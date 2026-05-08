@@ -116,12 +116,12 @@ void WorkspaceShell::CancelProjectSearchEdit() {
 
 SDL_FRect WorkspaceShell::ProjectSearchQueryRect(const SDL_FRect& sidebar_rect) const {
   return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchQueryTop,
-                  std::max(0.0f, sidebar_rect.w - 20.0f), 14.0f);
+                  std::max(0.0f, sidebar_rect.w - 20.0f), 20.0f);
 }
 
 SDL_FRect WorkspaceShell::ProjectSearchReplaceRect(const SDL_FRect& sidebar_rect) const {
   return MakeRect(sidebar_rect.x + 10.0f, sidebar_rect.y + kProjectSearchReplaceTop,
-                  std::max(0.0f, sidebar_rect.w - 20.0f), 14.0f);
+                  std::max(0.0f, sidebar_rect.w - 20.0f), 20.0f);
 }
 
 SDL_FRect WorkspaceShell::ProjectSearchModeButtonRect(const SDL_FRect& sidebar_rect) const {

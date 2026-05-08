@@ -211,10 +211,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       };
     }
     case TextInputSurface::ChatComposer: {
-      const SDL_FRect prompt_rect =
-          sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Chat
-              ? ChatSidebarComposerRect(layout.sidebar)
-              : BottomPanelCommandPromptRect(layout);
+      const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
       auto& composer = const_cast<editor::TextViewport&>(*text_input_vm.chat_composer);
       const std::size_t visible_lines = std::max<std::size_t>(
           1, static_cast<std::size_t>(std::floor(std::max(1.0f, prompt_rect.h - 8.0f) / line_height)));
@@ -327,9 +324,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           surface == TextInputSurface::SidebarSearchQuery ? ProjectSearchQueryRect(layout.sidebar)
                                                           : ProjectSearchReplaceRect(layout.sidebar);
       const float text_x = text_rect.x + 6.0f;
-      const float text_y = text_rect.y + 2.0f;
-      const std::string_view prefix =
-          surface == TextInputSurface::SidebarSearchQuery ? "search> " : "replace> ";
+      const float text_y = text_rect.y + 3.0f;
+      const std::string_view prefix = "";
       const float available_width =
           std::max(1.0f, text_rect.w - 12.0f);
       auto vm = ComputeSingleLineViewMetrics(

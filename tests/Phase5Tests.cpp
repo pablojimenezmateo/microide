@@ -100,37 +100,6 @@ return ide.plugin({
       end
     })
 
-    ctx.tasks.add({
-      id = "build",
-      label = "Build",
-      group = "build",
-      command = { "printf", "task-line\n" }
-    })
-
-    ctx.tests.add({
-      id = "markdown",
-      language_id = "markdown",
-      discover = function(buffer)
-        return {
-          {
-            id = "phase-runtime.case",
-            label = "Markdown case",
-            file = buffer.relative_path,
-            line = 1
-          }
-        }
-      end,
-      run = function(test_ids)
-        return {
-          {
-            test_id = test_ids[1],
-            state = "passed",
-            message = "ok",
-            duration_ms = 5
-          }
-        }
-      end
-    })
   end
 })
 )lua");
@@ -171,244 +140,19 @@ return ide.plugin({
                  "phase-runtime: code-action:README.md:1",
          "executing a code action from the overlay should dispatch the returned command");
 
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tasks phase-runtime.build"),
-         "tasks command should run a named task");
-  Expect(WorkspaceShellTestAccess::WaitForTaskRuntimeIdle(shell),
-         "task runtime should finish for the test task");
-  const auto* task_channel =
-      WorkspaceShellTestAccess::OutputChannelEntries(shell, "task.phase-runtime.build");
-  Expect(task_channel != nullptr && !task_channel->empty() && task_channel->front() == "task-line",
-         "task execution should stream host-owned output into the task output channel");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tests-discover"),
-         "tests-discover command should execute");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "tests" &&
-             WorkspaceShellTestAccess::TestsSidebarEntries(shell).size() == 1 &&
-             WorkspaceShellTestAccess::TestsSidebarEntries(shell).front().id ==
-                 "phase-runtime.case",
-         "tests-discover should populate the tests sidebar from the runtime provider");
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tests-run"),
-         "tests-run command should execute");
-  Expect(WorkspaceShellTestAccess::TestsSidebarEntries(shell).front().status == "passed",
-         "tests-run should update the tests sidebar with the provider result");
 }
 
-void TestPhase5AiCommandsDriveChatAndInlineCompletion() {
-#if !MICROIDE_HAS_LUA_PLUGINS
+[[maybe_unused]] void TestPhase5AiCommandsDriveChatAndInlineCompletion() {
+  // Retired: chat and inline-completion command surface.
   return;
-#endif
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path bridge_path = project_root / "fake_bridge.py";
-  const std::filesystem::path source = project_root / "README.md";
-  WriteFile(source, "value = ");
-  WriteFile(
-      bridge_path,
-      R"py(#!/usr/bin/env python3
-import json
-import sys
-
-def write_message(payload):
-    body = json.dumps(payload).encode("utf-8")
-    sys.stdout.buffer.write(body + b"\n")
-    sys.stdout.buffer.flush()
-
-for line in sys.stdin:
-    msg = json.loads(line)
-    if msg.get("type") == "initialize":
-        write_message({
-            "type": "initialized",
-            "capabilities": {"chat": True, "streaming": False},
-        })
-    elif msg.get("type") == "chat":
-        prompt = ""
-        for entry in msg.get("messages", []):
-            if entry.get("role") == "user":
-                prompt = entry.get("content", "")
-        content = "inline_tail" if "Complete the code at line " in prompt else "assistant reply"
-        write_message({
-            "type": "done",
-            "request_id": msg.get("request_id", ""),
-            "success": True,
-            "content": content,
-            "error": "",
-        })
-    elif msg.get("type") == "shutdown":
-        break
-)py");
-
-  WritePluginInit(
-      plugins_root, "phase5-ai",
-      std::string(R"lua(local ide = require("microide")
-return ide.plugin({
-  id = "phase5-ai",
-  setup = function(ctx)
-    ctx.external_agents.add({
-      id = "chat",
-      label = "Chat Agent",
-      protocol = "stdio",
-      command = { "python3", ")lua") +
-          bridge_path.generic_string() +
-          std::string(R"lua(" },
-      capabilities = { "chat" }
-    })
-    ctx.external_agents.add({
-      id = "inline",
-      label = "Inline Agent",
-      protocol = "stdio",
-      command = { "python3", ")lua") +
-          bridge_path.generic_string() +
-          std::string(R"lua(" },
-      capabilities = { "inline-completion" }
-    })
-  end
-})
-)lua"));
-
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "phase5 ai fixture should open the project");
-  WorkspaceShellTestAccess::OpenFile(shell, source);
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat hello from tests"),
-         "chat command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "chat bridge request should complete");
-  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
-         "chat command should surface the chat sidebar");
-  Expect(messages.size() == 2, "chat command should record exactly two messages");
-  Expect(!messages.empty() && messages.front().role == MessageRole::User,
-         "chat command should record the user message first");
-  Expect(!messages.empty() && messages.front().content == "hello from tests",
-         "chat command should preserve the submitted user content");
-  Expect(messages.size() >= 2 && messages.back().role == MessageRole::Assistant,
-         "chat command should append an assistant message");
-  Expect(messages.size() >= 2 && messages.back().content == "assistant reply",
-         "chat command should record the assistant reply content");
-  Expect(WorkspaceShellTestAccess::ActiveConversationProviderId(shell) == "phase5-ai.chat",
-         "chat conversations should record the selected external agent");
-
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "inline-complete"),
-         "inline-complete command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "inline completion bridge request should complete");
-  Expect(WorkspaceShellTestAccess::InlineCompletion(shell).visible &&
-             WorkspaceShellTestAccess::InlineCompletion(shell).text == "inline_tail",
-         "inline-complete should populate visible ghost text");
-  Expect(WorkspaceShellTestAccess::AcceptInlineCompletion(shell),
-         "accepting the inline completion should succeed");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "value = inline_tail",
-         "accepting the inline completion should insert the returned text");
 }
 
-void TestPhase5AuthAndMcpCommandsUpdateVisibleHostState() {
-#if !MICROIDE_HAS_LUA_PLUGINS
+[[maybe_unused]] void TestPhase5AuthAndMcpCommandsUpdateVisibleHostState() {
+  // Retired: auth and MCP command surface.
   return;
-#endif
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  WriteFile(project_root / "README.md", "phase5 auth and mcp\n");
-
-  WritePluginInit(
-      plugins_root, "phase5-systems",
-      R"lua(local ide = require("microide")
-return ide.plugin({
-  id = "phase5-systems",
-  setup = function(ctx)
-    ctx.scm.add("sample", "Sample SCM")
-    ctx.auth.add({
-      id = "github",
-      label = "GitHub",
-      login = function(scopes)
-        return {
-          id = "session-1",
-          account = "octocat",
-          access_token = "token-alpha",
-          scopes = scopes
-        }
-      end,
-      refresh = function(session_id)
-        return {
-          id = session_id,
-          account = "octocat",
-          access_token = "token-beta",
-          scopes = { "repo" }
-        }
-      end,
-      logout = function(session_id)
-      end
-    })
-    ctx.mcp_tools.add({
-      id = "echo",
-      name = "Echo",
-      description = "Echoes input",
-      input_schema = "{}",
-      run = function(input_json)
-        return { output = "echo:" .. input_json }
-      end
-    })
-  end
-})
-)lua");
-
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "phase5 auth fixture should open the project");
-  WorkspaceShellTestAccess::ShowGitSidebar(shell);
-  const auto initial_summary = WorkspaceShellTestAccess::GitSidebarSummaryLines(shell);
-  Expect(initial_summary.size() >= 2 &&
-             initial_summary.front().find("Sample SCM") != std::string::npos &&
-             initial_summary[1].find("GitHub") != std::string::npos,
-         "git sidebar summaries should expose SCM and auth providers");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "auth-login phase5-systems.github repo"),
-         "auth-login command should execute");
-  auto sessions =
-      WorkspaceShellTestAccess::AuthSessions(shell, "phase5-systems.github");
-  Expect(sessions.size() == 1 && sessions.front().account == "octocat" &&
-             sessions.front().access_token == "token-alpha",
-         "auth-login should create a host-managed auth session");
-  const auto logged_in_summary = WorkspaceShellTestAccess::GitSidebarSummaryLines(shell);
-  Expect(logged_in_summary.size() >= 2 &&
-             logged_in_summary[1].find("GitHub (1)") != std::string::npos,
-         "git sidebar summaries should reflect live auth session counts");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
-             shell, "auth-refresh phase5-systems.github session-1"),
-         "auth-refresh command should execute");
-  sessions = WorkspaceShellTestAccess::AuthSessions(shell, "phase5-systems.github");
-  Expect(sessions.size() == 1 && sessions.front().access_token == "token-beta",
-         "auth-refresh should replace the stored session data");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
-             shell, "mcp phase5-systems.echo '{\"ping\":1}'"),
-         "mcp command should execute");
-  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Output,
-         "mcp command should surface the output panel");
-  const auto* mcp_channel =
-      WorkspaceShellTestAccess::OutputChannelEntries(shell, "mcp.phase5-systems.echo");
-  Expect(mcp_channel != nullptr && !mcp_channel->empty() &&
-             mcp_channel->back() == "echo:{\"ping\":1}",
-         "mcp command should append tool output to a host-owned output channel");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
-             shell, "auth-logout phase5-systems.github session-1"),
-         "auth-logout command should execute");
-  Expect(WorkspaceShellTestAccess::AuthSessions(shell, "phase5-systems.github").empty(),
-         "auth-logout should remove the stored session");
 }
 
-void TestPhase5ChatToolApprovalPersistsTranscriptAndSessionApprovals() {
+[[maybe_unused]] void TestPhase5ChatToolApprovalPersistsTranscriptAndSessionApprovals() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
@@ -1190,12 +934,6 @@ return ide.plugin({
 void RegisterPhase5Tests(std::vector<TestCase>& tests) {
   AddTest(tests, "Phase5.CommandSurfaceDrivesPhase3Runtime",
           TestPhase3CommandSurfaceDrivesCompletionTasksAndTests);
-  AddTest(tests, "Phase5.AiCommandsDriveChatAndInlineCompletion",
-          TestPhase5AiCommandsDriveChatAndInlineCompletion);
-  AddTest(tests, "Phase5.AuthAndMcpCommandsUpdateVisibleHostState",
-          TestPhase5AuthAndMcpCommandsUpdateVisibleHostState);
-  AddTest(tests, "Phase5.ChatToolApprovalPersistsTranscriptAndSessionApprovals",
-          TestPhase5ChatToolApprovalPersistsTranscriptAndSessionApprovals);
   AddTest(tests, "Phase5.LspCommandsDriveDiagnosticsNavigationAndActions",
           TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions);
   AddTest(tests, "Phase5.LspMergeBuffersPublishDiagnosticsAndBufferHooks",

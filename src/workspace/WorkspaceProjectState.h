@@ -40,7 +40,6 @@ enum class OverlayMode {
   CommitPicker,
   Completion,
   CodeActions,
-  TaskPicker,
 };
 
 enum class PanelContentKind {
@@ -128,25 +127,12 @@ struct CodeActionSessionState {
   std::string error;
 };
 
-struct TaskPickerEntry {
-  std::string id;
-  std::string label;
-  std::string group;
-};
-
-struct TaskPickerState {
-  std::vector<TaskPickerEntry> entries;
-  std::size_t selected_index = 0;
-  std::string error;
-};
-
 struct OverlayWorkflowState {
   BufferSearchState buffer_search;
   ProjectSearchState project_search;
   ComparePickerState compare_picker;
   CompletionSessionState completion;
   CodeActionSessionState code_actions;
-  TaskPickerState task_picker;
 };
 
 struct OverlayState {
@@ -233,13 +219,6 @@ struct InlineCompletionState {
   std::string pending_request_id;
 };
 
-struct DebugSessionState {
-  bool running = false;
-  std::string type;
-  std::string channel_id;
-  std::string status_text;
-};
-
 struct LspUiState {
   bool request_in_flight = false;
   Uint64 request_started_ticks = 0;
@@ -277,7 +256,6 @@ struct ProjectWorkspaceState {
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
   InlineCompletionState inline_completion;
-  DebugSessionState debug_session;
   editor::DiagnosticsStore diagnostics_store;
   std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
   LspUiState lsp;

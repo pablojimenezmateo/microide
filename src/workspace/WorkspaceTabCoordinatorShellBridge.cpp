@@ -292,6 +292,29 @@ void WorkspaceShell::OpenFile(const std::filesystem::path& path) {
   (void)OpenFileInNewTab(path);
 }
 
+void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
+                                        std::size_t line,
+                                        std::size_t column) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  OpenFile(path);
+
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
+    for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
+      const auto& tab = context_.current_project_state.open_tabs[i];
+      if (tab.kind == TabEntry::Kind::Editor && tab.path == normalized_path) {
+        ActivateTab(i);
+        viewport = ActiveEditorViewport();
+        break;
+      }
+    }
+  }
+
+  if (viewport != nullptr) {
+    viewport->MoveCursorTo(line, column);
+  }
+}
+
 bool WorkspaceShell::ReopenActiveTab() {
   return MakeEditorTabService().ReopenActive();
 }

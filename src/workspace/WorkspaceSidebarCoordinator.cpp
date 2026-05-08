@@ -12,9 +12,45 @@
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "app/BackgroundTaskCounter.h"
 #include "project/GitCompareService.h"
+#include "project/GitRepository.h"
 #include "project/GitStatusService.h"
 
 namespace microide::workspace {
+
+namespace {
+
+std::string ResolveGitBranchLabel(const std::filesystem::path& project_root) {
+  const project::GitRepository repo(project_root);
+  if (!repo.IsValid()) {
+    return {};
+  }
+
+  if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
+      symbolic_ref.success()) {
+    std::string label = symbolic_ref.output;
+    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
+      label.pop_back();
+    }
+    if (!label.empty()) {
+      return label;
+    }
+  }
+
+  if (const auto short_head = repo.Execute({"rev-parse", "--short", "HEAD"});
+      short_head.success()) {
+    std::string label = short_head.output;
+    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
+      label.pop_back();
+    }
+    if (!label.empty()) {
+      return label;
+    }
+  }
+
+  return "HEAD";
+}
+
+}  // namespace
 
 SidebarCoordinator::SidebarCoordinator(ProjectWorkspaceState& state,
                                        PromptState& prompts,
@@ -337,10 +373,6 @@ void WorkspaceShell::ShowSearchSidebar(std::string query, bool temporary) {
   MakeSidebarService().ShowSearch(std::move(query), temporary);
 }
 
-void WorkspaceShell::ShowChatSidebar() {
-  MakeSidebarService().ShowMode(SidebarMode::Chat, false);
-}
-
 void WorkspaceShell::ShowProblemsSidebar() {
   MakeSidebarService().ShowProblems();
 }
@@ -410,6 +442,7 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
     const ResolvedGitOutgoingBase resolved_base =
         ResolveGitOutgoingBase(project_root, outgoing_base_choice);
     snapshot.repo_available = resolved_base.repo_available;
+    snapshot.branch_label = ResolveGitBranchLabel(project_root);
     snapshot.base_ref = resolved_base.base_ref;
     snapshot.base_label = resolved_base.base_label;
     if (!snapshot.base_ref.empty()) {

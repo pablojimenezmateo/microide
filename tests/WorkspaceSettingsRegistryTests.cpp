@@ -2,7 +2,6 @@
 
 #include "plugin/PluginHost.h"
 #include "workspace/SettingsOverlayService.h"
-#include "workspace/WorkspaceAiProvider.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 
 #include <algorithm>
@@ -18,8 +17,6 @@ using microide::workspace::DefaultSettingValue;
 using microide::workspace::FindBuiltinSettingSpec;
 using microide::workspace::ParseSettingValue;
 using microide::workspace::SerializeSettingValue;
-using microide::workspace::AiProviderRegistry;
-using microide::workspace::AiProviderSpec;
 using microide::workspace::SettingsOverlayService;
 using microide::workspace::SettingSpec;
 using microide::workspace::SettingType;
@@ -136,38 +133,6 @@ void TestSettingsOverlayFiltersAndPreservesScopes() {
          "settings overlay rows should preserve scope labels");
 }
 
-void TestAiProviderRegistryMetadataValidation() {
-  AiProviderRegistry registry;
-  AiProviderSpec empty_name;
-  empty_name.id = "empty-name";
-  registry.Register(empty_name);
-  Expect(registry.Specs().empty(),
-         "AI provider registry should reject providers without display names");
-
-  AiProviderSpec openai;
-  openai.id = "openai";
-  openai.label = "OpenAI";
-  openai.display_name = "OpenAI";
-  openai.type = "cloud";
-  openai.api_key_name = "openai.api_key";
-  openai.models = {"gpt-test"};
-  openai.default_model = "gpt-test";
-  registry.Register(openai);
-  Expect(registry.Specs().size() == 1,
-         "AI provider registry should accept providers with display metadata");
-  Expect(registry.Specs().front().requires_api_key &&
-             registry.Specs().front().auth_method == "api_key",
-         "AI provider registry should derive auth metadata from API-key providers");
-
-  SettingsOverlayService service;
-  service.OpenAiProviderPicker();
-  service.RebuildProviderRows(registry.Specs(), "openai");
-  Expect(service.ProviderRows().size() == 1 && service.ProviderRows().front().active,
-         "AI provider picker should expose active provider rows");
-  Expect(service.ProviderRows().front().model == "gpt-test",
-         "AI provider picker should expose default model metadata");
-}
-
 }  // namespace
 
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
@@ -181,8 +146,6 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogRejectsInvalidEnums);
   AddTest(tests, "WorkspaceSettingsOverlay/FiltersAndPreservesScopes",
           TestSettingsOverlayFiltersAndPreservesScopes);
-  AddTest(tests, "WorkspaceAiProviderPicker/MetadataValidation",
-          TestAiProviderRegistryMetadataValidation);
 }
 
 }  // namespace microide::tests

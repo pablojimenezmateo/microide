@@ -52,7 +52,7 @@ These are implemented and should not be treated as open migration work:
 - PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
 - runtime syntax highlighting from the in-tree generated syntax snapshot plus plugin `syntax/*.lua` contributions loaded into the host tokenizer at startup and `plugins-reload`
 - manual Lua plugin loading from user and project directories, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, active-buffer metadata, argv-based process helpers, repo-owned dogfood plugins, and `plugins-reload`
-- plugin-published diagnostics with host-owned storage, theme-backed underline rendering, severity gutter markers, host-owned blame/diagnostic/plugin hover popups in editor surfaces, plugin hover providers, a built-in Problems sidebar, and host rename/delete cleanup for stale diagnostic paths
+- plugin-published diagnostics with host-owned storage, theme-backed underline rendering, severity gutter markers, host-owned blame/diagnostic/plugin hover popups in editor surfaces, plugin hover providers, and host rename/delete cleanup for stale diagnostic paths
 - targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
 
 ## Active Phases
@@ -69,6 +69,11 @@ all top-level menus reachable through compact/overflow chrome, hit pads cover sm
 scrollbar, and terminal-tab controls, the bottom status bar is host-owned and clickable, and
 Settings and Help/About overlays now share one settings-overlay service and
 view-model-rendered surface.
+
+Update (2026-05-08): `full-ui-ux-revision` shipped. Status-bar source-control affordance now
+surfaces branch identity and cleanliness, compact mode is state-labeled and checkable in menus,
+Project and Search sidebar headers now use cohesive two-row control layouts, and Help/About plus
+workspace actions no longer expose removed auth/chat/debug/task/test/problem surfaces.
 
 Update (2026-05-08): `stabilize-ci-and-remove-periodic-workflows` is in progress. Active CI policy
 now requires event-driven triggers only (`push`, `pull_request`, `workflow_dispatch`) and removes

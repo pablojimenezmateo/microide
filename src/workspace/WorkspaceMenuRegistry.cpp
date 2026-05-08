@@ -120,10 +120,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::SidebarShow, "Source Control", {},
                std::array<std::string_view, 2>{"git", {}}, 1, true),
-      MenuItem(ActionId::SidebarShow, "Problems", {},
-               std::array<std::string_view, 2>{"problems", {}}, 1, true),
-      MenuItem(ActionId::SidebarShow, "Tests", {},
-               std::array<std::string_view, 2>{"tests", {}}, 1, true),
       MenuSeparator(),
       MenuItem(ActionId::ShowOutput),
       MenuItem(ActionId::Wrap, "Word Wrap", {}, {}, 0, true),
@@ -153,15 +149,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::GoToDefinition),
       MenuItem(ActionId::FindReferences),
   });
-  static const auto kRunItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::TestsRun, "Run Tests"),
-      MenuItem(ActionId::TestsDiscover, "Discover Tests"),
-      MenuSeparator(),
-      MenuItem(ActionId::DebugStart, "Start Debugger"),
-      MenuItem(ActionId::DebugStop, "Stop Debugger"),
-      MenuSeparator(),
-      MenuItem(ActionId::Tasks, "Run Task…"),
-  });
   static const auto kGitItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarShow, "Source Control Sidebar", {},
                std::array<std::string_view, 2>{"git", {}}, 1, false),
@@ -176,7 +163,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kPreferencesItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),
-      MenuItem(ActionId::ToggleLayoutMode, "Toggle Compact Layout"),
+      MenuItem(ActionId::ToggleLayoutMode, "Compact mode", {}, {}, 0, true),
       MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
       MenuItem(ActionId::UiScale, "Zoom Out", "Ctrl+-", std::array<std::string_view, 2>{"down", {}}, 1),
@@ -219,7 +206,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::Selection, "Selection", kSelectionItems},
       MenuSpec{MenuId::View, "View", kViewItems},
       MenuSpec{MenuId::Go, "Go", kGoItems},
-      MenuSpec{MenuId::Run, "Run", kRunItems},
       MenuSpec{MenuId::Git, "Git", kGitItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::GitOutgoingBase, "Outgoing Base", {}},

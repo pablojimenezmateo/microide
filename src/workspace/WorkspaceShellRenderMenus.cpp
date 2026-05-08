@@ -33,8 +33,11 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
             }
 
             const MenuItemSpec& spec = items[item.index];
+            const bool hovered = item.hovered ||
+                                 (last_mouse_position_valid_ &&
+                                  Contains(item.rect, last_mouse_x_, last_mouse_y_));
             DrawMenuRow(text_renderer_, renderer, theme_, item.rect, MenuItemLabel(spec),
-                        MenuItemAccelerator(spec), item.enabled, item.hovered, item.checked);
+                        MenuItemAccelerator(spec), item.enabled, hovered, item.checked);
           }
         };
     draw_popup_menu(context_.menu_state.active_menu_id, context_.menu_state.active_menu_item_index, std::nullopt);
@@ -86,8 +89,11 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
     }
 
     const MenuItemSpec& spec = items[item.index];
+    const bool hovered = item.hovered ||
+                         (last_mouse_position_valid_ &&
+                          Contains(item.rect, last_mouse_x_, last_mouse_y_));
     DrawMenuRow(text_renderer_, renderer, theme_, item.rect, MenuItemLabel(spec),
-                MenuItemAccelerator(spec), item.enabled, item.hovered, item.checked);
+                MenuItemAccelerator(spec), item.enabled, hovered, item.checked);
   }
 }
 

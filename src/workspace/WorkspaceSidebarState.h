@@ -93,12 +93,14 @@ struct GitSidebarState {
   struct RefreshSnapshot {
     std::vector<RefreshSnapshotEntry> entries;
     bool repo_available = false;
+    std::string branch_label;
     std::string base_ref;
     std::string base_label;
     std::uint64_t generation = 0;
   };
 
   std::vector<GitSidebarEntry> entries;
+  std::string branch_label;
   std::string base_ref;
   std::string base_label;
   OutgoingBaseChoice outgoing_base_choice;

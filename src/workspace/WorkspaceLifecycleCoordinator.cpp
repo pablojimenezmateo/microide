@@ -25,7 +25,6 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   operations_.set_project_watcher_deferred_arming(true);
 
   operations_.initialize_project_search_runtime();
-  operations_.initialize_task_runtime();
   operations_.initialize_ai_provider_runtime();
   operations_.register_wake_events();
   editor::runtime_syntax::EnsureInitialized();
@@ -72,7 +71,6 @@ void LifecycleCoordinator::Shutdown() {
   operations_.persist_inactive_projects_for_shutdown();
   operations_.save_workspace_session();
   operations_.shutdown_project_search_runtime();
-  operations_.shutdown_task_runtime();
   operations_.shutdown_ai_provider_runtime();
   // Terminal session teardown and cursor cleanup are intentionally skipped here:
   // the process exits via quick_exit() immediately after, so the OS reclaims
@@ -191,7 +189,6 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
       LifecycleCoordinator::Operations{
           .reset_startup_state = [this]() { ResetLifecycleStartupState(); },
           .initialize_project_search_runtime = [this]() { project_search_runtime_.Initialize(); },
-          .initialize_task_runtime = [this]() { task_runtime_.Initialize(); },
           .initialize_ai_provider_runtime = [this]() { ai_provider_runtime_service_.Initialize(); },
           .register_wake_events = [this]() { RegisterLifecycleWakeEvents(); },
           .restore_user_config = [this]() { MakePersistenceCoordinator().RestoreUserConfig(); },
@@ -225,7 +222,6 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
-          .shutdown_task_runtime = [this]() { task_runtime_.Shutdown(); },
           .shutdown_ai_provider_runtime = [this]() { ai_provider_runtime_service_.Shutdown(); },
           .clear_terminal_tabs =
               [this]() { context_.current_project_state.terminal_tabs.clear(); },

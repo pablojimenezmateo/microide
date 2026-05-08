@@ -140,7 +140,6 @@ void WorkspaceShell::RebuildPhase3Registries() {
   save_participant_registry_ = SaveParticipantRegistry{};
   completion_registry_ = CompletionRegistry{};
   code_action_registry_ = CodeActionRegistry{};
-  task_registry_ = TaskRegistry{};
   tool_registry_ = ToolRegistry{};
   test_controller_.Clear();
   dap_manager_.ShutdownAll();
@@ -186,17 +185,6 @@ void WorkspaceShell::RebuildPhase3Registries() {
                                        false);
   }
   CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
-  for (const auto& task : host.ContributedTasks()) {
-    task_registry_.Register(TaskSpec{
-        .id = task.id,
-        .plugin_id = task.plugin_id,
-        .label = task.label,
-        .group = task.group,
-        .command = task.command,
-        .cwd = task.cwd,
-        .run_in_shell = task.run_in_shell,
-    });
-  }
   for (const auto& tool : host.ContributedTools()) {
     tool_registry_.Register(ToolSpec{
         .id = tool.id,
@@ -207,9 +195,6 @@ void WorkspaceShell::RebuildPhase3Registries() {
         .sha256 = tool.sha256,
         .install_dir = tool.install_dir,
     });
-  }
-  for (const auto& debugger : host.ContributedDebuggers()) {
-    dap_manager_.RegisterDebugger(debugger.type, debugger.command);
   }
 }
 

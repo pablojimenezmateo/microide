@@ -52,7 +52,6 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
         return TextInputSurface::CommitPicker;
       case OverlayMode::Completion:
       case OverlayMode::CodeActions:
-      case OverlayMode::TaskPicker:
         return TextInputSurface::None;
       case OverlayMode::FileFinder:
       default:
@@ -66,13 +65,6 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return context_.current_project_state.overlay.workflow.project_search.edit_field == ProjectSearchEditField::Query
                ? TextInputSurface::SidebarSearchQuery
                : TextInputSurface::SidebarSearchReplace;
-  }
-
-  if (context_.current_project_state.surface.focus == FocusTarget::Sidebar &&
-      context_.current_project_state.sidebar.visible &&
-      ActiveSidebarMode() == SidebarMode::Chat &&
-      context_.current_project_state.panel.chat.focus_region == ChatPaneFocusRegion::Composer) {
-    return TextInputSurface::ChatComposer;
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {

@@ -87,6 +87,9 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     sidebar_mode_menu_entries_.reserve(views.size());
 
     for (const SidebarViewInfo& view : views) {
+      if (view.id == "chat" || view.id == "problems" || view.id == "tests") {
+        continue;
+      }
       sidebar_mode_menu_entries_.push_back(
           SidebarModeMenuEntry{.label = std::string(view.label), .id = std::string(view.id)});
       const auto& entry = sidebar_mode_menu_entries_.back();

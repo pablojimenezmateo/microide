@@ -25,7 +25,6 @@ std::vector<std::string_view> TopLevelLabels() {
       case MenuId::Selection:
       case MenuId::View:
       case MenuId::Go:
-      case MenuId::Run:
       case MenuId::Git:
       case MenuId::Search:
       case MenuId::Terminal:
@@ -51,8 +50,8 @@ bool MenuContainsLabel(MenuId id, std::string_view label) {
 
 void TestMenuRegistryTopLevelSnapshot() {
   const std::vector<std::string_view> labels = TopLevelLabels();
-  const std::array<std::string_view, 11> expected = {
-      "File", "Edit", "Selection", "View", "Go", "Run",
+  const std::array<std::string_view, 10> expected = {
+      "File", "Edit", "Selection", "View", "Go",
       "Git", "Search", "Terminal", "Preferences", "Help",
   };
   Expect(labels.size() == expected.size(),
@@ -70,8 +69,6 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
          "File menu should expose Open Folder / Project Tab");
   Expect(MenuContainsLabel(MenuId::Go, "Go to File…"),
          "Go menu should expose file navigation");
-  Expect(MenuContainsLabel(MenuId::Run, "Run Tests"),
-         "Run menu should expose test execution");
   Expect(MenuContainsLabel(MenuId::Git, "Compare with HEAD"),
          "Git menu should expose compare with HEAD");
   Expect(MenuContainsLabel(MenuId::Terminal, "New Terminal"),
@@ -80,8 +77,8 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
          "Preferences menu should expose plugin reload");
   Expect(MenuContainsLabel(MenuId::Preferences, "Settings…"),
          "Preferences menu should expose the settings overlay");
-  Expect(MenuContainsLabel(MenuId::Preferences, "AI Provider…"),
-         "Preferences menu should expose the AI provider picker");
+  Expect(MenuContainsLabel(MenuId::Preferences, "Compact mode"),
+         "Preferences menu should expose compact mode as a stateful option");
   Expect(MenuContainsLabel(MenuId::Help, "Keyboard Shortcuts"),
          "Help menu should expose keyboard shortcuts");
   Expect(MenuContainsLabel(MenuId::Help, "About microide"),

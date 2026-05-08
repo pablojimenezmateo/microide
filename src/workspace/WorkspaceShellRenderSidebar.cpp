@@ -4,7 +4,6 @@
 #include <cmath>
 #include <string>
 
-#include "editor/DiagnosticsRender.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
@@ -120,13 +119,13 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     DrawTextFieldFrame(renderer, theme_, replace_rect,
                        current_surface == TextInputSurface::SidebarSearchReplace);
     DrawSingleLineTextTail(
-        renderer, query_rect.x + 6.0f, query_rect.y + 2.0f,
+        renderer, query_rect.x + 6.0f, query_rect.y + 3.0f,
         std::max(1.0f, query_rect.w - 12.0f),
         editing_query ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
         sidebar_display_text(TextInputSurface::SidebarSearchQuery, sidebar_vm.query_fallback_text));
     DrawSingleLineTextTail(
-        renderer, replace_rect.x + 6.0f, replace_rect.y + 2.0f,
+        renderer, replace_rect.x + 6.0f, replace_rect.y + 3.0f,
         std::max(1.0f, replace_rect.w - 12.0f),
         editing_replace ? theme_.text_primary : theme_.text_secondary,
         theme_.surface_background,
@@ -254,218 +253,6 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(line_map.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
-  } else if (sidebar_mode == SidebarMode::Chat) {
-    const ChatSidebarLayout chat_layout = ComputeChatSidebarLayout(layout.sidebar);
-    const Conversation* conversation = ActiveConversation();
-    const bool active_request =
-        conversation != nullptr && project_state.panel.chat.request_in_flight &&
-        project_state.panel.chat.request_conversation_id == conversation->id;
-    const std::string title =
-        conversation != nullptr && !conversation->title.empty() ? conversation->title : "Chat";
-    const std::string status = active_request
-                                   ? project_state.panel.chat.status_text
-                               : conversation != nullptr &&
-                                       conversation->status == RequestStatus::Failed
-                                   ? "Failed"
-                               : conversation != nullptr &&
-                                       conversation->status == RequestStatus::Cancelled
-                                   ? "Cancelled"
-                                   : "Ready";
-    DrawTextOn(text_renderer_, renderer, chat_layout.header_title_rect.x, chat_layout.header_title_rect.y,
-               theme_.text_primary, theme_.surface_background,
-               TruncateLabel(title, chat_layout.header_title_rect.w));
-    DrawTextOn(text_renderer_, renderer,
-               chat_layout.header_title_rect.x + chat_layout.header_title_rect.w + 8.0f,
-               chat_layout.header_title_rect.y, theme_.text_muted, theme_.surface_background,
-               TruncateLabel(status, std::max(0.0f, chat_layout.header_rect.w -
-                                                        chat_layout.header_title_rect.w - 12.0f)));
-
-    DrawRect(renderer, chat_layout.rail_rect, theme_.border);
-    for (std::size_t i = 0;
-         i < project_state.conversations.conversations().size();
-         ++i) {
-      const Conversation& item = project_state.conversations.conversations()[i];
-      const SDL_FRect row_rect = ChatSidebarConversationRowRect(layout.sidebar, i);
-      if (row_rect.y + row_rect.h > chat_layout.rail_list_rect.y + chat_layout.rail_list_rect.h) {
-        break;
-      }
-      const bool active = item.id == project_state.panel.chat.conversation_id;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, active,
-                                  active);
-      SDL_Color marker = theme_.text_muted;
-      if (item.status == RequestStatus::Running || item.status == RequestStatus::Streaming) {
-        marker = theme_.accent;
-      } else if (item.status == RequestStatus::Failed || item.status == RequestStatus::Cancelled) {
-        marker = theme_.diff_deleted;
-      }
-      DrawFilledRect(renderer, MakeRect(row_rect.x + 4.0f, row_rect.y + 6.0f, 6.0f, 10.0f), marker);
-      DrawVCenteredTextOn(text_renderer_, renderer,
-                          MakeRect(row_rect.x + 14.0f, row_rect.y, row_rect.w - 18.0f, row_rect.h),
-                          0.0f, active ? theme_.text_primary : theme_.text_secondary,
-                          active ? theme_.row_highlight : theme_.surface_background,
-                          TruncateLabel(item.title.empty() ? "Chat" : item.title, row_rect.w - 22.0f));
-      if (project_state.panel.chat.focus_region == ChatPaneFocusRegion::Rail &&
-          active) {
-        DrawRect(renderer, row_rect, theme_.accent);
-      }
-    }
-    draw_action_button(chat_layout.rail_new_rect, "New Chat", true);
-
-    for (std::size_t i = 0; const ChatHeaderAction& action : BuildChatHeaderActions(layout.sidebar)) {
-      draw_action_button(action.rect, action.label, action.enabled,
-                         action.kind == ChatHeaderAction::Kind::DeleteConversation);
-      if (project_state.panel.chat.focus_region == ChatPaneFocusRegion::Header &&
-          project_state.panel.chat.header_focus_index == i) {
-        DrawRect(renderer, action.rect, theme_.accent);
-      }
-      ++i;
-    }
-
-    const std::string auth_banner = ChatAuthBannerText(conversation);
-    if (!auth_banner.empty()) {
-      DrawFilledRect(renderer, chat_layout.auth_rect, theme_.surface_raised);
-      DrawRect(renderer, chat_layout.auth_rect, theme_.border);
-      DrawVCenteredTextOn(text_renderer_, renderer, chat_layout.auth_rect, 6.0f,
-                          theme_.text_secondary, theme_.surface_raised,
-                          TruncateLabel(auth_banner, chat_layout.auth_rect.w - 12.0f));
-    }
-
-    DrawRect(renderer, chat_layout.transcript_rect,
-             project_state.panel.chat.focus_region == ChatPaneFocusRegion::Transcript
-                 ? theme_.accent
-                 : theme_.border);
-    const ChatTranscriptLayout transcript = BuildChatTranscriptLayout(layout.sidebar);
-    const auto list_layout =
-        ComputeChatSidebarListLayout(layout.sidebar, transcript.rows.size());
-    const int scroll_row = list_layout.scroll_row;
-    project_state.panel.chat.scroll_row = scroll_row;
-
-    for (int row = 0; row < list_layout.visible_rows; ++row) {
-      const int line_index = scroll_row + row;
-      if (line_index >= static_cast<int>(transcript.rows.size())) {
-        break;
-      }
-
-      const ChatTranscriptRow& line = transcript.rows[static_cast<std::size_t>(line_index)];
-      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
-      if (line.kind == ChatTranscriptRow::Kind::Spacer) {
-        continue;
-      }
-
-      const bool user_line = line.role == MessageRole::User;
-      const bool assistant_line = line.role == MessageRole::Assistant;
-      const SDL_Color row_background =
-          line.kind == ChatTranscriptRow::Kind::Placeholder
-              ? theme_.surface_background
-              : line.kind == ChatTranscriptRow::Kind::Code
-                  ? theme_.surface_raised
-                  : user_line ? theme_.surface_raised : theme_.surface_background;
-      DrawFilledRect(renderer, row_rect, row_background);
-      if (line.tone == ChatTranscriptRow::Tone::Quote) {
-        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h),
-                       theme_.text_muted);
-      }
-
-      const SDL_Color base_color =
-          line.kind == ChatTranscriptRow::Kind::Placeholder
-              ? theme_.text_muted
-          : line.kind == ChatTranscriptRow::Kind::Meta ||
-                  line.kind == ChatTranscriptRow::Kind::Tool
-              ? theme_.text_muted
-          : line.kind == ChatTranscriptRow::Kind::Error
-              ? theme_.diff_deleted
-          : line.tone == ChatTranscriptRow::Tone::Heading
-              ? theme_.accent
-          : line.tone == ChatTranscriptRow::Tone::Quote
-              ? theme_.text_muted
-              : user_line ? theme_.text_primary : assistant_line ? theme_.text_secondary
-                                                              : theme_.text_muted;
-
-      float text_x = row_rect.x + 6.0f;
-      if (!line.prefix.empty()) {
-        DrawVCenteredTextOn(
-            text_renderer_, renderer,
-            MakeRect(text_x, row_rect.y, std::max(0.0f, row_rect.w - 12.0f), row_rect.h), 0.0f,
-            line.tone == ChatTranscriptRow::Tone::List ? theme_.text_muted : base_color,
-            row_background, line.prefix);
-        text_x += text_renderer_.MeasureWidth(line.prefix);
-      }
-
-      for (const ChatTranscriptSegment& segment : line.segments) {
-        SDL_Color segment_color = base_color;
-        if (segment.style == ChatTextStyle::Link) {
-          segment_color = theme_.accent;
-        } else if (segment.style == ChatTextStyle::InlineCode) {
-          segment_color = theme_.text_primary;
-        } else if (segment.style == ChatTextStyle::Strong &&
-                   line.kind != ChatTranscriptRow::Kind::Error) {
-          segment_color = theme_.text_primary;
-        } else if (segment.style == ChatTextStyle::Emphasis &&
-                   line.kind != ChatTranscriptRow::Kind::Error) {
-          segment_color = assistant_line ? theme_.text_primary : theme_.text_secondary;
-        }
-        const float segment_width = text_renderer_.MeasureWidth(segment.text);
-        if (segment.style == ChatTextStyle::InlineCode && segment_width > 0.0f) {
-          const SDL_FRect code_rect = MakeRect(text_x - 1.0f, row_rect.y + 2.0f,
-                                               segment_width + 2.0f,
-                                               std::max(1.0f, row_rect.h - 4.0f));
-          DrawFilledRect(renderer, code_rect, theme_.surface_background);
-          DrawRect(renderer, code_rect, theme_.border);
-        }
-        DrawVCenteredTextOn(
-            text_renderer_, renderer,
-            MakeRect(text_x, row_rect.y, std::max(0.0f, row_rect.w - (text_x - row_rect.x) - 6.0f),
-                     row_rect.h),
-            0.0f, segment_color, row_background, segment.text);
-        if (segment.style == ChatTextStyle::Link && segment_width > 0.0f) {
-          SDL_SetRenderDrawColor(renderer, segment_color.r, segment_color.g, segment_color.b,
-                                 segment_color.a);
-          SDL_RenderLine(renderer, text_x, row_rect.y + row_rect.h - 3.0f,
-                         text_x + segment_width, row_rect.y + row_rect.h - 3.0f);
-        }
-        text_x += segment_width;
-      }
-    }
-
-    const TextInputSurface current_surface = text_input_vm.current_surface;
-    const bool chat_input_active = current_surface == TextInputSurface::ChatComposer;
-    const auto visual = chat_input_active ? BuildActiveTextInputVisual(layout, std::nullopt)
-                                          : std::nullopt;
-    auto& composer = project_state.panel.chat.composer;
-    const SDL_FRect composer_rect = ChatSidebarComposerRect(layout.sidebar);
-    composer.SetViewportSize(
-        std::max<std::size_t>(1, static_cast<std::size_t>((composer_rect.h - 8.0f) /
-                                                          std::max(1.0f, text_renderer_.LineHeight()))),
-        std::max<std::size_t>(1, static_cast<std::size_t>((composer_rect.w - 12.0f) /
-                                                          std::max(1.0f, text_renderer_.CharWidth()))));
-    DrawTextFieldFrame(renderer, theme_, composer_rect, chat_input_active);
-    DrawRect(renderer, composer_rect,
-             project_state.panel.chat.focus_region == ChatPaneFocusRegion::Composer
-                 ? theme_.accent
-                 : theme_.border);
-    if (composer.lines().size() == 1 && composer.lines().front().empty()) {
-      DrawTextOn(text_renderer_, renderer, composer_rect.x + 6.0f, composer_rect.y + 4.0f,
-                 theme_.text_muted, theme_.surface_background, "Ask about this workspace");
-      DrawTextOn(text_renderer_, renderer, composer_rect.x + 6.0f, composer_rect.y + 18.0f,
-                 theme_.text_muted, theme_.surface_background, "Enter for newline, Ctrl+Enter to send");
-    } else {
-      const std::size_t first_line = composer.scroll_line();
-      const std::size_t last_line =
-          std::min(composer.line_count(), first_line + composer.visible_lines());
-      float text_y = composer_rect.y + 4.0f;
-      for (std::size_t line_index = first_line; line_index < last_line; ++line_index) {
-        const editor::LayoutLine layout_line = composer.VisibleLineLayout(line_index);
-        DrawTextOn(text_renderer_, renderer, composer_rect.x + 6.0f, text_y,
-                   chat_input_active ? theme_.text_primary : theme_.text_secondary,
-                   theme_.surface_background, layout_line.text);
-        text_y += text_renderer_.LineHeight();
-      }
-    }
-
-    draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(transcript.rows.size()),
-                            list_layout.visible_units, static_cast<float>(scroll_row),
-                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar,
-                            true);
   } else if (sidebar_mode == SidebarMode::Git) {
     const bool outgoing_base_menu_open =
         context_.menu_state.menu_bar_open &&
@@ -514,8 +301,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
             DrawRect(renderer, *button_rect,
                      outgoing_base_menu_open ? theme_.accent
                                              : hovered ? theme_.text_secondary : theme_.border);
-            DrawChevron(renderer, button_rect->x + button_rect->w * 0.5f,
-                        button_rect->y + button_rect->h * 0.5f, true,
+            const float chevron_x =
+                std::floor(button_rect->x + (button_rect->w - 8.0f) * 0.5f);
+            const float chevron_center_y =
+                std::floor(button_rect->y + button_rect->h * 0.5f);
+            DrawChevron(renderer, chevron_x, chevron_center_y, true,
                         outgoing_base_menu_open || hovered ? theme_.text_primary
                                                            : theme_.text_muted);
             label_width =
@@ -591,126 +381,6 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
-  } else if (sidebar_mode == SidebarMode::Problems) {
-    const auto list_layout =
-        ComputeProblemsSidebarListLayout(layout.sidebar, project_state.sidebar.problems.entries.size());
-    const int scroll_row = list_layout.scroll_row;
-
-    for (int row = 0; row < list_layout.visible_rows; ++row) {
-      const int item_index = scroll_row + row;
-      if (item_index >= static_cast<int>(project_state.sidebar.problems.entries.size())) {
-        break;
-      }
-
-      const auto& item = project_state.sidebar.problems.entries[static_cast<std::size_t>(item_index)];
-      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
-      const bool selected =
-          static_cast<std::size_t>(item_index) == project_state.sidebar.problems.selected_index;
-      const SDL_Color row_background =
-          selected ? theme_.row_highlight : theme_.surface_background;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected);
-
-      const SDL_Color severity =
-          editor::DiagnosticSeverityColor(theme_, item.diagnostic.severity);
-      DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, 2.0f, row_rect.h), severity);
-
-      const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
-      const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
-      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 8.0f,
-                                  row_rect.x + row_rect.w - 6.0f, primary_color, secondary_color,
-                                  row_background, item.primary_label, item.detail_label, 0.58f);
-    }
-
-    if (project_state.sidebar.problems.entries.empty()) {
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-                 list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,
-                 TruncateLabel(FormatEmptyState("diagnostics"),
-                               layout.sidebar.w - kSidebarInset * 2.0f));
-    }
-
-    draw_vertical_scrollbar(list_layout.list_rect,
-                            static_cast<float>(project_state.sidebar.problems.entries.size()),
-                            list_layout.visible_units, static_cast<float>(scroll_row),
-                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
-  } else if (sidebar_mode == SidebarMode::Tests) {
-    const auto list_layout =
-        ComputeTestsSidebarListLayout(layout.sidebar, project_state.sidebar.tests.entries.size());
-    const int scroll_row = list_layout.scroll_row;
-
-    for (int row = 0; row < list_layout.visible_rows; ++row) {
-      const int item_index = scroll_row + row;
-      if (item_index >= static_cast<int>(project_state.sidebar.tests.entries.size())) {
-        break;
-      }
-
-      const auto& item =
-          project_state.sidebar.tests.entries[static_cast<std::size_t>(item_index)];
-      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
-      const bool selected =
-          static_cast<std::size_t>(item_index) == project_state.sidebar.tests.selected_index;
-      const SDL_Color row_background =
-          selected ? theme_.row_highlight : theme_.surface_background;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
-                                  selected);
-
-      SDL_Color status_color = theme_.text_muted;
-      if (item.status == "passed") {
-        status_color = theme_.diff_added;
-      } else if (item.status == "failed" || item.status == "errored") {
-        status_color = theme_.diff_deleted;
-      } else if (item.status == "running") {
-        status_color = theme_.accent;
-      } else if (item.status == "skipped") {
-        status_color = theme_.text_disabled;
-      }
-
-      const std::string status_glyph =
-          item.status == "passed" ? "Pass"
-          : item.status == "failed" ? "Fail"
-          : item.status == "errored" ? "Error"
-          : item.status == "running" ? "Run"
-          : item.status == "skipped" ? "Skip"
-                                     : "Queued";
-      const float text_x = row_rect.x + 8.0f;
-      const float text_y =
-          row_rect.y + std::floor(std::max(0.0f, row_rect.h - text_renderer_.LineHeight()) * 0.5f);
-      DrawTextOn(text_renderer_, renderer, text_x, text_y, status_color, row_background,
-                 status_glyph);
-
-      const float label_x = text_x + text_renderer_.MeasureWidth(status_glyph) + 10.0f;
-      const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
-      std::string detail;
-      if (!item.file.empty()) {
-        detail = item.file.filename().string();
-        if (item.line > 0) {
-          detail.push_back(':');
-          AppendUnsigned(detail, static_cast<std::size_t>(item.line));
-        }
-      }
-      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, label_x,
-                                  row_rect.x + row_rect.w - 6.0f, primary_color,
-                                  selected ? theme_.text_secondary : theme_.text_muted,
-                                  row_background, item.label, detail, 0.62f);
-    }
-
-    const std::string placeholder =
-        !project_state.sidebar.tests.error.empty()
-            ? "Error: " + project_state.sidebar.tests.error
-            : project_state.sidebar.tests.entries.empty()
-                ? FormatEmptyState("tests discovered")
-                                                                           : std::string{};
-    if (!placeholder.empty()) {
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-                 list_layout.row_y + 4.0f,
-                 project_state.sidebar.tests.error.empty() ? theme_.text_muted : theme_.diff_deleted,
-                 theme_.surface_background,
-                 TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
-    }
-
-    draw_vertical_scrollbar(list_layout.list_rect,
-                            static_cast<float>(project_state.sidebar.tests.entries.size()),
-                            list_layout.visible_units, static_cast<float>(scroll_row),
-                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else if (sidebar_mode == SidebarMode::Plugin) {
     const auto list_layout =
         ComputePluginSidebarListLayout(layout.sidebar, project_state.sidebar.plugin.items.size());
@@ -766,7 +436,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     if (!compact_tree_header) {
       const std::string tree_root_label = ProjectLabel();
       const float root_label_left = sidebar_mode_rect.x + sidebar_mode_rect.w + 10.0f;
-      const float root_label_right = collapse_rect.x - 10.0f;
+      // Project actions now render on a second row, so first-row label width
+      // should not reserve horizontal space for those buttons anymore.
+      const float root_label_right = layout.sidebar.x + layout.sidebar.w - kSidebarInset;
       const float root_label_max_width = std::max(0.0f, root_label_right - root_label_left);
       const std::string root_label = TruncateLabel(tree_root_label, root_label_max_width);
       if (!root_label.empty()) {

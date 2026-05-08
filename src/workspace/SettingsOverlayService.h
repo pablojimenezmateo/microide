@@ -5,14 +5,12 @@
 #include <string_view>
 #include <vector>
 
-#include "workspace/WorkspaceAiProvider.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 
 namespace microide::workspace {
 
 enum class SettingsOverlayMode {
   Settings,
-  AiProvider,
   HelpAbout,
 };
 
@@ -27,15 +25,6 @@ struct SettingsOverlayRow {
   bool editable = false;
 };
 
-struct AiProviderPickerRow {
-  std::string id;
-  std::string label;
-  std::string model;
-  std::string auth_method;
-  bool requires_api_key = false;
-  bool active = false;
-};
-
 struct HelpAboutRow {
   std::string label;
   std::string detail;
@@ -44,7 +33,6 @@ struct HelpAboutRow {
 class SettingsOverlayService {
  public:
   void OpenSettings();
-  void OpenAiProviderPicker();
   void OpenHelpAbout();
   void Close();
 
@@ -58,12 +46,9 @@ class SettingsOverlayService {
   void RebuildSettingsRows(const std::vector<SettingInfo>& settings,
                            const std::vector<std::pair<std::string, std::string>>& user_settings,
                            const std::vector<std::pair<std::string, std::string>>& project_settings);
-  void RebuildProviderRows(const std::vector<AiProviderSpec>& providers,
-                           std::string_view active_provider_id);
   void RebuildHelpRows(std::vector<HelpAboutRow> rows);
 
   const std::vector<SettingsOverlayRow>& SettingsRows() const { return settings_rows_; }
-  const std::vector<AiProviderPickerRow>& ProviderRows() const { return provider_rows_; }
   const std::vector<HelpAboutRow>& HelpRows() const { return help_rows_; }
   std::size_t VisibleRowCount() const;
 
@@ -75,7 +60,6 @@ class SettingsOverlayService {
   int scroll_row_ = 0;
   std::string query_;
   std::vector<SettingsOverlayRow> settings_rows_;
-  std::vector<AiProviderPickerRow> provider_rows_;
   std::vector<HelpAboutRow> help_rows_;
 };
 

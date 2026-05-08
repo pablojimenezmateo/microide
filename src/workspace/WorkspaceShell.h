@@ -40,8 +40,6 @@
 #include "workspace/WorkspaceSaveParticipants.h"
 #include "workspace/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
-#include "workspace/WorkspaceTaskRegistry.h"
-#include "workspace/WorkspaceTaskRuntime.h"
 #include "workspace/WorkspaceToolRegistry.h"
 #include "workspace/WorkspaceToolDownloader.h"
 #include "workspace/WorkspaceDapManager.h"

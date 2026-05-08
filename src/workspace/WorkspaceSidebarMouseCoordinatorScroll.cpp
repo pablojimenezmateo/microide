@@ -10,8 +10,8 @@ namespace microide::workspace {
 namespace {
 
 int& ActiveSidebarScrollRow(ProjectWorkspaceState& state, SidebarMode sidebar_mode) {
-  return sidebar_mode == SidebarMode::Chat ? state.panel.chat.scroll_row
-                                           : state.sidebar.scroll_row;
+  (void)sidebar_mode;
+  return state.sidebar.scroll_row;
 }
 
 }  // namespace
@@ -87,10 +87,6 @@ ScrollableListLayout SidebarMouseCoordinator::CurrentListLayout(const WorkspaceL
   if (sidebar_mode == SidebarMode::Search) {
     const auto line_map = operations_.build_project_search_line_map();
     return operations_.compute_project_search_sidebar_list_layout(layout.sidebar, line_map.size());
-  }
-  if (sidebar_mode == SidebarMode::Chat) {
-    const std::size_t line_count = operations_.chat_transcript_line_count(layout.sidebar);
-    return operations_.compute_chat_sidebar_list_layout(layout.sidebar, line_count);
   }
   if (sidebar_mode == SidebarMode::Git) {
     const auto lines = operations_.build_git_sidebar_lines();

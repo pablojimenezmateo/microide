@@ -16,7 +16,6 @@ enum class StatusBarSegmentId : std::uint8_t {
   LineColumn,
   Problems,
   Lsp,
-  AiProvider,
   LayoutMode,
   Count,
 };

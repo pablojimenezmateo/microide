@@ -84,7 +84,6 @@ void TestStatusBarCompactDropOrder() {
   SetSegment(service, StatusBarSegmentId::LineColumn, "Ln 4, Col 2");
   SetSegment(service, StatusBarSegmentId::Problems, "0 problems");
   SetSegment(service, StatusBarSegmentId::Lsp, "LSP: Ready");
-  SetSegment(service, StatusBarSegmentId::AiProvider, "OpenAI");
   SetSegment(service, StatusBarSegmentId::LayoutMode, "compact");
 
   LayoutModeInputs inputs;

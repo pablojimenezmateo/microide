@@ -336,27 +336,17 @@ void TestWorkspaceSidebarRegistry() {
   Expect(git != nullptr && git->mode == WorkspaceShell::SidebarMode::Git,
          "sidebar registry should resolve the git tool by command name");
 
-  const SidebarViewSpec* problems = FindBuiltinSidebarView("problems");
-  Expect(problems != nullptr && problems->mode == WorkspaceShell::SidebarMode::Problems,
-         "sidebar registry should resolve the problems tool by command name");
-
   microide::plugin::PluginHost plugin_host;
   const auto views = SidebarViews(plugin_host);
-  Expect(views.size() == 5, "sidebar registry should expose five built-in views");
+  Expect(views.size() == 3, "sidebar registry should expose three built-in views");
   Expect(views[0].id == "tree" && views[0].label == "Project" &&
-             views[1].id == "search" && views[2].id == "problems" &&
-             views[3].id == "git" && views[4].id == "tests",
+             views[1].id == "search" && views[2].id == "git",
          "sidebar registry should preserve built-in view ordering");
 
-  const auto problems_view = FindSidebarView("problems", plugin_host);
-  Expect(problems_view.has_value() &&
-             problems_view->mode == WorkspaceShell::SidebarMode::Problems,
-         "sidebar registry should resolve the problems view against the host");
-
   const auto view_ids = SidebarViewIds(plugin_host);
-  // Alphabetical order: git, problems, search, tests, tree
-  Expect(view_ids.size() == 5 && view_ids[0] == "git" && view_ids[1] == "problems" &&
-             view_ids[3] == "tests" && view_ids[4] == "tree",
+  // Alphabetical order: git, search, tree
+  Expect(view_ids.size() == 3 && view_ids[0] == "git" &&
+             view_ids[1] == "search" && view_ids[2] == "tree",
          "sidebar registry should preserve built-in view completion ids");
 
   const SidebarViewRequest search_request =

@@ -524,11 +524,11 @@ inline void DrawMenuRow(const render::TextRenderer& text_renderer,
                         bool enabled,
                         bool hovered,
                         bool checked) {
-  const SDL_Color background = hovered && enabled ? theme.row_highlight : theme.overlay_background;
+  const SDL_Color background = hovered ? theme.row_highlight : theme.overlay_background;
   const SDL_Color text_color =
       !enabled ? theme.text_disabled : hovered ? theme.text_primary : theme.text_secondary;
   const SDL_Color accel_color = !enabled ? theme.text_disabled : theme.text_muted;
-  DrawSelectableRowBackground(renderer, theme, rect, theme.overlay_background, hovered && enabled);
+  DrawSelectableRowBackground(renderer, theme, rect, theme.overlay_background, hovered);
   if (checked) {
     DrawCheckGlyph(renderer, MakeRect(rect.x + 8.0f, rect.y + 3.0f, 10.0f, rect.h - 6.0f),
                    enabled ? theme.accent : theme.text_disabled);

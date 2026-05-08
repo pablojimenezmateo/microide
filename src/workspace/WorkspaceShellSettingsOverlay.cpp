@@ -232,12 +232,6 @@ void WorkspaceShell::OpenSettingsOverlay() {
   RequestOverlayRedraw();
 }
 
-void WorkspaceShell::OpenAiProviderPicker() {
-  settings_overlay_service_.OpenSettings();
-  RefreshSettingsOverlayCatalog();
-  RequestOverlayRedraw();
-}
-
 void WorkspaceShell::OpenHelpAboutOverlay() {
   settings_overlay_service_.OpenHelpAbout();
   RefreshSettingsOverlayCatalog();
@@ -332,10 +326,6 @@ bool WorkspaceShell::HandleStatusBarButtonDown(const SDL_Event& event,
       switch (it->id) {
         case StatusBarSegmentId::LineColumn:
           ActionCoordinator(MakeActionContext()).Execute(ActionId::Goto, {}, ActionSource::Menu);
-          break;
-        case StatusBarSegmentId::Problems:
-          ActionCoordinator(MakeActionContext())
-              .Execute(ActionId::SidebarShow, {"problems"}, ActionSource::Menu);
           break;
         case StatusBarSegmentId::Lsp:
           ShowOutputChannel("lsp");

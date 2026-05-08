@@ -5,7 +5,6 @@
 #include "workspace/WorkspaceSaveParticipants.h"
 #include "workspace/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
-#include "workspace/WorkspaceTaskRegistry.h"
 #include "workspace/WorkspaceToolRegistry.h"
 
 #include <cassert>
@@ -128,30 +127,6 @@ static void TestCodeActionRegistry() {
   assert(found != nullptr);
 }
 
-static void TestTaskRegistry() {
-  TaskRegistry reg;
-  TaskSpec spec{
-      .id = "build",
-      .plugin_id = "cargo",
-      .label = "Build Project",
-      .group = "build",
-      .command = {"cargo", "build"},
-      .cwd = ".",
-      .run_in_shell = false,
-  };
-  reg.Register(spec);
-  const auto* found = reg.FindTask("build");
-  assert(found != nullptr);
-  assert(found->label == "Build Project");
-  assert(found->command.size() == 2);
-}
-
-static void TestTaskRegistryNotFound() {
-  TaskRegistry reg;
-  const auto* found = reg.FindTask("nonexistent");
-  assert(found == nullptr);
-}
-
 static void TestToolRegistry() {
   ToolRegistry reg;
   ToolSpec spec{
@@ -210,8 +185,6 @@ void RegisterPhase3Tests(std::vector<TestCase>& tests) {
   tests.emplace_back("Phase3.SaveParticipantRegistry", &TestSaveParticipantRegistry);
   tests.emplace_back("Phase3.CompletionRegistry", &TestCompletionRegistry);
   tests.emplace_back("Phase3.CodeActionRegistry", &TestCodeActionRegistry);
-  tests.emplace_back("Phase3.TaskRegistry", &TestTaskRegistry);
-  tests.emplace_back("Phase3.TaskRegistryNotFound", &TestTaskRegistryNotFound);
   tests.emplace_back("Phase3.ToolRegistry", &TestToolRegistry);
   tests.emplace_back("Phase3.ToolRegistryMultiplePlatforms", &TestToolRegistryMultiplePlatforms);
 }

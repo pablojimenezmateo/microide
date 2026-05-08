@@ -33,49 +33,11 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
                 return ComputeProjectSearchSidebarListLayout(rect, count);
               },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
-          .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
+          .open_file_at_location =
+              [this](const std::filesystem::path& path, std::size_t line, std::size_t column) {
+                OpenFileAtLocation(path, line, column);
+              },
           .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },
-          .chat_sidebar_new_rect =
-              [this](const SDL_FRect& rect) { return ChatSidebarConversationNewRect(rect); },
-          .chat_sidebar_conversation_row_rect =
-              [this](const SDL_FRect& rect, std::size_t index) {
-                return ChatSidebarConversationRowRect(rect, index);
-              },
-          .chat_sidebar_composer_rect =
-              [this](const SDL_FRect& rect) { return ChatSidebarComposerRect(rect); },
-          .chat_header_primary_rect =
-              [this](const SDL_FRect& rect) { return BuildChatHeaderActions(rect).at(0).rect; },
-          .chat_header_secondary_rect =
-              [this](const SDL_FRect& rect) { return BuildChatHeaderActions(rect).at(1).rect; },
-          .chat_provider_rect =
-              [this](const SDL_FRect& rect) { return BuildChatHeaderActions(rect).at(2).rect; },
-          .chat_model_rect =
-              [this](const SDL_FRect& rect) { return BuildChatHeaderActions(rect).at(3).rect; },
-          .chat_tool_mode_rect =
-              [this](const SDL_FRect& rect) { return BuildChatHeaderActions(rect).at(4).rect; },
-          .activate_chat_conversation =
-              [this](std::string_view id) { return ActivateChatConversation(id); },
-          .create_chat_conversation = [this]() { return CreateChatConversation(); },
-          .delete_active_chat_conversation = [this]() { return DeleteActiveChatConversation(); },
-          .cancel_active_chat_request = [this]() { return CancelActiveChatRequest(); },
-          .retry_active_chat_request =
-              [this](std::string* error_message) { return RetryActiveChatRequest(error_message); },
-          .cycle_active_chat_provider =
-              [this](int delta) { CycleActiveConversationProvider(delta); },
-          .cycle_active_chat_model =
-              [this](int delta) { CycleActiveConversationModel(delta); },
-          .cycle_active_chat_tool_mode =
-              [this](int delta) { CycleActiveConversationToolMode(delta); },
-          .chat_transcript_line_count =
-              [this](const SDL_FRect& rect) { return ChatTranscriptLineCount(rect); },
-          .compute_chat_sidebar_list_layout =
-              [this](const SDL_FRect& rect, std::size_t count) {
-                return ComputeChatSidebarListLayout(rect, count);
-              },
-          .activate_chat_link_at_point =
-              [this](const SDL_FRect& rect, float x, float y) {
-                return ActivateChatTranscriptLinkAtPoint(rect, x, y);
-              },
           .can_stage_all_git_sidebar_entries = [this]() { return CanStageAllGitSidebarEntries(); },
           .git_sidebar_stage_all_button_rect =
               [this](const SDL_FRect& rect) { return GitSidebarStageAllButtonRect(rect); },

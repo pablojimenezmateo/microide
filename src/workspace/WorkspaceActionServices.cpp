@@ -118,8 +118,7 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
       operations_.show_search_sidebar(query, false);
       return true;
     case SidebarMode::Chat:
-      operations_.show_chat_panel();
-      return true;
+      return false;
     case SidebarMode::Problems:
       operations_.show_problems_sidebar();
       return true;
@@ -250,10 +249,6 @@ void WorkspaceActionContext::OpenSettingsOverlay() {
   operations_.open_settings_overlay();
 }
 
-void WorkspaceActionContext::OpenAiProviderPicker() {
-  operations_.open_ai_provider_picker();
-}
-
 void WorkspaceActionContext::OpenHelpAboutOverlay() {
   operations_.open_help_about_overlay();
 }
@@ -286,14 +281,6 @@ bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
   return operations_.find_lsp_references(error_message);
 }
 
-bool WorkspaceActionContext::ShowTaskPickerOverlay() {
-  return operations_.show_task_picker_overlay();
-}
-
-bool WorkspaceActionContext::RunTaskById(std::string_view id, std::string* error_message) {
-  return operations_.run_task_by_id(id, error_message);
-}
-
 bool WorkspaceActionContext::DiscoverTestsForActiveBuffer(std::string* error_message) {
   return operations_.discover_tests_for_active_buffer(error_message);
 }
@@ -311,48 +298,8 @@ void WorkspaceActionContext::ShowOutputChannel(std::string_view id) {
   operations_.show_output_channel(id);
 }
 
-void WorkspaceActionContext::ShowChatPanel() {
-  operations_.show_chat_panel();
-}
-
-bool WorkspaceActionContext::StartChatRequest(std::string message, std::string* error_message) {
-  return operations_.start_chat_request(std::move(message), error_message);
-}
-
 bool WorkspaceActionContext::RequestInlineCompletion(std::string* error_message) {
   return operations_.request_inline_completion(error_message);
-}
-
-bool WorkspaceActionContext::StartDebugger(std::string_view type, std::string* error_message) {
-  return operations_.start_debugger(type, error_message);
-}
-
-void WorkspaceActionContext::StopDebugger() {
-  operations_.stop_debugger();
-}
-
-bool WorkspaceActionContext::LoginAuthProvider(std::string_view provider_id,
-                                               const std::vector<std::string>& scopes,
-                                               std::string* error_message) {
-  return operations_.login_auth_provider(provider_id, scopes, error_message);
-}
-
-bool WorkspaceActionContext::RefreshAuthSession(std::string_view provider_id,
-                                                std::string_view session_id,
-                                                std::string* error_message) {
-  return operations_.refresh_auth_session(provider_id, session_id, error_message);
-}
-
-bool WorkspaceActionContext::LogoutAuthSession(std::string_view provider_id,
-                                               std::string_view session_id,
-                                               std::string* error_message) {
-  return operations_.logout_auth_session(provider_id, session_id, error_message);
-}
-
-bool WorkspaceActionContext::InvokeMcpTool(std::string_view tool_id,
-                                           std::string_view input_json,
-                                           std::string* error_message) {
-  return operations_.invoke_mcp_tool(tool_id, input_json, error_message);
 }
 
 bool WorkspaceActionContext::ActiveTabIsCompare() const {

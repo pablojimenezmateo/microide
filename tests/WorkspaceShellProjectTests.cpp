@@ -3,6 +3,7 @@
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -173,6 +174,37 @@ void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
       });
   Expect(found_modified_source,
          "on-demand git sidebar refresh should include the modified file");
+}
+
+void TestWorkspaceShellStatusBarShowsSourceControlState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int value() {\n  return 1;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "status bar source-control fixture should open");
+  WorkspaceShellTestAccess::SetStatusBarGitSnapshot(shell, true, "main", true);
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+
+  const std::string project_segment = WorkspaceShellTestAccess::StatusBarSegmentText(
+      shell, microide::workspace::StatusBarSegmentId::Project);
+  const std::string project_tooltip = WorkspaceShellTestAccess::StatusBarSegmentTooltip(
+      shell, microide::workspace::StatusBarSegmentId::Project);
+  const std::string branch_segment = WorkspaceShellTestAccess::StatusBarSegmentText(
+      shell, microide::workspace::StatusBarSegmentId::Branch);
+  const bool branch_visible = WorkspaceShellTestAccess::StatusBarSegmentVisible(
+      shell, microide::workspace::StatusBarSegmentId::Branch);
+
+  Expect(project_segment.find("main") != std::string::npos,
+         "status bar source-control segment should prioritize the branch label");
+  Expect(project_segment.find("[dirty]") != std::string::npos,
+         "status bar project segment should expose dirty working-tree state");
+  Expect(project_tooltip.find("Open Source Control") != std::string::npos,
+         "status bar source-control segment should expose click destination intent");
+  Expect(!branch_visible && branch_segment.empty(),
+         "status bar branch segment should stay hidden when branch is shown in the primary segment");
 }
 
 void TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking() {
@@ -1006,10 +1038,19 @@ void TestWorkspaceShellTreeHeaderCompactsBeforeButtonsOverlap() {
 
   Expect(mode_rect.w > 0.0f && collapse_rect.w > 0.0f && refresh_rect.w > 0.0f,
          "compact tree-header fixture should still expose all header controls");
-  Expect(mode_rect.x + mode_rect.w <= collapse_rect.x,
-         "sidebar mode control should compact before overlapping the collapse button");
+  Expect(mode_rect.y + mode_rect.h <= collapse_rect.y,
+         "project sidebar actions should render on a dedicated row below the selector");
   Expect(collapse_rect.x + collapse_rect.w <= refresh_rect.x,
          "collapse and refresh controls should remain non-overlapping in compact header mode");
+  Expect(std::abs(collapse_rect.y - refresh_rect.y) < 0.1f,
+         "project sidebar action buttons should share the same action-row baseline");
+
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  const std::array<SDL_FRect, 3> git_action_rects =
+      WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
+  Expect(std::abs(git_action_rects[0].y - collapse_rect.y) < 0.1f,
+         "project and source-control sidebars should align action rows for cohesion");
+
   Expect(SendMouseDown(
              shell, collapse_rect.x + collapse_rect.w * 0.5f, collapse_rect.y + collapse_rect.h * 0.5f,
              SDL_BUTTON_LEFT),
@@ -1113,6 +1154,29 @@ void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
          "right click inside settings overlay should be handled");
   Expect(!WorkspaceShellTestAccess::EditorContextMenuOpen(shell),
          "right click inside settings overlay should not leak into editor context menu");
+}
+
+void TestWorkspaceShellSettingsOverlayHintUsesNoteLabel() {
+  WorkspaceShell shell;
+  const std::string hint = WorkspaceShellTestAccess::SettingsOverlayInputHintLabel(shell);
+  Expect(hint.find("Note:") == 0,
+         "settings overlay guidance text should use a neutral note label");
+  Expect(hint.find("Tip:") == std::string::npos,
+         "settings overlay baseline behavior guidance should not be labeled as a tip");
+}
+
+void TestWorkspaceShellHelpAboutOmitsAuthCommands() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
+  const auto rows = WorkspaceShellTestAccess::HelpAboutRows(shell);
+  const bool has_auth_reference = std::any_of(
+      rows.begin(), rows.end(), [](const auto& row) {
+        return row.detail.find("auth-login") != std::string::npos ||
+               row.detail.find("auth-refresh") != std::string::npos ||
+               row.detail.find("auth-logout") != std::string::npos;
+      });
+  Expect(!has_auth_reference,
+         "help/about rows should not include auth command references");
 }
 
 void TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath() {
@@ -1979,6 +2043,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/ProjectOpenDefersGitSidebarRefreshUntilShown",
           TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown);
+  AddTest(tests, "WorkspaceShell/StatusBarShowsSourceControlState",
+          TestWorkspaceShellStatusBarShowsSourceControlState);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshDispatchIsNonBlocking",
           TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking);
   AddTest(tests, "WorkspaceShell/ProjectSwitchDiscardsStaleGitSidebarRefreshResult",
@@ -2055,6 +2121,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
+  AddTest(tests, "WorkspaceShell/SettingsOverlayHintUsesNoteLabel",
+          TestWorkspaceShellSettingsOverlayHintUsesNoteLabel);
+  AddTest(tests, "WorkspaceShell/HelpAboutOmitsAuthCommands",
+          TestWorkspaceShellHelpAboutOmitsAuthCommands);
   AddTest(tests, "WorkspaceShell/IgnoredTreeFileActivatesDirectOpenPath",
           TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath);
   AddTest(tests, "WorkspaceShell/IgnoredDirectoryExpansionMaterializesOneLevel",

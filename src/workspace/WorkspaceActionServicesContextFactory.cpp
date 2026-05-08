@@ -117,7 +117,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
           .dismiss_overlay = [this]() { DismissOverlay(); },
           .open_settings_overlay = [this]() { OpenSettingsOverlay(); },
-          .open_ai_provider_picker = [this]() { OpenAiProviderPicker(); },
           .open_help_about_overlay = [this]() { OpenHelpAboutOverlay(); },
           .toggle_status_bar =
               [this]() {
@@ -149,11 +148,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string* error_message) {
                 return FindLspReferences(error_message);
               },
-          .show_task_picker_overlay = [this]() { return ShowTaskPickerOverlay(); },
-          .run_task_by_id =
-              [this](std::string_view id, std::string* error_message) {
-                return RunTaskById(id, error_message);
-              },
           .discover_tests_for_active_buffer =
               [this](std::string* error_message) {
                 return DiscoverTestsForActiveBuffer(error_message);
@@ -167,39 +161,9 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return RunAllDiscoveredTests(error_message);
               },
           .show_output_channel = [this](std::string_view id) { ShowOutputChannel(id); },
-          .show_chat_panel = [this]() { ShowChatPanel(); },
-          .start_chat_request =
-              [this](std::string message, std::string* error_message) {
-                return StartChatRequest(std::move(message), error_message);
-              },
           .request_inline_completion =
               [this](std::string* error_message) {
                 return RequestInlineCompletion(error_message);
-              },
-          .start_debugger =
-              [this](std::string_view type, std::string* error_message) {
-                return StartDebugger(type, error_message);
-              },
-          .stop_debugger = [this]() { StopDebugger(); },
-          .login_auth_provider =
-              [this](std::string_view provider_id, const std::vector<std::string>& scopes,
-                     std::string* error_message) {
-                return LoginAuthProvider(provider_id, scopes, error_message);
-              },
-          .refresh_auth_session =
-              [this](std::string_view provider_id, std::string_view session_id,
-                     std::string* error_message) {
-                return RefreshAuthSession(provider_id, session_id, error_message);
-              },
-          .logout_auth_session =
-              [this](std::string_view provider_id, std::string_view session_id,
-                     std::string* error_message) {
-                return LogoutAuthSession(provider_id, session_id, error_message);
-              },
-          .invoke_mcp_tool =
-              [this](std::string_view tool_id, std::string_view input_json,
-                     std::string* error_message) {
-                return InvokeMcpTool(tool_id, input_json, error_message);
               },
           .open_compare_picker_for_path =
               [this](const std::filesystem::path& path, const std::string& commit_spec) {

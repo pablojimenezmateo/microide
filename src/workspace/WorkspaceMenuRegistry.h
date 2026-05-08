@@ -23,7 +23,6 @@ enum class MenuId {
   Selection,
   View,
   Go,
-  Run,
   Git,
   SidebarMode,
   GitOutgoingBase,

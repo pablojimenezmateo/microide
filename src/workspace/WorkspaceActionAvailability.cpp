@@ -20,14 +20,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
   const TextInputSurface text_input_surface = operations_.current_text_input_surface();
   const bool active_single_line_selection = operations_.active_single_line_text_has_selection();
   switch (id) {
-    case ActionId::AuthLogin:
-    case ActionId::AuthRefresh:
-    case ActionId::AuthLogout:
-    case ActionId::DebugStart:
-    case ActionId::McpTool:
-    case ActionId::ShowChat:
     case ActionId::ShowOutput:
-    case ActionId::Tasks:
       return !context_.current_project_state.root.empty();
     case ActionId::CodeActions:
       return active_viewport != nullptr && operations_.active_code_actions_available();
@@ -41,7 +34,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr;
     case ActionId::Colorscheme:
     case ActionId::Files:
-    case ActionId::OpenAiProviderPicker:
     case ActionId::OpenCommandPrompt:
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
@@ -187,8 +179,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleLayoutMode:
     case ActionId::ToggleStatusBar:
       return true;
-    case ActionId::DebugStop:
-      return context_.current_project_state.debug_session.running;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev:
       return !context_.current_project_state.root.empty() &&

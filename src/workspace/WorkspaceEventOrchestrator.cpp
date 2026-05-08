@@ -79,11 +79,6 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     operations_.consume_project_search_updates();
     return finish(true);
   }
-  if (operations_.task_runtime_handles_event(event.type)) {
-    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::TaskRuntimeEvent");
-    operations_.consume_task_runtime_updates();
-    return finish(true);
-  }
   if (operations_.ai_runtime_handles_event(event.type)) {
     util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::AiRuntimeEvent");
     operations_.consume_ai_runtime_updates();

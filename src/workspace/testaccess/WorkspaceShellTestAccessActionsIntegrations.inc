@@ -100,15 +100,6 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
     shell.ConsumeAiRuntimeUpdates();
     return !any_in_flight();
   }
-  static bool WaitForTaskRuntimeIdle(WorkspaceShell& shell, int timeout_ms = 2000) {
-    const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
-    while (shell.task_runtime_.active_run_id() != 0 && SDL_GetTicks() <= deadline) {
-      shell.ConsumeTaskRuntimeUpdates();
-      SDL_Delay(5);
-    }
-    shell.ConsumeTaskRuntimeUpdates();
-    return shell.task_runtime_.active_run_id() == 0;
-  }
   static const std::vector<editor::PublishedDiagnostic>* DiagnosticsForPath(
       const WorkspaceShell& shell,
       const std::filesystem::path& path) {

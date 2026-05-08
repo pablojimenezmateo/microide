@@ -172,6 +172,41 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.TreeSidebarRefreshButtonRect(layout.sidebar);
   }
+  static std::string StatusBarSegmentText(const WorkspaceShell& shell,
+                                          StatusBarSegmentId id) {
+    return shell.status_bar_service_.Segment(id).text;
+  }
+  static std::string StatusBarSegmentTooltip(const WorkspaceShell& shell,
+                                             StatusBarSegmentId id) {
+    return shell.status_bar_service_.Segment(id).tooltip;
+  }
+  static bool StatusBarSegmentVisible(const WorkspaceShell& shell,
+                                      StatusBarSegmentId id) {
+    return shell.status_bar_service_.Segment(id).visible;
+  }
+  static std::string SettingsOverlayInputHintLabel(const WorkspaceShell& shell) {
+    return shell.SettingsOverlayInputHintLabel();
+  }
+  static void RefreshStatusBar(WorkspaceShell& shell) { shell.RefreshStatusBar(); }
+  static void SetStatusBarGitSnapshot(WorkspaceShell& shell,
+                                      bool repo_available,
+                                      std::string base_label,
+                                      bool dirty_worktree) {
+    auto& git = shell.context_.current_project_state.sidebar.git;
+    git.repo_available = repo_available;
+    git.branch_label = base_label;
+    git.base_label = std::move(base_label);
+    git.base_ref = git.base_label;
+    git.entries.clear();
+    if (repo_available && dirty_worktree) {
+      GitSidebarEntry entry;
+      entry.section = GitSidebarEntry::Section::Modified;
+      entry.path = shell.context_.current_project_state.root / "status_bar_fixture.cpp";
+      entry.relative_path = std::filesystem::path("status_bar_fixture.cpp");
+      entry.status = project::GitFileStatus::Modified;
+      git.entries.push_back(std::move(entry));
+    }
+  }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.directory_tree.entries();
@@ -291,6 +326,10 @@
     return it->second;
   }
   static void OpenSettingsOverlay(WorkspaceShell& shell) { shell.OpenSettingsOverlay(); }
+  static void OpenHelpAboutOverlay(WorkspaceShell& shell) { shell.OpenHelpAboutOverlay(); }
+  static std::vector<HelpAboutRow> HelpAboutRows(const WorkspaceShell& shell) {
+    return shell.settings_overlay_service_.HelpRows();
+  }
   static SDL_FRect SettingsOverlayRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return ComputeOverlaySurfaceRect(layout.editor_area);

@@ -9,6 +9,10 @@ namespace microide::workspace {
 
 using namespace detail;
 
+std::string WorkspaceShell::SettingsOverlayInputHintLabel() const {
+  return "Note: left-click increases/cycles, right-click decreases/reverses";
+}
+
 void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                                            const WorkspaceLayout& layout) const {
   const SettingsOverlayViewModel vm =
@@ -41,8 +45,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     const SDL_FRect hint_rect =
         MakeRect(vm.rect.x + 12.0f, vm.rect.y + header.h + 4.0f, vm.rect.w - 24.0f, 16.0f);
     DrawVCenteredTextOn(text_renderer_, renderer, hint_rect, 0.0f, theme_.text_muted,
-                        theme_.surface_background,
-                        "Tip: left-click increases/cycles, right-click decreases/reverses");
+                        theme_.surface_background, SettingsOverlayInputHintLabel());
     list_top += 16.0f;
   }
   const float list_bottom = vm.rect.y + vm.rect.h - 10.0f;
@@ -76,10 +79,6 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   if (vm.mode == SettingsOverlayMode::Settings) {
     for (const SettingsOverlayRow& row : vm.settings_rows) {
       draw_row(row.label, row.value, row.detail, false);
-    }
-  } else if (vm.mode == SettingsOverlayMode::AiProvider) {
-    for (const AiProviderPickerRow& row : vm.provider_rows) {
-      draw_row(row.label, row.model, row.auth_method, row.active);
     }
   } else {
     for (const HelpAboutRow& row : vm.help_rows) {

@@ -133,12 +133,7 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
       break;
     case TextInputSurface::Command:
     case TextInputSurface::ChatComposer:
-      if (operations_.active_sidebar_mode() == SidebarMode::Chat &&
-          state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible) {
-        operations_.request_sidebar_redraw();
-      } else {
-        operations_.request_bottom_panel_command_redraw();
-      }
+      operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -214,12 +209,7 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::ChatComposer:
-      if (operations_.active_sidebar_mode() == SidebarMode::Chat &&
-          state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible) {
-        operations_.request_sidebar_redraw();
-      } else {
-        operations_.request_bottom_panel_command_redraw();
-      }
+      operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::CommitPicker:
       if (text_changed) {

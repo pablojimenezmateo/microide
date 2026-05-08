@@ -217,6 +217,28 @@ void TestWorkspaceShellProjectSearchSidebarClickOpensResult() {
          "clicking a project search result should return focus to the editor");
 }
 
+void TestWorkspaceShellProjectSearchSidebarClickMovesToCorrectLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "target-one\nmiddle\ntarget-two\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "target", false);
+  WaitForProjectSearch(shell);
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
+         "search line fixture should expose two results in one file");
+  const SDL_FRect second_result_rect = WorkspaceShellTestAccess::ProjectSearchResultRect(shell, 1);
+  Expect(SendMouseDown(shell, second_result_rect.x + second_result_rect.w * 0.5f,
+                       second_result_rect.y + second_result_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the second project search result should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 2,
+         "clicking the second project search result should move to its line");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
@@ -232,6 +254,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchStreamsWhileRunning);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickOpensResult",
           TestWorkspaceShellProjectSearchSidebarClickOpensResult);
+  AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickMovesToCorrectLine",
+          TestWorkspaceShellProjectSearchSidebarClickMovesToCorrectLine);
 }
 
 }  // namespace microide::tests

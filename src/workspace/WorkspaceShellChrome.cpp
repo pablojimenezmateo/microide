@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "project/GitRepository.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
@@ -22,6 +23,24 @@ std::string ProjectTabBadgeText(std::string_view label) {
     }
   }
   return "P";
+}
+
+std::string ResolveBranchLabel(const std::filesystem::path& root) {
+  const project::GitRepository repo(root);
+  if (!repo.IsValid()) {
+    return {};
+  }
+  if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
+      symbolic_ref.success()) {
+    std::string label = symbolic_ref.output;
+    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
+      label.pop_back();
+    }
+    if (!label.empty()) {
+      return label;
+    }
+  }
+  return "HEAD";
 }
 
 }  // namespace
@@ -458,33 +477,56 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
 
 void WorkspaceShell::RefreshStatusBar() {
   StatusBarSegmentValue project_segment;
+  StatusBarSegmentValue branch_segment;
   if (!context_.current_project_state.root.empty()) {
-    project_segment.text = context_.current_project_state.root.filename().string();
-    if (project_segment.text.empty()) {
-      project_segment.text = context_.current_project_state.root.string();
+    const auto& git_state = context_.current_project_state.sidebar.git;
+    const bool tree_has_worktree_changes = std::any_of(
+        context_.current_project_state.directory_tree.entries().begin(),
+        context_.current_project_state.directory_tree.entries().end(),
+        [](const project::TreeEntry& entry) {
+          return !entry.is_directory && entry.git_status != project::GitFileStatus::Clean;
+        });
+    const bool snapshot_has_worktree_changes = std::any_of(
+        git_state.entries.begin(), git_state.entries.end(), [](const GitSidebarEntry& entry) {
+          return entry.section == GitSidebarEntry::Section::Modified;
+        });
+    const bool has_worktree_changes = tree_has_worktree_changes || snapshot_has_worktree_changes;
+    const bool repo_available =
+        git_state.repo_available ||
+        project::GitRepository(context_.current_project_state.root).IsValid();
+    const std::string cleanliness =
+        repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm";
+    std::string branch_label = context_.current_project_state.sidebar.git.branch_label;
+    if (branch_label.empty() && repo_available) {
+      context_.current_project_state.sidebar.git.branch_label =
+          ResolveBranchLabel(context_.current_project_state.root);
+      branch_label = context_.current_project_state.sidebar.git.branch_label;
     }
-    project_segment.tooltip = context_.current_project_state.root.string();
+    if (branch_label.empty() && repo_available) {
+      branch_label = git_state.base_label;
+    }
+    if (branch_label.empty() && repo_available) {
+      branch_label = git_state.base_ref;
+    }
+    if (branch_label.empty()) {
+      branch_label = "no-scm";
+    }
+    project_segment.text = branch_label == "no-scm" && cleanliness == "no-scm"
+                               ? std::string("no-scm")
+                               : branch_label + " [" + cleanliness + "]";
+    project_segment.tooltip = "Open Source Control (" + cleanliness + ")";
     project_segment.visible = true;
     project_segment.clickable = true;
+    branch_segment = {};
   }
   status_bar_service_.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
-
-  const Conversation* conversation = ActiveConversation();
-  StatusBarSegmentValue ai_provider;
-  if (conversation != nullptr && !conversation->provider_id.empty()) {
-    const AiProviderSpec* provider = ai_provider_registry_.FindProvider(conversation->provider_id);
-    ai_provider.text = provider != nullptr && !provider->display_name.empty() ? provider->display_name
-                                                                               : conversation->provider_id;
-    ai_provider.tooltip = "AI provider";
-    ai_provider.visible = true;
-    ai_provider.clickable = true;
-  }
-  status_bar_service_.SetSegment(StatusBarSegmentId::AiProvider, std::move(ai_provider));
+  status_bar_service_.SetSegment(StatusBarSegmentId::Branch, std::move(branch_segment));
 
   StatusBarSegmentValue layout_mode_segment;
-  layout_mode_segment.text =
-      layout_mode_service_.CurrentMode() == LayoutMode::Compact ? "compact" : "regular";
-  layout_mode_segment.tooltip = "Toggle layout mode";
+  layout_mode_segment.text = layout_mode_service_.CurrentMode() == LayoutMode::Compact
+                                 ? "Compact mode"
+                                 : "Regular mode";
+  layout_mode_segment.tooltip = "Switch between regular and compact mode";
   layout_mode_segment.visible = true;
   layout_mode_segment.clickable = true;
   status_bar_service_.SetSegment(StatusBarSegmentId::LayoutMode,

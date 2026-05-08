@@ -130,8 +130,6 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
     const bool surface_accepts_paste =
         state_.panel.command_mode ||
-        (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
-         operations_.active_sidebar_mode() == SidebarMode::Chat) ||
         (state_.overlay.visible &&
          (state_.overlay.mode == OverlayMode::FileFinder ||
           state_.overlay.mode == OverlayMode::CommitPicker ||
@@ -417,19 +415,6 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },
-          .activate_chat_conversation =
-              [this](std::string_view id) { return ActivateChatConversation(id); },
-          .create_chat_conversation = [this]() { return CreateChatConversation(); },
-          .delete_active_chat_conversation = [this]() { return DeleteActiveChatConversation(); },
-          .cancel_active_chat_request = [this]() { return CancelActiveChatRequest(); },
-          .retry_active_chat_request =
-              [this](std::string* error_message) { return RetryActiveChatRequest(error_message); },
-          .cycle_active_chat_provider =
-              [this](int delta) { CycleActiveConversationProvider(delta); },
-          .cycle_active_chat_model =
-              [this](int delta) { CycleActiveConversationModel(delta); },
-          .cycle_active_chat_tool_mode =
-              [this](int delta) { CycleActiveConversationToolMode(delta); },
           .move_git_sidebar_selection = [this](int delta) { MoveGitSidebarSelection(delta); },
           .reveal_selected_git_sidebar_line = [this]() { RevealSelectedGitSidebarLine(); },
           .open_git_sidebar_entry =
@@ -501,12 +486,6 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .execute_selected_code_action =
               [this]() { return ExecuteSelectedCodeAction(); },
-          .show_task_picker_overlay = [this]() { return ShowTaskPickerOverlay(); },
-          .run_selected_task = [this]() { return RunSelectedTask(); },
-          .start_chat_request =
-              [this](std::string message) {
-                return StartChatRequest(std::move(message), nullptr);
-              },
           .request_inline_completion =
               [this](std::string* error_message) {
                 return RequestInlineCompletion(error_message);

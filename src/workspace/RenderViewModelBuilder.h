@@ -103,7 +103,6 @@ struct SettingsOverlayViewModel {
   std::string title;
   std::string query;
   std::vector<SettingsOverlayRow> settings_rows;
-  std::vector<AiProviderPickerRow> provider_rows;
   std::vector<HelpAboutRow> help_rows;
 };
 

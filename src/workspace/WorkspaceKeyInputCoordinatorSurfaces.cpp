@@ -139,8 +139,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   }
 
   if (state_.overlay.mode == OverlayMode::Completion ||
-      state_.overlay.mode == OverlayMode::CodeActions ||
-      state_.overlay.mode == OverlayMode::TaskPicker) {
+      state_.overlay.mode == OverlayMode::CodeActions) {
     auto set_selected_index = [&](std::size_t index, std::size_t item_count, std::size_t& target) {
       if (item_count == 0) {
         return;
@@ -165,13 +164,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         const int max_index =
             static_cast<int>(state_.overlay.workflow.code_actions.items.size()) - 1;
         state_.overlay.workflow.code_actions.selected_index =
-            static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-      } else if (state_.overlay.mode == OverlayMode::TaskPicker &&
-                 !state_.overlay.workflow.task_picker.entries.empty()) {
-        const int current = static_cast<int>(state_.overlay.workflow.task_picker.selected_index);
-        const int max_index =
-            static_cast<int>(state_.overlay.workflow.task_picker.entries.size()) - 1;
-        state_.overlay.workflow.task_picker.selected_index =
             static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
       }
       if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
@@ -206,9 +198,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         } else if (state_.overlay.mode == OverlayMode::CodeActions) {
           set_selected_index(0, state_.overlay.workflow.code_actions.items.size(),
                              state_.overlay.workflow.code_actions.selected_index);
-        } else {
-          set_selected_index(0, state_.overlay.workflow.task_picker.entries.size(),
-                             state_.overlay.workflow.task_picker.selected_index);
         }
         return true;
       case SDLK_END:
@@ -222,11 +211,6 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
           set_selected_index(state_.overlay.workflow.code_actions.items.size() - 1,
                              state_.overlay.workflow.code_actions.items.size(),
                              state_.overlay.workflow.code_actions.selected_index);
-        } else if (state_.overlay.mode == OverlayMode::TaskPicker &&
-                   !state_.overlay.workflow.task_picker.entries.empty()) {
-          set_selected_index(state_.overlay.workflow.task_picker.entries.size() - 1,
-                             state_.overlay.workflow.task_picker.entries.size(),
-                             state_.overlay.workflow.task_picker.selected_index);
         }
         return true;
       default:

@@ -34,9 +34,6 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (sidebar_mode == SidebarMode::Search) {
     return HandleSearchButtonDown(event, layout, local_y);
   }
-  if (sidebar_mode == SidebarMode::Chat) {
-    return HandleChatButtonDown(event, layout, local_y);
-  }
   if (sidebar_mode == SidebarMode::Git) {
     return HandleGitButtonDown(event, layout, local_y);
   }
@@ -106,10 +103,7 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
         static_cast<std::size_t>(line_map[static_cast<std::size_t>(*line_index)]);
     const auto& result =
         state_.overlay.workflow.project_search.results[state_.overlay.workflow.project_search.selected_index];
-    operations_.open_file(state_.root / result.relative_path);
-    if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
-      viewport->MoveCursorTo(result.line, result.column);
-    }
+    operations_.open_file_at_location(state_.root / result.relative_path, result.line, result.column);
     if (state_.sidebar.temporary) {
       operations_.restore_previous_sidebar();
     }
@@ -176,93 +170,6 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     return true;
   }
   operations_.open_git_sidebar_entry(state_.sidebar.git.selected_index);
-  return true;
-}
-
-bool SidebarMouseCoordinator::HandleChatButtonDown(const SDL_Event& event,
-                                                   const WorkspaceLayout& layout,
-                                                   float local_y) {
-  if (event.button.button != SDL_BUTTON_LEFT) {
-    return true;
-  }
-
-  if (Contains(operations_.chat_sidebar_new_rect(layout.sidebar), event.button.x, event.button.y)) {
-    state_.panel.chat.focus_region = ChatPaneFocusRegion::Rail;
-    return operations_.create_chat_conversation();
-  }
-
-  for (std::size_t i = 0; i < state_.conversations.conversations().size(); ++i) {
-    const SDL_FRect row_rect =
-        operations_.chat_sidebar_conversation_row_rect(layout.sidebar, i);
-    if (Contains(row_rect, event.button.x, event.button.y)) {
-      state_.panel.chat.focus_region = ChatPaneFocusRegion::Rail;
-      return operations_.activate_chat_conversation(
-          state_.conversations.conversations()[i].id);
-    }
-  }
-
-  if (Contains(operations_.chat_header_primary_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    state_.panel.chat.focus_region = ChatPaneFocusRegion::Header;
-    state_.panel.chat.header_focus_index = 0;
-    const auto* conversation =
-        state_.conversations.GetConversation(state_.panel.chat.conversation_id);
-    if (state_.panel.chat.request_in_flight &&
-        state_.panel.chat.request_conversation_id == state_.panel.chat.conversation_id) {
-      return operations_.cancel_active_chat_request();
-    }
-    if (conversation != nullptr &&
-        (conversation->status == RequestStatus::Failed ||
-         conversation->status == RequestStatus::Cancelled)) {
-      return operations_.retry_active_chat_request(nullptr);
-    }
-    return operations_.create_chat_conversation();
-  }
-  if (Contains(operations_.chat_header_secondary_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    state_.panel.chat.focus_region = ChatPaneFocusRegion::Header;
-    state_.panel.chat.header_focus_index = 1;
-    return operations_.delete_active_chat_conversation();
-  }
-  if (Contains(operations_.chat_provider_rect(layout.sidebar), event.button.x, event.button.y)) {
-    state_.panel.chat.focus_region = ChatPaneFocusRegion::Header;
-    state_.panel.chat.header_focus_index = 2;
-    operations_.cycle_active_chat_provider(1);
-    return true;
-  }
-  if (Contains(operations_.chat_model_rect(layout.sidebar), event.button.x, event.button.y)) {
-    state_.panel.chat.focus_region = ChatPaneFocusRegion::Header;
-    state_.panel.chat.header_focus_index = 3;
-    operations_.cycle_active_chat_model(1);
-    return true;
-  }
-  if (Contains(operations_.chat_tool_mode_rect(layout.sidebar), event.button.x, event.button.y)) {
-    state_.panel.chat.focus_region = ChatPaneFocusRegion::Header;
-    state_.panel.chat.header_focus_index = 4;
-    operations_.cycle_active_chat_tool_mode(1);
-    return true;
-  }
-
-  if (Contains(operations_.chat_sidebar_composer_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    state_.panel.chat.focus_region = ChatPaneFocusRegion::Composer;
-    return true;
-  }
-
-  if (local_y < 0.0f) {
-    return true;
-  }
-
-  state_.panel.chat.focus_region = ChatPaneFocusRegion::Transcript;
-  const std::size_t line_count = operations_.chat_transcript_line_count(layout.sidebar);
-  const auto list_layout = operations_.compute_chat_sidebar_list_layout(layout.sidebar, line_count);
-  const auto line_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-  if (!line_index.has_value() || *line_index < 0 || *line_index >= static_cast<int>(line_count)) {
-    return true;
-  }
-  if (operations_.activate_chat_link_at_point(layout.sidebar, event.button.x, event.button.y)) {
-    return true;
-  }
   return true;
 }
 

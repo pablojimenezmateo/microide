@@ -29,12 +29,6 @@ void SettingsOverlayService::OpenSettings() {
   scroll_row_ = 0;
 }
 
-void SettingsOverlayService::OpenAiProviderPicker() {
-  visible_ = true;
-  mode_ = SettingsOverlayMode::AiProvider;
-  scroll_row_ = 0;
-}
-
 void SettingsOverlayService::OpenHelpAbout() {
   visible_ = true;
   mode_ = SettingsOverlayMode::HelpAbout;
@@ -82,28 +76,6 @@ void SettingsOverlayService::RebuildSettingsRows(
   }
 }
 
-void SettingsOverlayService::RebuildProviderRows(const std::vector<AiProviderSpec>& providers,
-                                                 std::string_view active_provider_id) {
-  provider_rows_.clear();
-  provider_rows_.reserve(providers.size());
-  for (const AiProviderSpec& provider : providers) {
-    const std::string label = provider.display_name.empty() ? provider.label : provider.display_name;
-    if (!RowMatchesQuery(label, provider.id)) {
-      continue;
-    }
-    AiProviderPickerRow row;
-    row.id = provider.id;
-    row.label = label;
-    row.model = provider.default_model.empty()
-                    ? (provider.models.empty() ? std::string{} : provider.models.front())
-                    : provider.default_model;
-    row.auth_method = provider.requires_api_key ? provider.auth_method + " required" : provider.auth_method;
-    row.requires_api_key = provider.requires_api_key;
-    row.active = provider.id == active_provider_id;
-    provider_rows_.push_back(std::move(row));
-  }
-}
-
 void SettingsOverlayService::RebuildHelpRows(std::vector<HelpAboutRow> rows) {
   help_rows_.clear();
   help_rows_.reserve(rows.size());
@@ -118,8 +90,6 @@ std::size_t SettingsOverlayService::VisibleRowCount() const {
   switch (mode_) {
     case SettingsOverlayMode::Settings:
       return settings_rows_.size();
-    case SettingsOverlayMode::AiProvider:
-      return provider_rows_.size();
     case SettingsOverlayMode::HelpAbout:
       return help_rows_.size();
   }

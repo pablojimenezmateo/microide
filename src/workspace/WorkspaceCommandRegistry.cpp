@@ -7,12 +7,6 @@ namespace microide::workspace {
 
 std::span<const ActionSpec> WorkspaceCommandSpecs() {
   static const auto kSpecs = std::to_array<ActionSpec>({
-      ActionSpec{ActionId::AuthLogin, "auth-login", "auth-login <provider> [scope...]",
-                 "Login", ""},
-      ActionSpec{ActionId::AuthLogout, "auth-logout", "auth-logout <provider> <session>",
-                 "Logout", ""},
-      ActionSpec{ActionId::AuthRefresh, "auth-refresh", "auth-refresh <provider> <session>",
-                 "Refresh Session", ""},
       ActionSpec{ActionId::CodeActions, "code-actions", "code-actions", "Code Actions",
                  "Ctrl+."},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",
@@ -22,9 +16,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Compare, "compare", "compare [path] [commit-prefix]",
                  "Compare Against...", ""},
       ActionSpec{ActionId::CompareHead, "", "", "Compare Against HEAD", ""},
-      ActionSpec{ActionId::DebugStart, "debug-start", "debug-start <type>", "Start Debugger",
-                 ""},
-      ActionSpec{ActionId::DebugStop, "debug-stop", "debug-stop", "Stop Debugger", ""},
       ActionSpec{ActionId::Merge, "merge", "merge <base> <incoming> <current> [output]",
                  "Merge Editor", ""},
       ActionSpec{ActionId::CopyAbsolutePath, "", "", "Copy Absolute Path", ""},
@@ -85,7 +76,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::TabMove, "tabmove", "tabmove <n>", "Move Tab", ""},
       ActionSpec{ActionId::TabSwitch, "tabswitch", "tabswitch <tab>", "Switch Tab", ""},
       ActionSpec{ActionId::Term, "term", "term [command]", "New Terminal", ""},
-      ActionSpec{ActionId::Tasks, "tasks", "tasks [task-id]", "Tasks", ""},
       ActionSpec{ActionId::TestsDiscover, "tests-discover", "tests-discover",
                  "Discover Tests", ""},
       ActionSpec{ActionId::TestsRun, "tests-run", "tests-run [test-id...]", "Run Tests", ""},

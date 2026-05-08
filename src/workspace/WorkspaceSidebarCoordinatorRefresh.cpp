@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "project/GitRepository.h"
 #include "project/GitStatusService.h"
 #include "workspace/WorkspaceGitOutgoingBase.h"
 #include "workspace/WorkspaceLayout.h"
@@ -14,6 +15,28 @@
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
+
+namespace {
+
+std::string ResolveGitBranchLabelFallback(const std::filesystem::path& project_root) {
+  const project::GitRepository repo(project_root);
+  if (!repo.IsValid()) {
+    return {};
+  }
+  if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
+      symbolic_ref.success()) {
+    std::string label = symbolic_ref.output;
+    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
+      label.pop_back();
+    }
+    if (!label.empty()) {
+      return label;
+    }
+  }
+  return {};
+}
+
+}  // namespace
 
 void SidebarCoordinator::RefreshGit() {
   const std::filesystem::path previous_path =
@@ -26,6 +49,7 @@ void SidebarCoordinator::RefreshGit() {
           : GitSidebarEntry::Section::Modified;
 
   state_.sidebar.git.entries.clear();
+  state_.sidebar.git.branch_label.clear();
   state_.sidebar.git.base_ref.clear();
   state_.sidebar.git.base_label.clear();
   state_.sidebar.git.repo_available = false;
@@ -52,6 +76,7 @@ void SidebarCoordinator::RefreshGit() {
     const ResolvedGitOutgoingBase resolved_base = ResolveGitOutgoingBase(
         project_root_, state_.sidebar.git.outgoing_base_choice);
     snapshot.repo_available = resolved_base.repo_available;
+    snapshot.branch_label = ResolveGitBranchLabelFallback(project_root_);
     snapshot.base_ref = resolved_base.base_ref;
     snapshot.base_label = resolved_base.base_label;
     if (!snapshot.base_ref.empty()) {
@@ -84,6 +109,7 @@ void SidebarCoordinator::RefreshGit() {
     });
   }
   state_.sidebar.git.repo_available = snapshot.repo_available;
+  state_.sidebar.git.branch_label = snapshot.branch_label;
   state_.sidebar.git.base_ref = snapshot.base_ref;
   state_.sidebar.git.base_label = snapshot.base_label;
   // Preserve refresh-in-flight state when data was rendered from a synchronous
@@ -105,6 +131,7 @@ void SidebarCoordinator::RefreshGit() {
   }
 
   RevealSelectedGitLine();
+  operations_.request_window_redraw();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
     operations_.request_sidebar_redraw();
   }

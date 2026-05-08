@@ -320,33 +320,6 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                  TruncateLabel(overlay_state.workflow.code_actions.error,
                                overlay.w - 36.0f));
     }
-  } else if (overlay_vm.mode == OverlayMode::TaskPicker) {
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
-               theme_.text_primary, theme_.chrome_background, "Tasks");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               theme_.text_muted, theme_.overlay_background,
-               JoinHintSegments({"Enter run selected task", "Esc cancel"}));
-    for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = overlay_vm.scroll_row + row;
-      if (item_index >= static_cast<int>(overlay_state.workflow.task_picker.entries.size())) {
-        break;
-      }
-      const auto& item =
-          overlay_state.workflow.task_picker.entries[static_cast<std::size_t>(item_index)];
-      const std::string label =
-          item.group.empty() ? item.label : item.group + "  " + item.label;
-      draw_overlay_row(
-          row,
-          static_cast<int>(overlay_state.workflow.task_picker.selected_index) -
-              overlay_vm.scroll_row,
-          TruncateLabel(label, overlay.w - 36.0f));
-    }
-    if (!overlay_state.workflow.task_picker.error.empty()) {
-      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
-                 theme_.diff_deleted, theme_.overlay_background,
-                 TruncateLabel(overlay_state.workflow.task_picker.error,
-                               overlay.w - 36.0f));
-    }
   } else {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Find File");

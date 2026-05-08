@@ -29,27 +29,8 @@ class SidebarMouseCoordinator {
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_project_search_sidebar_list_layout;
     std::function<void(const std::filesystem::path&)> open_file;
-    std::function<editor::TextViewport*()> active_editor_viewport;
+    std::function<void(const std::filesystem::path&, std::size_t, std::size_t)> open_file_at_location;
     std::function<void()> restore_previous_sidebar;
-    std::function<SDL_FRect(const SDL_FRect&)> chat_sidebar_new_rect;
-    std::function<SDL_FRect(const SDL_FRect&, std::size_t)> chat_sidebar_conversation_row_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> chat_sidebar_composer_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> chat_header_primary_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> chat_header_secondary_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> chat_provider_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> chat_model_rect;
-    std::function<SDL_FRect(const SDL_FRect&)> chat_tool_mode_rect;
-    std::function<bool(std::string_view)> activate_chat_conversation;
-    std::function<bool()> create_chat_conversation;
-    std::function<bool()> delete_active_chat_conversation;
-    std::function<bool()> cancel_active_chat_request;
-    std::function<bool(std::string*)> retry_active_chat_request;
-    std::function<void(int)> cycle_active_chat_provider;
-    std::function<void(int)> cycle_active_chat_model;
-    std::function<void(int)> cycle_active_chat_tool_mode;
-    std::function<std::size_t(const SDL_FRect&)> chat_transcript_line_count;
-    std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_chat_sidebar_list_layout;
-    std::function<bool(const SDL_FRect&, float, float)> activate_chat_link_at_point;
     std::function<bool()> can_stage_all_git_sidebar_entries;
     std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_stage_all_button_rect;
     std::function<bool()> stage_all_git_sidebar_entries;
@@ -109,9 +90,6 @@ class SidebarMouseCoordinator {
   bool HandleGitButtonDown(const SDL_Event& event,
                            const WorkspaceLayout& layout,
                            float local_y);
-  bool HandleChatButtonDown(const SDL_Event& event,
-                            const WorkspaceLayout& layout,
-                            float local_y);
   bool HandleProblemsButtonDown(const SDL_Event& event,
                                 const WorkspaceLayout& layout,
                                 float local_y);

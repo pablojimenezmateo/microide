@@ -346,6 +346,9 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   if (item.action == ActionId::ToggleStatusBar) {
     return layout_mode_service_.StatusBarVisible();
   }
+  if (item.action == ActionId::ToggleLayoutMode) {
+    return layout_mode_service_.CurrentMode() == LayoutMode::Compact;
+  }
   if (item.action == ActionId::SidebarShow && item.arg_count > 0) {
     const std::optional<SidebarViewInfo> view = FindSidebarView(item.args[0], plugin_runtime_.Host());
     if (view.has_value()) {

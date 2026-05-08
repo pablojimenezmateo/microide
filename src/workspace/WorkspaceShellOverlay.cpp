@@ -71,7 +71,6 @@ float WorkspaceShell::OverlayListStartOffset() const {
     case OverlayMode::CommitPicker:
     case OverlayMode::Completion:
     case OverlayMode::CodeActions:
-    case OverlayMode::TaskPicker:
     default:
       return 86.0f;
   }
@@ -100,8 +99,6 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
       return context_.current_project_state.overlay.workflow.completion.items.size();
     case OverlayMode::CodeActions:
       return context_.current_project_state.overlay.workflow.code_actions.items.size();
-    case OverlayMode::TaskPicker:
-      return context_.current_project_state.overlay.workflow.task_picker.entries.size();
     case OverlayMode::FileFinder:
     default:
       return context_.current_project_state.file_finder.results().size();
@@ -121,8 +118,6 @@ std::size_t WorkspaceShell::OverlaySelectedIndex() const {
       return context_.current_project_state.overlay.workflow.completion.selected_index;
     case OverlayMode::CodeActions:
       return context_.current_project_state.overlay.workflow.code_actions.selected_index;
-    case OverlayMode::TaskPicker:
-      return context_.current_project_state.overlay.workflow.task_picker.selected_index;
     case OverlayMode::FileFinder:
     default:
       return context_.current_project_state.file_finder.selected_index();
@@ -157,9 +152,6 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
       break;
     case OverlayMode::CodeActions:
       context_.current_project_state.overlay.workflow.code_actions.selected_index = clamped_index;
-      break;
-    case OverlayMode::TaskPicker:
-      context_.current_project_state.overlay.workflow.task_picker.selected_index = clamped_index;
       break;
     case OverlayMode::FileFinder:
     default: {
@@ -225,8 +217,6 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       return ApplySelectedCompletion();
     case OverlayMode::CodeActions:
       return ExecuteSelectedCodeAction();
-    case OverlayMode::TaskPicker:
-      return RunSelectedTask();
     case OverlayMode::FileFinder:
     default:
       if (const auto selected = context_.current_project_state.file_finder.SelectedPath(); selected.has_value()) {

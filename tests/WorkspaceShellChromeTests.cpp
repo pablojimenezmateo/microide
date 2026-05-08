@@ -892,27 +892,12 @@ void TestWorkspaceShellSidebarDropdownOffersChatView() {
          "clicking the sidebar mode control should open the sidebar menu");
 
   const auto labels = WorkspaceShellTestAccess::SidebarModeMenuLabels(shell);
-  Expect(std::find(labels.begin(), labels.end(), "Chat") != labels.end(),
-         "the sidebar dropdown should list the built-in chat view");
-
-  const auto chat_rect = WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Chat");
-  Expect(chat_rect.has_value(),
-         "the sidebar dropdown should expose a clickable chat row");
-  Expect(SendMouseDown(
-             shell, chat_rect->x + chat_rect->w * 0.5f, chat_rect->y + chat_rect->h * 0.5f,
-             SDL_BUTTON_LEFT),
-         "clicking the built-in chat sidebar row should be handled");
-  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
-         "selecting chat from the sidebar dropdown should focus the sidebar");
-  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
-         "selecting chat from the sidebar dropdown should activate chat mode");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "chat",
-         "selecting chat from the sidebar dropdown should target the built-in chat view id");
-
-  const auto bottom_panel_tabs = WorkspaceShellTestAccess::BottomPanelTabDisplayTitles(shell);
-  Expect(std::find(bottom_panel_tabs.begin(), bottom_panel_tabs.end(), "Chat") ==
-             bottom_panel_tabs.end(),
-         "chat should no longer appear as a bottom-panel tab");
+  Expect(std::find(labels.begin(), labels.end(), "Chat") == labels.end(),
+         "the sidebar dropdown should omit chat after AI capability removal");
+  Expect(std::find(labels.begin(), labels.end(), "Problems") == labels.end(),
+         "the sidebar dropdown should omit the Problems entry");
+  Expect(std::find(labels.begin(), labels.end(), "Tests") == labels.end(),
+         "the sidebar dropdown should omit the Tests entry");
 }
 
 void TestWorkspaceShellTabTooltipRendersAboveSidebar() {

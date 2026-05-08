@@ -21,7 +21,6 @@
   using OverlayMode = workspace::OverlayMode;
   using CompletionSessionState = workspace::CompletionSessionState;
   using CodeActionSessionState = workspace::CodeActionSessionState;
-  using TaskPickerState = workspace::TaskPickerState;
   using InlineCompletionState = workspace::InlineCompletionState;
   using PanelContentKind = workspace::PanelContentKind;
 
@@ -529,12 +528,12 @@
     Unavailable,
   };
 
-  static constexpr float kProjectSearchQueryTop = 38.0f;
-  static constexpr float kProjectSearchReplaceTop = 54.0f;
-  static constexpr float kProjectSearchButtonTop = 72.0f;
+  static constexpr float kProjectSearchButtonTop = 34.0f;
+  static constexpr float kProjectSearchQueryTop = 58.0f;
+  static constexpr float kProjectSearchReplaceTop = 82.0f;
   static constexpr float kProjectSearchButtonHeight = 18.0f;
-  static constexpr float kProjectSearchStatusTop = 94.0f;
-  static constexpr float kProjectSearchResultsTop = 112.0f;
+  static constexpr float kProjectSearchStatusTop = 106.0f;
+  static constexpr float kProjectSearchResultsTop = 124.0f;
 
   static std::span<const ActionSpec> ActionSpecs();
   static const ActionSpec* FindActionSpec(ActionId id);
@@ -1085,11 +1084,8 @@
   bool ShowCodeActionsOverlay(std::string* error_message = nullptr);
   bool GoToLspDefinition(std::string* error_message = nullptr);
   bool FindLspReferences(std::string* error_message = nullptr);
-  bool ShowTaskPickerOverlay();
-  bool RunTaskById(std::string_view id, std::string* error_message = nullptr);
   bool ApplySelectedCompletion();
   bool ExecuteSelectedCodeAction();
-  bool RunSelectedTask();
   FocusTarget PrimarySurfaceFocusTarget() const;
   void ShowOverlay(OverlayMode mode);
   void DismissOverlay(bool focus_editor = false);
@@ -1134,13 +1130,10 @@
   bool DiscoverTestsForActiveBuffer(std::string* error_message = nullptr);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message = nullptr);
   bool RunAllDiscoveredTests(std::string* error_message = nullptr);
-  bool StartDebugger(std::string_view type, std::string* error_message = nullptr);
-  void StopDebugger();
   const std::vector<WorkspaceOutputChannels::ChannelInfo>& OutputChannels() const;
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
   void ShowOutputChannel(std::string_view id);
   void ShowChatPanel();
-  void ConsumeTaskRuntimeUpdates();
   bool LoginAuthProvider(std::string_view provider_id,
                          const std::vector<std::string>& scopes,
                          std::string* error_message = nullptr);
@@ -1254,6 +1247,9 @@
   std::optional<std::size_t> FindTabIndexBySpecifier(std::string_view specifier,
                                                      std::string* error_message = nullptr) const;
   void OpenFile(const std::filesystem::path& path);
+  void OpenFileAtLocation(const std::filesystem::path& path,
+                          std::size_t line,
+                          std::size_t column);
   bool HandleMouseButtonDown(const SDL_Event& event);
   bool HandleMouseButtonUp(const SDL_Event& event);
   bool HandleMouseMotion(const SDL_Event& event);
@@ -1282,9 +1278,9 @@
   bool SetSettingValue(std::string_view id, std::string value);
   void RefreshSettingsOverlayCatalog();
   void OpenSettingsOverlay();
-  void OpenAiProviderPicker();
   void OpenHelpAboutOverlay();
   void CloseSettingsOverlay();
+  std::string SettingsOverlayInputHintLabel() const;
   void RenderSettingsOverlay(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   bool HandleSettingsOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleStatusBarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -1495,8 +1491,6 @@
   SaveParticipantRegistry save_participant_registry_;
   CompletionRegistry completion_registry_;
   CodeActionRegistry code_action_registry_;
-  TaskRegistry task_registry_;
-  WorkspaceTaskRuntime task_runtime_;
   ToolRegistry tool_registry_;
   ToolDownloader tool_downloader_;
   DapManager dap_manager_;

@@ -60,7 +60,6 @@ class WorkspaceActionContext {
     std::function<void(OverlayMode)> show_overlay;
     std::function<void()> dismiss_overlay;
     std::function<void()> open_settings_overlay;
-    std::function<void()> open_ai_provider_picker;
     std::function<void()> open_help_about_overlay;
     std::function<void()> toggle_status_bar;
     std::function<void()> toggle_layout_mode;
@@ -72,22 +71,11 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> show_code_actions_overlay;
     std::function<bool(std::string*)> go_to_lsp_definition;
     std::function<bool(std::string*)> find_lsp_references;
-    std::function<bool()> show_task_picker_overlay;
-    std::function<bool(std::string_view, std::string*)> run_task_by_id;
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
     std::function<bool(std::string*)> run_all_discovered_tests;
     std::function<void(std::string_view)> show_output_channel;
-    std::function<void()> show_chat_panel;
-    std::function<bool(std::string, std::string*)> start_chat_request;
     std::function<bool(std::string*)> request_inline_completion;
-    std::function<bool(std::string_view, std::string*)> start_debugger;
-    std::function<void()> stop_debugger;
-    std::function<bool(std::string_view, const std::vector<std::string>&, std::string*)>
-        login_auth_provider;
-    std::function<bool(std::string_view, std::string_view, std::string*)> refresh_auth_session;
-    std::function<bool(std::string_view, std::string_view, std::string*)> logout_auth_session;
-    std::function<bool(std::string_view, std::string_view, std::string*)> invoke_mcp_tool;
     std::function<void(const std::filesystem::path&, const std::string&)> open_compare_picker_for_path;
     std::function<void(const project::GitCommitEntry&)> open_comparison;
     std::function<bool(const std::filesystem::path&,
@@ -211,7 +199,6 @@ class WorkspaceActionContext {
   bool OverlayVisible() const;
   void DismissOverlay();
   void OpenSettingsOverlay();
-  void OpenAiProviderPicker();
   void OpenHelpAboutOverlay();
   void ToggleStatusBar();
   void ToggleLayoutMode();
@@ -220,29 +207,11 @@ class WorkspaceActionContext {
   bool ShowCodeActionsOverlay(std::string* error_message);
   bool GoToLspDefinition(std::string* error_message);
   bool FindLspReferences(std::string* error_message);
-  bool ShowTaskPickerOverlay();
-  bool RunTaskById(std::string_view id, std::string* error_message);
   bool DiscoverTestsForActiveBuffer(std::string* error_message);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message);
   bool RunAllDiscoveredTests(std::string* error_message);
   void ShowOutputChannel(std::string_view id);
-  void ShowChatPanel();
-  bool StartChatRequest(std::string message, std::string* error_message);
   bool RequestInlineCompletion(std::string* error_message);
-  bool StartDebugger(std::string_view type, std::string* error_message);
-  void StopDebugger();
-  bool LoginAuthProvider(std::string_view provider_id,
-                         const std::vector<std::string>& scopes,
-                         std::string* error_message);
-  bool RefreshAuthSession(std::string_view provider_id,
-                          std::string_view session_id,
-                          std::string* error_message);
-  bool LogoutAuthSession(std::string_view provider_id,
-                         std::string_view session_id,
-                         std::string* error_message);
-  bool InvokeMcpTool(std::string_view tool_id,
-                     std::string_view input_json,
-                     std::string* error_message);
   bool ActiveTabIsCompare() const;
   bool ActiveTabIsMerge() const;
   void OpenBufferSearch(std::string query);

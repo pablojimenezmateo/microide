@@ -100,14 +100,18 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       editing_replace ? project_search.edit_buffer.text() : project_search.replace_text.text();
 
   std::string query_fallback_text;
-  query_fallback_text.reserve(8 + query_text.size());
-  query_fallback_text += "search> ";
-  query_fallback_text += query_text;
+  if (query_text.empty()) {
+    query_fallback_text = "Search in project";
+  } else {
+    query_fallback_text = std::string(query_text);
+  }
 
   std::string replace_fallback_text;
-  replace_fallback_text.reserve(9 + replace_text.size());
-  replace_fallback_text += "replace> ";
-  replace_fallback_text += replace_text;
+  if (replace_text.empty()) {
+    replace_fallback_text = "Replace in project";
+  } else {
+    replace_fallback_text = std::string(replace_text);
+  }
 
   return SidebarSurfaceViewModel{
       .visible = context_.current_project_state.sidebar.visible,
@@ -171,12 +175,12 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   add_segment(StatusBarSegmentId::Indent, vm.left_segments);
   add_segment(StatusBarSegmentId::Encoding, vm.left_segments);
   add_segment(StatusBarSegmentId::LineColumn, vm.right_segments);
-  add_segment(StatusBarSegmentId::Problems, vm.right_segments);
   add_segment(StatusBarSegmentId::Lsp, vm.right_segments);
   add_segment(StatusBarSegmentId::LayoutMode, vm.right_segments);
 
   if (vm.layout_mode == LayoutMode::Compact) {
-    if (!vm.right_segments.empty() && vm.right_segments.back().text.find("compact") != std::string::npos) {
+    if (!vm.right_segments.empty() &&
+        vm.right_segments.back().id == StatusBarSegmentId::LayoutMode) {
       vm.right_segments.pop_back();  // drop layout-mode badge
     }
     while (vm.left_segments.size() > 2) {  // keep project + branch

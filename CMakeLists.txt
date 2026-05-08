@@ -237,7 +237,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTextInputCoordinator.cpp
   src/workspace/WorkspaceTextInputCoordinatorTerminal.cpp
   src/workspace/WorkspaceTabActionExecutor.cpp
-  src/workspace/WorkspaceChatTranscriptLayout.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellBlame.cpp
   src/workspace/WorkspaceShellCursor.cpp
@@ -279,12 +278,10 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellChatToolApproval.cpp
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellAssist.cpp
-  src/workspace/WorkspaceShellAuthDebug.cpp
   src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp
   src/workspace/WorkspaceShellProviderAuth.cpp
   src/workspace/WorkspaceShellSettingsOverlay.cpp
-  src/workspace/WorkspaceShellTasks.cpp
   src/workspace/WorkspaceShellMcp.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp
@@ -301,7 +298,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/TerminalPanelService.cpp
-  src/workspace/WorkspaceTaskRuntime.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/PersistenceService.cpp
@@ -336,10 +332,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellSidebarMouse.cpp
-  src/workspace/WorkspaceChatTranscript.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShellTerminalService.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp
+  src/workspace/WorkspaceChatTranscript.cpp
+  src/workspace/WorkspaceChatTranscriptLayout.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
   src/workspace/SettingsOverlayService.cpp
@@ -353,7 +350,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceSaveParticipants.cpp
   src/workspace/WorkspaceCompletionRegistry.cpp
   src/workspace/WorkspaceCodeActionRegistry.cpp
-  src/workspace/WorkspaceTaskRegistry.cpp
   src/workspace/WorkspaceToolRegistry.cpp
   src/workspace/WorkspaceToolDownloader.cpp
   src/workspace/WorkspaceTestController.cpp
@@ -363,9 +359,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceReviewComments.cpp
   src/workspace/WorkspaceAuthProvider.cpp
   src/workspace/WorkspaceSecretStorage.cpp
+  src/workspace/WorkspaceInlineCompletion.cpp
   src/workspace/WorkspaceAiProvider.cpp
   src/workspace/WorkspaceAiProviderRuntime.cpp
-  src/workspace/WorkspaceInlineCompletion.cpp
   src/workspace/WorkspaceConversation.cpp
   src/workspace/WorkspaceExternalAgent.cpp
   src/workspace/WorkspaceProviderBridge.cpp
