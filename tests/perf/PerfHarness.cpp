@@ -142,13 +142,15 @@ void ScenarioContext::ConsumeProjectSearchUpdates() {
 std::uint64_t ScenarioContext::Wait(std::chrono::milliseconds duration) {
   const auto end = std::chrono::steady_clock::now() + duration;
   std::uint64_t wake_count = 0;
+  constexpr auto kIdlePollInterval = std::chrono::milliseconds(4);
   while (std::chrono::steady_clock::now() < end) {
     const auto wake = shell_.HandleScheduledWake();
     if (wake.handled) {
       ++wake_count;
       PumpFrames(1);
+      continue;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(kIdlePollInterval);
   }
   return wake_count;
 }
@@ -181,6 +183,19 @@ bool ScenarioContext::AssertNoAllocationsDuringDraw(std::string* error) {
   return ok;
 }
 
+double ScenarioContext::Measure(std::string_view phase_name, const std::function<void()>& action) {
+  const auto start = std::chrono::steady_clock::now();
+  action();
+  const auto end = std::chrono::steady_clock::now();
+  const double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+  phase_durations_ms_.emplace_back(std::string(phase_name), elapsed_ms);
+  return elapsed_ms;
+}
+
+std::vector<std::pair<std::string, double>> ScenarioContext::TakePhaseDurations() {
+  return std::move(phase_durations_ms_);
+}
+
 std::uint64_t ScenarioContext::RandomU64() {
   return rng_();
 }
@@ -195,6 +210,22 @@ void ScenarioContext::ActivateGitSidebar() {
 
 void ScenarioContext::StartSearch(std::string_view query) {
   ExecuteCommand("project-search " + std::string(query));
+}
+
+void ScenarioContext::OpenTerminal(std::string_view command) {
+  std::string command_line = "term";
+  if (!command.empty()) {
+    command_line.append(" ");
+    command_line.append(command);
+  }
+  (void)ExecuteCommand(command_line);
+}
+
+void ScenarioContext::ResizeWindow(int width, int height) {
+  if (window_ != nullptr) {
+    SDL_SetWindowSize(window_, width, height);
+  }
+  (void)SendWindowResized(shell_, width, height);
 }
 
 void PerfHarness::RegisterScenario(const Scenario& scenario) {
@@ -260,6 +291,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
                 .bytes_freed =
                     static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.bytes_freed)),
             },
+        .phase_durations_ms = context.TakePhaseDurations(),
     });
   }
   aggregate.metrics = AggregateMetrics(aggregate.iterations);

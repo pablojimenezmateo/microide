@@ -77,4 +77,12 @@ inline bool SendWindowMouseLeave(workspace::WorkspaceShell& shell) {
   return shell.HandleEvent(event).handled;
 }
 
+inline bool SendWindowResized(workspace::WorkspaceShell& shell, int width, int height) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_WINDOW_RESIZED;
+  event.window.data1 = width;
+  event.window.data2 = height;
+  return shell.HandleEvent(event).handled;
+}
+
 }  // namespace microide::tests

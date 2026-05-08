@@ -36,6 +36,7 @@ struct MetricSet {
 struct Iteration {
   std::size_t index = 0;
   MetricSnapshot metrics;
+  std::vector<std::pair<std::string, double>> phase_durations_ms;
 };
 
 struct Aggregate {
@@ -62,16 +63,21 @@ class ScenarioContext {
   bool WaitForDiagnostics(const std::filesystem::path& path,
                           std::chrono::milliseconds timeout);
   bool AssertNoAllocationsDuringDraw(std::string* error = nullptr);
+  double Measure(std::string_view phase_name, const std::function<void()>& action);
+  std::vector<std::pair<std::string, double>> TakePhaseDurations();
   std::uint64_t RandomU64();
   void OpenFileFinder();
   void ActivateGitSidebar();
   void StartSearch(std::string_view query);
+  void OpenTerminal(std::string_view command);
+  void ResizeWindow(int width, int height);
 
  private:
   workspace::WorkspaceShell& shell_;
   SDL_Window* window_ = nullptr;
   SDL_Renderer* renderer_ = nullptr;
   std::mt19937_64 rng_;
+  std::vector<std::pair<std::string, double>> phase_durations_ms_;
 };
 
 struct Scenario {

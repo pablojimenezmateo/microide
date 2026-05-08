@@ -30,6 +30,35 @@ When adding a scenario:
 4. pump frames intentionally (`PumpFrames`) so rendering work is included consistently
 5. decide whether the scenario belongs in smoke (`.smoke = true`) or gate-only (`.smoke = false`)
 
+## Hotspot Audit Matrix
+
+Use this matrix for repository-wide hotspot passes so each critical workflow has deterministic
+coverage and a clear owner.
+
+| Workflow class | Primary scenarios | Key metrics | Primary subsystem ownership |
+| --- | --- | --- | --- |
+| Startup (no project, small, large) | `cold_startup_no_project`, `cold_startup_small_project`, `cold_startup_large_project` | p50/p95/max wall time, allocation counts | app bootstrap, session restore, workspace init |
+| Editing and render throughput | `typing_small_file`, `typing_large_file`, `scroll_large_file`, `multi_tab_cycle` | p50/p95/max wall time, allocation counts | editor, text viewport, render view-model pipeline |
+| Search and indexing | `project_search_literal`, `project_search_regex`, `search_first_result`, `file_finder_cold` | p50/p95/max wall time | project search, file finder, background executor |
+| Shell surfaces | `compare_tab_open`, `merge_tab_open`, `git_sidebar_activate` | p50/p95/max wall time, allocation counts | compare/merge services, sidebar services |
+| Terminal and output | `terminal_scroll_long_output` | p50/p95/max wall time, allocation counts | terminal panel, scroll and redraw integration |
+| Idle and long soak | `idle_soak_30s`, `long_soak_8h`, `switch_and_idle` | wake-up count, wall time, allocation counts | event loop, scheduled wake handling, watchers |
+
+When a hotspot class has no deterministic coverage, add a scenario + baseline in the same change
+before closing the performance pass.
+
+## Deterministic Input Checklist
+
+Before trusting results from a scenario run:
+
+1. use fixed fixtures committed under `tests/perf/fixtures/` (avoid host-dependent project trees)
+2. keep random behavior deterministic via `MICROIDE_PERF_SEED` (default is fixed to `1337`)
+3. drive frame work through explicit `PumpFrames(...)` calls
+4. keep iteration count explicit (`--iterations=N`, default `10`)
+5. run under software renderer (`SDL_HINT_RENDER_DRIVER=software`) and fixed window (`1920x1080`)
+6. keep plugin-dependent scenarios explicit and bounded; do not rely on incidental plugin state
+7. capture JSON reports (`--report-json`) for reproducible hotspot triage diffs
+
 Current notable scenarios:
 
 - `switch_and_idle` (smoke): open fixture project A, open 20 tabs, switch to fixture project B,
@@ -63,6 +92,13 @@ Current notable scenarios:
   - baseline:
     - `tests/perf/baselines/search_first_result.json`
   - skips gracefully when fixture directory is absent
+
+- `window_resize_stress` (smoke): repeatedly resizes the window between compact and regular
+  dimensions while pumping frames, used to catch layout and resize-path regressions
+  - fixture root:
+    - `tests/perf/fixtures/small_project/`
+  - baseline:
+    - `tests/perf/baselines/window_resize_stress.json`
 
 - `idle_soak_30s` (gate): 3-second settle then 27-second soak; asserts that the file-index watcher
   thread and git executor thread generate zero SDL wake events during the soak period after startup

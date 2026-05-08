@@ -108,6 +108,43 @@ double CpuPercentFromSamples(const ProcessSample& before,
 #endif
 }
 
+std::string ReadFileTextOrThrow(const std::filesystem::path& path) {
+  std::ifstream input(path, std::ios::binary);
+  if (!input) {
+    throw std::runtime_error("failed to read file: " + path.string());
+  }
+  return std::string((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+}
+
+void WriteFileTextOrThrow(const std::filesystem::path& path, std::string_view content) {
+  std::ofstream output(path, std::ios::binary | std::ios::trunc);
+  if (!output) {
+    throw std::runtime_error("failed to write file: " + path.string());
+  }
+  output << content;
+  if (!output.good()) {
+    throw std::runtime_error("failed to flush file: " + path.string());
+  }
+}
+
+class FixtureRestoreGuard {
+ public:
+  FixtureRestoreGuard(std::filesystem::path path, std::string original)
+      : path_(std::move(path)), original_(std::move(original)) {}
+
+  ~FixtureRestoreGuard() {
+    try {
+      WriteFileTextOrThrow(path_, original_);
+    } catch (...) {
+      // Do not throw from destructor; best-effort restore only.
+    }
+  }
+
+ private:
+  std::filesystem::path path_;
+  std::string original_;
+};
+
 std::vector<std::string> SplitComma(std::string_view text) {
   std::vector<std::string> out;
   std::string current;
@@ -270,6 +307,24 @@ void RegisterBuiltInScenarios() {
           },
   });
   PerfHarness::RegisterScenario(Scenario{
+      .name = "window_resize_stress",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.PumpFrames(2);
+            context.Measure("resize.compact_to_regular", [&]() {
+              for (int i = 0; i < 12; ++i) {
+                context.ResizeWindow(1280, 720);
+                context.PumpFrames(1);
+                context.ResizeWindow(1920, 1080);
+                context.PumpFrames(1);
+              }
+            });
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
       .name = "project_search_literal",
       .smoke = true,
       .run =
@@ -301,6 +356,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path project = "tests/perf/fixtures/linter_project";
             const std::filesystem::path source = project / "src" / "index.js";
+            FixtureRestoreGuard restore_guard(source, ReadFileTextOrThrow(source));
             (void)context.Open(project);
             context.OpenTab(source);
             context.Type(" // save to trigger lint");
@@ -335,11 +391,13 @@ void RegisterBuiltInScenarios() {
       .smoke = true,
       .run =
           [](ScenarioContext& context) {
-            context.OpenTerminal("yes perf-output-line");
-            context.Wait(std::chrono::milliseconds(80));
-            for (int i = 0; i < 48; ++i) {
-              context.Scroll(-1);
-            }
+            context.Measure("terminal.open", [&]() { context.OpenTerminal("yes perf-output-line"); });
+            context.Measure("terminal.initial_wait", [&]() { context.Wait(std::chrono::milliseconds(80)); });
+            context.Measure("terminal.scroll_burst", [&]() {
+              for (int i = 0; i < 48; ++i) {
+                context.Scroll(-1);
+              }
+            });
             context.PumpFrames(2);
           },
   });
@@ -528,6 +586,10 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
   util::JsonArray iterations_json;
   iterations_json.reserve(aggregate.iterations.size());
   for (const Iteration& iteration : aggregate.iterations) {
+    util::JsonObject phase_json;
+    for (const auto& phase : iteration.phase_durations_ms) {
+      phase_json[phase.first] = phase.second;
+    }
     iterations_json.push_back(util::JsonObject{
         {"index", static_cast<std::int64_t>(iteration.index)},
         {"wall_ms", iteration.metrics.wall_ms},
@@ -535,6 +597,7 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
         {"frees", static_cast<std::int64_t>(iteration.metrics.frees)},
         {"bytes_allocated", static_cast<std::int64_t>(iteration.metrics.bytes_allocated)},
         {"bytes_freed", static_cast<std::int64_t>(iteration.metrics.bytes_freed)},
+        {"phase_durations_ms", std::move(phase_json)},
     });
   }
   return util::JsonObject{
