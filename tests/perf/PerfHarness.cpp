@@ -104,7 +104,13 @@ void ScenarioContext::PumpFrames(std::size_t count) {
 }
 
 bool ScenarioContext::Open(const std::filesystem::path& project_root) {
-  return workspace::WorkspaceShell::TestAccess::OpenProjectTab(shell_, project_root, false, false);
+  std::error_code error;
+  const std::filesystem::path resolved =
+      std::filesystem::absolute(project_root, error).lexically_normal();
+  if (error || resolved.empty()) {
+    return workspace::WorkspaceShell::TestAccess::OpenProjectTab(shell_, project_root, false, false);
+  }
+  return workspace::WorkspaceShell::TestAccess::OpenProjectTab(shell_, resolved, false, false);
 }
 
 void ScenarioContext::OpenTab(const std::filesystem::path& path) {

@@ -239,12 +239,14 @@ void RegisterBuiltInScenarios() {
                 "tests/fixtures/diff/simple",
                 "tests/fixtures/large/plain",
             };
-            for (int pass = 0; pass < 3; ++pass) {
-              for (const auto& project : projects) {
-                (void)context.Open(project);
-                context.PumpFrames(2);
+            context.Measure("multi_project.switch_cycles", [&]() {
+              for (int pass = 0; pass < 2; ++pass) {
+                for (const auto& project : projects) {
+                  (void)context.Open(project);
+                  context.PumpFrames(2);
+                }
               }
-            }
+            });
           },
   });
   PerfHarness::RegisterScenario(Scenario{
@@ -365,9 +367,11 @@ void RegisterBuiltInScenarios() {
             FixtureRestoreGuard restore_guard(source, ReadFileTextOrThrow(source));
             (void)context.Open(project);
             context.OpenTab(source);
-            context.Type(" // save to trigger lint");
-            (void)context.ExecuteCommand("save");
-            (void)context.WaitForDiagnostics(source, std::chrono::milliseconds(1000));
+            context.Measure("linter.type_invalid_edit", [&]() { context.Type("\nconst broken = ;"); });
+            context.Measure("linter.save", [&]() { (void)context.ExecuteCommand("save"); });
+            context.Measure("linter.wait_diagnostics", [&]() {
+              (void)context.WaitForDiagnostics(source, std::chrono::milliseconds(120));
+            });
             context.PumpFrames(2);
           },
   });
