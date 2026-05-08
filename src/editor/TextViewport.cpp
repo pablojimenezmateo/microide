@@ -41,6 +41,120 @@ bool IsIndentCharacter(char c) {
   return c == ' ' || c == '\t';
 }
 
+std::size_t LeadingIndentLen(const std::string& line) {
+  std::size_t i = 0;
+  while (i < line.size() && IsIndentCharacter(line[i])) {
+    ++i;
+  }
+  return i;
+}
+
+bool LineIsIndentOnly(const std::string& line) {
+  return std::all_of(line.begin(), line.end(),
+                     [](char c) { return IsIndentCharacter(c); });
+}
+
+std::string_view TrimmedRightView(const std::string& line) {
+  std::size_t end = line.size();
+  while (end > 0 && IsIndentCharacter(line[end - 1])) {
+    --end;
+  }
+  return std::string_view(line.data(), end);
+}
+
+const microide::editor::LanguagePair* FindAutoCloseOpener(
+    const microide::editor::LanguageContractView& view, char ch) {
+  for (const auto& pair : view.auto_close_pairs) {
+    if (pair.open.size() == 1 && pair.open[0] == ch) {
+      return &pair;
+    }
+  }
+  return nullptr;
+}
+
+const microide::editor::LanguagePair* FindAutoCloseCloser(
+    const microide::editor::LanguageContractView& view, char ch) {
+  for (const auto& pair : view.auto_close_pairs) {
+    if (pair.close.size() == 1 && pair.close[0] == ch) {
+      return &pair;
+    }
+  }
+  return nullptr;
+}
+
+const microide::editor::LanguagePair* FindSurroundOpener(
+    const microide::editor::LanguageContractView& view, char ch) {
+  for (const auto& pair : view.surround_pairs) {
+    if (pair.open.size() == 1 && pair.open[0] == ch) {
+      return &pair;
+    }
+  }
+  return nullptr;
+}
+
+bool ShouldAutoCloseAtNext(const std::string& line, std::size_t column,
+                           const microide::editor::LanguageContractView& view) {
+  if (column >= line.size()) {
+    return true;
+  }
+  const char next = line[column];
+  if (next == ' ' || next == '\t') {
+    return true;
+  }
+  if (FindAutoCloseCloser(view, next) != nullptr) {
+    return true;
+  }
+  if (next == ')' || next == ']' || next == '}' || next == '>' || next == ',' ||
+      next == ';' || next == ':') {
+    return true;
+  }
+  return false;
+}
+
+bool DedentOnCloseTokenMatches(const microide::editor::LanguageContractView& view,
+                               char ch) {
+  for (const auto& token : view.dedent_on_close_chars) {
+    if (token.size() == 1 && token[0] == ch) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool TrimTrailingWhitespaceInPlace(std::vector<std::string>& lines) {
+  bool any = false;
+  for (std::string& line : lines) {
+    std::size_t end = line.size();
+    while (end > 0) {
+      char c = line[end - 1];
+      if (c != ' ' && c != '\t') break;
+      --end;
+    }
+    if (end != line.size()) {
+      line.resize(end);
+      any = true;
+    }
+  }
+  return any;
+}
+
+bool EnsureSingleFinalNewlineInPlace(std::vector<std::string>& lines) {
+  if (lines.empty()) {
+    lines.emplace_back();
+    return true;
+  }
+  bool changed = false;
+  while (lines.size() > 1 && lines.back().empty() && lines[lines.size() - 2].empty()) {
+    lines.pop_back();
+    changed = true;
+  }
+  if (lines.empty() || !lines.back().empty()) {
+    lines.emplace_back();
+    changed = true;
+  }
+  return changed;
+}
+
 }  // namespace
 
 TextViewport::TextViewport() {
@@ -76,9 +190,31 @@ bool TextViewport::Save() {
     return false;
   }
 
-  const std::string text = util::SerializeLines(document_->lines, document_->line_ending);
+  // Save-time normalization: apply trim and final-newline transforms to a
+  // local copy of the lines buffer. We write the normalized text but keep the
+  // in-memory buffer untouched unless the toggles change the content; this
+  // keeps subsequent edits idempotent and avoids the noise of a re-layout
+  // immediately after save.
+  std::vector<std::string> normalized = document_->lines;
+  bool changed = false;
+  if (save_trim_trailing_whitespace_) {
+    if (TrimTrailingWhitespaceInPlace(normalized)) changed = true;
+  }
+  if (save_ensure_final_newline_) {
+    if (EnsureSingleFinalNewlineInPlace(normalized)) changed = true;
+  }
+
+  const std::string text = util::SerializeLines(
+      changed ? normalized : document_->lines, document_->line_ending);
   if (!util::WriteTextFileAtomically(document_->path, text)) {
     return false;
+  }
+
+  if (changed) {
+    // Mirror the normalization into the live buffer so the user sees the
+    // same content they just saved. Routed through ReplaceLines so undo can
+    // unwind the change.
+    ReplaceLines(0, document_->lines.size(), normalized, /*record_undo=*/true);
   }
 
   document_->mixed_line_endings = false;
@@ -301,8 +437,21 @@ void TextViewport::Page(int direction) {
 
 void TextViewport::InsertCharacter(char character) {
   if (has_multiple_carets()) {
+    if (TryMultiCaretPairInsert(character)) {
+      return;
+    }
     const std::string text(1, character);
     (void)ApplyMultiCaretInsert(text, true);
+    return;
+  }
+  if (TrySurroundInsert(character)) {
+    return;
+  }
+  if (TrySkipOverClose(character)) {
+    return;
+  }
+  (void)MaybeDedentOnClose(character);
+  if (TryAutoCloseInsert(character)) {
     return;
   }
   const SelectionRange range = selection_range().value_or(
@@ -314,6 +463,10 @@ void TextViewport::InsertCharacter(char character) {
 
 void TextViewport::InsertText(std::string_view text, bool record_undo) {
   if (text.empty()) {
+    return;
+  }
+  if (text.size() == 1 && text.front() != '\n' && record_undo) {
+    InsertCharacter(text.front());
     return;
   }
   if (has_multiple_carets()) {
@@ -330,6 +483,9 @@ void TextViewport::InsertText(std::string_view text, bool record_undo) {
 void TextViewport::InsertNewline() {
   if (has_multiple_carets()) {
     (void)ApplyMultiCaretInsert("\n", true);
+    return;
+  }
+  if (TryInsertNewlineSplitBraces()) {
     return;
   }
   const SelectionRange range = selection_range().value_or(
@@ -1583,14 +1739,370 @@ std::string TextViewport::AutoIndentForNewline(std::size_t line, std::size_t col
   const auto first_non_indent = std::find_if(
       current_line.begin(), current_line.end(),
       [](char c) { return !IsIndentCharacter(c); });
-  if (first_non_indent == current_line.end()) {
-    return {};
+
+  std::string base_indent;
+  if (first_non_indent != current_line.end()) {
+    const std::size_t indent_columns = std::min<std::size_t>(
+        static_cast<std::size_t>(first_non_indent - current_line.begin()),
+        clamped_column);
+    base_indent.assign(current_line, 0, indent_columns);
   }
 
-  const std::size_t indent_columns =
-      std::min<std::size_t>(static_cast<std::size_t>(first_non_indent - current_line.begin()),
-                            clamped_column);
-  return current_line.substr(0, indent_columns);
+  if (!lc_view_.smart_indent_enabled || lc_view_.indent_after_open_patterns.empty()) {
+    return base_indent;
+  }
+
+  const std::string_view trimmed = TrimmedRightView(current_line);
+  if (clamped_column < trimmed.size()) {
+    return base_indent;
+  }
+  for (const std::string& pattern : lc_view_.indent_after_open_patterns) {
+    if (pattern.empty()) {
+      continue;
+    }
+    if (trimmed.size() >= pattern.size() &&
+        trimmed.substr(trimmed.size() - pattern.size()) == pattern) {
+      return base_indent + IndentUnit();
+    }
+  }
+  return base_indent;
+}
+
+std::string TextViewport::IndentUnit() const {
+  if (soft_tabs_) {
+    return std::string(std::max<std::size_t>(1, indent_width_), ' ');
+  }
+  return "\t";
+}
+
+bool TextViewport::TryAutoCloseInsert(char ch) {
+  if (!lc_view_.auto_close_enabled || has_selection()) {
+    return false;
+  }
+  const auto* pair = FindAutoCloseOpener(lc_view_, ch);
+  if (pair == nullptr || pair->close.empty()) {
+    return false;
+  }
+  if (cursor_line_ >= document_->lines.size()) {
+    return false;
+  }
+  const std::string& current_line = document_->lines[cursor_line_];
+  const std::size_t clamped_column = TextLayout::ClampTextColumn(current_line, cursor_column_);
+  if (InInsertionSuppressedScope(cursor_line_, clamped_column)) {
+    return false;
+  }
+  if (!ShouldAutoCloseAtNext(current_line, clamped_column, lc_view_)) {
+    return false;
+  }
+  // Same-character pairs (quotes): avoid stacking when the previous char is
+  // already the same quote (typing inside a comment/string we can't detect
+  // semantically) -- simple heuristic.
+  if (pair->open == pair->close && clamped_column > 0 &&
+      current_line[clamped_column - 1] == ch) {
+    return false;
+  }
+
+  const SelectionRange range = SelectionRange{
+      TextPosition{cursor_line_, clamped_column},
+      TextPosition{cursor_line_, clamped_column},
+  };
+  const std::string replacement = pair->open + pair->close;
+  if (!ApplyRangeEdit(range, replacement, true)) {
+    return false;
+  }
+  // Position caret between open and close (open is one byte; we already
+  // restricted to single-character pairs above for FindAutoCloseOpener match).
+  cursor_column_ = clamped_column + pair->open.size();
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  selection_anchor_.reset();
+  EnsureCursorVisible();
+  return true;
+}
+
+bool TextViewport::TrySurroundInsert(char ch) {
+  if (!lc_view_.surround_enabled) {
+    return false;
+  }
+  const auto sel = selection_range();
+  if (!sel.has_value()) {
+    return false;
+  }
+  const auto* pair = FindSurroundOpener(lc_view_, ch);
+  if (pair == nullptr || pair->open.empty() || pair->close.empty()) {
+    return false;
+  }
+  if (InInsertionSuppressedScope(sel->start.line, sel->start.column)) {
+    return false;
+  }
+  if (sel->start.line != sel->end.line) {
+    return false;
+  }
+  const std::size_t line = sel->start.line;
+  if (line >= document_->lines.size()) {
+    return false;
+  }
+  const std::string& current_line = document_->lines[line];
+  if (sel->start.column > current_line.size() || sel->end.column > current_line.size() ||
+      sel->start.column > sel->end.column) {
+    return false;
+  }
+  std::string inner(current_line, sel->start.column, sel->end.column - sel->start.column);
+  std::string replacement = pair->open + inner + pair->close;
+  if (!ApplyRangeEdit(*sel, replacement, true)) {
+    return false;
+  }
+  const std::size_t new_inner_start = sel->start.column + pair->open.size();
+  const std::size_t new_inner_end = new_inner_start + inner.size();
+  selection_anchor_ = TextPosition{line, new_inner_start};
+  cursor_line_ = line;
+  cursor_column_ = new_inner_end;
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  EnsureCursorVisible();
+  return true;
+}
+
+bool TextViewport::TrySkipOverClose(char ch) {
+  if (!lc_view_.auto_close_enabled || has_selection()) {
+    return false;
+  }
+  if (cursor_line_ >= document_->lines.size()) {
+    return false;
+  }
+  const std::string& current_line = document_->lines[cursor_line_];
+  const std::size_t clamped_column = TextLayout::ClampTextColumn(current_line, cursor_column_);
+  if (clamped_column >= current_line.size()) {
+    return false;
+  }
+  if (current_line[clamped_column] != ch) {
+    return false;
+  }
+  if (FindAutoCloseCloser(lc_view_, ch) == nullptr) {
+    return false;
+  }
+  cursor_column_ = clamped_column + 1;
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  selection_anchor_.reset();
+  EnsureCursorVisible();
+  return true;
+}
+
+bool TextViewport::MaybeDedentOnClose(char ch) {
+  if (!lc_view_.smart_indent_enabled) {
+    return false;
+  }
+  if (has_selection()) {
+    return false;
+  }
+  if (!DedentOnCloseTokenMatches(lc_view_, ch)) {
+    return false;
+  }
+  if (cursor_line_ >= document_->lines.size()) {
+    return false;
+  }
+  const std::string& current_line = document_->lines[cursor_line_];
+  if (!LineIsIndentOnly(current_line)) {
+    return false;
+  }
+  if (cursor_column_ != current_line.size()) {
+    return false;
+  }
+  const std::string unit = IndentUnit();
+  if (current_line.size() < unit.size()) {
+    return false;
+  }
+  if (current_line.compare(current_line.size() - unit.size(), unit.size(), unit) != 0) {
+    return false;
+  }
+  const SelectionRange erase_range = SelectionRange{
+      TextPosition{cursor_line_, current_line.size() - unit.size()},
+      TextPosition{cursor_line_, current_line.size()},
+  };
+  return ApplyRangeEdit(erase_range, "", true);
+}
+
+bool TextViewport::TryInsertNewlineSplitBraces() {
+  if (has_selection() || has_multiple_carets()) {
+    return false;
+  }
+  if (!lc_view_.auto_close_enabled) {
+    return false;
+  }
+  if (cursor_line_ >= document_->lines.size()) {
+    return false;
+  }
+  const std::string& current_line = document_->lines[cursor_line_];
+  const std::size_t column = TextLayout::ClampTextColumn(current_line, cursor_column_);
+  if (column == 0 || column >= current_line.size()) {
+    return false;
+  }
+  const char prev = current_line[column - 1];
+  const char next = current_line[column];
+  const auto* opener = FindAutoCloseOpener(lc_view_, prev);
+  if (opener == nullptr || opener->close.size() != 1 || opener->close[0] != next) {
+    return false;
+  }
+  const std::string base_indent = AutoIndentForNewline(cursor_line_, column);
+  const std::string unit = IndentUnit();
+  std::string inner_indent;
+  if (lc_view_.smart_indent_enabled) {
+    inner_indent = base_indent + unit;
+  } else {
+    inner_indent = base_indent + unit;
+  }
+  const std::string replacement = std::string("\n") + inner_indent + "\n" + base_indent;
+  const std::size_t opener_line = cursor_line_;
+  const SelectionRange range = SelectionRange{
+      TextPosition{cursor_line_, column},
+      TextPosition{cursor_line_, column},
+  };
+  if (!ApplyRangeEdit(range, replacement, true)) {
+    return false;
+  }
+  cursor_line_ = opener_line + 1;
+  if (cursor_line_ < document_->lines.size()) {
+    cursor_column_ = std::min(inner_indent.size(), document_->lines[cursor_line_].size());
+  } else {
+    cursor_column_ = 0;
+  }
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  selection_anchor_.reset();
+  EnsureCursorVisible();
+  return true;
+}
+
+bool TextViewport::InInsertionSuppressedScope(std::size_t line, std::size_t column) const {
+  if ((!lc_view_.inhibit_pairs_in_strings && !lc_view_.inhibit_pairs_in_comments) ||
+      line >= document_->lines.size()) {
+    return false;
+  }
+  const std::string& text = document_->lines[line];
+  if (text.empty()) {
+    return false;
+  }
+  const auto& tokens = HighlightedLineTokens(line);
+  if (tokens.empty()) {
+    return false;
+  }
+  const std::size_t clamped_column = TextLayout::ClampTextColumn(text, column);
+  const std::size_t token_index = clamped_column == 0 ? 0 : std::min(clamped_column - 1, tokens.size() - 1);
+  const SyntaxTokenKind kind = tokens[token_index];
+  if (lc_view_.inhibit_pairs_in_strings && kind == SyntaxTokenKind::String) {
+    return true;
+  }
+  if (lc_view_.inhibit_pairs_in_comments && kind == SyntaxTokenKind::Comment) {
+    return true;
+  }
+  return false;
+}
+
+bool TextViewport::TryMultiCaretPairInsert(char ch) {
+  if (!has_multiple_carets()) {
+    return false;
+  }
+  last_applied_edit_.reset();
+  EnsureDocument();
+  if (document_->lines.empty()) {
+    document_->lines.push_back("");
+  }
+
+  std::vector<TextPosition> carets = secondary_carets();
+  carets.push_back(TextPosition{cursor_line_, cursor_column_});
+  std::sort(carets.begin(), carets.end(), TextPositionLess);
+  carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
+  if (carets.empty()) {
+    return false;
+  }
+
+  const std::vector<std::string> before_lines = document_->lines;
+  const ViewState before_state = CaptureViewState();
+  const TextPosition primary_before{cursor_line_, cursor_column_};
+  TextPosition primary_after = primary_before;
+  std::vector<TextPosition> updated_secondary_carets;
+  updated_secondary_carets.reserve(carets.size());
+
+  bool text_changed = false;
+  bool caret_changed = false;
+  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
+    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
+    const std::string& current_line = document_->lines[line];
+
+    const auto* close_pair = lc_view_.auto_close_enabled ? FindAutoCloseCloser(lc_view_, ch) : nullptr;
+    if (close_pair != nullptr && !has_selection() && column < current_line.size() &&
+        current_line[column] == ch) {
+      const TextPosition updated_position{line, column + 1};
+      caret_changed = true;
+      if (line == primary_before.line && column == primary_before.column) {
+        primary_after = updated_position;
+      } else {
+        updated_secondary_carets.push_back(updated_position);
+      }
+      continue;
+    }
+
+    std::string replacement(1, ch);
+    const auto* open_pair = lc_view_.auto_close_enabled ? FindAutoCloseOpener(lc_view_, ch) : nullptr;
+    if (open_pair != nullptr && !has_selection() && !open_pair->close.empty() &&
+        !InInsertionSuppressedScope(line, column) &&
+        ShouldAutoCloseAtNext(current_line, column, lc_view_)) {
+      if (!(open_pair->open == open_pair->close && column > 0 && current_line[column - 1] == ch)) {
+        replacement = open_pair->open + open_pair->close;
+      }
+    }
+
+    const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(
+        SelectionRange{TextPosition{line, column}, TextPosition{line, column}}, replacement);
+    if (!entry.has_value()) {
+      if (!(line == primary_before.line && column == primary_before.column)) {
+        updated_secondary_carets.push_back(TextPosition{line, column});
+      }
+      continue;
+    }
+    text_changed = true;
+    ApplyHistoryEntry(*entry, true);
+    TextPosition updated_position{entry->after_state.cursor_line, entry->after_state.cursor_column};
+    if (replacement.size() > 1) {
+      updated_position.column = column + 1;
+    }
+    if (line == primary_before.line && column == primary_before.column) {
+      primary_after = updated_position;
+    } else {
+      updated_secondary_carets.push_back(updated_position);
+    }
+  }
+
+  if (!text_changed && !caret_changed) {
+    return false;
+  }
+
+  cursor_line_ = primary_after.line;
+  cursor_column_ = primary_after.column;
+  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), TextPositionLess);
+  updated_secondary_carets.erase(
+      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
+      updated_secondary_carets.end());
+  updated_secondary_carets.erase(
+      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
+      updated_secondary_carets.end());
+  secondary_carets_.clear();
+  for (const TextPosition& caret : updated_secondary_carets) {
+    AddSecondaryCaret(caret.line, caret.column);
+  }
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  selection_anchor_.reset();
+  EnsureCursorVisible();
+
+  if (!text_changed) {
+    return true;
+  }
+
+  document_->placeholder = false;
+  document_->dirty = true;
+  const HistoryEntry aggregate_entry =
+      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
+  PushHistoryEntry(aggregate_entry);
+  return true;
 }
 
 bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {

@@ -133,6 +133,42 @@ void TestSettingsOverlayFiltersAndPreservesScopes() {
          "settings overlay rows should preserve scope labels");
 }
 
+void TestSettingsOverlayGroupsEditorEssentialsToggles() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+
+  const auto find_row = [&](std::string_view id) {
+    return std::find_if(service.SettingsRows().begin(), service.SettingsRows().end(),
+                        [&](const auto& row) { return row.id == id; });
+  };
+
+  const auto fold_it = find_row("editor.fold.enabled");
+  Expect(fold_it != service.SettingsRows().end(),
+         "settings overlay should include the code-folding toggle");
+  Expect(fold_it->group == "Editor → Essentials → Block Structure",
+         "fold toggle should land in the Block Structure subsection");
+
+  const auto match_it = find_row("editor.brackets.match_highlight.enabled");
+  Expect(match_it != service.SettingsRows().end(),
+         "settings overlay should include the bracket-match toggle");
+  Expect(match_it->group == "Editor → Essentials → Pair And Indent",
+         "bracket-match toggle should land in the Pair And Indent subsection");
+
+  const auto trim_it = find_row("editor.save.trim_trailing_whitespace");
+  Expect(trim_it != service.SettingsRows().end(),
+         "settings overlay should include the trim-trailing-whitespace toggle");
+  Expect(trim_it->group == "Editor → Essentials → Shaping And Save",
+         "trim toggle should land in the Shaping And Save subsection");
+
+  const auto layout_it = find_row("ui.layout_mode");
+  Expect(layout_it != service.SettingsRows().end(),
+         "settings overlay should still surface non-essentials toggles");
+  Expect(layout_it->group.empty(),
+         "non-essentials toggles should keep an empty group so they fall outside the essentials block");
+}
+
 }  // namespace
 
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
@@ -146,6 +182,8 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogRejectsInvalidEnums);
   AddTest(tests, "WorkspaceSettingsOverlay/FiltersAndPreservesScopes",
           TestSettingsOverlayFiltersAndPreservesScopes);
+  AddTest(tests, "WorkspaceSettingsOverlay/GroupsEditorEssentialsToggles",
+          TestSettingsOverlayGroupsEditorEssentialsToggles);
 }
 
 }  // namespace microide::tests

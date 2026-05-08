@@ -417,13 +417,28 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
           ? context_.current_project_state.diagnostics_store.FindByPath(merge_tab->result_viewport.path())
           : nullptr;
+  const auto merge_setting_enabled = [this](std::string_view id, bool default_value) {
+    const auto value = GetSettingValue(id);
+    if (!value.has_value()) {
+      return default_value;
+    }
+    return *value != "false" && *value != "0" && *value != "off";
+  };
+  const bool bracket_match_highlight_enabled =
+      merge_setting_enabled("editor.brackets.match_highlight.enabled", true);
+  const bool indent_guides_enabled =
+      merge_setting_enabled("editor.view.indent_guides.enabled", true);
+  const bool render_whitespace_enabled =
+      merge_setting_enabled("editor.view.render_whitespace", false);
   editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
                                context_.current_project_state.surface.focus == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
                                merge_blame_overlay,
                                merge_diagnostics != nullptr
                                    ? std::span<const editor::PublishedDiagnostic>(*merge_diagnostics)
-                                   : std::span<const editor::PublishedDiagnostic>{});
+                                   : std::span<const editor::PublishedDiagnostic>{},
+                               bracket_match_highlight_enabled,
+                               indent_guides_enabled, render_whitespace_enabled);
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 

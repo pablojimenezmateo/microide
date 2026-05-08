@@ -275,6 +275,12 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               },
           .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
           .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
+          .get_setting_value =
+              [this](std::string_view id) { return GetSettingValue(id); },
+          .set_setting_value =
+              [this](std::string_view id, std::string value) {
+                return SetSettingValue(id, std::move(value));
+              },
           .apply_ui_scale =
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },

@@ -33,6 +33,10 @@ struct SettingSpec {
   float default_float = 0.0f;
   std::string_view default_string;
   std::span<const SettingEnumValue> enum_values;
+  // Optional grouping path used by the Settings overlay to organize related
+  // toggles into subsections. Format: "Group → Subsection" (Unicode arrow).
+  // Empty when the setting belongs to no specific group (top-level list).
+  std::string_view group;
 };
 
 using SettingValue = std::variant<bool, int, float, std::string>;
@@ -55,6 +59,7 @@ struct SettingInfo {
   SettingValue default_value;
   std::vector<std::string> enum_values;
   std::string plugin_id;  // empty for built-ins
+  std::string group;       // see SettingSpec::group
 };
 
 std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host);

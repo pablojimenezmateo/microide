@@ -19,6 +19,7 @@ struct SettingsOverlayRow {
   std::string label;
   std::string value;
   std::string detail;
+  std::string group;  // path like "Editor → Essentials → Block Structure"
   SettingType type = SettingType::String;
   SettingScope scope = SettingScope::Project;
   bool resettable = false;

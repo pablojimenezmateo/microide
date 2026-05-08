@@ -45,6 +45,8 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .active_references_available = [shell]() {
             return shell->HasActiveReferencesProvider();
           },
+          .get_setting_value =
+              [shell](std::string_view id) { return shell->GetSettingValue(id); },
       });
 }
 

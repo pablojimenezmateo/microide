@@ -41,6 +41,10 @@ struct ApiFns {
   lua_CFunction scm_provider_add;
   lua_CFunction annotation_provider_add;
   lua_CFunction auth_provider_add;
+  lua_CFunction brackets_add;
+  lua_CFunction comments_add;
+  lua_CFunction indents_add;
+  lua_CFunction snippets_add;
 };
 
 void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns);

@@ -224,6 +224,10 @@ void WorkspaceShell::ApplyLiveSettings() {
       layout_mode_service_.SetUserOverride(LayoutModeInputs::Override::Auto);
     }
   }
+
+  // Keep per-tab editor runtime knobs (save normalization and language-pair
+  // toggles) aligned with effective settings after any setting write.
+  ApplyEditorPreferencesToAllTabs();
 }
 
 void WorkspaceShell::OpenSettingsOverlay() {

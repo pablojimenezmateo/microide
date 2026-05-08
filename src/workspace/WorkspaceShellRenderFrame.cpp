@@ -277,6 +277,19 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             DrawFilledRect(renderer, marker_rect, theme_.accent);
           }
         };
+    const auto setting_enabled = [this](std::string_view id, bool default_value) {
+      const auto value = GetSettingValue(id);
+      if (!value.has_value()) {
+        return default_value;
+      }
+      return *value != "false" && *value != "0" && *value != "off";
+    };
+    const bool bracket_match_highlight_enabled =
+        setting_enabled("editor.brackets.match_highlight.enabled", true);
+    const bool indent_guides_enabled =
+        setting_enabled("editor.view.indent_guides.enabled", true);
+    const bool render_whitespace_enabled =
+        setting_enabled("editor.view.render_whitespace", false);
     const std::vector<EditorPaneLayout>& panes = editor_panes;
     editor::TextViewport* active_viewport = ActiveEditorViewport();
     if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
@@ -285,7 +298,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
-                                   std::nullopt, {});
+                                   std::nullopt, {}, bracket_match_highlight_enabled,
+                                   indent_guides_enabled, render_whitespace_enabled);
     }
     auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
@@ -312,7 +326,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                        ? overlay_vm.buffer_search_query_text
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
-                                   blame_overlay, diagnostics_for_viewport(*viewport));
+                                   blame_overlay, diagnostics_for_viewport(*viewport),
+                                   pane.active && bracket_match_highlight_enabled,
+                                   indent_guides_enabled, render_whitespace_enabled);
       draw_review_comment_markers(*viewport, pane.rect);
 
     }

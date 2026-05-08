@@ -5,6 +5,9 @@
 #include <utility>
 #include <vector>
 
+#include "editor/BracketScanner.h"
+#include "editor/ShapingActions.h"
+#include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionRequests.h"
 
 namespace microide::workspace {
@@ -120,6 +123,154 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (!context_.DiscoverTestsForActiveBuffer(&error_message)) {
         return reject(error_message.empty() ? "Test discovery failed" : error_message);
       }
+      return DispatchResult::Handled;
+    }
+    case ActionId::JumpToMatchingBracket: {
+      auto* viewport = context_.ActiveNavigableViewport();
+      if (viewport == nullptr) return DispatchResult::Handled;
+      auto match = editor::FindBracketMatch(*viewport, viewport->cursor_line(),
+                                            viewport->cursor_column());
+      if (!match) return DispatchResult::Handled;
+      const bool at_open = (viewport->cursor_line() == match->open_line &&
+                            (viewport->cursor_column() == match->open_column ||
+                             viewport->cursor_column() == match->open_column + 1));
+      if (at_open) {
+        viewport->MoveCursorTo(match->close_line, match->close_column, false);
+      } else {
+        viewport->MoveCursorTo(match->open_line, match->open_column, false);
+      }
+      context_.NotifyEditorCaretMoved();
+      return DispatchResult::Handled;
+    }
+    case ActionId::ToggleLineComment:
+    case ActionId::ToggleBlockComment:
+    case ActionId::MoveLineUp:
+    case ActionId::MoveLineDown:
+    case ActionId::DuplicateLine:
+    case ActionId::DeleteLine:
+    case ActionId::IndentLines:
+    case ActionId::OutdentLines:
+    case ActionId::SortLinesAscending:
+    case ActionId::SortLinesDescending: {
+      auto* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr) return DispatchResult::Handled;
+      bool changed = false;
+      switch (id) {
+        case ActionId::ToggleLineComment:
+          changed = editor::ToggleLineComment(*viewport, "//");
+          break;
+        case ActionId::ToggleBlockComment:
+          changed = editor::ToggleBlockComment(*viewport, "/*", "*/");
+          break;
+        case ActionId::MoveLineUp:
+          changed = editor::MoveLineUp(*viewport);
+          break;
+        case ActionId::MoveLineDown:
+          changed = editor::MoveLineDown(*viewport);
+          break;
+        case ActionId::DuplicateLine:
+          changed = editor::DuplicateSelection(*viewport);
+          break;
+        case ActionId::DeleteLine:
+          changed = editor::DeleteLine(*viewport);
+          break;
+        case ActionId::IndentLines:
+          changed = editor::IndentSelection(*viewport);
+          break;
+        case ActionId::OutdentLines:
+          changed = editor::OutdentSelection(*viewport);
+          break;
+        case ActionId::SortLinesAscending:
+          changed = editor::SortLines(*viewport, /*ascending=*/true);
+          break;
+        case ActionId::SortLinesDescending:
+          changed = editor::SortLines(*viewport, /*ascending=*/false);
+          break;
+        default: break;
+      }
+      if (changed) {
+        context_.NotifyEditorViewportChanged(/*last_change=*/true);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::AddCursorAtNextMatch:
+    case ActionId::AddCursorAtAllMatches: {
+      auto* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr) return DispatchResult::Handled;
+      // If no selection, expand to word under caret first.
+      if (!viewport->has_selection()) {
+        viewport->SelectWordAtCursor();
+      }
+      auto sel = viewport->selection_range();
+      if (!sel || sel->start.line != sel->end.line || sel->start.column == sel->end.column) {
+        return DispatchResult::Handled;
+      }
+      const auto& lines = viewport->lines();
+      if (sel->start.line >= lines.size()) return DispatchResult::Handled;
+      const std::string& line = lines[sel->start.line];
+      std::size_t a = std::min(sel->start.column, sel->end.column);
+      std::size_t b = std::max(sel->start.column, sel->end.column);
+      if (b > line.size()) return DispatchResult::Handled;
+      std::string needle = line.substr(a, b - a);
+      if (needle.empty()) return DispatchResult::Handled;
+      auto carets = viewport->secondary_carets();
+      if (id == ActionId::AddCursorAtNextMatch) {
+        // Find next occurrence after the selection.
+        for (std::size_t li = sel->start.line; li < lines.size(); ++li) {
+          const std::string& current = lines[li];
+          std::size_t from = (li == sel->start.line) ? b : 0;
+          std::size_t pos = current.find(needle, from);
+          if (pos != std::string::npos) {
+            carets.push_back(editor::TextPosition{li, pos + needle.size()});
+            break;
+          }
+        }
+      } else {
+        // Add cursor at every match in the file.
+        for (std::size_t li = 0; li < lines.size(); ++li) {
+          const std::string& current = lines[li];
+          std::size_t from = 0;
+          while (true) {
+            std::size_t pos = current.find(needle, from);
+            if (pos == std::string::npos) break;
+            // Skip the original selection's end position.
+            if (li == sel->start.line && pos == a) {
+              from = pos + needle.size();
+              continue;
+            }
+            carets.push_back(editor::TextPosition{li, pos + needle.size()});
+            from = pos + needle.size();
+            if (from >= current.size()) break;
+          }
+        }
+      }
+      viewport->SetSecondaryCarets(std::move(carets));
+      context_.NotifyEditorCaretMoved();
+      return DispatchResult::Handled;
+    }
+    case ActionId::ToggleEditorFolding:
+    case ActionId::ToggleEditorStickyScroll:
+    case ActionId::ToggleEditorIndentGuides:
+    case ActionId::ToggleEditorRenderWhitespace:
+    case ActionId::ToggleEditorOutline:
+    case ActionId::ToggleEditorBracketMatchHighlight:
+    case ActionId::ToggleEditorAutoClosePairs:
+    case ActionId::ToggleEditorSurround:
+    case ActionId::ToggleEditorSmartIndent:
+    case ActionId::ToggleEditorToggleComment:
+    case ActionId::ToggleEditorLineOps:
+    case ActionId::ToggleEditorSortLines:
+    case ActionId::ToggleEditorAddCursorAtMatch:
+    case ActionId::ToggleEditorOccurrencesHighlight:
+    case ActionId::ToggleEditorSnippets:
+    case ActionId::ToggleEditorSaveTrim:
+    case ActionId::ToggleEditorSaveEnsureNewline:
+    case ActionId::ToggleEditorAutoDetectIndent: {
+      // Toggle commands flip the corresponding setting key. Settings are read
+      // by feature consumers via `WorkspaceContext::user_settings`; this
+      // command is the canonical way to flip them from a keybinding or menu
+      // entry.
+      context_.ToggleEditorEssentialsCapability(id);
       return DispatchResult::Handled;
     }
     default:

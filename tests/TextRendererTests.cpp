@@ -966,6 +966,190 @@ void TestEditorViewRendererPaintsDiagnosticGutterMarkers() {
   SDL_DestroySurface(pixels);
 }
 
+void TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 120);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("if (a) {\n  return 1;\n}\n", "/tmp/sample.cpp");
+  viewport.MoveCursorTo(0, 7);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
+  microide::editor::EditorViewRenderer renderer;
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+  Expect(renderer.bracket_match_cache_misses() == 1,
+         "first frame with bracket-match enabled should populate the cache");
+  Expect(renderer.last_bracket_match_pair().has_value(),
+         "first frame should compute and cache a bracket-match pair");
+  Expect(renderer.last_bracket_match_pair()->open_line == 0 &&
+             renderer.last_bracket_match_pair()->open_column == 7,
+         "cached pair should reflect the brace at line 0 col 7");
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+  Expect(renderer.bracket_match_cache_hits() == 1,
+         "second frame with unchanged caret/layout should reuse the cached pair");
+  Expect(renderer.bracket_match_cache_misses() == 1,
+         "second frame should not recompute the bracket-match pair");
+}
+
+void TestEditorViewRendererBracketMatchCacheInvalidatesOnCaretMove() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 120);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("if (a) {\n  return 1;\n}\n", "/tmp/sample.cpp");
+  viewport.MoveCursorTo(0, 7);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
+  microide::editor::EditorViewRenderer renderer;
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+  Expect(renderer.bracket_match_cache_misses() == 1,
+         "first frame should compute the pair");
+
+  viewport.MoveCursorTo(0, 0);
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+  Expect(renderer.bracket_match_cache_misses() == 2,
+         "moving the caret should invalidate the cache and force a fresh compute");
+  Expect(!renderer.last_bracket_match_pair().has_value(),
+         "no bracket adjacent to the caret at line 0 col 0 should yield no pair");
+}
+
+void TestEditorViewRendererBracketMatchCacheClearsWhenToggleOff() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 120);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("if (a) {\n  return 1;\n}\n", "/tmp/sample.cpp");
+  viewport.MoveCursorTo(0, 7);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
+  microide::editor::EditorViewRenderer renderer;
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+  Expect(renderer.last_bracket_match_pair().has_value(),
+         "toggle-on frame should compute a bracket-match pair");
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/false);
+  Expect(!renderer.last_bracket_match_pair().has_value(),
+         "toggle-off frame should clear the cached pair so no paint occurs");
+  Expect(renderer.bracket_match_cache_misses() == 1,
+         "toggle-off frame should not run a fresh bracket-match compute");
+  Expect(renderer.bracket_match_cache_hits() == 0,
+         "toggle-off frame should not record a cache hit either");
+}
+
+void TestEditorViewRendererIndentGuidesCacheReusesAcrossUnchangedFrames() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 120);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("if (x) {\n    a();\n        b();\n    }\n}\n",
+                        "/tmp/indent.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(2, 8);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
+  microide::editor::EditorViewRenderer renderer;
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {},
+                  /*bracket_match_highlight_enabled=*/false,
+                  /*indent_guides_enabled=*/true,
+                  /*render_whitespace_enabled=*/false);
+  Expect(renderer.indent_guides_cache_misses() == 1,
+         "first frame with indent guides enabled should populate the cache");
+  Expect(!renderer.last_indent_guide_runs().empty(),
+         "first frame should compute at least one indent-guide run");
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {},
+                  /*bracket_match_highlight_enabled=*/false,
+                  /*indent_guides_enabled=*/true,
+                  /*render_whitespace_enabled=*/false);
+  Expect(renderer.indent_guides_cache_hits() == 1,
+         "second frame with unchanged caret/scroll should reuse the indent-guide runs");
+}
+
+void TestEditorViewRendererIndentGuidesCacheInvalidatesOnCaretMove() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 120);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("if (x) {\n    a();\n        b();\n    }\n}\n",
+                        "/tmp/indent.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(2, 8);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, false, true, false);
+
+  viewport.MoveCursorTo(0, 0);
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, false, true, false);
+  Expect(renderer.indent_guides_cache_misses() == 2,
+         "moving the caret should invalidate the indent-guides cache");
+}
+
+void TestEditorViewRendererIndentGuidesClearOnToggleOff() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 120);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("if (x) {\n    a();\n}\n", "/tmp/indent.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, false, true, false);
+  Expect(!renderer.last_indent_guide_runs().empty(),
+         "toggle-on frame should populate guide runs");
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, false, false, false);
+  Expect(renderer.last_indent_guide_runs().empty(),
+         "toggle-off frame should clear cached guide runs so no paint occurs");
+  Expect(renderer.indent_guides_cache_misses() == 1,
+         "toggle-off frame should not run a fresh indent-guides compute");
+}
+
 void TestMeasureWidthCachesRepeatedStrings() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -1060,6 +1244,24 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view paints diagnostic gutter markers",
           TestEditorViewRendererPaintsDiagnosticGutterMarkers);
+  AddTest(tests,
+          "TextRenderer editor view bracket-match cache reuses pair across unchanged frames",
+          TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange);
+  AddTest(tests,
+          "TextRenderer editor view bracket-match cache invalidates on caret move",
+          TestEditorViewRendererBracketMatchCacheInvalidatesOnCaretMove);
+  AddTest(tests,
+          "TextRenderer editor view bracket-match cache clears when highlight toggle is off",
+          TestEditorViewRendererBracketMatchCacheClearsWhenToggleOff);
+  AddTest(tests,
+          "TextRenderer editor view indent-guides cache reuses runs across unchanged frames",
+          TestEditorViewRendererIndentGuidesCacheReusesAcrossUnchangedFrames);
+  AddTest(tests,
+          "TextRenderer editor view indent-guides cache invalidates on caret move",
+          TestEditorViewRendererIndentGuidesCacheInvalidatesOnCaretMove);
+  AddTest(tests,
+          "TextRenderer editor view indent-guides clear cached runs when toggle is off",
+          TestEditorViewRendererIndentGuidesClearOnToggleOff);
   AddTest(tests, "TextRenderer caches repeated width lookups", TestMeasureWidthCachesRepeatedStrings);
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",

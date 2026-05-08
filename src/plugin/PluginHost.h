@@ -260,6 +260,43 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  // Plugin-contributed bracket pair set for a single language. The host merges
+  // these on top of built-in defaults during `WorkspaceLanguageContract::Refresh`.
+  struct ContributedBracketSet {
+    std::string language_id;
+    std::vector<std::pair<std::string, std::string>> bracket_pairs;
+    std::vector<std::pair<std::string, std::string>> auto_close_pairs;
+    std::vector<std::pair<std::string, std::string>> surround_pairs;
+    std::string plugin_id;
+  };
+
+  // Plugin-contributed comment markers for a single language.
+  struct ContributedCommentMarkers {
+    std::string language_id;
+    std::string line_comment;
+    std::string block_comment_open;
+    std::string block_comment_close;
+    std::string plugin_id;
+  };
+
+  // Plugin-contributed indent hints for a single language.
+  struct ContributedIndentRules {
+    std::string language_id;
+    std::vector<std::string> indent_after_open_patterns;
+    std::vector<std::string> dedent_on_close_chars;
+    std::string plugin_id;
+  };
+
+  // Plugin-contributed snippet entry. `id` is host-namespaced (`"<plugin>.<id>"`).
+  struct ContributedSnippet {
+    std::string id;
+    std::string language_id;
+    std::string prefix;
+    std::string label;
+    std::string body;
+    std::string plugin_id;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -372,6 +409,10 @@ class PluginHost {
   const std::vector<ContributedScmProvider>& ContributedScmProviders() const;
   const std::vector<ContributedAnnotationProvider>& ContributedAnnotationProviders() const;
   const std::vector<ContributedAuthProvider>& ContributedAuthProviders() const;
+  const std::vector<ContributedBracketSet>& ContributedBrackets() const;
+  const std::vector<ContributedCommentMarkers>& ContributedComments() const;
+  const std::vector<ContributedIndentRules>& ContributedIndents() const;
+  const std::vector<ContributedSnippet>& ContributedSnippets() const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

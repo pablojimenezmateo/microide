@@ -1,9 +1,28 @@
 #include "workspace/WorkspaceActionAvailability.h"
 
 #include <filesystem>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace microide::workspace {
+
+namespace {
+
+bool SettingEnabled(const ActionAvailability::Operations& operations,
+                    std::string_view id,
+                    bool default_value) {
+  if (!operations.get_setting_value) {
+    return default_value;
+  }
+  const auto value = operations.get_setting_value(id);
+  if (!value.has_value()) {
+    return default_value;
+  }
+  return !(*value == "false" || *value == "0" || *value == "off");
+}
+
+}  // namespace
 
 ActionAvailability::ActionAvailability(const WorkspaceContext& context, Operations operations)
     : context_(context), operations_(std::move(operations)) {}
@@ -189,6 +208,49 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              !context_.current_project_state.open_tabs.empty();
     case ActionId::TestsRun:
       return !context_.current_project_state.sidebar.tests.entries.empty();
+    case ActionId::ToggleLineComment:
+    case ActionId::ToggleBlockComment:
+      return active_editable_viewport != nullptr &&
+             SettingEnabled(operations_, "editor.shaping.toggle_comment.enabled", true);
+    case ActionId::MoveLineUp:
+    case ActionId::MoveLineDown:
+    case ActionId::DuplicateLine:
+    case ActionId::DeleteLine:
+    case ActionId::IndentLines:
+    case ActionId::OutdentLines:
+      return active_editable_viewport != nullptr &&
+             SettingEnabled(operations_, "editor.shaping.line_ops.enabled", true);
+    case ActionId::SortLinesAscending:
+    case ActionId::SortLinesDescending:
+      return active_editable_viewport != nullptr &&
+             SettingEnabled(operations_, "editor.shaping.sort_lines.enabled", true);
+    case ActionId::AddCursorAtNextMatch:
+    case ActionId::AddCursorAtAllMatches:
+      return active_editable_viewport != nullptr &&
+             SettingEnabled(operations_, "editor.multicursor.add_at_match.enabled", true);
+    case ActionId::JumpToMatchingBracket:
+      return active_viewport != nullptr;
+    // Editor-essentials capability toggles: always available; flipping them
+    // requires no surrounding context.
+    case ActionId::ToggleEditorFolding:
+    case ActionId::ToggleEditorStickyScroll:
+    case ActionId::ToggleEditorIndentGuides:
+    case ActionId::ToggleEditorRenderWhitespace:
+    case ActionId::ToggleEditorOutline:
+    case ActionId::ToggleEditorBracketMatchHighlight:
+    case ActionId::ToggleEditorAutoClosePairs:
+    case ActionId::ToggleEditorSurround:
+    case ActionId::ToggleEditorSmartIndent:
+    case ActionId::ToggleEditorToggleComment:
+    case ActionId::ToggleEditorLineOps:
+    case ActionId::ToggleEditorSortLines:
+    case ActionId::ToggleEditorAddCursorAtMatch:
+    case ActionId::ToggleEditorOccurrencesHighlight:
+    case ActionId::ToggleEditorSnippets:
+    case ActionId::ToggleEditorSaveTrim:
+    case ActionId::ToggleEditorSaveEnsureNewline:
+    case ActionId::ToggleEditorAutoDetectIndent:
+      return true;
   }
 
   return true;

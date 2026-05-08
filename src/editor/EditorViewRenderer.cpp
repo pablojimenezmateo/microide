@@ -252,7 +252,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 std::string_view search_query,
                                 const std::optional<SelectionRange>& active_search_match,
                                 const std::optional<EditorBlameOverlay>& blame_overlay,
-                                std::span<const PublishedDiagnostic> diagnostics) const {
+                                std::span<const PublishedDiagnostic> diagnostics,
+                                bool bracket_match_highlight_enabled,
+                                bool indent_guides_enabled,
+                                bool render_whitespace_enabled) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -266,6 +269,36 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     DrawPlaceholderView(renderer, text_renderer, theme, rect);
     viewport.SetViewportSize(1, 1);
     return;
+  }
+
+  std::optional<BracketMatchPair> bracket_match_pair;
+  if (bracket_match_highlight_enabled) {
+    const std::size_t caret_line = viewport.cursor_line();
+    const std::size_t caret_column = viewport.cursor_column();
+    const std::size_t layout_revision = viewport.layout_revision();
+    if (bracket_match_cache_.valid && bracket_match_cache_.viewport == &viewport &&
+        bracket_match_cache_.layout_revision == layout_revision &&
+        bracket_match_cache_.caret_line == caret_line &&
+        bracket_match_cache_.caret_column == caret_column) {
+      bracket_match_pair = bracket_match_cache_.pair;
+      ++bracket_match_cache_.hits;
+    } else {
+      bracket_match_pair = FindBracketMatch(viewport, caret_line, caret_column);
+      bracket_match_cache_.viewport = &viewport;
+      bracket_match_cache_.layout_revision = layout_revision;
+      bracket_match_cache_.caret_line = caret_line;
+      bracket_match_cache_.caret_column = caret_column;
+      bracket_match_cache_.pair = bracket_match_pair;
+      bracket_match_cache_.valid = true;
+      ++bracket_match_cache_.misses;
+    }
+  } else if (bracket_match_cache_.valid) {
+    bracket_match_cache_.viewport = nullptr;
+    bracket_match_cache_.layout_revision = 0;
+    bracket_match_cache_.caret_line = 0;
+    bracket_match_cache_.caret_column = 0;
+    bracket_match_cache_.pair.reset();
+    bracket_match_cache_.valid = false;
   }
 
   const EditorViewMetrics metrics = ComputeMetrics(text_renderer, viewport, rect);
@@ -291,6 +324,62 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   std::size_t blame_index = 0;
   std::size_t secondary_caret_index = 0;
   std::string lowered_line_scratch;
+
+  // Build the visible-row→buffer-line map once so the indent-guides compute
+  // and the per-row paint loop can both consume it. The visible-rows count is
+  // also part of the indent-guides cache key.
+  std::vector<std::size_t> visible_rows_for_guides;
+  if (indent_guides_enabled) {
+    visible_rows_for_guides.reserve(metrics.visible_rows);
+    for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
+      const std::size_t visual_row_index = scroll_line + row;
+      if (visual_row_index >= viewport.visual_line_count()) break;
+      const auto row_meta = soft_wrap
+                                ? viewport.WrappedVisualRowLayout(visual_row_index)
+                                : TextViewport::WrappedVisualRow{
+                                      .line_index = visual_row_index,
+                                      .visual_start = viewport.horizontal_scroll(),
+                                      .visual_end = viewport.horizontal_scroll() +
+                                                    viewport.visible_columns(),
+                                  };
+      visible_rows_for_guides.push_back(row_meta.line_index);
+    }
+  }
+
+  const std::vector<IndentGuideRun>* indent_guides_to_paint = nullptr;
+  if (indent_guides_enabled) {
+    const std::size_t indent_width =
+        viewport.indent_width() == 0 ? 1 : viewport.indent_width();
+    if (indent_guides_cache_.valid && indent_guides_cache_.viewport == &viewport &&
+        indent_guides_cache_.layout_revision == viewport.layout_revision() &&
+        indent_guides_cache_.scroll_line == scroll_line &&
+        indent_guides_cache_.visible_rows_count == visible_rows_for_guides.size() &&
+        indent_guides_cache_.indent_width == indent_width &&
+        indent_guides_cache_.caret_line == cursor_line) {
+      ++indent_guides_cache_.hits;
+    } else {
+      const std::size_t caret_indent =
+          cursor_line < lines.size()
+              ? LeadingVisualIndent(lines[cursor_line], viewport.tab_size())
+              : 0;
+      ComputeIndentGuides(lines, visible_rows_for_guides, viewport.tab_size(),
+                          indent_width, cursor_line, caret_indent,
+                          &indent_guides_cache_.runs);
+      indent_guides_cache_.viewport = &viewport;
+      indent_guides_cache_.layout_revision = viewport.layout_revision();
+      indent_guides_cache_.scroll_line = scroll_line;
+      indent_guides_cache_.visible_rows_count = visible_rows_for_guides.size();
+      indent_guides_cache_.indent_width = indent_width;
+      indent_guides_cache_.caret_line = cursor_line;
+      indent_guides_cache_.valid = true;
+      ++indent_guides_cache_.misses;
+    }
+    indent_guides_to_paint = &indent_guides_cache_.runs;
+  } else if (indent_guides_cache_.valid) {
+    indent_guides_cache_.viewport = nullptr;
+    indent_guides_cache_.runs.clear();
+    indent_guides_cache_.valid = false;
+  }
 
   util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
@@ -412,6 +501,101 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                 },
             .color = theme.selection_fill,
         });
+      }
+    }
+
+    if (bracket_match_pair.has_value()) {
+      const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
+        if (bracket_line != line_index) return;
+        if (bracket_column >= lines[line_index].size()) return;
+        const std::size_t cell_visual = TextLayout::VisualColumnForTextColumn(
+            lines[line_index], bracket_column, viewport.tab_size());
+        const std::size_t row_start_visual = row_meta.visual_start;
+        const std::size_t row_end_visual = row_meta.visual_end;
+        if (cell_visual < row_start_visual || cell_visual >= row_end_visual) return;
+        row_desc.fills.push_back(DecoratedTextFill{
+            .rect =
+                SDL_FRect{
+                    metrics.text_x +
+                        static_cast<float>(cell_visual - row_start_visual) *
+                            text_renderer.CharWidth(),
+                    y - 1.0f,
+                    text_renderer.CharWidth(),
+                    metrics.line_height,
+                },
+            .color = theme.bracket_match_background,
+        });
+      };
+      append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
+      append_bracket_cell(bracket_match_pair->close_line, bracket_match_pair->close_column);
+    }
+
+    if (indent_guides_to_paint != nullptr) {
+      const std::size_t row_start_visual = row_meta.visual_start;
+      const std::size_t row_end_visual = row_meta.visual_end;
+      for (const auto& guide : *indent_guides_to_paint) {
+        if (guide.start_row != row) continue;
+        if (guide.column < row_start_visual || guide.column >= row_end_visual) continue;
+        const SDL_Color color = guide.active ? theme.text_muted : theme.border;
+        row_desc.fills.push_back(DecoratedTextFill{
+            .rect =
+                SDL_FRect{
+                    metrics.text_x +
+                        static_cast<float>(guide.column - row_start_visual) *
+                            text_renderer.CharWidth(),
+                    y - 1.0f,
+                    1.0f,
+                    metrics.line_height,
+                },
+            .color = color,
+        });
+      }
+    }
+
+    if (render_whitespace_enabled) {
+      const std::string& line_text = lines[line_index];
+      const std::size_t row_start_visual = row_meta.visual_start;
+      const std::size_t row_end_visual = row_meta.visual_end;
+      const std::size_t tab_size = viewport.tab_size();
+      std::size_t visual_col = 0;
+      for (char c : line_text) {
+        std::size_t cell_width = 1;
+        if (c == '\t') {
+          const std::size_t step = tab_size == 0 ? 1 : tab_size;
+          cell_width = step - (visual_col % step);
+        }
+        const std::size_t cell_start = visual_col;
+        visual_col += cell_width;
+        if (cell_start >= row_end_visual) break;
+        if (cell_start < row_start_visual) continue;
+        if (visual_col > row_end_visual) continue;
+        const float cell_x =
+            metrics.text_x +
+            static_cast<float>(cell_start - row_start_visual) * text_renderer.CharWidth();
+        if (c == ' ') {
+          row_desc.fills.push_back(DecoratedTextFill{
+              .rect =
+                  SDL_FRect{
+                      cell_x + text_renderer.CharWidth() * 0.5f - 1.0f,
+                      y + metrics.line_height * 0.5f - 1.0f,
+                      2.0f,
+                      2.0f,
+                  },
+              .color = theme.text_disabled,
+          });
+        } else if (c == '\t') {
+          const float cell_w = static_cast<float>(cell_width) * text_renderer.CharWidth();
+          row_desc.fills.push_back(DecoratedTextFill{
+              .rect =
+                  SDL_FRect{
+                      cell_x + 2.0f,
+                      y + metrics.line_height * 0.5f,
+                      cell_w - 4.0f,
+                      1.0f,
+                  },
+              .color = theme.text_disabled,
+          });
+        }
       }
     }
 

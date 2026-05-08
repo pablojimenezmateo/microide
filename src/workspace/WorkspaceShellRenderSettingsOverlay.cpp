@@ -77,7 +77,27 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   };
 
   if (vm.mode == SettingsOverlayMode::Settings) {
+    std::string current_group;
+    const auto draw_group_header = [&](std::string_view text) {
+      if (row_index++ < vm.scroll_row) {
+        return;
+      }
+      const float y = list_top + static_cast<float>(row_index - vm.scroll_row - 1) * row_height;
+      if (y + row_height > list_bottom) {
+        return;
+      }
+      const SDL_FRect header_rect = MakeRect(vm.rect.x + 10.0f, y, vm.rect.w - 20.0f, row_height);
+      DrawFilledRect(renderer, header_rect, theme_.chrome_background);
+      text_renderer_.DrawStringOn(renderer, header_rect.x + 8.0f, header_rect.y + 5.0f,
+                                  theme_.accent, theme_.chrome_background, text);
+    };
     for (const SettingsOverlayRow& row : vm.settings_rows) {
+      if (row.group != current_group) {
+        current_group = row.group;
+        if (!current_group.empty()) {
+          draw_group_header(current_group);
+        }
+      }
       draw_row(row.label, row.value, row.detail, false);
     }
   } else {

@@ -102,6 +102,22 @@ struct McpToolRegistration {
   bool has_runtime = false;
 };
 
+struct BracketSetRegistration {
+  PluginHost::ContributedBracketSet contributed;
+};
+
+struct CommentMarkersRegistration {
+  PluginHost::ContributedCommentMarkers contributed;
+};
+
+struct IndentRulesRegistration {
+  PluginHost::ContributedIndentRules contributed;
+};
+
+struct SnippetRegistration {
+  PluginHost::ContributedSnippet contributed;
+};
+
 #if MICROIDE_HAS_LUA_PLUGINS
 bool ParseCompletionRegistration(lua_State* state,
                                  const std::string& plugin_id,
@@ -196,6 +212,26 @@ bool ParseExternalAgentRegistration(lua_State* state,
 bool ParseMcpToolRegistration(lua_State* state,
                               const std::string& plugin_id,
                               McpToolRegistration* out,
+                              std::string* error_message);
+
+bool ParseBracketSetRegistration(lua_State* state,
+                                 const std::string& plugin_id,
+                                 BracketSetRegistration* out,
+                                 std::string* error_message);
+
+bool ParseCommentMarkersRegistration(lua_State* state,
+                                     const std::string& plugin_id,
+                                     CommentMarkersRegistration* out,
+                                     std::string* error_message);
+
+bool ParseIndentRulesRegistration(lua_State* state,
+                                  const std::string& plugin_id,
+                                  IndentRulesRegistration* out,
+                                  std::string* error_message);
+
+bool ParseSnippetRegistration(lua_State* state,
+                              const std::string& plugin_id,
+                              SnippetRegistration* out,
                               std::string* error_message);
 #endif
 

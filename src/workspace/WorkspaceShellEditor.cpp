@@ -2,15 +2,72 @@
 
 #include <algorithm>
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/EditorTabService.h"
 
 namespace microide::workspace {
 
+namespace {
+
+editor::LanguageContractView BuildEditorLanguageContractView(
+    const WorkspaceLanguageContract& contracts,
+    std::string_view language_id,
+    bool auto_close_enabled,
+    bool surround_enabled,
+    bool smart_indent_enabled) {
+  editor::LanguageContractView view;
+  const auto resolved = contracts.ResolveView(language_id);
+  if (const LanguageContract* contract = resolved.contract; contract != nullptr) {
+    view.auto_close_pairs.reserve(contract->auto_close_pairs.size());
+    for (const auto& pair : contract->auto_close_pairs) {
+      view.auto_close_pairs.push_back(editor::LanguagePair{pair.open, pair.close});
+    }
+    view.surround_pairs.reserve(contract->surround_pairs.size());
+    for (const auto& pair : contract->surround_pairs) {
+      view.surround_pairs.push_back(editor::LanguagePair{pair.open, pair.close});
+    }
+    view.indent_after_open_patterns = contract->indent_after_open_patterns;
+    view.dedent_on_close_chars = contract->dedent_on_close_chars;
+    view.line_comment = contract->line_comment;
+    view.block_comment_open = contract->block_comment.open;
+    view.block_comment_close = contract->block_comment.close;
+    view.inhibit_pairs_in_strings = contract->inhibit_pairs_in_strings;
+    view.inhibit_pairs_in_comments = contract->inhibit_pairs_in_comments;
+  }
+  view.auto_close_enabled = auto_close_enabled;
+  view.surround_enabled = surround_enabled;
+  view.smart_indent_enabled = smart_indent_enabled;
+  return view;
+}
+
+}  // namespace
+
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
+  const auto setting_enabled = [this](std::string_view id, bool default_value) {
+    const auto value = GetSettingValue(id);
+    if (!value.has_value()) {
+      return default_value;
+    }
+    return *value != "false" && *value != "0" && *value != "off";
+  };
+
   viewport.SetTabSize(context_.current_project_state.editor_preferences.tab_size);
   viewport.SetIndentWidth(context_.current_project_state.editor_preferences.indent_width);
   viewport.SetSoftTabs(context_.current_project_state.editor_preferences.soft_tabs);
   viewport.SetSoftWrap(context_.current_project_state.editor_preferences.soft_wrap);
+  viewport.SetSaveTrimTrailingWhitespace(
+      setting_enabled("editor.save.trim_trailing_whitespace", true));
+  viewport.SetSaveEnsureFinalNewline(
+      setting_enabled("editor.save.ensure_final_newline", true));
+
+  const std::string language_id =
+      editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
+  viewport.SetLanguageContractView(BuildEditorLanguageContractView(
+      language_contract_,
+      language_id,
+      setting_enabled("editor.brackets.auto_close.enabled", true),
+      setting_enabled("editor.brackets.surround.enabled", true),
+      setting_enabled("editor.indent.smart.enabled", true)));
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {

@@ -50,7 +50,11 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedAnnotationProvider>* annotation_providers,
     std::vector<runtime_types::AnnotationProviderRuntime>* annotation_provider_runtimes,
     std::vector<PluginHost::ContributedAuthProvider>* auth_providers,
-    std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes);
+    std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes,
+    std::vector<PluginHost::ContributedBracketSet>* bracket_sets,
+    std::vector<PluginHost::ContributedCommentMarkers>* comment_markers,
+    std::vector<PluginHost::ContributedIndentRules>* indent_rules,
+    std::vector<PluginHost::ContributedSnippet>* snippets);
 #endif
 
 }  // namespace microide::plugin::state_teardown_interop

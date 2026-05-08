@@ -146,6 +146,10 @@ void WorkspaceShell::RebuildPhase3Registries() {
   std::unordered_set<std::string> active_language_servers;
 
   const auto& host = plugin_runtime_.Host();
+  language_contract_.Refresh(host, [this](std::string_view id) {
+    return GetSettingValue(id);
+  });
+
   for (const auto& formatter : host.ContributedFormatters()) {
     formatter_registry_.Register(FormatterSpec{
         .id = formatter.id,
@@ -196,6 +200,11 @@ void WorkspaceShell::RebuildPhase3Registries() {
         .install_dir = tool.install_dir,
     });
   }
+
+  // Plugin-contributed language metadata can change auto-close/surround/indent
+  // behavior. Re-apply editor preferences so every open viewport receives the
+  // refreshed contract and current toggle settings.
+  ApplyEditorPreferencesToAllTabs();
 }
 
 void WorkspaceShell::RebuildPhase4Registries() {

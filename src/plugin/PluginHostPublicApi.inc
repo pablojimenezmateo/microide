@@ -640,6 +640,22 @@ const std::vector<PluginHost::ContributedAuthProvider>& PluginHost::ContributedA
   return impl_->auth_providers;
 }
 
+const std::vector<PluginHost::ContributedBracketSet>& PluginHost::ContributedBrackets() const {
+  return impl_->bracket_sets;
+}
+
+const std::vector<PluginHost::ContributedCommentMarkers>& PluginHost::ContributedComments() const {
+  return impl_->comment_markers;
+}
+
+const std::vector<PluginHost::ContributedIndentRules>& PluginHost::ContributedIndents() const {
+  return impl_->indent_rules;
+}
+
+const std::vector<PluginHost::ContributedSnippet>& PluginHost::ContributedSnippets() const {
+  return impl_->snippets;
+}
+
 const std::vector<std::string>& PluginHost::Messages() const {
   return impl_->messages;
 }

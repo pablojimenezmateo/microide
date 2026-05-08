@@ -1134,6 +1134,91 @@ void TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart() {
          "restored settings list should mirror canonical tab size after command-driven updates");
 }
 
+void TestWorkspaceShellAutoCloseToggleUpdatesViewportContract() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
+         "auto-close should start enabled from the default setting");
+  Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
+         "toggle-editor-auto-close should execute from the command prompt");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
+         "toggling auto-close off should update the active viewport contract immediately");
+  const auto stored_disabled = WorkspaceShellTestAccess::ProjectStoredSettingValue(
+      shell, "editor.brackets.auto_close.enabled");
+  Expect(stored_disabled.has_value() && *stored_disabled == "false",
+         "toggle action should persist editor.brackets.auto_close.enabled=false");
+
+  Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
+         "toggling auto-close again should re-enable it");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
+         "second toggle should re-enable auto-close in the active viewport contract");
+}
+
+void TestWorkspaceShellTabKeyIndentsMultiLineSelection() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha\nbeta\ngamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(2, 5, /*select=*/true);
+  Expect(viewport.has_selection() && viewport.selection_range().has_value() &&
+             viewport.selection_range()->start.line != viewport.selection_range()->end.line,
+         "fixture should have a multi-line selection across three lines");
+
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should be handled when a multi-line selection is active");
+  const auto& after_indent = viewport.lines();
+  Expect(after_indent.size() >= 3, "indent should preserve line count");
+  Expect(after_indent[0].rfind("\t", 0) == 0 || after_indent[0].rfind("    ", 0) == 0,
+         "first selected line should gain one indent unit on Tab");
+  Expect(after_indent[1].rfind("\t", 0) == 0 || after_indent[1].rfind("    ", 0) == 0,
+         "second selected line should gain one indent unit on Tab");
+  Expect(after_indent[2].rfind("\t", 0) == 0 || after_indent[2].rfind("    ", 0) == 0,
+         "third selected line should gain one indent unit on Tab");
+
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
+         "Shift+Tab should be handled when a multi-line selection is active");
+  const auto& after_outdent = viewport.lines();
+  Expect(after_outdent[0] == "alpha" && after_outdent[1] == "beta" &&
+             after_outdent[2] == "gamma",
+         "Shift+Tab should outdent the previously indented selection back to original");
+}
+
+void TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab on no-selection single-line should be handled by InsertTab");
+  const std::string& first = viewport.lines().front();
+  Expect(first.rfind("\t", 0) == 0 || first.rfind("    ", 0) == 0 ||
+             first.rfind("  ", 0) == 0,
+         "InsertTab should prepend an indent unit at the caret");
+}
+
 void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2119,6 +2204,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart);
   AddTest(tests, "WorkspaceShell/CommandTabSizeStaysVisibleAfterRestart",
           TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart);
+  AddTest(tests, "WorkspaceShell/AutoCloseToggleUpdatesViewportContract",
+          TestWorkspaceShellAutoCloseToggleUpdatesViewportContract);
+  AddTest(tests, "WorkspaceShell/TabKeyIndentsMultiLineSelection",
+          TestWorkspaceShellTabKeyIndentsMultiLineSelection);
+  AddTest(tests, "WorkspaceShell/TabKeyOnSingleLineInsertsTabCharacter",
+          TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
   AddTest(tests, "WorkspaceShell/SettingsOverlayHintUsesNoteLabel",

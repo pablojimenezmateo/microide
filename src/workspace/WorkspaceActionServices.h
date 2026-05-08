@@ -135,6 +135,8 @@ class WorkspaceActionContext {
     std::function<void(std::string_view)> apply_colorscheme;
     std::function<void()> apply_editor_preferences_to_all_tabs;
     std::function<void()> save_config_state;
+    std::function<std::optional<std::string>(std::string_view)> get_setting_value;
+    std::function<bool(std::string_view, std::string)> set_setting_value;
     std::function<void(float)> apply_ui_scale;
     std::function<TerminalTabState*()> active_terminal_tab;
     std::function<void()> reset_command_prompt_session;
@@ -273,6 +275,15 @@ class WorkspaceActionContext {
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
   void RequestQuit();
+
+  // Editor essentials: accessors and shaping-action driver. These keep the
+  // executor free of direct operations_ access while still allowing free
+  // editor functions to operate on the viewport.
+  editor::TextViewport* ActiveEditableViewport();
+  editor::TextViewport* ActiveNavigableViewport();
+  void NotifyEditorViewportChanged(bool last_change);
+  void NotifyEditorCaretMoved();
+  void ToggleEditorEssentialsCapability(ActionId id);
 
  private:
   ProjectCatalogState& project_catalog_;

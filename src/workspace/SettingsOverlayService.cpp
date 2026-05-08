@@ -68,6 +68,7 @@ void SettingsOverlayService::RebuildSettingsRows(
     row.value = stored != nullptr ? *stored : SerializeSettingValue(setting.default_value);
     row.detail = setting.scope == SettingScope::User ? "User / " : "Project / ";
     row.detail += setting.plugin_id.empty() ? "built-in" : "plugin:" + setting.plugin_id;
+    row.group = setting.group;
     row.type = setting.type;
     row.scope = setting.scope;
     row.resettable = stored != nullptr;

@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "editor/LanguageContractView.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
 #include "util/StringUtil.h"
@@ -64,6 +65,21 @@ class TextViewport {
 
   bool OpenFile(const std::filesystem::path& path);
   bool Save();
+
+  // Save-time normalization knobs. When set, `Save()` applies these transforms
+  // to the in-memory line buffer (recorded as undo) before the file is
+  // serialized. Defaults are off; callers should configure them from
+  // `editor.save.*` settings before invoking Save().
+  void SetSaveTrimTrailingWhitespace(bool enabled) { save_trim_trailing_whitespace_ = enabled; }
+  void SetSaveEnsureFinalNewline(bool enabled) { save_ensure_final_newline_ = enabled; }
+  bool save_trim_trailing_whitespace() const { return save_trim_trailing_whitespace_; }
+  bool save_ensure_final_newline() const { return save_ensure_final_newline_; }
+
+  // Per-tab language contract for auto-close, surround, smart indent, etc.
+  // Default-constructed view disables every per-language behavior; pushing in
+  // a populated view is how the workspace turns these features on.
+  void SetLanguageContractView(LanguageContractView view) { lc_view_ = std::move(view); }
+  const LanguageContractView& language_contract_view() const { return lc_view_; }
   void LoadContent(std::string_view content,
                    const std::filesystem::path& path = {},
                    std::optional<LineEnding> line_ending = std::nullopt);
@@ -267,6 +283,14 @@ class TextViewport {
                      const std::vector<std::string>& replacement,
                      bool record_undo);
   std::string AutoIndentForNewline(std::size_t line, std::size_t column) const;
+  std::string IndentUnit() const;
+  bool TryAutoCloseInsert(char ch);
+  bool TrySurroundInsert(char ch);
+  bool TrySkipOverClose(char ch);
+  bool MaybeDedentOnClose(char ch);
+  bool TryInsertNewlineSplitBraces();
+  bool InInsertionSuppressedScope(std::size_t line, std::size_t column) const;
+  bool TryMultiCaretPairInsert(char ch);
   void InvalidateDerivedCaches();
   void InvalidateDerivedCaches(std::size_t start_line);
   void InvalidateVisualColumnCache();
@@ -307,6 +331,9 @@ class TextViewport {
   std::size_t indent_width_ = 4;
   bool soft_tabs_ = false;
   bool soft_wrap_ = false;
+  bool save_trim_trailing_whitespace_ = false;
+  bool save_ensure_final_newline_ = false;
+  LanguageContractView lc_view_;
   std::vector<SecondaryCaret> secondary_carets_;
   mutable std::vector<WrappedRowLayout> wrapped_row_layouts_;
   mutable std::vector<std::size_t> wrapped_line_row_offsets_;

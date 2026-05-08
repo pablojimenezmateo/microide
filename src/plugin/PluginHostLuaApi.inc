@@ -324,6 +324,46 @@
         });
   }
 
+  static int LuaBracketsAdd(lua_State* state) {
+    return RegisterTableContribution(
+        state, "bracket set registration requires an active plugin state",
+        "failed to parse bracket set registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterBracketSet(
+              state, plugin->id, &host->bracket_sets, error_message);
+        });
+  }
+
+  static int LuaCommentsAdd(lua_State* state) {
+    return RegisterTableContribution(
+        state, "comment markers registration requires an active plugin state",
+        "failed to parse comment markers registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterCommentMarkers(
+              state, plugin->id, &host->comment_markers, error_message);
+        });
+  }
+
+  static int LuaIndentsAdd(lua_State* state) {
+    return RegisterTableContribution(
+        state, "indent rules registration requires an active plugin state",
+        "failed to parse indent rules registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterIndentRules(
+              state, plugin->id, &host->indent_rules, error_message);
+        });
+  }
+
+  static int LuaSnippetsAdd(lua_State* state) {
+    return RegisterTableContribution(
+        state, "snippet registration requires an active plugin state",
+        "failed to parse snippet registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return lua_provider_registration_interop::RegisterSnippet(
+              state, plugin->id, &host->snippets, error_message);
+        });
+  }
+
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaWorkspaceProjectRoot(
@@ -441,6 +481,10 @@
             .scm_provider_add = &LuaScmProviderAdd,
             .annotation_provider_add = &LuaAnnotationProviderAdd,
             .auth_provider_add = &LuaAuthProviderAdd,
+            .brackets_add = &LuaBracketsAdd,
+            .comments_add = &LuaCommentsAdd,
+            .indents_add = &LuaIndentsAdd,
+            .snippets_add = &LuaSnippetsAdd,
         });
   }
 
@@ -513,7 +557,8 @@
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
         &language_servers, &tasks, &tools, &debuggers, &test_providers, &test_provider_runtimes,
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
-        &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes);
+        &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,
+        &bracket_sets, &comment_markers, &indent_rules, &snippets);
   }
 
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {

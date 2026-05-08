@@ -33,6 +33,7 @@ struct Theme {
   SDL_Color selection_fill;
   SDL_Color search_match;
   SDL_Color search_match_active;
+  SDL_Color bracket_match_background;
   SDL_Color cursor;
   SDL_Color syntax_keyword;
   SDL_Color syntax_type;

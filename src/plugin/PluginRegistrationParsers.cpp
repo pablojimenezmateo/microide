@@ -528,6 +528,192 @@ bool ParseSaveParticipantRegistration(lua_State* state,
   return true;
 }
 
+namespace {
+
+bool ReadPairArrayField(lua_State* state,
+                        int table_index,
+                        const char* field,
+                        std::vector<std::pair<std::string, std::string>>* out) {
+  lua_getfield(state, table_index, field);
+  if (lua_isnil(state, -1)) {
+    lua_pop(state, 1);
+    return true;  // optional
+  }
+  if (!lua_istable(state, -1)) {
+    lua_pop(state, 1);
+    return false;
+  }
+  for (lua_Integer i = 1;; ++i) {
+    lua_geti(state, -1, i);
+    if (lua_isnil(state, -1)) {
+      lua_pop(state, 1);
+      break;
+    }
+    if (!lua_istable(state, -1)) {
+      lua_pop(state, 2);
+      return false;
+    }
+    lua_geti(state, -1, 1);
+    lua_geti(state, -2, 2);
+    if (!lua_isstring(state, -2) || !lua_isstring(state, -1)) {
+      lua_pop(state, 4);
+      return false;
+    }
+    out->emplace_back(lua_tostring(state, -2), lua_tostring(state, -1));
+    lua_pop(state, 3);
+  }
+  lua_pop(state, 1);
+  return true;
+}
+
+}  // namespace
+
+bool ParseBracketSetRegistration(lua_State* state,
+                                 const std::string& plugin_id,
+                                 BracketSetRegistration* out,
+                                 std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "bracket set registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto language_id_opt = ReadStringField(state, table_index, "language_id");
+  if (!language_id_opt) {
+    if (error_message != nullptr) {
+      *error_message = "bracket set requires language_id";
+    }
+    return false;
+  }
+  PluginHost::ContributedBracketSet contributed;
+  contributed.language_id = std::move(*language_id_opt);
+  contributed.plugin_id = plugin_id;
+  if (!ReadPairArrayField(state, table_index, "pairs", &contributed.bracket_pairs) ||
+      !ReadPairArrayField(state, table_index, "auto_close", &contributed.auto_close_pairs) ||
+      !ReadPairArrayField(state, table_index, "surround", &contributed.surround_pairs)) {
+    if (error_message != nullptr) {
+      *error_message = "bracket set fields must be arrays of {open, close} pairs";
+    }
+    return false;
+  }
+  out->contributed = std::move(contributed);
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseCommentMarkersRegistration(lua_State* state,
+                                     const std::string& plugin_id,
+                                     CommentMarkersRegistration* out,
+                                     std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "comment markers registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto language_id_opt = ReadStringField(state, table_index, "language_id");
+  if (!language_id_opt) {
+    if (error_message != nullptr) {
+      *error_message = "comment markers require language_id";
+    }
+    return false;
+  }
+  PluginHost::ContributedCommentMarkers contributed;
+  contributed.language_id = std::move(*language_id_opt);
+  contributed.plugin_id = plugin_id;
+  if (auto line_opt = ReadStringField(state, table_index, "line")) {
+    contributed.line_comment = std::move(*line_opt);
+  }
+  if (auto open_opt = ReadStringField(state, table_index, "block_open")) {
+    contributed.block_comment_open = std::move(*open_opt);
+  }
+  if (auto close_opt = ReadStringField(state, table_index, "block_close")) {
+    contributed.block_comment_close = std::move(*close_opt);
+  }
+  out->contributed = std::move(contributed);
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseIndentRulesRegistration(lua_State* state,
+                                  const std::string& plugin_id,
+                                  IndentRulesRegistration* out,
+                                  std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "indent rules registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto language_id_opt = ReadStringField(state, table_index, "language_id");
+  if (!language_id_opt) {
+    if (error_message != nullptr) {
+      *error_message = "indent rules require language_id";
+    }
+    return false;
+  }
+  PluginHost::ContributedIndentRules contributed;
+  contributed.language_id = std::move(*language_id_opt);
+  contributed.plugin_id = plugin_id;
+  if (auto opens = ReadStringArrayField(state, table_index, "indent_after_open")) {
+    contributed.indent_after_open_patterns = std::move(*opens);
+  }
+  if (auto closes = ReadStringArrayField(state, table_index, "dedent_on_close")) {
+    contributed.dedent_on_close_chars = std::move(*closes);
+  }
+  out->contributed = std::move(contributed);
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ParseSnippetRegistration(lua_State* state,
+                              const std::string& plugin_id,
+                              SnippetRegistration* out,
+                              std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "snippet registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto id_opt = ReadStringField(state, table_index, "id");
+  auto language_id_opt = ReadStringField(state, table_index, "language_id");
+  auto prefix_opt = ReadStringField(state, table_index, "prefix");
+  auto body_opt = ReadStringField(state, table_index, "body");
+  if (!id_opt || !language_id_opt || !prefix_opt || !body_opt) {
+    if (error_message != nullptr) {
+      *error_message = "snippet requires id, language_id, prefix, and body";
+    }
+    return false;
+  }
+  std::string label;
+  if (auto label_opt = ReadStringField(state, table_index, "label")) {
+    label = std::move(*label_opt);
+  }
+  out->contributed = PluginHost::ContributedSnippet{
+      .id = plugin_id + "." + *id_opt,
+      .language_id = std::move(*language_id_opt),
+      .prefix = std::move(*prefix_opt),
+      .label = std::move(label),
+      .body = std::move(*body_opt),
+      .plugin_id = plugin_id,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
 }  // namespace microide::plugin::registration_parsers
 
 #endif

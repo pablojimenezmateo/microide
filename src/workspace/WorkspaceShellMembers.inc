@@ -1486,6 +1486,7 @@
   LayoutModeService layout_mode_service_;
   StatusBarService status_bar_service_;
   SettingsOverlayService settings_overlay_service_;
+  WorkspaceLanguageContract language_contract_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

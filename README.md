@@ -236,6 +236,37 @@ Current commands:
 - `status-bar-toggle`
 - `unsplit`
 - `vsplit [path]`
+- `jump-to-matching-bracket`
+- `toggle-line-comment`
+- `toggle-block-comment`
+- `move-line-up`
+- `move-line-down`
+- `duplicate-line`
+- `delete-line`
+- `indent-lines`
+- `outdent-lines`
+- `sort-lines-ascending`
+- `sort-lines-descending`
+- `add-cursor-next-match`
+- `add-cursor-all-matches`
+- `toggle-editor-folding`
+- `toggle-editor-sticky-scroll`
+- `toggle-editor-indent-guides`
+- `toggle-editor-render-whitespace`
+- `toggle-editor-outline`
+- `toggle-editor-bracket-match-highlight`
+- `toggle-editor-auto-close`
+- `toggle-editor-surround`
+- `toggle-editor-smart-indent`
+- `toggle-editor-toggle-comment`
+- `toggle-editor-line-ops`
+- `toggle-editor-sort-lines`
+- `toggle-editor-add-cursor-at-match`
+- `toggle-editor-occurrences-highlight`
+- `toggle-editor-snippets`
+- `toggle-editor-save-trim`
+- `toggle-editor-save-ensure-newline`
+- `toggle-editor-auto-detect-indent`
 
 Merge example:
 ```

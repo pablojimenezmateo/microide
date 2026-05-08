@@ -70,7 +70,11 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedAnnotationProvider>* annotation_providers,
     std::vector<runtime_types::AnnotationProviderRuntime>* annotation_provider_runtimes,
     std::vector<PluginHost::ContributedAuthProvider>* auth_providers,
-    std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes) {
+    std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes,
+    std::vector<PluginHost::ContributedBracketSet>* bracket_sets,
+    std::vector<PluginHost::ContributedCommentMarkers>* comment_markers,
+    std::vector<PluginHost::ContributedIndentRules>* indent_rules,
+    std::vector<PluginHost::ContributedSnippet>* snippets) {
   for (auto it = commands->begin(); it != commands->end();) {
     if (it->second.state != state) {
       ++it;
@@ -273,6 +277,26 @@ void UnregisterContributionsForState(
     }
     it = auth_provider_runtimes->erase(it);
   }
+  bracket_sets->erase(std::remove_if(bracket_sets->begin(), bracket_sets->end(),
+                                     [&](const PluginHost::ContributedBracketSet& e) {
+                                       return e.plugin_id == plugin_id;
+                                     }),
+                      bracket_sets->end());
+  comment_markers->erase(std::remove_if(comment_markers->begin(), comment_markers->end(),
+                                        [&](const PluginHost::ContributedCommentMarkers& e) {
+                                          return e.plugin_id == plugin_id;
+                                        }),
+                         comment_markers->end());
+  indent_rules->erase(std::remove_if(indent_rules->begin(), indent_rules->end(),
+                                     [&](const PluginHost::ContributedIndentRules& e) {
+                                       return e.plugin_id == plugin_id;
+                                     }),
+                      indent_rules->end());
+  snippets->erase(std::remove_if(snippets->begin(), snippets->end(),
+                                 [&](const PluginHost::ContributedSnippet& e) {
+                                   return e.plugin_id == plugin_id;
+                                 }),
+                  snippets->end());
 }
 
 }  // namespace microide::plugin::state_teardown_interop

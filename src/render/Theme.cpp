@@ -602,6 +602,7 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   theme.search_match = WithAlpha(search_match, 0x8f);
   theme.search_match_active =
       WithAlpha(Lighten(search_match, IsLight(search_match) ? 0.04f : 0.12f), 0xc8);
+  theme.bracket_match_background = WithAlpha(Mix(selection, theme.accent, 0.35f), 0xa6);
   theme.cursor = EnsureContrast(default_foreground, theme.editor_background, 4.5f);
   theme.syntax_keyword = ResolveForeground(styles, "statement", theme.accent);
   theme.syntax_type = ResolveForeground(styles, "type", theme.text_primary);
@@ -662,6 +663,7 @@ Theme MakeDefaultTheme() {
       .selection_fill = SDL_Color{0x2b, 0x4f, 0x7a, 0xc0},
       .search_match = SDL_Color{0x65, 0x56, 0x1b, 0x96},
       .search_match_active = SDL_Color{0xc0, 0x95, 0x3d, 0xd0},
+      .bracket_match_background = SDL_Color{0x3a, 0x52, 0x73, 0xa6},
       .cursor = SDL_Color{0xff, 0xff, 0xff, 0xff},
       .syntax_keyword = SDL_Color{0xc6, 0x78, 0xdd, 0xff},
       .syntax_type = SDL_Color{0x61, 0xaf, 0xef, 0xff},

@@ -275,6 +275,70 @@ bool RegisterMcpTool(lua_State* state,
   return true;
 }
 
+bool RegisterBracketSet(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedBracketSet>* sets,
+                        std::string* error_message) {
+  if (sets == nullptr) {
+    return false;
+  }
+  registration_parsers::BracketSetRegistration registration;
+  if (!registration_parsers::ParseBracketSetRegistration(state, std::string(plugin_id),
+                                                         &registration, error_message)) {
+    return false;
+  }
+  sets->push_back(std::move(registration.contributed));
+  return true;
+}
+
+bool RegisterCommentMarkers(lua_State* state,
+                            std::string_view plugin_id,
+                            std::vector<PluginHost::ContributedCommentMarkers>* markers,
+                            std::string* error_message) {
+  if (markers == nullptr) {
+    return false;
+  }
+  registration_parsers::CommentMarkersRegistration registration;
+  if (!registration_parsers::ParseCommentMarkersRegistration(state, std::string(plugin_id),
+                                                             &registration, error_message)) {
+    return false;
+  }
+  markers->push_back(std::move(registration.contributed));
+  return true;
+}
+
+bool RegisterIndentRules(lua_State* state,
+                         std::string_view plugin_id,
+                         std::vector<PluginHost::ContributedIndentRules>* rules,
+                         std::string* error_message) {
+  if (rules == nullptr) {
+    return false;
+  }
+  registration_parsers::IndentRulesRegistration registration;
+  if (!registration_parsers::ParseIndentRulesRegistration(state, std::string(plugin_id),
+                                                          &registration, error_message)) {
+    return false;
+  }
+  rules->push_back(std::move(registration.contributed));
+  return true;
+}
+
+bool RegisterSnippet(lua_State* state,
+                     std::string_view plugin_id,
+                     std::vector<PluginHost::ContributedSnippet>* snippets,
+                     std::string* error_message) {
+  if (snippets == nullptr) {
+    return false;
+  }
+  registration_parsers::SnippetRegistration registration;
+  if (!registration_parsers::ParseSnippetRegistration(state, std::string(plugin_id),
+                                                      &registration, error_message)) {
+    return false;
+  }
+  snippets->push_back(std::move(registration.contributed));
+  return true;
+}
+
 }  // namespace microide::plugin::contribution_interop
 
 #endif

@@ -134,6 +134,22 @@ bool RegisterMcpTool(lua_State* state,
                      std::vector<PluginHost::ContributedMcpTool>* mcp_tools,
                      std::vector<runtime_types::McpToolRuntime>* mcp_tool_runtimes,
                      std::string* error_message);
+bool RegisterBracketSet(lua_State* state,
+                        std::string_view plugin_id,
+                        std::vector<PluginHost::ContributedBracketSet>* sets,
+                        std::string* error_message);
+bool RegisterCommentMarkers(lua_State* state,
+                            std::string_view plugin_id,
+                            std::vector<PluginHost::ContributedCommentMarkers>* markers,
+                            std::string* error_message);
+bool RegisterIndentRules(lua_State* state,
+                         std::string_view plugin_id,
+                         std::vector<PluginHost::ContributedIndentRules>* rules,
+                         std::string* error_message);
+bool RegisterSnippet(lua_State* state,
+                     std::string_view plugin_id,
+                     std::vector<PluginHost::ContributedSnippet>* snippets,
+                     std::string* error_message);
 #endif
 
 }  // namespace microide::plugin::lua_provider_registration_interop

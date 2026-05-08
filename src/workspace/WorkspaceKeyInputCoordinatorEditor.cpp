@@ -2,6 +2,7 @@
 
 #include <limits>
 
+#include "editor/ShapingActions.h"
 #include "util/PerformanceTrace.h"
 
 namespace microide::workspace {
@@ -367,6 +368,22 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     case SDLK_TAB: {
       if (editable_viewport == nullptr) {
         return true;
+      }
+      const bool shift_held = (modifiers & SDL_KMOD_SHIFT) != 0;
+      const auto selection = editable_viewport->selection_range();
+      const bool multi_line_selection =
+          selection.has_value() && selection->start.line != selection->end.line;
+      if (shift_held) {
+        return ApplyDefaultEditorEdit(
+            operations_, *editable_viewport,
+            "KeyInputCoordinator::HandleDefaultEditorKeyDown::OutdentSelection",
+            [&]() { editor::OutdentSelection(*editable_viewport); });
+      }
+      if (multi_line_selection) {
+        return ApplyDefaultEditorEdit(
+            operations_, *editable_viewport,
+            "KeyInputCoordinator::HandleDefaultEditorKeyDown::IndentSelection",
+            [&]() { editor::IndentSelection(*editable_viewport); });
       }
       return ApplyDefaultEditorEdit(operations_, *editable_viewport,
                                     "KeyInputCoordinator::HandleDefaultEditorKeyDown::InsertTab",

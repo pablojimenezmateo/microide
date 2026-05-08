@@ -115,11 +115,16 @@ target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 
 set(MICROIDE_CORE_SOURCES
   src/app/BackgroundTaskCounter.cpp
+  src/editor/BracketScanner.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
+  src/editor/FoldingModel.cpp
+  src/editor/IndentDetect.cpp
+  src/editor/IndentGuides.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
+  src/editor/ShapingActions.cpp
   src/editor/SingleLineEditor.cpp
   src/editor/SingleLineKeyHandler.cpp
   src/editor/SyntaxDefinitionLoader.cpp
@@ -332,6 +337,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellTerminalService.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp
+  src/workspace/WorkspaceLanguageContract.cpp
+  src/workspace/WorkspaceSaveNormalization.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
   src/workspace/SettingsOverlayService.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
@@ -469,6 +476,8 @@ add_executable(microide_tests
   tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
+  tests/EditorEssentialsTests.cpp
+  tests/FoldingModelTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
   tests/WorkspaceSettingsRegistryTests.cpp

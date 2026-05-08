@@ -4,6 +4,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionTypes.h"
@@ -34,6 +35,7 @@ class ActionAvailability {
     std::function<bool()> active_code_actions_available;
     std::function<bool()> active_definition_available;
     std::function<bool()> active_references_available;
+    std::function<std::optional<std::string>(std::string_view)> get_setting_value;
   };
 
   ActionAvailability(const WorkspaceContext& context, Operations operations);

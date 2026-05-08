@@ -110,6 +110,10 @@ struct PluginHost::Impl {
   std::vector<AnnotationProviderRuntime> annotation_provider_runtimes;
   std::vector<PluginHost::ContributedAuthProvider> auth_providers;
   std::vector<AuthProviderRuntime> auth_provider_runtimes;
+  std::vector<PluginHost::ContributedBracketSet> bracket_sets;
+  std::vector<PluginHost::ContributedCommentMarkers> comment_markers;
+  std::vector<PluginHost::ContributedIndentRules> indent_rules;
+  std::vector<PluginHost::ContributedSnippet> snippets;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
