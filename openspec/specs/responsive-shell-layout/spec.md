@@ -67,9 +67,9 @@ Every interactive shell affordance SHALL expose a pointer hit area of at least 2
 - **WHEN** `LayoutMode` is `Compact`
 - **THEN** the terminal new-tab affordance SHALL render as a compact `+` glyph at `kBottomPanelHeaderButtonSize` minus 4px, MUST keep its hit pad ≥20×20px, and SHALL never overlap the active terminal-tab strip
 
-#### Scenario: Chat sidebar rail becomes icon-only
-- **WHEN** `LayoutMode` is `Compact` and the chat sidebar is visible
-- **THEN** the rail SHALL render at `kChatSidebarRailMinWidth - 32px`, label text SHALL be omitted, every entry SHALL keep a tooltip, and the chat surface SHALL still respect a minimum content width of `kWorkspaceMinEditorAreaWidth - 80px`
+#### Scenario: Sidebar controls remain reachable in compact mode
+- **WHEN** `LayoutMode` is `Compact` and a host-owned sidebar surface is visible
+- **THEN** sidebar controls SHALL remain reachable without requiring text labels, and compact rendering SHALL preserve minimum interaction targets and tooltips
 
 ### Requirement: Layout Mode Is Persisted And Observable
 

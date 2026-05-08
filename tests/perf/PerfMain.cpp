@@ -331,17 +331,16 @@ void RegisterBuiltInScenarios() {
           },
   });
   PerfHarness::RegisterScenario(Scenario{
-      .name = "chat_pane_long_transcript",
+      .name = "terminal_scroll_long_output",
       .smoke = true,
       .run =
           [](ScenarioContext& context) {
-            (void)context.ExecuteCommand("chat");
-            context.Type(
-                "Long transcript fixture: alpha beta gamma delta epsilon zeta eta theta iota "
-                "kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega. "
-                "Long transcript fixture: alpha beta gamma delta epsilon zeta eta theta iota "
-                "kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega.");
-            context.PumpFrames(3);
+            context.OpenTerminal("yes perf-output-line");
+            context.Wait(std::chrono::milliseconds(80));
+            for (int i = 0; i < 48; ++i) {
+              context.Scroll(-1);
+            }
+            context.PumpFrames(2);
           },
   });
   PerfHarness::RegisterScenario(Scenario{

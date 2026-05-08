@@ -11,21 +11,16 @@
 namespace microide::tests {
 namespace {
 
-using microide::workspace::DecodeConversationRegistryRecord;
 using microide::workspace::DecodeProjectConfigRecord;
 using microide::workspace::DecodeProjectSessionRecord;
 using microide::workspace::DecodeUserConfigRecord;
 using microide::workspace::DecodeWorkspaceSessionRecord;
-using microide::workspace::EncodeConversationRegistryRecord;
 using microide::workspace::EncodeProjectConfigRecord;
 using microide::workspace::EncodeProjectSessionRecord;
 using microide::workspace::EncodeUserConfigRecord;
 using microide::workspace::EncodeWorkspaceSessionRecord;
-using microide::workspace::PersistedChatState;
-using microide::workspace::PersistedConversationState;
 using microide::workspace::PersistedEditorTabState;
 using microide::workspace::PersistedEditorViewState;
-using microide::workspace::PersistedMessageState;
 using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedSidebarViewPolicy;
@@ -79,55 +74,6 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
          "project config sidebar policy should round-trip");
 }
 
-PersistedChatState BuildChatFixture() {
-  PersistedChatState chat;
-  chat.active_conversation_id = "conv-1";
-  chat.conversations.push_back(PersistedConversationState{
-      .schema_version = 5,
-      .id = "conv-1",
-      .title = "Chat",
-      .provider_id = "openai.chat",
-      .model_id = "gpt-4.1-mini",
-      .status = "succeeded",
-      .tool_mode = "ask",
-      .draft = "draft",
-      .system_prompt = "be concise",
-      .created_at = "2026-04-28T08:00:00Z",
-      .updated_at = "2026-04-28T08:00:01Z",
-      .last_request_duration_ms = 123,
-      .messages = {
-          PersistedMessageState{
-              .id = "msg-1",
-              .role = "assistant",
-              .content = "hello",
-              .timestamp = "2026-04-28T08:00:01Z",
-              .provider_id = "openai.chat",
-              .model = "gpt-4.1-mini",
-              .status = "succeeded",
-              .request_duration_ms = 123,
-              .error = {},
-              .tool_events = {
-                  PersistedMessageState::PersistedToolEventState{
-                      .call_id = "tool-1",
-                      .tool_id = "phase5.echo",
-                      .display_name = "Echo",
-                      .arguments_summary = "{\"ping\":1}",
-                      .status = "completed",
-                      .permission_decision = "session",
-                      .capability_scope = "phase5.echo",
-                      .started_at = "2026-04-28T08:00:00Z",
-                      .finished_at = "2026-04-28T08:00:01Z",
-                      .duration_ms = 11,
-                      .error = {},
-                      .output_summary = "{\"pong\":1}",
-                  },
-              },
-          },
-      },
-  });
-  return chat;
-}
-
 PersistedProjectSessionState BuildProjectSessionFixture() {
   PersistedEditorTabState editor_tab;
   editor_tab.kind = "editor";
@@ -171,26 +117,10 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.outgoing_base_choice.custom_ref = "release/2.0";
   session.active_tab_index = 1;
   session.tabs = {editor_tab, compare_tab};
-  session.chat = BuildChatFixture();
   return session;
 }
 
-void TestPersistedStateConversationAndSessionRecordRoundTrip() {
-  PersistedChatState chat = BuildChatFixture();
-  std::vector<std::byte> chat_record;
-  Expect(EncodeConversationRegistryRecord(chat, &chat_record),
-         "conversation registry encode should succeed");
-  PersistedChatState decoded_chat;
-  Expect(DecodeConversationRegistryRecord(chat_record, &decoded_chat),
-         "conversation registry decode should succeed");
-  Expect(decoded_chat.active_conversation_id == "conv-1" &&
-             decoded_chat.conversations.size() == 1,
-         "conversation registry identity should round-trip");
-  Expect(decoded_chat.conversations[0].messages.size() == 1 &&
-             decoded_chat.conversations[0].messages[0].tool_events.size() == 1 &&
-             decoded_chat.conversations[0].messages[0].tool_events[0].permission_decision == "session",
-         "conversation registry tool events should round-trip");
-
+void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
   PersistedProjectSessionState session = BuildProjectSessionFixture();
   std::vector<std::byte> session_record;
   Expect(EncodeProjectSessionRecord(session, &session_record),
@@ -210,9 +140,17 @@ void TestPersistedStateConversationAndSessionRecordRoundTrip() {
              decoded_session.tabs[0].views.size() == 1 &&
              decoded_session.tabs[1].compare_right_ref == "WORKTREE",
          "project session tabs should round-trip");
-  Expect(decoded_session.chat.conversations.size() == 1 &&
-             decoded_session.chat.conversations[0].messages.size() == 1,
-         "project session embedded chat should round-trip");
+  std::size_t offset = 0;
+  bool saw_chat_registry = false;
+  while (offset < session_record.size()) {
+    microide::persistence::TaggedRecordView record;
+    Expect(microide::persistence::ReadTaggedRecord(session_record, &offset, &record),
+           "project session stream should decode");
+    if (record.tag == 7) {
+      saw_chat_registry = true;
+    }
+  }
+  Expect(!saw_chat_registry, "project session writer should omit legacy chat registry");
 
   PersistedWorkspaceSessionState workspace{
       .project_roots = {"/tmp/project-a", "/tmp/project-b"},
@@ -228,6 +166,22 @@ void TestPersistedStateConversationAndSessionRecordRoundTrip() {
              decoded_workspace.project_roots[1] == "/tmp/project-b" &&
              decoded_workspace.active_project_index == 1,
          "workspace session should round-trip");
+}
+
+void TestPersistedStateProjectSessionAcceptsLegacyChatRegistryTag() {
+  PersistedProjectSessionState session = BuildProjectSessionFixture();
+  std::vector<std::byte> encoded;
+  Expect(EncodeProjectSessionRecord(session, &encoded), "project session encode should succeed");
+
+  std::vector<std::byte> legacy_chat_payload{std::byte{0x01}, std::byte{0x02}, std::byte{0x03}};
+  Expect(microide::persistence::AppendTaggedRecord(7, legacy_chat_payload, &encoded),
+         "legacy chat payload should append");
+
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(encoded, &decoded),
+         "project session decode should ignore legacy chat records");
+  Expect(decoded.tabs.size() == session.tabs.size(),
+         "legacy chat records should not alter tab state");
 }
 
 void TestPersistedStateRecordDecodersSkipUnknownTags() {
@@ -285,10 +239,8 @@ void TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto() {
   Expect(microide::persistence::AppendTaggedRecord(5, payload, &encoded),
          "project session active-tab tag should append");
 
-  std::vector<std::byte> chat_record;
-  Expect(EncodeConversationRegistryRecord(PersistedChatState{}, &chat_record),
-         "empty chat registry should encode");
-  Expect(microide::persistence::AppendTaggedRecord(7, chat_record, &encoded),
+  std::vector<std::byte> legacy_chat_payload{std::byte{0xAA}, std::byte{0xBB}};
+  Expect(microide::persistence::AppendTaggedRecord(7, legacy_chat_payload, &encoded),
          "project session chat-registry tag should append");
 
   PersistedProjectSessionState decoded;
@@ -305,8 +257,10 @@ void TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto() {
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedStateRecord/UserAndProjectConfigRoundTrip",
           TestPersistedStateUserAndProjectConfigRecordRoundTrip);
-  AddTest(tests, "PersistedStateRecord/ConversationAndSessionRoundTrip",
-          TestPersistedStateConversationAndSessionRecordRoundTrip);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripOmitsChatRegistry",
+          TestPersistedStateProjectSessionRoundTripOmitsChatRegistry);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionAcceptsLegacyChatRegistryTag",
+          TestPersistedStateProjectSessionAcceptsLegacyChatRegistryTag);
   AddTest(tests, "PersistedStateRecord/DecodersSkipUnknownTags",
           TestPersistedStateRecordDecodersSkipUnknownTags);
   AddTest(tests, "PersistedStateRecord/ProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto",

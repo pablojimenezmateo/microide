@@ -29,7 +29,7 @@ Purpose: first-stop operating guide for agents working in this repository.
 When guidance conflicts, use this order:
 
 1. `AGENTS.md`
-2. `openspec/specs/` — authoritative product contracts (vision, diff/merge, AI, performance budgets)
+2. `openspec/specs/` — authoritative product contracts (vision, diff/merge, performance budgets)
 3. `docs/active-work.md`
 4. `docs/implementation-guide.md`
 5. Focused subsystem docs in `docs/`
@@ -99,12 +99,12 @@ Several patterns were intentionally removed by the 2026-04-29 `comprehensive-tec
 - No `friend class`/`friend struct` in `src/workspace/*`.
 - Numeric token parsing uses `util/Parse.h` (`ParseInt`, `ParseInt64`, `ParseSize`, `ParseFloat`). No `try`/`catch` around `std::sto*`.
 - The shell stays a thin orchestrator: `src/workspace/WorkspaceShell.h` ≤ 400 lines, `src/workspace/WorkspaceShell.cpp` ≤ 600 lines.
-- Workspace-state persistence (project state, user config, session restore, chat conversations) routes through `PersistenceService` plus `PersistedRecordReader`/`PersistedRecordWriter`. Do not hand-roll a new text format or open these files directly elsewhere.
-- Single-line input surfaces consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler` (chat composer is the documented multiline exception).
+- Workspace-state persistence (project state, user config, session restore) routes through `PersistenceService` plus `PersistedRecordReader`/`PersistedRecordWriter`. Do not hand-roll a new text format or open these files directly elsewhere.
+- Single-line input surfaces consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`.
 - The active editor viewport is owned by the active editor tab; resolve it through `EditorTabService::ActiveViewport()`. Do not reintroduce a shell-level or project-level viewport fallback under any name.
 - Plugin host stays decomposed; `lua_State*` lives behind `plugin/LuaRuntime` only, and no `src/plugin/*.cpp` translation unit exceeds 800 lines.
 - Render TUs covered by the lint (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, `WorkspaceShellHoverTargets`) consume view models built by `RenderViewModelBuilder` and do not read `context_.current_project_state` or call `CurrentTextInputSurface(...)`.
-- Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay host-owned and service-backed. Menu overflow, status-bar actions, Settings, AI Provider, and Help/About route through action/service state and `RenderViewModelBuilder`, not plugin-owned rendering or render-TU product logic.
+- Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay host-owned and service-backed. Menu overflow, status-bar actions, Settings, and Help/About route through action/service state and `RenderViewModelBuilder`, not plugin-owned rendering or render-TU product logic.
 - No legacy persistence symbols (`WorkspacePersistenceLegacyFormat`, `EncodeSessionNodePath`, `DecodeSessionNodePath`, `ParseUserConfigText`, `ParseProjectConfigText`, `ParseProjectSessionText`, `ParseWorkspaceSessionText`) may appear in `src/`, `tests/`, or `tools/`; the legacy importer path is deleted and must not be revived.
 - No `platform::RunSubprocess(...)` calls in workspace `.cpp` units; dispatch through `ProjectBackgroundExecutor` to avoid shell-thread stalls.
 - Render translation units must not materialize new strings in hot paths (`std::string(...)`, string `+`/`+=`, `to_string`, or `std::format`/`fmt::format`); compute render text in `RenderViewModelBuilder` instead.

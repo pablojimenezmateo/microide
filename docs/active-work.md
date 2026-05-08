@@ -41,7 +41,7 @@ These are implemented and should not be treated as open migration work:
   far jumps in large files do not have to rebuild highlight state from file start
 - UTF-8 boundary logic, line-ending decode or serialize, and text splitting now route through one
   shared `util/StringUtil.*` layer across viewport, renderer, terminal, and workspace helpers
-- single-line shell text inputs now share one insertion, caret, composition, and tail-truncation path across prompts, command/chat input, overlays, and sidebar search fields, while read-only viewport-backed text surfaces still participate in shared selection and copy actions
+- single-line shell text inputs now share one insertion, caret, composition, and tail-truncation path across prompts, command input, overlays, and sidebar search fields, while read-only viewport-backed text surfaces still participate in shared selection and copy actions
 - editor undo and redo now store changed line ranges plus view state instead of full-buffer snapshots, and editor file open/save now reuses the shared text-file helper instead of inline stream assembly
 - filesystem tree with `.gitignore` handling, git markers, refresh, and trash-backed create/rename/delete flows
 - host-owned app-directory, trash or recycle-bin, open-URL, reveal-path, and bundled-asset
@@ -67,7 +67,7 @@ Update (2026-05-07): `responsive-layout-and-options-polish` shipped the responsi
 window scaling now avoids retained-text blur on HiDPI/fractional-scale displays, the menu bar keeps
 all top-level menus reachable through compact/overflow chrome, hit pads cover small resize, close,
 scrollbar, and terminal-tab controls, the bottom status bar is host-owned and clickable, and
-Settings, AI Provider, and Help/About overlays now share one settings-overlay service and
+Settings and Help/About overlays now share one settings-overlay service and
 view-model-rendered surface.
 
 ### 1. Plugin Platform Expansion
@@ -323,7 +323,7 @@ Remaining work:
 - `WorkspaceShell` render entry points now delegate the ordered frame composition path to
   `WorkspaceRootView`, which now composes dedicated active-surface, chrome, sidebar, overlay,
   panel, menu, and prompt views instead of acting as a single minimal placeholder seam
-- repo-owned dogfood plugins now cover a session-scoped ESLint diagnostics flow and configurable host-owned LLM chat or inline completion agents
+- repo-owned dogfood plugins now cover a session-scoped ESLint diagnostics flow plus formatter and LSP integrations
 
 - Phase 2 contribution and override model is now shipped:
   - `WorkspaceKeybindingRegistry*` defines named built-in keybinding specs with stable IDs,
@@ -453,47 +453,7 @@ Open work:
 - validate GitLens-like and GitHub-review-like workflows against the current provider seams before
   broadening them
 
-- Phase 5 AI platform is now shipped:
-  - `workspace/WorkspaceAiProvider.*` manages language model provider registrations (cloud, local,
-    external)
-  - `workspace/WorkspaceInlineCompletion.*` manages AI-powered inline code completions and
-    inline actions (explain, edit, fix, refactor, document)
-  - `workspace/WorkspaceConversation.*` manages chat/conversation threads with full message
-    history, persistence-ready
-  - `workspace/WorkspaceExternalAgent.*` manages external AI agents over ACP-like protocols
-    (HTTP, stdio, WebSocket) with capability declaration and task-based selection
-  - `workspace/WorkspaceMcpTool.*` manages Model Context Protocol tools with per-agent
-    permission levels (denied, prompt-required, allowed-within-context, allowed)
-  - `workspace/WorkspaceAiContext.*` provides bounded context collection with configurable
-    limits (size, file count) and smart prioritization (current file > selection > diagnostics)
-  - `PluginHost` gains three new Lua tables: `ctx.ai_providers` (add),
-    `ctx.external_agents` (add), `ctx.mcp_tools` (add); conversations and inline completions
-    are host-managed
-  - `workspace/WorkspaceAiProviderRuntime.*` now owns runtime-first provider execution, auth
-    checks, model enumeration, cancellation, and SDL wake delivery for chat and inline completion
-    requests, with sidecar bridges as optional adapters
-  - the live shell now supports a host-owned chat pane shell with conversation rail, header
-    provider or model or tool controls, multiline draft composer with per-conversation retention,
-    project-tab chat status summaries, markdown transcript rendering with safe local-link opening
-    and remote-link confirmation, ghost-text inline completion with accept or dismiss flow, and
-    built-in `chat`, `inline-complete`, and `mcp` commands
-  - first-pass external-agent execution is wired through long-lived stdio subprocesses, and MCP
-    tool invocation now flows through host-owned permission checks, per-project chat approval
-    prompts, session-scoped remembered approvals, persisted transcript tool events, and output
-    channels
-  - repo-owned `openai`, `anthropic`, and `deepseek` plugins now use direct host runtime adapters
-    (OpenAI-compatible and Anthropic Messages), while sidecar bridges remain optional
-  - dedicated end-to-end coverage now lives in `tests/Phase5Tests.cpp`
-
-Open work:
-
-- broaden the external-agent runtime beyond stdio only when a real HTTP, WebSocket, or ACP-backed
-  integration requires it
-- add richer streamed updates, tool-permission prompts, and broader `WorkspaceAiContext`
-  collection from diagnostics, SCM, and search as follow-on work, not as a reason to rework the
-  current runtime shape
-- validate real LLM workflows against the shipped inline completion and chat surfaces before
-  expanding the UX
+- Phase 5 AI and LLM runtime surfaces are retired from the product scope.
 
 ### 6. Deferred Work And Throughput Pass (2026-05-02)
 
@@ -638,7 +598,6 @@ Keep these when you need deeper design context:
 
 - `openspec/specs/product-vision/spec.md`: authoritative product thesis and non-goals
 - `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
-- `openspec/specs/ai-workflows/spec.md`: durable AI surface contract
 - `openspec/specs/performance-budgets/spec.md`: durable performance budget policy
 - `AGENTS.md`: repo-level engineering policy, iteration loop, and agent expectations
 - `docs/implementation-guide.md`: durable product direction
@@ -650,6 +609,5 @@ Keep these when you need deeper design context:
 - `docs/runtime-profiling.md`: runtime and redraw profiling workflow
 
 Archived (shipped or superseded):
-- `docs/archive/chat-pane-plan.md`: chat pane design — shipped in Phase 5
 - `docs/archive/plugin-platform-expansion-plan.md`: plugin platform planning — shipped across Phases 1–5
 - `docs/archive/production-tech-debt-review.md`: 2026-04-20 structural debt review — major items resolved by the shell-breakdown pass

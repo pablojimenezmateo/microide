@@ -25,7 +25,7 @@ Performance scenarios SHALL be authored as C++ files under `tests/perf/scenarios
 
 #### Scenario: Initial scenario set covers required workloads
 - **WHEN** the harness suite runs
-- **THEN** it SHALL include scenarios named `cold_startup_no_project`, `cold_startup_small_project`, `cold_startup_large_project`, `multi_project_switch`, `multi_tab_cycle`, `typing_small_file`, `typing_large_file`, `scroll_large_file`, `project_search_literal`, `project_search_regex`, `linter_on_save`, `compare_tab_open`, `merge_tab_open`, `chat_pane_long_transcript`, and `idle_soak_30s`
+- **THEN** it SHALL include scenarios named `cold_startup_no_project`, `cold_startup_small_project`, `cold_startup_large_project`, `multi_project_switch`, `multi_tab_cycle`, `typing_small_file`, `typing_large_file`, `scroll_large_file`, `project_search_literal`, `project_search_regex`, `linter_on_save`, `compare_tab_open`, `merge_tab_open`, `terminal_scroll_long_output`, and `idle_soak_30s`
 
 #### Scenario: New features ship with a perf scenario
 - **WHEN** a change adds a new user-facing hot path (editor surface, sidebar surface, overlay, render path, background-task category)

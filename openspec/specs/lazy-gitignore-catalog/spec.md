@@ -25,7 +25,7 @@ MicroIDE SHALL treat ignored directories as collapsed opaque nodes during initia
 
 ### Requirement: Ignored Content Stays Out Of Background Tools By Default
 
-Background indexing, search, AI context collection, diagnostics discovery, git/project refresh, and file-watcher-triggered parsing SHALL exclude ignored descendants by default even if those nodes are visible or expanded in the tree. Opening an ignored file directly SHALL still load it in a normal editor tab.
+Background indexing, search, diagnostics discovery, git/project refresh, and file-watcher-triggered parsing SHALL exclude ignored descendants by default even if those nodes are visible or expanded in the tree. Opening an ignored file directly SHALL still load it in a normal editor tab.
 
 #### Scenario: Opened ignored file remains excluded from background scans
 - **WHEN** the user opens an ignored file directly from the project tree

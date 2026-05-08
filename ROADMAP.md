@@ -18,8 +18,8 @@ the next meaningful slices for this codebase under the repo policy:
 ## Current Position
 
 The large plugin-platform expansion is no longer hypothetical work. Manual Lua plugins, host-owned
-registries, async subprocess plumbing, LSP or DAP transport, SCM or annotation or auth provider
-surfaces, and the first AI runtime slices are already in the tree.
+registries, async subprocess plumbing, LSP or DAP transport, and SCM or annotation or auth
+provider surfaces are already in the tree.
 
 That changes what the roadmap should optimize for. The next work is not "add another foundation."
 It is:
@@ -38,11 +38,11 @@ Priority:
 - P0
 
 Goals:
-- validate real LSP, DAP, task, test, SCM, auth, and AI integrations before advertising broader
+- validate real LSP, DAP, task, test, SCM, and auth integrations before advertising broader
   support
 - confirm that callback delivery, wake routing, cancellation, shutdown, and project switching stay
   correct under repeated concurrent activity
-- keep completion, code actions, chat, inline completion, and similar UI surfaces host-owned and
+- keep completion, code actions, and similar UI surfaces host-owned and
   minimal while the runtime contracts settle
 
 Exit criteria:
@@ -101,7 +101,7 @@ Goals:
   exercised
 - profile before choosing larger rewrites, especially in text rendering and invalidation behavior
 - keep background worker behavior bounded and cheap under overlap between git, search, blame,
-  language tooling, and AI runtimes
+  and language tooling
 
 Exit criteria:
 - typing, scrolling, drag, resize, and startup traces show no regression
@@ -124,15 +124,12 @@ host boundaries and no major latency regressions.
 Focus this phase on:
 
 - real LSP and DAP workflows that MicroIDE actually wants to keep, not protocol checkbox growth
-- real AI workflows against the contracts in `openspec/specs/ai-workflows/spec.md`: chat, inline
-  completion, MCP permission flow, bounded context collection, and provider-bridge correctness
 - project, git, and file-watch correctness under active background work
 - continued shell-boundary reduction where validation exposes the wrong ownership seam
 
 Do not expand this phase into:
 
 - richer debugger UX beyond what the first-pass runtime already supports
-- AI surface area that contradicts the host-owned contract in `openspec/specs/ai-workflows/spec.md`
 - plugin background execution unless a real plugin is blocked on it
 - speculative renderer rewrites without profiling evidence
 
@@ -141,8 +138,7 @@ Do not expand this phase into:
 Land work in slices like:
 
 1. Real-server validation and bug fixes for LSP, DAP, tasks, tests, and tool execution.
-2. Real-agent validation and bug fixes for chat, inline completion, MCP permission flow, and
-   bounded context gathering.
+2. Real-world validation and bug fixes for async runtime surfaces and tooling workflows.
 3. File-watch, reload, rename, delete, diagnostics, and blame correctness under external changes.
 4. Narrower APIs for the shell-owned action, tooling, and render paths that still rely on broad
    coordinator reach.
@@ -161,13 +157,13 @@ This phase is done when:
 
 ## Next Priorities
 
-### 1. Validate real LSP, DAP, and AI workflows before broadening UX
+### 1. Validate real LSP and DAP workflows before broadening UX
 
 Do next:
 - add only the protocol methods or runtime features that unlock real product workflows
 - validate real server or agent behavior before expanding the advertised capability surface
-- keep shell-owned conversations, inline completion, completion overlays, and code-action overlays
-  simple until real usage shows a need for richer UX
+- keep shell-owned completion and code-action overlays simple until real usage shows a need for
+  richer UX
 
 ### 2. Keep plugin APIs narrow and registry-first
 
@@ -202,7 +198,7 @@ Do next:
 
 Continue with:
 - validation of the shipped plugin runtime against real repo-owned and user-installed plugins
-- stronger host boundaries around SCM, annotation, auth, AI, and tooling providers
+- stronger host boundaries around SCM, annotation, auth, and tooling providers
 - deletion of stale adapters, duplicated contribution paths, and accidental compatibility shims as
   the canonical host seams settle
 
@@ -272,7 +268,6 @@ These were identified during the vision-alignment pass and should each become th
 
 - `openspec/specs/product-vision/spec.md`: authoritative product thesis and in-scope/non-goal list
 - `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
-- `openspec/specs/ai-workflows/spec.md`: durable AI surface contract
 - `openspec/specs/performance-budgets/spec.md`: durable performance budget and measurement policy
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `docs/implementation-guide.md`: durable product direction

@@ -5,11 +5,11 @@ TBD - created by archiving change comprehensive-tech-debt-cleanup. Update Purpos
 ## Requirements
 ### Requirement: Single Structured Format For Workspace State
 
-Project workspace state, user configuration, workspace session restore data, and chat conversation data SHALL be persisted using one shared structured format with a typed record stream and an explicit schema-version field. There SHALL be exactly one reader implementation and one writer implementation in the source tree.
+Project workspace state, user configuration, and workspace session restore data SHALL be persisted using one shared structured format with a typed record stream and an explicit schema-version field. There SHALL be exactly one reader implementation and one writer implementation in the source tree.
 
 #### Scenario: Single reader/writer
 - **WHEN** the source tree is built
-- **THEN** all four persisted artifacts SHALL be produced and consumed by `PersistedRecordReader` and `PersistedRecordWriter`, and no other parser SHALL exist for these artifacts
+- **THEN** all persisted artifacts SHALL be produced and consumed by `PersistedRecordReader` and `PersistedRecordWriter`, and no other parser SHALL exist for these artifacts
 
 #### Scenario: Schema version is explicit
 - **WHEN** any persisted file is opened for reading
@@ -41,10 +41,10 @@ The format SHALL support adding new typed records without breaking older readers
 
 ### Requirement: One-Shot Migration From Legacy Text Format
 
-The application SHALL migrate existing text-command-based workspace state, user configuration, session restore, and conversation files to the structured format on first launch and SHALL NOT retain a runtime fallback to the legacy parser.
+The application SHALL migrate existing text-command-based workspace state, user configuration, and session restore files to the structured format on first launch and SHALL NOT retain a runtime fallback to the legacy parser.
 
 #### Scenario: First launch with legacy files
-- **WHEN** the application starts and detects legacy `project.state`, `user.config`, `session.workspace`, or `chat.conversations` files
+- **WHEN** the application starts and detects legacy `project.state`, `user.config`, or `session.workspace` files
 - **THEN** it SHALL import each file once, write the equivalent structured file via the atomic writer, verify the round-trip by re-reading the new file, and only then rename the legacy file to `<name>.legacy`
 
 #### Scenario: Legacy reader is deleted
@@ -115,21 +115,13 @@ The user-config persisted artifact SHALL accept and round-trip the following new
 - **WHEN** a user-config artifact written by a prior version of MicroIDE is read on first launch after this change
 - **THEN** every new key SHALL be treated as absent, the corresponding `SettingSpec` default SHALL be used, and `PersistedRecordReader` SHALL NOT abort or warn for the missing keys
 
-### Requirement: AI Provider Configuration Has A Persisted Section
+### Requirement: Legacy AI Records Are Tolerated But Not Rewritten
 
-The user-config artifact SHALL include a typed `ai_provider_config` section keyed by `provider_id`. Each entry SHALL store the chosen `model_id` and a boolean `is_default`. The project-state artifact SHALL store an optional `ai_provider_override` that takes precedence while that project is active. Secrets SHALL NOT live in either artifact and SHALL continue to flow through the existing secret store via `WorkspaceAuthProvider`.
+The persisted-state reader SHALL tolerate legacy AI-related records that may exist in historical workspace/session files, and the writer SHALL NOT emit new AI conversation/provider records.
 
-#### Scenario: Provider/model selection survives restart
-- **WHEN** the user picks a model for a provider in the picker overlay and restarts the application
-- **THEN** the next launch SHALL surface the same model selection in the picker without prompting
-
-#### Scenario: Project override defeats user default
-- **WHEN** a project has an `ai_provider_override` and the user's default provider differs
-- **THEN** chat and inline completion in that project SHALL use the override, and switching to a project without an override SHALL revert to the user default
-
-#### Scenario: Secrets are not persisted in plain text
-- **WHEN** the user-config or project-state artifacts are inspected on disk after configuring a provider that requires an API key
-- **THEN** neither artifact SHALL contain the secret value, and the secret SHALL only be reachable through the host secret store
+#### Scenario: Workspace with legacy AI records is opened and saved
+- **WHEN** a persisted workspace/session payload contains historical AI conversation or provider fields
+- **THEN** load SHALL complete without failure, and the next successful save SHALL omit AI-only records
 
 ### Requirement: Reader Survives Unknown Setting Keys
 

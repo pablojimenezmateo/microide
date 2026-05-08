@@ -145,8 +145,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.OpenSettingsOverlay();
       return DispatchResult::Handled;
     case ActionId::OpenAiProviderPicker:
-      context_.OpenAiProviderPicker();
-      return DispatchResult::Handled;
+      return reject("AI provider picker is retired");
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
       context_.OpenHelpAboutOverlay();
@@ -170,34 +169,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::DebugStop:
       context_.StopDebugger();
       return DispatchResult::Handled;
-    case ActionId::McpTool: {
-      if (args.empty()) {
-        return reject("mcp requires a tool id");
-      }
-      const std::string input_json = args.size() > 1 ? JoinCommandArguments(args, 1) : "{}";
-      std::string error_message;
-      if (!context_.InvokeMcpTool(args.front(), input_json, &error_message)) {
-        return reject(error_message.empty() ? "MCP tool failed" : error_message);
-      }
-      return DispatchResult::Handled;
-    }
+    case ActionId::McpTool:
+      return reject("MCP tool invocation is retired");
     case ActionId::PluginsReload:
       if (!context_.PluginRuntimeEnabled()) {
         return reject("Lua plugin runtime unavailable");
       }
       context_.ReloadPluginsWithFeedback();
       return DispatchResult::Handled;
-    case ActionId::ShowChat: {
-      if (args.empty()) {
-        context_.ShowChatPanel();
-        return DispatchResult::Handled;
-      }
-      std::string error_message;
-      if (!context_.StartChatRequest(JoinCommandArguments(args, 0), &error_message)) {
-        return reject(error_message.empty() ? "Chat request failed" : error_message);
-      }
-      return DispatchResult::Handled;
-    }
+    case ActionId::ShowChat:
+      return reject("Chat is retired");
     case ActionId::ShowOutput:
       context_.ShowOutputChannel(args.empty() ? std::string_view{} : std::string_view(args.front()));
       return DispatchResult::Handled;

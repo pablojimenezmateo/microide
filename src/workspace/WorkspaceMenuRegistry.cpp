@@ -126,7 +126,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
                std::array<std::string_view, 2>{"tests", {}}, 1, true),
       MenuSeparator(),
       MenuItem(ActionId::ShowOutput),
-      MenuItem(ActionId::ShowChat),
       MenuItem(ActionId::Wrap, "Word Wrap", {}, {}, 0, true),
       MenuItem(ActionId::ToggleStatusBar, "Status Bar", {}, {}, 0, true),
       MenuSeparator(),
@@ -177,7 +176,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kPreferencesItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),
-      MenuItem(ActionId::OpenAiProviderPicker, "AI Provider…"),
       MenuItem(ActionId::ToggleLayoutMode, "Toggle Compact Layout"),
       MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),

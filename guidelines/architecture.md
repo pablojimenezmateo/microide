@@ -108,9 +108,9 @@ Rules:
 - Coordinators take only the service interfaces they need, value-typed input state, and read-only resource handles. They never take `WorkspaceShell&`, never hold a shell pointer, and never reach into shell-private state.
 - Services own their state and the only mutation API for it. If a coordinator needs a behavior the service does not expose, add the method to the service contract; do not add a friend escape hatch.
 - Render code consumes view-model parameters only. View models are POD-like, trivially copyable, and contain exactly the fields the surface needs. They do not hold pointers or references to the shell, coordinators, or services.
-- Single-line shell inputs use `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`. Do not duplicate insert / backspace / delete / movement / selection / clipboard / select-all logic per surface. The chat composer is the only documented multiline exception.
+- Single-line shell inputs use `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`. Do not duplicate insert / backspace / delete / movement / selection / clipboard / select-all logic per surface.
 - `lua_State*` lifecycle lives in `plugin/LuaRuntime` only. Plugin extension-surface modules consume the runtime through opaque handles.
-- Persistence for project state, user config, session restore, and chat conversations always routes through `PersistenceService`. Do not hand-roll a new text format or open these files directly from elsewhere.
+- Persistence for project state, user config, and session restore always routes through `PersistenceService`. Do not hand-roll a new text format or open these files directly from elsewhere.
 
 ## Plugin-Phase Direction
 

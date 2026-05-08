@@ -26,7 +26,7 @@ The shell is intentionally compact:
 
 - a custom in-window menu bar
 - project tabs above file tabs
-- a persistent left sidebar with tree, search, chat, and source-control modes
+- a persistent left sidebar with tree, search, problems, tests, and source-control modes
 - a central editor workspace with nested splits
 - a docked terminal-and-command pane
 - centered overlays for file finding and commit picking
@@ -66,11 +66,7 @@ The current SDL shell already includes:
 - runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets plus runtime-loaded plugin syntax contributions
 - a host-owned plugin runtime service for plugin lifecycle, syntax-asset reload bookkeeping,
   asset watching, and plugin output logging
-- repo-owned Lua dogfood plugins for ESLint diagnostics and host-owned LLM chat or inline completion, exercising the same narrow host APIs exposed to user plugins
-- a host-owned chat pane with conversation rail, provider/model selector, multiline draft composer, markdown transcript rendering, and project-tab chat status summaries
-- ghost-text inline completion with accept/dismiss, backed by `AiProviderRuntimeService`
-- MCP tool invocations with per-agent permission levels, session-scoped approvals, and persisted transcript events
-- a native `microide_provider_bridge` binary for direct stdio-backed provider communication
+- repo-owned Lua dogfood plugins for ESLint diagnostics, formatting, and language-server workflows, exercising the same narrow host APIs exposed to user plugins
 - shared shell render primitives for cards, tooltips, text fields, buttons, list rows, strip tabs,
   and common chrome glyphs across prompts, overlays, sidebar, panel, and editor-empty states
 - an optional `SDL3_ttf` backend with a debug-text fallback
@@ -90,8 +86,8 @@ The authoritative product thesis — including in-scope capabilities, priority o
 - the sidebar stays persistent across tab switches
 - a terminal tab should be open by default for loaded projects
 - colorscheme and editor preferences remain project-local
-- compare, merge, search, git, terminal, chat, and inline completion workflows are built-in product features, not plugins
-- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-loaded syntax data, but they do not replace built-in editing, search, git, compare, merge, terminal, chat, or inline completion workflows
+- compare, merge, search, git, and terminal workflows are built-in product features, not plugins
+- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-loaded syntax data, but they do not replace built-in editing, search, git, compare, merge, or terminal workflows
 - plugin dogfooding should continue to favor small repo-owned examples over widening the host API speculatively; add new plugin-facing seams only when a real plugin needs them
 
 ## Explicit Non-Goals
@@ -106,8 +102,7 @@ These are out of scope unless deliberately added as a separate phase:
 - recent-project and recent-file surfaces
 - native OS menu bar integration
 
-AI, chat, and inline completion are **in scope** as built-in, host-owned workflows. See
-`openspec/specs/ai-workflows/spec.md` for the durable contract.
+AI, chat, inline-completion, and provider-bridge workflows are retired.
 
 Broad LSP coverage is not an implicit requirement of the current shell; only validated workflows
 should stay in scope.
@@ -170,7 +165,6 @@ whether the backend is external or built in.
 
 - `openspec/specs/product-vision/spec.md`: authoritative product thesis, in-scope capabilities, priority order, and non-goals
 - `openspec/specs/diff-merge-editor/spec.md`: durable behavioral contract for compare and merge tabs
-- `openspec/specs/ai-workflows/spec.md`: durable contract for chat, inline completion, MCP tools, and AI provider runtimes
 - `openspec/specs/performance-budgets/spec.md`: durable latency, CPU, and measurement policy
 - `openspec/specs/host-platform-support/spec.md`: durable supported-host contract for Linux,
   macOS, and Windows host services

@@ -77,22 +77,6 @@ if(MICROIDE_PCRE2_TARGET STREQUAL "")
     "PCRE2 was not found. Install PCRE2 development files and rerun CMake.")
 endif()
 
-set(MICROIDE_CURL_TARGET "")
-find_package(CURL QUIET)
-if(TARGET CURL::libcurl)
-  set(MICROIDE_CURL_TARGET CURL::libcurl)
-elseif(PkgConfig_FOUND)
-  pkg_check_modules(CURL_PKG QUIET IMPORTED_TARGET libcurl)
-  if(TARGET PkgConfig::CURL_PKG)
-    set(MICROIDE_CURL_TARGET PkgConfig::CURL_PKG)
-  endif()
-endif()
-
-if(MICROIDE_CURL_TARGET STREQUAL "")
-  message(FATAL_ERROR
-    "libcurl was not found. Install libcurl development files and rerun CMake.")
-endif()
-
 set(MICROIDE_LUA_TARGET "")
 
 if(MICROIDE_ENABLE_LUA_PLUGINS)
@@ -431,8 +415,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide PRIVATE src)
-target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET}
-                                       ${MICROIDE_CURL_TARGET})
+target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -532,8 +515,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide_tests PRIVATE src tests)
-target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET}
-                                             ${MICROIDE_CURL_TARGET})
+target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -622,7 +604,6 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   target_link_libraries(microide_perf PRIVATE
     ${MICROIDE_SDL3_TARGET}
     ${MICROIDE_PCRE2_TARGET}
-    ${MICROIDE_CURL_TARGET}
   )
   if(NOT MICROIDE_LUA_TARGET STREQUAL "")
     target_link_libraries(microide_perf PRIVATE ${MICROIDE_LUA_TARGET})
@@ -648,30 +629,6 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   add_test(NAME microide_perf_tests
            COMMAND microide_perf --smoke --iterations=1)
 endif()
-
-add_executable(microide_provider_bridge
-  src/app/ProviderBridgeMain.cpp
-  src/provider/CloudProviderBridge.cpp
-  src/util/JsonValue.cpp
-  src/util/Parse.cpp
-)
-
-target_include_directories(microide_provider_bridge PRIVATE src)
-target_link_libraries(microide_provider_bridge PRIVATE ${MICROIDE_CURL_TARGET})
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_provider_bridge PRIVATE -Wall -Wextra -Wpedantic)
-  if(MICROIDE_WARNINGS_AS_ERRORS)
-    target_compile_options(microide_provider_bridge PRIVATE -Werror)
-  endif()
-elseif(MSVC)
-  target_compile_options(microide_provider_bridge PRIVATE /W4)
-  if(MICROIDE_WARNINGS_AS_ERRORS)
-    target_compile_options(microide_provider_bridge PRIVATE /WX)
-  endif()
-endif()
-
-add_dependencies(microide_tests microide_provider_bridge)
 
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>

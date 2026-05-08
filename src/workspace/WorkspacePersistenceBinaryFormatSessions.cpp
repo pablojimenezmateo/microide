@@ -125,12 +125,6 @@ bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
     }
   }
 
-  std::vector<std::byte> chat_payload;
-  if (!EncodeConversationRegistryRecord(state.chat, &chat_payload) ||
-      !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectSessionTag::ChatRegistry), chat_payload,
-                          out)) {
-    return false;
-  }
   return true;
 }
 
@@ -180,8 +174,9 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    state->tabs.push_back(std::move(tab));
                    return true;
                  }
-                 case ProjectSessionTag::ChatRegistry:
-                   return DecodeConversationRegistryRecord(payload, &state->chat);
+                case ProjectSessionTag::ChatRegistry:
+                  // Legacy AI/chat records are tolerated during decode and ignored.
+                  return true;
                }
                return true;
              }) &&

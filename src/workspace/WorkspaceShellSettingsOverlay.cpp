@@ -27,7 +27,7 @@ void UpsertSetting(std::vector<std::pair<std::string, std::string>>& settings,
 
 std::vector<HelpAboutRow> BuildHelpRows() {
   std::vector<HelpAboutRow> rows;
-  rows.push_back(HelpAboutRow{.label = "microide", .detail = "AI-focused desktop IDE"});
+  rows.push_back(HelpAboutRow{.label = "microide", .detail = "Desktop IDE"});
   for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
     if (spec.command_name.empty()) {
       continue;
@@ -203,9 +203,6 @@ void WorkspaceShell::RefreshSettingsOverlayCatalog() {
   settings_overlay_service_.RebuildSettingsRows(AllSettingInfos(plugin_runtime_.Host()),
                                                 context_.user_settings,
                                                 context_.current_project_state.settings);
-  const Conversation* conversation = ActiveConversation();
-  settings_overlay_service_.RebuildProviderRows(
-      ai_provider_registry_.Specs(), conversation != nullptr ? conversation->provider_id : "");
   settings_overlay_service_.RebuildHelpRows(BuildHelpRows());
 }
 
@@ -236,7 +233,7 @@ void WorkspaceShell::OpenSettingsOverlay() {
 }
 
 void WorkspaceShell::OpenAiProviderPicker() {
-  settings_overlay_service_.OpenAiProviderPicker();
+  settings_overlay_service_.OpenSettings();
   RefreshSettingsOverlayCatalog();
   RequestOverlayRedraw();
 }
@@ -284,18 +281,6 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
       static_cast<std::size_t>(std::max(0.0f, event.button.y - list_top) / row_height) +
       static_cast<std::size_t>(settings_overlay_service_.ScrollRow());
 
-  if (settings_overlay_service_.Mode() == SettingsOverlayMode::AiProvider &&
-      row < settings_overlay_service_.ProviderRows().size()) {
-    const auto& picked = settings_overlay_service_.ProviderRows()[row];
-    if (Conversation* conversation = ActiveConversation(); conversation != nullptr) {
-      conversation->provider_id = picked.id;
-      if (!picked.model.empty()) {
-        conversation->model_id = picked.model;
-      }
-    }
-    CloseSettingsOverlay();
-    return true;
-  }
   if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings &&
       row < settings_overlay_service_.SettingsRows().size()) {
     const auto& picked = settings_overlay_service_.SettingsRows()[row];
@@ -354,9 +339,6 @@ bool WorkspaceShell::HandleStatusBarButtonDown(const SDL_Event& event,
           break;
         case StatusBarSegmentId::Lsp:
           ShowOutputChannel("lsp");
-          break;
-        case StatusBarSegmentId::AiProvider:
-          OpenAiProviderPicker();
           break;
         case StatusBarSegmentId::LayoutMode: {
           const bool compact = layout_mode_service_.CurrentMode() != LayoutMode::Compact;

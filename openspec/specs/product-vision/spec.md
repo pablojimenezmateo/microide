@@ -4,14 +4,14 @@ Define the durable product thesis, priority order, ownership boundaries, and non
 ## Requirements
 ### Requirement: Product Thesis
 
-MicroIDE SHALL be a native desktop IDE built in C++20 with SDL3, distributed as a single-window application with no GPU acceleration, positioned as a compact combination of a VSCode-shaped surface area and Zed-class responsiveness, with AI workflows as a first-class built-in capability.
+MicroIDE SHALL be a native desktop IDE built in C++20 with SDL3, distributed as a single-window application with no GPU acceleration, positioned as a compact combination of a VSCode-shaped surface area and Zed-class responsiveness.
 
 #### Scenario: Rendering backend does not require a GPU
 - **WHEN** MicroIDE is launched on a host without hardware-accelerated OpenGL, Vulkan, or Metal available to the user session
 - **THEN** the application SHALL start, render the shell, and accept input using SDL3's CPU-capable render path (including the `SDL3_ttf` text backend or the debug-text fallback) without requiring GPU features
 
 #### Scenario: Single-window shell shape is preserved
-- **WHEN** a user opens any built-in workflow (editor, compare, merge, search, git, terminal, chat)
+- **WHEN** a user opens any built-in workflow (editor, compare, merge, search, git, terminal)
 - **THEN** the workflow SHALL render inside the single MicroIDE window, reusing the menu bar, project tabs, file tabs, persistent sidebar, editor surface, and docked bottom panel, and SHALL NOT spawn detached OS windows or native OS menus
 
 ### Requirement: Priority Order For Engineering Tradeoffs
@@ -28,7 +28,7 @@ When MicroIDE engineering tradeoffs conflict, the project SHALL resolve them in 
 
 ### Requirement: Built-in Workflows Remain Host-Owned
 
-Editor, compare, merge, search, git, terminal, diagnostics, chat, inline completion, and MCP tool flows SHALL remain built-in, host-owned product features. Plugins MAY contribute data, commands, providers, registries, and structured requests through narrow host APIs, but SHALL NOT replace or reimplement these workflows.
+Editor, compare, merge, search, git, terminal, and diagnostics flows SHALL remain built-in, host-owned product features. Plugins MAY contribute data, commands, registries, and structured requests through narrow host APIs, but SHALL NOT replace or reimplement these workflows.
 
 #### Scenario: Plugin attempts to replace diff rendering
 - **WHEN** a plugin is installed that declares itself as a replacement compare or merge renderer
@@ -42,11 +42,4 @@ MicroIDE SHALL treat the following as out of scope unless deliberately promoted 
 - **WHEN** a proposal requests a feature whose primary capability falls inside the non-goal list
 - **THEN** the proposal SHALL be rejected or SHALL explicitly declare itself as promoting a non-goal into its own phase, with an updated product-vision delta in the same change
 
-### Requirement: AI Is In Scope
-
-The MicroIDE product SHALL treat AI workflows (chat, inline completion, MCP-backed tool use, provider-bridge–driven model access) as in-scope, host-owned first-class surfaces. The implementation guide and any durable docs SHALL NOT list AI or chat as a non-goal.
-
-#### Scenario: Documentation lists AI as a non-goal
-- **WHEN** any durable doc (implementation guide, roadmap, guidelines) is reviewed
-- **THEN** it SHALL NOT list AI, chat, or inline completion as a non-goal, and any such entry SHALL be corrected in the same review
 

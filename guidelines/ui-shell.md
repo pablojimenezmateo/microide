@@ -50,10 +50,10 @@ Plugins may request contributions, but they do not own frame composition, paint 
 - Small visual controls keep explicit hit pads: resize handles, scrollbars, tab closes, terminal
   new-tab controls, and menu overflow affordances must be easier to hit than their visual size.
 - The status bar and settings-style overlays are host-owned surfaces. Status-bar rows route to
-  actions through segment ids, while Settings, AI Provider, and Help/About use the shared
+  actions through segment ids, while Settings and Help/About use the shared
   settings-overlay service and view model rather than ad-hoc render or plugin-owned surfaces.
 - Avoid embedding service logic directly in render or input handlers when a coordinator can own it.
-- Single-line shell input surfaces (prompts, command input, overlay query, sidebar search) consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`. Do not reimplement insert / backspace / delete / movement / selection / clipboard / select-all per surface. The chat composer is the documented multiline exception.
+- Single-line shell input surfaces (prompts, command input, overlay query, sidebar search) consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`. Do not reimplement insert / backspace / delete / movement / selection / clipboard / select-all per surface.
 - The active editor viewport is owned by the active editor tab. Resolve it through `EditorTabService::ActiveViewport()` (or equivalent typed accessor); do not reintroduce a shell-level or project-level fallback under any name.
 
 ## Testing Expectations

@@ -10,9 +10,6 @@ SidebarMode SidebarModeFromViewId(std::string_view view_id) {
   if (view_id == "search") {
     return SidebarMode::Search;
   }
-  if (view_id == "chat") {
-    return SidebarMode::Chat;
-  }
   if (view_id == "problems") {
     return SidebarMode::Problems;
   }
@@ -176,7 +173,6 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   add_segment(StatusBarSegmentId::LineColumn, vm.right_segments);
   add_segment(StatusBarSegmentId::Problems, vm.right_segments);
   add_segment(StatusBarSegmentId::Lsp, vm.right_segments);
-  add_segment(StatusBarSegmentId::AiProvider, vm.right_segments);
   add_segment(StatusBarSegmentId::LayoutMode, vm.right_segments);
 
   if (vm.layout_mode == LayoutMode::Compact) {
@@ -206,10 +202,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     case SettingsOverlayMode::Settings:
       vm.title = "Settings";
       vm.settings_rows = service.SettingsRows();
-      break;
-    case SettingsOverlayMode::AiProvider:
-      vm.title = "AI Provider";
-      vm.provider_rows = service.ProviderRows();
       break;
     case SettingsOverlayMode::HelpAbout:
       vm.title = "Help / About";

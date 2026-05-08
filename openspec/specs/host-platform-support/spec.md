@@ -5,7 +5,7 @@ TBD - created by archiving change add-cross-platform-host-support. Update Purpos
 ## Requirements
 ### Requirement: Supported Hosts
 
-MicroIDE SHALL support Linux, macOS, and Windows as first-class desktop hosts for the built-in editor, compare, merge, search, git, AI, plugin, and terminal workflows.
+MicroIDE SHALL support Linux, macOS, and Windows as first-class desktop hosts for the built-in editor, compare, merge, search, git, plugin, and terminal workflows.
 
 #### Scenario: Linux remains a supported baseline
 - **WHEN** host-platform work refactors process, watcher, terminal, file-operation, or packaging seams

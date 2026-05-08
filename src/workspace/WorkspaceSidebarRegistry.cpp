@@ -12,7 +12,6 @@ std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
   static const auto kSpecs = std::to_array<SidebarViewSpec>({
       SidebarViewSpec{"tree", "Project", SidebarMode::Tree},
       SidebarViewSpec{"search", "Search", SidebarMode::Search},
-      SidebarViewSpec{"chat", "Chat", SidebarMode::Chat},
       SidebarViewSpec{"problems", "Problems", SidebarMode::Problems},
       SidebarViewSpec{"git", "Source Control", SidebarMode::Git},
       SidebarViewSpec{"tests", "Tests", SidebarMode::Tests},
@@ -113,7 +112,6 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
     case SidebarMode::Search:
       request.query = JoinCommandArguments(args, 1);
       break;
-    case SidebarMode::Chat:
     case SidebarMode::Problems:
     case SidebarMode::Git:
     case SidebarMode::Tests:

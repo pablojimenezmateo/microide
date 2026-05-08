@@ -5,7 +5,7 @@ TBD - created by archiving change responsive-layout-and-options-polish. Update P
 ## Requirements
 ### Requirement: Host-Owned Modal Settings Overlay
 
-MicroIDE SHALL expose a host-owned modal settings overlay reachable from the menu bar (Preferences → Settings…), the status bar, and a keyboard accelerator. The overlay SHALL render as a single modal surface in the editor area using the existing prompt-overlay pattern; it SHALL NOT spawn an OS dialog and SHALL NOT replace the editor or chat workflows.
+MicroIDE SHALL expose a host-owned modal settings overlay reachable from the menu bar (Preferences → Settings…), the status bar, and a keyboard accelerator. The overlay SHALL render as a single modal surface in the editor area using the existing prompt-overlay pattern; it SHALL NOT spawn an OS dialog and SHALL NOT replace editor workflows.
 
 #### Scenario: Overlay opens and consumes input focus
 - **WHEN** the user invokes the Settings overlay action
@@ -55,25 +55,6 @@ The overlay SHALL include a single-line search input that filters the visible se
 - **WHEN** `editor.hover_delay_ms` changes
 - **THEN** the editor hover popup SHALL apply the new delay on the next hover, and SHALL NOT require a restart
 
-### Requirement: AI Provider Picker Replaces Click-To-Cycle
-
-The chat sidebar's provider rail SHALL surface an "AI provider…" affordance that opens a host-owned provider-picker sub-overlay listing every registered runtime via the same overlay infrastructure as Settings. Click-to-cycle SHALL remain available as a keyboard accelerator only (`Ctrl+Shift+P` cycle next/previous). The picker SHALL be reachable from the status-bar AI segment.
-
-#### Scenario: Picker lists every registered provider
-- **WHEN** the picker opens
-- **THEN** the list SHALL contain every provider in `AiProviderRegistry`, ordered alphabetically by `display_name`, and SHALL show the current default provider with an active marker
-
-#### Scenario: Picker offers model selection
-- **WHEN** the user selects a provider
-- **THEN** the picker SHALL render a model dropdown populated from the runtime's `Models()` snapshot or the provider's declared `model_options`, defaulting to the runtime-reported default model when present
-
-#### Scenario: Picker accepts an API key when required
-- **WHEN** the selected provider declares `requires_api_key = true` and `auth_status` is `KeyMissing` or `KeyInvalid`
-- **THEN** the picker SHALL render a secret-input field, SHALL forward submitted text to `WorkspaceAuthProvider::SetSecret(provider_id, value)`, SHALL never echo the secret to the screen or persist it in plain text, and SHALL re-trigger an auth-check on submit
-
-#### Scenario: Per-project default override
-- **WHEN** the user enables "Use this provider for the current project only" in the picker
-- **THEN** the selection SHALL persist as a project-scoped record and SHALL override the user-scope default while that project is active
 
 ### Requirement: Overlay Render Path Is Allocation-Bounded
 

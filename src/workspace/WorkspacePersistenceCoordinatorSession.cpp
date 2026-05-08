@@ -519,25 +519,6 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
   }
 
-  // Restore conversations; convert any non-terminal states to failed.
-  if (!persisted_session.chat.conversations.empty()) {
-    util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RestoreConversations");
-    bool any_interrupted = false;
-    std::vector<Conversation> restored =
-        RestoreConversations(persisted_session.chat, &any_interrupted);
-    state.conversations.SetConversations(std::move(restored));
-    state.panel.chat.conversation_id = persisted_session.chat.active_conversation_id;
-    if (any_interrupted) {
-      state.panel.chat.has_restore_warning = true;
-      state.panel.chat.status_text = "Interrupted by reload or shutdown.";
-    }
-    // Validate that active conversation id exists.
-    if (!state.panel.chat.conversation_id.empty() &&
-        state.conversations.GetConversation(state.panel.chat.conversation_id) == nullptr) {
-      state.panel.chat.conversation_id.clear();
-    }
-  }
-
   if (state.open_tabs.empty()) {
     state.welcome_surface.viewport.SetPlaceholderText(
         "microide\n\n"
@@ -595,10 +576,6 @@ void PersistenceCoordinator::SaveSessionState() {
     }
     persisted_session.tabs.push_back(std::move(*persisted_tab));
   }
-
-  persisted_session.chat = BuildPersistedChatState(
-      CurrentProjectState().conversations,
-      CurrentProjectState().panel.chat.conversation_id);
 
   operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
 }

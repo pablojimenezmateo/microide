@@ -2,9 +2,9 @@
 
 ## Mission
 
-Build `microide` as the fastest, lowest-footprint AI-focused desktop IDE — a compact C++/SDL3
+Build `microide` as the fastest, lowest-footprint desktop IDE — a compact C++/SDL3
 single-window application with no GPU acceleration requirement, keyboard-first workflows,
-best-in-class diff and merge, and AI as a built-in first-class capability.
+and best-in-class diff and merge.
 
 Do not optimize for keeping old boundaries alive. If the correct fix breaks compatibility, touches
 many files, or requires a broader refactor, prefer the better design.
@@ -19,11 +19,9 @@ MicroIDE's durable built-in capabilities are:
 - **Search** — async project search (literal + regex), replace-in-project, file finder
 - **Git** — working-tree changes, staging, conflicts, outgoing files, blame
 - **Terminal** — PTY-backed tabs with scrollback, alternate screen, full ANSI support
-- **AI** — host-owned chat pane, ghost-text inline completion, MCP tool execution, provider
-  bridges; see `openspec/specs/ai-workflows/spec.md` for the contract
 - **Plugins** — Lua 5.4 runtime with narrow host-owned registries for commands, sidebars,
   settings, keybindings, status items, diagnostics, hover, formatters, tasks, tools, tests,
-  SCM, auth, and AI providers
+  SCM, and auth
 
 The authoritative product thesis, priority order, and non-goals live in
 `openspec/specs/product-vision/spec.md`.
@@ -113,15 +111,14 @@ Policy invariants (no automated lint, but reviewers will reject):
   through `EditorTabService::ActiveViewport()` (or equivalent typed accessor). The legacy symbols
   `text_viewport_` and `current_project_state_.text_viewport` were deleted intentionally; do not
   reintroduce equivalents under a new name.
-- No bespoke per-section parser for project state, user config, session restore, or chat
-  conversations. All four artifacts route through `PersistedRecordReader`/`PersistedRecordWriter`
+- No bespoke per-section parser for project state, user config, and session restore.
+  These artifacts route through `PersistedRecordReader`/`PersistedRecordWriter`
   and `PersistenceService`. Add a typed record, do not hand-roll a text format.
 - No new direct file I/O for workspace/session/config/conversation state outside
   `PersistenceService`.
 - No per-surface duplicate of single-line edit operations (insert, backspace, delete-forward,
   caret movement, selection, copy, cut, paste, select-all). Single-line surfaces consume
-  `editor/SingleLineEditor.{h,cpp}` plus `editor/SingleLineKeyHandler.{h,cpp}`. The chat composer
-  is the only documented exception because it is multiline.
+  `editor/SingleLineEditor.{h,cpp}` plus `editor/SingleLineKeyHandler.{h,cpp}`.
 - No `lua_State*` outside `plugin/LuaRuntime.{h,cpp}`. Plugin extension-surface modules consume
   the runtime through opaque handles.
 - Plugin extension surfaces stay split across focused translation units (commands, sidebars,
@@ -130,7 +127,7 @@ Policy invariants (no automated lint, but reviewers will reject):
 - View models do not hold pointers or references to `WorkspaceShell`, coordinators, or services.
   They are POD-like structs populated by the builder.
 - Responsive shell surfaces (`LayoutModeService`, `StatusBarService`, `SettingsOverlayService`) stay
-  host-owned and service-backed. Menu overflow, status-bar actions, Settings, AI Provider, and
+  host-owned and service-backed. Menu overflow, status-bar actions, Settings, and
   Help/About must route through action/service state and `RenderViewModelBuilder`, not plugin-owned
   rendering or render-TU product logic.
 - Project reactivation paths do not reload plugins. Reactivation refresh uses
