@@ -159,7 +159,7 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   if (!vm.visible) {
     return vm;
   }
-  const auto snapshot = service.Snapshot();
+  const auto& snapshot = service.Snapshot();
   const auto add_segment = [&](StatusBarSegmentId id,
                                 std::vector<StatusBarSegmentViewModel>& target) {
     const auto& seg = snapshot[static_cast<std::size_t>(id)];

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace microide::workspace {
@@ -82,7 +83,7 @@ struct HoverTargetsViewModel {
 
 struct StatusBarSegmentViewModel {
   StatusBarSegmentId id = StatusBarSegmentId::Project;
-  std::string text;
+  std::string_view text;
   bool clickable = false;
 };
 

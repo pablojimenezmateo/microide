@@ -39,7 +39,7 @@ class StatusBarService {
     return segments_[static_cast<std::size_t>(id)];
   }
 
-  std::array<StatusBarSegmentValue, static_cast<std::size_t>(StatusBarSegmentId::Count)>
+  const std::array<StatusBarSegmentValue, static_cast<std::size_t>(StatusBarSegmentId::Count)>&
   Snapshot() const {
     return segments_;
   }

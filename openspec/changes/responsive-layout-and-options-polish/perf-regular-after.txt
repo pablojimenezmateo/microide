@@ -1,0 +1,3 @@
+typing_small_file p50=11.2997ms p95=16.9116ms max=101.042ms
+typing_large_file p50=10.1156ms p95=14.3921ms max=78.428ms
+scroll_large_file p50=9.30596ms p95=13.0072ms max=53.6378ms
