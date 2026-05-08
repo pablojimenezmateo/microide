@@ -376,17 +376,6 @@
     bool enabled = false;
   };
 
-  struct ProjectChatSummary {
-    enum class State {
-      Idle,
-      Running,
-      Failed,
-    };
-
-    State state = State::Idle;
-    std::string tooltip;
-  };
-
  private:
   struct ChatLinkTarget {
     enum class Kind {
@@ -572,7 +561,6 @@
   void NormalizeSidebarViewSelection();
   void RebuildPhase3Registries();
   void RebuildPhase4Registries();
-  void RebuildPhase5Registries();
   std::vector<VisibleStatusItem> ComputeVisibleStatusItems(const SDL_FRect& breadcrumb) const;
   std::string HoveredStatusTooltip(const SDL_FRect& breadcrumb) const;
   std::optional<SDL_FRect> ActiveSubmenuRect(const SDL_FRect& menu_bar) const;
@@ -893,7 +881,6 @@
   void ShowSidebarMode(SidebarMode mode, bool temporary = false);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
-  void ShowChatSidebar();
   void ShowProblemsSidebar();
   void ShowGitSidebar();
   void ShowTestsSidebar();
@@ -965,7 +952,6 @@
   void CycleActiveConversationToolMode(int delta = 1);
   std::string ChatComposerText() const;
   std::string ChatAuthBannerText(const Conversation* conversation) const;
-  ProjectChatSummary SummarizeProjectChatState(std::size_t project_index) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
                                                                  const GitSidebarEntry& entry) const;
@@ -1160,9 +1146,6 @@
   bool RequestInlineCompletion(std::string* error_message = nullptr);
   bool AcceptInlineCompletion();
   void DismissInlineCompletion();
-  bool InvokeMcpTool(std::string_view tool_id,
-                     std::string_view input_json,
-                     std::string* error_message = nullptr);
   void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
@@ -1442,8 +1425,6 @@
   void ClearMouseHoverState();
   void UpdateMouseCursor(float x, float y);
   ChatTranscriptLayout BuildChatTranscriptLayout(const SDL_FRect& sidebar_rect) const;
-  const ChatMarkdownDocument& ParsedChatMarkdown(std::string_view text) const;
-  ChatMarkdownDocument ParseChatMarkdown(std::string_view text) const;
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
@@ -1493,20 +1474,14 @@
   CodeActionRegistry code_action_registry_;
   ToolRegistry tool_registry_;
   ToolDownloader tool_downloader_;
-  DapManager dap_manager_;
   TestController test_controller_;
+  DapManager dap_manager_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;
   AuthProviderRegistry auth_provider_registry_;
   SecretStorage secret_storage_;
   VirtualDocumentRegistry virtual_document_registry_;
   ReviewCommentsRegistry review_comments_registry_;
-  AiProviderRegistry ai_provider_registry_;
-  AiProviderRuntimeService ai_provider_runtime_service_;
-  InlineCompletionRegistry inline_completion_registry_;
-  ExternalAgentRegistry external_agent_registry_;
-  McpToolRegistry mcp_tool_registry_;
-  AiContextManager ai_context_manager_;
   PersistenceService persistence_service_;
   LayoutModeService layout_mode_service_;
   StatusBarService status_bar_service_;
@@ -1527,7 +1502,6 @@
   std::function<std::optional<std::string>()> primary_selection_text_reader_;
   std::function<bool(std::string_view)> primary_selection_text_writer_;
   std::function<bool(std::string_view)> external_url_opener_;
-  mutable std::unordered_map<std::uint64_t, ChatMarkdownDocument> chat_markdown_cache_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
   bool quit_requested_ = false;

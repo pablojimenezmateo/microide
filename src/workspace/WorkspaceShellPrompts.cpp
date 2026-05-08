@@ -174,8 +174,6 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Outgoing Base Ref";
     case PromptSurfaceState::Action::OpenExternalUrl:
       return "Open External Link";
-    case PromptSurfaceState::Action::ApproveChatTool:
-      return "Approve Tool Call";
   }
   return "Prompt";
 }
@@ -200,12 +198,6 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Compare outgoing files against this ref.";
     case PromptSurfaceState::Action::OpenExternalUrl:
       return "Open " + context_.prompts.surface.detail + " in your browser?";
-    case PromptSurfaceState::Action::ApproveChatTool: {
-      const std::string tool_name = context_.prompts.surface.tool_id.empty()
-                                        ? std::string("this tool")
-                                        : context_.prompts.surface.tool_id;
-      return "Allow " + tool_name + " to run for this chat request?";
-    }
   }
   return {};
 }
@@ -214,7 +206,6 @@ std::string WorkspaceShell::PromptSurfaceDetail() const {
   switch (context_.prompts.surface.action) {
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
     case PromptSurfaceState::Action::OpenExternalUrl:
-    case PromptSurfaceState::Action::ApproveChatTool:
       return context_.prompts.surface.detail;
     default:
       return {};
@@ -237,8 +228,6 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Use Ref", "Cancel"};
     case PromptSurfaceState::Action::OpenExternalUrl:
       return {"Open Link", "Cancel"};
-    case PromptSurfaceState::Action::ApproveChatTool:
-      return {"Allow Once", "Allow Session", "Deny"};
   }
   return {"OK", "Cancel"};
 }
@@ -285,18 +274,6 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     const std::string url = context_.prompts.surface.detail;
     const bool opened = !url.empty() && OpenExternalUrl(url);
     MakePromptSurfaceService().DismissPromptSurface(!opened);
-    return;
-  }
-  if (context_.prompts.surface_visible &&
-      context_.prompts.surface.action == PromptSurfaceState::Action::ApproveChatTool) {
-    const int selected_button = context_.prompts.surface.selected_button;
-    if (selected_button == 0) {
-      ResolveChatToolApprovalPrompt(true, false);
-    } else if (selected_button == 1) {
-      ResolveChatToolApprovalPrompt(true, true);
-    } else {
-      ResolveChatToolApprovalPrompt(false, false);
-    }
     return;
   }
   if (context_.prompts.surface_visible &&

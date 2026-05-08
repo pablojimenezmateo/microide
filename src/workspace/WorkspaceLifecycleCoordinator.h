@@ -13,7 +13,6 @@ class LifecycleCoordinator {
   struct Operations {
     std::function<void()> reset_startup_state;
     std::function<void()> initialize_project_search_runtime;
-    std::function<void()> initialize_ai_provider_runtime;
     std::function<void()> register_wake_events;
     std::function<void()> restore_user_config;
     std::function<void()> refresh_available_colorscheme_names;
@@ -29,7 +28,6 @@ class LifecycleCoordinator {
     std::function<void()> persist_inactive_projects_for_shutdown;
     std::function<void()> save_workspace_session;
     std::function<void()> shutdown_project_search_runtime;
-    std::function<void()> shutdown_ai_provider_runtime;
     std::function<void()> clear_terminal_tabs;
     std::function<void()> destroy_cursors;
   };

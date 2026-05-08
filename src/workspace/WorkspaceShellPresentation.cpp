@@ -50,60 +50,12 @@ std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
   return DirtyEditorTabIndicesForProject(index).empty() ? label : "*" + label;
 }
 
-WorkspaceShell::ProjectChatSummary WorkspaceShell::SummarizeProjectChatState(
-    std::size_t project_index) const {
-  ProjectChatSummary summary;
-  if (project_index >= context_.project_catalog.entries.size()) {
-    return summary;
-  }
-
-  const ProjectWorkspaceState* project = context_.project_catalog.entries[project_index].get();
-  if (project == nullptr) {
-    return summary;
-  }
-
-  std::size_t running_count = 0;
-  std::size_t failed_count = 0;
-  for (const Conversation& conversation : project->conversations.conversations()) {
-    if (conversation.status == RequestStatus::Running ||
-        conversation.status == RequestStatus::Streaming ||
-        conversation.status == RequestStatus::Queued) {
-      ++running_count;
-    } else if (conversation.status == RequestStatus::Failed ||
-               conversation.status == RequestStatus::Cancelled) {
-      ++failed_count;
-    }
-  }
-
-  if (running_count > 0) {
-    summary.state = ProjectChatSummary::State::Running;
-    summary.tooltip = "Chat running";
-    if (running_count > 1) {
-      summary.tooltip += " in " + std::to_string(running_count) + " conversations";
-    }
-  } else if (failed_count > 0) {
-    summary.state = ProjectChatSummary::State::Failed;
-    summary.tooltip = "Chat attention needed";
-    if (failed_count > 1) {
-      summary.tooltip += " in " + std::to_string(failed_count) + " conversations";
-    }
-  }
-  return summary;
-}
-
 std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return {};
   }
   const std::filesystem::path root = ProjectCatalogRoot(index);
-  std::string label =
-      root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string();
-  const ProjectChatSummary summary = SummarizeProjectChatState(index);
-  if (!summary.tooltip.empty()) {
-    label += "\n";
-    label += summary.tooltip;
-  }
-  return label;
+  return root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string();
 }
 
 std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const {

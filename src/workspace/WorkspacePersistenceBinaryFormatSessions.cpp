@@ -28,65 +28,6 @@ OutgoingBaseChoice::Kind ParseOutgoingBaseChoiceKind(std::string_view value) {
 
 }  // namespace
 
-bool EncodeConversationRegistryRecord(const PersistedChatState& state,
-                                      std::vector<std::byte>* out) {
-  if (out == nullptr) {
-    return false;
-  }
-  out->clear();
-  if (!AppendRecord(ConversationRegistryTag::Schema,
-                    [&](PrimitiveWriter& w) { return w.WriteU32(kSchemaVersion); }, out) ||
-      !AppendRecord(ConversationRegistryTag::ActiveConversationId,
-                    [&](PrimitiveWriter& w) { return w.WriteString(state.active_conversation_id); },
-                    out)) {
-    return false;
-  }
-  for (const auto& conversation : state.conversations) {
-    std::vector<std::byte> payload;
-    if (!EncodeConversation(conversation, &payload) ||
-        !AppendTaggedRecord(static_cast<std::uint16_t>(ConversationRegistryTag::Conversation), payload,
-                            out)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool DecodeConversationRegistryRecord(std::span<const std::byte> input,
-                                      PersistedChatState* state) {
-  if (state == nullptr) {
-    return false;
-  }
-  *state = PersistedChatState{};
-  bool seen_schema = false;
-  return ParseRecordStream<ConversationRegistryTag>(
-             input, [&](ConversationRegistryTag tag, std::span<const std::byte> payload) {
-               PrimitiveReader reader(payload);
-               switch (tag) {
-                 case ConversationRegistryTag::Schema: {
-                   std::uint32_t schema = 0;
-                   if (!reader.ReadU32(&schema) || reader.remaining() != 0 || schema != kSchemaVersion) {
-                     return false;
-                   }
-                   seen_schema = true;
-                   return true;
-                 }
-                 case ConversationRegistryTag::ActiveConversationId:
-                   return reader.ReadString(&state->active_conversation_id) && reader.remaining() == 0;
-                 case ConversationRegistryTag::Conversation: {
-                   PersistedConversationState conversation;
-                   if (!DecodeConversation(payload, &conversation)) {
-                     return false;
-                   }
-                   state->conversations.push_back(std::move(conversation));
-                   return true;
-                 }
-               }
-               return true;
-             }) &&
-         seen_schema;
-}
-
 bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
                                 std::vector<std::byte>* out) {
   if (out == nullptr) {

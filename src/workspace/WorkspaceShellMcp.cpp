@@ -2,29 +2,6 @@
 
 namespace microide::workspace {
 
-bool WorkspaceShell::InvokeMcpTool(std::string_view tool_id,
-                                   std::string_view input_json,
-                                   std::string* error_message) {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  const ToolPermissionLevel permission = mcp_tool_registry_.CheckPermission(std::string(tool_id), "*");
-  if (permission == ToolPermissionLevel::Denied) {
-    if (error_message != nullptr) {
-      *error_message = "Tool access denied";
-    }
-    return false;
-  }
-
-  std::string output_json;
-  if (!plugin_runtime_.Host().InvokeMcpTool(tool_id, input_json, &output_json, error_message)) {
-    return false;
-  }
-  output_channels_.AppendLine("mcp." + std::string(tool_id), std::string(tool_id), output_json);
-  ShowOutputChannel("mcp." + std::string(tool_id));
-  return true;
-}
-
 std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& path) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (normalized_path.empty()) {

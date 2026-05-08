@@ -50,7 +50,6 @@ struct PromptSurfaceState {
     DiscardGitChanges,
     SetGitOutgoingBaseRef,
     OpenExternalUrl,
-    ApproveChatTool,
   };
 
   Kind kind = Kind::None;

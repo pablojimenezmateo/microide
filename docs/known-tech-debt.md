@@ -109,7 +109,6 @@ Impact:
 
 What remains:
 - No further migration is required for task closure.
-- Chat composer remains multiline by design and is tracked separately as feature work, not debt.
 
 Relevant code:
 - `src/editor/SingleLineEditor.h`

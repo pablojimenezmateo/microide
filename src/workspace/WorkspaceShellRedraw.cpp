@@ -771,7 +771,6 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleScheduledWake");
-  ExpirePendingToolApprovals();
   if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
     return EventResult{
         .handled = true,

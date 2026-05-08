@@ -308,72 +308,41 @@ ScrollableListLayout WorkspaceShell::ComputeChatSidebarListLayout(const SDL_FRec
 std::vector<WorkspaceShell::ChatHeaderAction> WorkspaceShell::BuildChatHeaderActions(
     const SDL_FRect& sidebar_rect) const {
   const ChatSidebarLayout layout = ComputeChatSidebarLayout(sidebar_rect);
-  const Conversation* conversation = ActiveConversation();
-  const bool active_request =
-      conversation != nullptr && context_.current_project_state.panel.chat.request_in_flight &&
-      context_.current_project_state.panel.chat.request_conversation_id == conversation->id;
 
   std::vector<ChatHeaderAction> actions;
-  ChatHeaderAction primary;
-  primary.kind = active_request
-                     ? ChatHeaderAction::Kind::Cancel
-                 : conversation != nullptr &&
-                         (conversation->status == RequestStatus::Failed ||
-                          conversation->status == RequestStatus::Cancelled)
-                     ? ChatHeaderAction::Kind::Retry
-                     : ChatHeaderAction::Kind::NewConversation;
-  primary.rect = layout.header_primary_action_rect;
-  primary.label = primary.kind == ChatHeaderAction::Kind::Cancel
-                      ? "Cancel"
-                  : primary.kind == ChatHeaderAction::Kind::Retry ? "Retry"
-                                                                  : "New";
-  primary.enabled = true;
-  actions.push_back(std::move(primary));
+  actions.push_back(ChatHeaderAction{
+      .kind = ChatHeaderAction::Kind::NewConversation,
+      .rect = layout.header_primary_action_rect,
+      .label = "New",
+      .enabled = false,
+  });
 
   actions.push_back(ChatHeaderAction{
       .kind = ChatHeaderAction::Kind::DeleteConversation,
       .rect = layout.header_secondary_action_rect,
       .label = "Delete",
-      .enabled = conversation != nullptr,
+      .enabled = false,
   });
 
-  const AiProviderSpec* provider =
-      conversation != nullptr ? ai_provider_registry_.FindProvider(conversation->provider_id)
-                              : nullptr;
   actions.push_back(ChatHeaderAction{
       .kind = ChatHeaderAction::Kind::Provider,
       .rect = layout.provider_rect,
-      .label = provider != nullptr ? provider->label : "Provider",
-      .enabled = !ChatProviders().empty(),
+      .label = "Provider",
+      .enabled = false,
   });
 
-  std::string model_label = "Model";
-  if (conversation != nullptr) {
-    if (!conversation->model_id.empty()) {
-      model_label = conversation->model_id;
-    } else if (const auto models = ChatModelsForConversation(*conversation); !models.empty()) {
-      model_label = models.front();
-    } else {
-      model_label = "Default";
-    }
-  }
   actions.push_back(ChatHeaderAction{
       .kind = ChatHeaderAction::Kind::Model,
       .rect = layout.model_rect,
-      .label = model_label,
-      .enabled = conversation != nullptr && !conversation->provider_id.empty(),
+      .label = "Model",
+      .enabled = false,
   });
 
-  const std::string tool_label =
-      conversation == nullptr ? "Tools"
-      : conversation->tool_mode == ToolMode::NoTools ? "No Tools"
-      : conversation->tool_mode == ToolMode::Ask     ? "Ask"
-                                                     : "Auto";
   actions.push_back(ChatHeaderAction{
       .kind = ChatHeaderAction::Kind::ToolMode,
       .rect = layout.tool_mode_rect,
-      .label = tool_label,
-      .enabled = conversation != nullptr,
+      .label = "Tools",
+      .enabled = false,
   });
   return actions;
 }

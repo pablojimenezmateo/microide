@@ -1,6 +1,6 @@
 # microide
 
-The fastest, lowest-footprint AI-focused desktop IDE — a native C++/SDL3 single-window application
+The fastest, lowest-footprint desktop IDE — a native C++/SDL3 single-window application
 with no GPU acceleration requirement, keyboard-first workflows, and best-in-class diff and merge.
 Think VSCode-shaped surface area with Zed-class responsiveness.
 
@@ -45,27 +45,19 @@ For the authoritative in-scope/non-goal list see `openspec/specs/product-vision/
 - Terminal text selection, copy, and paste shortcuts
 - Tab drag reordering; right-click for "Copy Last Command + Output"
 
-### AI
-- Host-owned chat pane with conversation rail, provider/model selector, markdown transcript rendering
-- Per-conversation multiline draft composer with retention across conversation switches
-- Ghost-text inline completion with explicit accept / dismiss; cancels on caret move or buffer change
-- MCP tool execution with per-agent permission levels, session-scoped approvals, transcript events
-- Native `microide_provider_bridge` binary for stdio-backed direct API-key provider communication
-- `chat`, `inline-complete`, and `mcp` built-in commands
-
 ### Plugins
 - Manual Lua 5.4 plugins from `~/.config/microide/plugins/` and project-local `.microide/plugins/`
 - Lifecycle hooks, commands, sidebars, diagnostics, hover providers, syntax contributions
 - Host-owned registries: settings, keybindings, status items, menus, formatters, save participants,
-  completion providers, code actions, tasks, tools, tests, SCM, auth, annotations, AI providers
+  completion providers, code actions, tests, SCM, auth, annotations
 - `plugins-reload` command; file-watch–triggered asset reload on Linux
-- Repo-owned dogfood examples: `plugins/eslint` (diagnostics), `plugins/llm` (chat/completion)
+- Repo-owned dogfood examples: `plugins/eslint` (diagnostics)
 
 ## Scope
 
 In-scope and non-goals are declared in `openspec/specs/product-vision/spec.md`.
 
-Short version: built-in editor, diff, merge, search, git, terminal, and AI workflows stay host-owned.
+Short version: built-in editor, diff, merge, search, git, and terminal workflows stay host-owned.
 Out of scope: full debugger UI, plugin marketplaces, cloud/collaboration/sync, recent-project surfaces.
 
 ## Build
@@ -156,53 +148,44 @@ Right-click terminal tab: **Copy Last Command + Output**.
 
 ## Commands
 
-Run commands with `Ctrl+e` (command prompt) or the `chat` sidebar:
+Run commands with `Ctrl+e` (command prompt):
 
 ```
-auth-login <provider> [scope...]    auth-logout <provider> <session>
-auth-refresh <provider> <session>   about
-ai-provider                         chat [message]
-code-actions                        colorscheme [name|list]
-compare [path] [commit-prefix]      completion
-debug-start <type>                  debug-stop
-files [root]                        find <query>
-find-references                     focus <editor|sidebar|panel>
-git-refresh                         goto <line[:col]>
-goto-definition                     indent-width [n]
-inline-complete                     jump <line[:col]>
+about                               code-actions
+colorscheme [name|list]             compare [path] [commit-prefix]
+completion                          files [root]
+find <query>                        find-references
+focus <editor|sidebar|panel>        git-refresh
+goto <line[:col]>                   goto-definition
+indent-width [n]                    jump <line[:col]>
 keyboard-shortcuts                  layout-mode-toggle
-mcp <tool> [json]                   merge <base> <incoming> <current> [output]
+merge <base> <incoming> <current> [output]
 open <path>                         output [channel]
 plugins-reload                      project-close
 project-next                        project-open [path]
 project-prev                        project-search [query]
 quit                                reopen
 save                                search <query>
-settings                            status-bar-toggle
-sidebar-close                       sidebar-hide
-sidebar-show [tool]                 sidebar-toggle [tool]
-sidebar-width <n>                   soft-tabs [on|off]
-split-first                         split-last
-split-next                          split-prev
+settings                            sidebar-close
+sidebar-hide                        sidebar-show [tool]
+sidebar-toggle [tool]               sidebar-width <n>
+soft-tabs [on|off]                  split-first
+split-last                          split-next
+split-prev                          status-bar-toggle
 tab [path]                          tab-size [n]
 tabmove <n>                         tabswitch <tab>
-tasks [task-id]                     term [command]
-tests-discover                      tests-run [test-id...]
-tree [root]                         tree-refresh
-ui-scale [n|up|down|reset]          unsplit
-vsplit [path]                       wrap [on|off]
+term [command]                      tests-discover
+tests-run [test-id...]              tree [root]
+tree-refresh                        ui-scale [n|up|down|reset]
+unsplit                             vsplit [path]
+wrap [on|off]
 ```
 
 Current commands:
-- `auth-login <provider> [scope...]`
-- `auth-logout <provider> <session>`
-- `auth-refresh <provider> <session>`
 - `code-actions`
 - `colorscheme [name|list]`
 - `completion`
 - `compare [path] [commit-prefix]`
-- `debug-start <type>`
-- `debug-stop`
 - `merge <base> <incoming> <current> [output]`
 - `files [root]`
 - `find <query>`
@@ -212,11 +195,8 @@ Current commands:
 - `goto <line[:col]>`
 - `git-refresh`
 - `indent-width [n]`
-- `inline-complete`
 - `jump <line[:col]>`
-- `mcp <tool> [json]`
 - `open <path>`
-- `ai-provider`
 - `about`
 - `keyboard-shortcuts`
 - `settings`
@@ -230,7 +210,6 @@ Current commands:
 - `reopen`
 - `save`
 - `search <query>`
-- `chat [message]`
 - `output [channel]`
 - `sidebar-close`
 - `sidebar-hide`
@@ -248,7 +227,6 @@ Current commands:
 - `tabmove <n>`
 - `tabswitch <tab>`
 - `term [command]`
-- `tasks [task-id]`
 - `tests-discover`
 - `tests-run [test-id...]`
 - `tree [root]`
@@ -296,6 +274,5 @@ See `docs/startup-tracing.md` and `docs/runtime-profiling.md` for full workflows
   `ctx.settings.*`, `ctx.menus.add`, `ctx.keybindings.add`, `ctx.status.*`,
   `ctx.formatters.add`, `ctx.save_participants.add`, `ctx.completion.add`,
   `ctx.code_actions.add`, `ctx.tasks.add`, `ctx.tools.add`, `ctx.debuggers.add`,
-  `ctx.tests.add`, `ctx.scm.add`, `ctx.annotations.add`, `ctx.auth.add`,
-  `ctx.ai_providers.add`, `ctx.external_agents.add`, `ctx.mcp_tools.add`
+  `ctx.tests.add`, `ctx.scm.add`, `ctx.annotations.add`, `ctx.auth.add`
 - Syntax: `syntax/*.lua` inside plugin directories, loaded on project open and `plugins-reload`

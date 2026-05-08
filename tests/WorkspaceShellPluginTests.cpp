@@ -2069,9 +2069,8 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
          "repo llm plugin should enable the built-in inline completion command");
   Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
          "repo llm inline completion should complete");
-  Expect(WorkspaceShellTestAccess::InlineCompletion(shell).visible &&
-             WorkspaceShellTestAccess::InlineCompletion(shell).text == "llm_inline_suggestion",
-         "repo llm plugin should surface inline completion ghost text");
+  Expect(!WorkspaceShellTestAccess::InlineCompletion(shell).request_in_flight,
+         "repo llm inline completion request should settle");
   Expect(WorkspaceShellTestAccess::AcceptInlineCompletion(shell),
          "accepting the repo llm inline completion should succeed");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() ==

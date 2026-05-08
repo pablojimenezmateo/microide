@@ -82,9 +82,6 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   PushAddOnlyModule(state, host_upvalue, "scm", fns.scm_provider_add);
   PushAddOnlyModule(state, host_upvalue, "annotations", fns.annotation_provider_add);
   PushAddOnlyModule(state, host_upvalue, "auth", fns.auth_provider_add);
-  PushAddOnlyModule(state, host_upvalue, "ai_providers", fns.ai_provider_add);
-  PushAddOnlyModule(state, host_upvalue, "external_agents", fns.external_agent_add);
-  PushAddOnlyModule(state, host_upvalue, "mcp_tools", fns.mcp_tool_add);
 }
 
 }  // namespace microide::plugin::lua_context_interop

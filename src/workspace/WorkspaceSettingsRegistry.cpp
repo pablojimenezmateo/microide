@@ -14,8 +14,6 @@ namespace {
 
 const SettingEnumValue kColorschemeValues[] = {
     {"default", "Default"},
-    {"dark", "Dark"},
-    {"light", "Light"},
 };
 
 const SettingEnumValue kEditorWrapValues[] = {

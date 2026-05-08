@@ -14,10 +14,7 @@ namespace microide::workspace {
 namespace {
 
 void SyncChatDraft(ProjectWorkspaceState& state) {
-  if (Conversation* conversation = state.conversations.GetConversation(state.panel.chat.conversation_id);
-      conversation != nullptr) {
-    conversation->draft = util::SerializeLines(state.panel.chat.composer.lines(), util::LineEnding::LF);
-  }
+  (void)state;
 }
 
 std::optional<editor::SingleLineEditor> BuildSingleLineFromComposerLine(

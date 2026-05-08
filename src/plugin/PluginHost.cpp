@@ -71,7 +71,6 @@ struct PluginHost::Impl {
   using ScmProviderRuntime = runtime_types::ScmProviderRuntime;
   using AnnotationProviderRuntime = runtime_types::AnnotationProviderRuntime;
   using AuthProviderRuntime = runtime_types::AuthProviderRuntime;
-  using McpToolRuntime = runtime_types::McpToolRuntime;
 
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
@@ -111,10 +110,6 @@ struct PluginHost::Impl {
   std::vector<AnnotationProviderRuntime> annotation_provider_runtimes;
   std::vector<PluginHost::ContributedAuthProvider> auth_providers;
   std::vector<AuthProviderRuntime> auth_provider_runtimes;
-  std::vector<PluginHost::ContributedAiProvider> ai_providers;
-  std::vector<PluginHost::ContributedExternalAgent> external_agents;
-  std::vector<PluginHost::ContributedMcpTool> mcp_tools;
-  std::vector<McpToolRuntime> mcp_tool_runtimes;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";

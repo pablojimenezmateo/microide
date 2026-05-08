@@ -272,15 +272,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellInlineCompletion.cpp
-  src/workspace/WorkspaceShellChatPanel.cpp
-  src/workspace/WorkspaceShellChatRequests.cpp
-  src/workspace/WorkspaceShellChatBridge.cpp
-  src/workspace/WorkspaceShellChatToolApproval.cpp
+  src/workspace/WorkspaceShellChatRetired.cpp
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellAssist.cpp
   src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp
-  src/workspace/WorkspaceShellProviderAuth.cpp
   src/workspace/WorkspaceShellSettingsOverlay.cpp
   src/workspace/WorkspaceShellMcp.cpp
   src/workspace/WorkspaceShellProjects.cpp
@@ -335,8 +331,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShellTerminalService.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp
-  src/workspace/WorkspaceChatTranscript.cpp
-  src/workspace/WorkspaceChatTranscriptLayout.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
   src/workspace/SettingsOverlayService.cpp

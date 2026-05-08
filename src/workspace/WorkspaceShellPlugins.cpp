@@ -229,77 +229,6 @@ void WorkspaceShell::RebuildPhase4Registries() {
   }
 }
 
-void WorkspaceShell::RebuildPhase5Registries() {
-  ai_provider_registry_ = AiProviderRegistry{};
-  ai_provider_runtime_service_.ClearRuntimes();
-  inline_completion_registry_.Clear();
-  external_agent_registry_.Clear();
-  mcp_tool_registry_.Clear();
-  ai_context_manager_.Clear();
-
-  const auto& host = plugin_runtime_.Host();
-  for (const auto& provider : host.ContributedAiProviders()) {
-    AiProviderSpec spec;
-    spec.id = provider.id;
-    spec.label = provider.label;
-    spec.display_name = provider.label;
-    spec.type = provider.type;
-    spec.api_key_name = provider.id + ".api_key";
-    spec.models = provider.models;
-    spec.runtime = provider.runtime;
-    spec.base_url = provider.base_url;
-    spec.default_model = provider.default_model;
-    spec.requires_api_key = !spec.api_key_name.empty();
-    spec.auth_method = "api_key";
-    spec.plugin_id = provider.plugin_id;
-    ai_provider_registry_.Register(spec);
-    ai_provider_runtime_service_.RegisterDirectRuntime(spec);
-  }
-  for (const auto& agent : host.ContributedExternalAgents()) {
-    ExternalAgentSpec agent_spec{
-        .id = agent.id,
-        .label = agent.label,
-        .protocol = agent.protocol,
-        .command = agent.command,
-        .capabilities = agent.capabilities,
-        .plugin_id = agent.plugin_id,
-    };
-    if (ai_provider_registry_.FindProvider(agent.id) == nullptr) {
-      AiProviderSpec synthetic_provider;
-      synthetic_provider.id = agent.id;
-      synthetic_provider.label = agent.label;
-      synthetic_provider.display_name = agent.label;
-      synthetic_provider.type = "external";
-      synthetic_provider.auth_method = "sidecar";
-      synthetic_provider.plugin_id = agent.plugin_id;
-      ai_provider_registry_.Register(synthetic_provider);
-    }
-    external_agent_registry_.RegisterAgent(agent_spec);
-    if (const AiProviderSpec* provider = ai_provider_registry_.FindProvider(agent.id);
-        provider != nullptr) {
-      ai_provider_runtime_service_.RegisterSidecarRuntime(*provider, agent_spec);
-    }
-  }
-  for (const auto& tool : host.ContributedMcpTools()) {
-    mcp_tool_registry_.RegisterTool(McpToolSpec{
-        .id = tool.id,
-        .name = tool.name,
-        .description = tool.description,
-        .input_schema = tool.input_schema,
-        .plugin_id = tool.plugin_id,
-    });
-    mcp_tool_registry_.SetPermission(ToolPermission{
-        .tool_id = tool.id,
-        .agent_id = "*",
-        .level = ToolPermissionLevel::PromptRequired,
-    });
-  }
-  if (context_.current_project_state.panel.chat.conversation_id.empty()) {
-    context_.current_project_state.panel.chat.conversation_id =
-        context_.current_project_state.conversations.CreateConversation("Chat", {});
-  }
-}
-
 bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
@@ -318,7 +247,6 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
         "WorkspaceShell::ReloadPluginsForCurrentProject::RebuildRegistries");
     RebuildPhase3Registries();
     RebuildPhase4Registries();
-    RebuildPhase5Registries();
   }
   {
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
@@ -381,7 +309,6 @@ void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
       "WorkspaceShell::RefreshPluginSurfacesForReactivation");
   RebuildPhase3Registries();
   RebuildPhase4Registries();
-  RebuildPhase5Registries();
   NormalizeSidebarViewSelection();
   RefreshPluginSidebar();
   if (ActiveSidebarMode() == SidebarMode::Git) {

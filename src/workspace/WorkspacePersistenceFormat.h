@@ -140,7 +140,6 @@ struct PersistedProjectSessionState {
   OutgoingBaseChoice outgoing_base_choice;
   std::size_t active_tab_index = 0;
   std::vector<PersistedEditorTabState> tabs;
-  PersistedChatState chat;
 };
 
 struct PersistedWorkspaceSessionState {
@@ -156,10 +155,6 @@ bool EncodeProjectConfigRecord(const PersistedProjectConfigState& state,
                                std::vector<std::byte>* out);
 bool DecodeProjectConfigRecord(std::span<const std::byte> input,
                                PersistedProjectConfigState* state);
-bool EncodeConversationRegistryRecord(const PersistedChatState& state,
-                                      std::vector<std::byte>* out);
-bool DecodeConversationRegistryRecord(std::span<const std::byte> input,
-                                      PersistedChatState* state);
 bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
                                 std::vector<std::byte>* out);
 bool DecodeProjectSessionRecord(std::span<const std::byte> input,

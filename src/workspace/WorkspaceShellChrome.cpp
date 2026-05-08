@@ -142,7 +142,6 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
                                           std::max(0, static_cast<int>(context_.project_catalog.entries.size()) - 1))),
       tab_y, tab_height, {}, context_.project_catalog.active_index, display_titles, tooltip_labels);
   for (VisibleStripTab& tab : tabs) {
-    const ProjectChatSummary summary = SummarizeProjectChatState(tab.index);
     const ProjectWorkspaceState* project = ProjectCatalogEntry(tab.index);
     const std::filesystem::path root = ProjectCatalogRoot(tab.index);
     tab.badge_text = ProjectTabBadgeText(ProjectLabelForRoot(root));
@@ -151,10 +150,6 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
             ? *project->project_base_color
             : DefaultProjectBaseColor(root);
     tab.show_badge = layout_mode_service_.CurrentMode() != LayoutMode::Compact;
-    tab.chat_status =
-        summary.state == ProjectChatSummary::State::Running ? VisibleStripTab::ChatStatus::Running
-        : summary.state == ProjectChatSummary::State::Failed ? VisibleStripTab::ChatStatus::Failed
-                                                             : VisibleStripTab::ChatStatus::None;
   }
   return tabs;
 }

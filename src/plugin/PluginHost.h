@@ -360,10 +360,6 @@ class PluginHost {
   bool LogoutAuthSession(std::string_view provider_id,
                          std::string_view session_id,
                          std::string* error_message = nullptr) const;
-  bool InvokeMcpTool(std::string_view tool_id,
-                     std::string_view input_json,
-                     std::string* output_json,
-                     std::string* error_message = nullptr) const;
   const std::vector<ContributedFormatter>& ContributedFormatters() const;
   const std::vector<ContributedSaveParticipant>& ContributedSaveParticipants() const;
   const std::vector<ContributedCompletion>& ContributedCompletions() const;
@@ -376,9 +372,6 @@ class PluginHost {
   const std::vector<ContributedScmProvider>& ContributedScmProviders() const;
   const std::vector<ContributedAnnotationProvider>& ContributedAnnotationProviders() const;
   const std::vector<ContributedAuthProvider>& ContributedAuthProviders() const;
-  const std::vector<ContributedAiProvider>& ContributedAiProviders() const;
-  const std::vector<ContributedExternalAgent>& ContributedExternalAgents() const;
-  const std::vector<ContributedMcpTool>& ContributedMcpTools() const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

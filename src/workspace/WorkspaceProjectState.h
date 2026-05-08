@@ -209,14 +209,6 @@ struct ChatPanelState {
 struct InlineCompletionState {
   bool visible = false;
   bool request_in_flight = false;
-  std::string text;
-  std::size_t start_line = 0;
-  std::size_t start_column = 0;
-  std::string provider_id;
-  std::string model_id;
-  std::string error;
-  std::string pending_provider_id;
-  std::string pending_request_id;
 };
 
 struct LspUiState {
@@ -264,8 +256,6 @@ struct ProjectWorkspaceState {
   EditorPreferences editor_preferences;
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<SidebarViewPolicy> sidebar_policies;
-  // Chat conversations persisted per-project.
-  ConversationRegistry conversations;
 };
 
 struct ProjectCatalogState {

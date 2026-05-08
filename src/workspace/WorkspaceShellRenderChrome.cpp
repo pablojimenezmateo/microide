@@ -119,12 +119,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                      .accent_edge = StripAccentEdge::Top,
                  },
                  chrome_tab_palette);
-    if (tab.chat_status != VisibleStripTab::ChatStatus::None) {
-      DrawFilledRect(renderer,
-                     MakeRect(tab.rect.x + 8.0f, tab.rect.y + tab.rect.h - 8.0f, 10.0f, 3.0f),
-                     tab.chat_status == VisibleStripTab::ChatStatus::Running ? theme_.accent
-                                                                             : theme_.diff_deleted);
-    }
     draw_tab_close_button(tab.close_rect,
                           tab.active ? chrome_tab_palette.active_glyph
                                      : chrome_tab_palette.inactive_glyph,

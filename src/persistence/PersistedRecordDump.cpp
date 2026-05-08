@@ -32,9 +32,6 @@ void AppendProjectSessionSummary(const workspace::PersistedProjectSessionState& 
   stream << "decoded.project_session.bottom_panel_height: " << state.bottom_panel_height << '\n';
   stream << "decoded.project_session.active_tab_index: " << state.active_tab_index << '\n';
   stream << "decoded.project_session.tab_count: " << state.tabs.size() << '\n';
-  stream << "decoded.project_session.active_conversation_id: " << state.chat.active_conversation_id
-         << '\n';
-  stream << "decoded.project_session.conversation_count: " << state.chat.conversations.size() << '\n';
 }
 
 void AppendUserConfigSummary(const workspace::PersistedUserConfigState& state,
@@ -60,13 +57,6 @@ void AppendWorkspaceSessionSummary(const workspace::PersistedWorkspaceSessionSta
                                    std::ostringstream& stream) {
   stream << "decoded.workspace_session.active_project_index: " << state.active_project_index << '\n';
   stream << "decoded.workspace_session.project_count: " << state.project_roots.size() << '\n';
-}
-
-void AppendConversationRegistrySummary(const workspace::PersistedChatState& state,
-                                       std::ostringstream& stream) {
-  stream << "decoded.conversation_registry.active_conversation_id: " << state.active_conversation_id
-         << '\n';
-  stream << "decoded.conversation_registry.conversation_count: " << state.conversations.size() << '\n';
 }
 
 void AppendDecodedSummary(std::uint32_t capability_flags,
@@ -105,15 +95,6 @@ void AppendDecodedSummary(std::uint32_t capability_flags,
       AppendWorkspaceSessionSummary(state, stream);
     } else {
       stream << "decoded.error: failed_to_decode_workspace_session\n";
-    }
-    return;
-  }
-  if (capability_flags == 5u) {
-    workspace::PersistedChatState state;
-    if (workspace::DecodeConversationRegistryRecord(body, &state)) {
-      AppendConversationRegistrySummary(state, stream);
-    } else {
-      stream << "decoded.error: failed_to_decode_conversation_registry\n";
     }
     return;
   }

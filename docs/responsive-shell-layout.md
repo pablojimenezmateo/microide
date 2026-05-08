@@ -10,7 +10,7 @@
 | Project tree / tools    | Editor / compare / merge surface                    |
 |                         |                                                       |
 + Bottom panel tabs -------------------------------------------------------------+
-+ Status: project branch indent                    Ln/Col LSP AI regular --------+
++ Status: project branch indent                    Ln/Col LSP mode regular ------+
 ```
 
 ## Compact
@@ -23,7 +23,7 @@
 | Tools                  | Editor / compare / merge surface                    |
 |                        |                                                       |
 + Bottom panel tabs + -----------------------------------------------------------+
-+ Status: project branch                         Ln/Col LSP AI ------------------+
++ Status: project branch                         Ln/Col LSP mode ----------------+
 ```
 
 Compact mode keeps every top-level menu reachable through the overflow menu and drops

@@ -488,10 +488,13 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() { return ExecuteSelectedCodeAction(); },
           .request_inline_completion =
               [this](std::string* error_message) {
-                return RequestInlineCompletion(error_message);
+                if (error_message != nullptr) {
+                  *error_message = "Inline completion is retired";
+                }
+                return false;
               },
-          .accept_inline_completion = [this]() { return AcceptInlineCompletion(); },
-          .dismiss_inline_completion = [this]() { DismissInlineCompletion(); },
+          .accept_inline_completion = [this]() { return false; },
+          .dismiss_inline_completion = [this]() {},
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =
               [this](MergeTabState& merge_tab,

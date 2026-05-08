@@ -416,11 +416,12 @@
   }
   static bool AcceptInlineCompletion(WorkspaceShell& shell) {
     return shell.AcceptInlineCompletion();
-  }  static std::vector<Message> ActiveConversationMessages(const WorkspaceShell& shell) {
-    const auto* conversation = shell.context_.current_project_state.conversations.GetConversation(
-        shell.context_.current_project_state.panel.chat.conversation_id);
-    return conversation != nullptr ? conversation->messages : std::vector<Message>{};
+  }
+  static std::vector<Message> ActiveConversationMessages(const WorkspaceShell& shell) {
+    (void)shell;
+    return {};
   }
   static std::string ActiveConversationProviderId(const WorkspaceShell& shell) {
-    const auto* conversation = shell.context_.current_project_state.conversations.GetConversation(
-        shell.context_.current_project_state.panel.chat.conversation_id);
+    (void)shell;
+    return {};
+  }

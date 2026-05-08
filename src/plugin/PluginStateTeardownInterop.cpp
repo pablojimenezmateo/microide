@@ -70,11 +70,7 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedAnnotationProvider>* annotation_providers,
     std::vector<runtime_types::AnnotationProviderRuntime>* annotation_provider_runtimes,
     std::vector<PluginHost::ContributedAuthProvider>* auth_providers,
-    std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes,
-    std::vector<PluginHost::ContributedAiProvider>* ai_providers,
-    std::vector<PluginHost::ContributedExternalAgent>* external_agents,
-    std::vector<PluginHost::ContributedMcpTool>* mcp_tools,
-    std::vector<runtime_types::McpToolRuntime>* mcp_tool_runtimes) {
+    std::vector<runtime_types::AuthProviderRuntime>* auth_provider_runtimes) {
   for (auto it = commands->begin(); it != commands->end();) {
     if (it->second.state != state) {
       ++it;
@@ -276,31 +272,6 @@ void UnregisterContributionsForState(
       luaL_unref(state, LUA_REGISTRYINDEX, it->logout_ref);
     }
     it = auth_provider_runtimes->erase(it);
-  }
-  ai_providers->erase(std::remove_if(ai_providers->begin(), ai_providers->end(),
-                                     [&](const PluginHost::ContributedAiProvider& e) {
-                                       return e.plugin_id == plugin_id;
-                                     }),
-                      ai_providers->end());
-  external_agents->erase(std::remove_if(external_agents->begin(), external_agents->end(),
-                                        [&](const PluginHost::ContributedExternalAgent& e) {
-                                          return e.plugin_id == plugin_id;
-                                        }),
-                         external_agents->end());
-  mcp_tools->erase(std::remove_if(mcp_tools->begin(), mcp_tools->end(),
-                                  [&](const PluginHost::ContributedMcpTool& e) {
-                                    return e.plugin_id == plugin_id;
-                                  }),
-                   mcp_tools->end());
-  for (auto it = mcp_tool_runtimes->begin(); it != mcp_tool_runtimes->end();) {
-    if (it->plugin_id != plugin_id) {
-      ++it;
-      continue;
-    }
-    if (it->run_ref != LUA_NOREF && it->run_ref != LUA_REFNIL) {
-      luaL_unref(state, LUA_REGISTRYINDEX, it->run_ref);
-    }
-    it = mcp_tool_runtimes->erase(it);
   }
 }
 

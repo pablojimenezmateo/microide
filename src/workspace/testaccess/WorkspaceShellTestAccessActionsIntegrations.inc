@@ -1,5 +1,3 @@
-    return conversation != nullptr ? conversation->provider_id : std::string{};
-  }
   static bool ActivateChatConversation(WorkspaceShell& shell, std::string_view conversation_id) {
     return shell.ActivateChatConversation(conversation_id);
   }
@@ -17,7 +15,9 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
     return *shell.context_.project_catalog.entries.at(index);
   }
   static const std::vector<AiProviderSpec>& AiProviders(const WorkspaceShell& shell) {
-    return shell.ai_provider_registry_.Specs();
+    (void)shell;
+    static const std::vector<AiProviderSpec> kRetiredProviders;
+    return kRetiredProviders;
   }
   static bool SetProviderApiKey(WorkspaceShell& shell,
                                 std::string_view provider_id,
@@ -30,36 +30,24 @@ static WorkspaceShell::ProjectWorkspaceState& CurrentProjectState(WorkspaceShell
     return shell.GetProviderAuthStatus(provider_id);
   }
   static void RequestProviderAuthCheck(WorkspaceShell& shell, std::string_view provider_id) {
-    const AiProviderSpec* provider =
-        shell.ai_provider_registry_.FindProvider(std::string(provider_id));
-    if (provider == nullptr) {
-      return;
-    }
-    shell.ai_provider_runtime_service_.RequestAuthCheck(
-        provider_id,
-        AiRuntimeLaunchContext{.cwd = shell.context_.current_project_state.root,
-                               .secret = shell.ResolveProviderApiKey(*provider)},
-        nullptr);
+    (void)shell;
+    (void)provider_id;
   }
   static void RequestProviderModelList(WorkspaceShell& shell, std::string_view provider_id) {
-    const AiProviderSpec* provider =
-        shell.ai_provider_registry_.FindProvider(std::string(provider_id));
-    if (provider == nullptr) {
-      return;
-    }
-    shell.ai_provider_runtime_service_.RequestModelList(
-        provider_id,
-        AiRuntimeLaunchContext{.cwd = shell.context_.current_project_state.root,
-                               .secret = shell.ResolveProviderApiKey(*provider)},
-        nullptr);
+    (void)shell;
+    (void)provider_id;
   }
   static std::vector<std::string> ProviderModels(const WorkspaceShell& shell,
                                                  std::string_view provider_id) {
-    return shell.ai_provider_runtime_service_.GetModels(provider_id);
+    (void)shell;
+    (void)provider_id;
+    return {};
   }
   static ProviderCapabilities GetProviderCapabilities(const WorkspaceShell& shell,
                                                       std::string_view provider_id) {
-    return shell.ai_provider_runtime_service_.GetCapabilities(provider_id);
+    (void)shell;
+    (void)provider_id;
+    return {};
   }
   static void ConsumeAiRuntimeUpdates(WorkspaceShell& shell) {
     shell.ConsumeAiRuntimeUpdates();

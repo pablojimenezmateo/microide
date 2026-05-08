@@ -206,6 +206,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const FrameToken& frame_token,
     bool draw_editor_caret,
     std::optional<SDL_FRect>* active_editor_pane_rect) {
+  (void)frame_token;
   const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
   ProjectWorkspaceState& project_state = *frame_vm.project_state;
   const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
@@ -314,45 +315,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    blame_overlay, diagnostics_for_viewport(*viewport));
       draw_review_comment_markers(*viewport, pane.rect);
 
-      if (pane.active && project_state.inline_completion.visible &&
-          !project_state.inline_completion.text.empty()) {
-        const std::size_t line_index = project_state.inline_completion.start_line;
-        const auto& lines = viewport->lines();
-        const std::size_t visible_start =
-            pane.active && frame_token.visible_line_range().viewport == viewport
-                ? frame_token.visible_line_range().start_line
-                : viewport->scroll_line();
-        const std::size_t visible_end =
-            pane.active && frame_token.visible_line_range().viewport == viewport
-                ? frame_token.visible_line_range().end_line
-                : std::min(lines.size(), viewport->scroll_line() + viewport->visible_lines());
-        if (line_index < lines.size() && line_index >= visible_start && line_index < visible_end) {
-          const editor::EditorViewMetrics metrics =
-              editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
-          const std::size_t visual_column = editor::TextLayout::VisualColumnForTextColumn(
-              lines[line_index], project_state.inline_completion.start_column,
-              viewport->tab_size());
-          if (visual_column >= viewport->horizontal_scroll() &&
-              visual_column < viewport->horizontal_scroll() + viewport->visible_columns()) {
-            const float draw_x =
-                metrics.text_x +
-                static_cast<float>(visual_column - viewport->horizontal_scroll()) *
-                    text_renderer_.CharWidth();
-            const float draw_y =
-                metrics.first_line_y +
-                static_cast<float>(line_index - viewport->scroll_line()) * metrics.line_height;
-            std::string ghost_text = project_state.inline_completion.text;
-            if (const std::size_t newline = ghost_text.find('\n'); newline != std::string::npos) {
-              ghost_text.erase(newline);
-            }
-            text_renderer_.DrawStringOn(
-                renderer, draw_x, draw_y, theme_.text_disabled,
-                line_index == viewport->cursor_line() ? theme_.row_highlight
-                                                      : theme_.editor_background,
-                ghost_text);
-          }
-        }
-      }
     }
   }
 

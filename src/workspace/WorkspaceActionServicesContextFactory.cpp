@@ -163,7 +163,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .show_output_channel = [this](std::string_view id) { ShowOutputChannel(id); },
           .request_inline_completion =
               [this](std::string* error_message) {
-                return RequestInlineCompletion(error_message);
+                if (error_message != nullptr) {
+                  *error_message = "Inline completion is retired";
+                }
+                return false;
               },
           .open_compare_picker_for_path =
               [this](const std::filesystem::path& path, const std::string& commit_spec) {

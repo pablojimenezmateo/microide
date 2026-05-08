@@ -586,36 +586,6 @@ bool PluginHost::LogoutAuthSession(std::string_view provider_id,
 #endif
 }
 
-bool PluginHost::InvokeMcpTool(std::string_view tool_id,
-                               std::string_view input_json,
-                               std::string* output_json,
-                               std::string* error_message) const {
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  if (output_json == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "mcp invocation requires an output string";
-    }
-    return false;
-  }
-  output_json->clear();
-  if (!impl_->enabled()) {
-    return false;
-  }
-
-#if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::InvokeMcpTool(
-      tool_id, input_json, impl_->mcp_tool_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); }, output_json,
-      error_message);
-#else
-  (void)tool_id;
-  (void)input_json;
-  return false;
-#endif
-}
-
 const std::vector<PluginHost::ContributedFormatter>& PluginHost::ContributedFormatters() const {
   return impl_->formatters;
 }
@@ -668,20 +638,6 @@ PluginHost::ContributedAnnotationProviders() const {
 const std::vector<PluginHost::ContributedAuthProvider>& PluginHost::ContributedAuthProviders()
     const {
   return impl_->auth_providers;
-}
-
-const std::vector<PluginHost::ContributedAiProvider>& PluginHost::ContributedAiProviders()
-    const {
-  return impl_->ai_providers;
-}
-
-const std::vector<PluginHost::ContributedExternalAgent>& PluginHost::ContributedExternalAgents()
-    const {
-  return impl_->external_agents;
-}
-
-const std::vector<PluginHost::ContributedMcpTool>& PluginHost::ContributedMcpTools() const {
-  return impl_->mcp_tools;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {

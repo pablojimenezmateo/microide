@@ -324,36 +324,6 @@
         });
   }
 
-  static int LuaAiProviderAdd(lua_State* state) {
-    return RegisterTableContribution(
-        state, "AI provider registration requires an active plugin state",
-        "failed to parse AI provider registration",
-        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterAiProvider(
-              state, plugin->id, &host->ai_providers, error_message);
-        });
-  }
-
-  static int LuaExternalAgentAdd(lua_State* state) {
-    return RegisterTableContribution(
-        state, "external agent registration requires an active plugin state",
-        "failed to parse external agent registration",
-        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterExternalAgent(
-              state, plugin->id, &host->external_agents, error_message);
-        });
-  }
-
-  static int LuaMcpToolAdd(lua_State* state) {
-    return RegisterTableContribution(
-        state, "MCP tool registration requires an active plugin state",
-        "failed to parse MCP tool registration",
-        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterMcpTool(
-              state, plugin->id, &host->mcp_tools, &host->mcp_tool_runtimes, error_message);
-        });
-  }
-
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaWorkspaceProjectRoot(
@@ -471,9 +441,6 @@
             .scm_provider_add = &LuaScmProviderAdd,
             .annotation_provider_add = &LuaAnnotationProviderAdd,
             .auth_provider_add = &LuaAuthProviderAdd,
-            .ai_provider_add = &LuaAiProviderAdd,
-            .external_agent_add = &LuaExternalAgentAdd,
-            .mcp_tool_add = &LuaMcpToolAdd,
         });
   }
 
@@ -546,8 +513,7 @@
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
         &language_servers, &tasks, &tools, &debuggers, &test_providers, &test_provider_runtimes,
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
-        &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes, &ai_providers,
-        &external_agents, &mcp_tools, &mcp_tool_runtimes);
+        &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes);
   }
 
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {
