@@ -88,7 +88,7 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
   if (editor_tab == nullptr) {
     return nullptr;
   }
-  const editor::TextViewport* active_viewport = ActiveEditorViewport();
+  editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (active_viewport == nullptr) {
     return &editor_tab->folding_model;
   }

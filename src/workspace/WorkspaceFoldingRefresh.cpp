@@ -17,7 +17,7 @@ constexpr std::size_t kFoldingModelComputeBudget = 2000;
 }  // namespace
 
 void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
-                             const editor::TextViewport& viewport,
+                             editor::TextViewport& viewport,
                              const LanguageContract* contract,
                              std::size_t tab_size,
                              bool fold_enabled) {
@@ -53,7 +53,8 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
     }
   }
 
-  model.ComputeWithBudget(viewport.lines(), options, kFoldingModelComputeBudget);
+  const std::size_t fold_resume_line = viewport.ConsumeFoldEditAnchorLine();
+  model.ComputeWithBudget(viewport.lines(), options, kFoldingModelComputeBudget, fold_resume_line);
   model.SetFingerprint(fingerprint);
 }
 

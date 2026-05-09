@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
@@ -1318,6 +1319,16 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
   ++document_->layout_revision;
   const std::size_t safe_start = std::min(start_line, document_->lines.size());
 
+  // Folding incremental scan anchors at lines >= fold_edit_anchor_line_. Zero
+  // forces a bracket rescan without prefix reuse; SIZE_MAX sentinel means idle.
+  if (safe_start == 0) {
+    fold_edit_anchor_line_ = 0;
+  } else if (safe_start >= document_->lines.size()) {
+    fold_edit_anchor_line_ = document_->lines.size();
+  } else {
+    fold_edit_anchor_line_ = std::min(fold_edit_anchor_line_, safe_start);
+  }
+
   if (safe_start == 0) {
     visible_line_cache_.clear();
     visible_line_cache_order_.clear();
@@ -1376,6 +1387,12 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
     highlight_checkpoints_.front() = *initial_highlight_state_;
   }
   highlight_state_revision_ = document_->layout_revision;
+}
+
+std::size_t TextViewport::ConsumeFoldEditAnchorLine() {
+  const std::size_t v = fold_edit_anchor_line_;
+  fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();
+  return v;
 }
 
 void TextViewport::InvalidateVisualColumnCache() {

@@ -2,6 +2,7 @@
 
 #include <deque>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -136,6 +137,10 @@ class TextViewport {
   std::size_t visible_columns() const { return visible_columns_; }
   std::size_t line_count() const { return document_->lines.size(); }
   std::size_t layout_revision() const { return document_ != nullptr ? document_->layout_revision : 0; }
+  // Minimum line index affected by the last layout invalidation (used by the
+  // folding model to preserve stable bracket folds above the edit). Reset by
+  // `ConsumeFoldEditAnchorLine()` after the host reads it for a recompute.
+  std::size_t ConsumeFoldEditAnchorLine();
   std::size_t tab_size() const { return tab_size_; }
   std::size_t max_visual_columns() const { return MaxVisualColumns(); }
   std::size_t indent_width() const { return indent_width_; }
@@ -327,6 +332,7 @@ class TextViewport {
   static SelectionRange NormalizeRange(const SelectionRange& range);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
+  std::size_t fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();
   std::shared_ptr<DocumentState> document_;
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;

@@ -26,7 +26,7 @@ struct LanguageContract;
 // `contract` may be null when no language metadata is available; in that
 // case only the indent-source fold scan runs.
 void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
-                             const editor::TextViewport& viewport,
+                             editor::TextViewport& viewport,
                              const LanguageContract* contract,
                              std::size_t tab_size,
                              bool fold_enabled);

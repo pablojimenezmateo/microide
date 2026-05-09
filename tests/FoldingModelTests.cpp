@@ -115,6 +115,32 @@ void TestToggleFoldHidesInteriorLines() {
          "opener line itself should not be hidden");
 }
 
+void TestIncrementalBracketScanReusesPrefixAndCollapseState() {
+  std::vector<std::string> lines = {
+      "void outer() {",  // 0
+      "  void inner() {",  // 1
+      "    body();",       // 2
+      "  }",               // 3
+      "}",                 // 4
+      "// tail",           // 5
+      "void after() {",    // 6
+      "}",                 // 7
+  };
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()),
+         "initial compute should finish for incremental fixture");
+  Expect(model.Collapse(0), "outer fold should accept collapse");
+  Expect(model.IsCollapsedAtOpener(0), "outer fold should be collapsed");
+
+  Expect(model.ComputeWithBudget(lines, DefaultCStyleOptions(), /*max_lines=*/0, /*resume=*/5),
+         "incremental refresh should complete");
+  const auto outer = Find(model.ranges(), 0);
+  Expect(outer.closer_line == 4 && outer.source == FoldSource::Bracket,
+         "incremental path should preserve the outer bracket span");
+  Expect(model.IsCollapsedAtOpener(0),
+         "collapse state should remap across incremental bracket recompute");
+}
+
 }  // namespace
 
 void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
@@ -128,6 +154,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestComputeWithBudgetFlagsPartial);
   AddTest(tests, "EditorFolding/State/ToggleHidesInterior",
           TestToggleFoldHidesInteriorLines);
+  AddTest(tests, "EditorFolding/Incremental/ReusesPrefixAndCollapse",
+          TestIncrementalBracketScanReusesPrefixAndCollapseState);
 }
 
 }  // namespace microide::tests

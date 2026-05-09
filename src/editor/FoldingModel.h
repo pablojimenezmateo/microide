@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -57,9 +58,15 @@ class FoldingModel {
   // returned ranges are partial and `complete()` will report `false`. This is
   // the budgeted recompute described in the spec; the fold gutter renderer
   // paints whatever is resolved.
+  // `incremental_resume_line` anchors bracket rescans after localized edits:
+  // bracket folds with `closer_line < incremental_resume_line` are reused when
+  // they match the previous model, and bracket balance is seeded from lines
+  // `[0, incremental_resume_line)`. `std::numeric_limits<std::size_t>::max()`
+  // forces a whole-file bracket scan.
   bool ComputeWithBudget(const std::vector<std::string>& lines,
                          const ComputeOptions& options,
-                         std::size_t max_lines);
+                         std::size_t max_lines,
+                         std::size_t incremental_resume_line = std::numeric_limits<std::size_t>::max());
 
   // Toggle the collapsed state of the fold range whose opener matches
   // `opener_line`. Returns true if a matching range was found and toggled.
