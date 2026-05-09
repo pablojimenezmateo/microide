@@ -44,6 +44,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
             break;
           }
           operations_.apply_editor_preferences(reopened_view);
+          operations_.apply_detected_indent_on_open(reopened_view);
           reopened_view.MoveCursorTo(cursor_line, cursor_column);
           reopened_view.SetScrollLine(scroll_line);
           reopened_view.SetHorizontalScroll(horizontal_scroll);

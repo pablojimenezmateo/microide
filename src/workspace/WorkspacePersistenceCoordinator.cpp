@@ -41,6 +41,8 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
           .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
           .apply_editor_preferences =
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },
+          .apply_detected_indent_on_open =
+              [this](editor::TextViewport& viewport) { ApplyDetectedIndentOnOpen(viewport); },
           .build_compare_tab_from_commit =
               [this](const std::filesystem::path& path,
                      const project::GitCommitEntry& commit,

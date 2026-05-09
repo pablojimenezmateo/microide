@@ -316,6 +316,7 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
         continue;
       }
       ApplyEditorPreferences(reopened_view);
+      ApplyDetectedIndentOnOpen(reopened_view);
       bool reloaded_any = false;
       for (auto& view : tab.editor_state->views) {
         const bool active_view =

@@ -98,8 +98,8 @@
 
 - [x] 10.1 Add `src/workspace/WorkspaceSaveNormalization.{h,cpp}` with two pure transforms: `TrimTrailingWhitespace(buffer&)` and `EnsureSingleFinalNewline(buffer&)`.
 - [x] 10.2 Wire the transforms into the editor save pipeline before the existing LSP / formatter save participants; respect `editor.save.trim_trailing_whitespace` and `editor.save.ensure_final_newline`. (Wired through `TextViewport::SetSaveTrimTrailingWhitespace` / `SetSaveEnsureFinalNewline` knobs read by the workspace settings layer; LSP/formatter integration ordering deferred.)
-- [x] 10.3 Add `editor::DetectIndent(buffer)` returning `(soft_tabs, indent_width)`; call it from `TextViewport::OpenFile` after `DecodeLines` when `editor.indent.detect_on_open` is true. (Helper added; OpenFile integration deferred — workspace layer can call it after open.)
-- [ ] 10.4 Apply detected `soft_tabs` and `indent_width` to the tab only; never persist the detection result; never modify file contents.
+- [x] 10.3 Add `editor::DetectIndent(buffer)` returning `(soft_tabs, indent_width)`; call it from `TextViewport::OpenFile` after `DecodeLines` when `editor.indent.detect_on_open` is true. (Helper lives in `IndentDetect.cpp`; workspace applies it after `ApplyEditorPreferences` on every disk-backed load path via `ApplyDetectedIndentAfterPreferences` / `WorkspaceShell::ApplyDetectedIndentOnOpen`; `TextViewport::OpenFile` stays file-IO-only.)
+- [x] 10.4 Apply detected `soft_tabs` and `indent_width` to the tab only; never persist the detection result; never modify file contents.
 - [x] 10.5 Add tests covering: trim trailing whitespace on save, ensure final newline on save (zero, one, multiple trailing newlines), detect on tabs-majority file, detect on spaces-majority file, detect on indent-width tie, behavior when each toggle is disabled. (Trim, ensure-newline, detect-spaces, detect-tabs covered in `tests/EditorEssentialsTests.cpp`.)
 
 ## 11. Symbol Outline Sidebar View

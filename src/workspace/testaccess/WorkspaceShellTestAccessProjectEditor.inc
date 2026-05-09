@@ -14,6 +14,7 @@
       throw std::runtime_error("failed to open editor fixture: " + path.string());
     }
     shell.ApplyEditorPreferences(opened_view);
+    shell.ApplyDetectedIndentOnOpen(opened_view);
     shell.context_.current_project_state.welcome_surface.viewport = opened_view;
     shell.context_.current_project_state.open_tabs.push_back(WorkspaceShell::TabEntry{
         .kind = WorkspaceShell::TabEntry::Kind::Editor,
@@ -177,7 +178,6 @@
     if (!opened_view.OpenFile(path)) {
       return false;
     }
-    shell.ApplyEditorPreferences(opened_view);
     return shell.ReplaceActiveEditorView(opened_view);
   }
   static bool OpenWorkingTreeComparison(WorkspaceShell& shell,

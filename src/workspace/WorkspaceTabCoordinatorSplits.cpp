@@ -109,6 +109,7 @@ bool TabCoordinator::RestoreEditorView(TabEntry::EditorTabState::EditorViewState
   loaded_view.SetScrollLine(view.restored_scroll_line);
   loaded_view.SetHorizontalScroll(view.restored_horizontal_scroll);
   operations_.apply_editor_preferences(loaded_view);
+  operations_.apply_detected_indent_on_open(loaded_view);
   view.viewport = std::move(loaded_view);
   view.needs_restore = false;
   return true;

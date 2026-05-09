@@ -299,6 +299,7 @@ void TabCoordinator::Activate(std::size_t index) {
         return;
       }
       operations_.apply_editor_preferences(loaded_view);
+      operations_.apply_detected_indent_on_open(loaded_view);
       loaded_view.MoveCursorTo(tab.deferred_handle->cursor_line,
                                tab.deferred_handle->cursor_column);
       loaded_view.SetScrollLine(tab.deferred_handle->scroll_line);
@@ -317,6 +318,7 @@ void TabCoordinator::Activate(std::size_t index) {
         return;
       }
       operations_.apply_editor_preferences(loaded_view);
+      operations_.apply_detected_indent_on_open(loaded_view);
       state_.welcome_surface.viewport = loaded_view;
       tab.editor_state = operations_.make_editor_tab_state(loaded_view);
     }
@@ -432,6 +434,7 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
       continue;
     }
     operations_.apply_editor_preferences(reopened_view);
+    operations_.apply_detected_indent_on_open(reopened_view);
 
     bool reloaded_any = false;
     for (auto& view : tab.editor_state->views) {
@@ -534,6 +537,7 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
     }
   }
   operations_.apply_editor_preferences(opened_view);
+  operations_.apply_detected_indent_on_open(opened_view);
   state_.welcome_surface.viewport = opened_view;
 
   state_.open_tabs.push_back(TabEntry{
@@ -584,6 +588,7 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
   editor::TextViewport viewport;
   viewport.LoadContent(content, virtual_path);
   operations_.apply_editor_preferences(viewport);
+  operations_.apply_detected_indent_on_open(viewport);
   state_.welcome_surface.viewport = viewport;
 
   state_.open_tabs.push_back(TabEntry{
@@ -712,6 +717,7 @@ void TabCoordinator::Close(std::size_t index) {
       editor::TextViewport loaded_view;
       if (loaded_view.OpenFile(tab.path)) {
         operations_.apply_editor_preferences(loaded_view);
+        operations_.apply_detected_indent_on_open(loaded_view);
         state_.welcome_surface.viewport = loaded_view;
         tab.editor_state = operations_.make_editor_tab_state(loaded_view);
       }
@@ -773,6 +779,7 @@ bool TabCoordinator::ReopenActive() {
     return false;
   }
   operations_.apply_editor_preferences(reopened_view);
+  operations_.apply_detected_indent_on_open(reopened_view);
 
   if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
     operations_.normalize_editor_split_tree(*tab.editor_state);

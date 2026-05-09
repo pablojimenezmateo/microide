@@ -5,6 +5,7 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
+#include "workspace/WorkspaceIndentDetectApply.h"
 
 namespace microide::workspace {
 
@@ -42,6 +43,11 @@ editor::LanguageContractView BuildEditorLanguageContractView(
 }
 
 }  // namespace
+
+void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const {
+  ApplyDetectedIndentAfterPreferences(
+      viewport, [this](std::string_view id) { return GetSettingValue(id); });
+}
 
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
@@ -202,6 +208,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
 
   editor::TextViewport configured_view = viewport;
   ApplyEditorPreferences(configured_view);
+  ApplyDetectedIndentOnOpen(configured_view);
 
   NormalizeEditorSplitTree(*editor_tab);
   if (auto* active_view = FindEditorView(*editor_tab, editor_tab->active_leaf_id);

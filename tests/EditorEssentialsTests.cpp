@@ -9,6 +9,7 @@
 #include "editor/TextViewport.h"
 #include "plugin/PluginHost.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
+#include "workspace/WorkspaceIndentDetectApply.h"
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspaceSaveNormalization.h"
 #include "workspace/WorkspaceTabState.h"
@@ -194,6 +195,58 @@ void TestIndentDetectTabsMajority() {
   auto detected = microide::editor::DetectIndent(lines);
   Expect(detected.detected, "tabs should be detected");
   Expect(!detected.soft_tabs, "majority tabs should yield soft_tabs=false");
+}
+
+void TestApplyDetectedIndentOnOpenUpdatesViewport() {
+  editor::TextViewport viewport;
+  viewport.LoadContent(
+      "root\n"
+      "    child\n"
+      "        grand\n",
+      "/tmp/sample.cpp");
+  viewport.SetSoftTabs(false);
+  viewport.SetIndentWidth(8);
+  viewport.SetTabSize(8);
+
+  const auto get_on = [](std::string_view id) -> std::optional<std::string> {
+    if (id == "editor.indent.detect_on_open") {
+      return std::string{"true"};
+    }
+    return std::nullopt;
+  };
+  microide::workspace::ApplyDetectedIndentAfterPreferences(viewport, get_on);
+  Expect(viewport.soft_tabs(), "four-space sample should switch to soft tabs");
+  Expect(viewport.indent_width() == 4 && viewport.tab_size() == 4,
+         "indent and tab size should follow detection");
+}
+
+void TestApplyDetectedIndentOnOpenSkippedWhenDisabled() {
+  editor::TextViewport viewport;
+  viewport.LoadContent("\tone\n\t\ttwo\n", "/tmp/sample.cpp");
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(3);
+  viewport.SetTabSize(3);
+
+  const auto get_off = [](std::string_view id) -> std::optional<std::string> {
+    if (id == "editor.indent.detect_on_open") {
+      return std::string{"false"};
+    }
+    return std::nullopt;
+  };
+  microide::workspace::ApplyDetectedIndentAfterPreferences(viewport, get_off);
+  Expect(viewport.soft_tabs() && viewport.indent_width() == 3,
+         "disabled detection should leave prior viewport settings");
+}
+
+void TestApplyDetectedIndentOnOpenSkippedWhenPathEmpty() {
+  editor::TextViewport viewport;
+  viewport.LoadContent("    lone\n");
+  viewport.SetIndentWidth(2);
+  const auto get_on = [](std::string_view) -> std::optional<std::string> {
+    return std::string{"true"};
+  };
+  microide::workspace::ApplyDetectedIndentAfterPreferences(viewport, get_on);
+  Expect(viewport.indent_width() == 2, "untitled buffer should skip detection");
 }
 
 void TestLanguageContractDefaults() {
@@ -670,6 +723,12 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentDetectSpacesMajority);
   AddTest(tests, "EditorEssentials/IndentDetect/TabsMajority",
           TestIndentDetectTabsMajority);
+  AddTest(tests, "EditorEssentials/IndentDetect/ApplyOnOpenUpdatesViewport",
+          TestApplyDetectedIndentOnOpenUpdatesViewport);
+  AddTest(tests, "EditorEssentials/IndentDetect/ApplyOnOpenSkippedWhenDisabled",
+          TestApplyDetectedIndentOnOpenSkippedWhenDisabled);
+  AddTest(tests, "EditorEssentials/IndentDetect/ApplyOnOpenSkippedWhenPathEmpty",
+          TestApplyDetectedIndentOnOpenSkippedWhenPathEmpty);
   AddTest(tests, "EditorEssentials/LanguageContract/Defaults",
           TestLanguageContractDefaults);
   AddTest(tests, "EditorEssentials/LanguageContract/Missing",

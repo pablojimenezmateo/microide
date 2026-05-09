@@ -26,6 +26,7 @@ class PathMutationCoordinator {
     std::function<void()> queue_editor_hover_refresh;
     std::function<void()> request_editor_surface_redraw;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
+    std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<const editor::TextViewport*(const TabEntry::EditorTabState&, std::size_t)>
         find_editor_view;
     std::function<TabEntry::EditorTabState::EditorViewState*(TabEntry::EditorTabState&, std::size_t)>

@@ -1154,6 +1154,7 @@
   std::filesystem::path UserConfigPath() const;
   std::filesystem::path ProjectStateDirectory() const;
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
+  void ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const;
   void ApplyEditorPreferencesToAllTabs();
   // Refresh the active editor tab's `editor::FoldingModel` from the active
   // viewport, the resolved language contract, and the current `editor.fold.enabled`

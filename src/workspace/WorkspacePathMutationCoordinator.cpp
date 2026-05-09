@@ -147,6 +147,8 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .apply_editor_preferences =
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },
+          .apply_detected_indent_on_open =
+              [this](editor::TextViewport& viewport) { ApplyDetectedIndentOnOpen(viewport); },
           .find_editor_view =
               [this](const TabEntry::EditorTabState& editor_state, std::size_t leaf_id) {
                 return FindEditorView(editor_state, leaf_id);

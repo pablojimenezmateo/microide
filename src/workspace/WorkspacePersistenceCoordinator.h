@@ -24,6 +24,7 @@ class PersistenceCoordinator {
     const PersistenceService* persistence_service = nullptr;
     std::function<void()> apply_editor_preferences_to_all_tabs;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
+    std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,
                                           const project::GitCommitEntry&,
                                           std::size_t)>

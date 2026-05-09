@@ -23,6 +23,7 @@ class TabCoordinator {
     std::function<bool(const std::filesystem::path&, editor::TextViewport&, std::string*)>
         prepare_editor_view_for_save;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
+    std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<TabEntry::EditorTabState(const editor::TextViewport&)> make_editor_tab_state;
     std::function<std::filesystem::path(const TabEntry::EditorTabState::EditorViewState&)>
         editor_view_path;

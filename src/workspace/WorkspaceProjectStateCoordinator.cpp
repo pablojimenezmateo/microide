@@ -301,6 +301,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     editor::TextViewport startup_view;
     if (std::filesystem::exists(candidate) && startup_view.OpenFile(candidate)) {
       ApplyEditorPreferences(startup_view);
+      ApplyDetectedIndentOnOpen(startup_view);
       context_.current_project_state.welcome_surface.viewport = startup_view;
       context_.current_project_state.directory_tree.SelectPath(candidate);
       RevealSelectedTreeSidebarLine();

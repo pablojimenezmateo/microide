@@ -215,6 +215,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
         restored_view.SetHorizontalScroll(persisted_view.horizontal_scroll);
         restored_view.SetDirty(true);
         operations_.apply_editor_preferences(restored_view);
+        operations_.apply_detected_indent_on_open(restored_view);
         editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
             .leaf_id = persisted_view.leaf_id,
             .viewport = std::move(restored_view),
