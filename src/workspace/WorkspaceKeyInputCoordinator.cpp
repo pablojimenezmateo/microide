@@ -27,6 +27,15 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   };
 
   const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
+
+  const bool clears_editor_ctrl_k_chord =
+      prompts_.dirty_visible || menu_state_.tree_context_menu.open ||
+      menu_state_.menu_bar_open || prompts_.surface_visible || state_.overlay.visible ||
+      state_.panel.command_mode || state_.surface.focus != FocusTarget::Editor;
+  if (clears_editor_ctrl_k_chord) {
+    state_.surface.editor_ctrl_k_leader_armed = false;
+  }
+
   if (prompts_.dirty_visible) {
     const bool handled = HandleDirtyPromptKeyDown(event, modifiers);
     if (handled) {
@@ -171,8 +180,33 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   }
 
   const auto bindings = operations_.resolved_keybindings();
-  const ResolvedKeybinding* binding =
-      FindKeybinding(bindings, event.key, modifiers, ActiveKeybindingContext());
+  const KeybindingContext key_ctx = ActiveKeybindingContext();
+  const bool editor_chord_allowed =
+      state_.surface.focus == FocusTarget::Editor && !state_.overlay.visible &&
+      !state_.panel.command_mode && key_ctx == KeybindingContext::Editor;
+
+  if (state_.surface.editor_ctrl_k_leader_armed) {
+    state_.surface.editor_ctrl_k_leader_armed = false;
+    if (editor_chord_allowed) {
+      const SDL_Keymod chord_mod = NormalizedKeyModifiers(modifiers);
+      if (chord_mod == SDL_KMOD_CTRL) {
+        if (event.key == SDLK_0 || event.key == SDLK_KP_0) {
+          return operations_.execute_action(ActionId::FoldAll, {}, ActionSource::Shortcut);
+        }
+        if (event.key == SDLK_J) {
+          return operations_.execute_action(ActionId::UnfoldAll, {}, ActionSource::Shortcut);
+        }
+      }
+    }
+  } else if (editor_chord_allowed && event.key == SDLK_K &&
+             NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL) {
+    if (FindKeybinding(bindings, SDLK_K, modifiers, KeybindingContext::Editor) == nullptr) {
+      state_.surface.editor_ctrl_k_leader_armed = true;
+      return true;
+    }
+  }
+
+  const ResolvedKeybinding* binding = FindKeybinding(bindings, event.key, modifiers, key_ctx);
   if (binding == nullptr) {
     return false;
   }

@@ -60,6 +60,9 @@ enum class ProjectSearchEditField {
 
 struct ProjectSurfaceState {
   FocusTarget focus = FocusTarget::Sidebar;
+  // After Ctrl+K in the editor with no overriding Ctrl+K binding; cleared on the
+  // next key (fold-all / unfold-all follow-ups, or when focus leaves the editor).
+  bool editor_ctrl_k_leader_armed = false;
 };
 
 struct CommandState {

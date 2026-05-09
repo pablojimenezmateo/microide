@@ -62,4 +62,7 @@ const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& 
 bool ParseKeyChord(std::string_view chord, SDL_Keycode* key, SDL_Keymod* modifiers);
 std::string FormatKeyChord(SDL_Keycode key, SDL_Keymod modifiers);
 
+// Normalized Ctrl/Shift/Alt/Meta mask for keybinding comparison.
+SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers);
+
 }  // namespace microide::workspace

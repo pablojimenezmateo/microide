@@ -19,7 +19,9 @@ std::string ToLowerAscii(std::string_view text) {
   return lower;
 }
 
-SDL_Keymod NormalizeRelevantModifiers(SDL_Keymod modifiers) {
+}  // namespace
+
+SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers) {
   SDL_Keymod normalized = SDL_KMOD_NONE;
   if ((modifiers & SDL_KMOD_CTRL) != 0) {
     normalized = static_cast<SDL_Keymod>(normalized | SDL_KMOD_CTRL);
@@ -35,8 +37,6 @@ SDL_Keymod NormalizeRelevantModifiers(SDL_Keymod modifiers) {
   }
   return normalized;
 }
-
-}  // namespace
 
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
   static const auto kSpecs = std::to_array<KeybindingSpec>({
@@ -377,10 +377,9 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
-      // Code folding: single-chord bindings only. The VSCode-style dual chords
-      // `Ctrl+K Ctrl+0` (FoldAll) and `Ctrl+K Ctrl+J` (UnfoldAll) are not
-      // registered until the keybinding registry grows chord-sequence support;
-      // both actions remain dispatchable through the command prompt and menu.
+      // Code folding shortcuts: fold/unfold regions use single chords; fold-all /
+      // unfold-all use a minimal Ctrl+K leader sequence handled in
+      // KeyInputCoordinator::HandleGlobalKeyDown (no second binding entry here).
       KeybindingSpec{
           .id = "fold",
           .action = ActionId::Fold,
@@ -415,7 +414,7 @@ const KeybindingSpec* FindBuiltinKeybinding(std::string_view id) {
 const KeybindingSpec* FindBuiltinKeybindingByKey(SDL_Keycode key,
                                                   SDL_Keymod modifiers,
                                                   KeybindingContext context) {
-  const SDL_Keymod relevant = NormalizeRelevantModifiers(modifiers);
+  const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
   const auto specs = BuiltinKeybindingSpecs();
   for (const KeybindingSpec& spec : specs) {
     if (spec.key != key) {
@@ -498,7 +497,7 @@ const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& 
                                           SDL_Keycode key,
                                           SDL_Keymod modifiers,
                                           KeybindingContext context) {
-  const SDL_Keymod relevant = NormalizeRelevantModifiers(modifiers);
+  const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
   for (const ResolvedKeybinding& rb : bindings) {
     if (rb.key != key) {
       continue;

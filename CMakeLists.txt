@@ -637,6 +637,7 @@ add_executable(microide_diff_bench
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
+  src/editor/FoldingModel.cpp
   src/editor/IndentGuides.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp

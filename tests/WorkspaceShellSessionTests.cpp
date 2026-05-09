@@ -629,6 +629,52 @@ void TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection() {
          "activating the revealed match should keep the fold expanded after the overlay closes");
 }
 
+void TestWorkspaceShellFoldAllUnfoldAllCtrlKChord() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.cpp";
+  WriteFile(source, "void f() {\n  body();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(model != nullptr, "fold-all chord fixture should build a folding model");
+  Expect(!model->ranges().empty(),
+         "fold-all chord fixture should expose at least one fold range");
+  Expect(!model->IsCollapsedAtOpener(0),
+         "fold-all chord fixture should start with folds expanded");
+
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL),
+         "Ctrl+K should arm the editor fold chord sequence");
+  Expect(SendKeyDown(shell, SDLK_0, SDL_KMOD_CTRL),
+         "Ctrl+K Ctrl+0 should collapse all folds");
+  Expect(model->IsCollapsedAtOpener(0),
+         "Ctrl+K Ctrl+0 should collapse the opener fold");
+
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL),
+         "Ctrl+K should arm the editor fold chord sequence");
+  Expect(SendKeyDown(shell, SDLK_0, SDL_KMOD_CTRL),
+         "Ctrl+K Ctrl+0 should collapse all folds");
+  Expect(model->IsCollapsedAtOpener(0),
+         "Ctrl+K Ctrl+0 should collapse the opener fold");
+
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL),
+         "Ctrl+K should arm unfold-all");
+  Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL),
+         "Ctrl+K Ctrl+J should expand folds");
+  Expect(!model->IsCollapsedAtOpener(0),
+         "Ctrl+K Ctrl+J should expand collapsed folds");
+
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL),
+         "Ctrl+K should arm keypad fold-all");
+  Expect(SendKeyDown(shell, SDLK_KP_0, SDL_KMOD_CTRL),
+         "Ctrl+K Ctrl+keypad 0 should collapse all folds");
+  Expect(model->IsCollapsedAtOpener(0),
+         "Ctrl+keypad 0 should complete the fold-all chord");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1606,6 +1652,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndRestoresOnDismiss);
   AddTest(tests, "WorkspaceShell/BufferSearchKeepsRevealAfterActivateSelection",
           TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection);
+  AddTest(tests, "WorkspaceShell/FoldAllUnfoldAllCtrlKChord",
+          TestWorkspaceShellFoldAllUnfoldAllCtrlKChord);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyUntitledBufferContent",
