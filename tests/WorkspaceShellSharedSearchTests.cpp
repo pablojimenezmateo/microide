@@ -190,6 +190,26 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
     expect_pos(earlier_line, 0, 0,
                "after the seed line exhausts forward matches, wrap finds an earlier line first");
   }
+
+  {
+    const std::vector<std::string> mixed_case_line{"Foo foo"};
+    const auto forward_ci = FindNextLiteralMatchAfterSeedWrapOnce(
+        mixed_case_line, 0, 0, 3, "Foo", /*case_sensitive=*/false);
+    expect_pos(forward_ci, 0, 4,
+               "case-insensitive forward finds the next byte-different match on the same line");
+
+    const std::vector<std::string> wrap_mixed{"foo FOO"};
+    const auto wrap_ci = FindNextLiteralMatchAfterSeedWrapOnce(
+        wrap_mixed, 0, 4, 7, "FOO", /*case_sensitive=*/false);
+    expect_pos(wrap_ci, 0, 0,
+               "case-insensitive wrap reaches the earlier mixed-case match before the seed span");
+
+    const std::vector<std::string> lone_mixed{"Foo"};
+    const auto none_ci = FindNextLiteralMatchAfterSeedWrapOnce(
+        lone_mixed, 0, 0, 3, "Foo", /*case_sensitive=*/false);
+    expect_missing(none_ci,
+                   "case-insensitive wrap still skips the sole seeded span and finds nothing else");
+  }
 }
 
 void TestWorkspaceSharedProjectSearchLineMapHelpers() {
