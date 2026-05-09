@@ -510,6 +510,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Essentials → Shaping And Save",
       },
       SettingSpec{
+          .id = "editor.search.case_sensitive",
+          .label = "Case-Sensitive Occurrence Highlight",
+          .description =
+              "When enabled, occurrence highlight and add-cursor-at-next-match treat text as "
+              "case-sensitive (default off).",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Editor → Essentials → Shaping And Save",
+      },
+      SettingSpec{
           .id = "editor.occurrences.enabled",
           .label = "Occurrences Highlight",
           .description = "Highlight matches of the word under the caret in the visible viewport.",

@@ -2,6 +2,10 @@
 
 #include "workspace/StatusBarService.h"
 
+#include <algorithm>
+#include <cctype>
+#include <unordered_set>
+
 namespace microide::workspace {
 
 namespace {
@@ -128,31 +132,124 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
 editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
     const editor::TextViewport& viewport,
     std::size_t visible_rows,
-    const editor::FoldingModel* folding_model) const {
+    const editor::FoldingModel* folding_model,
+    bool occurrences_highlight_enabled,
+    bool occurrences_case_sensitive) const {
   editor::EditorViewModel vm;
-  if (folding_model == nullptr || folding_model->ranges().empty()) {
+  if (folding_model != nullptr && !folding_model->ranges().empty()) {
+    vm.fold_gutter_marks.reserve(visible_rows);
+    for (std::size_t row = 0; row < visible_rows; ++row) {
+      const std::size_t visual_row_index = viewport.scroll_line() + row;
+      if (visual_row_index >= viewport.visual_line_count()) {
+        break;
+      }
+      const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
+      if (viewport.soft_wrap() && row_meta.visual_start != 0) {
+        continue;
+      }
+      if (!folding_model->FoldStartingAt(row_meta.line_index).has_value()) {
+        continue;
+      }
+      vm.fold_gutter_marks.push_back(editor::FoldGutterMark{
+          .line_index = row_meta.line_index,
+          .visual_row_index = visual_row_index,
+          .collapsed = folding_model->IsCollapsedAtOpener(row_meta.line_index),
+      });
+    }
+  }
+
+  if (!occurrences_highlight_enabled || viewport.is_placeholder()) {
     return vm;
   }
 
-  vm.fold_gutter_marks.reserve(visible_rows);
+  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
+  if (!seed.has_value()) {
+    return vm;
+  }
+  if (seed->start.line != seed->end.line) {
+    return vm;
+  }
+  const std::size_t seed_line = seed->start.line;
+  const std::size_t seed_start = seed->start.column;
+  const std::size_t seed_end = seed->end.column;
+  if (seed_start >= seed_end) {
+    return vm;
+  }
+
+  const auto& lines = viewport.lines();
+  if (seed_line >= lines.size()) {
+    return vm;
+  }
+
+  const std::string_view needle(lines[seed_line].data() + seed_start, seed_end - seed_start);
+  if (needle.empty()) {
+    return vm;
+  }
+
+  std::string lowered_needle;
+  if (!occurrences_case_sensitive) {
+    lowered_needle.resize(needle.size());
+    std::transform(needle.begin(), needle.end(), lowered_needle.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  }
+
+  std::unordered_set<std::size_t> visible_line_indices;
+  visible_line_indices.reserve(visible_rows);
+  const std::size_t scroll = viewport.scroll_line();
+  const std::size_t visual_total = viewport.visual_line_count();
   for (std::size_t row = 0; row < visible_rows; ++row) {
-    const std::size_t visual_row_index = viewport.scroll_line() + row;
-    if (visual_row_index >= viewport.visual_line_count()) {
+    const std::size_t visual_row_index = scroll + row;
+    if (visual_row_index >= visual_total) {
       break;
     }
     const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
-    if (viewport.soft_wrap() && row_meta.visual_start != 0) {
-      continue;
-    }
-    if (!folding_model->FoldStartingAt(row_meta.line_index).has_value()) {
-      continue;
-    }
-    vm.fold_gutter_marks.push_back(editor::FoldGutterMark{
-        .line_index = row_meta.line_index,
-        .visual_row_index = visual_row_index,
-        .collapsed = folding_model->IsCollapsedAtOpener(row_meta.line_index),
-    });
+    visible_line_indices.insert(row_meta.line_index);
   }
+
+  auto append_occurrences = [&](std::size_t line_index, const std::string& haystack) {
+    const auto emit = [&](std::size_t match_start, std::size_t match_end) {
+      const bool primary = line_index == seed_line && match_start == seed_start &&
+                           match_end == seed_end;
+      vm.occurrence_ranges.push_back(editor::OccurrenceRange{
+          .line_index = line_index,
+          .start_column = match_start,
+          .end_column = match_end,
+          .is_primary_seed = primary,
+      });
+    };
+    if (occurrences_case_sensitive) {
+      for (std::size_t pos = 0; pos <= haystack.size();) {
+        const std::size_t found = haystack.find(needle, pos);
+        if (found == std::string::npos) {
+          break;
+        }
+        emit(found, found + needle.size());
+        pos = found + 1;
+      }
+    } else {
+      for (std::size_t i = 0; i + lowered_needle.size() <= haystack.size(); ++i) {
+        bool match = true;
+        for (std::size_t j = 0; j < lowered_needle.size(); ++j) {
+          if (static_cast<char>(std::tolower(static_cast<unsigned char>(haystack[i + j]))) !=
+              lowered_needle[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) {
+          emit(i, i + lowered_needle.size());
+        }
+      }
+    }
+  };
+
+  for (std::size_t line_index : visible_line_indices) {
+    if (line_index >= lines.size()) {
+      continue;
+    }
+    append_occurrences(line_index, lines[line_index]);
+  }
+
   return vm;
 }
 

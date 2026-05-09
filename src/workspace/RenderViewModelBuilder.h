@@ -117,7 +117,9 @@ class RenderViewModelBuilder {
   SidebarSurfaceViewModel BuildSidebarSurface() const;
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
                                                std::size_t visible_rows,
-                                               const editor::FoldingModel* folding_model) const;
+                                               const editor::FoldingModel* folding_model,
+                                               bool occurrences_highlight_enabled,
+                                               bool occurrences_case_sensitive) const;
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
   HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
   HoverTargetsViewModel BuildHoverTargets() const;

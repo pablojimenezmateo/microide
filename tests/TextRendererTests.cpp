@@ -7,6 +7,8 @@
 #include "editor/TextViewport.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
+#include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceContext.h"
 
 #include <SDL3/SDL.h>
 
@@ -1301,6 +1303,61 @@ void TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements() {
          "truncate-to-width should avoid probing every prefix width linearly");
 }
 
+void TestRenderViewModelBuilderOccurrencesScansVisibleLinesOnly() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::editor::TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 40; ++i) {
+    content += "aaa\n";
+  }
+  content += "name\n";
+  for (int i = 0; i < 40; ++i) {
+    content += "bbb\n";
+  }
+  viewport.LoadContent(content, "/tmp/occ-viewport.txt");
+  viewport.MoveCursorTo(40, 2, false);
+  viewport.SetScrollLine(0);
+  viewport.SetViewportSize(10, 120);
+
+  const auto vm_disabled =
+      builder.BuildEditorViewModel(viewport, 10, nullptr, false, false);
+  Expect(vm_disabled.occurrence_ranges.empty(),
+         "occurrence ranges should stay empty when highlighting is disabled");
+
+  const auto vm_top =
+      builder.BuildEditorViewModel(viewport, 10, nullptr, true, false);
+  Expect(vm_top.occurrence_ranges.empty(),
+         "caret line outside the viewport should yield no in-viewport matches");
+
+  viewport.SetScrollLine(35);
+  const auto vm_visible =
+      builder.BuildEditorViewModel(viewport, 10, nullptr, true, false);
+  Expect(!vm_visible.occurrence_ranges.empty(),
+         "scrolling the seeded line into view should surface occurrence ranges");
+  std::size_t primary = 0;
+  for (const auto& occ : vm_visible.occurrence_ranges) {
+    if (occ.line_index == 40 && occ.start_column == 0 && occ.end_column == 4 &&
+        occ.is_primary_seed) {
+      ++primary;
+    }
+  }
+  Expect(primary == 1, "exactly one primary occurrence should match the seed span");
+}
+
+void TestRenderViewModelBuilderOccurrencesMatchWordInstancesInView() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("name bob name\nother\n", "/tmp/occ-double.txt");
+  viewport.MoveCursorTo(0, 2, false);
+  viewport.SetScrollLine(0);
+  viewport.SetViewportSize(8, 120);
+  const auto vm = builder.BuildEditorViewModel(viewport, 8, nullptr, true, false);
+  Expect(vm.occurrence_ranges.size() == 2,
+         "visible logical line should surface every viewport-visible textual match");
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
@@ -1357,6 +1414,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view indent-guides clear cached runs when toggle is off",
           TestEditorViewRendererIndentGuidesClearOnToggleOff);
+  AddTest(tests,
+          "TextRenderer render view model occurrence scan stays viewport-bounded",
+          TestRenderViewModelBuilderOccurrencesScansVisibleLinesOnly);
+  AddTest(tests,
+          "TextRenderer render view model occurrence scan lists every visible match on a line",
+          TestRenderViewModelBuilderOccurrencesMatchWordInstancesInView);
   AddTest(tests, "TextRenderer caches repeated width lookups", TestMeasureWidthCachesRepeatedStrings);
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",

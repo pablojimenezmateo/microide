@@ -509,6 +509,40 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
     }
 
+    if (view_model != nullptr && !view_model->occurrence_ranges.empty()) {
+      const std::size_t row_start_visual_occ = row_meta.visual_start;
+      const std::size_t row_end_visual_occ = row_meta.visual_end;
+      for (const OccurrenceRange& occ : view_model->occurrence_ranges) {
+        if (occ.line_index != line_index || occ.start_column >= occ.end_column) {
+          continue;
+        }
+        const std::size_t match_start = occ.start_column;
+        const std::size_t match_end = occ.end_column;
+        const std::size_t start_visual =
+            TextLayout::VisualColumnForTextColumn(lines[line_index], match_start, viewport.tab_size());
+        const std::size_t end_visual = TextLayout::VisualColumnForTextColumn(
+            lines[line_index], match_end, viewport.tab_size());
+        const std::size_t visible_start = std::max(start_visual, row_start_visual_occ);
+        const std::size_t visible_end = std::min(end_visual, row_end_visual_occ);
+        if (visible_end <= visible_start) {
+          continue;
+        }
+        row_desc.fills.push_back(DecoratedTextFill{
+            .rect =
+                SDL_FRect{
+                    metrics.text_x +
+                        static_cast<float>(visible_start - row_start_visual_occ) *
+                            text_renderer.CharWidth(),
+                    y - 1.0f,
+                    static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
+                    metrics.line_height,
+                },
+            .color =
+                occ.is_primary_seed ? theme.search_match_active : theme.search_match,
+        });
+      }
+    }
+
     if (selection.has_value() &&
         line_index >= selection->start.line &&
         line_index <= selection->end.line) {

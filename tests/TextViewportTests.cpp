@@ -892,6 +892,56 @@ void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
          "plugin region syntax definitions should highlight string spans");
 }
 
+void TestTextViewportOccurrenceSeedSpanUsesWordUnderCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa name bbb name\n", "/tmp/oc-caret.txt");
+  viewport.MoveCursorTo(0, 5, false);
+  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
+  Expect(seed.has_value(), "caret inside a word should produce an occurrence seed span");
+  Expect(seed->start.line == 0 && seed->end.line == 0,
+         "occurrence seed should stay on a single logical line");
+  Expect(seed->start.column == 4 && seed->end.column == 8,
+         "occurrence seed should cover the word under the caret");
+}
+
+void TestTextViewportOccurrenceSeedSpanUsesTrailingEdgeAdjacentWord() {
+  TextViewport viewport;
+  viewport.LoadContent("word", "/tmp/oc-adjacent.txt");
+  viewport.MoveCursorTo(0, 4, false);
+  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
+  Expect(seed.has_value(), "caret after the final word character should still seed that word");
+  Expect(seed->start.column == 0 && seed->end.column == 4,
+         "trailing-edge caret should expand to the full prior word");
+}
+
+void TestTextViewportOccurrenceSeedSpanHonorsSingleLineSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("foo bar baz\n", "/tmp/oc-sel.txt");
+  viewport.MoveCursorTo(0, 4, false);
+  viewport.MoveCursorTo(0, 7, true);
+  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
+  Expect(seed.has_value(), "non-empty selection should supply the occurrence seed");
+  Expect(seed->start.column == 4 && seed->end.column == 7,
+         "selection bounds should seed literal substring occurrences");
+}
+
+void TestTextViewportOccurrenceSeedSpanRejectsMultiLineSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\n", "/tmp/oc-multi.txt");
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(1, 1, true);
+  Expect(!viewport.OccurrenceSeedSpanForHighlight().has_value(),
+         "multi-line selections should not drive occurrence seeding");
+}
+
+void TestTextViewportOccurrenceSeedSpanNoWordInWhitespace() {
+  TextViewport viewport;
+  viewport.LoadContent("x  y\n", "/tmp/oc-space.txt");
+  viewport.MoveCursorTo(0, 2, false);
+  Expect(!viewport.OccurrenceSeedSpanForHighlight().has_value(),
+         "caret positioned in whitespace should not yield a seed span");
+}
+
 }  // namespace
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
@@ -967,6 +1017,16 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
   AddTest(tests, "TextViewport/MaxVisualColumnsUpdatesIncrementally",
           TestTextViewportMaxVisualColumnsUpdatesIncrementally);
+  AddTest(tests, "TextViewport/OccurrenceSeedSpanUsesWordUnderCaret",
+          TestTextViewportOccurrenceSeedSpanUsesWordUnderCaret);
+  AddTest(tests, "TextViewport/OccurrenceSeedSpanUsesTrailingEdgeAdjacentWord",
+          TestTextViewportOccurrenceSeedSpanUsesTrailingEdgeAdjacentWord);
+  AddTest(tests, "TextViewport/OccurrenceSeedSpanHonorsSingleLineSelection",
+          TestTextViewportOccurrenceSeedSpanHonorsSingleLineSelection);
+  AddTest(tests, "TextViewport/OccurrenceSeedSpanRejectsMultiLineSelection",
+          TestTextViewportOccurrenceSeedSpanRejectsMultiLineSelection);
+  AddTest(tests, "TextViewport/OccurrenceSeedSpanNoWordInWhitespace",
+          TestTextViewportOccurrenceSeedSpanNoWordInWhitespace);
   AddTest(tests, "TextViewport/ReplaceAllUndoRedoHandlesLargeSparseDocument",
           TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",

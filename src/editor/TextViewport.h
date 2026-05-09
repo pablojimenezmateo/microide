@@ -184,6 +184,8 @@ class TextViewport {
   void SelectAll();
   void SelectWordAtCursor();
   void SelectLineAtCursor();
+  // Non-mutating seed span for occurrences highlight / match actions (single logical line).
+  std::optional<SelectionRange> OccurrenceSeedSpanForHighlight() const;
   void InvalidateSyntaxHighlighting();
 
  private:

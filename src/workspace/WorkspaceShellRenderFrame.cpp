@@ -300,6 +300,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const bool render_whitespace_enabled =
         setting_enabled("editor.view.render_whitespace", false);
     const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
+    const bool occurrences_highlight_enabled_global =
+        setting_enabled("editor.occurrences.enabled", true);
+    const bool occurrences_case_sensitive =
+        setting_enabled("editor.search.case_sensitive", false);
     const editor::FoldingModel* active_folding_model =
         fold_enabled ? EnsureActiveFoldingModelFresh() : nullptr;
     if (!fold_enabled) {
@@ -321,7 +325,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       active_viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       const editor::EditorViewModel editor_vm =
           RenderViewModelBuilder(context_).BuildEditorViewModel(
-              *active_viewport, metrics.visible_rows, active_folding_model);
+              *active_viewport, metrics.visible_rows, active_folding_model,
+              occurrences_highlight_enabled_global, occurrences_case_sensitive);
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
                                    std::nullopt, {}, &editor_vm, bracket_match_highlight_enabled,
@@ -348,9 +353,12 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       const editor::EditorViewMetrics metrics =
           editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      const bool occurrences_for_pane =
+          occurrences_highlight_enabled_global && pane.active;
       const editor::EditorViewModel editor_vm =
           RenderViewModelBuilder(context_).BuildEditorViewModel(
-              *viewport, metrics.visible_rows, active_folding_model);
+              *viewport, metrics.visible_rows, active_folding_model, occurrences_for_pane,
+              occurrences_case_sensitive);
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active &&

@@ -1154,6 +1154,56 @@ void TextViewport::SelectWordAtCursor() {
   EnsureCursorVisible();
 }
 
+std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() const {
+  if (document_->lines.empty()) {
+    return std::nullopt;
+  }
+
+  auto is_word_char = [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+  };
+
+  if (const auto selected = selection_range()) {
+    if (selected->start.line != selected->end.line) {
+      return std::nullopt;
+    }
+    const std::size_t line_index = selected->start.line;
+    std::size_t start_col = selected->start.column;
+    std::size_t end_col = selected->end.column;
+    if (start_col > end_col) {
+      std::swap(start_col, end_col);
+    }
+    if (start_col < end_col) {
+      return SelectionRange{{line_index, start_col}, {line_index, end_col}};
+    }
+  }
+
+  const std::size_t line_index = cursor_line_;
+  const std::string& line = document_->lines[line_index];
+  const std::size_t col = std::min(cursor_column_, line.size());
+  std::size_t anchor_col = col;
+  if (col < line.size() && is_word_char(line[col])) {
+    // Primary caret indexes a word character.
+  } else if (col > 0 && is_word_char(line[col - 1])) {
+    anchor_col = col - 1;
+  } else {
+    return std::nullopt;
+  }
+
+  std::size_t start = anchor_col;
+  std::size_t end = anchor_col;
+  while (start > 0 && is_word_char(line[start - 1])) {
+    --start;
+  }
+  while (end < line.size() && is_word_char(line[end])) {
+    ++end;
+  }
+  if (start >= end) {
+    return std::nullopt;
+  }
+  return SelectionRange{{line_index, start}, {line_index, end}};
+}
+
 void TextViewport::SelectLineAtCursor() {
   if (document_->lines.empty()) {
     return;
