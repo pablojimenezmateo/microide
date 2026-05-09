@@ -150,6 +150,48 @@ void TestWorkspaceLiteralNeedleScanCaseModeInLine() {
          "overlapping case-sensitive occurrences should expose the earliest match index");
 }
 
+void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
+  using microide::workspace::FindNextLiteralMatchAfterSeedWrapOnce;
+
+  auto expect_pos = [&](const std::optional<microide::editor::TextPosition>& got,
+                        std::size_t line,
+                        std::size_t column,
+                        const char* message) {
+    Expect(got.has_value(), message);
+    if (got.has_value()) {
+      Expect(got->line == line && got->column == column, message);
+    }
+  };
+
+  auto expect_missing = [&](const std::optional<microide::editor::TextPosition>& got,
+                            const char* message) {
+    Expect(!got.has_value(), message);
+  };
+
+  {
+    const std::vector<std::string> dual{"foo foo"};
+    const auto forward_then_wrap =
+        FindNextLiteralMatchAfterSeedWrapOnce(dual, 0, 4, 7, "foo", /*case_sensitive=*/true);
+    expect_pos(forward_then_wrap, 0, 0,
+               "after the last occurrence on the line, wrap picks the earliest match");
+    const auto forward_only =
+        FindNextLiteralMatchAfterSeedWrapOnce(dual, 0, 0, 3, "foo", /*case_sensitive=*/true);
+    expect_pos(forward_only, 0, 4,
+               "forward scan prefers the occurrence after the seed span");
+
+    const std::vector<std::string> single{"foo"};
+    const auto lone =
+        FindNextLiteralMatchAfterSeedWrapOnce(single, 0, 0, 3, "foo", /*case_sensitive=*/true);
+    expect_missing(lone, "only the seed occurrence yields no candidate after a single wrap");
+
+    const std::vector<std::string> above_first{"foo", "foo"};
+    const auto earlier_line = FindNextLiteralMatchAfterSeedWrapOnce(
+        above_first, 1, 0, 3, "foo", /*case_sensitive=*/true);
+    expect_pos(earlier_line, 0, 0,
+               "after the seed line exhausts forward matches, wrap finds an earlier line first");
+  }
+}
+
 void TestWorkspaceSharedProjectSearchLineMapHelpers() {
   const std::vector<microide::project::ProjectSearchResult> results = {
       {.relative_path = std::filesystem::path("src/a.cpp"),
@@ -195,6 +237,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedLiteralReplaceModeHelpers);
   AddTest(tests, "WorkspaceTextSearch/LiteralNeedleScanCaseModeInLine",
           TestWorkspaceLiteralNeedleScanCaseModeInLine);
+  AddTest(tests, "WorkspaceTextSearch/NextLiteralMatchAfterSeedWrapOnce",
+          TestWorkspaceNextLiteralMatchAfterSeedWrapOnce);
   AddTest(tests, "WorkspaceProjectSearchPresentation/LineMapHelpers",
           TestWorkspaceSharedProjectSearchLineMapHelpers);
 }

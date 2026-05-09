@@ -143,6 +143,61 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
   return std::nullopt;
 }
 
+std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
+    const std::vector<std::string>& lines,
+    std::size_t seed_line,
+    std::size_t seed_start_col,
+    std::size_t seed_end_col,
+    std::string_view needle,
+    bool case_sensitive) {
+  if (needle.empty() || seed_line >= lines.size()) {
+    return std::nullopt;
+  }
+
+  const std::string& seed_line_text = lines[seed_line];
+
+  auto forward_from_cursor = [&](std::size_t li, std::size_t start_from_column) -> std::optional<editor::TextPosition> {
+    if (li >= lines.size()) {
+      return std::nullopt;
+    }
+    const auto pos =
+        FindLiteralNeedleInLine(lines[li], start_from_column, needle, case_sensitive);
+    if (pos.has_value()) {
+      return editor::TextPosition{li, *pos};
+    }
+    return std::nullopt;
+  };
+
+  for (std::size_t li = seed_line; li < lines.size(); ++li) {
+    const std::size_t start_from = (li == seed_line) ? seed_end_col : 0;
+    if (auto found = forward_from_cursor(li, start_from); found.has_value()) {
+      return found;
+    }
+  }
+
+  for (std::size_t li = 0; li < seed_line && li < lines.size(); ++li) {
+    if (auto found = forward_from_cursor(li, 0); found.has_value()) {
+      return found;
+    }
+  }
+
+  std::size_t from = 0;
+  while (true) {
+    const auto pos =
+        FindLiteralNeedleInLine(seed_line_text, from, needle, case_sensitive);
+    if (!pos.has_value() || *pos >= seed_end_col) {
+      break;
+    }
+    if (*pos == seed_start_col) {
+      from = *pos + needle.size();
+      continue;
+    }
+    return editor::TextPosition{seed_line, *pos};
+  }
+
+  return std::nullopt;
+}
+
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
     std::string_view query) {

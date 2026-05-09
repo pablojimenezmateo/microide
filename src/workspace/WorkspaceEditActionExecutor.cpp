@@ -229,16 +229,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
       auto carets = viewport->secondary_carets();
       if (id == ActionId::AddCursorAtNextMatch) {
-        // Find next occurrence after the selection.
-        for (std::size_t li = sel->start.line; li < lines.size(); ++li) {
-          const std::string& current = lines[li];
-          std::size_t from = (li == sel->start.line) ? b : 0;
-          const auto pos =
-              FindLiteralNeedleInLine(current, from, needle_view, case_sensitive);
-          if (pos.has_value()) {
-            carets.push_back(editor::TextPosition{li, *pos + needle_view.size()});
-            break;
-          }
+        if (const auto next = FindNextLiteralMatchAfterSeedWrapOnce(
+                lines, sel->start.line, a, b, needle_view, case_sensitive);
+            next.has_value()) {
+          carets.push_back(editor::TextPosition{
+              next->line, next->column + needle_view.size(),
+          });
         }
       } else {
         // Add cursor at every match in the file.

@@ -31,4 +31,16 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
                                                    std::string_view needle,
                                                    bool case_sensitive);
 
+/// Returns the start column of the next occurrence after scanning forward from
+/// `(seed_line, seed_end_col)`, then wrapping once from the beginning of the
+/// document. On `seed_line` after the wrap, matches before `seed_end_col` count,
+/// excluding the seeded span at `(seed_line, seed_start_col)`.
+std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
+    const std::vector<std::string>& lines,
+    std::size_t seed_line,
+    std::size_t seed_start_col,
+    std::size_t seed_end_col,
+    std::string_view needle,
+    bool case_sensitive);
+
 }  // namespace microide::workspace
