@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,5 +25,10 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
     std::string_view query);
+
+std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
+                                                   std::size_t start_from,
+                                                   std::string_view needle,
+                                                   bool case_sensitive);
 
 }  // namespace microide::workspace

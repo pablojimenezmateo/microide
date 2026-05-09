@@ -859,6 +859,13 @@ void WorkspaceActionContext::NotifyEditorCaretMoved() {
   operations_.request_focused_editor_redraw();
 }
 
+std::optional<std::string> WorkspaceActionContext::GetSettingValue(std::string_view id) const {
+  if (!operations_.get_setting_value) {
+    return std::nullopt;
+  }
+  return operations_.get_setting_value(id);
+}
+
 namespace {
 
 const char* CapabilitySettingKeyForToggle(ActionId id) {

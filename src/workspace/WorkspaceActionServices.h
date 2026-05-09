@@ -287,6 +287,7 @@ class WorkspaceActionContext {
   void NotifyEditorViewportChanged(bool last_change);
   void NotifyEditorCaretMoved();
   void ToggleEditorEssentialsCapability(ActionId id);
+  std::optional<std::string> GetSettingValue(std::string_view id) const;
 
  private:
   ProjectCatalogState& project_catalog_;

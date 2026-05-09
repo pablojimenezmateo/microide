@@ -511,10 +511,10 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       },
       SettingSpec{
           .id = "editor.search.case_sensitive",
-          .label = "Case-Sensitive Occurrence Highlight",
+          .label = "Case-Sensitive Search Seed Matching",
           .description =
-              "When enabled, occurrence highlight and add-cursor-at-next-match treat text as "
-              "case-sensitive (default off).",
+              "When enabled, occurrence highlight plus Ctrl+D / Ctrl+Shift+L add-cursor scans treat "
+              "the seeded text as case-sensitive (default off).",
           .type = SettingType::Bool,
           .scope = SettingScope::User,
           .default_bool = false,

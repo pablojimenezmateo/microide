@@ -133,6 +133,23 @@ void TestWorkspaceSharedLiteralReplaceModeHelpers() {
          "lowercase queries should keep case-insensitive mode");
 }
 
+void TestWorkspaceLiteralNeedleScanCaseModeInLine() {
+  using microide::workspace::FindLiteralNeedleInLine;
+
+  Expect(FindLiteralNeedleInLine("Foo foo FOO", 0, "foo", /*case_sensitive=*/false) == 0,
+         "case-insensitive scan should prefer the earliest offset");
+  Expect(FindLiteralNeedleInLine("Foo foo FOO", 1, "foo", /*case_sensitive=*/false) == 4,
+         "case-insensitive scan should skip earlier matches outside the slice");
+  Expect(!FindLiteralNeedleInLine("x Foo y", 0, "foo", /*case_sensitive=*/true).has_value(),
+         "case-sensitive scan should reject byte mismatches against the seeded needle text");
+  const auto matched = FindLiteralNeedleInLine("Foo foo", 0, "Foo", /*case_sensitive=*/true);
+  Expect(matched.has_value() && *matched == 0,
+         "case-sensitive scan should locate exact-case substrings");
+
+  Expect(FindLiteralNeedleInLine("ababa", 0, "aba", /*case_sensitive=*/true) == 0,
+         "overlapping case-sensitive occurrences should expose the earliest match index");
+}
+
 void TestWorkspaceSharedProjectSearchLineMapHelpers() {
   const std::vector<microide::project::ProjectSearchResult> results = {
       {.relative_path = std::filesystem::path("src/a.cpp"),
@@ -176,6 +193,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedLiteralSearchHelpers);
   AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",
           TestWorkspaceSharedLiteralReplaceModeHelpers);
+  AddTest(tests, "WorkspaceTextSearch/LiteralNeedleScanCaseModeInLine",
+          TestWorkspaceLiteralNeedleScanCaseModeInLine);
   AddTest(tests, "WorkspaceProjectSearchPresentation/LineMapHelpers",
           TestWorkspaceSharedProjectSearchLineMapHelpers);
 }

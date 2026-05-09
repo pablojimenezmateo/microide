@@ -116,6 +116,33 @@ std::size_t ReplaceLiteralMatchesInText(std::string& content,
   return replacements;
 }
 
+std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
+                                                   std::size_t start_from,
+                                                   std::string_view needle,
+                                                   bool case_sensitive) {
+  if (needle.empty() || start_from > haystack.size()) {
+    return std::nullopt;
+  }
+  if (case_sensitive) {
+    const std::size_t position = haystack.find(needle, start_from);
+    return position != std::string_view::npos ? std::optional{position} : std::nullopt;
+  }
+  for (std::size_t i = start_from; i + needle.size() <= haystack.size(); ++i) {
+    bool match = true;
+    for (std::size_t j = 0; j < needle.size(); ++j) {
+      if (std::tolower(static_cast<unsigned char>(haystack[i + j])) !=
+          std::tolower(static_cast<unsigned char>(needle[j]))) {
+        match = false;
+        break;
+      }
+    }
+    if (match) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
 std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
     std::string_view query) {

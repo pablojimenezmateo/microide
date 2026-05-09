@@ -1,6 +1,5 @@
 #include "workspace/WorkspaceActionCoordinator.h"
 
-#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -9,8 +8,21 @@
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionRequests.h"
+#include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
+
+namespace {
+
+bool SettingEnabled(const WorkspaceActionContext& context, std::string_view id, bool default_value) {
+  const auto value = context.GetSettingValue(id);
+  if (!value.has_value()) {
+    return default_value;
+  }
+  return *value != "false" && *value != "0" && *value != "off";
+}
+
+}  // namespace
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
                                                                  const std::vector<std::string>& args,
@@ -211,17 +223,20 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       std::size_t a = std::min(sel->start.column, sel->end.column);
       std::size_t b = std::max(sel->start.column, sel->end.column);
       if (b > line.size()) return DispatchResult::Handled;
-      std::string needle = line.substr(a, b - a);
+      const std::string needle = line.substr(a, b - a);
       if (needle.empty()) return DispatchResult::Handled;
+      const std::string_view needle_view = needle;
+      const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
       auto carets = viewport->secondary_carets();
       if (id == ActionId::AddCursorAtNextMatch) {
         // Find next occurrence after the selection.
         for (std::size_t li = sel->start.line; li < lines.size(); ++li) {
           const std::string& current = lines[li];
           std::size_t from = (li == sel->start.line) ? b : 0;
-          std::size_t pos = current.find(needle, from);
-          if (pos != std::string::npos) {
-            carets.push_back(editor::TextPosition{li, pos + needle.size()});
+          const auto pos =
+              FindLiteralNeedleInLine(current, from, needle_view, case_sensitive);
+          if (pos.has_value()) {
+            carets.push_back(editor::TextPosition{li, *pos + needle_view.size()});
             break;
           }
         }
@@ -231,15 +246,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           const std::string& current = lines[li];
           std::size_t from = 0;
           while (true) {
-            std::size_t pos = current.find(needle, from);
-            if (pos == std::string::npos) break;
+            const auto pos =
+                FindLiteralNeedleInLine(current, from, needle_view, case_sensitive);
+            if (!pos.has_value()) {
+              break;
+            }
             // Skip the original selection's end position.
-            if (li == sel->start.line && pos == a) {
-              from = pos + needle.size();
+            if (li == sel->start.line && *pos == a) {
+              from = *pos + needle_view.size();
               continue;
             }
-            carets.push_back(editor::TextPosition{li, pos + needle.size()});
-            from = pos + needle.size();
+            carets.push_back(editor::TextPosition{li, *pos + needle_view.size()});
+            from = *pos + needle_view.size();
             if (from >= current.size()) break;
           }
         }
