@@ -1358,6 +1358,54 @@ void TestRenderViewModelBuilderOccurrencesMatchWordInstancesInView() {
          "visible logical line should surface every viewport-visible textual match");
 }
 
+void TestRenderViewModelBuilderOccurrenceSeedAndScanCachesHitOnStableFrames() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::editor::TextViewport viewport;
+
+  std::string content;
+  for (int i = 0; i < 20; ++i) {
+    content += "aaa\n";
+  }
+  content += "name bob name\n";
+  for (int i = 0; i < 30; ++i) {
+    content += "zzz\n";
+  }
+  viewport.LoadContent(content, "/tmp/occ-cache-hit.txt");
+  viewport.SetViewportSize(8, 120);
+  viewport.MoveCursorTo(20, 2, false);
+
+  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+  const auto first_vm = builder.BuildEditorViewModel(viewport, 8, nullptr, true, false);
+  const auto second_vm = builder.BuildEditorViewModel(viewport, 8, nullptr, true, false);
+  Expect(!first_vm.occurrence_ranges.empty() &&
+             second_vm.occurrence_ranges.size() == first_vm.occurrence_ranges.size(),
+         "cached builds should keep the same visible occurrence projections");
+  Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 1,
+         "first frame should refill the occurrence seed detection cache exactly once");
+  Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheHitsForTesting() == 1,
+         "identical successive frames should hit the occurrence seed detection cache once");
+  Expect(microide::workspace::RenderViewModelBuilder::OccurrenceScanCacheMissesForTesting() == 1,
+         "first frame should refill the viewport occurrence scan once");
+  Expect(microide::workspace::RenderViewModelBuilder::OccurrenceScanCacheHitsForTesting() == 1,
+         "stable scroll + visible-rows count should reuse the scanned occurrence ranges");
+
+  viewport.ScrollVertical(4);
+  (void)builder.BuildEditorViewModel(viewport, 8, nullptr, true, false);
+  Expect(microide::workspace::RenderViewModelBuilder::OccurrenceScanCacheMissesForTesting() == 2,
+         "scroll changes must rebuild the occurrence scan even when caret is stable");
+  Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheHitsForTesting() == 2,
+         "seed detection should remain cached while the caret stays put");
+
+  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+  viewport.MoveCursorTo(20, 11, false);
+  (void)builder.BuildEditorViewModel(viewport, 8, nullptr, true, false);
+  (void)builder.BuildEditorViewModel(viewport, 8, nullptr, true, false);
+  Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 1 &&
+             microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheHitsForTesting() == 1,
+         "caret moves that change the seed word should refill once then hit");
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
@@ -1420,6 +1468,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer render view model occurrence scan lists every visible match on a line",
           TestRenderViewModelBuilderOccurrencesMatchWordInstancesInView);
+  AddTest(tests,
+          "TextRenderer render view model occurrence scan cache hits stable frames then invalidates",
+          TestRenderViewModelBuilderOccurrenceSeedAndScanCachesHitOnStableFrames);
   AddTest(tests, "TextRenderer caches repeated width lookups", TestMeasureWidthCachesRepeatedStrings);
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",

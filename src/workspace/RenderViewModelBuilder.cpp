@@ -4,11 +4,191 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <unordered_set>
 
 namespace microide::workspace {
 
 namespace {
+
+thread_local struct OccurrenceSeedDetectCache {
+  std::uintptr_t viewport = 0;
+  std::uint64_t layout_revision = 0;
+  std::size_t caret_line = 0;
+  std::size_t caret_column = 0;
+  bool case_sensitive = false;
+  bool has_seed = false;
+  std::size_t seed_line = 0;
+  std::size_t seed_start = 0;
+  std::size_t seed_end = 0;
+  std::string needle;
+  std::string lowered_needle;
+} g_occurrence_seed_cache;
+
+thread_local struct OccurrenceViewportScanCache {
+  std::uintptr_t viewport = 0;
+  std::uint64_t layout_revision = 0;
+  std::size_t scroll_line = 0;
+  std::size_t visible_rows = 0;
+  bool case_sensitive = false;
+  std::string needle_key;
+  std::vector<editor::OccurrenceRange> ranges;
+} g_occurrence_scan_cache;
+
+thread_local std::uint64_t g_occurrence_seed_hits = 0;
+thread_local std::uint64_t g_occurrence_seed_misses = 0;
+thread_local std::uint64_t g_occurrence_scan_hits = 0;
+thread_local std::uint64_t g_occurrence_scan_misses = 0;
+
+bool OccurrenceSeedCacheMatches(const editor::TextViewport& viewport,
+                                std::uintptr_t viewport_key,
+                                bool case_sensitive_flag) {
+  return g_occurrence_seed_cache.viewport == viewport_key &&
+         g_occurrence_seed_cache.layout_revision == viewport.layout_revision() &&
+         g_occurrence_seed_cache.caret_line == viewport.cursor_line() &&
+         g_occurrence_seed_cache.caret_column == viewport.cursor_column() &&
+         g_occurrence_seed_cache.case_sensitive == case_sensitive_flag;
+}
+
+void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
+                               std::uintptr_t viewport_key,
+                               bool occurrences_case_sensitive) {
+  auto& seed_cache = g_occurrence_seed_cache;
+  seed_cache.viewport = viewport_key;
+  seed_cache.layout_revision = viewport.layout_revision();
+  seed_cache.caret_line = viewport.cursor_line();
+  seed_cache.caret_column = viewport.cursor_column();
+  seed_cache.case_sensitive = occurrences_case_sensitive;
+  seed_cache.has_seed = false;
+
+  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
+  if (!seed.has_value() || seed->start.line != seed->end.line) {
+    seed_cache.lowered_needle.clear();
+    return;
+  }
+
+  std::size_t seed_line = seed->start.line;
+  std::size_t seed_start = seed->start.column;
+  std::size_t seed_end = seed->end.column;
+  if (seed_start >= seed_end || seed_line >= viewport.lines().size()) {
+    seed_cache.lowered_needle.clear();
+    return;
+  }
+
+  seed_cache.has_seed = true;
+  seed_cache.seed_line = seed_line;
+  seed_cache.seed_start = seed_start;
+  seed_cache.seed_end = seed_end;
+
+  seed_cache.needle = viewport.lines()[seed_line].substr(seed_start, seed_end - seed_start);
+
+  seed_cache.lowered_needle.clear();
+  if (!occurrences_case_sensitive) {
+    const std::string_view needle_view(seed_cache.needle.data(), seed_cache.needle.size());
+    seed_cache.lowered_needle.resize(needle_view.size());
+    std::transform(needle_view.begin(), needle_view.end(), seed_cache.lowered_needle.begin(),
+                   [](unsigned char c) {
+                     return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                   });
+  }
+}
+
+bool OccurrenceScanCacheMatches(const editor::TextViewport& viewport,
+                                std::uintptr_t viewport_key,
+                                std::size_t visible_rows,
+                                const std::string& needle_compare) {
+  if (needle_compare.empty()) {
+    return false;
+  }
+  const std::size_t scroll_line = viewport.scroll_line();
+  return g_occurrence_scan_cache.viewport == viewport_key &&
+         g_occurrence_scan_cache.layout_revision == viewport.layout_revision() &&
+         g_occurrence_scan_cache.scroll_line == scroll_line &&
+         g_occurrence_scan_cache.visible_rows == visible_rows &&
+         g_occurrence_scan_cache.case_sensitive ==
+             g_occurrence_seed_cache.case_sensitive &&
+         g_occurrence_scan_cache.needle_key == needle_compare;
+}
+
+void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
+                               std::uintptr_t viewport_key,
+                               std::size_t visible_rows,
+                               std::size_t seed_line,
+                               std::size_t seed_start,
+                               std::size_t seed_end,
+                               const std::string& needle,
+                               const std::string& lowered_needle,
+                               bool occurrences_case_sensitive) {
+  auto& scan_cache = g_occurrence_scan_cache;
+  scan_cache.viewport = viewport_key;
+  scan_cache.layout_revision = viewport.layout_revision();
+  scan_cache.scroll_line = viewport.scroll_line();
+  scan_cache.visible_rows = visible_rows;
+  scan_cache.case_sensitive = occurrences_case_sensitive;
+  scan_cache.needle_key = needle;
+
+  scan_cache.ranges.clear();
+
+  std::unordered_set<std::size_t> visible_line_indices;
+  visible_line_indices.reserve(visible_rows);
+  const std::size_t scroll = viewport.scroll_line();
+  const std::size_t visual_total = viewport.visual_line_count();
+  for (std::size_t row = 0; row < visible_rows; ++row) {
+    const std::size_t visual_row_index = scroll + row;
+    if (visual_row_index >= visual_total) {
+      break;
+    }
+    const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
+    visible_line_indices.insert(row_meta.line_index);
+  }
+
+  const auto& lines = viewport.lines();
+  const std::string_view needle_view(needle.data(), needle.size());
+
+  auto append_occurrences = [&](std::size_t line_index, const std::string& haystack) {
+    const auto emit = [&](std::size_t match_start, std::size_t match_end) {
+      const bool primary = line_index == seed_line && match_start == seed_start &&
+                           match_end == seed_end;
+      scan_cache.ranges.push_back(editor::OccurrenceRange{
+          .line_index = line_index,
+          .start_column = match_start,
+          .end_column = match_end,
+          .is_primary_seed = primary,
+      });
+    };
+    if (occurrences_case_sensitive) {
+      for (std::size_t pos = 0; pos <= haystack.size();) {
+        const std::size_t found = haystack.find(needle_view, pos);
+        if (found == std::string::npos) {
+          break;
+        }
+        emit(found, found + needle_view.size());
+        pos = found + 1;
+      }
+    } else {
+      for (std::size_t i = 0; i + lowered_needle.size() <= haystack.size(); ++i) {
+        bool match = true;
+        for (std::size_t j = 0; j < lowered_needle.size(); ++j) {
+          if (static_cast<char>(std::tolower(static_cast<unsigned char>(haystack[i + j]))) !=
+              lowered_needle[j]) {
+            match = false;
+            break;
+          }
+        }
+        if (match) {
+          emit(i, i + lowered_needle.size());
+        }
+      }
+    }
+  };
+
+  for (std::size_t line_index : visible_line_indices) {
+    if (line_index >= lines.size()) {
+      continue;
+    }
+    append_occurrences(line_index, lines[line_index]);
+  }
+}
 
 SidebarMode SidebarModeFromViewId(std::string_view view_id) {
   if (view_id == "search") {
@@ -162,94 +342,42 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
     return vm;
   }
 
-  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
-  if (!seed.has_value()) {
-    return vm;
-  }
-  if (seed->start.line != seed->end.line) {
-    return vm;
-  }
-  const std::size_t seed_line = seed->start.line;
-  const std::size_t seed_start = seed->start.column;
-  const std::size_t seed_end = seed->end.column;
-  if (seed_start >= seed_end) {
-    return vm;
+  const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
+
+  const bool seed_cache_hit =
+      OccurrenceSeedCacheMatches(viewport, viewport_key, occurrences_case_sensitive);
+  if (!seed_cache_hit) {
+    ++g_occurrence_seed_misses;
+    RefillOccurrenceSeedCache(viewport, viewport_key, occurrences_case_sensitive);
+  } else {
+    ++g_occurrence_seed_hits;
   }
 
-  const auto& lines = viewport.lines();
-  if (seed_line >= lines.size()) {
+  if (!g_occurrence_seed_cache.has_seed) {
     return vm;
   }
 
-  const std::string_view needle(lines[seed_line].data() + seed_start, seed_end - seed_start);
-  if (needle.empty()) {
-    return vm;
+  const auto& seed_cache = g_occurrence_seed_cache;
+
+  bool scan_hit = OccurrenceScanCacheMatches(viewport, viewport_key, visible_rows,
+                                              seed_cache.needle);
+  if (!scan_hit) {
+    ++g_occurrence_scan_misses;
+    RefillOccurrenceScanCache(viewport,
+                              viewport_key,
+                              visible_rows,
+                              seed_cache.seed_line,
+                              seed_cache.seed_start,
+                              seed_cache.seed_end,
+                              seed_cache.needle,
+                              seed_cache.lowered_needle,
+                              occurrences_case_sensitive);
+  } else {
+    ++g_occurrence_scan_hits;
   }
 
-  std::string lowered_needle;
-  if (!occurrences_case_sensitive) {
-    lowered_needle.resize(needle.size());
-    std::transform(needle.begin(), needle.end(), lowered_needle.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  }
-
-  std::unordered_set<std::size_t> visible_line_indices;
-  visible_line_indices.reserve(visible_rows);
-  const std::size_t scroll = viewport.scroll_line();
-  const std::size_t visual_total = viewport.visual_line_count();
-  for (std::size_t row = 0; row < visible_rows; ++row) {
-    const std::size_t visual_row_index = scroll + row;
-    if (visual_row_index >= visual_total) {
-      break;
-    }
-    const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
-    visible_line_indices.insert(row_meta.line_index);
-  }
-
-  auto append_occurrences = [&](std::size_t line_index, const std::string& haystack) {
-    const auto emit = [&](std::size_t match_start, std::size_t match_end) {
-      const bool primary = line_index == seed_line && match_start == seed_start &&
-                           match_end == seed_end;
-      vm.occurrence_ranges.push_back(editor::OccurrenceRange{
-          .line_index = line_index,
-          .start_column = match_start,
-          .end_column = match_end,
-          .is_primary_seed = primary,
-      });
-    };
-    if (occurrences_case_sensitive) {
-      for (std::size_t pos = 0; pos <= haystack.size();) {
-        const std::size_t found = haystack.find(needle, pos);
-        if (found == std::string::npos) {
-          break;
-        }
-        emit(found, found + needle.size());
-        pos = found + 1;
-      }
-    } else {
-      for (std::size_t i = 0; i + lowered_needle.size() <= haystack.size(); ++i) {
-        bool match = true;
-        for (std::size_t j = 0; j < lowered_needle.size(); ++j) {
-          if (static_cast<char>(std::tolower(static_cast<unsigned char>(haystack[i + j]))) !=
-              lowered_needle[j]) {
-            match = false;
-            break;
-          }
-        }
-        if (match) {
-          emit(i, i + lowered_needle.size());
-        }
-      }
-    }
-  };
-
-  for (std::size_t line_index : visible_line_indices) {
-    if (line_index >= lines.size()) {
-      continue;
-    }
-    append_occurrences(line_index, lines[line_index]);
-  }
-
+  vm.occurrence_ranges.assign(g_occurrence_scan_cache.ranges.begin(),
+                               g_occurrence_scan_cache.ranges.end());
   return vm;
 }
 
@@ -341,6 +469,37 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
       break;
   }
   return vm;
+}
+
+void RenderViewModelBuilder::ResetOccurrenceCachesForTesting() {
+  g_occurrence_seed_cache = {};
+  g_occurrence_scan_cache.viewport = 0;
+  g_occurrence_scan_cache.layout_revision = 0;
+  g_occurrence_scan_cache.scroll_line = 0;
+  g_occurrence_scan_cache.visible_rows = 0;
+  g_occurrence_scan_cache.case_sensitive = false;
+  g_occurrence_scan_cache.needle_key.clear();
+  g_occurrence_scan_cache.ranges.clear();
+  g_occurrence_seed_hits = 0;
+  g_occurrence_seed_misses = 0;
+  g_occurrence_scan_hits = 0;
+  g_occurrence_scan_misses = 0;
+}
+
+std::uint64_t RenderViewModelBuilder::OccurrenceSeedCacheHitsForTesting() {
+  return g_occurrence_seed_hits;
+}
+
+std::uint64_t RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() {
+  return g_occurrence_seed_misses;
+}
+
+std::uint64_t RenderViewModelBuilder::OccurrenceScanCacheHitsForTesting() {
+  return g_occurrence_scan_hits;
+}
+
+std::uint64_t RenderViewModelBuilder::OccurrenceScanCacheMissesForTesting() {
+  return g_occurrence_scan_misses;
 }
 
 }  // namespace microide::workspace

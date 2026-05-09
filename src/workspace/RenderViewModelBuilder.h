@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "editor/EditorViewModel.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
@@ -128,6 +130,13 @@ class RenderViewModelBuilder {
   SettingsOverlayViewModel BuildSettingsOverlay(
       const WorkspaceLayout& layout,
       const class SettingsOverlayService& service) const;
+
+  // Thread-local caches (render thread): unit tests reset between cases.
+  static void ResetOccurrenceCachesForTesting();
+  static std::uint64_t OccurrenceSeedCacheHitsForTesting();
+  static std::uint64_t OccurrenceSeedCacheMissesForTesting();
+  static std::uint64_t OccurrenceScanCacheHitsForTesting();
+  static std::uint64_t OccurrenceScanCacheMissesForTesting();
 
  private:
   const WorkspaceContext& context_;
