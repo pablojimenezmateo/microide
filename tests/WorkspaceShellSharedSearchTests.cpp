@@ -210,6 +210,15 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
     expect_missing(none_ci,
                    "case-insensitive wrap still skips the sole seeded span and finds nothing else");
   }
+
+  {
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({}, 0, 0, 0, "x", false),
+                   "empty lines buffer yields no match");
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"a"}, 1, 0, 1, "a", false),
+                   "seed line past end of buffer yields no match");
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"a"}, 0, 0, 1, "", false),
+                   "empty needle yields no match");
+  }
 }
 
 void TestWorkspaceSharedProjectSearchLineMapHelpers() {
