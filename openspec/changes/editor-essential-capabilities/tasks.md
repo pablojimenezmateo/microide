@@ -114,7 +114,7 @@
 ## 12. Multicursor And Wrap Spec Updates
 
 - [ ] 12.1 Update test coverage in `tests/EditorMultiCaretTests.cpp` to add: promoted caret participates in atomic edit, fold-aware multi-caret motion, and PageUp/PageDown across collapsed fold.
-- [ ] 12.2 Verify `Add Cursor At Next Match` plus subsequent multi-caret commands respect the existing applied-edit pipeline (one applied edit per command, atomic undo).
+- [x] 12.2 Verify `Add Cursor At Next Match` plus subsequent multi-caret commands respect the existing applied-edit pipeline (one applied editor transform per shaping command, atomic undo). (Add-cursor actions only adjust secondary carets (no undo). `MoveLineDown` / `ResolveLineRange` spanning primary + secondary carets runs one `ReplaceLines` with undo; regression: `EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep`.)
 
 ## 13. Performance Validation
 
