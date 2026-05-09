@@ -166,6 +166,7 @@ bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
   if (!complete_) {
     ranges_ = std::move(bracket_ranges);
     collapsed_.assign(ranges_.size(), false);
+    ++revision_;
     return complete_;
   }
 
@@ -195,6 +196,7 @@ bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
                             }),
                 ranges_.end());
   collapsed_.assign(ranges_.size(), false);
+  ++revision_;
   return complete_;
 }
 
@@ -217,37 +219,49 @@ bool FoldingModel::ToggleFold(std::size_t opener_line) {
   if (idx < 0) return false;
   collapsed_[static_cast<std::size_t>(idx)] =
       !collapsed_[static_cast<std::size_t>(idx)];
+  ++revision_;
   return true;
 }
 
 bool FoldingModel::Collapse(std::size_t opener_line) {
   const auto idx = IndexOfOpener(ranges_, opener_line);
   if (idx < 0) return false;
+  if (collapsed_[static_cast<std::size_t>(idx)]) return false;
   collapsed_[static_cast<std::size_t>(idx)] = true;
+  ++revision_;
   return true;
 }
 
 bool FoldingModel::Expand(std::size_t opener_line) {
   const auto idx = IndexOfOpener(ranges_, opener_line);
   if (idx < 0) return false;
+  if (!collapsed_[static_cast<std::size_t>(idx)]) return false;
   collapsed_[static_cast<std::size_t>(idx)] = false;
+  ++revision_;
   return true;
 }
 
 void FoldingModel::CollapseAll() {
+  if (std::all_of(collapsed_.begin(), collapsed_.end(), [](bool collapsed) { return collapsed; })) {
+    return;
+  }
   std::fill(collapsed_.begin(), collapsed_.end(), true);
+  ++revision_;
 }
 
 void FoldingModel::ExpandAll() {
+  if (std::none_of(collapsed_.begin(), collapsed_.end(), [](bool collapsed) { return collapsed; })) {
+    return;
+  }
   std::fill(collapsed_.begin(), collapsed_.end(), false);
+  ++revision_;
 }
 
 bool FoldingModel::IsLineHidden(std::size_t line) const {
   for (std::size_t i = 0; i < ranges_.size(); ++i) {
     if (!collapsed_[i]) continue;
-    // Strict interior only; the opener stays visible as the fold's anchor row,
-    // the closer stays visible so the renderer can paint a one-line summary.
-    if (line > ranges_[i].opener_line && line < ranges_[i].closer_line) {
+    // A collapsed fold consumes a single visible row anchored on the opener.
+    if (line > ranges_[i].opener_line && line <= ranges_[i].closer_line) {
       return true;
     }
   }
@@ -261,11 +275,19 @@ std::optional<FoldRange> FoldingModel::FoldStartingAt(std::size_t line) const {
   return std::nullopt;
 }
 
+bool FoldingModel::IsCollapsedAtOpener(std::size_t line) const {
+  for (std::size_t i = 0; i < ranges_.size(); ++i) {
+    if (ranges_[i].opener_line == line) return collapsed_[i];
+  }
+  return false;
+}
+
 void FoldingModel::Clear() {
   ranges_.clear();
   collapsed_.clear();
   complete_ = true;
   dirty_ = true;
+  ++revision_;
 }
 
 }  // namespace microide::editor

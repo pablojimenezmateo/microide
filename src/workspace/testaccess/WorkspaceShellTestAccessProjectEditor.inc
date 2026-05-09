@@ -31,6 +31,9 @@
   static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) {
     return *shell.ActiveEditorViewport();
   }
+  static editor::FoldingModel* EnsureActiveFoldingModelFresh(WorkspaceShell& shell) {
+    return shell.EnsureActiveFoldingModelFresh();
+  }
   static bool ActiveEditorHasSelection(const WorkspaceShell& shell) {
     const editor::TextViewport* viewport = shell.ActiveEditorViewport();
     return viewport != nullptr && viewport->selection_range().has_value();

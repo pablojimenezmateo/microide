@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "editor/LanguageContractView.h"
+#include "editor/FoldingModel.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
 #include "util/StringUtil.h"
@@ -94,6 +95,7 @@ class TextViewport {
   void SetIndentWidth(std::size_t indent_width);
   void SetSoftTabs(bool soft_tabs);
   void SetSoftWrap(bool soft_wrap);
+  void SetFoldingModel(const FoldingModel* folding_model);
   bool soft_wrap() const { return soft_wrap_; }
   void MoveCursorVertical(int delta, bool extend_selection = false);
   void MoveCursorHorizontal(int delta, bool extend_selection = false);
@@ -127,6 +129,7 @@ class TextViewport {
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;
+  std::size_t cursor_visual_row() const;
   std::size_t scroll_line() const { return scroll_line_; }
   std::size_t horizontal_scroll() const { return horizontal_scroll_; }
   std::size_t visible_lines() const { return visible_lines_; }
@@ -149,6 +152,11 @@ class TextViewport {
   int VisualRowCount() const;
   std::size_t visual_line_count() const;
   std::size_t visual_scroll_line() const { return scroll_line_; }
+  std::size_t folding_revision() const {
+    return folding_model_ != nullptr ? folding_model_->revision() : 0;
+  }
+  std::size_t VisualRowLineIndex(std::size_t visual_row_index) const;
+  std::size_t VisualRowForLine(std::size_t line_index) const;
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;
   bool syntax_highlighting_enabled() const { return !document_->placeholder; }
   TextViewportCacheStats CacheStats() const;
@@ -340,6 +348,9 @@ class TextViewport {
   mutable std::size_t wrapped_row_layouts_tab_size_ = 0;
   mutable std::size_t wrapped_row_layouts_visible_columns_ = 0;
   mutable std::size_t wrapped_row_layouts_revision_ = 0;
+  mutable bool wrapped_row_layouts_soft_wrap_ = false;
+  mutable const FoldingModel* wrapped_row_layouts_folding_model_ = nullptr;
+  mutable std::size_t wrapped_row_layouts_fold_revision_ = 0;
 #ifndef NDEBUG
   mutable std::size_t wrapped_row_layout_build_count_ = 0;
 #endif
@@ -365,6 +376,7 @@ class TextViewport {
   mutable std::size_t highlight_checkpoint_advances_ = 0;
   std::optional<TextPosition> selection_anchor_;
   std::optional<AppliedEdit> last_applied_edit_;
+  const FoldingModel* folding_model_ = nullptr;
 
 #ifndef NDEBUG
  public:

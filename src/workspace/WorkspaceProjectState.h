@@ -75,6 +75,9 @@ struct BufferSearchState {
   editor::SingleLineEditor replace_text;
   std::vector<editor::SelectionRange> matches;
   std::size_t selected_index = 0;
+  std::vector<std::size_t> temporarily_expanded_fold_openers;
+  std::filesystem::path temporarily_expanded_fold_tab_path;
+  bool preserve_temporarily_expanded_folds = false;
 };
 
 struct ProjectSearchState {

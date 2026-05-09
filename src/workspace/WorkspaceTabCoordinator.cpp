@@ -455,9 +455,12 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
       reloaded_any = true;
     }
     if (reloaded_any && i == state_.active_tab_index) {
+      tab.editor_state->folding_model.Clear();
       operations_.normalize_editor_split_tree(*tab.editor_state);
       SyncActiveEditorTabMetadata();
       operations_.request_editor_surface_redraw();
+    } else if (reloaded_any) {
+      tab.editor_state->folding_model.Clear();
     }
   }
 }
@@ -785,6 +788,7 @@ bool TabCoordinator::ReopenActive() {
         view.needs_restore = false;
       }
     }
+    tab.editor_state->folding_model.Clear();
     state_.welcome_surface.viewport = reopened_view;
   } else {
     state_.welcome_surface.viewport = reopened_view;

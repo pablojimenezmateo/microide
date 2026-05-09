@@ -255,7 +255,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 std::span<const PublishedDiagnostic> diagnostics,
                                 bool bracket_match_highlight_enabled,
                                 bool indent_guides_enabled,
-                                bool render_whitespace_enabled) const {
+                                bool render_whitespace_enabled,
+                                const FoldingModel* folding_model) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -334,14 +335,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
       const std::size_t visual_row_index = scroll_line + row;
       if (visual_row_index >= viewport.visual_line_count()) break;
-      const auto row_meta = soft_wrap
-                                ? viewport.WrappedVisualRowLayout(visual_row_index)
-                                : TextViewport::WrappedVisualRow{
-                                      .line_index = visual_row_index,
-                                      .visual_start = viewport.horizontal_scroll(),
-                                      .visual_end = viewport.horizontal_scroll() +
-                                                    viewport.visible_columns(),
-                                  };
+      const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
       visible_rows_for_guides.push_back(row_meta.line_index);
     }
   }
@@ -352,6 +346,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         viewport.indent_width() == 0 ? 1 : viewport.indent_width();
     if (indent_guides_cache_.valid && indent_guides_cache_.viewport == &viewport &&
         indent_guides_cache_.layout_revision == viewport.layout_revision() &&
+        indent_guides_cache_.fold_revision == viewport.folding_revision() &&
         indent_guides_cache_.scroll_line == scroll_line &&
         indent_guides_cache_.visible_rows_count == visible_rows_for_guides.size() &&
         indent_guides_cache_.indent_width == indent_width &&
@@ -367,6 +362,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                           &indent_guides_cache_.runs);
       indent_guides_cache_.viewport = &viewport;
       indent_guides_cache_.layout_revision = viewport.layout_revision();
+      indent_guides_cache_.fold_revision = viewport.folding_revision();
       indent_guides_cache_.scroll_line = scroll_line;
       indent_guides_cache_.visible_rows_count = visible_rows_for_guides.size();
       indent_guides_cache_.indent_width = indent_width;
@@ -387,15 +383,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (visual_row_index >= viewport.visual_line_count()) {
       break;
     }
-    const auto row_meta = soft_wrap ? viewport.WrappedVisualRowLayout(visual_row_index)
-                                    : TextViewport::WrappedVisualRow{
-                                          .line_index = visual_row_index,
-                                          .visual_start = viewport.horizontal_scroll(),
-                                          .visual_end = viewport.horizontal_scroll() + viewport.visible_columns(),
-                                      };
-    const auto row_layout = soft_wrap ? viewport.VisibleWrappedRowLayout(visual_row_index)
-                                      : viewport.VisibleLineLayout(visual_row_index);
+    const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
     const std::size_t line_index = row_meta.line_index;
+    const auto row_layout = soft_wrap ? viewport.VisibleWrappedRowLayout(visual_row_index)
+                                      : viewport.VisibleLineLayout(line_index);
     if (line_index >= lines.size()) {
       break;
     }
@@ -628,6 +619,31 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                  selected ? theme.current_line_number : theme.line_number,
                                  selected ? theme.row_highlight : theme.gutter_background,
                                  std::string_view{line_number_buf, end});
+    }
+
+    if (folding_model != nullptr && (!soft_wrap || row_meta.visual_start == 0) &&
+        folding_model->FoldStartingAt(line_index).has_value()) {
+      const bool collapsed = folding_model->IsCollapsedAtOpener(line_index);
+      const float mark_size = std::max(4.0f, std::min(8.0f, metrics.line_height - 6.0f));
+      const float mark_x = gutter.x + gutter.w - 4.0f - mark_size;
+      const float mark_y = y + (metrics.line_height - mark_size) * 0.5f;
+      const SDL_FRect mark_rect = SDL_FRect{mark_x, mark_y, mark_size, mark_size};
+      const SDL_Color color = selected ? theme.text_primary : theme.text_secondary;
+      SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+      if (collapsed) {
+        SDL_RenderFillRect(renderer, &mark_rect);
+      } else {
+        // Outlined marker: paint a 1px border so the expanded state is visually
+        // distinct from the collapsed (filled) state without a separate glyph.
+        SDL_FRect top = SDL_FRect{mark_x, mark_y, mark_size, 1.0f};
+        SDL_FRect bottom = SDL_FRect{mark_x, mark_y + mark_size - 1.0f, mark_size, 1.0f};
+        SDL_FRect left = SDL_FRect{mark_x, mark_y, 1.0f, mark_size};
+        SDL_FRect right = SDL_FRect{mark_x + mark_size - 1.0f, mark_y, 1.0f, mark_size};
+        SDL_RenderFillRect(renderer, &top);
+        SDL_RenderFillRect(renderer, &bottom);
+        SDL_RenderFillRect(renderer, &left);
+        SDL_RenderFillRect(renderer, &right);
+      }
     }
 
     if (draw_caret && selected && layout.caret_visible) {

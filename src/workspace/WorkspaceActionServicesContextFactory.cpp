@@ -181,6 +181,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return OpenMergeEditor(base_path, incoming_path, current_path, output_path);
               },
           .active_editor_tab = [this]() { return ActiveEditorTab(); },
+          .ensure_active_folding_model_fresh =
+              [this]() { return EnsureActiveFoldingModelFresh(); },
           .replace_active_editor_view =
               [this](const editor::TextViewport& viewport) {
                 return ReplaceActiveEditorView(viewport);

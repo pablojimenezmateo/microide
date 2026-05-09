@@ -1075,6 +1075,8 @@
   FocusTarget PrimarySurfaceFocusTarget() const;
   void ShowOverlay(OverlayMode mode);
   void DismissOverlay(bool focus_editor = false);
+  void RevealBufferSearchMatch(const editor::SelectionRange& match);
+  void ResetBufferSearchFoldRevealState(bool preserve_expanded_folds);
   void RefreshBufferSearch();
   void RefreshProjectSearch();
   void StopProjectSearch();
@@ -1153,6 +1155,12 @@
   std::filesystem::path ProjectStateDirectory() const;
   void ApplyEditorPreferences(editor::TextViewport& viewport) const;
   void ApplyEditorPreferencesToAllTabs();
+  // Refresh the active editor tab's `editor::FoldingModel` from the active
+  // viewport, the resolved language contract, and the current `editor.fold.enabled`
+  // setting. Returns the (now-fresh) model pointer or nullptr when no editor
+  // tab is active. Callers (render path, fold-action handlers) consume the
+  // model directly.
+  editor::FoldingModel* EnsureActiveFoldingModelFresh();
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;

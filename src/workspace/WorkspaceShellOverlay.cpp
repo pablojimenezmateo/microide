@@ -20,6 +20,13 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
 
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
   RequestOverlayRedraw();
+  const bool preserve_buffer_search_expansions =
+      context_.current_project_state.overlay.mode == OverlayMode::BufferSearch &&
+      focus_editor;
+  if (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
+      context_.current_project_state.overlay.mode == OverlayMode::BufferReplace) {
+    ResetBufferSearchFoldRevealState(preserve_buffer_search_expansions);
+  }
   context_.current_project_state.overlay.visible = false;
   context_.current_project_state.surface.focus = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
   RequestOverlayRedraw();
@@ -28,6 +35,7 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
 void WorkspaceShell::OpenBufferSearch() {
   ShowOverlay(OverlayMode::BufferSearch);
   context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
+  ResetBufferSearchFoldRevealState(false);
   context_.current_project_state.overlay.workflow.buffer_search.query.SetText("");
   context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText("");
   context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
@@ -37,6 +45,7 @@ void WorkspaceShell::OpenBufferSearch() {
 void WorkspaceShell::OpenBufferReplace() {
   ShowOverlay(OverlayMode::BufferReplace);
   context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
+  ResetBufferSearchFoldRevealState(false);
   context_.current_project_state.overlay.workflow.buffer_search.query.SetText("");
   context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText("");
   context_.current_project_state.overlay.workflow.buffer_search.matches.clear();

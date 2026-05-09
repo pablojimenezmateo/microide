@@ -8,6 +8,7 @@
 
 #include "compare/CompareModel.h"
 #include "compare/MergeModel.h"
+#include "editor/FoldingModel.h"
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceLayout.h"
@@ -114,6 +115,11 @@ struct TabEntry {
     std::size_t active_leaf_id = 0;
     std::size_t next_leaf_id = 1;
     std::unique_ptr<EditorSplitNode> split_root;
+    // Per-tab fold-region model. Lazily computed by the renderer / fold action
+    // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
+    // close; rekeyed implicitly through its `(layout_revision, tab_size,
+    // language_id)` fingerprint when the buffer or language changes.
+    editor::FoldingModel folding_model;
   };
 
   struct DeferredTabHandle {

@@ -1,14 +1,17 @@
 #include "TestSupport.h"
 
 #include "editor/BracketScanner.h"
+#include "editor/FoldingModel.h"
 #include "editor/IndentDetect.h"
 #include "editor/IndentGuides.h"
 #include "editor/LanguageContractView.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
 #include "plugin/PluginHost.h"
+#include "workspace/WorkspaceFoldingRefresh.h"
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspaceSaveNormalization.h"
+#include "workspace/WorkspaceTabState.h"
 
 #include <optional>
 #include <string>
@@ -549,6 +552,93 @@ void TestDedentOnCloseSkippedOnNonIndentOnlyLine() {
          "dedent-on-close must not trigger on lines with non-whitespace content");
 }
 
+microide::workspace::TabEntry::EditorTabState MakeFoldingTab() {
+  microide::workspace::TabEntry::EditorTabState tab;
+  microide::workspace::TabEntry::EditorTabState::EditorViewState view;
+  view.leaf_id = 1;
+  tab.views.push_back(std::move(view));
+  tab.active_leaf_id = 1;
+  tab.next_leaf_id = 2;
+  return tab;
+}
+
+microide::workspace::LanguageContract MakeCStyleFoldContract() {
+  microide::workspace::LanguageContract contract;
+  contract.language_id = "cpp";
+  contract.bracket_pairs.push_back({"{", "}"});
+  contract.bracket_pairs.push_back({"(", ")"});
+  contract.bracket_pairs.push_back({"[", "]"});
+  return contract;
+}
+
+void TestFoldingRefreshComputesBracketRanges() {
+  auto tab = MakeFoldingTab();
+  auto& viewport = tab.views.front().viewport;
+  viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
+  const auto contract = MakeCStyleFoldContract();
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract,
+                                               /*tab_size=*/4,
+                                               /*fold_enabled=*/true);
+  Expect(!tab.folding_model.ranges().empty(),
+         "fold model should have at least one range after refresh");
+  Expect(tab.folding_model.ranges().front().opener_line == 0,
+         "first fold opener must be on line 0");
+  Expect(tab.folding_model.ranges().front().closer_line == 2,
+         "first fold closer must be on line 2");
+}
+
+void TestFoldingRefreshFingerprintReusedAcrossCalls() {
+  auto tab = MakeFoldingTab();
+  auto& viewport = tab.views.front().viewport;
+  viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
+  const auto contract = MakeCStyleFoldContract();
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true);
+  const auto& fp_first = tab.folding_model.fingerprint();
+  // A subsequent call with the same fingerprint must not change the stored
+  // fingerprint or the ranges; the model exposes IsFresh as the canonical
+  // freshness check, so we verify that.
+  Expect(tab.folding_model.IsFresh(fp_first),
+         "model must report itself fresh after a successful compute");
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true);
+  Expect(tab.folding_model.IsFresh(fp_first),
+         "model must remain fresh on a repeat refresh with the same inputs");
+}
+
+void TestFoldingRefreshDisabledExpandsAndClears() {
+  auto tab = MakeFoldingTab();
+  auto& viewport = tab.views.front().viewport;
+  viewport.LoadContent("void f() {\n  body;\n}\nvoid g() {\n  body;\n}\n", "/tmp/sample.cpp");
+  const auto contract = MakeCStyleFoldContract();
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true);
+  Expect(tab.folding_model.ranges().size() >= 1,
+         "fold model should have ranges after enable");
+  Expect(tab.folding_model.Collapse(0), "expected to collapse fold at line 0");
+  Expect(tab.folding_model.IsCollapsedAtOpener(0),
+         "fold at line 0 should be collapsed before disable");
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4,
+                                               /*fold_enabled=*/false);
+  Expect(tab.folding_model.ranges().empty(),
+         "disabling fold must clear stored ranges");
+  Expect(tab.folding_model.collapsed_flags().empty(),
+         "disabling fold must drop collapsed state so no rows are hidden");
+}
+
+void TestFoldingRefreshLanguageChangeRebuilds() {
+  auto tab = MakeFoldingTab();
+  auto& viewport = tab.views.front().viewport;
+  viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
+  const auto cpp = MakeCStyleFoldContract();
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &cpp, 4, true);
+  const auto cpp_fp = tab.folding_model.fingerprint();
+  microide::workspace::LanguageContract other = cpp;
+  other.language_id = "rust";
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &other, 4, true);
+  Expect(!tab.folding_model.IsFresh(cpp_fp),
+         "language id change must invalidate the prior fingerprint");
+  Expect(tab.folding_model.fingerprint().language_id == "rust",
+         "post-refresh fingerprint must reflect the new language id");
+}
+
 }  // namespace
 
 void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
@@ -622,6 +712,14 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestSplitBracesInsertsThreeLines);
   AddTest(tests, "EditorEssentials/DedentOnClose/Brace",
           TestDedentOnCloseBrace);
+  AddTest(tests, "EditorEssentials/Folding/RefreshComputesBracketRanges",
+          TestFoldingRefreshComputesBracketRanges);
+  AddTest(tests, "EditorEssentials/Folding/RefreshFingerprintReusedAcrossCalls",
+          TestFoldingRefreshFingerprintReusedAcrossCalls);
+  AddTest(tests, "EditorEssentials/Folding/RefreshDisabledExpandsAndClears",
+          TestFoldingRefreshDisabledExpandsAndClears);
+  AddTest(tests, "EditorEssentials/Folding/RefreshLanguageChangeRebuilds",
+          TestFoldingRefreshLanguageChangeRebuilds);
 }
 
 }  // namespace microide::tests

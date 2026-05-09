@@ -230,6 +230,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              SettingEnabled(operations_, "editor.multicursor.add_at_match.enabled", true);
     case ActionId::JumpToMatchingBracket:
       return active_viewport != nullptr;
+    case ActionId::Fold:
+    case ActionId::Unfold:
+    case ActionId::ToggleFoldAtCursor:
+    case ActionId::FoldAll:
+    case ActionId::UnfoldAll:
+      return active_viewport != nullptr &&
+             SettingEnabled(operations_, "editor.fold.enabled", true);
     // Editor-essentials capability toggles: always available; flipping them
     // requires no surrounding context.
     case ActionId::ToggleEditorFolding:

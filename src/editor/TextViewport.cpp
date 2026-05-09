@@ -41,14 +41,6 @@ bool IsIndentCharacter(char c) {
   return c == ' ' || c == '\t';
 }
 
-std::size_t LeadingIndentLen(const std::string& line) {
-  std::size_t i = 0;
-  while (i < line.size() && IsIndentCharacter(line[i])) {
-    ++i;
-  }
-  return i;
-}
-
 bool LineIsIndentOnly(const std::string& line) {
   return std::all_of(line.begin(), line.end(),
                      [](char c) { return IsIndentCharacter(c); });
@@ -318,6 +310,16 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position);
   }
+  ClampScrollState();
+  EnsureCursorVisible();
+}
+
+void TextViewport::SetFoldingModel(const FoldingModel* folding_model) {
+  if (folding_model_ == folding_model) {
+    return;
+  }
+  folding_model_ = folding_model;
+  InvalidateVisualColumnCache();
   ClampScrollState();
   EnsureCursorVisible();
 }
@@ -806,13 +808,6 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) c
 }
 
 TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t visual_row_index) const {
-  if (!soft_wrap_) {
-    return WrappedVisualRow{
-        .line_index = visual_row_index,
-        .visual_start = horizontal_scroll_,
-        .visual_end = horizontal_scroll_ + visible_columns_,
-    };
-  }
   EnsureWrappedRowLayouts();
   if (visual_row_index >= wrapped_row_layouts_.size()) {
     return {};
@@ -828,15 +823,6 @@ TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t 
 LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int visual_col) const {
   if (document_->lines.empty()) {
     return {};
-  }
-  if (!soft_wrap_) {
-    const std::size_t line = std::min<std::size_t>(static_cast<std::size_t>(std::max(0, visual_row)),
-                                                    document_->lines.size() - 1);
-    const std::size_t column_visual = static_cast<std::size_t>(std::max(0, visual_col));
-    return LogicalPosition{
-        .line = line,
-        .column = TextLayout::TextColumnForVisualColumn(document_->lines[line], column_visual, tab_size_),
-    };
   }
   EnsureWrappedRowLayouts();
   if (wrapped_row_layouts_.empty()) {
@@ -857,15 +843,29 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
 }
 
 int TextViewport::VisualRowCount() const {
-  if (!soft_wrap_) {
-    return static_cast<int>(document_->lines.size());
-  }
   EnsureWrappedRowLayouts();
   return static_cast<int>(wrapped_row_layouts_.size());
 }
 
 std::size_t TextViewport::visual_line_count() const {
   return static_cast<std::size_t>(std::max(0, VisualRowCount()));
+}
+
+std::size_t TextViewport::VisualRowLineIndex(std::size_t visual_row_index) const {
+  EnsureWrappedRowLayouts();
+  if (wrapped_row_layouts_.empty()) {
+    return 0;
+  }
+  return wrapped_row_layouts_[std::min<std::size_t>(visual_row_index, wrapped_row_layouts_.size() - 1)]
+      .line_index;
+}
+
+std::size_t TextViewport::VisualRowForLine(std::size_t line_index) const {
+  EnsureWrappedRowLayouts();
+  if (wrapped_line_row_offsets_.empty()) {
+    return 0;
+  }
+  return wrapped_line_row_offsets_[std::min<std::size_t>(line_index, wrapped_line_row_offsets_.size() - 1)];
 }
 
 const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
@@ -1389,6 +1389,9 @@ void TextViewport::InvalidateVisualColumnCache() {
   wrapped_row_layouts_tab_size_ = 0;
   wrapped_row_layouts_visible_columns_ = 0;
   wrapped_row_layouts_revision_ = 0;
+  wrapped_row_layouts_soft_wrap_ = false;
+  wrapped_row_layouts_folding_model_ = nullptr;
+  wrapped_row_layouts_fold_revision_ = 0;
 }
 
 void TextViewport::InvalidateLayoutCaches() {
@@ -2488,17 +2491,13 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   if (!document_) {
     return;
   }
-  if (!soft_wrap_) {
-    wrapped_row_layouts_.clear();
-    wrapped_line_row_offsets_.clear();
-    wrapped_row_layouts_tab_size_ = tab_size_;
-    wrapped_row_layouts_visible_columns_ = visible_columns_;
-    wrapped_row_layouts_revision_ = document_->layout_revision;
-    return;
-  }
   if (wrapped_row_layouts_revision_ == document_->layout_revision &&
       wrapped_row_layouts_tab_size_ == tab_size_ &&
-      wrapped_row_layouts_visible_columns_ == visible_columns_) {
+      wrapped_row_layouts_visible_columns_ == visible_columns_ &&
+      wrapped_row_layouts_soft_wrap_ == soft_wrap_ &&
+      wrapped_row_layouts_folding_model_ == folding_model_ &&
+      wrapped_row_layouts_fold_revision_ ==
+          (folding_model_ != nullptr ? folding_model_->revision() : 0)) {
     return;
   }
 
@@ -2507,26 +2506,43 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   wrapped_row_layouts_.reserve(document_->lines.size());
   wrapped_line_row_offsets_.reserve(document_->lines.size());
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
+  std::size_t last_visible_row = 0;
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
+    const bool line_hidden =
+        folding_model_ != nullptr && folding_model_->IsLineHidden(line_index);
+    if (line_hidden) {
+      wrapped_line_row_offsets_.push_back(last_visible_row);
+      continue;
+    }
+
     wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
+    last_visible_row = wrapped_row_layouts_.size();
     const std::size_t line_visual_width =
         TextLayout::VisualColumnForTextColumn(document_->lines[line_index],
                                               document_->lines[line_index].size(), tab_size_);
-    if (line_visual_width == 0) {
+    if (!soft_wrap_) {
+      wrapped_row_layouts_.push_back(
+          WrappedRowLayout{line_index, horizontal_scroll_, horizontal_scroll_ + visible_columns_});
+    } else if (line_visual_width == 0) {
       wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, 0, 0});
-      continue;
-    }
-    for (std::size_t start = 0; start < line_visual_width; start += wrap_columns) {
-      const std::size_t end = std::min(line_visual_width, start + wrap_columns);
-      wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, start, end});
+    } else {
+      for (std::size_t start = 0; start < line_visual_width; start += wrap_columns) {
+        const std::size_t end = std::min(line_visual_width, start + wrap_columns);
+        wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, start, end});
+      }
     }
   }
   if (wrapped_row_layouts_.empty()) {
     wrapped_row_layouts_.push_back(WrappedRowLayout{0, 0, 0});
+    wrapped_line_row_offsets_.assign(document_->lines.size(), 0);
   }
   wrapped_row_layouts_tab_size_ = tab_size_;
   wrapped_row_layouts_visible_columns_ = visible_columns_;
   wrapped_row_layouts_revision_ = document_->layout_revision;
+  wrapped_row_layouts_soft_wrap_ = soft_wrap_;
+  wrapped_row_layouts_folding_model_ = folding_model_;
+  wrapped_row_layouts_fold_revision_ =
+      folding_model_ != nullptr ? folding_model_->revision() : 0;
 #ifndef NDEBUG
   ++wrapped_row_layout_build_count_;
 #endif
@@ -2534,6 +2550,10 @@ void TextViewport::EnsureWrappedRowLayouts() const {
 
 std::size_t TextViewport::CursorVisualRow() const {
   return CursorVisualRowForCaret(TextPosition{cursor_line_, cursor_column_});
+}
+
+std::size_t TextViewport::cursor_visual_row() const {
+  return CursorVisualRow();
 }
 
 std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) const {
@@ -2554,15 +2574,18 @@ std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) con
 }
 
 std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) const {
-  if (!soft_wrap_) {
-    return caret.line;
-  }
   EnsureWrappedRowLayouts();
   if (document_->lines.empty() || caret.line >= document_->lines.size() ||
       wrapped_line_row_offsets_.size() != document_->lines.size()) {
     return 0;
   }
   const std::size_t base_row = wrapped_line_row_offsets_[caret.line];
+  if (folding_model_ != nullptr && folding_model_->IsLineHidden(caret.line)) {
+    return base_row;
+  }
+  if (!soft_wrap_) {
+    return base_row;
+  }
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
   const std::size_t caret_visual =
       TextLayout::VisualColumnForTextColumn(document_->lines[caret.line], caret.column, tab_size_);
@@ -2592,6 +2615,10 @@ std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(
   }
   const std::size_t clamped_row = std::min(target_row, wrapped_row_layouts_.size() - 1);
   const WrappedRowLayout& target = wrapped_row_layouts_[clamped_row];
+  if (!soft_wrap_) {
+    const std::size_t desired_absolute = horizontal_scroll_ + preferred_column;
+    return desired_absolute;
+  }
   if (target.visual_end <= target.visual_start) {
     return target.visual_start;
   }
@@ -2646,28 +2673,20 @@ void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
 void TextViewport::AdvanceCaretVertical(TextPosition& caret,
                                         std::size_t& preferred_column,
                                         int delta) const {
-  if (soft_wrap_) {
-    EnsureWrappedRowLayouts();
-    if (wrapped_row_layouts_.empty()) {
-      return;
-    }
-    const std::size_t current_row = CursorVisualRowForCaret(caret);
-    const int max_row = static_cast<int>(wrapped_row_layouts_.size()) - 1;
-    const std::size_t target_row =
-        static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
-    const WrappedRowLayout& target = wrapped_row_layouts_[target_row];
-    const std::size_t target_visual_column =
-        ResolveSoftWrapCursorColumnForTargetRow(caret, preferred_column, target_row);
-    caret.line = target.line_index;
-    caret.column = TextLayout::TextColumnForVisualColumn(document_->lines[target.line_index],
-                                                         target_visual_column, tab_size_);
+  EnsureWrappedRowLayouts();
+  if (wrapped_row_layouts_.empty()) {
     return;
   }
-  const int current = static_cast<int>(caret.line);
-  const int max_index = static_cast<int>(document_->lines.size()) - 1;
-  caret.line = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  caret.column = TextLayout::TextColumnForVisualColumn(document_->lines[caret.line], preferred_column,
-                                                       tab_size_);
+  const std::size_t current_row = CursorVisualRowForCaret(caret);
+  const int max_row = static_cast<int>(wrapped_row_layouts_.size()) - 1;
+  const std::size_t target_row =
+      static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
+  const WrappedRowLayout& target = wrapped_row_layouts_[target_row];
+  const std::size_t target_visual_column =
+      ResolveSoftWrapCursorColumnForTargetRow(caret, preferred_column, target_row);
+  caret.line = target.line_index;
+  caret.column = TextLayout::TextColumnForVisualColumn(document_->lines[target.line_index],
+                                                       target_visual_column, tab_size_);
 }
 
 void TextViewport::EnsureDocument() {

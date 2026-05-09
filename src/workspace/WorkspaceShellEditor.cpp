@@ -4,6 +4,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "workspace/EditorTabService.h"
+#include "workspace/WorkspaceFoldingRefresh.h"
 
 namespace microide::workspace {
 
@@ -80,6 +81,37 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
       ApplyEditorPreferences(view.viewport);
     }
   }
+}
+
+editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
+  auto* editor_tab = ActiveEditorTab();
+  if (editor_tab == nullptr) {
+    return nullptr;
+  }
+  const editor::TextViewport* active_viewport = ActiveEditorViewport();
+  if (active_viewport == nullptr) {
+    return &editor_tab->folding_model;
+  }
+  const auto setting_enabled = [this](std::string_view id, bool default_value) {
+    const auto value = GetSettingValue(id);
+    if (!value.has_value()) {
+      return default_value;
+    }
+    return *value != "false" && *value != "0" && *value != "off";
+  };
+  const std::string language_id =
+      editor::runtime_syntax::DetectFiletype(active_viewport->path(), active_viewport->lines());
+  const auto resolved = language_contract_.ResolveView(language_id);
+  EnsureFoldingModelFresh(*editor_tab, *active_viewport, resolved.contract,
+                          context_.current_project_state.editor_preferences.tab_size,
+                          setting_enabled("editor.fold.enabled", true));
+  for (auto& view : editor_tab->views) {
+    view.viewport.SetFoldingModel(editor_tab->folding_model.ranges().empty() &&
+                                          editor_tab->folding_model.collapsed_flags().empty()
+                                      ? nullptr
+                                      : &editor_tab->folding_model);
+  }
+  return &editor_tab->folding_model;
 }
 
 void WorkspaceShell::ActivateTab(std::size_t index) {
@@ -176,6 +208,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
       active_view != nullptr) {
     const std::filesystem::path old_path = active_view->path().lexically_normal();
     *active_view = configured_view;
+    editor_tab->folding_model.Clear();
     context_.current_project_state.welcome_surface.viewport = configured_view;
     const std::filesystem::path new_path = configured_view.path().lexically_normal();
     if (!old_path.empty() && old_path != new_path && CountOpenBufferViews(old_path) == 0) {

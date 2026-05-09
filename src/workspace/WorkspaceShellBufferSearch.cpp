@@ -8,18 +8,18 @@ namespace microide::workspace {
 
 void WorkspaceShell::RefreshBufferSearch() {
   editor::TextViewport* viewport = ActiveEditorViewport();
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (viewport == nullptr) {
-    context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
-    context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
+    buffer_search.matches.clear();
+    buffer_search.selected_index = 0;
     return;
   }
-  context_.current_project_state.overlay.workflow.buffer_search.matches =
-      FindLiteralSearchMatches(viewport->lines(), context_.current_project_state.overlay.workflow.buffer_search.query.text());
-  context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
+  buffer_search.matches =
+      FindLiteralSearchMatches(viewport->lines(), buffer_search.query.text());
+  buffer_search.selected_index = 0;
 
-  if (!context_.current_project_state.overlay.workflow.buffer_search.matches.empty()) {
-    const auto& match = context_.current_project_state.overlay.workflow.buffer_search.matches.front();
-    viewport->MoveCursorTo(match.start.line, match.start.column);
+  if (!buffer_search.matches.empty()) {
+    RevealBufferSearchMatch(buffer_search.matches.front());
   }
   ResetOverlayScroll();
   RequestOverlayRedraw();
@@ -27,19 +27,16 @@ void WorkspaceShell::RefreshBufferSearch() {
 }
 
 void WorkspaceShell::MoveBufferSearchSelection(int delta) {
-  if (context_.current_project_state.overlay.workflow.buffer_search.matches.empty() || delta == 0) {
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  if (buffer_search.matches.empty() || delta == 0) {
     return;
   }
 
-  const int current = static_cast<int>(context_.current_project_state.overlay.workflow.buffer_search.selected_index);
-  const int max_index = static_cast<int>(context_.current_project_state.overlay.workflow.buffer_search.matches.size()) - 1;
-  context_.current_project_state.overlay.workflow.buffer_search.selected_index =
+  const int current = static_cast<int>(buffer_search.selected_index);
+  const int max_index = static_cast<int>(buffer_search.matches.size()) - 1;
+  buffer_search.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  const auto& match =
-      context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
-  if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-    viewport->MoveCursorTo(match.start.line, match.start.column);
-  }
+  RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
   if (context_.current_project_state.overlay.visible) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
@@ -49,43 +46,108 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
 }
 
 void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
-  if (context_.current_project_state.overlay.workflow.buffer_search.matches.empty() ||
-      context_.current_project_state.overlay.workflow.buffer_search.selected_index >=
-          context_.current_project_state.overlay.workflow.buffer_search.matches.size()) {
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  if (buffer_search.matches.empty() ||
+      buffer_search.selected_index >= buffer_search.matches.size()) {
     return;
   }
 
-  const auto match =
-      context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
+  buffer_search.preserve_temporarily_expanded_folds = true;
+  const auto match = buffer_search.matches[buffer_search.selected_index];
   editor::TextViewport* viewport = ActiveEditorViewport();
   if (viewport == nullptr ||
-      !viewport->ReplaceRange(match, context_.current_project_state.overlay.workflow.buffer_search.replace_text.text())) {
+      !viewport->ReplaceRange(match, buffer_search.replace_text.text())) {
     return;
   }
 
   RefreshBufferSearch();
-  if (!context_.current_project_state.overlay.workflow.buffer_search.matches.empty()) {
-    context_.current_project_state.overlay.workflow.buffer_search.selected_index =
-        std::min(context_.current_project_state.overlay.workflow.buffer_search.selected_index,
-                 context_.current_project_state.overlay.workflow.buffer_search.matches.size() - 1);
-    const auto& next_match =
-        context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
-    viewport->MoveCursorTo(next_match.start.line, next_match.start.column);
+  if (!buffer_search.matches.empty()) {
+    buffer_search.selected_index =
+        std::min(buffer_search.selected_index, buffer_search.matches.size() - 1);
+    RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
   }
   RequestEditorSurfaceRedraw();
 }
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
-  if (context_.current_project_state.overlay.workflow.buffer_search.query.text().empty()) {
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  if (buffer_search.query.text().empty()) {
     return;
   }
 
+  buffer_search.preserve_temporarily_expanded_folds = true;
   if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-    viewport->ReplaceAll(context_.current_project_state.overlay.workflow.buffer_search.query.text(),
-                         context_.current_project_state.overlay.workflow.buffer_search.replace_text.text());
+    viewport->ReplaceAll(buffer_search.query.text(), buffer_search.replace_text.text());
   }
   RefreshBufferSearch();
   RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match) {
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return;
+  }
+  viewport->MoveCursorTo(match.start.line, match.start.column);
+
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  editor::FoldingModel* model = EnsureActiveFoldingModelFresh();
+  if (model == nullptr) {
+    return;
+  }
+
+  bool changed = false;
+  for (std::size_t i = 0; i < model->ranges().size() && i < model->collapsed_flags().size(); ++i) {
+    if (!model->collapsed_flags()[i]) {
+      continue;
+    }
+    const auto& range = model->ranges()[i];
+    if (match.start.line <= range.opener_line || match.start.line > range.closer_line) {
+      continue;
+    }
+    if (model->Expand(range.opener_line)) {
+      if (buffer_search.temporarily_expanded_fold_openers.empty()) {
+        buffer_search.temporarily_expanded_fold_tab_path = viewport->path().lexically_normal();
+      }
+      if (std::find(buffer_search.temporarily_expanded_fold_openers.begin(),
+                    buffer_search.temporarily_expanded_fold_openers.end(),
+                    range.opener_line) ==
+          buffer_search.temporarily_expanded_fold_openers.end()) {
+        buffer_search.temporarily_expanded_fold_openers.push_back(range.opener_line);
+      }
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    RequestEditorSurfaceRedraw();
+  }
+}
+
+void WorkspaceShell::ResetBufferSearchFoldRevealState(bool preserve_expanded_folds) {
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  const bool should_restore =
+      !preserve_expanded_folds && !buffer_search.preserve_temporarily_expanded_folds &&
+      !buffer_search.temporarily_expanded_fold_openers.empty();
+  if (should_restore) {
+    editor::TextViewport* viewport = ActiveEditorViewport();
+    editor::FoldingModel* model = EnsureActiveFoldingModelFresh();
+    if (viewport != nullptr && model != nullptr &&
+        viewport->path().lexically_normal() == buffer_search.temporarily_expanded_fold_tab_path) {
+      bool changed = false;
+      for (auto it = buffer_search.temporarily_expanded_fold_openers.rbegin();
+           it != buffer_search.temporarily_expanded_fold_openers.rend(); ++it) {
+        changed = model->Collapse(*it) || changed;
+      }
+      if (changed) {
+        RequestEditorSurfaceRedraw();
+      }
+    }
+  }
+
+  buffer_search.temporarily_expanded_fold_openers.clear();
+  buffer_search.temporarily_expanded_fold_tab_path.clear();
+  buffer_search.preserve_temporarily_expanded_folds = false;
 }
 
 std::optional<editor::SelectionRange> WorkspaceShell::ActiveBufferSearchMatch() const {

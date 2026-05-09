@@ -13,6 +13,7 @@
 
 #include "editor/BracketScanner.h"
 #include "editor/DiagnosticsStore.h"
+#include "editor/FoldingModel.h"
 #include "editor/IndentGuides.h"
 #include "editor/TextViewport.h"
 #include "render/TextRenderer.h"
@@ -63,7 +64,8 @@ class EditorViewRenderer {
               std::span<const PublishedDiagnostic> diagnostics = {},
               bool bracket_match_highlight_enabled = false,
               bool indent_guides_enabled = false,
-              bool render_whitespace_enabled = false) const;
+              bool render_whitespace_enabled = false,
+              const FoldingModel* folding_model = nullptr) const;
 
   // Test/diagnostic accessors for the bracket-match cache. The cache is keyed
   // on (viewport, layout_revision, primary_caret_line, primary_caret_column)
@@ -128,6 +130,7 @@ class EditorViewRenderer {
   struct IndentGuidesCache {
     const TextViewport* viewport = nullptr;
     std::size_t layout_revision = 0;
+    std::size_t fold_revision = 0;
     std::size_t scroll_line = 0;
     std::size_t visible_rows_count = 0;
     std::size_t indent_width = 0;

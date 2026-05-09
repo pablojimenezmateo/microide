@@ -76,11 +76,15 @@ class FoldingModel {
   // Returns the fold range whose opener equals `line`, if any.
   std::optional<FoldRange> FoldStartingAt(std::size_t line) const;
 
+  // True iff a fold range opens at `line` and is currently collapsed.
+  bool IsCollapsedAtOpener(std::size_t line) const;
+
   void Clear();
 
   const std::vector<FoldRange>& ranges() const { return ranges_; }
   const std::vector<bool>& collapsed_flags() const { return collapsed_; }
   bool complete() const { return complete_; }
+  std::size_t revision() const { return revision_; }
 
   bool IsFresh(const Fingerprint& fingerprint) const {
     return !dirty_ && fingerprint_ == fingerprint;
@@ -98,6 +102,7 @@ class FoldingModel {
   Fingerprint fingerprint_;
   bool complete_ = true;
   bool dirty_ = true;
+  std::size_t revision_ = 0;
 };
 
 }  // namespace microide::editor

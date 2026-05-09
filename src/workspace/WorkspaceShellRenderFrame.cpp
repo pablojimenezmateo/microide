@@ -113,9 +113,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   FrameToken::VisibleLineRange visible_line_range{};
   if (auto* viewport = ActiveEditorViewport(); viewport != nullptr && !viewport->is_placeholder()) {
     visible_line_range.viewport = viewport;
-    visible_line_range.start_line = viewport->scroll_line();
-    visible_line_range.end_line = std::min(viewport->lines().size(),
-                                           viewport->scroll_line() + viewport->visible_lines());
+    visible_line_range.start_line = viewport->VisualRowLineIndex(viewport->scroll_line());
+    const std::size_t last_visible_row =
+        viewport->visible_lines() == 0
+            ? viewport->scroll_line()
+            : viewport->scroll_line() + viewport->visible_lines() - 1;
+    visible_line_range.end_line =
+        std::min(viewport->lines().size(), viewport->VisualRowLineIndex(last_visible_row) + 1);
   }
   ++prepared_frame_id_;
   float mouse_x = last_mouse_x_;
@@ -256,18 +260,23 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           const std::string uri = viewport.path().generic_string();
           const editor::EditorViewMetrics metrics =
               editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, pane_rect);
-          for (std::size_t line_index = viewport.scroll_line();
-               line_index < std::min(viewport.lines().size(),
-                                     viewport.scroll_line() + viewport.visible_lines());
-               ++line_index) {
+          for (std::size_t row = 0; row < viewport.visible_lines(); ++row) {
+            const std::size_t visual_row_index = viewport.scroll_line() + row;
+            if (visual_row_index >= viewport.visual_line_count()) {
+              break;
+            }
+            const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
+            if (viewport.soft_wrap() && row_meta.visual_start != 0) {
+              continue;
+            }
+            const std::size_t line_index = row_meta.line_index;
             const int one_based_line = static_cast<int>(line_index + 1);
             if (!review_comments_registry_.HasThreads(uri, one_based_line) &&
                 !review_comments_registry_.HasComments(uri, one_based_line)) {
               continue;
             }
             const float y =
-                metrics.first_line_y +
-                static_cast<float>(line_index - viewport.scroll_line()) * metrics.line_height;
+                metrics.first_line_y + static_cast<float>(row) * metrics.line_height;
             const SDL_FRect marker_rect = SDL_FRect{
                 pane_rect.x + metrics.gutter_width - 6.0f,
                 y + std::max(1.0f, (metrics.line_height - 6.0f) * 0.5f),
@@ -290,6 +299,16 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.view.indent_guides.enabled", true);
     const bool render_whitespace_enabled =
         setting_enabled("editor.view.render_whitespace", false);
+    const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
+    const editor::FoldingModel* active_folding_model =
+        fold_enabled ? EnsureActiveFoldingModelFresh() : nullptr;
+    if (!fold_enabled) {
+      if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+        for (auto& view : editor_tab->views) {
+          view.viewport.SetFoldingModel(nullptr);
+        }
+      }
+    }
     const std::vector<EditorPaneLayout>& panes = editor_panes;
     editor::TextViewport* active_viewport = ActiveEditorViewport();
     if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
@@ -299,7 +318,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
                                    std::nullopt, {}, bracket_match_highlight_enabled,
-                                   indent_guides_enabled, render_whitespace_enabled);
+                                   indent_guides_enabled, render_whitespace_enabled,
+                                   active_folding_model);
     }
     auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
@@ -328,7 +348,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay, diagnostics_for_viewport(*viewport),
                                    pane.active && bracket_match_highlight_enabled,
-                                   indent_guides_enabled, render_whitespace_enabled);
+                                   indent_guides_enabled, render_whitespace_enabled,
+                                   active_folding_model);
       draw_review_comment_markers(*viewport, pane.rect);
 
     }

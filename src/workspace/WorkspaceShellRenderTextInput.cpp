@@ -177,7 +177,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
               char_width;
       const float cursor_y =
           metrics.first_line_y +
-          static_cast<float>(viewport->cursor_line() - viewport->scroll_line()) *
+          static_cast<float>(viewport->cursor_visual_row() - viewport->scroll_line()) *
               metrics.line_height;
       return TextInputVisual{
           .surface = surface,

@@ -377,6 +377,30 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // Code folding: single-chord bindings only. The VSCode-style dual chords
+      // `Ctrl+K Ctrl+0` (FoldAll) and `Ctrl+K Ctrl+J` (UnfoldAll) are not
+      // registered until the keybinding registry grows chord-sequence support;
+      // both actions remain dispatchable through the command prompt and menu.
+      KeybindingSpec{
+          .id = "fold",
+          .action = ActionId::Fold,
+          .key = SDLK_LEFTBRACKET,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "unfold",
+          .action = ActionId::Unfold,
+          .key = SDLK_RIGHTBRACKET,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
   });
   return kSpecs;
 }

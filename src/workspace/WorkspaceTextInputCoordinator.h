@@ -40,6 +40,7 @@ class TextInputCoordinator {
                        editor::TextPosition)>
         update_merge_tracking_after_viewport_edit;
     std::function<void()> reset_caret_blink;
+    std::function<void()> mark_active_editor_folding_dirty;
     std::function<void()> request_active_editable_last_change_redraw;
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;

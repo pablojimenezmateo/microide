@@ -577,13 +577,23 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   }
   const editor::EditorViewMetrics metrics =
       editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_rect);
-  const VisibleLineRangeLayout line_layout = {
-      .first_line_y = metrics.first_line_y,
-      .line_height = metrics.line_height,
-      .scroll_line = viewport->scroll_line(),
-      .visible_rows = metrics.visible_rows,
-  };
-  return ComputeVisibleLineRangeRect(pane_rect, line_layout, start_line, end_line);
+  const std::size_t visible_start_row = viewport->scroll_line();
+  const std::size_t visible_end_row = visible_start_row + metrics.visible_rows;
+  const std::size_t start_row = viewport->VisualRowForLine(start_line);
+  const std::size_t end_row = end_line == 0
+                                  ? start_row + 1
+                                  : viewport->VisualRowForLine(end_line - 1) + 1;
+  if (end_row <= visible_start_row || start_row >= visible_end_row) {
+    return std::nullopt;
+  }
+  const std::size_t clipped_start = std::max(start_row, visible_start_row);
+  const std::size_t clipped_end = std::min(end_row, visible_end_row);
+  return MakeRect(pane_rect.x,
+                  metrics.first_line_y +
+                      static_cast<float>(clipped_start - visible_start_row) * metrics.line_height -
+                      1.0f,
+                  pane_rect.w,
+                  static_cast<float>(clipped_end - clipped_start) * metrics.line_height);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineToBottomRect(std::size_t start_line) const {

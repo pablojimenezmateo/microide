@@ -829,7 +829,22 @@ editor::TextViewport* WorkspaceActionContext::ActiveNavigableViewport() {
   return operations_.active_navigable_viewport();
 }
 
+TabEntry::EditorTabState* WorkspaceActionContext::ActiveEditorTab() {
+  return operations_.active_editor_tab ? operations_.active_editor_tab() : nullptr;
+}
+
+editor::FoldingModel* WorkspaceActionContext::EnsureActiveFoldingModelFresh() {
+  return operations_.ensure_active_folding_model_fresh
+             ? operations_.ensure_active_folding_model_fresh()
+             : nullptr;
+}
+
 void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
+  if (last_change) {
+    if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+      editor_tab->folding_model.MarkDirty();
+    }
+  }
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
   operations_.request_focused_editor_redraw();

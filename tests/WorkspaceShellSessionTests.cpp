@@ -481,6 +481,154 @@ void TestWorkspaceShellRefreshReloadsCleanOpenEditorBuffers() {
          "tree refresh should preserve cursor state while reloading the buffer");
 }
 
+void TestWorkspaceShellReopenClearsFoldCollapseState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.cpp";
+  WriteFile(source, "void f() {\n  body();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto* initial_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(initial_model != nullptr, "folding model should be available for editor tabs");
+  Expect(!initial_model->ranges().empty(), "folding model should compute a fold range");
+  Expect(initial_model->Collapse(0), "test fixture should collapse the top-level fold");
+  Expect(initial_model->IsCollapsedAtOpener(0),
+         "collapsed state should be present before reopen");
+
+  WriteFile(source, "void f() {\n  refreshed();\n}\n");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto* reopened_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(reopened_model != nullptr, "reopened editor should rebuild the folding model");
+  Expect(!reopened_model->ranges().empty(),
+         "reopened editor should still expose fold ranges");
+  Expect(!reopened_model->IsCollapsedAtOpener(0),
+         "reopening a clean editor should clear prior collapsed fold state");
+}
+
+void TestWorkspaceShellRefreshClearsFoldCollapseState() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.cpp";
+  WriteFile(source, "void f() {\n  body();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto* initial_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(initial_model != nullptr, "folding model should be available for refresh fixture");
+  Expect(initial_model->Collapse(0), "test fixture should collapse the top-level fold");
+  Expect(initial_model->IsCollapsedAtOpener(0),
+         "collapsed state should be present before refresh");
+
+  WriteFile(source, "void f() {\n  refreshed();\n}\n");
+  Expect(WorkspaceShellTestAccess::ExecuteTreeRefresh(shell),
+         "tree refresh should execute for folding refresh fixture");
+
+  auto* refreshed_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(refreshed_model != nullptr, "refreshed editor should rebuild the folding model");
+  Expect(!refreshed_model->ranges().empty(),
+         "refreshed editor should still expose fold ranges");
+  Expect(!refreshed_model->IsCollapsedAtOpener(0),
+         "tree refresh should clear prior collapsed fold state");
+}
+
+void TestWorkspaceShellEditorEditInvalidatesFoldingFingerprint() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.cpp";
+  WriteFile(source, "void f() {\n  body();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(model != nullptr, "folding model should be available for edit fixture");
+  const auto fingerprint_before = model->fingerprint();
+  Expect(model->IsFresh(fingerprint_before),
+         "fresh folding model should report fresh before edits");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(1, 2);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "extra_"),
+         "editor should accept text input for folding invalidation fixture");
+
+  Expect(!model->IsFresh(fingerprint_before),
+         "editing the viewport should invalidate the prior folding fingerprint");
+
+  auto* refreshed_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(refreshed_model != nullptr, "folding model should refresh after edit invalidation");
+  Expect(refreshed_model->fingerprint().layout_revision != fingerprint_before.layout_revision,
+         "post-edit folding fingerprint should pick up the new layout revision");
+}
+
+void TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndRestoresOnDismiss() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.cpp";
+  WriteFile(source, "void f() {\n  target();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(model != nullptr, "buffer-search fold fixture should build a folding model");
+  Expect(model->Collapse(0), "buffer-search fold fixture should collapse the top-level fold");
+  Expect(model->IsCollapsedAtOpener(0),
+         "buffer-search fold fixture should start with the top-level fold collapsed");
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the buffer-search overlay");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "target"),
+         "buffer-search fold fixture should accept a query");
+
+  Expect(!model->IsCollapsedAtOpener(0),
+         "buffer-search should auto-expand a collapsed fold that hides the selected match");
+  const auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.cursor_line() == 1 && editor.cursor_column() == 2,
+         "buffer-search should move the caret onto the revealed match");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should dismiss the buffer-search overlay");
+  Expect(model->IsCollapsedAtOpener(0),
+         "dismissing buffer-search without committing to the reveal should restore the collapsed fold");
+}
+
+void TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.cpp";
+  WriteFile(source, "void f() {\n  target();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(model != nullptr, "buffer-search activate fixture should build a folding model");
+  Expect(model->Collapse(0), "buffer-search activate fixture should collapse the top-level fold");
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should open the buffer-search overlay for activate fixture");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "target"),
+         "buffer-search activate fixture should accept a query");
+  Expect(!model->IsCollapsedAtOpener(0),
+         "buffer-search activate fixture should auto-expand the collapsed match");
+
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should activate the selected buffer-search match");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "activating a buffer-search match should dismiss the overlay");
+  Expect(!model->IsCollapsedAtOpener(0),
+         "activating the revealed match should keep the fold expanded after the overlay closes");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1448,6 +1596,16 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellReopenFileReloadsCleanEditorTab);
   AddTest(tests, "WorkspaceShell/RefreshReloadsCleanOpenEditorBuffers",
           TestWorkspaceShellRefreshReloadsCleanOpenEditorBuffers);
+  AddTest(tests, "WorkspaceShell/ReopenClearsFoldCollapseState",
+          TestWorkspaceShellReopenClearsFoldCollapseState);
+  AddTest(tests, "WorkspaceShell/RefreshClearsFoldCollapseState",
+          TestWorkspaceShellRefreshClearsFoldCollapseState);
+  AddTest(tests, "WorkspaceShell/EditorEditInvalidatesFoldingFingerprint",
+          TestWorkspaceShellEditorEditInvalidatesFoldingFingerprint);
+  AddTest(tests, "WorkspaceShell/BufferSearchRevealsCollapsedMatchAndRestoresOnDismiss",
+          TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndRestoresOnDismiss);
+  AddTest(tests, "WorkspaceShell/BufferSearchKeepsRevealAfterActivateSelection",
+          TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyUntitledBufferContent",

@@ -27,6 +27,9 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::ResetCaretBlink");
     operations.reset_caret_blink();
   }
+  if (operations.mark_active_editor_folding_dirty) {
+    operations.mark_active_editor_folding_dirty();
+  }
   {
     util::PerformanceTrace::Scope scope(
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::RequestLastChangeRedraw");

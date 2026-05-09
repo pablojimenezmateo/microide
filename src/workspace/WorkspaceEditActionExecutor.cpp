@@ -248,6 +248,53 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;
     }
+    case ActionId::Fold:
+    case ActionId::Unfold:
+    case ActionId::ToggleFoldAtCursor:
+    case ActionId::FoldAll:
+    case ActionId::UnfoldAll: {
+      auto* model = context_.EnsureActiveFoldingModelFresh();
+      if (model == nullptr) return DispatchResult::Handled;
+      bool changed = false;
+      if (id == ActionId::FoldAll) {
+        if (!model->ranges().empty()) {
+          model->CollapseAll();
+          changed = true;
+        }
+      } else if (id == ActionId::UnfoldAll) {
+        if (!model->ranges().empty()) {
+          model->ExpandAll();
+          changed = true;
+        }
+      } else {
+        auto* viewport = context_.ActiveNavigableViewport();
+        if (viewport == nullptr) return DispatchResult::Handled;
+        const std::size_t caret_line = viewport->cursor_line();
+        // Find the innermost fold whose opener_line <= caret_line <= closer_line.
+        std::optional<std::size_t> target_opener;
+        std::size_t best_span = static_cast<std::size_t>(-1);
+        for (const auto& range : model->ranges()) {
+          if (caret_line < range.opener_line || caret_line > range.closer_line) continue;
+          const std::size_t span = range.closer_line - range.opener_line;
+          if (span < best_span) {
+            best_span = span;
+            target_opener = range.opener_line;
+          }
+        }
+        if (!target_opener) return DispatchResult::Handled;
+        if (id == ActionId::Fold) {
+          changed = model->Collapse(*target_opener);
+        } else if (id == ActionId::Unfold) {
+          changed = model->Expand(*target_opener);
+        } else {
+          changed = model->ToggleFold(*target_opener);
+        }
+      }
+      if (changed) {
+        context_.NotifyEditorViewportChanged(/*last_change=*/false);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::ToggleEditorFolding:
     case ActionId::ToggleEditorStickyScroll:
     case ActionId::ToggleEditorIndentGuides:

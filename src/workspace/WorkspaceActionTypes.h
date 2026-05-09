@@ -98,6 +98,12 @@ enum class ActionId {
   SortLinesDescending,
   AddCursorAtNextMatch,
   AddCursorAtAllMatches,
+  // Editor essentials: code folding controls
+  Fold,
+  Unfold,
+  FoldAll,
+  UnfoldAll,
+  ToggleFoldAtCursor,
   // Editor essentials: capability toggles (each must be checkable + command + setting)
   ToggleEditorFolding,
   ToggleEditorStickyScroll,

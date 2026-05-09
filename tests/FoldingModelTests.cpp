@@ -109,12 +109,10 @@ void TestToggleFoldHidesInteriorLines() {
          "compute should complete for toggle fixture");
   Expect(model.ToggleFold(0),
          "toggling the outer { should succeed");
-  Expect(model.IsLineHidden(1) && model.IsLineHidden(2),
-         "lines strictly inside collapsed fold should be hidden");
+  Expect(model.IsLineHidden(1) && model.IsLineHidden(2) && model.IsLineHidden(3),
+         "collapsed folds should hide every line after the opener through the closer");
   Expect(!model.IsLineHidden(0),
          "opener line itself should not be hidden");
-  Expect(!model.IsLineHidden(3),
-         "closer line should not be hidden (renderer paints the fold marker)");
 }
 
 }  // namespace

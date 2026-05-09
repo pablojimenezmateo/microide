@@ -84,6 +84,7 @@ class WorkspaceActionContext {
                        const std::filesystem::path&)>
         open_merge_editor;
     std::function<TabEntry::EditorTabState*()> active_editor_tab;
+    std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     std::function<bool(const editor::TextViewport&)> replace_active_editor_view;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
@@ -281,6 +282,8 @@ class WorkspaceActionContext {
   // editor functions to operate on the viewport.
   editor::TextViewport* ActiveEditableViewport();
   editor::TextViewport* ActiveNavigableViewport();
+  TabEntry::EditorTabState* ActiveEditorTab();
+  editor::FoldingModel* EnsureActiveFoldingModelFresh();
   void NotifyEditorViewportChanged(bool last_change);
   void NotifyEditorCaretMoved();
   void ToggleEditorEssentialsCapability(ActionId id);

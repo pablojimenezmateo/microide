@@ -70,10 +70,11 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
   const editor::EditorViewMetrics metrics =
       editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, rect);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const std::size_t visible_start_line = viewport.VisualRowLineIndex(viewport.scroll_line());
   const project::GitBlameRequest request{
       .root = context_.current_project_state.root,
       .absolute_path = viewport.path(),
-      .visible_start_line = viewport.scroll_line(),
+      .visible_start_line = visible_start_line,
       .visible_line_count = metrics.visible_rows,
       .total_line_count = viewport.line_count(),
       .dirty = viewport.dirty(),
@@ -97,11 +98,15 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
   overlay.visible = true;
   overlay.lines.reserve(snapshot.lines.size());
   for (const auto& line : snapshot.lines) {
-    if (line.line < caret_start || line.line > caret_end || line.line < viewport.scroll_line()) {
+    if (line.line < caret_start || line.line > caret_end || line.line < visible_start_line) {
       continue;
     }
 
-    const std::size_t row = line.line - viewport.scroll_line();
+    const std::size_t visual_row = viewport.VisualRowForLine(line.line);
+    if (visual_row < viewport.scroll_line()) {
+      continue;
+    }
+    const std::size_t row = visual_row - viewport.scroll_line();
     if (row >= metrics.visible_rows) {
       continue;
     }

@@ -356,6 +356,9 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
           cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
         }
         viewport->InsertText(input);
+        if (operations_.mark_active_editor_folding_dirty) {
+          operations_.mark_active_editor_folding_dirty();
+        }
         if (auto* compare_tab = operations_.active_compare_tab();
             compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
           operations_.refresh_compare_tab_derived_state(*compare_tab);

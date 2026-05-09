@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/SyntaxDefinitionLoader.h"
+#include "editor/FoldingModel.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 
@@ -14,6 +15,7 @@ namespace {
 using microide::editor::SyntaxTokenKind;
 using microide::editor::TextPosition;
 using microide::editor::TextViewport;
+using microide::editor::FoldingModel;
 
 struct ScopedRuntimeSyntaxRegistryReset {
   ~ScopedRuntimeSyntaxRegistryReset() { microide::editor::runtime_syntax::ReloadDefinitions({}); }
@@ -632,6 +634,101 @@ void TestTextViewportSoftWrapForcesHorizontalScrollToZero() {
          "soft wrap should reject new horizontal scrolling while wrap is enabled");
 }
 
+FoldingModel::ComputeOptions DefaultFoldOptions() {
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = true;
+  options.tab_size = 4;
+  return options;
+}
+
+void TestTextViewportCollapsedFoldHidesBodyRows() {
+  TextViewport viewport;
+  viewport.LoadContent("void f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/fold.cpp");
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "fold compute should complete for viewport fold fixture");
+  Expect(folding_model.Collapse(0), "outer fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+
+  Expect(viewport.VisualRowCount() == 3,
+         "collapsed fold should expose the opener row, later visible lines, and the trailing empty line");
+  const auto row0 = viewport.WrappedVisualRowLayout(0);
+  const auto row1 = viewport.WrappedVisualRowLayout(1);
+  const auto row2 = viewport.WrappedVisualRowLayout(2);
+  Expect(row0.line_index == 0,
+         "collapsed fold should keep the opener as the visible anchor row");
+  Expect(row1.line_index == 4,
+         "collapsed fold should hide the folded body and closer from visual rows");
+  Expect(row2.line_index == 5,
+         "collapsed fold should leave the trailing empty line visible after the folded block");
+}
+
+void TestTextViewportCollapsedFoldVerticalMotionSkipsHiddenLines() {
+  TextViewport viewport;
+  viewport.LoadContent("before();\nvoid f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/fold-motion.cpp");
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "fold compute should complete for motion fixture");
+  Expect(folding_model.Collapse(1), "inner function fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+  viewport.MoveCursorTo(0, 3);
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 1,
+         "moving down should land on the collapsed opener row");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 5,
+         "moving down again should skip the hidden folded body");
+
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_line() == 1,
+         "moving back up should treat the collapsed fold as one visible row");
+}
+
+void TestTextViewportCollapsedFoldPageMovesByVisibleRows() {
+  TextViewport viewport;
+  viewport.LoadContent("line0\nvoid f() {\n  a();\n  b();\n}\nline5\nline6\n", "/tmp/fold-page.cpp");
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "fold compute should complete for page fixture");
+  Expect(folding_model.Collapse(1), "function fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+  viewport.SetViewportSize(2, 20);
+  viewport.MoveCursorTo(0, 0);
+
+  viewport.Page(1);
+  Expect(viewport.cursor_line() == 1,
+         "page down should still follow the existing visible_lines - 1 step across a collapsed fold");
+
+  viewport.Page(1);
+  Expect(viewport.cursor_line() == 5,
+         "page down should count a collapsed fold as a single visible row when advancing past it");
+
+  viewport.Page(-1);
+  Expect(viewport.cursor_line() == 1,
+         "page up should reverse the same visible-row step back onto the collapsed opener row");
+
+  viewport.Page(-1);
+  Expect(viewport.cursor_line() == 0,
+         "page up should reverse the same visible-row count across a collapsed fold");
+}
+
+void TestTextViewportCollapsedFoldHitTestingUsesVisibleRows() {
+  TextViewport viewport;
+  viewport.LoadContent("void f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/fold-hit.cpp");
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "fold compute should complete for hit-testing fixture");
+  Expect(folding_model.Collapse(0), "outer fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+
+  const TextPosition hit = viewport.LogicalPositionForVisualHit(1, 2);
+  Expect(hit.line == 4,
+         "visual hit-testing should map rows after a collapsed fold to the next visible line");
+}
+
 void TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta", "/tmp/replace-lines.txt");
@@ -858,6 +955,14 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
 #endif
   AddTest(tests, "TextViewport/SoftWrapForcesHorizontalScrollToZero",
           TestTextViewportSoftWrapForcesHorizontalScrollToZero);
+  AddTest(tests, "TextViewport/CollapsedFoldHidesBodyRows",
+          TestTextViewportCollapsedFoldHidesBodyRows);
+  AddTest(tests, "TextViewport/CollapsedFoldVerticalMotionSkipsHiddenLines",
+          TestTextViewportCollapsedFoldVerticalMotionSkipsHiddenLines);
+  AddTest(tests, "TextViewport/CollapsedFoldPageMovesByVisibleRows",
+          TestTextViewportCollapsedFoldPageMovesByVisibleRows);
+  AddTest(tests, "TextViewport/CollapsedFoldHitTestingUsesVisibleRows",
+          TestTextViewportCollapsedFoldHitTestingUsesVisibleRows);
   AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",
           TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
   AddTest(tests, "TextViewport/MaxVisualColumnsUpdatesIncrementally",

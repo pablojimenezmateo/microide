@@ -456,6 +456,12 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
                 SyncCompareSelectionFromViewport(compare_tab, reveal_selection);
               },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
+          .mark_active_editor_folding_dirty =
+              [this]() {
+                if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+                  editor_tab->folding_model.MarkDirty();
+                }
+              },
           .request_active_editable_last_change_redraw =
               [this]() { RequestActiveEditableLastChangeRedraw(); },
           .request_active_editable_change_redraw =
