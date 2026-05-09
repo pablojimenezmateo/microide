@@ -437,6 +437,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
                                merge_diagnostics != nullptr
                                    ? std::span<const editor::PublishedDiagnostic>(*merge_diagnostics)
                                    : std::span<const editor::PublishedDiagnostic>{},
+                               nullptr,
                                bracket_match_highlight_enabled,
                                indent_guides_enabled, render_whitespace_enabled);
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());

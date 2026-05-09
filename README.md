@@ -249,6 +249,11 @@ Current commands:
 - `sort-lines-descending`
 - `add-cursor-next-match`
 - `add-cursor-all-matches`
+- `fold`
+- `unfold`
+- `fold-all`
+- `unfold-all`
+- `toggle-fold`
 - `toggle-editor-folding`
 - `toggle-editor-sticky-scroll`
 - `toggle-editor-indent-guides`

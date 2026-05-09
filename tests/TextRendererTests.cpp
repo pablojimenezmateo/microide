@@ -3,6 +3,7 @@
 #include "editor/DiagnosticsRender.h"
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/EditorViewRenderer.h"
+#include "editor/FoldingModel.h"
 #include "editor/TextViewport.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
@@ -165,6 +166,14 @@ std::string SummarizeDrawCalls(const std::vector<CountingTextBackend::DrawCall>&
     summary += call.text;
   }
   return summary;
+}
+
+microide::editor::FoldingModel::ComputeOptions DefaultFoldOptions() {
+  microide::editor::FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = true;
+  options.tab_size = 4;
+  return options;
 }
 
 #if MICROIDE_HAS_SDL3_TTF
@@ -966,6 +975,80 @@ void TestEditorViewRendererPaintsDiagnosticGutterMarkers() {
   SDL_DestroySurface(pixels);
 }
 
+void TestEditorViewRendererPaintsFoldGutterMarkers() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 72);
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255),
+         "fold gutter renderer test should set the software canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "fold gutter renderer test should clear the software canvas");
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.gutter_background = SDL_Color{0x12, 0x12, 0x12, 0xff};
+  theme.line_number = SDL_Color{0xc8, 0xd2, 0xe6, 0xff};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("void f() {\n  body();\n}\n", "/tmp/editor-fold-gutter.cpp");
+  microide::editor::FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "fold gutter renderer test should compute fold ranges");
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 72.0f};
+  microide::editor::EditorViewModel view_model;
+  view_model.fold_gutter_marks.push_back(
+      microide::editor::FoldGutterMark{.line_index = 0, .visual_row_index = 0, .collapsed = false});
+
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "", std::nullopt,
+                  std::nullopt, {}, &view_model, false, false, false, &folding_model);
+
+  const auto& marks = renderer.last_fold_gutter_marks();
+  Expect(marks.size() == 1, "renderer should cache one expanded fold gutter mark");
+  Expect(marks.front().line_index == 0 && marks.front().visual_row_index == 0,
+         "expanded fold gutter mark should target the opener row");
+  Expect(renderer.last_fold_gutter_marks().size() == 1 &&
+             !renderer.last_fold_gutter_marks().front().collapsed,
+         "renderer should cache one expanded fold gutter mark for the visible opener row");
+}
+
+void TestEditorViewRendererFoldGutterMarkerTracksCollapsedState() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 72);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.gutter_background = SDL_Color{0x12, 0x12, 0x12, 0xff};
+  theme.line_number = SDL_Color{0xc8, 0xd2, 0xe6, 0xff};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("void f() {\n  body();\n}\n", "/tmp/editor-fold-gutter-collapse.cpp");
+  microide::editor::FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "collapsed fold gutter renderer test should compute fold ranges");
+  Expect(folding_model.Collapse(0),
+         "collapsed fold gutter renderer test should collapse the fold");
+  viewport.SetFoldingModel(&folding_model);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 72.0f};
+  microide::editor::EditorViewModel view_model;
+  view_model.fold_gutter_marks.push_back(
+      microide::editor::FoldGutterMark{.line_index = 0, .visual_row_index = 0, .collapsed = true});
+
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "", std::nullopt,
+                  std::nullopt, {}, &view_model, false, false, false, &folding_model);
+
+  Expect(renderer.last_fold_gutter_marks().size() == 1 &&
+             renderer.last_fold_gutter_marks().front().collapsed,
+         "renderer should cache one collapsed fold gutter mark for the visible opener row");
+}
+
 void TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(220, 120);
@@ -982,7 +1065,8 @@ void TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange() {
   microide::editor::EditorViewRenderer renderer;
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+                  std::nullopt, std::nullopt, {}, nullptr,
+                  /*bracket_match_highlight_enabled=*/true);
   Expect(renderer.bracket_match_cache_misses() == 1,
          "first frame with bracket-match enabled should populate the cache");
   Expect(renderer.last_bracket_match_pair().has_value(),
@@ -992,7 +1076,8 @@ void TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange() {
          "cached pair should reflect the brace at line 0 col 7");
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+                  std::nullopt, std::nullopt, {}, nullptr,
+                  /*bracket_match_highlight_enabled=*/true);
   Expect(renderer.bracket_match_cache_hits() == 1,
          "second frame with unchanged caret/layout should reuse the cached pair");
   Expect(renderer.bracket_match_cache_misses() == 1,
@@ -1015,13 +1100,15 @@ void TestEditorViewRendererBracketMatchCacheInvalidatesOnCaretMove() {
   microide::editor::EditorViewRenderer renderer;
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+                  std::nullopt, std::nullopt, {}, nullptr,
+                  /*bracket_match_highlight_enabled=*/true);
   Expect(renderer.bracket_match_cache_misses() == 1,
          "first frame should compute the pair");
 
   viewport.MoveCursorTo(0, 0);
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+                  std::nullopt, std::nullopt, {}, nullptr,
+                  /*bracket_match_highlight_enabled=*/true);
   Expect(renderer.bracket_match_cache_misses() == 2,
          "moving the caret should invalidate the cache and force a fresh compute");
   Expect(!renderer.last_bracket_match_pair().has_value(),
@@ -1044,12 +1131,14 @@ void TestEditorViewRendererBracketMatchCacheClearsWhenToggleOff() {
   microide::editor::EditorViewRenderer renderer;
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/true);
+                  std::nullopt, std::nullopt, {}, nullptr,
+                  /*bracket_match_highlight_enabled=*/true);
   Expect(renderer.last_bracket_match_pair().has_value(),
          "toggle-on frame should compute a bracket-match pair");
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, /*bracket_match_highlight_enabled=*/false);
+                  std::nullopt, std::nullopt, {}, nullptr,
+                  /*bracket_match_highlight_enabled=*/false);
   Expect(!renderer.last_bracket_match_pair().has_value(),
          "toggle-off frame should clear the cached pair so no paint occurs");
   Expect(renderer.bracket_match_cache_misses() == 1,
@@ -1077,7 +1166,7 @@ void TestEditorViewRendererIndentGuidesCacheReusesAcrossUnchangedFrames() {
   microide::editor::EditorViewRenderer renderer;
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {},
+                  std::nullopt, std::nullopt, {}, nullptr,
                   /*bracket_match_highlight_enabled=*/false,
                   /*indent_guides_enabled=*/true,
                   /*render_whitespace_enabled=*/false);
@@ -1087,7 +1176,7 @@ void TestEditorViewRendererIndentGuidesCacheReusesAcrossUnchangedFrames() {
          "first frame should compute at least one indent-guide run");
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {},
+                  std::nullopt, std::nullopt, {}, nullptr,
                   /*bracket_match_highlight_enabled=*/false,
                   /*indent_guides_enabled=*/true,
                   /*render_whitespace_enabled=*/false);
@@ -1113,11 +1202,11 @@ void TestEditorViewRendererIndentGuidesCacheInvalidatesOnCaretMove() {
   const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
   microide::editor::EditorViewRenderer renderer;
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, false, true, false);
+                  std::nullopt, std::nullopt, {}, nullptr, false, true, false);
 
   viewport.MoveCursorTo(0, 0);
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, false, true, false);
+                  std::nullopt, std::nullopt, {}, nullptr, false, true, false);
   Expect(renderer.indent_guides_cache_misses() == 2,
          "moving the caret should invalidate the indent-guides cache");
 }
@@ -1138,12 +1227,12 @@ void TestEditorViewRendererIndentGuidesClearOnToggleOff() {
   const SDL_FRect rect{0.0f, 0.0f, 220.0f, 120.0f};
   microide::editor::EditorViewRenderer renderer;
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, false, true, false);
+                  std::nullopt, std::nullopt, {}, nullptr, false, true, false);
   Expect(!renderer.last_indent_guide_runs().empty(),
          "toggle-on frame should populate guide runs");
 
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
-                  std::nullopt, std::nullopt, {}, false, false, false);
+                  std::nullopt, std::nullopt, {}, nullptr, false, false, false);
   Expect(renderer.last_indent_guide_runs().empty(),
          "toggle-off frame should clear cached guide runs so no paint occurs");
   Expect(renderer.indent_guides_cache_misses() == 1,
@@ -1244,6 +1333,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view paints diagnostic gutter markers",
           TestEditorViewRendererPaintsDiagnosticGutterMarkers);
+  AddTest(tests,
+          "TextRenderer editor view paints fold gutter markers",
+          TestEditorViewRendererPaintsFoldGutterMarkers);
+  AddTest(tests,
+          "TextRenderer editor view fold gutter markers track collapsed state",
+          TestEditorViewRendererFoldGutterMarkerTracksCollapsedState);
   AddTest(tests,
           "TextRenderer editor view bracket-match cache reuses pair across unchanged frames",
           TestEditorViewRendererBracketMatchCacheReusesAcrossFramesWithoutChange);

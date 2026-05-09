@@ -125,6 +125,37 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   };
 }
 
+editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
+    const editor::TextViewport& viewport,
+    std::size_t visible_rows,
+    const editor::FoldingModel* folding_model) const {
+  editor::EditorViewModel vm;
+  if (folding_model == nullptr || folding_model->ranges().empty()) {
+    return vm;
+  }
+
+  vm.fold_gutter_marks.reserve(visible_rows);
+  for (std::size_t row = 0; row < visible_rows; ++row) {
+    const std::size_t visual_row_index = viewport.scroll_line() + row;
+    if (visual_row_index >= viewport.visual_line_count()) {
+      break;
+    }
+    const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
+    if (viewport.soft_wrap() && row_meta.visual_start != 0) {
+      continue;
+    }
+    if (!folding_model->FoldStartingAt(row_meta.line_index).has_value()) {
+      continue;
+    }
+    vm.fold_gutter_marks.push_back(editor::FoldGutterMark{
+        .line_index = row_meta.line_index,
+        .visual_row_index = visual_row_index,
+        .collapsed = folding_model->IsCollapsedAtOpener(row_meta.line_index),
+    });
+  }
+  return vm;
+}
+
 BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() const {
   return BottomPanelSurfaceViewModel{
       .command_mode = context_.current_project_state.panel.command_mode,

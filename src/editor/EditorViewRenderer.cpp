@@ -25,6 +25,30 @@ float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t 
   return std::max(48.0f, text_renderer.MeasureWidth(std::string_view{buf, end}) + 18.0f);
 }
 
+void DrawFoldGutterMarker(SDL_Renderer* renderer,
+                          SDL_Color color,
+                          const SDL_FRect& rect,
+                          bool collapsed) {
+  if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  SDL_RenderRect(renderer, &rect);
+
+  const float mid_y = std::floor(rect.y + rect.h * 0.5f);
+  const SDL_FRect horizontal =
+      SDL_FRect{rect.x + 2.0f, mid_y, std::max(1.0f, rect.w - 4.0f), 1.0f};
+  SDL_RenderFillRect(renderer, &horizontal);
+  if (!collapsed) {
+    return;
+  }
+
+  const float mid_x = std::floor(rect.x + rect.w * 0.5f);
+  const SDL_FRect vertical =
+      SDL_FRect{mid_x, rect.y + 2.0f, 1.0f, std::max(1.0f, rect.h - 4.0f)};
+  SDL_RenderFillRect(renderer, &vertical);
+}
+
 std::string ToLower(std::string_view text) {
   std::string lowered(text);
   std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
@@ -227,6 +251,17 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
 
 }  // namespace
 
+SDL_FRect FoldGutterMarkerRect(float gutter_x,
+                               float gutter_width,
+                               float row_y,
+                               float line_height) {
+  constexpr float kMarkerSize = 8.0f;
+  return SDL_FRect{gutter_x + gutter_width - 14.0f,
+                   row_y + std::max(1.0f, std::floor((line_height - kMarkerSize) * 0.5f)),
+                   kMarkerSize,
+                   kMarkerSize};
+}
+
 EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer& text_renderer,
                                                      const TextViewport& viewport,
                                                      const SDL_FRect& rect) {
@@ -253,6 +288,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 const std::optional<SelectionRange>& active_search_match,
                                 const std::optional<EditorBlameOverlay>& blame_overlay,
                                 std::span<const PublishedDiagnostic> diagnostics,
+                                const EditorViewModel* view_model,
                                 bool bracket_match_highlight_enabled,
                                 bool indent_guides_enabled,
                                 bool render_whitespace_enabled,
@@ -325,6 +361,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   std::size_t blame_index = 0;
   std::size_t secondary_caret_index = 0;
   std::string lowered_line_scratch;
+  last_fold_gutter_marks_.clear();
+  if (view_model != nullptr) {
+    last_fold_gutter_marks_.insert(last_fold_gutter_marks_.end(),
+                                   view_model->fold_gutter_marks.begin(),
+                                   view_model->fold_gutter_marks.end());
+  }
+  const std::vector<FoldGutterMark>* fold_gutter_marks =
+      view_model != nullptr ? &view_model->fold_gutter_marks : nullptr;
+  std::size_t fold_gutter_mark_index = 0;
 
   // Build the visible-row→buffer-line map once so the indent-guides compute
   // and the per-row paint loop can both consume it. The visible-rows count is
@@ -611,6 +656,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         severity.has_value()) {
       DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                  *severity);
+    }
+    if (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&
+        (*fold_gutter_marks)[fold_gutter_mark_index].visual_row_index == visual_row_index) {
+      const SDL_Color marker_color =
+          selected ? theme.current_line_number : theme.line_number;
+      DrawFoldGutterMarker(renderer, marker_color,
+                           FoldGutterMarkerRect(gutter.x, gutter.w, y, metrics.line_height),
+                           (*fold_gutter_marks)[fold_gutter_mark_index].collapsed);
+      ++fold_gutter_mark_index;
     }
     if (!soft_wrap || row_meta.visual_start == 0) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),

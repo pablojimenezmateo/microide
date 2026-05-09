@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/EditorViewModel.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/SettingsOverlayService.h"
@@ -114,6 +115,9 @@ class RenderViewModelBuilder {
   OverlaySurfaceViewModel BuildOverlaySurface() const;
   TextInputSurfaceViewModel BuildTextInputSurface() const;
   SidebarSurfaceViewModel BuildSidebarSurface() const;
+  editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
+                                               std::size_t visible_rows,
+                                               const editor::FoldingModel* folding_model) const;
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
   HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
   HoverTargetsViewModel BuildHoverTargets() const;

@@ -338,6 +338,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellTerminalTabs.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceLanguageContract.cpp
+  src/workspace/WorkspaceFoldingRefresh.cpp
   src/workspace/WorkspaceSaveNormalization.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
   src/workspace/SettingsOverlayService.cpp
@@ -631,10 +632,12 @@ endif()
 
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
+  src/editor/BracketScanner.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
+  src/editor/IndentGuides.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp

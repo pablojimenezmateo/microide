@@ -13,6 +13,7 @@
 
 #include "editor/BracketScanner.h"
 #include "editor/DiagnosticsStore.h"
+#include "editor/EditorViewModel.h"
 #include "editor/FoldingModel.h"
 #include "editor/IndentGuides.h"
 #include "editor/TextViewport.h"
@@ -46,6 +47,11 @@ struct EditorBlameOverlay {
   std::vector<EditorBlameLine> lines;
 };
 
+SDL_FRect FoldGutterMarkerRect(float gutter_x,
+                               float gutter_width,
+                               float row_y,
+                               float line_height);
+
 class EditorViewRenderer {
  public:
   static EditorViewMetrics ComputeMetrics(const render::TextRenderer& text_renderer,
@@ -62,6 +68,7 @@ class EditorViewRenderer {
               const std::optional<SelectionRange>& active_search_match = std::nullopt,
               const std::optional<EditorBlameOverlay>& blame_overlay = std::nullopt,
               std::span<const PublishedDiagnostic> diagnostics = {},
+              const EditorViewModel* view_model = nullptr,
               bool bracket_match_highlight_enabled = false,
               bool indent_guides_enabled = false,
               bool render_whitespace_enabled = false,
@@ -84,6 +91,7 @@ class EditorViewRenderer {
   }
   std::size_t indent_guides_cache_hits() const { return indent_guides_cache_.hits; }
   std::size_t indent_guides_cache_misses() const { return indent_guides_cache_.misses; }
+  const std::vector<FoldGutterMark>& last_fold_gutter_marks() const { return last_fold_gutter_marks_; }
 
  private:
   struct SearchMatchCacheKey {
@@ -141,6 +149,8 @@ class EditorViewRenderer {
     std::size_t misses = 0;
   };
   mutable IndentGuidesCache indent_guides_cache_;
+
+  mutable std::vector<FoldGutterMark> last_fold_gutter_marks_;
 };
 
 }  // namespace microide::editor

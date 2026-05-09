@@ -315,9 +315,16 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (active_editor_pane_rect != nullptr) {
         *active_editor_pane_rect = layout.editor_surface;
       }
+      const editor::EditorViewMetrics metrics =
+          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *active_viewport,
+                                                     layout.editor_surface);
+      active_viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      const editor::EditorViewModel editor_vm =
+          RenderViewModelBuilder(context_).BuildEditorViewModel(
+              *active_viewport, metrics.visible_rows, active_folding_model);
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
-                                   std::nullopt, {}, bracket_match_highlight_enabled,
+                                   std::nullopt, {}, &editor_vm, bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
                                    active_folding_model);
     }
@@ -338,6 +345,12 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (pane.active) {
         visible_editor_blame_overlay_ = blame_overlay;
       }
+      const editor::EditorViewMetrics metrics =
+          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
+      viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      const editor::EditorViewModel editor_vm =
+          RenderViewModelBuilder(context_).BuildEditorViewModel(
+              *viewport, metrics.visible_rows, active_folding_model);
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active &&
@@ -347,6 +360,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay, diagnostics_for_viewport(*viewport),
+                                   &editor_vm,
                                    pane.active && bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
                                    active_folding_model);
