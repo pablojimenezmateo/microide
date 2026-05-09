@@ -207,6 +207,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     }
     case ActionId::AddCursorAtNextMatch:
     case ActionId::AddCursorAtAllMatches: {
+      if (!SettingEnabled(context_, "editor.multicursor.add_at_match.enabled", true)) {
+        return DispatchResult::Handled;
+      }
       auto* viewport = context_.ActiveEditableViewport();
       if (viewport == nullptr) return DispatchResult::Handled;
       // If no selection, expand to word under caret first.

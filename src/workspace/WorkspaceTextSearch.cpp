@@ -155,6 +155,10 @@ std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
   }
 
   const std::string& seed_line_text = lines[seed_line];
+  if (seed_start_col > seed_end_col || seed_end_col > seed_line_text.size() ||
+      seed_start_col > seed_line_text.size()) {
+    return std::nullopt;
+  }
 
   auto forward_from_cursor = [&](std::size_t li, std::size_t start_from_column) -> std::optional<editor::TextPosition> {
     if (li >= lines.size()) {

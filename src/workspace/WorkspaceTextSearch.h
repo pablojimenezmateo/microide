@@ -35,6 +35,8 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
 /// `(seed_line, seed_end_col)`, then wrapping once from the beginning of the
 /// document. On `seed_line` after the wrap, matches before `seed_end_col` count,
 /// excluding the seeded span at `(seed_line, seed_start_col)`.
+/// Returns `nullopt` when `seed_start_col > seed_end_col` or either column is
+/// out of range for the seed line.
 std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
     const std::vector<std::string>& lines,
     std::size_t seed_line,

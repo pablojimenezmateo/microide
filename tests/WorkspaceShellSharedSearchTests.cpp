@@ -218,6 +218,12 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
                    "seed line past end of buffer yields no match");
     expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"a"}, 0, 0, 1, "", false),
                    "empty needle yields no match");
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 0, 10, "foo", false),
+                   "seed end column past the line length yields no match");
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 2, 1, "foo", false),
+                   "inverted seed span yields no match");
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"Foo"}, 0, 0, 3, "foo", true),
+                   "case-sensitive scan does not match a different-cased needle to the buffer");
   }
 }
 
