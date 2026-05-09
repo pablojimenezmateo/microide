@@ -86,6 +86,25 @@ void TestShapingMoveLineDownMultiCaretSingleUndoStep() {
          "undo should restore the original line order atomically");
 }
 
+void TestShapingMoveLineUpMultiCaretSingleUndoStep() {
+  TextViewport viewport;
+  viewport.LoadContent("top\na\nb\nc", "/tmp/sample.txt");
+  viewport.MoveCursorTo(1, 0);
+  viewport.AddSecondaryCaret(3, 0);
+  Expect(microide::editor::MoveLineUp(viewport),
+         "MoveLineUp spanning primary and secondary caret lines should succeed");
+  Expect(viewport.lines().size() == 4,
+         "MoveLineUp should preserve line count when moving block above prior line");
+  Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b" && viewport.lines()[2] == "c" &&
+             viewport.lines()[3] == "top",
+         "block [a,b,c] should move above line top via one ReplaceLines");
+  Expect(viewport.Undo(),
+         "undo after multi-caret MoveLineUp should succeed (single history entry)");
+  Expect(viewport.lines()[0] == "top" && viewport.lines()[1] == "a" && viewport.lines()[2] == "b" &&
+             viewport.lines()[3] == "c",
+         "undo should restore the original line order atomically");
+}
+
 void TestShapingMoveLineUpAtTopIsNoop() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\n", "/tmp/sample.txt");
@@ -724,6 +743,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineDown);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep",
           TestShapingMoveLineDownMultiCaretSingleUndoStep);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineUpMultiCaretSingleUndoStep",
+          TestShapingMoveLineUpMultiCaretSingleUndoStep);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineUpAtTop",
           TestShapingMoveLineUpAtTopIsNoop);
   AddTest(tests, "EditorEssentials/Shaping/DuplicateLine",
