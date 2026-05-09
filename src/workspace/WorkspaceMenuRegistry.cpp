@@ -174,6 +174,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::ToggleEditorAddCursorAtMatch, "Add Cursor Action", {}, {}, 0, true),
       MenuItem(ActionId::ToggleEditorOccurrencesHighlight, "Highlight Occurrences", {}, {}, 0,
                true),
+      MenuItem(ActionId::ToggleEditorSearchCaseSensitive, "Case-Sensitive Search Seeds", {}, {}, 0,
+               true),
   });
   static const auto kGoItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Files, "Go to File…"),

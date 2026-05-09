@@ -162,6 +162,12 @@ void TestSettingsOverlayGroupsEditorEssentialsToggles() {
   Expect(trim_it->group == "Editor → Essentials → Shaping And Save",
          "trim toggle should land in the Shaping And Save subsection");
 
+  const auto case_it = find_row("editor.search.case_sensitive");
+  Expect(case_it != service.SettingsRows().end(),
+         "settings overlay should include the case-sensitive search-seed toggle");
+  Expect(case_it->group == "Editor → Essentials → Shaping And Save",
+         "case-sensitive search-seed toggle should land in the Shaping And Save subsection");
+
   const auto layout_it = find_row("ui.layout_mode");
   Expect(layout_it != service.SettingsRows().end(),
          "settings overlay should still surface non-essentials toggles");

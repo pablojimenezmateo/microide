@@ -886,6 +886,7 @@ const char* CapabilitySettingKeyForToggle(ActionId id) {
     case ActionId::ToggleEditorAddCursorAtMatch:
       return "editor.multicursor.add_at_match.enabled";
     case ActionId::ToggleEditorOccurrencesHighlight: return "editor.occurrences.enabled";
+    case ActionId::ToggleEditorSearchCaseSensitive: return "editor.search.case_sensitive";
     case ActionId::ToggleEditorSnippets: return "editor.snippets.enabled";
     case ActionId::ToggleEditorSaveTrim: return "editor.save.trim_trailing_whitespace";
     case ActionId::ToggleEditorSaveEnsureNewline: return "editor.save.ensure_final_newline";

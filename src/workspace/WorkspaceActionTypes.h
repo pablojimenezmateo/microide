@@ -119,6 +119,7 @@ enum class ActionId {
   ToggleEditorSortLines,
   ToggleEditorAddCursorAtMatch,
   ToggleEditorOccurrencesHighlight,
+  ToggleEditorSearchCaseSensitive,
   ToggleEditorSnippets,
   ToggleEditorSaveTrim,
   ToggleEditorSaveEnsureNewline,

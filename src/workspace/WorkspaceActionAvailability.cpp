@@ -253,6 +253,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleEditorSortLines:
     case ActionId::ToggleEditorAddCursorAtMatch:
     case ActionId::ToggleEditorOccurrencesHighlight:
+    case ActionId::ToggleEditorSearchCaseSensitive:
     case ActionId::ToggleEditorSnippets:
     case ActionId::ToggleEditorSaveTrim:
     case ActionId::ToggleEditorSaveEnsureNewline:
