@@ -220,6 +220,8 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
                    "empty needle yields no match");
     expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 0, 10, "foo", false),
                    "seed end column past the line length yields no match");
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 4, 7, "foo", false),
+                   "seed start column past the line length yields no match");
     expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 2, 1, "foo", false),
                    "inverted seed span yields no match");
     expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"Foo"}, 0, 0, 3, "foo", true),
