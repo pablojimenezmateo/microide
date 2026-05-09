@@ -9,6 +9,17 @@ namespace microide::workspace {
 
 namespace {
 
+bool EditorShapingLineOpsSettingEnabled(const KeyInputCoordinator::Operations& operations) {
+  if (!operations.get_setting_value) {
+    return true;
+  }
+  const auto value = operations.get_setting_value("editor.shaping.line_ops.enabled");
+  if (!value.has_value()) {
+    return true;
+  }
+  return *value != "false" && *value != "0" && *value != "off";
+}
+
 template <typename EditFn>
 bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
                             editor::TextViewport& viewport,
@@ -377,12 +388,18 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       const bool multi_line_selection =
           selection.has_value() && selection->start.line != selection->end.line;
       if (shift_held) {
+        if (!EditorShapingLineOpsSettingEnabled(operations_)) {
+          return true;
+        }
         return ApplyDefaultEditorEdit(
             operations_, *editable_viewport,
             "KeyInputCoordinator::HandleDefaultEditorKeyDown::OutdentSelection",
             [&]() { editor::OutdentSelection(*editable_viewport); });
       }
       if (multi_line_selection) {
+        if (!EditorShapingLineOpsSettingEnabled(operations_)) {
+          return true;
+        }
         return ApplyDefaultEditorEdit(
             operations_, *editable_viewport,
             "KeyInputCoordinator::HandleDefaultEditorKeyDown::IndentSelection",

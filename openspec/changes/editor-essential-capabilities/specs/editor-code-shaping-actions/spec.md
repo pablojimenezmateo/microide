@@ -176,7 +176,7 @@ Add-cursor-at-next-match, occurrence scan, multi-caret line shaping, multi-line 
 
 ### Requirement: Every Code Shaping Action Is User-Disable-Able
 
-Every capability defined in this spec — toggle-line-comment, toggle-block-comment, move/duplicate/delete-line, indent/outdent selection, sort-lines, add-cursor-at-next-match, add-cursor-at-all-matches-in-selection, highlight-occurrences, snippet expansion, trim-trailing-whitespace-on-save, ensure-final-newline-on-save, and auto-detect-indent-on-open — SHALL be individually enable/disable-able by the user through three independent surfaces: (1) a `WorkspaceSettingsRegistry` boolean keyed under `editor.shaping.*`, `editor.multicursor.add_at_match.enabled`, `editor.occurrences.enabled`, `editor.snippets.enabled`, `editor.save.trim_trailing_whitespace`, `editor.save.ensure_final_newline`, or `editor.indent.detect_on_open` respectively, persisted at user and project scope with project overriding user; (2) a stable `ActionId` toggle command registered in `WorkspaceCommandRegistry` and bindable through `WorkspaceKeybindingRegistry`; and (3) a checkable menu entry registered in `WorkspaceMenuRegistry` under `Selection` for multi-cursor toggles, `Edit` for shaping-action toggles, or `Preferences → Editor` for save-normalization toggles. When a capability is disabled the action coordinator SHALL report its corresponding action as not enabled, the related render layer (occurrence underlay, snippet placeholder overlay) SHALL NOT paint, and save-time normalization SHALL be skipped for that step. The Settings overlay SHALL list every toggle from this spec in a single "Editor → Essentials → Shaping And Save" group.
+Every capability defined in this spec — toggle-line-comment, toggle-block-comment, move/duplicate/delete-line, indent/outdent selection, sort-lines, add-cursor-at-next-match, add-cursor-at-all-matches-in-selection, highlight-occurrences, snippet expansion, trim-trailing-whitespace-on-save, ensure-final-newline-on-save, and auto-detect-indent-on-open — SHALL be individually enable/disable-able by the user through three independent surfaces: (1) a `WorkspaceSettingsRegistry` boolean keyed under `editor.shaping.*`, `editor.multicursor.add_at_match.enabled`, `editor.occurrences.enabled`, `editor.snippets.enabled`, `editor.save.trim_trailing_whitespace`, `editor.save.ensure_final_newline`, or `editor.indent.detect_on_open` respectively, persisted at user and project scope with project overriding user; (2) a stable `ActionId` toggle command registered in `WorkspaceCommandRegistry` and bindable through `WorkspaceKeybindingRegistry`; and (3) a checkable menu entry registered in `WorkspaceMenuRegistry` under `Selection` for multi-cursor toggles, `Edit` for shaping-action toggles, or `Preferences → Editor` for save-normalization toggles. When a capability is disabled the action coordinator SHALL report its corresponding action as not enabled, executor dispatch and shaping-related editor key surfaces SHALL refuse buffer mutations where that toggle applies, the related render layer (occurrence underlay, snippet placeholder overlay) SHALL NOT paint, and save-time normalization SHALL be skipped for that step. The Settings overlay SHALL list every toggle from this spec in a single "Editor → Essentials → Shaping And Save" group.
 
 #### Scenario: User disables occurrences highlight from the Selection menu
 - **WHEN** the user opens `Selection` and clicks the checkable `Highlight Occurrences` entry while it is checked
@@ -193,3 +193,15 @@ Every capability defined in this spec — toggle-line-comment, toggle-block-comm
 #### Scenario: Disabling auto-detect leaves project setting authoritative
 - **WHEN** `editor.indent.detect_on_open` is `false` and a file is opened
 - **THEN** the tab SHALL adopt `soft_tabs` and `indent_width` from the resolved user/project setting unchanged, and SHALL NOT inspect the file's leading whitespace
+
+#### Scenario: Disabled toggle-comment shaping refuses buffer mutation
+- **WHEN** `editor.shaping.toggle_comment.enabled` is `false` and `toggle-line-comment` (or block comment) is dispatched on an eligible buffer
+- **THEN** every line SHALL remain byte-for-byte unchanged even if the action is invoked from the command palette
+
+#### Scenario: Disabled line-operation shaping refuses move and multi-line Tab indent
+- **WHEN** `editor.shaping.line_ops.enabled` is `false`, the user dispatches `move-line-up`, `move-line-down`, duplicate-line, delete-line, indent-lines, or outdent-lines — or presses `Tab` / `Shift+Tab` with a multi-line selection
+- **THEN** the buffer SHALL remain unchanged for that input
+
+#### Scenario: Disabled sort shaping refuses lexicographic reorder
+- **WHEN** `editor.shaping.sort_lines.enabled` is `false` and sort-lines ascending or descending is dispatched on a touched line range
+- **THEN** those lines SHALL retain their prior order and contents

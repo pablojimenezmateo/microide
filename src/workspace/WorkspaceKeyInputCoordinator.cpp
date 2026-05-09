@@ -535,6 +535,8 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .accept_inline_completion = [this]() { return false; },
           .dismiss_inline_completion = [this]() {},
+          .get_setting_value =
+              [this](std::string_view id) { return GetSettingValue(id); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =
               [this](MergeTabState& merge_tab,

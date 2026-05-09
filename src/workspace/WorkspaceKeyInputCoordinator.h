@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "workspace/WorkspaceActionTypes.h"
@@ -127,6 +128,7 @@ class KeyInputCoordinator {
     std::function<bool(std::string*)> request_inline_completion;
     std::function<bool()> accept_inline_completion;
     std::function<void()> dismiss_inline_completion;
+    std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(MergeTabState&,
                        const std::vector<std::string>&,

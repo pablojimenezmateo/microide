@@ -1219,6 +1219,88 @@ void TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter() {
          "InsertTab should prepend an indent unit at the caret");
 }
 
+void TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto comment_file = root / "comment.cpp";
+  const auto lines_file = root / "lines.cpp";
+  const auto sort_file = root / "sort.cpp";
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  WriteFile(comment_file, "hello\n");
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.shaping.toggle_comment.enabled", "false"),
+         "fixture should disable toggle-comment shaping");
+  WorkspaceShellTestAccess::OpenFile(shell, comment_file);
+  auto& comment_vp = WorkspaceShellTestAccess::ActiveEditor(shell);
+  comment_vp.MoveCursorTo(0, 0);
+  Expect(ExecuteCommand(shell, "toggle-line-comment"),
+         "toggle-line-comment should still dispatch when the capability toggle is off");
+  Expect(comment_vp.lines()[0] == "hello",
+         "toggle-line-comment must not mutate buffer while editor.shaping.toggle_comment.enabled=false");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.shaping.toggle_comment.enabled", "true"),
+         "fixture should re-enable toggle-comment shaping");
+  Expect(ExecuteCommand(shell, "toggle-line-comment"),
+         "toggle-line-comment should run once shaping is enabled again");
+  Expect(comment_vp.lines()[0].rfind("//", 0) == 0,
+         "toggle-line-comment should insert the language line marker when enabled");
+
+  WriteFile(lines_file, "alpha\nbeta\n");
+  WorkspaceShellTestAccess::OpenFile(shell, lines_file);
+  auto& line_vp = WorkspaceShellTestAccess::ActiveEditor(shell);
+  line_vp.MoveCursorTo(1, 0);
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.shaping.line_ops.enabled", "false"),
+         "fixture should disable line-operation shaping");
+  Expect(ExecuteCommand(shell, "move-line-up"),
+         "move-line-up should still dispatch when shaping line ops are disabled");
+  Expect(line_vp.lines()[0] == "alpha" && line_vp.lines()[1] == "beta",
+         "move-line-up must noop while editor.shaping.line_ops.enabled=false");
+
+  line_vp.MoveCursorTo(0, 0);
+  line_vp.MoveCursorTo(1, 4, true);
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should be handled for a multi-line selection");
+  Expect(line_vp.lines()[0] == "alpha" && line_vp.lines()[1] == "beta",
+         "multi-line Tab indent must noop while editor.shaping.line_ops.enabled=false");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.shaping.line_ops.enabled", "true"),
+         "fixture should re-enable line-operation shaping");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should indent after line ops are re-enabled");
+  const auto& indented = line_vp.lines();
+  Expect(indented.size() >= 2, "indent should keep two lines");
+  Expect((indented[0].rfind("\t", 0) == 0) || (indented[0].rfind("    ", 0) == 0) ||
+             (indented[0].rfind("  ", 0) == 0),
+         "first line should gain a leading indent unit");
+  Expect((indented[1].rfind("\t", 0) == 0) || (indented[1].rfind("    ", 0) == 0) ||
+             (indented[1].rfind("  ", 0) == 0),
+         "second line should gain a leading indent unit");
+
+  WriteFile(sort_file, "banana\napple\n");
+  WorkspaceShellTestAccess::OpenFile(shell, sort_file);
+  auto& sort_vp = WorkspaceShellTestAccess::ActiveEditor(shell);
+  sort_vp.MoveCursorTo(0, 0);
+  sort_vp.MoveCursorTo(1, 5, true);
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.shaping.sort_lines.enabled", "false"),
+         "fixture should disable sort shaping");
+  Expect(ExecuteCommand(shell, "sort-lines-ascending"),
+         "sort-lines-ascending should still dispatch while disabled");
+  Expect(sort_vp.lines()[0] == "banana" && sort_vp.lines()[1] == "apple",
+         "sort-lines-ascending must noop while editor.shaping.sort_lines.enabled=false");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.shaping.sort_lines.enabled", "true"),
+         "fixture should re-enable sort shaping");
+  sort_vp.MoveCursorTo(0, 0);
+  sort_vp.MoveCursorTo(1, 5, true);
+  Expect(ExecuteCommand(shell, "sort-lines-ascending"),
+         "sort-lines-ascending should mutate once enabled");
+  Expect(sort_vp.lines()[0] == "apple" && sort_vp.lines()[1] == "banana",
+         "enabled sort-lines-ascending should lexicographically order the selection");
+}
+
 void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2210,6 +2292,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyIndentsMultiLineSelection);
   AddTest(tests, "WorkspaceShell/TabKeyOnSingleLineInsertsTabCharacter",
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
+  AddTest(tests, "WorkspaceShell/ShapingCapabilityTogglesGateExecutorCommandsAndIndentTab",
+          TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
   AddTest(tests, "WorkspaceShell/SettingsOverlayHintUsesNoteLabel",
