@@ -58,7 +58,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},
       ActionSpec{ActionId::Save, "save", "save", "Save", "Ctrl+S"},
       ActionSpec{ActionId::Search, "search", "search <query>", "Find in Buffer", "Ctrl+F"},
-      ActionSpec{ActionId::ShowOutput, "output", "output [channel]", "Output", ""},
       ActionSpec{ActionId::SidebarClose, "sidebar-close", "sidebar-close", "Close Sidebar", ""},
       ActionSpec{ActionId::SidebarHide, "sidebar-hide", "sidebar-hide", "Hide Sidebar", ""},
       ActionSpec{ActionId::SidebarShow, "sidebar-show", "sidebar-show [tool]", "Show Sidebar",

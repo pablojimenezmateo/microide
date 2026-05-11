@@ -76,7 +76,6 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
     std::function<bool(std::string*)> run_all_discovered_tests;
-    std::function<void(std::string_view)> show_output_channel;
     std::function<bool(std::string*)> request_inline_completion;
     std::function<void(const std::filesystem::path&, const std::string&)> open_compare_picker_for_path;
     std::function<void(const project::GitCommitEntry&)> open_comparison;
@@ -219,7 +218,6 @@ class WorkspaceActionContext {
   bool DiscoverTestsForActiveBuffer(std::string* error_message);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message);
   bool RunAllDiscoveredTests(std::string* error_message);
-  void ShowOutputChannel(std::string_view id);
   bool RequestInlineCompletion(std::string* error_message);
   bool ActiveTabIsCompare() const;
   bool ActiveTabIsMerge() const;

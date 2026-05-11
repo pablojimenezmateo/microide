@@ -332,7 +332,8 @@ bool WorkspaceShell::HandleStatusBarButtonDown(const SDL_Event& event,
           ActionCoordinator(MakeActionContext()).Execute(ActionId::Goto, {}, ActionSource::Menu);
           break;
         case StatusBarSegmentId::Lsp:
-          ShowOutputChannel("lsp");
+          // ShowOutputChannel was removed with the user-facing output panel.
+          // The status segment now reads as informational only.
           break;
         case StatusBarSegmentId::LayoutMode: {
           const bool compact = layout_mode_service_.CurrentMode() != LayoutMode::Compact;

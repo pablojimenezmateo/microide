@@ -148,6 +148,47 @@ bool ToggleBlockComment(TextViewport& viewport,
   return viewport.ReplaceRange(n, wrapped, /*record_undo=*/true);
 }
 
+namespace {
+
+// Shifts the primary caret (and any selection anchor / secondary carets) by
+// `delta` lines when they fall inside [range_first, range_last]. Carets
+// outside the moved range stay put. Used by MoveLineUp / MoveLineDown so
+// the cursor follows the moved line instead of staying on the row index.
+void ShiftCaretsForLineMove(TextViewport& viewport,
+                            std::size_t range_first,
+                            std::size_t range_last,
+                            std::ptrdiff_t delta) {
+  const auto shift = [&](std::size_t line) -> std::size_t {
+    if (line < range_first || line > range_last) return line;
+    const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + delta;
+    return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
+  };
+
+  const std::vector<TextPosition> previous_secondaries = viewport.secondary_carets();
+  const std::optional<SelectionRange> previous_selection = viewport.selection_range();
+  const std::size_t primary_line = viewport.cursor_line();
+  const std::size_t primary_column = viewport.cursor_column();
+
+  if (previous_selection.has_value() &&
+      previous_selection->start.line >= range_first &&
+      previous_selection->end.line <= range_last) {
+    viewport.ClearSecondaryCarets();
+    viewport.MoveCursorTo(shift(previous_selection->start.line),
+                          previous_selection->start.column);
+    viewport.MoveCursorTo(shift(previous_selection->end.line),
+                          previous_selection->end.column, /*extend_selection=*/true);
+  } else {
+    viewport.ClearSecondaryCarets();
+    viewport.MoveCursorTo(shift(primary_line), primary_column);
+  }
+
+  for (const TextPosition& secondary : previous_secondaries) {
+    viewport.AddSecondaryCaret(shift(secondary.line), secondary.column);
+  }
+}
+
+}  // namespace
+
 bool MoveLineUp(TextViewport& viewport) {
   LineRange range = ResolveLineRange(viewport);
   if (range.first == 0) return false;
@@ -157,7 +198,12 @@ bool MoveLineUp(TextViewport& viewport) {
   updated.reserve(range.last - range.first + 2);
   for (std::size_t i = range.first; i <= range.last; ++i) updated.push_back(lines[i]);
   updated.push_back(lines[range.first - 1]);
-  return viewport.ReplaceLines(range.first - 1, range.last + 1, updated, /*record_undo=*/true);
+  if (!viewport.ReplaceLines(range.first - 1, range.last + 1, updated,
+                             /*record_undo=*/true)) {
+    return false;
+  }
+  ShiftCaretsForLineMove(viewport, range.first, range.last, -1);
+  return true;
 }
 
 bool MoveLineDown(TextViewport& viewport) {
@@ -168,7 +214,11 @@ bool MoveLineDown(TextViewport& viewport) {
   updated.reserve(range.last - range.first + 2);
   updated.push_back(lines[range.last + 1]);
   for (std::size_t i = range.first; i <= range.last; ++i) updated.push_back(lines[i]);
-  return viewport.ReplaceLines(range.first, range.last + 2, updated, /*record_undo=*/true);
+  if (!viewport.ReplaceLines(range.first, range.last + 2, updated, /*record_undo=*/true)) {
+    return false;
+  }
+  ShiftCaretsForLineMove(viewport, range.first, range.last, +1);
+  return true;
 }
 
 bool DuplicateSelection(TextViewport& viewport) {

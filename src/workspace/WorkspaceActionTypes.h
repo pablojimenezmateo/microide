@@ -43,7 +43,6 @@ enum class ActionId {
   Reopen,
   Save,
   Search,
-  ShowOutput,
   SidebarClose,
   SidebarHide,
   SidebarShow,

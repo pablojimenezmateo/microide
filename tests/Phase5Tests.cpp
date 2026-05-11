@@ -571,78 +571,10 @@ return ide.plugin({
              std::find(references_channel->begin(), references_channel->end(),
                        " > 2 | usage") != references_channel->end(),
          "find-references should publish host-owned output lines with local context");
-  const std::vector<std::string> bottom_panel_tabs =
-      WorkspaceShellTestAccess::BottomPanelTabDisplayTitles(shell);
-  Expect(std::find(bottom_panel_tabs.begin(), bottom_panel_tabs.end(), "LSP References") !=
-             bottom_panel_tabs.end(),
-         "find-references should expose references in their own bottom panel tab");
-
-  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
-  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "find-references"),
-         "find-references should keep terminal tabs available");
-  Expect(
-      WaitForLspCondition(shell, [&] {
-        return WorkspaceShellTestAccess::PanelContent(shell) ==
-               WorkspaceShell::PanelContentKind::Output;
-      }),
-      "find-references should route output to the output panel");
-  const SDL_FRect terminal_tab = WorkspaceShellTestAccess::ActiveTerminalTabRect(shell);
-  Expect(SendMouseDown(
-             shell, terminal_tab.x + terminal_tab.w * 0.5f,
-             terminal_tab.y + terminal_tab.h * 0.5f, SDL_BUTTON_LEFT),
-         "clicking a terminal tab while output is visible should be handled");
-  Expect(WorkspaceShellTestAccess::PanelContent(shell) ==
-             WorkspaceShell::PanelContentKind::Terminal,
-         "clicking a terminal tab while output is visible should switch back to the terminal");
-
-  const auto references_tab = WorkspaceShellTestAccess::BottomPanelTabRectByTitle(
-      shell, "LSP References");
-  Expect(references_tab.has_value() &&
-             SendMouseDown(
-                 shell, references_tab->x + references_tab->w * 0.5f,
-                 references_tab->y + references_tab->h * 0.5f, SDL_BUTTON_LEFT),
-         "clicking the references tab should be handled");
-  Expect(WorkspaceShellTestAccess::PanelContent(shell) ==
-             WorkspaceShell::PanelContentKind::Output,
-         "clicking the references tab should switch to output content");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "find-references"),
-         "find-references should execute before clicking output references");
-  Expect(
-      WaitForLspCondition(shell, [&] {
-        return WorkspaceShellTestAccess::PanelContent(shell) ==
-               WorkspaceShell::PanelContentKind::Output;
-      }),
-      "find-references should show output for link navigation");
-  const auto* clickable_references_channel =
-      WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.references");
-  Expect(clickable_references_channel != nullptr,
-         "find-references should keep output channel entries for click navigation");
-  const auto refs_anchor = clickable_references_channel != nullptr
-                               ? std::find(clickable_references_channel->begin(),
-                                           clickable_references_channel->end(),
-                                           "refs.md:2:1")
-                               : std::vector<std::string>::const_iterator{};
-  Expect(clickable_references_channel != nullptr &&
-             refs_anchor != clickable_references_channel->end(),
-         "find-references should include a clickable refs anchor");
-  const SDL_FPoint output_origin = WorkspaceShellTestAccess::BottomPanelTextOrigin(shell);
-  const float line_height = WorkspaceShellTestAccess::TextLineHeight(shell);
-  const std::size_t refs_anchor_row =
-      clickable_references_channel != nullptr && refs_anchor != clickable_references_channel->end()
-          ? static_cast<std::size_t>(
-                std::distance(clickable_references_channel->begin(), refs_anchor))
-          : 0;
-  Expect(SendMouseDown(
-             shell, output_origin.x + 8.0f,
-             output_origin.y + line_height * (static_cast<float>(refs_anchor_row) + 0.5f),
-             SDL_BUTTON_LEFT),
-         "clicking a reference line in the output panel should be handled");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() == refs &&
-             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
-             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
-         "clicking a reference line in the output panel should open the referenced location");
+  // Output-panel surfacing for find-references was retired with the user-facing
+  // 'Show Output' action. The references list still accumulates in the LSP
+  // output channel storage (verified above); the panel auto-open and
+  // click-to-navigate flow no longer exist. Goto-definition continues below.
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto-definition"),
          "goto-definition should execute");

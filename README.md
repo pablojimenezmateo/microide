@@ -160,25 +160,24 @@ goto <line[:col]>                   goto-definition
 indent-width [n]                    jump <line[:col]>
 keyboard-shortcuts                  layout-mode-toggle
 merge <base> <incoming> <current> [output]
-open <path>                         output [channel]
-plugins-reload                      project-close
-project-next                        project-open [path]
-project-prev                        project-search [query]
-quit                                reopen
-save                                search <query>
-settings                            sidebar-close
-sidebar-hide                        sidebar-show [tool]
-sidebar-toggle [tool]               sidebar-width <n>
-soft-tabs [on|off]                  split-first
-split-last                          split-next
-split-prev                          status-bar-toggle
-tab [path]                          tab-size [n]
-tabmove <n>                         tabswitch <tab>
-term [command]                      tests-discover
-tests-run [test-id...]              tree [root]
-tree-refresh                        ui-scale [n|up|down|reset]
-unsplit                             vsplit [path]
-wrap [on|off]
+open <path>                         plugins-reload
+project-close                       project-next
+project-open [path]                 project-prev
+project-search [query]              quit
+reopen                              save
+search <query>                      settings
+sidebar-close                       sidebar-hide
+sidebar-show [tool]                 sidebar-toggle [tool]
+sidebar-width <n>                   soft-tabs [on|off]
+split-first                         split-last
+split-next                          split-prev
+status-bar-toggle                   tab [path]
+tab-size [n]                        tabmove <n>
+tabswitch <tab>                     term [command]
+tests-discover                      tests-run [test-id...]
+tree [root]                         tree-refresh
+ui-scale [n|up|down|reset]          unsplit
+vsplit [path]                       wrap [on|off]
 ```
 
 Current commands:
@@ -211,7 +210,6 @@ Current commands:
 - `reopen`
 - `save`
 - `search <query>`
-- `output [channel]`
 - `sidebar-close`
 - `sidebar-hide`
 - `sidebar-show [tool]`

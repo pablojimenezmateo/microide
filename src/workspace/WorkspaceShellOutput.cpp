@@ -53,25 +53,4 @@ void WorkspaceShell::CloseOutputChannelTab(std::string_view channel_id) {
   }
 }
 
-void WorkspaceShell::ShowOutputChannel(std::string_view id) {
-  const std::string channel_id =
-      id.empty() ? (context_.current_project_state.panel.output.channel_id.empty()
-                        ? std::string("plugins.log")
-                        : context_.current_project_state.panel.output.channel_id)
-                 : std::string(id);
-  std::string channel_label = channel_id;
-  for (const auto& channel : output_channels_.Channels()) {
-    if (channel.id == channel_id) {
-      channel_label = channel.label.empty() ? channel.id : channel.label;
-      break;
-    }
-  }
-  output_channels_.EnsureChannel(channel_id, channel_label);
-  EnsureOutputChannelTabOpen(channel_id);
-  context_.current_project_state.panel.content = PanelContentKind::Output;
-  context_.current_project_state.panel.output.channel_id = channel_id;
-  context_.current_project_state.surface.focus = FocusTarget::Panel;
-  RequestBottomPanelRedraw();
-}
-
 }  // namespace microide::workspace

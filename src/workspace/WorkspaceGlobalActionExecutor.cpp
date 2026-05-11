@@ -127,9 +127,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.ReloadPluginsWithFeedback();
       return DispatchResult::Handled;
-    case ActionId::ShowOutput:
-      context_.ShowOutputChannel(args.empty() ? std::string_view{} : std::string_view(args.front()));
-      return DispatchResult::Handled;
     case ActionId::TestsRun: {
       std::string error_message;
       const bool ok = args.empty() ? context_.RunAllDiscoveredTests(&error_message)

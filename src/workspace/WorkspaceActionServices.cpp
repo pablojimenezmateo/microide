@@ -310,10 +310,6 @@ bool WorkspaceActionContext::RunAllDiscoveredTests(std::string* error_message) {
   return operations_.run_all_discovered_tests(error_message);
 }
 
-void WorkspaceActionContext::ShowOutputChannel(std::string_view id) {
-  operations_.show_output_channel(id);
-}
-
 bool WorkspaceActionContext::RequestInlineCompletion(std::string* error_message) {
   return operations_.request_inline_completion(error_message);
 }

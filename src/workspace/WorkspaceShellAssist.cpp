@@ -177,7 +177,6 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
   if (client == nullptr) {
     const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, provider_error);
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
-    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
       *error_message = failure;
     }
@@ -555,7 +554,6 @@ bool WorkspaceShell::ShowCodeActionsOverlay(std::string* error_message) {
   if (client == nullptr) {
     const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, provider_error);
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
-    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
       *error_message = failure;
     }
@@ -644,7 +642,6 @@ bool WorkspaceShell::GoToLspDefinition(std::string* error_message) {
   if (client == nullptr) {
     const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, {});
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
-    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
       *error_message = failure;
     }
@@ -660,7 +657,6 @@ bool WorkspaceShell::GoToLspDefinition(std::string* error_message) {
         FinishTrackedLspRequest();
         if (!locations.has_value() || locations->empty()) {
           output_channels_.AppendLine("lsp.definition", "LSP Definition", "No definition found");
-          ShowOutputChannel("lsp.definition");
           return;
         }
         const std::optional<std::filesystem::path> path = PathFromFileUri(locations->front().uri);
@@ -698,7 +694,6 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
   if (client == nullptr) {
     const std::string failure = LspUnavailableMessage(CurrentLspManager(), language_id, {});
     output_channels_.AppendLine("lsp.log", "LSP Log", failure);
-    ShowOutputChannel("lsp.log");
     if (error_message != nullptr) {
       *error_message = failure;
     }
@@ -716,7 +711,6 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
         output_channels_.Clear("lsp.references");
         if (!locations.has_value() || locations->empty()) {
           output_channels_.AppendLine("lsp.references", "LSP References", "No references found");
-          ShowOutputChannel("lsp.references");
           return;
         }
         std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
@@ -764,7 +758,6 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
             output_channels_.AppendLine("lsp.references", "LSP References", "");
           }
         }
-        ShowOutputChannel("lsp.references");
       });
   return true;
 }

@@ -1141,7 +1141,6 @@
   bool RunAllDiscoveredTests(std::string* error_message = nullptr);
   const std::vector<WorkspaceOutputChannels::ChannelInfo>& OutputChannels() const;
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
-  void ShowOutputChannel(std::string_view id);
   void ShowChatPanel();
   bool LoginAuthProvider(std::string_view provider_id,
                          const std::vector<std::string>& scopes,

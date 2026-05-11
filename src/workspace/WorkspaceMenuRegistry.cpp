@@ -140,12 +140,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),
       MenuSeparator(),
-      MenuItem(ActionId::SidebarShow, "Source Control", {},
-               std::array<std::string_view, 2>{"git", {}}, 1, true),
-      MenuItem(ActionId::SidebarShow, "Outline", "Ctrl+Alt+O",
-               std::array<std::string_view, 2>{"outline", {}}, 1, true),
-      MenuSeparator(),
-      MenuItem(ActionId::ShowOutput),
       MenuItem(ActionId::Wrap, "Word Wrap", {}, {}, 0, true),
       MenuItem(ActionId::ToggleStatusBar, "Status Bar", {}, {}, 0, true),
       MenuSeparator(),
@@ -153,7 +147,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::ToggleEditorStickyScroll, "Sticky Scroll", {}, {}, 0, true),
       MenuItem(ActionId::ToggleEditorIndentGuides, "Indent Guides", {}, {}, 0, true),
       MenuItem(ActionId::ToggleEditorRenderWhitespace, "Render Whitespace", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorOutline, "Symbol Outline", {}, {}, 0, true),
       MenuItem(ActionId::ToggleEditorBracketMatchHighlight, "Bracket Match Highlight", {}, {}, 0,
                true),
       MenuItem(ActionId::ToggleEditorOccurrencesHighlight, "Occurrences Highlight", {}, {}, 0,
@@ -200,7 +193,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, "New Terminal"),
-      MenuItem(ActionId::ShowOutput, "Show Output"),
       MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
   });
   static const auto kPreferencesItems = std::to_array<MenuItemSpec>({
@@ -233,8 +225,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenKeyboardShortcuts, "Keyboard Shortcuts"),
       MenuItem(ActionId::OpenHelpAbout, "About microide"),
-      MenuSeparator(),
-      MenuItem(ActionId::ShowOutput, "Show Output Channel"),
   });
   static const auto kSearchItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Search),

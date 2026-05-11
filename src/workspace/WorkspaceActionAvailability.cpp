@@ -39,8 +39,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
   const TextInputSurface text_input_surface = operations_.current_text_input_surface();
   const bool active_single_line_selection = operations_.active_single_line_text_has_selection();
   switch (id) {
-    case ActionId::ShowOutput:
-      return !context_.current_project_state.root.empty();
     case ActionId::CodeActions:
       return active_viewport != nullptr && operations_.active_code_actions_available();
     case ActionId::Completion:

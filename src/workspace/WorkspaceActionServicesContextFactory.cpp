@@ -53,7 +53,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                     MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
                 if (source != ActionSource::Command && !feedback_copy.empty()) {
                   output_channels_.AppendLine("actions.log", "Actions", feedback_copy);
-                  ShowOutputChannel("actions.log");
                 }
                 return accepted;
               },
@@ -165,7 +164,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string* error_message) {
                 return RunAllDiscoveredTests(error_message);
               },
-          .show_output_channel = [this](std::string_view id) { ShowOutputChannel(id); },
           .request_inline_completion =
               [this](std::string* error_message) {
                 if (error_message != nullptr) {
