@@ -210,7 +210,6 @@ void WorkspaceShell::RebuildPhase3Registries() {
 void WorkspaceShell::RebuildPhase4Registries() {
   scm_registry_ = ScmRegistry{};
   annotation_registry_ = AnnotationRegistry{};
-  auth_provider_registry_.Clear();
 
   const auto& host = plugin_runtime_.Host();
   for (const auto& provider : host.ContributedScmProviders()) {
@@ -226,13 +225,6 @@ void WorkspaceShell::RebuildPhase4Registries() {
         .label = provider.label,
         .type = provider.type,
         .language_id = provider.language_id,
-        .plugin_id = provider.plugin_id,
-    });
-  }
-  for (const auto& provider : host.ContributedAuthProviders()) {
-    auth_provider_registry_.RegisterProvider(AuthProviderSpec{
-        .id = provider.id,
-        .label = provider.label,
         .plugin_id = provider.plugin_id,
     });
   }

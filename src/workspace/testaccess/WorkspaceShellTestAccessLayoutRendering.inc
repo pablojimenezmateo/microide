@@ -1,12 +1,3 @@
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    for (const WorkspaceShell::VisibleStripTab& tab :
-         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
-      if (tab.index == index) {
-        return tab.chat_status;
-      }
-    }
-    return WorkspaceShell::VisibleStripTab::ChatStatus::None;
-  }
   static std::string ProjectTabBadgeText(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab :

@@ -16,8 +16,6 @@
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
-#include "workspace/WorkspaceConversation.h"
-#include "workspace/WorkspaceAiContext.h"
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
@@ -156,68 +154,6 @@ struct OutputPanelState {
   int scroll_row = 0;
 };
 
-enum class ChatPaneFocusRegion {
-  Rail,
-  Header,
-  Transcript,
-  Composer,
-};
-
-struct ChatPanelState {
-  struct RequestSnapshot {
-    std::string provider_id;
-    std::string model_id;
-    ToolMode tool_mode = ToolMode::Ask;
-    ContextPolicy context_policy;
-    std::vector<ContextItem> context_items;
-  };
-
-  struct PendingToolApproval {
-    std::string conversation_id;
-    std::string assistant_message_id;
-    std::string provider_id;
-    std::string request_id;
-    std::string tool_call_id;
-    std::string tool_id;
-    std::string display_name;
-    std::string arguments_json;
-    std::string arguments_summary;
-    std::string capability_scope;
-    Uint64 requested_ticks = 0;
-    Uint64 expires_at_ticks = 0;
-  };
-
-  struct RememberedToolApproval {
-    std::string capability_scope;
-    std::string tool_id;
-    std::string display_name;
-    Uint64 granted_at_ticks = 0;
-  };
-
-  std::string conversation_id;
-  std::string request_conversation_id;
-  std::string pending_assistant_message_id;
-  editor::TextViewport composer;
-  ChatPaneFocusRegion focus_region = ChatPaneFocusRegion::Composer;
-  std::size_t header_focus_index = 0;
-  int scroll_row = 0;
-  bool request_in_flight = false;
-  Uint64 request_started_ticks = 0;
-  std::string status_text;
-  std::string pending_provider_id;
-  std::string pending_request_id;
-  RequestSnapshot active_request;
-  std::optional<PendingToolApproval> pending_tool_approval;
-  std::vector<RememberedToolApproval> remembered_tool_approvals;
-  // Restore warning displayed after session restore detected interrupted requests.
-  bool has_restore_warning = false;
-};
-
-struct InlineCompletionState {
-  bool visible = false;
-  bool request_in_flight = false;
-};
-
 struct LspUiState {
   bool request_in_flight = false;
   Uint64 request_started_ticks = 0;
@@ -230,7 +166,6 @@ struct PanelState {
   float height = 184.0f;
   CommandState command;
   OutputPanelState output;
-  ChatPanelState chat;
 };
 
 struct WelcomeSurfaceState {
@@ -254,7 +189,6 @@ struct ProjectWorkspaceState {
   PanelState panel;
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
-  InlineCompletionState inline_completion;
   editor::DiagnosticsStore diagnostics_store;
   std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
   LspUiState lsp;

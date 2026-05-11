@@ -33,8 +33,7 @@ static void TestJsonParseArray() {
 static void TestJsonParseNestedString() {
   const auto val = ParseJson(R"({"nested": {"inner": "value"}})");
   assert(val.has_value());
-  const auto& nested = (*val)["nested"];
-  assert(nested["inner"].AsString() == "value");
+  assert((*val)["nested"]["inner"].AsString() == "value");
 }
 
 static void TestJsonSerializeBasic() {
@@ -79,15 +78,13 @@ static void TestFormatterRegistry() {
   };
   reg.Register(spec);
   assert(reg.Specs().size() == 1);
-  const auto* found = reg.FindFormatter("cpp");
-  assert(found != nullptr);
-  assert(found->label == "Clang Format");
+  assert(reg.FindFormatter("cpp") != nullptr);
+  assert(reg.FindFormatter("cpp")->label == "Clang Format");
 }
 
 static void TestFormatterRegistryNotFound() {
   FormatterRegistry reg;
-  const auto* found = reg.FindFormatter("rust");
-  assert(found == nullptr);
+  assert(reg.FindFormatter("rust") == nullptr);
 }
 
 static void TestSaveParticipantRegistry() {
@@ -110,9 +107,8 @@ static void TestCompletionRegistry() {
   };
   reg.Register(spec);
   assert(reg.Specs().size() == 1);
-  const auto* found = reg.FindProvider("rust");
-  assert(found != nullptr);
-  assert(found->trigger_characters == ".");
+  assert(reg.FindProvider("rust") != nullptr);
+  assert(reg.FindProvider("rust")->trigger_characters == ".");
 }
 
 static void TestCodeActionRegistry() {
@@ -123,8 +119,7 @@ static void TestCodeActionRegistry() {
       .language_id = "rust",
   };
   reg.Register(spec);
-  const auto* found = reg.FindProvider("rust");
-  assert(found != nullptr);
+  assert(reg.FindProvider("rust") != nullptr);
 }
 
 static void TestToolRegistry() {
@@ -139,9 +134,8 @@ static void TestToolRegistry() {
       .install_dir = ".cache/tools",
   };
   reg.Register(spec);
-  const auto* found = reg.FindTool("rust-analyzer", "linux");
-  assert(found != nullptr);
-  assert(found->label == "Rust Analyzer");
+  assert(reg.FindTool("rust-analyzer", "linux") != nullptr);
+  assert(reg.FindTool("rust-analyzer", "linux")->label == "Rust Analyzer");
 }
 
 static void TestToolRegistryMultiplePlatforms() {

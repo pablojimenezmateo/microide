@@ -210,34 +210,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .selection_bytes = vm.selection_bytes,
       };
     }
-    case TextInputSurface::ChatComposer: {
-      const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
-      auto& composer = const_cast<editor::TextViewport&>(*text_input_vm.chat_composer);
-      const std::size_t visible_lines = std::max<std::size_t>(
-          1, static_cast<std::size_t>(std::floor(std::max(1.0f, prompt_rect.h - 8.0f) / line_height)));
-      const std::size_t visible_columns = std::max<std::size_t>(
-          1, static_cast<std::size_t>(std::floor(std::max(1.0f, prompt_rect.w - 12.0f) / char_width)));
-      composer.SetViewportSize(visible_lines, visible_columns);
-      const editor::LayoutLine layout_line = composer.VisibleLineLayout(composer.cursor_line());
-      const float text_x = prompt_rect.x + 6.0f;
-      const float text_y = prompt_rect.y + 4.0f;
-      const float cursor_x = text_x + static_cast<float>(layout_line.caret_column) * char_width;
-      const float cursor_y =
-          text_y + static_cast<float>(composer.cursor_line() - composer.scroll_line()) * line_height;
-      return TextInputVisual{
-          .surface = surface,
-          .area = MakeRect(text_x, text_y, std::max(1.0f, prompt_rect.w - 12.0f),
-                           std::max(1.0f, prompt_rect.h - 8.0f)),
-          .text_x = text_x,
-          .text_y = text_y,
-          .cursor_x = cursor_x,
-          .cursor_y = cursor_y,
-          .foreground = theme_.text_primary,
-          .background = theme_.surface_background,
-          .displayed_text = {},
-          .selection_bytes = std::nullopt,
-      };
-    }
     case TextInputSurface::PromptInput: {
       const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
@@ -397,7 +369,6 @@ void WorkspaceShell::RenderSingleLineTextSelection(
   switch (visual->surface) {
     case TextInputSurface::PromptInput:
     case TextInputSurface::Command:
-    case TextInputSurface::ChatComposer:
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
@@ -451,7 +422,6 @@ void WorkspaceShell::RenderActiveTextInputCaret(
   switch (visual->surface) {
     case TextInputSurface::PromptInput:
     case TextInputSurface::Command:
-    case TextInputSurface::ChatComposer:
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:

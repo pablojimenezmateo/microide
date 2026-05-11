@@ -17,20 +17,6 @@ namespace {
 constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
-constexpr float kChatSidebarStatusTop = 30.0f;
-constexpr float kChatSidebarRailGap = 10.0f;
-constexpr float kChatSidebarRailMinWidth = 120.0f;
-constexpr float kChatSidebarRailMaxWidth = 168.0f;
-constexpr float kChatSidebarConversationRowHeight = 22.0f;
-constexpr float kChatSidebarConversationGap = 4.0f;
-constexpr float kChatSidebarHeaderHeight = 42.0f;
-constexpr float kChatSidebarHeaderButtonHeight = 18.0f;
-constexpr float kChatSidebarHeaderGap = 8.0f;
-constexpr float kChatSidebarAuthHeight = 18.0f;
-constexpr float kChatSidebarTranscriptGap = 8.0f;
-constexpr float kChatSidebarComposerBottomInset = 10.0f;
-constexpr float kChatSidebarComposerHeight = 82.0f;
-constexpr float kChatSidebarComposerGap = 8.0f;
 constexpr float kGitSidebarActionRowTop = 34.0f;
 constexpr float kGitSidebarActionButtonHeight = 18.0f;
 constexpr float kGitSidebarActionGap = 6.0f;
@@ -142,28 +128,6 @@ std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
   }
   lines.push_back(std::move(scm_line));
 
-  if (!auth_provider_registry_.Providers().empty()) {
-    std::string auth_line = "Accounts: ";
-    bool first = true;
-    for (const AuthProviderSpec& provider : auth_provider_registry_.Providers()) {
-      if (!first) {
-        auth_line += ", ";
-      }
-      first = false;
-      const std::size_t session_count =
-          static_cast<std::size_t>(std::count_if(auth_provider_registry_.Sessions().begin(),
-                                                 auth_provider_registry_.Sessions().end(),
-                                                 [&](const AuthSession& session) {
-                                                   return session.provider_id == provider.id;
-                                                 }));
-      auth_line += provider.label.empty() ? provider.id : provider.label;
-      if (session_count > 0) {
-        auth_line += " (" + std::to_string(session_count) + ")";
-      }
-    }
-    lines.push_back(std::move(auth_line));
-  }
-
   return lines;
 }
 
@@ -193,158 +157,6 @@ ScrollableListLayout WorkspaceShell::ComputeGitSidebarListLayout(const SDL_FRect
   return ComputeScrollableListLayout(sidebar_rect, GitSidebarListTop(sidebar_rect), line_count,
                                      context_.current_project_state.sidebar.scroll_row, kSidebarInset, kSidebarRowHeight,
                                      kSidebarRowHeight - 2.0f, 0.0f, 0.0f, true);
-}
-
-SDL_FRect WorkspaceShell::ChatSidebarStatusRect(const SDL_FRect& sidebar_rect) const {
-  return ComputeChatSidebarLayout(sidebar_rect).header_title_rect;
-}
-
-WorkspaceShell::ChatSidebarLayout WorkspaceShell::ComputeChatSidebarLayout(
-    const SDL_FRect& sidebar_rect) const {
-  ChatSidebarLayout layout;
-  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
-    return layout;
-  }
-
-  const float compact = layout_mode_service_.CurrentMode() == LayoutMode::Compact;
-  const float rail_min = compact ? std::max(64.0f, kChatSidebarRailMinWidth - 32.0f)
-                                 : kChatSidebarRailMinWidth;
-  const float rail_max = compact ? std::max(rail_min, kChatSidebarRailMaxWidth - 56.0f)
-                                 : kChatSidebarRailMaxWidth;
-  const float rail_width = std::clamp(sidebar_rect.w * 0.26f, rail_min, rail_max);
-  layout.rail_rect = MakeRect(sidebar_rect.x + kSidebarInset, sidebar_rect.y + kChatSidebarStatusTop,
-                              rail_width, std::max(0.0f, sidebar_rect.h - kChatSidebarStatusTop -
-                                                             kChatSidebarComposerBottomInset));
-  layout.rail_new_rect = MakeRect(layout.rail_rect.x, layout.rail_rect.y + layout.rail_rect.h - 18.0f,
-                                  layout.rail_rect.w, 18.0f);
-  layout.rail_list_rect =
-      MakeRect(layout.rail_rect.x, layout.rail_rect.y,
-               layout.rail_rect.w,
-               std::max(0.0f, layout.rail_new_rect.y - layout.rail_rect.y - kChatSidebarHeaderGap));
-
-  layout.content_rect =
-      MakeRect(layout.rail_rect.x + layout.rail_rect.w + kChatSidebarRailGap,
-               sidebar_rect.y + kChatSidebarStatusTop,
-               std::max(0.0f, sidebar_rect.w - (layout.rail_rect.w + kChatSidebarRailGap) -
-                                    kSidebarInset * 2.0f),
-               std::max(0.0f, sidebar_rect.h - kChatSidebarStatusTop));
-  layout.header_rect =
-      MakeRect(layout.content_rect.x, layout.content_rect.y, layout.content_rect.w,
-               kChatSidebarHeaderHeight);
-  layout.header_title_rect = MakeRect(layout.header_rect.x, layout.header_rect.y,
-                                      std::max(80.0f, layout.header_rect.w * 0.22f), 14.0f);
-
-  const float button_y = layout.header_rect.y + 20.0f;
-  const float action_width = std::max(56.0f, (layout.header_rect.w - 16.0f) * 0.13f);
-  layout.header_primary_action_rect =
-      MakeRect(layout.header_rect.x, button_y, action_width, kChatSidebarHeaderButtonHeight);
-  layout.header_secondary_action_rect =
-      MakeRect(layout.header_primary_action_rect.x + layout.header_primary_action_rect.w + 6.0f,
-               button_y, action_width, kChatSidebarHeaderButtonHeight);
-
-  const float trailing_width =
-      std::max(76.0f, (layout.header_rect.w - action_width * 2.0f - 28.0f) / 3.0f);
-  layout.tool_mode_rect = MakeRect(layout.header_rect.x + layout.header_rect.w - trailing_width,
-                                   button_y, trailing_width, kChatSidebarHeaderButtonHeight);
-  layout.model_rect =
-      MakeRect(layout.tool_mode_rect.x - 6.0f - trailing_width, button_y, trailing_width,
-               kChatSidebarHeaderButtonHeight);
-  layout.provider_rect =
-      MakeRect(layout.model_rect.x - 6.0f - trailing_width, button_y, trailing_width,
-               kChatSidebarHeaderButtonHeight);
-
-  layout.auth_rect =
-      MakeRect(layout.content_rect.x, layout.header_rect.y + layout.header_rect.h + 4.0f,
-               layout.content_rect.w, kChatSidebarAuthHeight);
-  layout.composer_rect =
-      MakeRect(layout.content_rect.x,
-               sidebar_rect.y + sidebar_rect.h - kChatSidebarComposerBottomInset -
-                   kChatSidebarComposerHeight,
-               layout.content_rect.w, kChatSidebarComposerHeight);
-  layout.transcript_rect =
-      MakeRect(layout.content_rect.x,
-               layout.auth_rect.y + layout.auth_rect.h + kChatSidebarTranscriptGap,
-               layout.content_rect.w,
-               std::max(0.0f, layout.composer_rect.y - (layout.auth_rect.y + layout.auth_rect.h) -
-                                    kChatSidebarTranscriptGap - kChatSidebarComposerGap));
-  return layout;
-}
-
-SDL_FRect WorkspaceShell::ChatSidebarTranscriptRect(const SDL_FRect& sidebar_rect) const {
-  return ComputeChatSidebarLayout(sidebar_rect).transcript_rect;
-}
-
-SDL_FRect WorkspaceShell::ChatSidebarConversationRailRect(const SDL_FRect& sidebar_rect) const {
-  return ComputeChatSidebarLayout(sidebar_rect).rail_rect;
-}
-
-SDL_FRect WorkspaceShell::ChatSidebarConversationNewRect(const SDL_FRect& sidebar_rect) const {
-  return ComputeChatSidebarLayout(sidebar_rect).rail_new_rect;
-}
-
-SDL_FRect WorkspaceShell::ChatSidebarConversationRowRect(const SDL_FRect& sidebar_rect,
-                                                         std::size_t index) const {
-  const ChatSidebarLayout layout = ComputeChatSidebarLayout(sidebar_rect);
-  return MakeRect(layout.rail_list_rect.x,
-                  layout.rail_list_rect.y +
-                      static_cast<float>(index) *
-                          (kChatSidebarConversationRowHeight + kChatSidebarConversationGap),
-                  layout.rail_list_rect.w, kChatSidebarConversationRowHeight);
-}
-
-SDL_FRect WorkspaceShell::ChatSidebarComposerRect(const SDL_FRect& sidebar_rect) const {
-  return ComputeChatSidebarLayout(sidebar_rect).composer_rect;
-}
-
-ScrollableListLayout WorkspaceShell::ComputeChatSidebarListLayout(const SDL_FRect& sidebar_rect,
-                                                                  std::size_t line_count) const {
-  const SDL_FRect transcript_rect = ChatSidebarTranscriptRect(sidebar_rect);
-  return ComputeScrollableListLayout(transcript_rect, transcript_rect.y, line_count,
-                                     context_.current_project_state.panel.chat.scroll_row, 0.0f,
-                                     kSidebarRowHeight, kSidebarRowHeight - 2.0f, 0.0f, 0.0f,
-                                     true);
-}
-
-std::vector<WorkspaceShell::ChatHeaderAction> WorkspaceShell::BuildChatHeaderActions(
-    const SDL_FRect& sidebar_rect) const {
-  const ChatSidebarLayout layout = ComputeChatSidebarLayout(sidebar_rect);
-
-  std::vector<ChatHeaderAction> actions;
-  actions.push_back(ChatHeaderAction{
-      .kind = ChatHeaderAction::Kind::NewConversation,
-      .rect = layout.header_primary_action_rect,
-      .label = "New",
-      .enabled = false,
-  });
-
-  actions.push_back(ChatHeaderAction{
-      .kind = ChatHeaderAction::Kind::DeleteConversation,
-      .rect = layout.header_secondary_action_rect,
-      .label = "Delete",
-      .enabled = false,
-  });
-
-  actions.push_back(ChatHeaderAction{
-      .kind = ChatHeaderAction::Kind::Provider,
-      .rect = layout.provider_rect,
-      .label = "Provider",
-      .enabled = false,
-  });
-
-  actions.push_back(ChatHeaderAction{
-      .kind = ChatHeaderAction::Kind::Model,
-      .rect = layout.model_rect,
-      .label = "Model",
-      .enabled = false,
-  });
-
-  actions.push_back(ChatHeaderAction{
-      .kind = ChatHeaderAction::Kind::ToolMode,
-      .rect = layout.tool_mode_rect,
-      .label = "Tools",
-      .enabled = false,
-  });
-  return actions;
 }
 
 ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,

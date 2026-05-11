@@ -157,7 +157,6 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   const bool single_line_text_surface =
       text_input_surface == TextInputSurface::PromptInput ||
       text_input_surface == TextInputSurface::Command ||
-      text_input_surface == TextInputSurface::ChatComposer ||
       text_input_surface == TextInputSurface::FileFinder ||
       text_input_surface == TextInputSurface::BufferSearch ||
       text_input_surface == TextInputSurface::BufferReplaceSearch ||

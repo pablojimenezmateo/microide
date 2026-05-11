@@ -12,62 +12,6 @@
 namespace microide::workspace {
 
 namespace {
-
-void SyncChatDraft(ProjectWorkspaceState& state) {
-  (void)state;
-}
-
-std::optional<editor::SingleLineEditor> BuildSingleLineFromComposerLine(
-    const editor::TextViewport& composer) {
-  const std::vector<std::string>& lines = composer.lines();
-  const std::size_t line_index = composer.cursor_line();
-  if (line_index >= lines.size()) {
-    return std::nullopt;
-  }
-
-  editor::SingleLineEditor editor(lines[line_index]);
-  editor.SetCaret(std::min(composer.cursor_column(), lines[line_index].size()));
-  const std::optional<editor::SelectionRange> selection = composer.selection_range();
-  if (!selection.has_value()) {
-    return editor;
-  }
-  if (selection->start.line != line_index || selection->end.line != line_index) {
-    return std::nullopt;
-  }
-
-  const std::size_t anchor_column =
-      composer.cursor_column() == selection->start.column ? selection->end.column
-                                                          : selection->start.column;
-  editor.SetSelectionAnchor(anchor_column);
-  return editor;
-}
-
-void ApplySingleLineToComposerLine(editor::TextViewport* composer,
-                                   std::size_t line_index,
-                                   const editor::SingleLineEditor& single_line,
-                                   const std::string& before_text) {
-  if (composer == nullptr) {
-    return;
-  }
-  if (single_line.text() != before_text) {
-    (void)composer->ReplaceRange(
-        editor::SelectionRange{
-            .start = editor::TextPosition{line_index, 0},
-            .end = editor::TextPosition{line_index, before_text.size()},
-        },
-        single_line.text(), true);
-  }
-
-  if (const std::optional<std::size_t> anchor = single_line.selection_anchor();
-      anchor.has_value()) {
-    composer->MoveCursorTo(line_index, *anchor, false);
-    composer->MoveCursorTo(line_index, single_line.caret(), true);
-  } else {
-    composer->MoveCursorTo(line_index, single_line.caret(), false);
-    composer->ClearSelection();
-  }
-}
-
 }  // namespace
 
 TextInputCoordinator::TextInputCoordinator(ProjectWorkspaceState& state,
@@ -129,7 +73,6 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
       operations_.request_prompt_redraw();
       break;
     case TextInputSurface::Command:
-    case TextInputSurface::ChatComposer:
       operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
@@ -159,8 +102,6 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
       return &prompts_.surface.input;
     case TextInputSurface::Command:
       return &state_.panel.command.input;
-    case TextInputSurface::ChatComposer:
-      return nullptr;
     case TextInputSurface::CommitPicker:
       return &state_.overlay.workflow.compare_picker.query;
     case TextInputSurface::BufferSearch:
@@ -203,9 +144,6 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       if (text_changed) {
         DidMutateCommandInputText();
       }
-      operations_.request_bottom_panel_command_redraw();
-      break;
-    case TextInputSurface::ChatComposer:
       operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::CommitPicker:
@@ -308,12 +246,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
   SyncTextInputSurface(nullptr);
   text_input_state_.composition = TextCompositionState{};
   const TextInputSurface surface = operations_.current_text_input_surface();
-  if (surface == TextInputSurface::ChatComposer) {
-    state_.panel.chat.composer.InsertText(input);
-    SyncChatDraft(state_);
-    RequestSingleLineTextRedraw(surface, true);
-    return true;
-  }
   if (editor::SingleLineEditor* text_state = ActiveSingleLineTextState();
       text_state != nullptr) {
     if (!text_state->Insert(input)) {
@@ -333,7 +265,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::CommitPicker:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
-    case TextInputSurface::ChatComposer:
       return false;
     case TextInputSurface::Editor:
       if (operations_.active_editable_viewport() == nullptr) {
@@ -400,87 +331,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
 
 bool TextInputCoordinator::HandleSingleLineKeyDown(const SDL_KeyboardEvent& event,
                                                    SDL_Keymod modifiers) {
-  if (operations_.current_text_input_surface() == TextInputSurface::ChatComposer) {
-    editor::TextViewport& composer = state_.panel.chat.composer;
-    bool handled = false;
-    auto maybe_single_line = BuildSingleLineFromComposerLine(composer);
-    if (maybe_single_line.has_value()) {
-      const bool single_line_key =
-          event.key == SDLK_BACKSPACE || event.key == SDLK_DELETE || event.key == SDLK_LEFT ||
-          event.key == SDLK_RIGHT || event.key == SDLK_HOME || event.key == SDLK_END ||
-          (((modifiers & SDL_KMOD_CTRL) != 0) && event.key == SDLK_A);
-      if (single_line_key) {
-        const std::size_t line_index = composer.cursor_line();
-        const std::string before_text = maybe_single_line->text();
-        handled = editor::SingleLineKeyHandler::HandleKeyDown(
-            *maybe_single_line, event.key, modifiers,
-            editor::SingleLineKeyHandler::Clipboard{
-                .write_text = [this](const std::string& text) {
-                  (void)operations_.write_clipboard_text(text);
-                },
-                .read_text = [this]() { return operations_.read_clipboard_text(); },
-            });
-        if (handled) {
-          ApplySingleLineToComposerLine(&composer, line_index, *maybe_single_line, before_text);
-        }
-      }
-    }
-    if (!handled) {
-      const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
-      if ((modifiers & SDL_KMOD_CTRL) != 0) {
-        switch (event.key) {
-          case SDLK_LEFT:
-          case SDLK_HOME:
-            composer.MoveCursorLineStart(extend_selection);
-            handled = true;
-            break;
-          case SDLK_RIGHT:
-          case SDLK_END:
-            composer.MoveCursorLineEnd(extend_selection);
-            handled = true;
-            break;
-          default:
-            break;
-        }
-      } else {
-        switch (event.key) {
-          case SDLK_RETURN:
-          case SDLK_KP_ENTER:
-            composer.InsertNewline();
-            handled = true;
-            break;
-          case SDLK_UP:
-            composer.MoveCursorVertical(-1, extend_selection);
-            handled = true;
-            break;
-          case SDLK_DOWN:
-            composer.MoveCursorVertical(1, extend_selection);
-            handled = true;
-            break;
-          case SDLK_PAGEUP:
-            composer.Page(-1);
-            handled = true;
-            break;
-          case SDLK_PAGEDOWN:
-            composer.Page(1);
-            handled = true;
-            break;
-          default:
-            break;
-        }
-      }
-    }
-    if (!handled) {
-      return false;
-    }
-    SyncChatDraft(state_);
-    RequestSingleLineTextRedraw(TextInputSurface::ChatComposer, true);
-    if (composer.has_selection()) {
-      operations_.write_primary_selection_text(composer.SelectedText());
-    }
-    return true;
-  }
-
   editor::SingleLineEditor* text_state = ActiveSingleLineTextState();
   if (text_state == nullptr) {
     return false;
@@ -509,37 +359,16 @@ bool TextInputCoordinator::HandleSingleLineKeyDown(const SDL_KeyboardEvent& even
 }
 
 bool TextInputCoordinator::HasSelectionAtActiveSingleLineSurface() const {
-  if (operations_.current_text_input_surface() == TextInputSurface::ChatComposer) {
-    return state_.panel.chat.composer.has_selection();
-  }
   const editor::SingleLineEditor* text_state = ActiveSingleLineTextState();
   return text_state != nullptr && text_state->HasSelection();
 }
 
 std::string TextInputCoordinator::SelectedTextAtActiveSingleLineSurface() const {
-  if (operations_.current_text_input_surface() == TextInputSurface::ChatComposer) {
-    return state_.panel.chat.composer.SelectedText();
-  }
   const editor::SingleLineEditor* text_state = ActiveSingleLineTextState();
   return text_state != nullptr ? text_state->SelectedText() : std::string{};
 }
 
 bool TextInputCoordinator::SelectAllAtActiveSingleLineSurface() {
-  if (operations_.current_text_input_surface() == TextInputSurface::ChatComposer) {
-    if (std::optional<editor::SingleLineEditor> single_line =
-            BuildSingleLineFromComposerLine(state_.panel.chat.composer);
-        single_line.has_value()) {
-      const std::size_t line_index = state_.panel.chat.composer.cursor_line();
-      const std::string before_text = single_line->text();
-      (void)single_line->SelectAll();
-      ApplySingleLineToComposerLine(&state_.panel.chat.composer, line_index, *single_line,
-                                    before_text);
-    } else {
-      state_.panel.chat.composer.SelectLineAtCursor();
-    }
-    RequestSingleLineTextRedraw(TextInputSurface::ChatComposer, false);
-    return true;
-  }
   editor::SingleLineEditor* text_state = ActiveSingleLineTextState();
   if (text_state == nullptr) {
     return false;
@@ -553,41 +382,6 @@ bool TextInputCoordinator::SelectAllAtActiveSingleLineSurface() {
 }
 
 bool TextInputCoordinator::CutSelectionAtActiveSingleLineSurface() {
-  if (operations_.current_text_input_surface() == TextInputSurface::ChatComposer) {
-    if (std::optional<editor::SingleLineEditor> single_line =
-            BuildSingleLineFromComposerLine(state_.panel.chat.composer);
-        single_line.has_value()) {
-      std::string selected = single_line->SelectedText();
-      if (selected.empty()) {
-        (void)single_line->SelectAll();
-        selected = single_line->SelectedText();
-      }
-      if (selected.empty() || !operations_.write_clipboard_text(selected)) {
-        return false;
-      }
-      const std::size_t line_index = state_.panel.chat.composer.cursor_line();
-      const std::string before_text = single_line->text();
-      operations_.write_primary_selection_text(selected);
-      if (!single_line->DeleteSelection()) {
-        return false;
-      }
-      ApplySingleLineToComposerLine(&state_.panel.chat.composer, line_index, *single_line,
-                                    before_text);
-    } else {
-      editor::TextViewport& composer = state_.panel.chat.composer;
-      const std::string selected = composer.SelectedText();
-      if (selected.empty() || !operations_.write_clipboard_text(selected)) {
-        return false;
-      }
-      operations_.write_primary_selection_text(selected);
-      if (!composer.DeleteSelectedText()) {
-        return false;
-      }
-    }
-    SyncChatDraft(state_);
-    RequestSingleLineTextRedraw(TextInputSurface::ChatComposer, true);
-    return true;
-  }
   editor::SingleLineEditor* text_state = ActiveSingleLineTextState();
   if (text_state == nullptr) {
     return false;

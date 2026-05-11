@@ -135,7 +135,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr ||
              text_input_surface == TextInputSurface::PromptInput ||
              text_input_surface == TextInputSurface::Command ||
-             text_input_surface == TextInputSurface::ChatComposer ||
              text_input_surface == TextInputSurface::FileFinder ||
              text_input_surface == TextInputSurface::BufferSearch ||
              text_input_surface == TextInputSurface::BufferReplaceSearch ||
@@ -148,7 +147,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_editable_viewport != nullptr ||
              text_input_surface == TextInputSurface::PromptInput ||
              text_input_surface == TextInputSurface::Command ||
-             text_input_surface == TextInputSurface::ChatComposer ||
              text_input_surface == TextInputSurface::FileFinder ||
              text_input_surface == TextInputSurface::BufferSearch ||
              text_input_surface == TextInputSurface::BufferReplaceSearch ||

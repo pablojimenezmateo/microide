@@ -437,4 +437,6 @@ void WorkspaceShell::SyncLspForActiveEditableLastChange() {
       applied_edit->replacement_text);
 }
 
+void WorkspaceShell::ConsumeLspCallbacks() { CurrentLspManager().DrainCallbacks(); }
+
 }  // namespace microide::workspace

@@ -14,7 +14,6 @@
 namespace microide::tests {
 namespace {
 
-using microide::workspace::MessageRole;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
@@ -33,20 +32,6 @@ bool WaitForLspCondition(WorkspaceShell& shell, Predicate&& ready, int timeout_m
     std::this_thread::yield();
   }
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
-  return ready();
-}
-
-template <typename Predicate>
-bool WaitForShellCondition(WorkspaceShell& shell, Predicate&& ready, int timeout_ms = 2000) {
-  const Uint64 deadline =
-      SDL_GetTicks() + static_cast<Uint64>(timeout_ms > 0 ? timeout_ms : 0);
-  while (!ready() && SDL_GetTicks() <= deadline) {
-    WorkspaceShellTestAccess::ConsumeAiRuntimeUpdates(shell);
-    WorkspaceShellTestAccess::HandleScheduledWake(shell);
-    std::this_thread::yield();
-  }
-  WorkspaceShellTestAccess::ConsumeAiRuntimeUpdates(shell);
-  WorkspaceShellTestAccess::HandleScheduledWake(shell);
   return ready();
 }
 
@@ -140,166 +125,6 @@ return ide.plugin({
                  "phase-runtime: code-action:README.md:1",
          "executing a code action from the overlay should dispatch the returned command");
 
-}
-
-[[maybe_unused]] void TestPhase5AiCommandsDriveChatAndInlineCompletion() {
-  // Retired: chat and inline-completion command surface.
-  return;
-}
-
-[[maybe_unused]] void TestPhase5AuthAndMcpCommandsUpdateVisibleHostState() {
-  // Retired: auth and MCP command surface.
-  return;
-}
-
-[[maybe_unused]] void TestPhase5ChatToolApprovalPersistsTranscriptAndSessionApprovals() {
-#if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path bridge_path = project_root / "tool_bridge.py";
-  WriteFile(project_root / "README.md", "phase5 tool approval\n");
-  WriteFile(
-      bridge_path,
-      R"py(#!/usr/bin/env python3
-import json
-import sys
-
-last_request_id = ""
-
-def write_message(payload):
-    body = json.dumps(payload).encode("utf-8")
-    sys.stdout.buffer.write(body + b"\n")
-    sys.stdout.buffer.flush()
-
-for line in sys.stdin:
-    msg = json.loads(line)
-    msg_type = msg.get("type")
-    if msg_type == "initialize":
-        write_message({
-            "type": "initialized",
-            "capabilities": {
-                "chat": True,
-                "tool_call": True,
-                "system_prompt": True
-            }
-        })
-    elif msg_type == "chat":
-        last_request_id = msg.get("request_id", "")
-        write_message({
-            "type": "tool_call",
-            "request_id": last_request_id,
-            "tool_call_id": "call-1",
-            "tool_id": "phase5-tool-chat.echo",
-            "display_name": "Echo",
-            "arguments_json": "{\"ping\":1}",
-            "arguments_summary": "{\"ping\":1}",
-            "capability_scope": "phase5-tool-chat.echo"
-        })
-    elif msg_type == "tool_result":
-        write_message({
-            "type": "done",
-            "request_id": msg.get("request_id", last_request_id),
-            "status": "succeeded",
-            "content": "tool:" + msg.get("output", ""),
-            "error": ""
-        })
-    elif msg_type == "tool_denied":
-        write_message({
-            "type": "done",
-            "request_id": msg.get("request_id", last_request_id),
-            "status": "failed",
-            "content": "",
-            "error": msg.get("error", "denied")
-        })
-    elif msg_type == "cancel":
-        write_message({
-            "type": "done",
-            "request_id": msg.get("request_id", last_request_id),
-            "status": "cancelled",
-            "content": "",
-            "error": "Cancelled"
-        })
-    elif msg_type == "shutdown":
-        break
-)py");
-
-  WritePluginInit(
-      plugins_root, "phase5-tool-chat",
-      std::string(R"lua(local ide = require("microide")
-return ide.plugin({
-  id = "phase5-tool-chat",
-  setup = function(ctx)
-    ctx.external_agents.add({
-      id = "chat",
-      label = "Tool Chat",
-      protocol = "stdio",
-      command = { "python3", ")lua") +
-          bridge_path.generic_string() +
-          std::string(R"lua(" },
-      capabilities = { "chat" }
-    })
-    ctx.mcp_tools.add({
-      id = "echo",
-      name = "Echo",
-      description = "Echoes JSON",
-      input_schema = "{\"type\":\"object\"}",
-      run = function(input_json)
-        return { output = "{\"pong\":1}" }
-      end
-    })
-  end
-})
-)lua"));
-
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "phase5 tool-approval fixture should open the project");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat use the echo tool"),
-         "chat tool-approval command should execute");
-  Expect(WaitForShellCondition(shell, [&] {
-           return WorkspaceShellTestAccess::PromptSurfaceVisible(shell);
-         }),
-         "tool approval should surface a host-owned prompt");
-  Expect(WorkspaceShellTestAccess::PromptSurfaceTitle(shell) == "Approve Tool Call" &&
-             WorkspaceShellTestAccess::PromptSurfaceButtonCount(shell) == 3,
-         "tool approval prompt should expose the dedicated approval surface");
-  Expect(WorkspaceShellTestAccess::PromptSurfaceMessage(shell).find("Echo") != std::string::npos &&
-             WorkspaceShellTestAccess::PromptSurfaceDetail(shell).find("phase5-tool-chat.echo") !=
-                 std::string::npos,
-         "tool approval prompt should describe the requested tool scope");
-
-  WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "chat tool request should complete after approval");
-  const auto approved_messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(approved_messages.size() == 2 &&
-             approved_messages.back().content == "tool:{\"pong\":1}" &&
-             approved_messages.back().tool_events.size() == 1,
-         "approved tool calls should complete the assistant reply and record tool events");
-  Expect(approved_messages.back().tool_events.front().permission_decision == "session" &&
-             approved_messages.back().tool_events.front().status == "Completed" &&
-             approved_messages.back().tool_events.front().output_summary.find("pong") !=
-                 std::string::npos,
-         "approved tool calls should persist permission and output metadata in the transcript");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat use the echo tool again"),
-         "second chat command should execute");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "remembered approval should allow the second tool call to complete");
-  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
-         "remembered session approvals should skip the prompt on later requests");
-  const auto remembered_messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(remembered_messages.size() == 4 &&
-             remembered_messages.back().tool_events.size() == 1 &&
-             remembered_messages.back().tool_events.front().permission_decision == "session",
-         "remembered approvals should stay scoped to later tool events in the same session");
 }
 
 void TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions() {

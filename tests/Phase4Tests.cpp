@@ -1,7 +1,6 @@
 #include "TestSupport.h"
 
 #include "workspace/WorkspaceReviewComments.h"
-#include "workspace/WorkspaceSecretStorage.h"
 #include "workspace/WorkspaceVirtualDocument.h"
 
 #include <string>
@@ -13,37 +12,8 @@ namespace {
 using microide::workspace::ReviewComment;
 using microide::workspace::ReviewCommentState;
 using microide::workspace::ReviewCommentsRegistry;
-using microide::workspace::SecretStorage;
 using microide::workspace::VirtualDocumentRegistry;
 using microide::workspace::VirtualDocumentSpec;
-
-void TestSecretStoragePersistsAcrossInstances() {
-  TemporaryDirectory temp_dir;
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", (temp_dir.path() / "config").string());
-
-  {
-    SecretStorage storage;
-    Expect(storage.Store("github.token", "secret-value"),
-           "secret storage should persist stored values");
-    Expect(storage.Contains("github.token"),
-           "secret storage should report persisted keys as present");
-  }
-
-  {
-    SecretStorage reloaded;
-    const auto secret = reloaded.Retrieve("github.token");
-    Expect(secret.has_value() && *secret == "secret-value",
-           "secret storage should reload persisted values in a new instance");
-    Expect(reloaded.Delete("github.token"),
-           "secret storage should delete persisted keys");
-  }
-
-  {
-    SecretStorage reloaded;
-    Expect(!reloaded.Contains("github.token"),
-           "deleting a persisted key should survive a later reload");
-  }
-}
 
 void TestVirtualDocumentRegistryUpdatesAndCallbacks() {
   VirtualDocumentRegistry registry;
@@ -110,8 +80,6 @@ void TestReviewCommentsRegistryTracksThreadsAndState() {
 }  // namespace
 
 void RegisterPhase4Tests(std::vector<TestCase>& tests) {
-  tests.emplace_back("Phase4.SecretStoragePersistsAcrossInstances",
-                     &TestSecretStoragePersistsAcrossInstances);
   tests.emplace_back("Phase4.VirtualDocumentRegistryUpdatesAndCallbacks",
                      &TestVirtualDocumentRegistryUpdatesAndCallbacks);
   tests.emplace_back("Phase4.ReviewCommentsRegistryTracksThreadsAndState",

@@ -10,17 +10,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <optional>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -275,37 +272,6 @@ void OpenEditorEssentials50kCppOrThrow(ScenarioContext& context) {
   }
   context.OpenTab(path);
   context.PumpFrames(2);
-}
-
-constexpr char kEditorEssentials50kPyPath[] =
-    "tests/perf/fixtures/editor_essentials_50k_py/synthetic_kernel.py";
-
-void OpenEditorEssentials50kPyOrThrow(ScenarioContext& context) {
-  const std::filesystem::path path{kEditorEssentials50kPyPath};
-  if (!std::filesystem::exists(path)) {
-    throw std::runtime_error(std::string("missing fixture: ") + kEditorEssentials50kPyPath);
-  }
-  context.OpenTab(path);
-  context.PumpFrames(2);
-}
-
-bool IsUnreservedUriBytePerf(unsigned char ch) {
-  return std::isalnum(ch) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == '/';
-}
-
-std::string FileUriForPerfPath(const std::filesystem::path& path) {
-  const std::string raw = path.lexically_normal().generic_string();
-  std::ostringstream encoded;
-  encoded << "file://";
-  for (unsigned char ch : raw) {
-    if (IsUnreservedUriBytePerf(ch)) {
-      encoded << static_cast<char>(ch);
-      continue;
-    }
-    encoded << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(ch) << std::nouppercase << std::dec;
-  }
-  return encoded.str();
 }
 
 void RegisterBuiltInScenarios() {

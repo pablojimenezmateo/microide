@@ -278,14 +278,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellHoverTargets.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
-  src/workspace/WorkspaceShellInlineCompletion.cpp
-  src/workspace/WorkspaceShellChatRetired.cpp
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellAssist.cpp
   src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp
   src/workspace/WorkspaceShellSettingsOverlay.cpp
-  src/workspace/WorkspaceShellMcp.cpp
   src/workspace/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp
   src/workspace/WorkspacePathMutationCoordinator.cpp
@@ -361,16 +358,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceAnnotationRegistry.cpp
   src/workspace/WorkspaceVirtualDocument.cpp
   src/workspace/WorkspaceReviewComments.cpp
-  src/workspace/WorkspaceAuthProvider.cpp
-  src/workspace/WorkspaceSecretStorage.cpp
-  src/workspace/WorkspaceInlineCompletion.cpp
-  src/workspace/WorkspaceAiProvider.cpp
-  src/workspace/WorkspaceAiProviderRuntime.cpp
-  src/workspace/WorkspaceConversation.cpp
-  src/workspace/WorkspaceExternalAgent.cpp
-  src/workspace/WorkspaceProviderBridge.cpp
-  src/workspace/WorkspaceMcpTool.cpp
-  src/workspace/WorkspaceAiContext.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/WorkspaceViewTree.cpp

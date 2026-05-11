@@ -13,6 +13,8 @@ std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
       SidebarViewSpec{"tree", "Project", SidebarMode::Tree},
       SidebarViewSpec{"search", "Search", SidebarMode::Search},
       SidebarViewSpec{"git", "Source Control", SidebarMode::Git},
+      SidebarViewSpec{"problems", "Problems", SidebarMode::Problems},
+      SidebarViewSpec{"tests", "Tests", SidebarMode::Tests},
   });
   return kSpecs;
 }

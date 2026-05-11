@@ -356,6 +356,10 @@
   static const std::vector<std::string>& PluginErrors(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Errors();
   }
+  static const std::vector<plugin::PluginHost::ContributedAuthProvider>& ContributedAuthProviders(
+      const WorkspaceShell& shell) {
+    return shell.plugin_runtime_.Host().ContributedAuthProviders();
+  }
   static void ClearPluginMessages(WorkspaceShell& shell) {
     shell.plugin_runtime_.Host().ClearMessages();
   }
@@ -400,25 +404,6 @@
   static WorkspaceShell::PanelContentKind PanelContent(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.content;
   }
-  static std::string ChatComposerInput(const WorkspaceShell& shell) {
-    return shell.ChatComposerText();
-  }
-  static std::vector<std::string> ChatTranscriptRows(WorkspaceShell& shell) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ChatTranscriptDebugLines(layout.sidebar);
-  }
-  static std::optional<SDL_FPoint> ChatTranscriptLinkPoint(WorkspaceShell& shell,
-                                                           std::string_view match) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto rect = shell.FindChatTranscriptLinkRect(layout.sidebar, match);
-    if (!rect.has_value()) {
-      return std::nullopt;
-    }
-    return SDL_FPoint{
-        .x = rect->x + rect->w * 0.5f,
-        .y = rect->y + rect->h * 0.5f,
-    };
-  }
   static WorkspaceShell::OverlayMode ActiveOverlayMode(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.mode;
   }
@@ -429,21 +414,6 @@
   static const WorkspaceShell::CodeActionSessionState& CodeActionSession(
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.code_actions;
-  }
-  static const WorkspaceShell::InlineCompletionState& InlineCompletion(
-      const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.inline_completion;
-  }
-  static bool AcceptInlineCompletion(WorkspaceShell& shell) {
-    return shell.AcceptInlineCompletion();
-  }
-  static std::vector<Message> ActiveConversationMessages(const WorkspaceShell& shell) {
-    (void)shell;
-    return {};
-  }
-  static std::string ActiveConversationProviderId(const WorkspaceShell& shell) {
-    (void)shell;
-    return {};
   }
   static bool PerfExpandSnippetAtCaret(WorkspaceShell& shell, std::string_view snippet_body) {
     editor::TextViewport* viewport = shell.ActiveEditorViewport();

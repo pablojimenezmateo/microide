@@ -1,9 +1,6 @@
 #include "TestSupport.h"
 
 #include "editor/RuntimeSyntaxRegistry.h"
-#include "persistence/PersistedRecordWriter.h"
-#include "platform/AsyncSubprocess.h"
-#include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <chrono>
@@ -19,7 +16,6 @@ namespace {
 
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
-using microide::workspace::ProviderAuthStatus;
 
 void WritePluginInit(const std::filesystem::path& root,
                      std::string_view directory_name,
@@ -40,179 +36,6 @@ std::filesystem::path RepoPluginsRoot() {
 
 void CopyRepoPlugin(const std::filesystem::path& root, std::string_view directory_name) {
   CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
-}
-
-[[maybe_unused]] void WriteStructuredUserConfig(
-    const std::filesystem::path& config_home,
-    const microide::workspace::PersistedUserConfigState& state) {
-  std::vector<std::byte> body;
-  Expect(microide::workspace::EncodeUserConfigRecord(state, &body),
-         "plugin test fixtures should encode user config records");
-  const std::filesystem::path config_path = config_home / "microide" / "config";
-  Expect(microide::persistence::PersistedRecordWriter::WriteFile(config_path, body, 1u),
-         "plugin test fixtures should persist structured user config records");
-}
-
-std::optional<std::string> ReadAsyncLine(microide::platform::AsyncSubprocess& process,
-                                         int timeout_ms = 2000) {
-  std::string buffer;
-  const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
-  while (SDL_GetTicks() <= deadline) {
-    const auto chunk = process.Read(4096, 50);
-    if (!chunk.has_value()) {
-      return std::nullopt;
-    }
-    if (chunk->empty()) {
-      continue;
-    }
-    buffer += *chunk;
-    const std::size_t newline = buffer.find('\n');
-    if (newline != std::string::npos) {
-      return buffer.substr(0, newline);
-    }
-  }
-  return std::nullopt;
-}
-
-struct FakeProviderServer {
-  microide::platform::AsyncSubprocess process;
-  std::string base_url;
-};
-
-[[maybe_unused]] FakeProviderServer StartFakeProviderServer(const std::filesystem::path& root,
-                                                            std::string_view provider) {
-  const std::filesystem::path script_path = root / ("fake_" + std::string(provider) + "_api.py");
-  WriteFile(
-      script_path,
-      std::string(R"py(#!/usr/bin/env python3
-import json
-import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-
-provider = sys.argv[1]
-expected_key = "secret-" + provider
-model = "gpt-4.1-mini" if provider == "openai" else "claude-sonnet-4-6"
-
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, format, *args):
-        return
-
-    def _send(self, status, payload):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _authorized(self):
-        if provider == "openai":
-            return self.headers.get("Authorization") == "Bearer " + expected_key
-        return (self.headers.get("x-api-key") == expected_key and
-                self.headers.get("anthropic-version") == "2023-06-01")
-
-    def do_GET(self):
-        if self.path != "/v1/models":
-            self._send(404, {"error": {"message": "not found"}})
-            return
-        if not self._authorized():
-            self._send(401, {"error": {"message": "invalid api key"}})
-            return
-        self._send(200, {"data": [{"id": model, "type": "model"}]})
-
-    def do_POST(self):
-        length = int(self.headers.get("Content-Length", "0") or "0")
-        payload = json.loads(self.rfile.read(length) or b"{}")
-        if not self._authorized():
-            self._send(401, {"error": {"message": "invalid api key"}})
-            return
-        if provider == "openai" and self.path == "/v1/chat/completions":
-            messages = payload.get("messages", [])
-            if payload.get("tools") and not any(entry.get("role") == "tool" for entry in messages):
-                self._send(200, {
-                    "choices": [{
-                        "message": {
-                            "content": "",
-                            "tool_calls": [{
-                                "id": "call-1",
-                                "type": "function",
-                                "function": {
-                                    "name": payload["tools"][0]["function"]["name"],
-                                    "arguments": "{\"ping\":1}"
-                                }
-                            }]
-                        }
-                    }]
-                })
-                return
-            if any(entry.get("role") == "tool" for entry in messages):
-                self._send(200, {
-                    "choices": [{
-                        "message": {
-                            "content": "openai tool reply"
-                        }
-                    }]
-                })
-                return
-            self._send(200, {
-                "choices": [{
-                    "message": {
-                        "content": "openai reply"
-                    }
-                }]
-            })
-            return
-        if provider == "anthropic" and self.path == "/v1/messages":
-            self._send(200, {
-                "content": [{
-                    "type": "text",
-                    "text": "anthropic reply"
-                }]
-            })
-            return
-        self._send(404, {"error": {"message": "not found"}})
-
-server = HTTPServer(("127.0.0.1", 0), Handler)
-print(server.server_port, flush=True)
-server.serve_forever()
-)py"));
-
-  FakeProviderServer server;
-  server.process.Start({"python3", script_path.string(), std::string(provider)}, root.string());
-  const auto port_text = ReadAsyncLine(server.process);
-  Expect(port_text.has_value(), "fake provider server should publish its port");
-  server.base_url = "http://127.0.0.1:" + (port_text.has_value() ? *port_text : "0");
-  return server;
-}
-
-[[maybe_unused]] bool WaitForProviderAuthStatus(WorkspaceShell& shell,
-                                                std::string_view provider_id,
-                                                ProviderAuthStatus expected,
-                                                int timeout_ms = 2000) {
-  const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
-  while (SDL_GetTicks() <= deadline) {
-    if (WorkspaceShellTestAccess::GetProviderAuthStatus(shell, provider_id) == expected) {
-      return true;
-    }
-    SDL_Delay(5);
-  }
-  return WorkspaceShellTestAccess::GetProviderAuthStatus(shell, provider_id) == expected;
-}
-
-[[maybe_unused]] bool WaitForProviderModels(WorkspaceShell& shell,
-                                            std::string_view provider_id,
-                                            std::string_view expected_model,
-                                            int timeout_ms = 2000) {
-  const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
-  while (SDL_GetTicks() <= deadline) {
-    const auto models = WorkspaceShellTestAccess::ProviderModels(shell, provider_id);
-    if (std::find(models.begin(), models.end(), expected_model) != models.end()) {
-      return true;
-    }
-    SDL_Delay(5);
-  }
-  const auto models = WorkspaceShellTestAccess::ProviderModels(shell, provider_id);
-  return std::find(models.begin(), models.end(), expected_model) != models.end();
 }
 
 void WriteFakeEslint(const std::filesystem::path& project_root) {
@@ -669,10 +492,11 @@ return ide.plugin({
              WorkspaceShellTestAccess::AnnotationProviders(shell).front().language_id ==
                  "markdown",
          "opening a project should rebuild the annotation registry from plugin contributions");
-  const auto* auth_provider =
-      WorkspaceShellTestAccess::AuthProvider(shell, "phase4-registries.github");
-  Expect(auth_provider != nullptr && auth_provider->label == "GitHub",
-         "opening a project should rebuild the auth provider registry from plugin contributions");
+  const auto& auth_providers = WorkspaceShellTestAccess::ContributedAuthProviders(shell);
+  Expect(auth_providers.size() == 1 && auth_providers.front().id == "phase4-registries.github" &&
+             auth_providers.front().label == "GitHub" &&
+             auth_providers.front().plugin_id == "phase4-registries",
+         "opening a project should record plugin-contributed auth providers on the host");
 }
 
 void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
@@ -1971,398 +1795,28 @@ void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
   Expect(true, "repo LLM plugin / chat / inline-completion path is retired");
 }
 
-[[maybe_unused]] static void _ignored_retired_llm_body() {
-#if 0
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path home_dir = temp_dir.path() / "home";
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path source = project_root / "src" / "main.js";
-  const std::filesystem::path codex_script =
-      home_dir / ".nvm" / "versions" / "node" / "v20.20.0" / "bin" / "codex";
-  const std::filesystem::path codex_log = temp_dir.path() / "fake-codex.log";
-  WriteFile(project_root / "README.md", "llm fixture\n");
-  WriteFile(source, "value = ");
-  WriteFile(
-      codex_script,
-      "#!/bin/sh\n"
-      "log_file='" + codex_log.string() + "'\n"
-      "printf '%s\\n' \"$*\" >> \"$log_file\"\n"
-      "command_name=\"$1\"\n"
-      "shift\n"
-      "if [ \"$command_name\" = \"login\" ] && [ \"$1\" = \"status\" ]; then\n"
-      "  printf '%s\\n' 'Logged in using ChatGPT'\n"
-      "  exit 0\n"
-      "fi\n"
-      "if [ \"$command_name\" = \"logout\" ]; then\n"
-      "  exit 0\n"
-      "fi\n"
-      "if [ \"$command_name\" != \"exec\" ]; then\n"
-      "  printf '%s\\n' \"unexpected command: $command_name\" >&2\n"
-      "  exit 1\n"
-      "fi\n"
-      "input=$(cat)\n"
-      "case \"$input\" in\n"
-      "  *\"Complete the code at line \"*) printf '%s' 'llm_inline_suggestion' ;;\n"
-      "  *) printf '%s' 'LLM example reply' ;;\n"
-      "esac\n");
-  std::filesystem::permissions(
-      codex_script,
-      std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
-          std::filesystem::perms::owner_exec,
-      std::filesystem::perm_options::replace);
-  CopyRepoPlugin(plugins_root, "llm");
-  WriteStructuredUserConfig(
-      config_home,
-      microide::workspace::PersistedUserConfigState{
-          .settings = {},
-          .disabled_keybinding_ids = {},
-      });
-  ScopedEnvVar home("HOME", home_dir.string());
-  // Prepend the fake codex bin dir so command -v codex resolves to our stub
-  // even when sh -l sources /etc/profile (which may add /usr/local/bin where
-  // a real codex binary can live on developer machines).
-  ScopedEnvVar path("PATH", (home_dir / ".nvm" / "versions" / "node" / "v20.20.0" / "bin").string() +
-                                ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(shell.Initialize({}), "llm plugin test should restore user config before opening a project");
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "llm plugin fixture should open the project");
-  WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::ClearPluginMessages(shell);
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "llm-status"),
-         "repo llm plugin should expose an auth status command");
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "repo llm status command should complete");
-  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(),
-         "repo llm status should not surface plugin errors");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain this file"),
-         ("repo llm plugin should enable the built-in chat command: " +
-          DescribePluginState(shell))
-             .c_str());
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "repo llm chat command should complete");
-  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Chat,
-         "chat command should surface the host-owned chat sidebar");
-  Expect(messages.size() == 2, "repo llm plugin should record one user message and one reply");
-  Expect(!messages.empty() && messages.front().content == "explain this file",
-         "repo llm plugin should preserve the submitted chat content");
-  Expect(messages.size() >= 2 && messages.back().content == "LLM example reply",
-         "repo llm plugin should register a default chat agent response");
-  Expect(WorkspaceShellTestAccess::ActiveConversationProviderId(shell) == "llm.chat",
-         ("repo llm chat conversations should record the repo plugin provider id; got " +
-          WorkspaceShellTestAccess::ActiveConversationProviderId(shell))
-             .c_str());
-
-  WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 8);
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "inline-complete"),
-         "repo llm plugin should enable the built-in inline completion command");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "repo llm inline completion should complete");
-  Expect(!WorkspaceShellTestAccess::InlineCompletion(shell).request_in_flight,
-         "repo llm inline completion request should settle");
-  Expect(WorkspaceShellTestAccess::AcceptInlineCompletion(shell),
-         "accepting the repo llm inline completion should succeed");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() ==
-             "value = llm_inline_suggestion",
-         "accepting the repo llm inline completion should edit the active buffer");
-
-  const std::string codex_invocations = ReadFile(codex_log);
-  Expect(codex_invocations.find("login status") != std::string::npos,
-         "repo llm plugin should invoke codex login status by default");
-  Expect(codex_invocations.find("exec --skip-git-repo-check --ephemeral --color never --sandbox "
-                                "read-only -m gpt-5.4 -") != std::string::npos,
-         "repo llm plugin should default chat and inline completion through codex exec");
-  Expect(codex_invocations.find(codex_script.string()) == std::string::npos,
-         "repo llm plugin should resolve the default codex binary through common install paths");
-#endif  // _ignored_retired_llm_body
-}
 
 void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
   Expect(true, "repo OpenAI provider plugin / native bridge is retired");
 }
 
-[[maybe_unused]] static void _ignored_retired_openai_bridge_body() {
-#if 0
-#if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path source = project_root / "README.md";
-  WriteFile(source, "provider bridge\n");
-  CopyRepoPlugin(plugins_root, "openai");
-
-  FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
-  WriteStructuredUserConfig(
-      config_home,
-      microide::workspace::PersistedUserConfigState{
-          .settings =
-              {
-                  {"openai.api_key", "secret-openai"},
-                  {"openai.base_url", server.base_url},
-                  {"openai.model", "gpt-4.1-mini"},
-              },
-          .disabled_keybinding_ids = {},
-      });
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(shell.Initialize({}),
-         "openai plugin test should restore user config before opening a project");
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "openai plugin fixture should open the project");
-  Expect(WorkspaceShellTestAccess::AiProviders(shell).size() == 1 &&
-             WorkspaceShellTestAccess::AiProviders(shell).front().id == "openai.chat",
-         "openai plugin should register one host-owned AI provider");
-
-  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") ==
-             ProviderAuthStatus::KeyPresent,
-         "user config API keys should make the provider readable before validation");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain provider bridge"),
-         "openai plugin should drive the built-in chat command");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "openai plugin chat should complete");
-  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(messages.size() == 2 && messages.back().content == "openai reply",
-         "openai plugin should route chat requests through the host runtime");
-
-  WorkspaceShellTestAccess::RequestProviderAuthCheck(shell, "openai.chat");
-  Expect(WaitForProviderAuthStatus(shell, "openai.chat", ProviderAuthStatus::KeyValid),
-         "openai plugin auth checks should validate keys through the host runtime");
-  WorkspaceShellTestAccess::RequestProviderModelList(shell, "openai.chat");
-  Expect(WaitForProviderModels(shell, "openai.chat", "gpt-4.1-mini"),
-         "openai plugin should enumerate models through the host runtime");
-  const auto capabilities = WorkspaceShellTestAccess::GetProviderCapabilities(shell, "openai.chat");
-  Expect(capabilities.chat && capabilities.system_prompt && capabilities.model_enumeration,
-         "openai plugin bridge should negotiate provider capabilities");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
-         "openai plugin should support reload without losing host-owned chat state");
-  Expect(WorkspaceShellTestAccess::ActiveConversationMessages(shell).size() == 2,
-         "plugin reload should preserve the conversation transcript");
-  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "openai.chat") !=
-             ProviderAuthStatus::KeyMissing,
-         "plugin reload should preserve the configured API key");
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain reload"),
-         "openai plugin should still answer after reload");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "openai plugin chat after reload should complete");
-
-  server.process.Shutdown();
-#endif  // _ignored_retired_openai_bridge_body
-}
 
 void TestWorkspaceShellRepoOpenAiPluginApprovesNativeToolCalls() {
   Expect(true, "repo OpenAI provider tool-call approval path is retired");
 }
 
-[[maybe_unused]] static void _ignored_retired_openai_tools_body() {
-#if 0
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  WriteFile(project_root / "README.md", "provider bridge tool call\n");
-  CopyRepoPlugin(plugins_root, "openai");
-  WritePluginInit(
-      plugins_root, "phase5-openai-tool",
-      R"lua(local ide = require("microide")
-return ide.plugin({
-  id = "phase5-openai-tool",
-  setup = function(ctx)
-    ctx.mcp_tools.add({
-      id = "echo",
-      name = "Echo",
-      description = "Echo tool",
-      input_schema = "{\"type\":\"object\"}",
-      run = function(input_json)
-        return { output = "{\"pong\":1}" }
-      end
-    })
-  end
-})
-)lua");
-
-  FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
-  WriteStructuredUserConfig(
-      config_home,
-      microide::workspace::PersistedUserConfigState{
-          .settings =
-              {
-                  {"openai.base_url", server.base_url},
-                  {"openai.model", "gpt-4.1-mini"},
-              },
-          .disabled_keybinding_ids = {},
-      });
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(shell.Initialize({}),
-         "openai tool-call test should restore user config before opening a project");
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "openai tool-call fixture should open the project");
-
-  std::string error_message;
-  Expect(WorkspaceShellTestAccess::SetProviderApiKey(shell, "openai.chat", "secret-openai",
-                                                     &error_message),
-         ("openai tool-call test should store API keys in the host secret store: " + error_message)
-             .c_str());
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat use a tool"),
-         "openai tool-call test should drive the built-in chat command");
-
-  const Uint64 prompt_deadline = SDL_GetTicks() + 2000;
-  while (!WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
-         SDL_GetTicks() <= prompt_deadline) {
-    WorkspaceShellTestAccess::ConsumeAiRuntimeUpdates(shell);
-    WorkspaceShellTestAccess::HandleScheduledWake(shell);
-    SDL_Delay(5);
-  }
-  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
-         "native OpenAI tool calls should surface the host approval prompt");
-  WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 0);
-
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "native OpenAI tool-call request should complete after approval");
-  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(messages.size() == 2 && messages.back().content == "openai tool reply" &&
-             messages.back().tool_events.size() == 1 &&
-             messages.back().tool_events.front().status == "Completed",
-         "native OpenAI tool calls should round-trip through the host approval and transcript path");
-
-  server.process.Shutdown();
-#endif  // _ignored_retired_openai_tools_body
-}
 
 void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
   Expect(true, "repo Anthropic provider plugin / native bridge is retired");
 }
 
-[[maybe_unused]] static void _ignored_retired_anthropic_body() {
-#if 0
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path source = project_root / "README.md";
-  WriteFile(source, "provider bridge\n");
-  CopyRepoPlugin(plugins_root, "anthropic");
-
-  FakeProviderServer server = StartFakeProviderServer(project_root, "anthropic");
-  WriteStructuredUserConfig(
-      config_home,
-      microide::workspace::PersistedUserConfigState{
-          .settings =
-              {
-                  {"anthropic.api_key", "secret-anthropic"},
-                  {"anthropic.base_url", server.base_url},
-                  {"anthropic.model", "claude-sonnet-4-6"},
-              },
-          .disabled_keybinding_ids = {},
-      });
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(shell.Initialize({}),
-         "anthropic plugin test should restore user config before opening a project");
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "anthropic plugin fixture should open the project");
-  Expect(WorkspaceShellTestAccess::AiProviders(shell).size() == 1 &&
-             WorkspaceShellTestAccess::AiProviders(shell).front().id == "anthropic.chat",
-         "anthropic plugin should register one host-owned AI provider");
-
-  Expect(WorkspaceShellTestAccess::GetProviderAuthStatus(shell, "anthropic.chat") ==
-             ProviderAuthStatus::KeyPresent,
-         "user config API keys should make anthropic readable before validation");
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain anthropic bridge"),
-         "anthropic plugin should drive the built-in chat command");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "anthropic plugin chat should complete");
-  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(messages.size() == 2 && messages.back().content == "anthropic reply",
-         "anthropic plugin should route chat requests through the host runtime");
-
-  WorkspaceShellTestAccess::RequestProviderAuthCheck(shell, "anthropic.chat");
-  Expect(WaitForProviderAuthStatus(shell, "anthropic.chat", ProviderAuthStatus::KeyValid),
-         "anthropic plugin auth checks should validate keys through the host runtime");
-  WorkspaceShellTestAccess::RequestProviderModelList(shell, "anthropic.chat");
-  Expect(WaitForProviderModels(shell, "anthropic.chat", "claude-sonnet-4-6"),
-         "anthropic plugin should enumerate models through the host runtime");
-
-  server.process.Shutdown();
-#endif  // _ignored_retired_anthropic_body
-}
 
 void TestWorkspaceShellRepoDeepSeekPluginUsesOpenAiCompatibilityRuntime() {
   Expect(true, "repo DeepSeek provider plugin / OpenAI-compat runtime is retired");
 }
 
-[[maybe_unused]] static void _ignored_retired_deepseek_body() {
-#if 0
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  WriteFile(project_root / "README.md", "deepseek runtime\n");
-  CopyRepoPlugin(plugins_root, "deepseek");
-
-  // Use the OpenAI fixture endpoint because DeepSeek follows the OpenAI-compatible path.
-  FakeProviderServer server = StartFakeProviderServer(project_root, "openai");
-
-  WriteStructuredUserConfig(
-      config_home,
-      microide::workspace::PersistedUserConfigState{
-          .settings =
-              {
-                  {"deepseek.api_key", "secret-openai"},
-                  {"deepseek.base_url", server.base_url},
-                  {"deepseek.model", "deepseek-chat"},
-              },
-          .disabled_keybinding_ids = {},
-      });
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
-
-  WorkspaceShell shell;
-  Expect(shell.Initialize({}),
-         "deepseek plugin test should restore user config before opening a project");
-  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
-         "deepseek plugin fixture should open the project");
-  Expect(WorkspaceShellTestAccess::AiProviders(shell).size() == 1 &&
-             WorkspaceShellTestAccess::AiProviders(shell).front().id == "deepseek.chat",
-         "deepseek plugin should register one host-owned AI provider");
-
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "chat explain deepseek runtime"),
-         "deepseek plugin should drive the built-in chat command");
-  Expect(WorkspaceShellTestAccess::WaitForAiRuntimeIdle(shell),
-         "deepseek plugin chat should complete");
-  const auto messages = WorkspaceShellTestAccess::ActiveConversationMessages(shell);
-  Expect(messages.size() == 2 && messages.back().content == "openai reply",
-         "deepseek plugin should route chat requests through the OpenAI-compatible runtime");
-
-  WorkspaceShellTestAccess::RequestProviderModelList(shell, "deepseek.chat");
-  Expect(WaitForProviderModels(shell, "deepseek.chat", "gpt-4.1-mini"),
-         "deepseek plugin should enumerate models through the OpenAI-compatible runtime");
-
-  server.process.Shutdown();
-#endif  // _ignored_retired_deepseek_body
-}
 
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
-  Expect(true, "Problems sidebar is retired with AI/chat cleanup");
-}
-
-[[maybe_unused]] static void _ignored_retired_problems_open_body() {
-#if 0
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path readme = project_root / "README.md";
@@ -2389,8 +1843,7 @@ void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
   Expect(WorkspaceShellTestAccess::RefreshProblemsSidebar(shell),
          "refreshing the problems sidebar should snapshot published diagnostics");
 
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show problems"),
-         "sidebar-show should activate the built-in problems sidebar");
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
          "showing problems should activate the problems sidebar mode");
   Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).size() == 1,
@@ -2411,15 +1864,9 @@ void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
          "opening a problem should move the editor cursor to the diagnostic location");
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
          "opening a problem should return focus to the editor");
-#endif  // _ignored_retired_problems_open_body
 }
 
 void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
-  Expect(true, "Problems sidebar persistence is retired with AI/chat cleanup");
-}
-
-[[maybe_unused]] static void _ignored_retired_problems_persist_body() {
-#if 0
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_a = temp_dir.path() / "project-a";
   const std::filesystem::path project_b = temp_dir.path() / "project-b";
@@ -2480,7 +1927,6 @@ void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
   Expect(WorkspaceShellTestAccess::ProblemsSidebarEntries(shell).front().detail_label ==
              "README.md:1:1 | lint-a",
          "restored problems should preserve their location metadata");
-#endif  // _ignored_retired_problems_persist_body
 }
 
 void TestWorkspaceShellProjectSwitchCancelsPluginWakePolling() {

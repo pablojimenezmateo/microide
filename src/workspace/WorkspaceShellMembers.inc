@@ -21,7 +21,6 @@
   using OverlayMode = workspace::OverlayMode;
   using CompletionSessionState = workspace::CompletionSessionState;
   using CodeActionSessionState = workspace::CodeActionSessionState;
-  using InlineCompletionState = workspace::InlineCompletionState;
   using PanelContentKind = workspace::PanelContentKind;
 
   enum class WindowAction {
@@ -129,6 +128,7 @@
 
 #ifdef MICROIDE_TESTING
   struct TestAccess;
+  friend struct TestAccess;
 #endif
 
  private:
@@ -154,8 +154,6 @@
   using OverlayState = workspace::OverlayState;
   using PanelState = workspace::PanelState;
   using OutputPanelState = workspace::OutputPanelState;
-  using ChatPanelState = workspace::ChatPanelState;
-  using ChatPaneFocusRegion = workspace::ChatPaneFocusRegion;
   using ProjectWorkspaceState = workspace::ProjectWorkspaceState;
   using ProjectCatalogState = workspace::ProjectCatalogState;
   using WorkspaceContext = workspace::WorkspaceContext;
@@ -280,12 +278,6 @@
   };
 
   struct VisibleStripTab {
-    enum class ChatStatus {
-      None,
-      Running,
-      Failed,
-    };
-
     std::size_t index = 0;
     SDL_FRect rect{};
     SDL_FRect close_rect{};
@@ -295,7 +287,6 @@
     std::string badge_text;
     SDL_Color badge_color{};
     bool show_badge = false;
-    ChatStatus chat_status = ChatStatus::None;
   };
 
   // Click-to-scroll overflow chevrons painted at each end of a tab strip.
@@ -350,132 +341,7 @@
     std::string tooltip_label;
   };
 
-  struct ChatSidebarLayout {
-    SDL_FRect rail_rect{};
-    SDL_FRect rail_list_rect{};
-    SDL_FRect rail_new_rect{};
-    SDL_FRect content_rect{};
-    SDL_FRect header_rect{};
-    SDL_FRect header_title_rect{};
-    SDL_FRect header_primary_action_rect{};
-    SDL_FRect header_secondary_action_rect{};
-    SDL_FRect provider_rect{};
-    SDL_FRect model_rect{};
-    SDL_FRect tool_mode_rect{};
-    SDL_FRect auth_rect{};
-    SDL_FRect transcript_rect{};
-    SDL_FRect composer_rect{};
-  };
-
-  struct ChatHeaderAction {
-    enum class Kind {
-      None,
-      NewConversation,
-      DeleteConversation,
-      Cancel,
-      Retry,
-      Provider,
-      Model,
-      ToolMode,
-    };
-
-    Kind kind = Kind::None;
-    SDL_FRect rect{};
-    std::string label;
-    bool enabled = false;
-  };
-
  private:
-  struct ChatLinkTarget {
-    enum class Kind {
-      LocalFile,
-      RemoteUrl,
-    };
-
-    Kind kind = Kind::RemoteUrl;
-    std::filesystem::path path;
-    std::string url;
-    std::size_t line = 0;
-    std::size_t column = 0;
-  };
-
-  enum class ChatTextStyle {
-    Normal,
-    Muted,
-    Emphasis,
-    Strong,
-    InlineCode,
-    Link,
-  };
-
-  struct ChatInlineFragment {
-    std::string text;
-    ChatTextStyle style = ChatTextStyle::Normal;
-    std::optional<ChatLinkTarget> link;
-  };
-
-  struct ChatMarkdownBlock {
-    enum class Kind {
-      Paragraph,
-      Heading,
-      Quote,
-      ListItem,
-      CodeBlock,
-    };
-
-    Kind kind = Kind::Paragraph;
-    std::size_t level = 0;
-    bool ordered_list = false;
-    std::vector<ChatInlineFragment> fragments;
-    std::vector<std::string> code_lines;
-  };
-
-  struct ChatMarkdownDocument {
-    std::uint64_t content_hash = 0;
-    std::vector<ChatMarkdownBlock> blocks;
-  };
-
-  struct ChatTranscriptSegment {
-    std::string text;
-    ChatTextStyle style = ChatTextStyle::Normal;
-    std::optional<ChatLinkTarget> link;
-  };
-
-  struct ChatTranscriptRow {
-    enum class Kind {
-      Meta,
-      Body,
-      Code,
-      Tool,
-      Error,
-      Placeholder,
-      Spacer,
-    };
-
-    enum class Tone {
-      Normal,
-      Heading,
-      Quote,
-      List,
-    };
-
-    Kind kind = Kind::Body;
-    Tone tone = Tone::Normal;
-    MessageRole role = MessageRole::Assistant;
-    std::string prefix;
-    std::vector<ChatTranscriptSegment> segments;
-  };
-
-  struct ChatTranscriptHitRegion {
-    SDL_FRect rect{};
-    ChatLinkTarget target;
-  };
-
-  struct ChatTranscriptLayout {
-    std::vector<ChatTranscriptRow> rows;
-    std::vector<ChatTranscriptHitRegion> hit_regions;
-  };
-
   struct EditorSplitSlot {
     TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
     std::size_t index = 0;
@@ -920,9 +786,6 @@
                                                              std::size_t line_count) const;
   ScrollableListLayout ComputeGitSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                    std::size_t line_count) const;
-  ScrollableListLayout ComputeChatSidebarListLayout(const SDL_FRect& sidebar_rect,
-                                                    std::size_t line_count) const;
-  ChatSidebarLayout ComputeChatSidebarLayout(const SDL_FRect& sidebar_rect) const;
   ScrollableListLayout ComputeTreeSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                     std::size_t line_count) const;
   ScrollableListLayout ComputeProblemsSidebarListLayout(const SDL_FRect& sidebar_rect,
@@ -931,36 +794,6 @@
                                                      std::size_t line_count) const;
   ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                       std::size_t line_count) const;
-  SDL_FRect ChatSidebarComposerRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ChatSidebarStatusRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ChatSidebarTranscriptRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ChatSidebarConversationRailRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ChatSidebarConversationNewRect(const SDL_FRect& sidebar_rect) const;
-  SDL_FRect ChatSidebarConversationRowRect(const SDL_FRect& sidebar_rect,
-                                           std::size_t index) const;
-  std::vector<ChatHeaderAction> BuildChatHeaderActions(const SDL_FRect& sidebar_rect) const;
-  std::size_t ChatTranscriptLineCount(const SDL_FRect& sidebar_rect) const;
-  bool HasChatTranscriptLinkAtPoint(const SDL_FRect& sidebar_rect, float x, float y) const;
-  bool ActivateChatTranscriptLinkAtPoint(const SDL_FRect& sidebar_rect, float x, float y);
-  std::vector<std::string> ChatTranscriptDebugLines(const SDL_FRect& sidebar_rect) const;
-  std::optional<SDL_FRect> FindChatTranscriptLinkRect(const SDL_FRect& sidebar_rect,
-                                                      std::string_view match) const;
-  Conversation* ActiveConversation();
-  const Conversation* ActiveConversation() const;
-  bool ActivateChatConversation(std::string_view conversation_id);
-  void SyncActiveConversationDraft();
-  void LoadChatComposerDraft();
-  bool CreateChatConversation();
-  bool DeleteActiveChatConversation();
-  bool CancelActiveChatRequest();
-  bool RetryActiveChatRequest(std::string* error_message = nullptr);
-  std::vector<const AiProviderSpec*> ChatProviders() const;
-  std::vector<std::string> ChatModelsForConversation(const Conversation& conversation) const;
-  void CycleActiveConversationProvider(int delta = 1);
-  void CycleActiveConversationModel(int delta = 1);
-  void CycleActiveConversationToolMode(int delta = 1);
-  std::string ChatComposerText() const;
-  std::string ChatAuthBannerText(const Conversation* conversation) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
                                                                  const GitSidebarEntry& entry) const;
@@ -1138,33 +971,8 @@
   bool RunAllDiscoveredTests(std::string* error_message = nullptr);
   const std::vector<WorkspaceOutputChannels::ChannelInfo>& OutputChannels() const;
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
-  void ShowChatPanel();
-  bool LoginAuthProvider(std::string_view provider_id,
-                         const std::vector<std::string>& scopes,
-                         std::string* error_message = nullptr);
-  bool RefreshAuthSession(std::string_view provider_id,
-                          std::string_view session_id,
-                          std::string* error_message = nullptr);
-  bool LogoutAuthSession(std::string_view provider_id,
-                         std::string_view session_id,
-                         std::string* error_message = nullptr);
-  bool StartChatRequest(std::string message, std::string* error_message = nullptr);
-  void ConsumeAiRuntimeUpdates();
-  void ExpirePendingToolApprovals();
-  bool ResolveChatToolApprovalPrompt(bool allow, bool remember_for_session);
-  void ShowPendingToolApprovalPrompt(ProjectWorkspaceState& project);
-  bool SetProviderApiKey(std::string_view provider_id,
-                         std::string_view api_key,
-                         std::string* error_message = nullptr);
-  bool ClearProviderApiKey(std::string_view provider_id, std::string* error_message = nullptr);
-  ProviderAuthStatus GetProviderAuthStatus(std::string_view provider_id) const;
-  std::string ProviderApiKeyStorageKey(const AiProviderSpec& provider) const;
-  std::optional<std::string> ResolveProviderApiKey(const AiProviderSpec& provider) const;
   void ConsumeLspCallbacks();
   bool ConsumePluginAsyncProcessCallbacks();
-  bool RequestInlineCompletion(std::string* error_message = nullptr);
-  bool AcceptInlineCompletion();
-  void DismissInlineCompletion();
   void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
@@ -1458,7 +1266,6 @@
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
   void UpdateMouseCursor(float x, float y);
-  ChatTranscriptLayout BuildChatTranscriptLayout(const SDL_FRect& sidebar_rect) const;
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
@@ -1512,8 +1319,6 @@
   DapManager dap_manager_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;
-  AuthProviderRegistry auth_provider_registry_;
-  SecretStorage secret_storage_;
   VirtualDocumentRegistry virtual_document_registry_;
   ReviewCommentsRegistry review_comments_registry_;
   PersistenceService persistence_service_;
