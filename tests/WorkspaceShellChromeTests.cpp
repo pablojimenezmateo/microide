@@ -1556,9 +1556,78 @@ void TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize() {
 }
 #endif
 
+void TestViewMenuToggleReflectsBackingSetting() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "menu check\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.enabled", "true"),
+         "menu-checked fixture should set editor.fold.enabled to true");
+  Expect(WorkspaceShellTestAccess::MenuItemCheckedByLabel(shell, WorkspaceShell::MenuId::View,
+                                                         "Code Folding") == true,
+         "Code Folding entry should report checked=true when its setting is on");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.enabled", "false"),
+         "menu-checked fixture should flip editor.fold.enabled to false");
+  Expect(WorkspaceShellTestAccess::MenuItemCheckedByLabel(shell, WorkspaceShell::MenuId::View,
+                                                         "Code Folding") == false,
+         "Code Folding entry should report checked=false when its setting is off");
+}
+
+void TestEditorTabStripOverflowControlsScrollAndCount() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "tab overflow\n");
+  // Open enough tabs to overflow a 1280-wide strip (each tab clamps at 132px
+  // minimum, so 16 tabs alone won't fit when the strip reserves margins +
+  // chevron space).
+  std::vector<std::filesystem::path> sources;
+  for (int i = 0; i < 16; ++i) {
+    std::filesystem::path p =
+        root / ("file_" + std::to_string(i) + "_long_name_for_overflow_test.txt");
+    WriteFile(p, "alpha\n");
+    sources.push_back(p);
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (const auto& p : sources) {
+    WorkspaceShellTestAccess::OpenFile(shell, p);
+  }
+
+  // Force the active tab to the first one so all overflow is on the right.
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  const auto overflow_at_left =
+      WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
+  Expect(overflow_at_left.hidden_left == 0,
+         "no tabs should be hidden left when the first tab is active");
+  Expect(overflow_at_left.hidden_right > 0,
+         "tabs should be hidden right when more open than fit");
+
+  // Scroll right by one and verify hidden counts shift.
+  const std::size_t hidden_right_before = overflow_at_left.hidden_right;
+  Expect(WorkspaceShellTestAccess::ScrollEditorTabStrip(shell, +1),
+         "scrolling the editor tab strip right should report a change");
+  const auto overflow_after_scroll =
+      WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
+  Expect(overflow_after_scroll.hidden_left == 1,
+         "after one right-scroll one tab should be hidden left");
+  Expect(overflow_after_scroll.hidden_right + 1 == hidden_right_before,
+         "after one right-scroll the right-hidden count should decrement by one");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ViewMenuToggleReflectsBackingSetting",
+          TestViewMenuToggleReflectsBackingSetting);
+  AddTest(tests, "WorkspaceShell/EditorTabStripOverflowControlsScrollAndCount",
+          TestEditorTabStripOverflowControlsScrollAndCount);
   AddTest(tests, "WorkspaceShell/MenuBarOmitsRemovedMenus",
           TestWorkspaceShellMenuBarOmitsRemovedMenus);
   AddTest(tests, "WorkspaceShell/MenuBarShowsChevronWhenTruncated",

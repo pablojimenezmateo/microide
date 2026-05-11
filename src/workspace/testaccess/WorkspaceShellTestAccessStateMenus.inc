@@ -153,6 +153,42 @@
     }
     return std::nullopt;
   }
+  static std::optional<bool> PopupMenuItemChecked(WorkspaceShell& shell,
+                                                  WorkspaceShell::MenuId id,
+                                                  std::string_view label) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto popup_rect = shell.ComputePopupMenuRect(layout.menu_bar, id);
+    if (!popup_rect.has_value()) {
+      return std::nullopt;
+    }
+    const auto items = shell.MenuItems(id);
+    for (const auto& visible_item : shell.ComputeVisiblePopupMenuItems(id, *popup_rect)) {
+      if (visible_item.separator) {
+        continue;
+      }
+      if (shell.MenuItemLabel(items[visible_item.index]) == label) {
+        return visible_item.checked;
+      }
+    }
+    return std::nullopt;
+  }
+  // Returns true if any menu item with the given label resolves to a
+  // checked state on the menu's item table (does NOT require the menu to
+  // be open — useful for unit-style checks against IsMenuItemChecked).
+  static std::optional<bool> MenuItemCheckedByLabel(const WorkspaceShell& shell,
+                                                    WorkspaceShell::MenuId id,
+                                                    std::string_view label) {
+    const auto items = shell.MenuItems(id);
+    for (const auto& item : items) {
+      if (item.separator) {
+        continue;
+      }
+      if (shell.MenuItemLabel(item) == label) {
+        return shell.IsMenuItemChecked(item);
+      }
+    }
+    return std::nullopt;
+  }
   static std::vector<std::string> SidebarModeMenuLabels(WorkspaceShell& shell) {
     return VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::SidebarMode);
   }

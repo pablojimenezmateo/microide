@@ -154,6 +154,41 @@ void TestShapingMoveLineUpAtTopIsNoop() {
          "MoveLineUp at top should be a no-op and return false");
 }
 
+void TestShapingMoveLineDownMovesCursor() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/sample.txt");
+  viewport.MoveCursorTo(0, 3);
+  Expect(microide::editor::MoveLineDown(viewport),
+         "MoveLineDown should succeed");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 3,
+         "cursor should follow the moved line down one row");
+}
+
+void TestShapingMoveLineUpMovesCursor() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/sample.txt");
+  viewport.MoveCursorTo(2, 4);
+  Expect(microide::editor::MoveLineUp(viewport),
+         "MoveLineUp should succeed");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 4,
+         "cursor should follow the moved line up one row");
+}
+
+void TestShapingMoveLineUpKeepsSecondaryCaretAndSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("zero\none\ntwo\nthree\n", "/tmp/sample.txt");
+  viewport.MoveCursorTo(2, 2);
+  viewport.AddSecondaryCaret(3, 1);
+  Expect(microide::editor::MoveLineUp(viewport),
+         "MoveLineUp with secondary caret should succeed");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "primary cursor should follow the block up by one row");
+  const auto secondaries = viewport.secondary_carets();
+  Expect(secondaries.size() == 1 && secondaries.front().line == 2 &&
+             secondaries.front().column == 1,
+         "secondary caret on a moved line should also shift up by one row");
+}
+
 void TestShapingDuplicateLine() {
   TextViewport viewport;
   viewport.LoadContent("hello\n", "/tmp/sample.txt");
@@ -365,6 +400,22 @@ void TestLanguageContractMissingLanguage() {
   auto view = registry.ResolveView("totally-fictional");
   Expect(view.contract == nullptr,
          "unknown language id view should have null contract");
+}
+
+void TestLanguageContractAliasesCppFiletypeName() {
+  // RuntimeSyntaxRegistry::DetectFiletype returns "c++" for .cpp / .hpp /
+  // .cxx files; the language-contract defaults are keyed under "cpp".
+  // Without the alias, auto-close / surround / smart-indent silently
+  // no-op on every C++ buffer.
+  microide::workspace::WorkspaceLanguageContract registry;
+  const auto* cpp_contract = registry.Find("c++");
+  Expect(cpp_contract != nullptr,
+         "'c++' (the runtime-syntax detected name) should resolve to the C-style contract");
+  Expect(!cpp_contract->auto_close_pairs.empty(),
+         "aliased c++ contract should carry C-style auto_close_pairs");
+  const auto* canonical = registry.Find("cpp");
+  Expect(canonical != nullptr && canonical->language_id == cpp_contract->language_id,
+         "c++ should alias to the same contract instance as cpp");
 }
 
 void TestIndentGuidesEmitsRunsAtNestedDepths() {
@@ -893,6 +944,12 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineUpMultiCaretSingleUndoStep);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineUpAtTop",
           TestShapingMoveLineUpAtTopIsNoop);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMovesCursor",
+          TestShapingMoveLineDownMovesCursor);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineUpMovesCursor",
+          TestShapingMoveLineUpMovesCursor);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineUpKeepsSecondaryCaretAndSelection",
+          TestShapingMoveLineUpKeepsSecondaryCaretAndSelection);
   AddTest(tests, "EditorEssentials/Shaping/DuplicateLine",
           TestShapingDuplicateLine);
   AddTest(tests, "EditorEssentials/Shaping/IndentSelection",
@@ -921,6 +978,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestApplyDetectedIndentOnOpenSkippedWhenPathEmpty);
   AddTest(tests, "EditorEssentials/LanguageContract/Defaults",
           TestLanguageContractDefaults);
+  AddTest(tests, "EditorEssentials/LanguageContract/AliasesCppFiletypeName",
+          TestLanguageContractAliasesCppFiletypeName);
   AddTest(tests, "EditorEssentials/LanguageContract/Missing",
           TestLanguageContractMissingLanguage);
   AddTest(tests, "EditorEssentials/LanguageContract/AppliesUserOverrides",

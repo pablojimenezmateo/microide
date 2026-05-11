@@ -36,6 +36,24 @@
     }
     return {};
   }
+  static WorkspaceShell::TabStripOverflowControls EditorTabOverflowControls(
+      WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto visible = shell.ComputeVisibleTabs(layout.tab_strip);
+    return shell.ComputeTabOverflowControls(layout.tab_strip, visible);
+  }
+  static WorkspaceShell::TabStripOverflowControls ProjectTabOverflowControls(
+      WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto visible = shell.ComputeVisibleProjectTabs(layout.project_tab_strip);
+    return shell.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible);
+  }
+  static bool ScrollEditorTabStrip(WorkspaceShell& shell, int direction) {
+    return shell.ScrollEditorTabStrip(direction);
+  }
+  static bool ScrollProjectTabStrip(WorkspaceShell& shell, int direction) {
+    return shell.ScrollProjectTabStrip(direction);
+  }
   static std::string TabDisplayTitle(WorkspaceShell& shell, std::size_t index) {
     return shell.TabDisplayTitle(index);
   }

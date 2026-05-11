@@ -150,39 +150,52 @@ bool ToggleBlockComment(TextViewport& viewport,
 
 namespace {
 
-// Shifts the primary caret (and any selection anchor / secondary carets) by
-// `delta` lines when they fall inside [range_first, range_last]. Carets
-// outside the moved range stay put. Used by MoveLineUp / MoveLineDown so
-// the cursor follows the moved line instead of staying on the row index.
-void ShiftCaretsForLineMove(TextViewport& viewport,
-                            std::size_t range_first,
-                            std::size_t range_last,
-                            std::ptrdiff_t delta) {
+// Captures caret state before a line-move edit, then re-applies shifted
+// positions after the edit so the primary caret, selection, and secondary
+// carets all follow the moved lines (carets outside the moved range stay
+// put). Used by MoveLineUp / MoveLineDown — the underlying ReplaceLines
+// snaps the caret to (range_first, 0) inside its history-entry after
+// state, which loses the original column and any secondary carets.
+struct LineMoveCaretSnapshot {
+  std::size_t primary_line = 0;
+  std::size_t primary_column = 0;
+  std::optional<SelectionRange> selection;
+  std::vector<TextPosition> secondaries;
+};
+
+LineMoveCaretSnapshot SnapshotCaretsForLineMove(const TextViewport& viewport) {
+  return LineMoveCaretSnapshot{
+      .primary_line = viewport.cursor_line(),
+      .primary_column = viewport.cursor_column(),
+      .selection = viewport.selection_range(),
+      .secondaries = viewport.secondary_carets(),
+  };
+}
+
+void RestoreCaretsAfterLineMove(TextViewport& viewport,
+                                const LineMoveCaretSnapshot& snapshot,
+                                std::size_t range_first,
+                                std::size_t range_last,
+                                std::ptrdiff_t delta) {
   const auto shift = [&](std::size_t line) -> std::size_t {
     if (line < range_first || line > range_last) return line;
     const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + delta;
     return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
   };
 
-  const std::vector<TextPosition> previous_secondaries = viewport.secondary_carets();
-  const std::optional<SelectionRange> previous_selection = viewport.selection_range();
-  const std::size_t primary_line = viewport.cursor_line();
-  const std::size_t primary_column = viewport.cursor_column();
-
-  if (previous_selection.has_value() &&
-      previous_selection->start.line >= range_first &&
-      previous_selection->end.line <= range_last) {
-    viewport.ClearSecondaryCarets();
-    viewport.MoveCursorTo(shift(previous_selection->start.line),
-                          previous_selection->start.column);
-    viewport.MoveCursorTo(shift(previous_selection->end.line),
-                          previous_selection->end.column, /*extend_selection=*/true);
+  viewport.ClearSecondaryCarets();
+  if (snapshot.selection.has_value() &&
+      snapshot.selection->start.line >= range_first &&
+      snapshot.selection->end.line <= range_last) {
+    viewport.MoveCursorTo(shift(snapshot.selection->start.line),
+                          snapshot.selection->start.column);
+    viewport.MoveCursorTo(shift(snapshot.selection->end.line),
+                          snapshot.selection->end.column, /*extend_selection=*/true);
   } else {
-    viewport.ClearSecondaryCarets();
-    viewport.MoveCursorTo(shift(primary_line), primary_column);
+    viewport.MoveCursorTo(shift(snapshot.primary_line), snapshot.primary_column);
   }
 
-  for (const TextPosition& secondary : previous_secondaries) {
+  for (const TextPosition& secondary : snapshot.secondaries) {
     viewport.AddSecondaryCaret(shift(secondary.line), secondary.column);
   }
 }
@@ -194,6 +207,7 @@ bool MoveLineUp(TextViewport& viewport) {
   if (range.first == 0) return false;
   const auto& lines = viewport.lines();
   if (range.last >= lines.size()) return false;
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
   std::vector<std::string> updated;
   updated.reserve(range.last - range.first + 2);
   for (std::size_t i = range.first; i <= range.last; ++i) updated.push_back(lines[i]);
@@ -202,7 +216,7 @@ bool MoveLineUp(TextViewport& viewport) {
                              /*record_undo=*/true)) {
     return false;
   }
-  ShiftCaretsForLineMove(viewport, range.first, range.last, -1);
+  RestoreCaretsAfterLineMove(viewport, snapshot, range.first, range.last, -1);
   return true;
 }
 
@@ -210,6 +224,7 @@ bool MoveLineDown(TextViewport& viewport) {
   LineRange range = ResolveLineRange(viewport);
   const auto& lines = viewport.lines();
   if (range.last + 1 >= lines.size()) return false;
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
   std::vector<std::string> updated;
   updated.reserve(range.last - range.first + 2);
   updated.push_back(lines[range.last + 1]);
@@ -217,7 +232,7 @@ bool MoveLineDown(TextViewport& viewport) {
   if (!viewport.ReplaceLines(range.first, range.last + 2, updated, /*record_undo=*/true)) {
     return false;
   }
-  ShiftCaretsForLineMove(viewport, range.first, range.last, +1);
+  RestoreCaretsAfterLineMove(viewport, snapshot, range.first, range.last, +1);
   return true;
 }
 
