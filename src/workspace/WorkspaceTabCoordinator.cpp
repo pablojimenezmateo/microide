@@ -276,10 +276,18 @@ void TabCoordinator::Activate(std::size_t index) {
 
   state_.active_tab_index = index;
   auto& tab = state_.open_tabs[index];
-  if (tab.kind == TabEntry::Kind::Editor) {
+  // Editor loading is best-effort: if the file disappeared while the IDE was
+  // closed, we still want the tab strip + project tree to reflect this tab as
+  // the active one (otherwise the activation looks like a no-op to the user).
+  // The lambda returns false on failure but doesn't skip the post-activation
+  // sync below.
+  const auto attempt_editor_load = [&]() -> bool {
+    if (tab.kind != TabEntry::Kind::Editor) {
+      return true;
+    }
     if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
       if (!EnsureEditorTabLoaded(tab)) {
-        return;
+        return false;
       }
       operations_.normalize_editor_split_tree(*tab.editor_state);
       editor::TextViewport* active_view =
@@ -292,11 +300,13 @@ void TabCoordinator::Activate(std::size_t index) {
         state_.welcome_surface.viewport = *active_view;
         operations_.apply_editor_preferences(state_.welcome_surface.viewport);
       }
-    } else if (tab.deferred_handle.has_value()) {
+      return true;
+    }
+    if (tab.deferred_handle.has_value()) {
       editor::TextViewport loaded_view;
       const std::filesystem::path deferred_path = tab.deferred_handle->path.lexically_normal();
       if (deferred_path.empty() || !loaded_view.OpenFile(deferred_path)) {
-        return;
+        return false;
       }
       operations_.apply_editor_preferences(loaded_view);
       operations_.apply_detected_indent_on_open(loaded_view);
@@ -312,17 +322,19 @@ void TabCoordinator::Activate(std::size_t index) {
       state_.welcome_surface.viewport = loaded_view;
       tab.editor_state = operations_.make_editor_tab_state(loaded_view);
       tab.deferred_handle.reset();
-    } else {
-      editor::TextViewport loaded_view;
-      if (!loaded_view.OpenFile(tab.path)) {
-        return;
-      }
-      operations_.apply_editor_preferences(loaded_view);
-      operations_.apply_detected_indent_on_open(loaded_view);
-      state_.welcome_surface.viewport = loaded_view;
-      tab.editor_state = operations_.make_editor_tab_state(loaded_view);
+      return true;
     }
-  }
+    editor::TextViewport loaded_view;
+    if (!loaded_view.OpenFile(tab.path)) {
+      return false;
+    }
+    operations_.apply_editor_preferences(loaded_view);
+    operations_.apply_detected_indent_on_open(loaded_view);
+    state_.welcome_surface.viewport = loaded_view;
+    tab.editor_state = operations_.make_editor_tab_state(loaded_view);
+    return true;
+  };
+  (void)attempt_editor_load();
   SyncActiveEditorTabMetadata();
   if (tab.kind == TabEntry::Kind::Compare) {
     operations_.reveal_active_compare_selection();

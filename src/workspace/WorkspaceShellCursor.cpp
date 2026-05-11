@@ -699,6 +699,34 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       blame_line != nullptr) {
     return blame_line->interactive ? CursorKind::Pointer : CursorKind::Default;
   }
+  // Gutter region: line-number column shows the default arrow; the fold
+  // marker hit zone (rightmost ~18px of the gutter, matching the
+  // EditorMouseCoordinator hit-test) shows the pointer when over a fold
+  // opener so it reads as a clickable affordance. Use the active editor
+  // viewport (not the welcome_surface snapshot used above) because only the
+  // active viewport has the FoldingModel attached, so its visual-row layout
+  // matches what's painted.
+  if (x < metrics.text_x) {
+    const float gutter_right = pane_it->rect.x + metrics.gutter_width;
+    const float fold_hit_left = gutter_right - 18.0f;
+    if (x >= fold_hit_left && x < gutter_right && y >= metrics.first_line_y) {
+      const editor::TextViewport* fold_viewport =
+          pane_it->active ? ActiveEditorViewport() : viewport;
+      if (fold_viewport != nullptr) {
+        const std::size_t visual_row =
+            fold_viewport->scroll_line() +
+            static_cast<std::size_t>((y - metrics.first_line_y) / metrics.line_height);
+        if (visual_row < fold_viewport->visual_line_count()) {
+          const std::size_t opener_line = fold_viewport->VisualRowLineIndex(visual_row);
+          if (editor_tab != nullptr &&
+              editor_tab->folding_model.FoldStartingAt(opener_line).has_value()) {
+            return CursorKind::Pointer;
+          }
+        }
+      }
+    }
+    return CursorKind::Default;
+  }
   return CursorKind::Text;
 }
 

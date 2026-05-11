@@ -70,6 +70,17 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   if (window_presentation_.logical_width != previous_width ||
       window_presentation_.logical_height != previous_height) {
     MarkLayoutDirty();
+    // Tab-strip scroll uses the current window width to decide how many tabs
+    // fit; the fallback width (1440) is wider than typical windows, so the
+    // initial post-session-restore call may leave the active tab/project
+    // scrolled off-screen until the user manually scrolls. Re-run both
+    // visibility passes on every size change so the active chips stay
+    // anchored in view.
+    if (window_presentation_.logical_width != previous_width) {
+      EnsureActiveProjectVisible();
+      EnsureActiveTabVisible();
+      tab_strip_geometry_cache_.valid = false;
+    }
   }
 }
 
