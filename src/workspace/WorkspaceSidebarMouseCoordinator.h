@@ -63,7 +63,6 @@ class SidebarMouseCoordinator {
         compute_plugin_sidebar_list_layout;
     std::function<void()> reveal_selected_plugin_sidebar_line;
     std::function<bool()> open_selected_plugin_sidebar_item;
-    std::function<void(const SDL_Event&, const WorkspaceLayout&)> handle_outline_sidebar_pointer_down;
     std::function<bool()> can_collapse_tree;
     std::function<SDL_FRect(const SDL_FRect&)> tree_sidebar_collapse_button_rect;
     std::function<void()> collapse_all_tree;
@@ -100,9 +99,6 @@ class SidebarMouseCoordinator {
   bool HandlePluginButtonDown(const SDL_Event& event,
                               const WorkspaceLayout& layout,
                               float local_y);
-  bool HandleOutlineButtonDown(const SDL_Event& event,
-                               const WorkspaceLayout& layout,
-                               float local_y);
   bool HandleTreeButtonDown(const SDL_Event& event,
                             const WorkspaceLayout& layout,
                             float local_y);

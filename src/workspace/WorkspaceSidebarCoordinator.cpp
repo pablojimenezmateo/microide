@@ -159,10 +159,6 @@ void SidebarCoordinator::ShowTests() {
   RevealSelectedTestsLine();
 }
 
-void SidebarCoordinator::ShowOutline() {
-  ShowMode(SidebarMode::Outline, false);
-}
-
 bool SidebarCoordinator::ShowPlugin(std::string_view id, bool temporary) {
   const auto* provider = plugin_runtime_.Host().FindSidebarProvider(id);
   if (provider == nullptr) {
@@ -387,10 +383,6 @@ void WorkspaceShell::ShowGitSidebar() {
 
 void WorkspaceShell::ShowTestsSidebar() {
   MakeSidebarService().ShowTests();
-}
-
-void WorkspaceShell::ShowOutlineSidebar() {
-  MakeSidebarService().ShowOutline();
 }
 
 bool WorkspaceShell::ShowPluginSidebar(std::string_view id, bool temporary) {

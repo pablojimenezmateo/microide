@@ -75,7 +75,6 @@ class SidebarCoordinator {
   void ShowProblems();
   void ShowGit();
   void ShowTests();
-  void ShowOutline();
   bool ShowPlugin(std::string_view id, bool temporary = false);
   void Close();
   void Toggle();

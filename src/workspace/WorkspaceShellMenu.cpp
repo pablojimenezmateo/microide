@@ -324,9 +324,6 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
   if ((effective_action == ActionId::SidebarShow || effective_action == ActionId::SidebarToggle) &&
       item.arg_count > 0) {
     if (FindBuiltinSidebarView(item.args[0]) != nullptr) {
-      if (item.args[0] == "outline") {
-        return EditorOutlineEnabled();
-      }
       return !context_.current_project_state.root.empty();
     }
     return FindSidebarView(item.args[0], plugin_runtime_.Host()).has_value();

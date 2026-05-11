@@ -86,8 +86,8 @@ const WorkspaceShell::MenuSpec* WorkspaceShell::FindMenuSpec(MenuId id) {
 std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId id) const {
   if (id == MenuId::SidebarMode) {
     const auto views =
-        OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies,
-                            EditorOutlineEnabled());
+        OrderedSidebarViews(plugin_runtime_.Host(),
+                            context_.current_project_state.sidebar_policies);
     sidebar_mode_menu_items_.clear();
     sidebar_mode_menu_entries_.clear();
     sidebar_mode_menu_items_.reserve(views.size());
@@ -295,8 +295,8 @@ std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) 
 std::vector<std::string> WorkspaceShell::OrderedSidebarViewIds() const {
   std::vector<std::string> ids;
   const auto views =
-      OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies,
-                          EditorOutlineEnabled());
+      OrderedSidebarViews(plugin_runtime_.Host(),
+                          context_.current_project_state.sidebar_policies);
   ids.reserve(views.size());
   for (const SidebarViewInfo& view : views) {
     ids.emplace_back(view.id);
@@ -307,8 +307,8 @@ std::vector<std::string> WorkspaceShell::OrderedSidebarViewIds() const {
 void WorkspaceShell::NormalizeSidebarViewSelection() {
   auto& sidebar = context_.current_project_state.sidebar;
   const auto visible_views =
-      OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies,
-                          EditorOutlineEnabled());
+      OrderedSidebarViews(plugin_runtime_.Host(),
+                          context_.current_project_state.sidebar_policies);
   const auto contains_visible_view = [&](std::string_view id) {
     return std::any_of(visible_views.begin(), visible_views.end(),
                        [id](const SidebarViewInfo& view) { return view.id == id; });

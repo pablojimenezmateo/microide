@@ -245,7 +245,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleEditorStickyScroll:
     case ActionId::ToggleEditorIndentGuides:
     case ActionId::ToggleEditorRenderWhitespace:
-    case ActionId::ToggleEditorOutline:
     case ActionId::ToggleEditorBracketMatchHighlight:
     case ActionId::ToggleEditorAutoClosePairs:
     case ActionId::ToggleEditorSurround:

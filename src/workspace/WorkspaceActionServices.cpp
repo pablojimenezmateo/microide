@@ -128,17 +128,6 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Tests:
       operations_.show_tests_sidebar();
       return true;
-    case SidebarMode::Outline: {
-      if (operations_.get_setting_value) {
-        const auto enabled = operations_.get_setting_value("editor.outline.enabled");
-        if (enabled.has_value() &&
-            (*enabled == "false" || *enabled == "0" || *enabled == "off")) {
-          return false;
-        }
-      }
-      operations_.show_outline_sidebar();
-      return true;
-    }
     case SidebarMode::Plugin:
       return operations_.show_plugin_sidebar(view.id, false);
     case SidebarMode::None:
@@ -157,7 +146,6 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Problems:
     case SidebarMode::Git:
     case SidebarMode::Tests:
-    case SidebarMode::Outline:
     case SidebarMode::Plugin:
       if (same_view) {
         operations_.close_sidebar();
@@ -900,9 +888,6 @@ void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {
   const bool next_enabled = !currently_enabled;
   if (!operations_.set_setting_value(key, next_enabled ? "true" : "false")) {
     return;
-  }
-  if (id == ActionId::ToggleEditorOutline && operations_.normalize_sidebar_view_selection) {
-    operations_.normalize_sidebar_view_selection();
   }
   operations_.request_active_tab_redraw(false);
 }

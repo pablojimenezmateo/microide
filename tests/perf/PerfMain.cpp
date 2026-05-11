@@ -5,7 +5,6 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceLspClient.h"
-#include "workspace/WorkspaceOutlineService.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -307,44 +306,6 @@ std::string FileUriForPerfPath(const std::filesystem::path& path) {
             << static_cast<int>(ch) << std::nouppercase << std::dec;
   }
   return encoded.str();
-}
-
-// Installs a synchronous LSP stub for the active editor's `DetectFiletype` id (e.g. `"c++"` for
-// `.cpp`) so `WorkspaceOutlineService` exercises the debounced documentSymbol path (§13.B.6).
-void InstallOutlineLspStubForActiveEditor(microide::workspace::WorkspaceShell& shell) {
-  using TA = microide::workspace::WorkspaceShell::TestAccess;
-  microide::editor::TextViewport& vp = TA::ActiveEditor(shell);
-  const std::filesystem::path path = vp.path();
-  if (path.empty()) {
-    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: empty buffer path");
-  }
-  const std::string lang =
-      microide::editor::runtime_syntax::DetectFiletype(path, vp.lines());
-  if (lang.empty()) {
-    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: could not detect language");
-  }
-  auto client = std::make_unique<microide::workspace::LspClient>();
-  client->EnableTestStubMode();
-  client->SetTestDocumentSymbolHandler(
-      [](std::string /*uri*/, microide::workspace::LspClient::DocumentSymbolCallback cb) {
-        microide::workspace::LspClient::DocumentSymbol sym{};
-        sym.name = "PerfOutlineLspSymbol";
-        sym.kind = 12;
-        sym.selection_range.start.line = 4990;
-        sym.selection_range.start.character = 4;
-        cb(std::vector<microide::workspace::LspClient::DocumentSymbol>{sym});
-      });
-  TA::LspManagerForTesting(shell).InstallTestClientForTesting(lang, std::move(client));
-  microide::workspace::LspClient* server = TA::LspManagerForTesting(shell).GetServer(lang);
-  if (server == nullptr) {
-    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: GetServer returned null");
-  }
-  const std::string uri = FileUriForPerfPath(path.lexically_normal());
-  const std::string doc_text =
-      microide::util::SerializeLines(vp.lines(), microide::util::LineEnding::LF);
-  if (!server->DidOpen(uri, lang, doc_text)) {
-    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: DidOpen failed");
-  }
 }
 
 void RegisterBuiltInScenarios() {
@@ -865,69 +826,6 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
-  PerfHarness::RegisterScenario(Scenario{
-      .name = "editor_outline_lsp_refresh",
-      .smoke = true,
-      .run =
-          [](ScenarioContext& context) {
-            using TA = microide::workspace::WorkspaceShell::TestAccess;
-            microide::workspace::WorkspaceShell& shell = context.Shell();
-            (void)context.Open("tests/perf/fixtures/small_project");
-            (void)TA::SetSettingValue(shell, "editor.outline.enabled", "true");
-            OpenEditorEssentials50kCppOrThrow(context);
-            context.PumpFrames(16);
-            InstallOutlineLspStubForActiveEditor(shell);
-            (void)context.ExecuteCommand("sidebar-show outline");
-            microide::workspace::WorkspaceOutlineService& outline_svc =
-                TA::OutlineServiceForTesting(shell);
-            outline_svc.ResetCountsForTesting();
-            outline_svc.SetFixedClockMsForTesting(0);
-            TA::PollOutlineServiceForTesting(shell, 0);
-            TA::LspManagerForTesting(shell).DrainCallbacks();
-            context.PumpFrames(4);
-            context.Measure("outline_lsp.debounced_refresh_and_type", [&]() {
-              context.Type(" // perf outline lsp");
-              TA::TouchOutlineDebouncedAfterEditorSyncForTesting(shell);
-              outline_svc.SetFixedClockMsForTesting(200);
-              TA::PollOutlineServiceForTesting(shell, 0);
-              TA::LspManagerForTesting(shell).DrainCallbacks();
-              context.PumpFrames(1);
-            });
-            outline_svc.SetFixedClockMsForTesting(std::nullopt);
-            std::string error;
-            (void)context.AssertNoAllocationsDuringDraw(&error);
-            context.PumpFrames(2);
-          },
-  });
-  PerfHarness::RegisterScenario(Scenario{
-      .name = "editor_outline_regex_fallback",
-      .smoke = true,
-      .run =
-          [](ScenarioContext& context) {
-            using TA = microide::workspace::WorkspaceShell::TestAccess;
-            microide::workspace::WorkspaceShell& shell = context.Shell();
-            // Open the fixture dir as the project so plugin reload + language contract initialization
-            // matches real sessions (outline regex fallback reads the merged `WorkspaceLanguageContract`).
-            (void)context.Open("tests/perf/fixtures/editor_essentials_50k_py");
-            context.SetSetting("editor.outline.enabled", "true");
-            OpenEditorEssentials50kPyOrThrow(context);
-            context.PumpFrames(8);
-            (void)context.ExecuteCommand("sidebar-show outline");
-            context.Measure("outline_regex.fallback_build", [&]() {
-              microide::workspace::WorkspaceOutlineService& outline_svc =
-                  TA::OutlineServiceForTesting(shell);
-              outline_svc.ResetCountsForTesting();
-              TA::PollOutlineServiceForTesting(shell, 0);
-            });
-            if (!TA::OutlineSidebarFromFallbackForTesting(shell) ||
-                TA::OutlineSidebarRootCountForTesting(shell) < 1) {
-              throw std::runtime_error(
-                  "editor_outline_regex_fallback: expected non-empty regex fallback outline");
-            }
-            context.PumpFrames(4);
-          },
-  });
-
   // OpenSpec §13.C — pair and indent (editor_essentials_50k_cpp).
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_bracket_match_caret_motion",

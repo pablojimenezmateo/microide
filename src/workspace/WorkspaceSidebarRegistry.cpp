@@ -13,7 +13,6 @@ std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
       SidebarViewSpec{"tree", "Project", SidebarMode::Tree},
       SidebarViewSpec{"search", "Search", SidebarMode::Search},
       SidebarViewSpec{"git", "Source Control", SidebarMode::Git},
-      SidebarViewSpec{"outline", "Outline", SidebarMode::Outline},
   });
   return kSpecs;
 }
@@ -36,16 +35,12 @@ const SidebarViewSpec* FindBuiltinSidebarView(SidebarMode mode) {
   return it == specs.end() ? nullptr : &(*it);
 }
 
-std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host,
-                                          bool editor_outline_enabled) {
+std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host) {
   std::vector<SidebarViewInfo> views;
   const auto builtins = BuiltinSidebarViewSpecs();
   const auto& plugin_providers = plugin_host.SidebarProviders();
   views.reserve(builtins.size() + plugin_providers.size());
   for (const SidebarViewSpec& spec : builtins) {
-    if (spec.mode == SidebarMode::Outline && !editor_outline_enabled) {
-      continue;
-    }
     views.push_back(SidebarViewInfo{
         .id = spec.id,
         .label = spec.label,
@@ -85,7 +80,7 @@ std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
 
 std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host) {
   std::vector<std::string> ids;
-  const auto views = SidebarViews(plugin_host, true);
+  const auto views = SidebarViews(plugin_host);
   ids.reserve(views.size());
   for (const SidebarViewInfo& view : views) {
     ids.emplace_back(view.id);
@@ -121,7 +116,6 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
     case SidebarMode::Plugin:
     case SidebarMode::Problems:
     case SidebarMode::Tests:
-    case SidebarMode::Outline:
       break;
   }
 
@@ -130,9 +124,8 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
 
 std::vector<SidebarViewInfo> OrderedSidebarViews(
     const plugin::PluginHost& plugin_host,
-    const std::vector<SidebarViewPolicy>& policies,
-    bool editor_outline_enabled) {
-  std::vector<SidebarViewInfo> all = SidebarViews(plugin_host, editor_outline_enabled);
+    const std::vector<SidebarViewPolicy>& policies) {
+  std::vector<SidebarViewInfo> all = SidebarViews(plugin_host);
 
   // Remove hidden views.
   all.erase(std::remove_if(all.begin(), all.end(),

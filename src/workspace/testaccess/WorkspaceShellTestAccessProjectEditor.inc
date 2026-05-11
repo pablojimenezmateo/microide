@@ -29,21 +29,6 @@
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
 
-  static void DispatchOutlineSidebarPointerDown(WorkspaceShell& shell,
-                                                float window_x,
-                                                float window_y) {
-    const auto layout = shell.CurrentWorkspaceLayout();
-    if (!layout.has_value()) {
-      throw std::runtime_error("DispatchOutlineSidebarPointerDown: missing layout");
-    }
-    SDL_Event event{};
-    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
-    event.button.button = SDL_BUTTON_LEFT;
-    event.button.x = window_x;
-    event.button.y = window_y;
-    shell.HandleOutlineSidebarPointerDown(event, *layout);
-  }
-
   static WorkspaceShell::TabEntry::EditorTabState MakeEditorTabStateForTesting(
       const editor::TextViewport& view) {
     return WorkspaceShell::MakeEditorTabState(view);
@@ -66,21 +51,6 @@
   }
   static workspace::LspManager& LspManagerForTesting(WorkspaceShell& shell) {
     return shell.CurrentLspManager();
-  }
-  static void PollOutlineServiceForTesting(WorkspaceShell& shell, uint32_t time_ms) {
-    shell.PollOutlineService(time_ms);
-  }
-  static void TouchOutlineDebouncedAfterEditorSyncForTesting(WorkspaceShell& shell) {
-    shell.TouchOutlineDebouncedAfterEditorSync();
-  }
-  static WorkspaceOutlineService& OutlineServiceForTesting(WorkspaceShell& shell) {
-    return shell.outline_service_;
-  }
-  static std::size_t OutlineSidebarRootCountForTesting(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.sidebar.outline.roots.size();
-  }
-  static bool OutlineSidebarFromFallbackForTesting(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.sidebar.outline.from_fallback;
   }
   static bool ActiveEditorHasSelection(const WorkspaceShell& shell) {
     const editor::TextViewport* viewport = shell.ActiveEditorViewport();

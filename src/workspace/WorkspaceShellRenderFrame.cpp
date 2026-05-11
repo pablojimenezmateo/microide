@@ -61,7 +61,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
-  PollOutlineService(SDL_GetTicks());
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;

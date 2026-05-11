@@ -257,7 +257,6 @@ Current commands:
 - `toggle-editor-sticky-scroll`
 - `toggle-editor-indent-guides`
 - `toggle-editor-render-whitespace`
-- `toggle-editor-outline`
 - `toggle-editor-bracket-match-highlight`
 - `toggle-editor-auto-close`
 - `toggle-editor-surround`

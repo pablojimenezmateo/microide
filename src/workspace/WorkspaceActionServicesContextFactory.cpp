@@ -92,7 +92,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .show_problems_sidebar = [this]() { ShowProblemsSidebar(); },
           .show_git_sidebar = [this]() { ShowGitSidebar(); },
           .show_tests_sidebar = [this]() { ShowTestsSidebar(); },
-          .show_outline_sidebar = [this]() { ShowOutlineSidebar(); },
           .show_plugin_sidebar =
               [this](std::string_view id, bool temporary) {
                 return ShowPluginSidebar(id, temporary);

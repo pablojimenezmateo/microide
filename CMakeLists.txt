@@ -334,7 +334,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellBootstrapper.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
-  src/workspace/WorkspaceShellOutline.cpp
   src/workspace/WorkspaceShellSidebarMouse.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShellTerminalService.cpp
@@ -350,8 +349,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspManager.cpp
-  src/workspace/WorkspaceOutlineService.cpp
-  src/workspace/WorkspaceOutlineFlat.cpp
   src/workspace/WorkspaceDapManager.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
   src/workspace/WorkspaceSaveParticipants.cpp
@@ -490,7 +487,6 @@ add_executable(microide_tests
   tests/EditorMultiCaretTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
-  tests/WorkspaceOutlineServiceTests.cpp
   tests/WorkspaceSettingsRegistryTests.cpp
   tests/WorkspaceShellChromeTests.cpp
   tests/WorkspaceShellEditorBlameTests.cpp

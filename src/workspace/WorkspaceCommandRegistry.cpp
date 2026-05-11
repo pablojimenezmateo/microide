@@ -142,8 +142,6 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "toggle-editor-indent-guides", "Indent Guides", "", true},
       ActionSpec{ActionId::ToggleEditorRenderWhitespace, "toggle-editor-render-whitespace",
                  "toggle-editor-render-whitespace", "Render Whitespace", "", true},
-      ActionSpec{ActionId::ToggleEditorOutline, "toggle-editor-outline", "toggle-editor-outline",
-                 "Symbol Outline", "", true},
       ActionSpec{ActionId::ToggleEditorBracketMatchHighlight,
                  "toggle-editor-bracket-match-highlight",
                  "toggle-editor-bracket-match-highlight", "Bracket Match Highlight", "", true},

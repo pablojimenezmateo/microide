@@ -400,17 +400,6 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Essentials → Block Structure",
       },
       SettingSpec{
-          .id = "editor.outline.enabled",
-          .label = "Symbol Outline",
-          .description = "Enable the Outline sidebar view.",
-          .type = SettingType::Bool,
-          .scope = SettingScope::User,
-          .default_bool = true,
-          .default_string = {},
-          .enum_values = {},
-          .group = "Editor → Essentials → Block Structure",
-      },
-      SettingSpec{
           .id = "editor.brackets.match_highlight.enabled",
           .label = "Bracket Match Highlight",
           .description = "Highlight the matching bracket adjacent to the caret.",

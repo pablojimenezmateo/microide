@@ -42,7 +42,6 @@ class WorkspaceActionContext {
     std::function<void()> show_problems_sidebar;
     std::function<void()> show_git_sidebar;
     std::function<void()> show_tests_sidebar;
-    std::function<void()> show_outline_sidebar;
     std::function<bool(std::string_view, bool)> show_plugin_sidebar;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<void()> refresh_project_files;

@@ -109,7 +109,6 @@ enum class ActionId {
   ToggleEditorStickyScroll,
   ToggleEditorIndentGuides,
   ToggleEditorRenderWhitespace,
-  ToggleEditorOutline,
   ToggleEditorBracketMatchHighlight,
   ToggleEditorAutoClosePairs,
   ToggleEditorSurround,
@@ -152,7 +151,6 @@ inline const char* EditorEssentialsCapabilitySettingKey(ActionId id) {
     case ActionId::ToggleEditorStickyScroll: return "editor.fold.sticky_scroll.enabled";
     case ActionId::ToggleEditorIndentGuides: return "editor.view.indent_guides.enabled";
     case ActionId::ToggleEditorRenderWhitespace: return "editor.view.render_whitespace";
-    case ActionId::ToggleEditorOutline: return "editor.outline.enabled";
     case ActionId::ToggleEditorBracketMatchHighlight:
       return "editor.brackets.match_highlight.enabled";
     case ActionId::ToggleEditorAutoClosePairs: return "editor.brackets.auto_close.enabled";

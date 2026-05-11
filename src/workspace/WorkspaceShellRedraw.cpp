@@ -237,7 +237,6 @@ void WorkspaceShell::RequestEditorLineToBottomRedraw(std::size_t start_line) {
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                                        const std::vector<std::string>& after_lines) {
   SyncLspForActiveEditableChange(before_lines, after_lines);
-  TouchOutlineDebouncedAfterEditorSync();
   const auto changed_span = ComputeChangedLineSpan(before_lines, after_lines);
   if (!changed_span.has_value()) {
     RequestFocusedEditorRedraw();
@@ -277,7 +276,6 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
         "WorkspaceShell::RequestActiveEditableLastChangeRedraw::SyncLsp");
     SyncLspForActiveEditableLastChange();
   }
-  TouchOutlineDebouncedAfterEditorSync();
   const auto& applied_edit = viewport->last_applied_edit();
   if (!applied_edit.has_value()) {
     util::PerformanceTrace::Scope scope(

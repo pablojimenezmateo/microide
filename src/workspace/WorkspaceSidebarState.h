@@ -35,7 +35,6 @@ enum class SidebarMode {
   Git,
   Tests,
   Plugin,
-  Outline,
 };
 
 struct GitSidebarEntry {
@@ -144,30 +143,6 @@ struct PluginSidebarState {
   std::size_t selected_index = 0;
 };
 
-struct OutlineSymbolNode {
-  std::string name;
-  int kind = 1;
-  std::size_t selection_line = 0;
-  std::size_t selection_column = 0;
-  std::vector<OutlineSymbolNode> children;
-};
-
-struct OutlineSidebarState {
-  bool from_fallback = false;
-  bool indexing = false;
-  std::vector<OutlineSymbolNode> roots;
-  std::unordered_set<std::string> collapsed_paths;
-  std::size_t selected_flat_index = 0;
-
-  void Clear() {
-    from_fallback = false;
-    indexing = false;
-    roots.clear();
-    collapsed_paths.clear();
-    selected_flat_index = 0;
-  }
-};
-
 struct SidebarState {
   bool visible = true;
   std::string view_id = "tree";
@@ -179,7 +154,6 @@ struct SidebarState {
   ProblemsSidebarState problems;
   TestsSidebarState tests;
   PluginSidebarState plugin;
-  OutlineSidebarState outline;
 };
 
 }  // namespace microide::workspace

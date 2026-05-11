@@ -223,9 +223,6 @@ SidebarMode SidebarModeFromViewId(std::string_view view_id) {
   if (view_id == "plugin") {
     return SidebarMode::Plugin;
   }
-  if (view_id == "outline") {
-    return SidebarMode::Outline;
-  }
   if (view_id == "tree") {
     return SidebarMode::Tree;
   }
