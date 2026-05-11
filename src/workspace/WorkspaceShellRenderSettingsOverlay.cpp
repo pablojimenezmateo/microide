@@ -1,9 +1,12 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <optional>
+#include <string_view>
 
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
+#include "workspace/WorkspaceSettingsRegistry.h"
 
 namespace microide::workspace {
 
@@ -50,8 +53,11 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   }
   const float list_bottom = vm.rect.y + vm.rect.h - 10.0f;
   int row_index = 0;
+  const auto bool_is_on = [](std::string_view value) {
+    return !(value == "false" || value == "0" || value == "off" || value.empty());
+  };
   const auto draw_row = [&](std::string_view label, std::string_view value, std::string_view detail,
-                            bool active) {
+                            bool active, std::optional<bool> bool_state) {
     if (row_index++ < vm.scroll_row) {
       return;
     }
@@ -63,17 +69,29 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     if (active) {
       DrawFilledRect(renderer, row, theme_.selection_fill);
     }
-    text_renderer_.DrawStringOn(renderer, row.x + 8.0f, row.y + 5.0f, theme_.text_primary,
-                                active ? theme_.selection_fill : theme_.surface_background,
-                                label);
+    const SDL_Color row_background = active ? theme_.selection_fill : theme_.surface_background;
+    float label_x = row.x + 8.0f;
+    if (bool_state.has_value()) {
+      // Reserve a fixed gutter on the left for a checkbox-style glyph so
+      // boolean settings read as on/off at a glance instead of as the
+      // literal "true"/"false" text in the value column.
+      const SDL_FRect box = MakeRect(row.x + 6.0f, row.y + 5.0f, 14.0f, 14.0f);
+      DrawRect(renderer, box, theme_.border);
+      if (*bool_state) {
+        DrawCheckGlyph(renderer, box, theme_.accent);
+      }
+      label_x = box.x + box.w + 8.0f;
+    }
+    text_renderer_.DrawStringOn(renderer, label_x, row.y + 5.0f, theme_.text_primary,
+                                row_background, label);
     const float detail_x = row.x + std::min(290.0f, row.w * 0.42f);
     text_renderer_.DrawStringOn(renderer, detail_x, row.y + 5.0f, theme_.text_disabled,
-                                active ? theme_.selection_fill : theme_.surface_background,
-                                detail);
-    const float value_x = row.x + std::min(520.0f, row.w * 0.72f);
-    text_renderer_.DrawStringOn(renderer, value_x, row.y + 5.0f, theme_.accent,
-                                active ? theme_.selection_fill : theme_.surface_background,
-                                value);
+                                row_background, detail);
+    if (!bool_state.has_value()) {
+      const float value_x = row.x + std::min(520.0f, row.w * 0.72f);
+      text_renderer_.DrawStringOn(renderer, value_x, row.y + 5.0f, theme_.accent,
+                                  row_background, value);
+    }
   };
 
   if (vm.mode == SettingsOverlayMode::Settings) {
@@ -98,11 +116,15 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
           draw_group_header(current_group);
         }
       }
-      draw_row(row.label, row.value, row.detail, false);
+      std::optional<bool> bool_state;
+      if (row.type == SettingType::Bool) {
+        bool_state = bool_is_on(row.value);
+      }
+      draw_row(row.label, row.value, row.detail, false, bool_state);
     }
   } else {
     for (const HelpAboutRow& row : vm.help_rows) {
-      draw_row(row.label, row.detail, {}, false);
+      draw_row(row.label, row.detail, {}, false, std::nullopt);
     }
   }
 }

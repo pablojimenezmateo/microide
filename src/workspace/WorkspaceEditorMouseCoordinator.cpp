@@ -148,6 +148,41 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
+  // Fold gutter click toggles the fold on the opener row. The painted marker
+  // (see FoldGutterMarkerRect) sits in the rightmost few px of the gutter; we
+  // widen the hit zone here so users don't need pixel precision.
+  if (event.button.button == SDL_BUTTON_LEFT && event.button.y >= metrics.first_line_y) {
+    const auto fold_setting = operations_.get_setting_value
+                                  ? operations_.get_setting_value("editor.fold.enabled")
+                                  : std::nullopt;
+    const bool fold_enabled = !fold_setting.has_value() ||
+                              (*fold_setting != "false" && *fold_setting != "0" &&
+                               *fold_setting != "off");
+    if (fold_enabled) {
+      const float gutter_right = editor_rect.x + metrics.gutter_width;
+      const float fold_hit_left = gutter_right - 18.0f;
+      if (event.button.x >= fold_hit_left && event.button.x < gutter_right) {
+        const std::size_t visual_row =
+            viewport->scroll_line() +
+            static_cast<std::size_t>((event.button.y - metrics.first_line_y) /
+                                     metrics.line_height);
+        if (visual_row < viewport->visual_line_count()) {
+          const std::size_t opener_line = viewport->VisualRowLineIndex(visual_row);
+          editor::FoldingModel* fold_model =
+              operations_.ensure_active_folding_model_fresh
+                  ? operations_.ensure_active_folding_model_fresh()
+                  : nullptr;
+          if (fold_model != nullptr && fold_model->FoldStartingAt(opener_line).has_value()) {
+            fold_model->ToggleFold(opener_line);
+            operations_.request_focused_editor_redraw();
+            state_.surface.focus = FocusTarget::Editor;
+            return true;
+          }
+        }
+      }
+    }
+  }
+
   const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
   const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);

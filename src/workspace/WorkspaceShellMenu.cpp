@@ -361,6 +361,14 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
       return context_.current_project_state.sidebar.visible && context_.current_project_state.sidebar.view_id == view->id;
     }
   }
+  if (const char* setting_key = EditorEssentialsCapabilitySettingKey(item.action);
+      setting_key != nullptr) {
+    const auto value = GetSettingValue(setting_key);
+    if (!value.has_value()) {
+      return false;
+    }
+    return !(*value == "false" || *value == "0" || *value == "off");
+  }
   return false;
 }
 
