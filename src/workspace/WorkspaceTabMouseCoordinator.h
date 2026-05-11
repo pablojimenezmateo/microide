@@ -37,6 +37,14 @@ class TabMouseCoordinator {
     std::function<bool(std::size_t)> move_active_terminal_tab_to;
     std::function<void()> save_workspace_session;
     std::function<void()> save_session_state;
+    std::function<WorkspaceShell::TabStripOverflowControls(
+        const SDL_FRect&, const std::vector<WorkspaceShell::VisibleStripTab>&)>
+        compute_project_tab_overflow_controls;
+    std::function<WorkspaceShell::TabStripOverflowControls(
+        const SDL_FRect&, const std::vector<WorkspaceShell::VisibleStripTab>&)>
+        compute_tab_overflow_controls;
+    std::function<bool(int)> scroll_project_tab_strip;
+    std::function<bool(int)> scroll_editor_tab_strip;
   };
 
   TabMouseCoordinator(ProjectCatalogState& project_catalog,

@@ -5,9 +5,55 @@
 #include <string>
 #include <vector>
 
+#include "render/SurfacePrimitives.h"
+
 namespace microide::workspace {
 
 using namespace detail;
+
+namespace {
+
+// Paints a chevron-glyph button with an optional hidden-tab count badge,
+// matching the look of the workspace tab strip chrome. Used for the
+// click-to-scroll overflow indicators at the strip ends.
+void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
+                                SDL_Renderer* renderer,
+                                const render::Theme& theme,
+                                const SDL_FRect& rect,
+                                bool point_right,
+                                std::size_t hidden_count,
+                                bool hovered) {
+  if (rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  const SDL_Color background = hovered ? theme.row_highlight : theme.surface_raised;
+  const SDL_Color foreground = hovered ? theme.text_primary : theme.text_secondary;
+  render::FillRect(renderer, rect, background);
+  render::OutlineRect(renderer, rect, theme.border);
+
+  const float cx = rect.x + rect.w * 0.32f;
+  const float cy = rect.y + rect.h * 0.5f;
+  const float arm = std::max(3.0f, rect.h * 0.22f);
+  SDL_SetRenderDrawColor(renderer, foreground.r, foreground.g, foreground.b, foreground.a);
+  if (point_right) {
+    SDL_RenderLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
+    SDL_RenderLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);
+  } else {
+    SDL_RenderLine(renderer, cx + arm * 0.5f, cy - arm, cx - arm * 0.5f, cy);
+    SDL_RenderLine(renderer, cx - arm * 0.5f, cy, cx + arm * 0.5f, cy + arm);
+  }
+
+  if (hidden_count > 0) {
+    const std::string count_text = std::to_string(hidden_count);
+    const float count_x = rect.x + rect.w * 0.55f;
+    const SDL_FRect count_rect{count_x, rect.y,
+                               std::max(0.0f, rect.x + rect.w - count_x - 2.0f), rect.h};
+    DrawVCenteredTextOn(text_renderer, renderer, count_rect, 0.0f, foreground, background,
+                        count_text);
+  }
+}
+
+}  // namespace
 
 std::string WorkspaceShell::HoveredProjectTabTooltipLabel(const SDL_FRect& project_tab_strip) const {
   if (!last_mouse_position_valid_ || !Contains(project_tab_strip, last_mouse_x_, last_mouse_y_)) {
@@ -125,6 +171,20 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                           tab.active ? chrome_tab_palette.active_text
                                      : chrome_tab_palette.inactive_text);
   }
+  {
+    const auto project_overflow =
+        ComputeProjectTabOverflowControls(layout.project_tab_strip, visible_project_tabs);
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.left_button,
+                               /*point_right=*/false, project_overflow.hidden_left,
+                               last_mouse_position_valid_ &&
+                                   Contains(project_overflow.left_button, last_mouse_x_,
+                                            last_mouse_y_));
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.right_button,
+                               /*point_right=*/true, project_overflow.hidden_right,
+                               last_mouse_position_valid_ &&
+                                   Contains(project_overflow.right_button, last_mouse_x_,
+                                            last_mouse_y_));
+  }
 
   std::vector<VisibleStripTab> visible_tabs;
   if (HasActiveProjectCatalogEntry()) {
@@ -157,6 +217,17 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                             tab.active ? chrome_tab_palette.active_text
                                        : chrome_tab_palette.inactive_text);
     }
+    const auto tab_overflow = ComputeTabOverflowControls(layout.tab_strip, visible_tabs);
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.left_button,
+                               /*point_right=*/false, tab_overflow.hidden_left,
+                               last_mouse_position_valid_ &&
+                                   Contains(tab_overflow.left_button, last_mouse_x_,
+                                            last_mouse_y_));
+    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.right_button,
+                               /*point_right=*/true, tab_overflow.hidden_right,
+                               last_mouse_position_valid_ &&
+                                   Contains(tab_overflow.right_button, last_mouse_x_,
+                                            last_mouse_y_));
   }
 
   const auto status_items = ComputeVisibleStatusItems(layout.breadcrumb);

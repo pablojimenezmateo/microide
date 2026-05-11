@@ -88,6 +88,13 @@ float WorkspaceShell::ProjectTabWidthForIndex(std::size_t index) const {
                     260.0f);
 }
 
+namespace {
+// Width reserved on each side of a tab strip for the click-to-scroll
+// overflow chevrons. Reserved unconditionally so the tab-packing math
+// doesn't depend on whether overflow currently exists.
+constexpr float kTabStripOverflowReserve = 32.0f;
+}  // namespace
+
 void WorkspaceShell::EnsureActiveProjectVisible() {
   if (context_.project_catalog.entries.empty()) {
     context_.project_catalog.tab_scroll_index = 0;
@@ -101,9 +108,10 @@ void WorkspaceShell::EnsureActiveProjectVisible() {
   }
 
   const float strip_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1440.0f;
-  const float start_x = 12.0f;
+  const float start_x = 12.0f + kTabStripOverflowReserve;
   const float gap = 1.0f;
-  const float max_tab_x = std::max(start_x + 120.0f, strip_width - 12.0f);
+  const float max_tab_x =
+      std::max(start_x + 120.0f, strip_width - 12.0f - kTabStripOverflowReserve);
   context_.project_catalog.tab_scroll_index =
       static_cast<int>(EnsureVisibleStripIndex(widths, start_x, gap, max_tab_x,
                                                static_cast<std::size_t>(std::max(0, context_.project_catalog.tab_scroll_index)),
@@ -133,9 +141,10 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
   const float tab_y = project_tab_strip.y + 2.0f;
   const float tab_height = std::max(18.0f, project_tab_strip.h - 2.0f);
   const float gap = 1.0f;
-  const float start_x = project_tab_strip.x + 12.0f;
-  const float max_tab_x =
-      std::max(start_x + 120.0f, project_tab_strip.x + project_tab_strip.w - 12.0f);
+  const float start_x = project_tab_strip.x + 12.0f + kTabStripOverflowReserve;
+  const float max_tab_x = std::max(
+      start_x + 120.0f,
+      project_tab_strip.x + project_tab_strip.w - 12.0f - kTabStripOverflowReserve);
   auto tabs = BuildVisibleStripTabs(
       widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(context_.project_catalog.tab_scroll_index, 0,
@@ -193,10 +202,11 @@ void WorkspaceShell::EnsureActiveTabVisible() {
     tab_strip_geometry_cache_.valid = true;
   }
 
-  const float start_x = 12.0f;
+  const float start_x = 12.0f + kTabStripOverflowReserve;
   const float gap = 1.0f;
   const float right_reserve = std::clamp(tab_strip_width * 0.22f, 160.0f, 240.0f);
-  const float max_tab_x = std::max(start_x + 120.0f, tab_strip_width - right_reserve);
+  const float max_tab_x =
+      std::max(start_x + 120.0f, tab_strip_width - right_reserve - kTabStripOverflowReserve);
   context_.current_project_state.tab_scroll_index =
       static_cast<int>(EnsureVisibleStripIndex(tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
                                                static_cast<std::size_t>(std::max(0, context_.current_project_state.tab_scroll_index)),
@@ -237,15 +247,87 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
   const float tab_y = tab_strip.y + 2.0f;
   const float tab_height = std::max(22.0f, tab_strip.h - 2.0f);
   const float gap = 1.0f;
-  const float start_x = tab_strip.x + 12.0f;
+  const float start_x = tab_strip.x + 12.0f + kTabStripOverflowReserve;
   const float right_reserve = std::clamp(tab_strip.w * 0.22f, 160.0f, 240.0f);
-  const float max_tab_x = std::max(start_x + 120.0f, tab_strip.x + tab_strip.w - right_reserve);
+  const float max_tab_x = std::max(
+      start_x + 120.0f, tab_strip.x + tab_strip.w - right_reserve - kTabStripOverflowReserve);
   return BuildVisibleStripTabs(
       tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
       static_cast<std::size_t>(std::clamp(context_.current_project_state.tab_scroll_index, 0,
                                           std::max(0, static_cast<int>(context_.current_project_state.open_tabs.size()) - 1))),
       tab_y, tab_height, {}, context_.current_project_state.active_tab_index,
       tab_strip_geometry_cache_.display_titles, tab_strip_geometry_cache_.tooltip_labels);
+}
+
+namespace {
+WorkspaceShell::TabStripOverflowControls BuildTabStripOverflowControls(
+    const SDL_FRect& strip,
+    const std::vector<WorkspaceShell::VisibleStripTab>& visible_tabs,
+    std::size_t total_count) {
+  WorkspaceShell::TabStripOverflowControls controls;
+  if (total_count == 0 || visible_tabs.empty()) {
+    return controls;
+  }
+  const std::size_t first_visible = visible_tabs.front().index;
+  const std::size_t last_visible = visible_tabs.back().index;
+  controls.hidden_left = first_visible;
+  controls.hidden_right =
+      last_visible + 1 < total_count ? total_count - (last_visible + 1) : 0;
+
+  const float button_w = kTabStripOverflowReserve - 4.0f;
+  const float button_y = strip.y + 4.0f;
+  const float button_h = std::max(16.0f, strip.h - 8.0f);
+  if (controls.hidden_left > 0) {
+    controls.left_button = MakeRect(strip.x + 8.0f, button_y, button_w, button_h);
+  }
+  if (controls.hidden_right > 0) {
+    controls.right_button =
+        MakeRect(strip.x + strip.w - button_w - 8.0f, button_y, button_w, button_h);
+  }
+  return controls;
+}
+
+bool ScrollTabIndex(int& scroll_index, int direction, std::size_t total) {
+  if (total == 0) {
+    return false;
+  }
+  const int max_index = static_cast<int>(total) - 1;
+  const int next =
+      std::clamp(scroll_index + (direction > 0 ? 1 : -1), 0, std::max(0, max_index));
+  if (next == scroll_index) {
+    return false;
+  }
+  scroll_index = next;
+  return true;
+}
+}  // namespace
+
+WorkspaceShell::TabStripOverflowControls WorkspaceShell::ComputeProjectTabOverflowControls(
+    const SDL_FRect& project_tab_strip,
+    const std::vector<VisibleStripTab>& visible_tabs) const {
+  return BuildTabStripOverflowControls(project_tab_strip, visible_tabs,
+                                       context_.project_catalog.entries.size());
+}
+
+WorkspaceShell::TabStripOverflowControls WorkspaceShell::ComputeTabOverflowControls(
+    const SDL_FRect& tab_strip,
+    const std::vector<VisibleStripTab>& visible_tabs) const {
+  return BuildTabStripOverflowControls(tab_strip, visible_tabs,
+                                       context_.current_project_state.open_tabs.size());
+}
+
+bool WorkspaceShell::ScrollProjectTabStrip(int direction) {
+  return ScrollTabIndex(context_.project_catalog.tab_scroll_index, direction,
+                        context_.project_catalog.entries.size());
+}
+
+bool WorkspaceShell::ScrollEditorTabStrip(int direction) {
+  if (ScrollTabIndex(context_.current_project_state.tab_scroll_index, direction,
+                     context_.current_project_state.open_tabs.size())) {
+    tab_strip_geometry_cache_.valid = false;
+    return true;
+  }
+  return false;
 }
 
 std::vector<WorkspaceShell::BottomPanelTabModel> WorkspaceShell::BuildBottomPanelTabs() const {

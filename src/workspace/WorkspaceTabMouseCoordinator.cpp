@@ -65,8 +65,28 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                            const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("TabMouseCoordinator::HandleButtonDown");
   if (Contains(layout.project_tab_strip, event.button.x, event.button.y)) {
-    for (const WorkspaceShell::VisibleStripTab& tab :
-         operations_.compute_visible_project_tabs(layout.project_tab_strip)) {
+    const auto visible_project_tabs =
+        operations_.compute_visible_project_tabs(layout.project_tab_strip);
+    if (event.button.button == SDL_BUTTON_LEFT &&
+        operations_.compute_project_tab_overflow_controls) {
+      const auto overflow = operations_.compute_project_tab_overflow_controls(
+          layout.project_tab_strip, visible_project_tabs);
+      if (overflow.hidden_left > 0 &&
+          Contains(overflow.left_button, event.button.x, event.button.y)) {
+        if (operations_.scroll_project_tab_strip) {
+          operations_.scroll_project_tab_strip(-1);
+        }
+        return true;
+      }
+      if (overflow.hidden_right > 0 &&
+          Contains(overflow.right_button, event.button.x, event.button.y)) {
+        if (operations_.scroll_project_tab_strip) {
+          operations_.scroll_project_tab_strip(+1);
+        }
+        return true;
+      }
+    }
+    for (const WorkspaceShell::VisibleStripTab& tab : visible_project_tabs) {
       if (!Contains(tab.rect, event.button.x, event.button.y)) {
         continue;
       }
@@ -102,8 +122,27 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       return false;
     }
 
-    for (const WorkspaceShell::VisibleStripTab& tab :
-         operations_.compute_visible_tabs(layout.tab_strip)) {
+    const auto visible_tabs = operations_.compute_visible_tabs(layout.tab_strip);
+    if (event.button.button == SDL_BUTTON_LEFT &&
+        operations_.compute_tab_overflow_controls) {
+      const auto overflow =
+          operations_.compute_tab_overflow_controls(layout.tab_strip, visible_tabs);
+      if (overflow.hidden_left > 0 &&
+          Contains(overflow.left_button, event.button.x, event.button.y)) {
+        if (operations_.scroll_editor_tab_strip) {
+          operations_.scroll_editor_tab_strip(-1);
+        }
+        return true;
+      }
+      if (overflow.hidden_right > 0 &&
+          Contains(overflow.right_button, event.button.x, event.button.y)) {
+        if (operations_.scroll_editor_tab_strip) {
+          operations_.scroll_editor_tab_strip(+1);
+        }
+        return true;
+      }
+    }
+    for (const WorkspaceShell::VisibleStripTab& tab : visible_tabs) {
       if (!Contains(tab.rect, event.button.x, event.button.y)) {
         continue;
       }
@@ -365,6 +404,18 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
+          .compute_project_tab_overflow_controls =
+              [this](const SDL_FRect& strip, const std::vector<VisibleStripTab>& tabs) {
+                return ComputeProjectTabOverflowControls(strip, tabs);
+              },
+          .compute_tab_overflow_controls =
+              [this](const SDL_FRect& strip, const std::vector<VisibleStripTab>& tabs) {
+                return ComputeTabOverflowControls(strip, tabs);
+              },
+          .scroll_project_tab_strip =
+              [this](int direction) { return ScrollProjectTabStrip(direction); },
+          .scroll_editor_tab_strip =
+              [this](int direction) { return ScrollEditorTabStrip(direction); },
       });
 }
 

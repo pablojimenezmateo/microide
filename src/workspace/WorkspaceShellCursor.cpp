@@ -313,7 +313,16 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (Contains(layout.project_tab_strip, x, y)) {
-    for (const VisibleStripTab& tab : ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+    const auto project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
+    const auto project_overflow =
+        ComputeProjectTabOverflowControls(layout.project_tab_strip, project_tabs);
+    if ((project_overflow.hidden_left > 0 &&
+         Contains(project_overflow.left_button, x, y)) ||
+        (project_overflow.hidden_right > 0 &&
+         Contains(project_overflow.right_button, x, y))) {
+      return CursorKind::Pointer;
+    }
+    for (const VisibleStripTab& tab : project_tabs) {
       if (Contains(tab.rect, x, y)) {
         return CursorKind::Pointer;
       }
@@ -332,7 +341,13 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                  ? CursorKind::Pointer
                  : CursorKind::Default;
     }
-    for (const VisibleStripTab& tab : ComputeVisibleTabs(layout.tab_strip)) {
+    const auto tabs = ComputeVisibleTabs(layout.tab_strip);
+    const auto tab_overflow = ComputeTabOverflowControls(layout.tab_strip, tabs);
+    if ((tab_overflow.hidden_left > 0 && Contains(tab_overflow.left_button, x, y)) ||
+        (tab_overflow.hidden_right > 0 && Contains(tab_overflow.right_button, x, y))) {
+      return CursorKind::Pointer;
+    }
+    for (const VisibleStripTab& tab : tabs) {
       if (Contains(tab.rect, x, y)) {
         return CursorKind::Pointer;
       }

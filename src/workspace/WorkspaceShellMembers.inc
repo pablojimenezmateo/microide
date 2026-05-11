@@ -300,6 +300,15 @@
     ChatStatus chat_status = ChatStatus::None;
   };
 
+  // Click-to-scroll overflow chevrons painted at each end of a tab strip.
+  // Either rect is zero-width when there is no hidden tab on that side.
+  struct TabStripOverflowControls {
+    SDL_FRect left_button{};
+    SDL_FRect right_button{};
+    std::size_t hidden_left = 0;
+    std::size_t hidden_right = 0;
+  };
+
   struct VisibleMenuBarItem {
     MenuId id = MenuId::None;
     SDL_FRect rect{};
@@ -1331,6 +1340,14 @@
   float TabWidthForIndex(std::size_t index) const;
   void EnsureActiveTabVisible();
   std::vector<VisibleStripTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
+  TabStripOverflowControls ComputeProjectTabOverflowControls(
+      const SDL_FRect& project_tab_strip,
+      const std::vector<VisibleStripTab>& visible_tabs) const;
+  TabStripOverflowControls ComputeTabOverflowControls(
+      const SDL_FRect& tab_strip,
+      const std::vector<VisibleStripTab>& visible_tabs) const;
+  bool ScrollProjectTabStrip(int direction);
+  bool ScrollEditorTabStrip(int direction);
   std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
   std::optional<SDL_FRect> HoveredTabTooltipRect(const WorkspaceLayout& layout) const;
   std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
