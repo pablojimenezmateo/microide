@@ -29,11 +29,70 @@
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
 
+  static void DispatchOutlineSidebarPointerDown(WorkspaceShell& shell,
+                                                float window_x,
+                                                float window_y) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      throw std::runtime_error("DispatchOutlineSidebarPointerDown: missing layout");
+    }
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.x = window_x;
+    event.button.y = window_y;
+    shell.HandleOutlineSidebarPointerDown(event, *layout);
+  }
+
+  static WorkspaceShell::TabEntry::EditorTabState MakeEditorTabStateForTesting(
+      const editor::TextViewport& view) {
+    return WorkspaceShell::MakeEditorTabState(view);
+  }
+
   static editor::TextViewport& ActiveEditor(WorkspaceShell& shell) {
     return *shell.ActiveEditorViewport();
   }
+
+  static void ApplyEditorPreferencesToAllTabs(WorkspaceShell& shell) {
+    shell.ApplyEditorPreferencesToAllTabs();
+  }
+  static void RebuildPhase3RegistriesForTesting(WorkspaceShell& shell) {
+    shell.RebuildPhase3Registries();
+  }
+
   static editor::FoldingModel* EnsureActiveFoldingModelFresh(WorkspaceShell& shell) {
     return shell.EnsureActiveFoldingModelFresh();
+  }
+  static editor::FoldingModel* ActiveTabFoldingModelForTesting(WorkspaceShell& shell) {
+    WorkspaceShell::TabEntry::EditorTabState* editor_tab = shell.ActiveEditorTab();
+    return editor_tab != nullptr ? &editor_tab->folding_model : nullptr;
+  }
+  static workspace::LspManager& LspManagerForTesting(WorkspaceShell& shell) {
+    return shell.CurrentLspManager();
+  }
+  static void PollOutlineServiceForTesting(WorkspaceShell& shell, uint32_t time_ms) {
+    shell.PollOutlineService(time_ms);
+  }
+  static void TouchOutlineDebouncedAfterEditorSyncForTesting(WorkspaceShell& shell) {
+    shell.TouchOutlineDebouncedAfterEditorSync();
+  }
+  static WorkspaceOutlineService& OutlineServiceForTesting(WorkspaceShell& shell) {
+    return shell.outline_service_;
+  }
+  static std::size_t OutlineSidebarRootCountForTesting(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.outline.roots.size();
+  }
+  static bool OutlineSidebarFromFallbackForTesting(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.outline.from_fallback;
+  }
+  static bool OutlineSidebarIndexingForTesting(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.outline.indexing;
+  }
+  static std::size_t LanguageContractOutlinePatternCountForTesting(
+      const WorkspaceShell& shell, std::string_view language_id) {
+    const LanguageContract* contract = shell.language_contract_.Find(language_id);
+    return contract == nullptr ? static_cast<std::size_t>(-1)
+                               : contract->outline_regex_patterns.size();
   }
   static bool ActiveEditorHasSelection(const WorkspaceShell& shell) {
     const editor::TextViewport* viewport = shell.ActiveEditorViewport();
@@ -427,4 +486,40 @@
   static std::string ActiveConversationProviderId(const WorkspaceShell& shell) {
     (void)shell;
     return {};
+  }
+  static bool PerfExpandSnippetAtCaret(WorkspaceShell& shell, std::string_view snippet_body) {
+    editor::TextViewport* viewport = shell.ActiveEditorViewport();
+    if (viewport == nullptr) {
+      return false;
+    }
+    auto& project = shell.context_.current_project_state;
+    if (project.active_tab_index >= project.open_tabs.size()) {
+      return false;
+    }
+    TabEntry& tab = project.open_tabs[project.active_tab_index];
+    if (tab.kind != TabEntry::Kind::Editor) {
+      return false;
+    }
+    if (!tab.editor_state.has_value()) {
+      return false;
+    }
+    viewport->BeginUndoGroup();
+    const editor::SelectionRange trigger{
+        editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
+        editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()}};
+    return editor::ExpandSnippetAtSelection(*viewport, tab.editor_state->snippet_session, trigger,
+                                            snippet_body);
+  }
+
+  /// Perf harness only: expand a minimal placeholder snippet on the active editor so an idle soak can
+  /// assert no periodic wakes while `SnippetSessionState::active` remains true (outline debounce is
+  /// primed separately in `ScenarioContext::PrimeEditorEssentialsIdleSoakSurface`).
+  static void PerfHarnessPrimeSnippetPlaceholderSession(WorkspaceShell& shell) {
+    WorkspaceShell::TabEntry::EditorTabState* editor_tab = shell.ActiveEditorTab();
+    editor::TextViewport* viewport = shell.ActiveEditorViewport();
+    if (editor_tab == nullptr || viewport == nullptr || viewport->is_placeholder()) {
+      return;
+    }
+    editor_tab->snippet_session.Reset(nullptr);
+    (void)PerfExpandSnippetAtCaret(shell, "${1:idle}$0");
   }

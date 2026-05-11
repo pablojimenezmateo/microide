@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":197716,"p50_allocations":132406,"p95_allocations":168326.94999999992,"p95_wall_ms":115.36571519999998,"max_wall_ms":119.936601,"p50_wall_ms":92.032568499999996},"scenario":"editor_bracket_match_caret_motion"}

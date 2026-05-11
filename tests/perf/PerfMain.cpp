@@ -1,19 +1,33 @@
 #include "perf/Baseline.h"
 #include "perf/PerfHarness.h"
 
+#include "editor/BracketScanner.h"
+#include "editor/RuntimeSyntaxRegistry.h"
+#include "editor/TextViewport.h"
+#include "workspace/WorkspaceLspClient.h"
+#include "workspace/WorkspaceOutlineService.h"
+#include "workspace/WorkspaceShellTestAccess.h"
+
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
+
+#include "util/StringUtil.h"
 
 #if defined(__linux__)
 #include <unistd.h>
@@ -211,6 +225,126 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
     return std::nullopt;
   }
   return options;
+}
+
+double SamplePercentile(std::vector<double>& values, double p) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  std::sort(values.begin(), values.end());
+  const double idx = p * static_cast<double>(values.size() - 1);
+  const std::size_t lo = static_cast<std::size_t>(std::floor(idx));
+  const std::size_t hi = static_cast<std::size_t>(std::ceil(idx));
+  if (lo == hi) {
+    return values[lo];
+  }
+  const double weight = idx - static_cast<double>(lo);
+  return values[lo] * (1.0 - weight) + values[hi] * weight;
+}
+
+void EnforceP95Microseconds(const char* label, std::vector<double>& samples_us, double p95_budget_us) {
+  if (samples_us.size() < 8) {
+    throw std::runtime_error(std::string(label) + ": insufficient samples");
+  }
+  const double p95 = SamplePercentile(samples_us, 0.95);
+  if (p95 > p95_budget_us) {
+    throw std::runtime_error(std::string(label) + " p95_us=" + std::to_string(p95) + " budget_us=" +
+                             std::to_string(p95_budget_us));
+  }
+}
+
+std::string ConcatLinesAtIndices(const microide::editor::TextViewport& vp,
+                                 const std::array<std::size_t, 8>& lines) {
+  std::string out;
+  out.reserve(4096);
+  for (std::size_t L : lines) {
+    if (L < vp.lines().size()) {
+      out.append(vp.lines()[L]);
+    }
+    out.push_back('\n');
+  }
+  return out;
+}
+
+constexpr char kEditorEssentials50kCppPath[] =
+    "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+
+void OpenEditorEssentials50kCppOrThrow(ScenarioContext& context) {
+  const std::filesystem::path path{kEditorEssentials50kCppPath};
+  if (!std::filesystem::exists(path)) {
+    throw std::runtime_error(std::string("missing fixture: ") + kEditorEssentials50kCppPath);
+  }
+  context.OpenTab(path);
+  context.PumpFrames(2);
+}
+
+constexpr char kEditorEssentials50kPyPath[] =
+    "tests/perf/fixtures/editor_essentials_50k_py/synthetic_kernel.py";
+
+void OpenEditorEssentials50kPyOrThrow(ScenarioContext& context) {
+  const std::filesystem::path path{kEditorEssentials50kPyPath};
+  if (!std::filesystem::exists(path)) {
+    throw std::runtime_error(std::string("missing fixture: ") + kEditorEssentials50kPyPath);
+  }
+  context.OpenTab(path);
+  context.PumpFrames(2);
+}
+
+bool IsUnreservedUriBytePerf(unsigned char ch) {
+  return std::isalnum(ch) != 0 || ch == '-' || ch == '_' || ch == '.' || ch == '~' || ch == '/';
+}
+
+std::string FileUriForPerfPath(const std::filesystem::path& path) {
+  const std::string raw = path.lexically_normal().generic_string();
+  std::ostringstream encoded;
+  encoded << "file://";
+  for (unsigned char ch : raw) {
+    if (IsUnreservedUriBytePerf(ch)) {
+      encoded << static_cast<char>(ch);
+      continue;
+    }
+    encoded << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<int>(ch) << std::nouppercase << std::dec;
+  }
+  return encoded.str();
+}
+
+// Installs a synchronous LSP stub for the active editor's `DetectFiletype` id (e.g. `"c++"` for
+// `.cpp`) so `WorkspaceOutlineService` exercises the debounced documentSymbol path (§13.B.6).
+void InstallOutlineLspStubForActiveEditor(microide::workspace::WorkspaceShell& shell) {
+  using TA = microide::workspace::WorkspaceShell::TestAccess;
+  microide::editor::TextViewport& vp = TA::ActiveEditor(shell);
+  const std::filesystem::path path = vp.path();
+  if (path.empty()) {
+    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: empty buffer path");
+  }
+  const std::string lang =
+      microide::editor::runtime_syntax::DetectFiletype(path, vp.lines());
+  if (lang.empty()) {
+    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: could not detect language");
+  }
+  auto client = std::make_unique<microide::workspace::LspClient>();
+  client->EnableTestStubMode();
+  client->SetTestDocumentSymbolHandler(
+      [](std::string /*uri*/, microide::workspace::LspClient::DocumentSymbolCallback cb) {
+        microide::workspace::LspClient::DocumentSymbol sym{};
+        sym.name = "PerfOutlineLspSymbol";
+        sym.kind = 12;
+        sym.selection_range.start.line = 4990;
+        sym.selection_range.start.character = 4;
+        cb(std::vector<microide::workspace::LspClient::DocumentSymbol>{sym});
+      });
+  TA::LspManagerForTesting(shell).InstallTestClientForTesting(lang, std::move(client));
+  microide::workspace::LspClient* server = TA::LspManagerForTesting(shell).GetServer(lang);
+  if (server == nullptr) {
+    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: GetServer returned null");
+  }
+  const std::string uri = FileUriForPerfPath(path.lexically_normal());
+  const std::string doc_text =
+      microide::util::SerializeLines(vp.lines(), microide::util::LineEnding::LF);
+  if (!server->DidOpen(uri, lang, doc_text)) {
+    throw std::runtime_error("InstallOutlineLspStubForActiveEditor: DidOpen failed");
+  }
 }
 
 void RegisterBuiltInScenarios() {
@@ -472,6 +606,9 @@ void RegisterBuiltInScenarios() {
       .run =
           [](ScenarioContext& context) {
             context.PumpFrames(2);
+            // §13.E.3: prime outline debounce + active snippet placeholder session, then verify no
+            // new SDL wake cadence during the soak window (same zero-wake assertion as before).
+            context.PrimeEditorEssentialsIdleSoakSurface();
             // Task 9.6: assert watcher/executor threads generate zero wake events after settling.
             // Allow 3 s for background work to settle before the soak window begins.
             context.Wait(std::chrono::seconds(3));
@@ -480,6 +617,7 @@ void RegisterBuiltInScenarios() {
             if (wakeups_during_soak > 0) {
               std::cerr << "idle_soak_30s: " << wakeups_during_soak
                         << " unexpected wake events during soak window\n";
+              throw std::runtime_error("idle_soak_30s: unexpected wakes during soak window");
             }
             context.PumpFrames(1);
           },
@@ -590,9 +728,368 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(30);
           },
   });
+
+  // OpenSpec §13.B — block structure (folding, sticky scroll, indent guides / whitespace, outline).
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_fold_recompute",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            (void)TA::SetSettingValue(context.Shell(), "editor.fold.enabled", "true");
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(24);
+            microide::editor::TextViewport& vp = TA::ActiveEditor(context.Shell());
+            std::vector<double> samples_us;
+            samples_us.reserve(28);
+            // Edits deep in the brace nest invalidate a broad prefix; `EnsureFoldingModelFresh` stays
+            // on the `ComputeWithBudget(2000)` path (WorkspaceFoldingRefresh.cpp).
+            for (int i = 0; i < 24; ++i) {
+              (void)context.ExecuteCommand("goto 25000");
+              const auto t0 = std::chrono::steady_clock::now();
+              vp.InsertCharacter('!');
+              context.PumpFrames(1);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+              if (!vp.Undo()) {
+                throw std::runtime_error("editor_fold_recompute: undo failed");
+              }
+            }
+            EnforceP95Microseconds("editor_fold_recompute.insert_and_fold_frame", samples_us,
+                                   60'000.0);
+            std::string error;
+            (void)context.AssertNoAllocationsDuringDraw(&error);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_fold_viewport_refresh",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            (void)TA::SetSettingValue(context.Shell(), "editor.fold.enabled", "true");
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(20);
+            (void)TA::EnsureActiveFoldingModelFresh(context.Shell());
+            std::vector<double> samples_us;
+            samples_us.reserve(96);
+            for (int i = 0; i < 96; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              context.Scroll(-2);
+              context.PumpFrames(1);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+            }
+            EnforceP95Microseconds("editor_fold_viewport_refresh.scroll_frame", samples_us,
+                                   30'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_sticky_scroll_scroll",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            (void)TA::SetSettingValue(context.Shell(), "editor.fold.enabled", "true");
+            (void)TA::SetSettingValue(context.Shell(), "editor.fold.sticky_scroll.enabled",
+                                      "true");
+            (void)TA::SetSettingValue(context.Shell(), "editor.fold.sticky_scroll.max_depth", "4");
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(20);
+            (void)context.ExecuteCommand("goto 12000 8");
+            std::vector<double> samples_us;
+            samples_us.reserve(100);
+            for (int i = 0; i < 100; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              context.Scroll(-3);
+              context.PumpFrames(1);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+            }
+            EnforceP95Microseconds("editor_sticky_scroll_scroll.fast_scroll_frame", samples_us,
+                                   30'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_indent_guides_paint",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            (void)TA::SetSettingValue(context.Shell(), "editor.fold.enabled", "true");
+            (void)TA::SetSettingValue(context.Shell(), "editor.view.indent_guides.enabled", "true");
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(18);
+            std::vector<double> samples_us;
+            samples_us.reserve(80);
+            for (int i = 0; i < 80; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              context.Scroll(((i % 7) & 1) != 0 ? 2 : -2);
+              context.PumpFrames(1);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+            }
+            EnforceP95Microseconds("editor_indent_guides_paint.scroll_paint_frame", samples_us,
+                                   30'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_render_whitespace_paint",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            (void)TA::SetSettingValue(context.Shell(), "editor.view.render_whitespace", "true");
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(18);
+            std::vector<double> samples_us;
+            samples_us.reserve(80);
+            for (int i = 0; i < 80; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              context.Scroll(-2);
+              context.PumpFrames(1);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+            }
+            EnforceP95Microseconds("editor_render_whitespace_paint.scroll_overlay_frame", samples_us,
+                                   30'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_outline_lsp_refresh",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            microide::workspace::WorkspaceShell& shell = context.Shell();
+            (void)context.Open("tests/perf/fixtures/small_project");
+            (void)TA::SetSettingValue(shell, "editor.outline.enabled", "true");
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(16);
+            InstallOutlineLspStubForActiveEditor(shell);
+            (void)context.ExecuteCommand("sidebar-show outline");
+            microide::workspace::WorkspaceOutlineService& outline_svc =
+                TA::OutlineServiceForTesting(shell);
+            outline_svc.ResetCountsForTesting();
+            outline_svc.SetFixedClockMsForTesting(0);
+            TA::PollOutlineServiceForTesting(shell, 0);
+            TA::LspManagerForTesting(shell).DrainCallbacks();
+            context.PumpFrames(4);
+            context.Measure("outline_lsp.debounced_refresh_and_type", [&]() {
+              context.Type(" // perf outline lsp");
+              TA::TouchOutlineDebouncedAfterEditorSyncForTesting(shell);
+              outline_svc.SetFixedClockMsForTesting(200);
+              TA::PollOutlineServiceForTesting(shell, 0);
+              TA::LspManagerForTesting(shell).DrainCallbacks();
+              context.PumpFrames(1);
+            });
+            outline_svc.SetFixedClockMsForTesting(std::nullopt);
+            std::string error;
+            (void)context.AssertNoAllocationsDuringDraw(&error);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_outline_regex_fallback",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            microide::workspace::WorkspaceShell& shell = context.Shell();
+            // Open the fixture dir as the project so plugin reload + language contract initialization
+            // matches real sessions (outline regex fallback reads the merged `WorkspaceLanguageContract`).
+            (void)context.Open("tests/perf/fixtures/editor_essentials_50k_py");
+            context.SetSetting("editor.outline.enabled", "true");
+            TA::RebuildPhase3RegistriesForTesting(shell);
+            OpenEditorEssentials50kPyOrThrow(context);
+            context.PumpFrames(8);
+            context.Measure("outline_regex.fallback_build", [&]() {
+              microide::workspace::WorkspaceOutlineService& outline_svc =
+                  TA::OutlineServiceForTesting(shell);
+              outline_svc.ResetCountsForTesting();
+              TA::PollOutlineServiceForTesting(shell, 0);
+            });
+            if (!TA::OutlineSidebarFromFallbackForTesting(shell) ||
+                TA::OutlineSidebarRootCountForTesting(shell) < 1) {
+              const std::string lid = microide::editor::runtime_syntax::DetectFiletype(
+                  TA::ActiveEditor(shell).path(), TA::ActiveEditor(shell).lines());
+              throw std::runtime_error(
+                  "editor_outline_regex_fallback: expected non-empty regex fallback outline "
+                  "(lang=" +
+                  lid +
+                  " roots=" +
+                  std::to_string(TA::OutlineSidebarRootCountForTesting(shell)) +
+                  " fallback=" +
+                  std::string(TA::OutlineSidebarFromFallbackForTesting(shell) ? "true" : "false") +
+                  " patterns=" +
+                  std::to_string(TA::LanguageContractOutlinePatternCountForTesting(shell, lid)) +
+                  " indexing=" +
+                  std::string(TA::OutlineSidebarIndexingForTesting(shell) ? "true" : "false") +
+                  " lines=" + std::to_string(TA::ActiveEditor(shell).lines().size()) + ")");
+            }
+            context.PumpFrames(4);
+          },
+  });
+
+  // OpenSpec §13.C — pair and indent (editor_essentials_50k_cpp).
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_bracket_match_caret_motion",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            OpenEditorEssentials50kCppOrThrow(context);
+            microide::editor::TextViewport& vp = context.ActiveViewport();
+            std::vector<std::string_view> line_views(vp.lines().size());
+            for (std::size_t i = 0; i < vp.lines().size(); ++i) {
+              line_views[i] = vp.lines()[i];
+            }
+            // Shallow nest depth keeps bracket scans bounded while the 50k-line buffer is live.
+            vp.MoveCursorTo(24, 8, false);
+            std::vector<double> samples_us;
+            samples_us.reserve(400);
+            for (int i = 0; i < 400; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              (void)microide::editor::FindBracketMatchInLines(line_views, vp.cursor_line(),
+                                                              vp.cursor_column(), 2000, &vp);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+              vp.MoveCursorHorizontal(1);
+            }
+            // design.md targets ≤ 50µs for the balanced scan; `HighlightedLineTokens` on this path
+            // is heavier under Xvfb. Baseline + this envelope gate gross regressions on large fixtures.
+            EnforceP95Microseconds("editor_bracket_match_caret_motion", samples_us, 125'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_auto_close_typing",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            OpenEditorEssentials50kCppOrThrow(context);
+            microide::editor::TextViewport& vp = context.ActiveViewport();
+            vp.MoveCursorTo(32, 0, false);
+            vp.MoveCursorLineEnd(false);
+            std::vector<double> samples_us;
+            samples_us.reserve(128);
+            for (int i = 0; i < 120; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              context.Type("(");
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+              if (!vp.Undo()) {
+                throw std::runtime_error("editor_auto_close_typing: undo failed");
+              }
+            }
+            // Advisory: stay within practical typing latency on the large buffer (see design.md + typing_large_file).
+            EnforceP95Microseconds("editor_auto_close_typing", samples_us, 200'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_smart_indent_typing",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            OpenEditorEssentials50kCppOrThrow(context);
+            microide::editor::TextViewport& vp = context.ActiveViewport();
+            const std::size_t header_line = 5;
+            if (vp.lines().size() <= header_line) {
+              throw std::runtime_error("editor_smart_indent_typing: fixture too small");
+            }
+            vp.MoveCursorTo(header_line, vp.lines()[header_line].size(), false);
+            std::vector<double> samples_us;
+            samples_us.reserve(128);
+            for (int i = 0; i < 120; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              vp.InsertNewline();
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+              if (!vp.Undo()) {
+                throw std::runtime_error("editor_smart_indent_typing: undo failed");
+              }
+            }
+            EnforceP95Microseconds("editor_smart_indent_typing", samples_us, 200'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_surround_multi_caret",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            OpenEditorEssentials50kCppOrThrow(context);
+            microide::editor::TextViewport& vp = context.ActiveViewport();
+            constexpr std::size_t kSelLen = 80;
+            std::array<std::size_t, 8> line_indices{};
+            for (std::size_t i = 0; i < 8; ++i) {
+              line_indices[i] = 20000u + i * 1200u;
+            }
+            const std::string before = ConcatLinesAtIndices(vp, line_indices);
+            for (int i = 0; i < 8; ++i) {
+              const std::size_t line = line_indices[static_cast<std::size_t>(i)];
+              if (line >= vp.lines().size()) {
+                throw std::runtime_error("editor_surround_multi_caret: line out of range");
+              }
+              const std::string& L = vp.lines()[line];
+              std::size_t start = L.find("volatile");
+              if (start == std::string::npos) {
+                start = 40;
+              }
+              if (start + kSelLen > L.size()) {
+                start = L.size() > kSelLen ? L.size() - kSelLen : 0;
+              }
+              const microide::editor::SelectionRange range{
+                  .start = {line, start},
+                  .end = {line, start + kSelLen},
+              };
+              if (i == 0) {
+                vp.MoveCursorTo(range.end.line, range.end.column, false);
+                vp.MoveCursorTo(range.start.line, range.start.column, true);
+              } else {
+                vp.AddSecondaryCaretWithRange(range);
+              }
+            }
+            if (!vp.has_multiple_carets()) {
+              throw std::runtime_error("editor_surround_multi_caret: expected multi-caret setup");
+            }
+            if (ConcatLinesAtIndices(vp, line_indices) != before) {
+              throw std::runtime_error("editor_surround_multi_caret: buffer changed before insert");
+            }
+            context.Measure("editor.surround_multi_caret.insert", [&]() { vp.InsertCharacter('('); });
+            if (ConcatLinesAtIndices(vp, line_indices) == before) {
+              throw std::runtime_error("editor_surround_multi_caret: insert had no effect");
+            }
+            if (!vp.Undo()) {
+              throw std::runtime_error("editor_surround_multi_caret: undo failed");
+            }
+            if (ConcatLinesAtIndices(vp, line_indices) != before) {
+              throw std::runtime_error(
+                  "editor_surround_multi_caret: single undo should restore 8-range surround");
+            }
+            context.PumpFrames(2);
+          },
+  });
 }
 
 util::JsonValue ToJson(const Aggregate& aggregate) {
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
   util::JsonArray iterations_json;
   iterations_json.reserve(aggregate.iterations.size());
   for (const Iteration& iteration : aggregate.iterations) {
@@ -600,16 +1097,19 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
     for (const auto& phase : iteration.phase_durations_ms) {
       phase_json[phase.first] = phase.second;
     }
-    iterations_json.push_back(util::JsonObject{
-        {"index", static_cast<std::int64_t>(iteration.index)},
-        {"wall_ms", iteration.metrics.wall_ms},
-        {"allocations", static_cast<std::int64_t>(iteration.metrics.allocations)},
-        {"frees", static_cast<std::int64_t>(iteration.metrics.frees)},
-        {"bytes_allocated", static_cast<std::int64_t>(iteration.metrics.bytes_allocated)},
-        {"bytes_freed", static_cast<std::int64_t>(iteration.metrics.bytes_freed)},
-        {"phase_durations_ms", std::move(phase_json)},
-    });
+    util::JsonObject iteration_json;
+    iteration_json["index"] = static_cast<std::int64_t>(iteration.index);
+    iteration_json["wall_ms"] = iteration.metrics.wall_ms;
+    iteration_json["allocations"] = static_cast<std::int64_t>(iteration.metrics.allocations);
+    iteration_json["frees"] = static_cast<std::int64_t>(iteration.metrics.frees);
+    iteration_json["bytes_allocated"] = static_cast<std::int64_t>(iteration.metrics.bytes_allocated);
+    iteration_json["bytes_freed"] = static_cast<std::int64_t>(iteration.metrics.bytes_freed);
+    iteration_json["phase_durations_ms"] = std::move(phase_json);
+    iterations_json.push_back(std::move(iteration_json));
   }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   return util::JsonObject{
       {"scenario", aggregate.scenario_name},
       {"smoke", aggregate.smoke},
@@ -651,6 +1151,24 @@ int main(int argc, char** argv) {
     std::string fixture_error;
     if (!PerfHarness::VerifyFixtureTree("tests/perf/fixtures/kernel_sized_project",
                                         "tests/perf/fixtures/kernel_sized_project.sha256",
+                                        &fixture_error)) {
+      std::cerr << fixture_error << '\n';
+      return 1;
+    }
+  }
+  {
+    std::string fixture_error;
+    if (!PerfHarness::VerifyFixtureTree("tests/perf/fixtures/editor_essentials_50k_cpp",
+                                        "tests/perf/fixtures/editor_essentials_50k_cpp.sha256",
+                                        &fixture_error)) {
+      std::cerr << fixture_error << '\n';
+      return 1;
+    }
+  }
+  {
+    std::string fixture_error;
+    if (!PerfHarness::VerifyFixtureTree("tests/perf/fixtures/editor_essentials_50k_py",
+                                        "tests/perf/fixtures/editor_essentials_50k_py.sha256",
                                         &fixture_error)) {
       std::cerr << fixture_error << '\n';
       return 1;

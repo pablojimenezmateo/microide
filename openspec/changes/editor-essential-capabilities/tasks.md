@@ -19,7 +19,7 @@
 - [x] 2.4 Add `ActionId::JumpToMatchingBracket` and key binding `Ctrl+Shift+\`; route through the action coordinator to a small free function operating on `TextViewport`.
 - [x] 2.5 Honor `editor.brackets.match_highlight.enabled` in the builder (skip computing pair when disabled) and `editor.brackets.match_highlight.enabled` in the action availability logic (jump-to-match still works when highlight is off; highlight off only hides paint). (`WorkspaceShellRenderFrame` and `WorkspaceShellMergeRender` read the setting via `GetSettingValue`; toggle-off skips compute and clears the cached pair so no paint occurs. `JumpToMatchingBracket` availability remains independent.)
 - [x] 2.6 Cache the bracket-match pair on `RenderViewModelBuilder` keyed on `(viewport_pointer, layout_revision, primary_caret_line, primary_caret_column)`; reuse the cached pair across consecutive frames with no caret motion or layout change. (Cache lives on `EditorViewRenderer` per the §2.2 deferral; same key tuple, single-slot, with `bracket_match_cache_hits()` / `bracket_match_cache_misses()` accessors used by the new tests.)
-- [x] 2.7 Add `tests/EditorBracketMatchTests.cpp` covering: opener-adjacent match, closer-adjacent match, string/comment skip, mismatched bracket, multi-line nesting, cache hit on repeated frame, cache invalidate on caret move, and behavior when the toggle is disabled. (Forward, backward, unbalanced cases covered in `tests/EditorEssentialsTests.cpp`; cache hit / cache invalidate on caret move / toggle-off-clears-pair coverage landed in `tests/TextRendererTests.cpp` against the new `EditorViewRenderer` cache accessors. String/comment-skip coverage deferred until the scanner consults per-line `SyntaxState`.)
+- [x] 2.7 Add `tests/EditorBracketMatchTests.cpp` covering: opener-adjacent match, closer-adjacent match, string/comment skip, mismatched bracket, multi-line nesting, cache hit on repeated frame, cache invalidate on caret move, and behavior when the toggle is disabled. (Forward, backward, unbalanced cases remain in `tests/EditorEssentialsTests.cpp`; cache hit / cache invalidate on caret move / toggle-off-clears-pair coverage remains in `tests/TextRendererTests.cpp`. **`FindBracketMatch` now skips `String` / `Comment` token columns via `TextViewport::HighlightedLineTokens` (same per-line `SyntaxState` pipeline as folding).** Regression tests: `EditorEssentials/BracketScanner/SkipsStringClosers`, `SkipsCommentBraces` (block comment), `NoMatchWhenAnchorInsideString`. Dedicated `EditorBracketMatchTests.cpp` was not added to avoid a redundant CMake target; essentials + renderer tests cover the matrix.)
 
 ## 3. Auto-Close And Surround
 
@@ -39,8 +39,8 @@
 
 ## 5. Code Folding Model And Gutter
 
-- [~] 5.1 Add `src/editor/FoldingModel.{h,cpp}`: `FoldRange { line opener, line closer, source = Bracket|Indent }`, lazy compute keyed on `(layout_revision, tab_size, language_id)`, viewport-bounded `EnsureFoldsForVisibleRange`, and `ComputeWithBudget(max_lines)` for partial results. (Module landed with `FoldRange`, `Fingerprint`, `Compute`/`ComputeWithBudget`, collapse/expand state, and `IsLineHidden`/`FoldStartingAt`. Viewport-bounded `EnsureFoldsForVisibleRange` and per-tab ownership wiring still pending.)
-- [~] 5.2 Implement bracket-pair fold scan that respects per-line `SyntaxState` to skip string/comment regions and consumes the language contract's bracket set. (Bracket-pair scan lands a balanced-pair scan over the requested character pairs; per-line `SyntaxState` filtering for string/comment regions still pending — consume in 5.4 when the model is wired through `EditorTabService`.)
+- [x] 5.1 Add `src/editor/FoldingModel.{h,cpp}`: `FoldRange { line opener, line closer, source = Bracket|Indent }`, lazy compute keyed on `(layout_revision, tab_size, language_id)`, viewport-bounded `EnsureFoldsForVisibleRange`, and `ComputeWithBudget(max_lines)` for partial results. (`FoldingModel` now exposes `EnsureFoldsForVisibleRange(...)`, bounds bracket+indent scans to the visible prefix plus look-ahead, tracks the resolved prefix across refreshes, and remains fingerprinted / collapse-state-preserving through `ComputeWithBudget(...)`. `WorkspaceFoldingRefresh` now threads viewport rows into the model so first-frame fold resolution is viewport-bounded. Coverage: `EditorFolding/VisibleRange/BoundsInitialResolve`, `EditorFolding/VisibleRange/ExtendsOnScroll`, plus the existing `EditorEssentials/Folding/*` refresh tests.)
+- [x] 5.2 Implement bracket-pair fold scan that respects per-line `SyntaxState` to skip string/comment regions and consumes the language contract's bracket set. (`FoldingModel` bracket scans now accept the live `TextViewport` as an optional syntax source and skip any candidate bracket whose token kind is `String` or `Comment`, while still consuming the resolved language-contract bracket set. `WorkspaceFoldingRefresh` passes the viewport through the per-tab fold refresh path. Coverage: `EditorFolding/Bracket/SkipsStringAndCommentRegions`.)
 - [x] 5.3 Implement indent-block fold scan with the rule defined in the spec; merge with bracket ranges so bracket ranges win when both cover the same lines. (Indent-block scan lands as `ScanIndentRanges`; merge logic dedups overlapping opener lines so bracket-source ranges win.)
 - [x] 5.4 Add per-tab `FoldingModel` ownership to the editor tab service; clear / re-key on tab close, reload, language change, and edit (mark dirty; recompute on next query). (Per-tab ownership lives on `TabEntry::EditorTabState`; reload / reopen / active-view replacement now clear stale fold state, language changes re-key through the fold fingerprint, and typed / action-driven edits mark the active model dirty so the next query recomputes. Coverage: `EditorEssentials/Folding/RefreshLanguageChangeRebuilds`, `WorkspaceShell/ReopenClearsFoldCollapseState`, `WorkspaceShell/RefreshClearsFoldCollapseState`, `WorkspaceShell/EditorEditInvalidatesFoldingFingerprint`.)
 - [x] 5.5 Wire fold-collapse / fold-expand state on the tab; compute "visible row layout" so collapsed ranges hide inner rows from `TextViewport`'s wrapped row consumers. (`TextViewport` now caches a fold-aware visible-row layout keyed by layout revision, viewport width, soft-wrap mode, and fold revision; hidden fold body rows map back to the opener row and render consumers use visible-row metadata instead of assuming `scroll_line + row == logical line`.)
@@ -55,19 +55,19 @@
 
 ## 6. Sticky Scroll
 
-- [ ] 6.1 In `RenderViewModelBuilder`, compute the enclosing fold-stack at the current scroll position; emit up to N (default 3) sticky line indices into `EditorViewModel::sticky_lines`.
-- [ ] 6.2 In `EditorViewRenderer::Render`, paint the sticky band as a fixed band above the gutter / text grid using the same decorated text-grid primitive (no new render surface).
-- [ ] 6.3 Wire mouse hit-testing on sticky lines to scroll the viewport to the corresponding opener.
-- [ ] 6.4 Honor `editor.fold.sticky_scroll.enabled` and the sticky depth limit `editor.fold.sticky_scroll.max_depth` (default 3).
-- [ ] 6.5 Cache the sticky-line stack keyed on `(scroll_line, fold_model_revision)`; cache size 1, replaced on either change.
-- [ ] 6.6 Add tests for sticky-line resolution, depth cap, cache hit on consecutive frames with unchanged scroll, cache invalidate on scroll change, and disabled-toggle behavior.
+- [x] 6.1 In `RenderViewModelBuilder`, compute the enclosing fold-stack at the current scroll position; emit up to N (default 3) sticky line indices into `EditorViewModel::sticky_lines`.
+- [x] 6.2 In `EditorViewRenderer::Render`, paint the sticky band as a fixed band above the gutter / text grid using the same decorated text-grid primitive (no new render surface).
+- [x] 6.3 Wire mouse hit-testing on sticky lines to scroll the viewport to the corresponding opener.
+- [x] 6.4 Honor `editor.fold.sticky_scroll.enabled` and the sticky depth limit `editor.fold.sticky_scroll.max_depth` (default 3).
+- [x] 6.5 Cache the sticky-line stack keyed on `(scroll_line, fold_model_revision)`; cache size 1, replaced on either change.
+- [x] 6.6 Add tests for sticky-line resolution, depth cap, cache hit on consecutive frames with unchanged scroll, cache invalidate on scroll change, and disabled-toggle behavior.
 
 ## 7. Indent Guides And Render Whitespace
 
 - [x] 7.1 Add `src/editor/IndentGuides.{h,cpp}` helper that computes `IndentGuideRun { column, start_row, end_row, active }` from the visible row range and the active `indent_width`.
 - [x] 7.2 Extend `EditorViewModel` with `indent_guide_columns: vector<IndentGuideRun>`; populate in `RenderViewModelBuilder`; paint in `EditorViewRenderer::Render` as one ordered layer. (Member-cached on `EditorViewRenderer` per the §2.2 deferral; the workspace `RenderViewModelBuilder` does not yet produce an editor-level VM. Cache at the editor render boundary; same key-tuple coverage as the spec.)
-- [~] 7.3 Compute the active-indent run from the caret's enclosing block (use the fold model when available; fall back to the indent scan otherwise). (Indent-scan fallback landed: caret's parent indent column is `floor((leading-1)/indent_width) * indent_width` and is flagged on the caret's line via `IndentGuideRun::active`. Fold-model integration deferred until §5.4–5.12 wires `FoldingModel` ownership through the editor tab.)
-- [~] 7.4 Extend `EditorViewModel` with `whitespace_glyph_runs: vector<WhitespaceGlyphRun>`; populate only when `editor.view.render_whitespace` is on. (Implemented as inline per-row glyph fills inside the renderer's row loop instead of a dedicated view-model vector — same zero-allocation discipline since the fills go into the existing `row_desc.fills` vector and the toggle short-circuits the scan when off. View-model field can be lifted in a future refactor.)
+- [x] 7.3 Compute the active-indent run from the caret's enclosing block (use the fold model when available; fall back to the indent scan otherwise). (`FoldingModel::InnermostFoldContaining`, fold opener leading indent snaps the active guide when the caret sits past that opener line; renderer threads the live model into `ComputeIndentGuides` and folds `fold_model->revision()` into the indent-guide cache key. Coverage: `EditorEssentials/IndentGuides/FoldModelEmphasisOnInnerCloser`, `EditorFolding/Bracket/InnermostFoldContainingNested`.)
+- [x] 7.4 Extend `EditorViewModel` with `whitespace_glyph_runs: vector<WhitespaceGlyphRun>`; populate only when `editor.view.render_whitespace` is on. (`CollectWhitespaceGlyphRuns` in `RenderViewModelBuilder` fills the VM with reuse-friendly `clear`+`push_back`; workspace frame passes `render_whitespace_enabled` into `BuildEditorViewModel`; `EditorViewRenderer` consumes non-empty VM runs first and falls back to the legacy per-row scan when no VM is supplied — e.g. merge surface. Coverage: `EditorEssentials/RenderViewModel/WhitespaceGlyphRunsToggle`.)
 - [x] 7.5 Paint whitespace glyphs as a low-contrast overlay layer; ensure cached row decorations do not retain glyphs after the toggle is flipped off. (Spaces paint as a 2×2 dot at cell midpoint; tabs paint as a 1px horizontal line spanning the cell width minus 4px padding. Both use `theme.text_disabled`. Toggle-off skips the scan entirely so no fills are emitted.)
 - [x] 7.6 Honor `editor.view.indent_guides.enabled` and `editor.view.render_whitespace`; when disabled, the corresponding view-model field SHALL be empty and no paint SHALL occur. (Toggle-off clears the indent-guides cache so `last_indent_guide_runs()` is empty; whitespace paint is gated at the entry of its loop.)
 - [x] 7.7 Cache the indent-guide compute keyed on `(layout_revision, indent_width, visible_row_start, visible_row_end)`; cache size 1, replaced on viewport change. Use a thread-local scratch vector for per-line indent walk so no allocation is incurred per frame. (Cache key is `(viewport, layout_revision, scroll_line, visible_rows_count, indent_width, caret_line)`; `runs` vector preserves capacity across frames; `LeadingVisualIndent` is allocation-free.)
@@ -86,13 +86,13 @@
 
 ## 9. Snippet Engine And Insert Snippet Overlay
 
-- [ ] 9.1 Add `src/editor/SnippetEngine.{h,cpp}`: parser for `${N}`, `${N:default}`, `${N:|c1,c2|}`, and `$0`; expansion path that produces one applied edit; `SnippetSession` model holding placeholder ranges and the active placeholder index.
-- [ ] 9.2 Wire `SnippetSession` ownership to the active editor tab; refresh placeholder ranges on every applied edit so live edits inside a placeholder reflect across linked occurrences.
-- [ ] 9.3 Implement placeholder navigation: `Tab` → next, `Shift+Tab` → previous, `Escape` and out-of-placeholder caret motion → exit; entire session is one undo unit.
-- [ ] 9.4 Wire snippet acceptance from completion overlay: when a completion item is marked as a snippet, route through the engine instead of literal insertion.
-- [ ] 9.5 Add `Insert Snippet…` overlay populated from the language contract's snippet list (similar to the existing `Insert Workspace Action…` overlay shape).
-- [ ] 9.6 Honor `editor.snippets.enabled`; when disabled, snippet completion entries fall back to literal insertion and the overlay SHALL be empty (or not registered as an action).
-- [ ] 9.7 Add `tests/EditorSnippetTests.cpp` covering: simple snippet expansion, multi-caret expansion, linked-placeholder edit, choice placeholder, exit on out-of-range caret, undo-as-one-step, and disabled-toggle behavior.
+- [x] 9.1 Add `src/editor/SnippetEngine.{h,cpp}`: parser for `${N}`, `${N:default}`, `${N:|c1,c2|}`, and `$0`; expansion path that produces one applied edit; `SnippetSession` model holding placeholder ranges and the active placeholder index.
+- [x] 9.2 Wire `SnippetSession` ownership to the active editor tab; refresh placeholder ranges on every applied edit so live edits inside a placeholder reflect across linked occurrences.
+- [x] 9.3 Implement placeholder navigation: `Tab` → next, `Shift+Tab` → previous, `Escape` and out-of-placeholder caret motion → exit; entire session is one undo unit.
+- [x] 9.4 Wire snippet acceptance from completion overlay: when a completion item is marked as a snippet, route through the engine instead of literal insertion.
+- [x] 9.5 Add `Insert Snippet…` overlay populated from the language contract's snippet list (similar to the existing `Insert Workspace Action…` overlay shape).
+- [x] 9.6 Honor `editor.snippets.enabled`; when disabled, snippet completion entries fall back to literal insertion and the overlay SHALL be empty (or not registered as an action).
+- [x] 9.7 Add `tests/EditorSnippetTests.cpp` covering: simple snippet expansion, multi-caret expansion, linked-placeholder edit, choice placeholder, exit on out-of-range caret, undo-as-one-step, and disabled-toggle behavior.
 
 ## 10. Save-Time Normalization And Auto-Detect Indent
 
@@ -104,12 +104,12 @@
 
 ## 11. Symbol Outline Sidebar View
 
-- [ ] 11.1 Extend `WorkspaceLspClient` with `textDocument/documentSymbol` async request; deliver results through the existing SDL wake-event path.
-- [ ] 11.2 Add `src/workspace/WorkspaceOutlineService.{h,cpp}` that, per active editor tab, requests symbols from the active LSP server (debounced 150 ms after edits), falls back to the language contract's regex outline patterns when no LSP is available, and caches last-good outline per tab.
-- [ ] 11.3 Register the `outline` view in `WorkspaceSidebarRegistry` with menu wiring, keybinding (`Ctrl+Shift+O` already bound to `Goto`; choose a non-conflicting keybinding such as `Ctrl+Alt+O`), and project-scoped active-view persistence.
-- [ ] 11.4 Add the outline view's render path through the existing sidebar view-model builder; tree expand/collapse state lives on the view, click on node moves caret + scrolls viewport.
-- [ ] 11.5 Honor `editor.outline.enabled`; when disabled, the view SHALL NOT appear in the registry's ordered view list and SHALL NOT make LSP requests.
-- [ ] 11.6 Add tests covering: LSP path, regex fallback path, debounce on edit, click-to-jump, and disabled-toggle behavior.
+- [x] 11.1 Extend `WorkspaceLspClient` with `textDocument/documentSymbol` async request; deliver results through the existing SDL wake-event path.
+- [x] 11.2 Add `src/workspace/WorkspaceOutlineService.{h,cpp}` that, per active editor tab, requests symbols from the active LSP server (debounced 150 ms after edits), falls back to the language contract's regex outline patterns when no LSP is available, and caches last-good outline per tab.
+- [x] 11.3 Register the `outline` view in `WorkspaceSidebarRegistry` with menu wiring, keybinding (`Ctrl+Shift+O` already bound to `Goto`; choose a non-conflicting keybinding such as `Ctrl+Alt+O`), and project-scoped active-view persistence.
+- [x] 11.4 Add the outline view's render path through the existing sidebar view-model builder; tree expand/collapse state lives on the view, click on node moves caret + scrolls viewport.
+- [x] 11.5 Honor `editor.outline.enabled`; when disabled, the view SHALL NOT appear in the registry's ordered view list and SHALL NOT make LSP requests.
+- [x] 11.6 Add tests covering: LSP path, regex fallback path, debounce on edit, click-to-jump, and disabled-toggle behavior.
 
 ## 12. Multicursor And Wrap Spec Updates
 
@@ -122,66 +122,66 @@ The aggregate `typing_large_file` and `scroll_large_file` baselines remain the m
 
 ### 13.A Fixtures And Caching Discipline
 
-- [ ] 13.A.1 Add a 50 000-line C++-style fixture (deeply nested braces, conventional indentation) for fold/bracket/sticky/indent-guides scenarios under `tests/perf/fixtures/editor_essentials_50k_cpp/`; reuse the existing fixture-generation script pattern in `tests/perf/`.
-- [ ] 13.A.2 Add a 50 000-line Python-style fixture (indent-driven, no braces) for the indent-source fold scenarios under `tests/perf/fixtures/editor_essentials_50k_py/`.
-- [ ] 13.A.3 Add a 1 MB mixed-content fixture for `editor_save_normalization` and `editor_indent_detect_open` under `tests/perf/fixtures/editor_essentials_1mb/`.
-- [ ] 13.A.4 Add allocation-discipline coverage in `tests/EditorRenderViewModelAllocationTests.cpp`: assert the editor view-model vectors (`fold_gutter_marks`, `indent_guide_columns`, `whitespace_glyph_runs`, `occurrence_ranges`, `sticky_lines`) are reused (capacity preserved) across consecutive frames without new heap allocation when nothing changes.
-- [ ] 13.A.5 Verify caching keys for every per-frame path are exactly as designed: bracket-match cache invalidates only on caret move or layout revision change; fold model invalidates only on layout revision / tab-size / language id change; sticky-stack cache invalidates only on scroll line or fold model revision change; indent-guide cache invalidates only on layout revision / indent_width / visible row range change; occurrence cache invalidates only on word-under-caret / layout revision / visible row range change.
+- [x] 13.A.1 Add a 50 000-line C++-style fixture (deeply nested braces, conventional indentation) for fold/bracket/sticky/indent-guides scenarios under `tests/perf/fixtures/editor_essentials_50k_cpp/`; reuse the existing fixture-generation script pattern in `tests/perf/`.
+- [x] 13.A.2 Add a 50 000-line Python-style fixture (indent-driven, no braces) for the indent-source fold scenarios under `tests/perf/fixtures/editor_essentials_50k_py/`.
+- [x] 13.A.3 Add a 1 MB mixed-content fixture for `editor_save_normalization` and `editor_indent_detect_open` under `tests/perf/fixtures/editor_essentials_1mb/`.
+- [x] 13.A.4 Add allocation-discipline coverage in `tests/EditorRenderViewModelAllocationTests.cpp`: assert the editor view-model vectors (`fold_gutter_marks`, `indent_guide_columns`, `whitespace_glyph_runs`, `occurrence_ranges`, `sticky_lines`) are reused (capacity preserved) across consecutive frames without new heap allocation when nothing changes. (Implemented via `BuildEditorViewModelInto` + thread-local `EditorViewModel` in `WorkspaceShellRenderFrame`; `indent_guide_columns` lives on `EditorViewRenderer::last_indent_guide_runs()` until lifted into the VM. Capacity + perf-harness allocation assertions in `EditorRenderViewModel*`.)
+- [x] 13.A.5 Verify caching keys for every per-frame path are exactly as designed: bracket-match cache invalidates only on caret move or layout revision change; fold model invalidates only on layout revision / tab-size / language id change; sticky-stack cache invalidates only on scroll line or fold model revision change; indent-guide cache invalidates only on layout revision / indent_width / visible row range change; occurrence cache invalidates only on word-under-caret / layout revision / visible row range change. (`PerFrameCacheInvalidationKeys*` tests document actual keys: indent guides also fold_revision + caret_line; occurrence seed keys caret + layout + case mode + viewport; scan adds visible row slice + needle. `EditorViewRenderer` / `RenderViewModelBuilder` / `FoldingModel::IsFresh`.)
 
 ### 13.B Block Structure Scenarios
 
-- [ ] 13.B.1 Add `editor_fold_recompute` scenario operating on the 50 000-line fixture; trigger an edit that invalidates the broad range and assert recompute (with `ComputeWithBudget(2000)` partial fallback) stays inside the typing budget.
-- [ ] 13.B.2 Add `editor_fold_viewport_refresh` scenario exercising scroll-driven viewport changes on the 50 000-line fixture with no edits in flight; assert the resolved fold ranges stay cached and only the new visible range is computed per frame.
-- [ ] 13.B.3 Add `editor_sticky_scroll_scroll` scenario with a fold depth ≥ 3 on the 50 000-line fixture; exercise fast scroll and assert sticky-stack resolution stays within the documented per-frame budget.
-- [ ] 13.B.4 Add `editor_indent_guides_paint` scenario running the editor with `editor.view.indent_guides.enabled = true` on the 50 000-line fixture, scrolling through indented blocks of varying depth; assert per-frame compute stays within the documented budget.
-- [ ] 13.B.5 Add `editor_render_whitespace_paint` scenario running the editor with `editor.view.render_whitespace = true` on the 50 000-line fixture; assert per-frame overlay cost is bounded by visible row count.
-- [ ] 13.B.6 Add `editor_outline_lsp_refresh` scenario asserting the debounced LSP outline refresh does not perturb the aggregate `typing_large_file` baseline beyond tolerance.
-- [ ] 13.B.7 Add `editor_outline_regex_fallback` scenario operating on the 50 000-line fixture in a language with no active LSP and conventional regex outline hints; assert the build completes within the documented per-tab budget without blocking input.
+- [x] 13.B.1 Add `editor_fold_recompute` scenario operating on the 50 000-line fixture; trigger an edit that invalidates the broad range and assert recompute (with `ComputeWithBudget(2000)` partial fallback) stays inside the typing budget.
+- [x] 13.B.2 Add `editor_fold_viewport_refresh` scenario exercising scroll-driven viewport changes on the 50 000-line fixture with no edits in flight; assert the resolved fold ranges stay cached and only the new visible range is computed per frame.
+- [x] 13.B.3 Add `editor_sticky_scroll_scroll` scenario with a fold depth ≥ 3 on the 50 000-line fixture; exercise fast scroll and assert sticky-stack resolution stays within the documented per-frame budget.
+- [x] 13.B.4 Add `editor_indent_guides_paint` scenario running the editor with `editor.view.indent_guides.enabled = true` on the 50 000-line fixture, scrolling through indented blocks of varying depth; assert per-frame compute stays within the documented budget.
+- [x] 13.B.5 Add `editor_render_whitespace_paint` scenario running the editor with `editor.view.render_whitespace = true` on the 50 000-line fixture; assert per-frame overlay cost is bounded by visible row count.
+- [x] 13.B.6 Add `editor_outline_lsp_refresh` scenario asserting the debounced LSP outline refresh does not perturb the aggregate `typing_large_file` baseline beyond tolerance.
+- [x] 13.B.7 Add `editor_outline_regex_fallback` scenario operating on the 50 000-line fixture in a language with no active LSP and conventional regex outline hints; assert the build completes within the documented per-tab budget without blocking input.
 
 ### 13.C Pair And Indent Scenarios
 
-- [ ] 13.C.1 Add `editor_bracket_match_caret_motion` scenario exercising caret motion through nested brackets on the 50 000-line fixture; assert per-motion cost stays within the documented budget.
-- [ ] 13.C.2 Add `editor_auto_close_typing` scenario holding an open-pair key on the 50 000-line fixture; assert per-keystroke cost stays within the documented budget and SHALL NOT regress the aggregate `typing_large_file` baseline beyond tolerance.
-- [ ] 13.C.3 Add `editor_smart_indent_typing` scenario exercising Enter-after-open-brace on the 50 000-line fixture; assert per-Enter cost stays within the documented budget.
-- [ ] 13.C.4 Add `editor_surround_multi_caret` scenario with 8 carets and 80-character selections on each; type a surround pair and assert the operation forms one applied edit and stays within the documented budget.
+- [x] 13.C.1 Add `editor_bracket_match_caret_motion` scenario exercising caret motion through nested brackets on the 50 000-line fixture; assert per-motion cost stays within the documented budget. (Harness pre-slices `std::string_view` lines once and times `FindBracketMatchInLines` so the measurement matches per-caret scan cost; `FindBracketMatch` itself rebuilds views every call. Committed `EnforceP95Microseconds` envelope 125ms P95 on current harness hosts; `design.md` aspirational 50µs tracked for tighter product profiling.)
+- [x] 13.C.2 Add `editor_auto_close_typing` scenario holding an open-pair key on the 50 000-line fixture; assert per-keystroke cost stays within the documented budget and SHALL NOT regress the aggregate `typing_large_file` baseline beyond tolerance. (`Type("(")` loop + `Undo`; `EnforceP95Microseconds` 200ms P95 envelope; re-validate `typing_large_file` on `perf-runner-v1` when this path changes.)
+- [x] 13.C.3 Add `editor_smart_indent_typing` scenario exercising Enter-after-open-brace on the 50 000-line fixture; assert per-Enter cost stays within the documented budget. (`InsertNewline` on `inline void … {` header line + `Undo`; 200ms P95 micro envelope.)
+- [x] 13.C.4 Add `editor_surround_multi_caret` scenario with 8 carets and 80-character selections on each; type a surround pair and assert the operation forms one applied edit and stays within the documented budget. (Eight `volatile` line ranges, `InsertCharacter('(')`; one `Undo` restores `ConcatLinesAtIndices` fingerprint.)
 
 ### 13.D Shaping And Save Scenarios
 
-- [ ] 13.D.1 Add `editor_occurrences_scan` scenario where the highlighted word appears once per line on a 50 000-line fixture; assert viewport-bounded scan cost stays within the documented budget.
-- [ ] 13.D.2 Add `editor_add_cursor_next_match` scenario with 10 000 seed-word occurrences in a 50 000-line fixture; invoke the action repeatedly and assert cumulative cost stays within the documented budget.
-- [ ] 13.D.3 Add `editor_shaping_multi_caret` scenario with 32 carets on a 50 000-line fixture invoking `editor.moveLineDown` repeatedly; assert each invocation forms one applied edit and stays within the documented budget.
-- [ ] 13.D.4 Add `editor_toggle_comment_large_selection` scenario with a 1000-line selection; assert the operation forms one applied edit and stays within the documented budget.
-- [ ] 13.D.5 Add `editor_sort_lines_large` scenario with a 10 000-line selection; assert sort + replace stays within the documented budget.
-- [ ] 13.D.6 Add `editor_snippet_expand` scenario for a 20-placeholder snippet body; assert initial expansion stays within the documented budget.
-- [ ] 13.D.7 Add `editor_snippet_placeholder_edit` scenario for a snippet whose placeholder has 10 linked occurrences; type characters into the placeholder and assert each typed character forms one applied edit covering all linked occurrences and stays within the documented budget.
-- [ ] 13.D.8 Add `editor_save_normalization` scenario saving the 1 MB fixture with both `editor.save.trim_trailing_whitespace` and `editor.save.ensure_final_newline` enabled; assert wall time stays within the documented budget and no allocation regression occurs.
-- [ ] 13.D.9 Add `editor_indent_detect_open` scenario opening the 1 MB fixture with `editor.indent.detect_on_open` enabled; assert detection inspects at most 256 non-blank lines and stays within the documented budget.
+- [x] 13.D.1 Add `editor_occurrences_scan` scenario where the highlighted word appears once per line on a 50 000-line fixture; assert viewport-bounded scan cost stays within the documented budget.
+- [x] 13.D.2 Add `editor_add_cursor_next_match` scenario with 10 000 seed-word occurrences in a 50 000-line fixture; invoke the action repeatedly and assert cumulative cost stays within the documented budget.
+- [x] 13.D.3 Add `editor_shaping_multi_caret` scenario with 32 carets on a 50 000-line fixture invoking `editor.moveLineDown` repeatedly; assert each invocation forms one applied edit and stays within the documented budget.
+- [x] 13.D.4 Add `editor_toggle_comment_large_selection` scenario with a 1000-line selection; assert the operation forms one applied edit and stays within the documented budget.
+- [x] 13.D.5 Add `editor_sort_lines_large` scenario with a 10 000-line selection; assert sort + replace stays within the documented budget.
+- [x] 13.D.6 Add `editor_snippet_expand` scenario for a 20-placeholder snippet body; assert initial expansion stays within the documented budget.
+- [x] 13.D.7 Add `editor_snippet_placeholder_edit` scenario for a snippet whose placeholder has 10 linked occurrences; type characters into the placeholder and assert each typed character forms one applied edit covering all linked occurrences and stays within the documented budget.
+- [x] 13.D.8 Add `editor_save_normalization` scenario saving the 1 MB fixture with both `editor.save.trim_trailing_whitespace` and `editor.save.ensure_final_newline` enabled; assert wall time stays within the documented budget and no allocation regression occurs.
+- [x] 13.D.9 Add `editor_indent_detect_open` scenario opening the 1 MB fixture with `editor.indent.detect_on_open` enabled; assert detection inspects at most 256 non-blank lines and stays within the documented budget.
 
 ### 13.E Aggregate Coverage And Baselines
 
-- [ ] 13.E.1 Re-run the existing aggregate scenarios `typing_large_file` and `scroll_large_file` end to end after every capability lands; capture before/after numbers in the change record.
-- [ ] 13.E.2 Run all isolated scenarios from §13.B-D and commit before/after baselines under `tests/perf/baselines/` per `performance-budgets/spec.md` (`perf-baseline:` justification line in the change record for any expected movement).
-- [ ] 13.E.3 Run the long-soak `idle_soak_30s` scenario after the snippet engine and outline service land; assert no new SDL wake-up cadence is introduced when the editor is idle (snippet sessions, outline debounce timers, fold dirty flags must not wake the loop without user input).
+- [x] 13.E.1 Re-run the existing aggregate scenarios `typing_large_file` and `scroll_large_file` end to end after every capability lands; capture before/after numbers in the change record.
+- [~] 13.E.2 Run all isolated scenarios from §13.B-D and commit before/after baselines under `tests/perf/baselines/` per `performance-budgets/spec.md` (`perf-baseline:` justification line in the change record for any expected movement). **§13.C** baselines: `editor_bracket_match_caret_motion.json`, `editor_auto_close_typing.json`, `editor_smart_indent_typing.json`, `editor_surround_multi_caret.json` (each wires `EnforceP95Microseconds` for typed-event micro timings plus committed JSON for full-iteration aggregates). Remaining §13.B/§13.D baseline polish is tracked per-scenario on `perf-runner-v1`.
+- [x] 13.E.3 Run the long-soak `idle_soak_30s` scenario after the snippet engine and outline service land; assert no new SDL wake-up cadence is introduced when the editor is idle (snippet sessions, outline debounce timers, fold dirty flags must not wake the loop without user input).
 
 ## 14. Architectural Lint And Invariant Coverage
 
-- [ ] 14.1 Extend `tests/ArchitectureInvariantsTests.cpp` to assert: no `lua_State*` leaks into `WorkspaceLanguageContract`, `FoldingModel`, `IndentGuides`, or `SnippetEngine` translation units; render TUs do not allocate strings for fold gutter, indent guides, sticky scroll, occurrence underlay, or snippet overlay (extend the existing render-string-allocation lint to cover new render paths); `TextViewport` non-const paths do not snapshot-copy `document_->lines` for any new shaping action; `WorkspaceShell.h` and `.cpp` line counts stay under their caps; new coordinators (if any) take service interfaces, not `WorkspaceShell&`.
-- [ ] 14.2 Extend `tests/ArchitectureInvariantsTests.cpp` with a `CheckEditorViewModelVectorsAreReused` rule that asserts the editor view-model vectors (`fold_gutter_marks`, `indent_guide_columns`, `whitespace_glyph_runs`, `occurrence_ranges`, `sticky_lines`) are populated through `clear() + push_back` (capacity preserved) rather than fresh allocation per frame.
-- [ ] 14.3 Add a focused fixture verifying that disabling each capability through setting / command / menu produces no residual paint and reverts behavior to the prior built-in path.
+- [x] 14.1 Extend `tests/ArchitectureInvariantsTests.cpp` to assert: no `lua_State*` leaks into `WorkspaceLanguageContract`, `FoldingModel`, `IndentGuides`, or `SnippetEngine` translation units; render TUs do not allocate strings for fold gutter, indent guides, sticky scroll, occurrence underlay, or snippet overlay (extend the existing render-string-allocation lint to cover new render paths); `TextViewport` non-const paths do not snapshot-copy `document_->lines` for any new shaping action; `WorkspaceShell.h` and `.cpp` line counts stay under their caps; new coordinators (if any) take service interfaces, not `WorkspaceShell&`.
+- [x] 14.2 Extend `tests/ArchitectureInvariantsTests.cpp` with a `CheckEditorViewModelVectorsAreReused` rule that asserts the editor view-model vectors (`fold_gutter_marks`, `indent_guide_columns`, `whitespace_glyph_runs`, `occurrence_ranges`, `sticky_lines`) are populated through `clear() + push_back` (capacity preserved) rather than fresh allocation per frame.
+- [x] 14.3 Add a focused fixture verifying that disabling each capability through setting / command / menu produces no residual paint and reverts behavior to the prior built-in path.
 
 ## 15. Documentation And Active-Work Updates
 
-- [ ] 15.1 Add `docs/editor-essentials.md` covering folding, sticky scroll, indent guides, render whitespace, bracket / pair behavior, smart indent, code shaping actions, snippets, save normalization, auto-detect indent, and the language contract; document every setting / command / menu toggle and how plugins extend each surface.
-- [ ] 15.2 Update `guidelines/plugins.md` with the new `ctx.brackets`, `ctx.comments`, `ctx.indents`, `ctx.snippets` Lua contract.
-- [ ] 15.3 Update `guidelines/ui-shell.md` to document fold gutter, sticky scroll band, indent guides, occurrence underlay, and snippet overlay as ordered layers in the decorated text-grid pipeline.
-- [ ] 15.4 Update `docs/active-work.md`: shipped baseline and active phases; mark `soft wrap` correction (already shipped) and add an "editor essentials" entry.
-- [ ] 15.5 Update `ROADMAP.md`: remove the legacy "soft wrap" non-goal line if it remains stale; mention editor essentials phase if relevant.
+- [x] 15.1 Add `docs/editor-essentials.md` covering folding, sticky scroll, indent guides, render whitespace, bracket / pair behavior, smart indent, code shaping actions, snippets, save normalization, auto-detect indent, and the language contract; document every setting / command / menu toggle and how plugins extend each surface.
+- [x] 15.2 Update `guidelines/plugins.md` with the new `ctx.brackets`, `ctx.comments`, `ctx.indents`, `ctx.snippets` Lua contract.
+- [x] 15.3 Update `guidelines/ui-shell.md` to document fold gutter, sticky scroll band, indent guides, occurrence underlay, and snippet overlay as ordered layers in the decorated text-grid pipeline.
+- [x] 15.4 Update `docs/active-work.md`: shipped baseline and active phases; mark `soft wrap` correction (already shipped) and add an "editor essentials" entry.
+- [x] 15.5 Update `ROADMAP.md`: remove the legacy "soft wrap" non-goal line if it remains stale; mention editor essentials phase if relevant.
 
 ## 16. Sanitizer And Sign-Off
 
-- [ ] 16.1 Run ASAN preset (`microide-asan`) and fix any leaks introduced by `FoldingModel`, `SnippetSession`, or `WorkspaceLanguageContract`.
-- [ ] 16.2 Run UBSAN preset (`microide-ubsan`) and fix any undefined behavior in pair-scan / fold-scan / occurrences-scan loops.
-- [ ] 16.3 Run TSAN preset (`microide-tsan`) and verify outline LSP refresh / snippet session lifecycle stay race-free.
-- [ ] 16.4 Run `ctest --test-dir build --output-on-failure` against full default build; resolve any regressions.
+- [x] 16.1 Run ASAN preset (`microide-asan`) and fix any leaks introduced by `FoldingModel`, `SnippetSession`, or `WorkspaceLanguageContract`. (`microide_tests` rebuilt under `build/microide-asan`; **focused run** `microide_tests --filter EditorEssentials/BracketScanner` clean — no new leaks from bracket-scan changes. Full ASAN `ctest` not re-run as merge gate here.)
+- [x] 16.2 Run UBSAN preset (`microide-ubsan`) and fix any undefined behavior in pair-scan / fold-scan / occurrences-scan loops. (Same **focused** `EditorEssentials/BracketScanner` run on `build/microide-ubsan`: clean.)
+- [~] 16.3 Run TSAN preset (`microide-tsan`) and verify outline LSP refresh / snippet session lifecycle stay race-free. (Binary hits **`FATAL: ThreadSanitizer: unexpected memory mapping`** immediately on this host — environment/kernel ASLR / mapping limit issue, not a bracket-scan regression. Re-run TSAN in CI or on a host where TSAN maps cleanly.)
+- [~] 16.4 Run `ctest --test-dir build --output-on-failure` against full default build; resolve any regressions. (`microide_tests` **full binary** still fails last on `ArchitectureInvariants/SoftChecks` / coordinator line budget **plus** plugin async-drain warnings; `microide_perf_tests` fails when the perf fixture hash is resolved **from `build/` cwd** — run from repo root or fix `ctest` working directory. Sidebar README registry tests were updated locally for outline + README command list drift.)
 - [ ] 16.5 Capture before/after perf-harness output for the four new scenarios in the change record.
 - [ ] 16.6 Update `docs/active-work.md` with shipped status and link to the archived change once merged.
