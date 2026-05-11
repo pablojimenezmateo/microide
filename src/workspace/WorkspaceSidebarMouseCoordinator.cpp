@@ -46,6 +46,9 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (sidebar_mode == SidebarMode::Plugin) {
     return HandlePluginButtonDown(event, layout, local_y);
   }
+  if (sidebar_mode == SidebarMode::Outline) {
+    return HandleOutlineButtonDown(event, layout, local_y);
+  }
   return HandleTreeButtonDown(event, layout, local_y);
 }
 
@@ -240,6 +243,18 @@ bool SidebarMouseCoordinator::HandlePluginButtonDown(const SDL_Event& event,
   operations_.reveal_selected_plugin_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
     operations_.open_selected_plugin_sidebar_item();
+  }
+  return true;
+}
+
+bool SidebarMouseCoordinator::HandleOutlineButtonDown(const SDL_Event& event,
+                                                       const WorkspaceLayout& layout,
+                                                       float local_y) {
+  if (local_y < 0.0f) {
+    return true;
+  }
+  if (operations_.handle_outline_sidebar_pointer_down) {
+    operations_.handle_outline_sidebar_pointer_down(event, layout);
   }
   return true;
 }

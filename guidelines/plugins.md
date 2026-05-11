@@ -32,8 +32,66 @@ Plugins may contribute capabilities such as:
 - SCM providers
 - annotation providers
 - syntax data and related assets that the host knows how to load
+- **Editor language contract data** via Lua tables merged by
+  `WorkspaceLanguageContract` (pairs, comment markers, indent hints, snippet
+  definitions). These tables only feed the host contract; they do not register
+  commands or render surfaces.
 
 The exact mechanism should remain host-owned and registry-first.
+
+## Editor language contract tables (`ctx.brackets`, `ctx.comments`, `ctx.indents`, `ctx.snippets`)
+
+Plugins register these from `init.lua` using the same `ctx.<surface>.add(...)`
+pattern as other contribution modules (`PluginLuaContextInterop.cpp`).
+Registration is parsed in `PluginRegistrationParsers.cpp` and stored on
+`PluginHost` until teardown on reload.
+
+### `ctx.brackets.add { … }`
+
+Required: `language_id` (string).
+
+Arrays of UTF-8 string pairs `{ open, close }` (each pair is a two-element Lua
+array):
+
+- `pairs` → language bracket pairs (matching / folding consumption as implemented)
+- `auto_close` → auto-close / skip-over-close pairs
+- `surround` → surround-selection pairs
+
+Omitting an array means “no contribution” for that sub-field.
+
+### `ctx.comments.add { … }`
+
+Required: `language_id`.
+
+Optional string fields — any mixture may be present:
+
+- `line` — line-comment leader (e.g. `//`)
+- `block_open` / `block_close` — block comment delimiters
+
+### `ctx.indents.add { … }`
+
+Required: `language_id`.
+
+Optional arrays of strings:
+
+- `indent_after_open` — suffix tokens on the **previous** logical line that trigger
+  an extra indent unit on newline (host matches trimmed line endings)
+- `dedent_on_close` — typed characters that trigger dedent-on-close on
+  indent-only lines (see smart-indent implementation)
+
+### `ctx.snippets.add { … }`
+
+Required: `id`, `language_id`, `prefix`, `body` (all strings). Optional `label`.
+
+The host forms the stable snippet id as `<plugin_id>.<id>` for merges and
+`editor.snippets.user_disabled` filtering. Snippet **bodies** are stored in the
+resolved `LanguageContract`; expansion UI / completion routing is not wired
+until the snippet engine work in `openspec/changes/editor-essential-capabilities`
+lands.
+
+After changes to these tables, the workspace refreshes `WorkspaceLanguageContract`
+and reapplies `LanguageContractView` to open editor tabs (same revision path as
+plugin reload).
 
 ## What Must Remain Host-Owned
 

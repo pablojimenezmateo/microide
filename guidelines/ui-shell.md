@@ -39,6 +39,40 @@ Plugins may request contributions, but they do not own frame composition, paint 
 - Reuse host render primitives so the shell does not drift into many one-off drawing conventions.
 - Protect typing, scrolling, and resize responsiveness when adding new UI behavior.
 
+## Editor text surface: decorated-row layer order
+
+The normal-editor path builds `editor::EditorViewModel` in
+`RenderViewModelBuilder::BuildEditorViewModel` (today: `fold_gutter_marks`,
+`occurrence_ranges`) and renders through `EditorViewRenderer::Render`. Within each
+visible row, **decoration fills** are appended to a `DecoratedTextRow` in this
+order before the row is rasterized once via `DecoratedTextGridRenderer`:
+
+1. Active-line row background (caret line highlight).
+2. Buffer-search match highlights (when the buffer search overlay is active).
+3. **Occurrence underlay** — viewport-bounded word matches from
+   `EditorViewModel::occurrence_ranges` (seed match uses the active highlight
+   color).
+4. Text selection fills.
+5. **Bracket pair match** — single-cell emphasis for opener and closer when the
+   bracket-match toggle is on and a pair is resolved.
+6. **Indent guides** — 1px vertical segments at indent columns (muted vs border
+   color; “active” guide emphasized).
+7. **Render-whitespace** glyphs — low-contrast dot / tab rule fills in the same
+   decoration list (not a separate view-model vector).
+
+Then the row draws **syntax-colored text runs**, **diagnostic underlines**, and
+the combined decorations through the shared decorated-grid primitive.
+
+After the text pass for that row, the gutter paints host-owned chrome (diagnostic
+severity marker, **fold affordances** from `FoldGutterMark` / folding model state,
+line numbers, secondary carets, primary caret). **Sticky scroll** has no band in
+the renderer yet (settings/toggle only).
+
+**Snippet overlay:** no snippet placeholder layer exists in the editor render path
+yet (`EditorViewModel` does not carry snippet ranges); when a snippet session is
+added, it should follow the same decorated-row discipline and sit relative to
+selection/caret per the editor-essential-capabilities spec once implemented.
+
 ## Interaction Rules
 
 - Separate event routing from durable state models when possible.

@@ -1,10 +1,28 @@
 #include "editor/IndentGuides.h"
 
+#include "editor/FoldingModel.h"
+
 #include <algorithm>
 #include <climits>
 #include <cstdint>
 
 namespace microide::editor {
+
+namespace {
+
+std::size_t ActiveGuideColumnFromLeading(std::size_t caret_leading_visual_indent,
+                                          std::size_t indent_width) {
+  std::size_t active_column = SIZE_MAX;
+  if (caret_leading_visual_indent >= indent_width) {
+    const std::size_t rounded =
+        (caret_leading_visual_indent / indent_width) * indent_width;
+    active_column =
+        rounded == caret_leading_visual_indent ? rounded - indent_width : rounded;
+  }
+  return active_column;
+}
+
+}  // namespace
 
 std::size_t LeadingVisualIndent(const std::string& line, std::size_t tab_size) {
   std::size_t visual = 0;
@@ -27,18 +45,30 @@ void ComputeIndentGuides(const std::vector<std::string>& lines,
                          std::size_t indent_width,
                          std::size_t caret_line,
                          std::size_t caret_leading_visual_indent,
-                         std::vector<IndentGuideRun>* out) {
+                         std::vector<IndentGuideRun>* out,
+                         const FoldingModel* folding_model) {
   if (out == nullptr) return;
   out->clear();
   if (indent_width == 0) return;
 
   // Compute the caret's "active" guide column: the immediate parent block.
   std::size_t active_column = SIZE_MAX;
-  if (caret_line != SIZE_MAX && caret_leading_visual_indent >= indent_width) {
-    const std::size_t rounded =
-        (caret_leading_visual_indent / indent_width) * indent_width;
-    active_column =
-        rounded == caret_leading_visual_indent ? rounded - indent_width : rounded;
+  if (caret_line != SIZE_MAX) {
+    if (folding_model != nullptr &&
+        caret_line < lines.size()) {
+      if (const auto fold = folding_model->InnermostFoldContaining(caret_line)) {
+        if (caret_line > fold->opener_line && fold->opener_line < lines.size()) {
+          const std::size_t opener_lead =
+              LeadingVisualIndent(lines[fold->opener_line], tab_size);
+          if (opener_lead >= indent_width) {
+            active_column = (opener_lead / indent_width) * indent_width;
+          }
+        }
+      }
+    }
+    if (active_column == SIZE_MAX) {
+      active_column = ActiveGuideColumnFromLeading(caret_leading_visual_indent, indent_width);
+    }
   }
 
   for (std::size_t row = 0; row < visible_rows.size(); ++row) {

@@ -93,6 +93,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .show_problems_sidebar = [this]() { ShowProblemsSidebar(); },
           .show_git_sidebar = [this]() { ShowGitSidebar(); },
           .show_tests_sidebar = [this]() { ShowTestsSidebar(); },
+          .show_outline_sidebar = [this]() { ShowOutlineSidebar(); },
           .show_plugin_sidebar =
               [this](std::string_view id, bool temporary) {
                 return ShowPluginSidebar(id, temporary);
@@ -135,6 +136,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .show_completion_overlay =
               [this](std::string* error_message) {
                 return ShowCompletionOverlay(error_message);
+              },
+          .show_insert_snippet_overlay =
+              [this](std::string* error_message) {
+                return ShowInsertSnippetOverlay(error_message);
               },
           .show_code_actions_overlay =
               [this](std::string* error_message) {
@@ -200,6 +205,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .reopen_active_tab = [this]() { return ReopenActiveTab(); },
           .save_tab = [this](std::size_t index) { return SaveTab(index); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
+          .notify_snippet_session_caret_moved =
+              [this]() { NotifySnippetSessionCaretMoved(); },
+          .clear_active_snippet_session_after_undo =
+              [this]() { ClearActiveSnippetSessionAfterUndo(); },
           .split_active_editor =
               [this](EditorSplitOrientation orientation) { return SplitActiveEditor(orientation); },
           .unsplit_active_editor = [this]() { return UnsplitActiveEditor(); },
@@ -283,6 +292,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string_view id, std::string value) {
                 return SetSettingValue(id, std::move(value));
               },
+          .normalize_sidebar_view_selection = [this]() { NormalizeSidebarViewSelection(); },
           .apply_ui_scale =
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },

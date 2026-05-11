@@ -606,7 +606,7 @@ void RegisterBuiltInScenarios() {
       .run =
           [](ScenarioContext& context) {
             context.PumpFrames(2);
-            // §13.E.3: prime outline debounce + active snippet placeholder session, then verify no
+            // Section 13.E.3: prime outline debounce + active snippet placeholder session, then verify no
             // new SDL wake cadence during the soak window (same zero-wake assertion as before).
             context.PrimeEditorEssentialsIdleSoakSurface();
             // Task 9.6: assert watcher/executor threads generate zero wake events after settling.
@@ -910,9 +910,9 @@ void RegisterBuiltInScenarios() {
             // matches real sessions (outline regex fallback reads the merged `WorkspaceLanguageContract`).
             (void)context.Open("tests/perf/fixtures/editor_essentials_50k_py");
             context.SetSetting("editor.outline.enabled", "true");
-            TA::RebuildPhase3RegistriesForTesting(shell);
             OpenEditorEssentials50kPyOrThrow(context);
             context.PumpFrames(8);
+            (void)context.ExecuteCommand("sidebar-show outline");
             context.Measure("outline_regex.fallback_build", [&]() {
               microide::workspace::WorkspaceOutlineService& outline_svc =
                   TA::OutlineServiceForTesting(shell);
@@ -921,21 +921,8 @@ void RegisterBuiltInScenarios() {
             });
             if (!TA::OutlineSidebarFromFallbackForTesting(shell) ||
                 TA::OutlineSidebarRootCountForTesting(shell) < 1) {
-              const std::string lid = microide::editor::runtime_syntax::DetectFiletype(
-                  TA::ActiveEditor(shell).path(), TA::ActiveEditor(shell).lines());
               throw std::runtime_error(
-                  "editor_outline_regex_fallback: expected non-empty regex fallback outline "
-                  "(lang=" +
-                  lid +
-                  " roots=" +
-                  std::to_string(TA::OutlineSidebarRootCountForTesting(shell)) +
-                  " fallback=" +
-                  std::string(TA::OutlineSidebarFromFallbackForTesting(shell) ? "true" : "false") +
-                  " patterns=" +
-                  std::to_string(TA::LanguageContractOutlinePatternCountForTesting(shell, lid)) +
-                  " indexing=" +
-                  std::string(TA::OutlineSidebarIndexingForTesting(shell) ? "true" : "false") +
-                  " lines=" + std::to_string(TA::ActiveEditor(shell).lines().size()) + ")");
+                  "editor_outline_regex_fallback: expected non-empty regex fallback outline");
             }
             context.PumpFrames(4);
           },

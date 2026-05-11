@@ -185,6 +185,7 @@ Current commands:
 - `code-actions`
 - `colorscheme [name|list]`
 - `completion`
+- `insert-snippet`
 - `compare [path] [commit-prefix]`
 - `merge <base> <incoming> <current> [output]`
 - `files [root]`
@@ -268,6 +269,7 @@ Current commands:
 - `toggle-editor-sort-lines`
 - `toggle-editor-add-cursor-at-match`
 - `toggle-editor-occurrences-highlight`
+- `toggle-editor-search-case-sensitive`
 - `toggle-editor-snippets`
 - `toggle-editor-save-trim`
 - `toggle-editor-save-ensure-newline`

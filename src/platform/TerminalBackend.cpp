@@ -187,7 +187,9 @@ class PosixTerminalBackend final : public TerminalBackend {
         close(slave_fd);
       }
 
-      chdir(request.working_directory.c_str());
+      if (chdir(request.working_directory.c_str()) != 0) {
+        _exit(127);
+      }
       setenv("TERM", "xterm-256color", 1);
       if (request.command.empty()) {
         execl(shell_path.c_str(), shell_name.c_str(), "-i", nullptr);

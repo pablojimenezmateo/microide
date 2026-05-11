@@ -42,6 +42,7 @@ class WorkspaceActionContext {
     std::function<void()> show_problems_sidebar;
     std::function<void()> show_git_sidebar;
     std::function<void()> show_tests_sidebar;
+    std::function<void()> show_outline_sidebar;
     std::function<bool(std::string_view, bool)> show_plugin_sidebar;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<void()> refresh_project_files;
@@ -68,6 +69,7 @@ class WorkspaceActionContext {
     std::function<void()> refresh_buffer_search;
     std::function<void()> open_buffer_replace;
     std::function<bool(std::string*)> show_completion_overlay;
+    std::function<bool(std::string*)> show_insert_snippet_overlay;
     std::function<bool(std::string*)> show_code_actions_overlay;
     std::function<bool(std::string*)> go_to_lsp_definition;
     std::function<bool(std::string*)> find_lsp_references;
@@ -96,6 +98,8 @@ class WorkspaceActionContext {
     std::function<bool()> reopen_active_tab;
     std::function<bool(std::size_t)> save_tab;
     std::function<void()> reset_caret_blink;
+    std::function<void()> notify_snippet_session_caret_moved;
+    std::function<void()> clear_active_snippet_session_after_undo;
     std::function<bool(EditorSplitOrientation)> split_active_editor;
     std::function<bool()> unsplit_active_editor;
     std::function<bool(int)> cycle_editor_split;
@@ -138,6 +142,7 @@ class WorkspaceActionContext {
     std::function<void()> save_config_state;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<bool(std::string_view, std::string)> set_setting_value;
+    std::function<void()> normalize_sidebar_view_selection;
     std::function<void(float)> apply_ui_scale;
     std::function<TerminalTabState*()> active_terminal_tab;
     std::function<void()> reset_command_prompt_session;
@@ -207,6 +212,7 @@ class WorkspaceActionContext {
   void ToggleLayoutMode();
   void ShowProjectSearchSidebar(std::string query);
   bool ShowCompletionOverlay(std::string* error_message);
+  bool ShowInsertSnippetOverlay(std::string* error_message);
   bool ShowCodeActionsOverlay(std::string* error_message);
   bool GoToLspDefinition(std::string* error_message);
   bool FindLspReferences(std::string* error_message);

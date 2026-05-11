@@ -6,6 +6,7 @@
 
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
+#include "workspace/WorkspaceOutlineFlat.h"
 
 namespace microide::workspace {
 
@@ -423,6 +424,62 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(project_state.sidebar.plugin.items.size()),
+                            list_layout.visible_units, static_cast<float>(scroll_row),
+                            context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
+  } else if (sidebar_mode == SidebarMode::Outline) {
+    const auto flat = BuildOutlineFlatRows(project_state.sidebar.outline);
+    const auto list_layout = ComputePluginSidebarListLayout(layout.sidebar, flat.size());
+    int scroll_row = list_layout.scroll_row;
+    project_state.sidebar.scroll_row = scroll_row;
+
+    const std::string subtitle =
+        project_state.sidebar.outline.indexing
+            ? "Indexing symbols…"
+            : (project_state.sidebar.outline.from_fallback ? "Regex fallback" : std::string{});
+    if (!subtitle.empty()) {
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
+                 list_layout.row_y - 2.0f, theme_.text_muted, theme_.surface_background,
+                 TruncateLabel(subtitle, layout.sidebar.w - kSidebarInset * 2.0f));
+    }
+
+    for (int row = 0; row < list_layout.visible_rows; ++row) {
+      const int item_index = scroll_row + row;
+      if (item_index >= static_cast<int>(flat.size())) {
+        break;
+      }
+      const auto& entry = flat[static_cast<std::size_t>(item_index)];
+      SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
+      const bool selected =
+          static_cast<std::size_t>(item_index) ==
+          project_state.sidebar.outline.selected_flat_index;
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+                                  selected);
+
+      const float depth_offset = static_cast<float>(entry.depth) * kTreeIndentWidth;
+      const float tree_x = row_rect.x + 6.0f + depth_offset;
+      const float label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
+      const float chevron_center_y = row_rect.y + row_rect.h * 0.5f;
+      if (entry.has_children) {
+        DrawChevron(renderer, tree_x + 2.0f, chevron_center_y, entry.expanded,
+                    selected ? theme_.text_primary : theme_.text_muted);
+      }
+      DrawVCenteredTextOn(
+          text_renderer_, renderer,
+          MakeRect(label_x, row_rect.y, row_rect.x + row_rect.w - 8.0f - label_x, row_rect.h), 0.0f,
+          selected ? theme_.text_primary : theme_.text_secondary,
+          selected ? theme_.row_highlight : theme_.surface_background,
+          TruncateLabel(entry.label, row_rect.x + row_rect.w - label_x - 8.0f));
+    }
+
+    if (flat.empty()) {
+      const std::string placeholder =
+          project_state.sidebar.outline.indexing ? "Waiting for symbols…" : FormatEmptyState("symbols");
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
+                 list_layout.row_y + 4.0f, theme_.text_muted, theme_.surface_background,
+                 TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
+    }
+
+    draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(flat.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   } else {

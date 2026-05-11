@@ -10,6 +10,8 @@
 
 namespace microide::editor {
 
+class TextViewport;
+
 enum class FoldSource : std::uint8_t {
   Bracket = 0,
   Indent = 1,
@@ -66,7 +68,21 @@ class FoldingModel {
   bool ComputeWithBudget(const std::vector<std::string>& lines,
                          const ComputeOptions& options,
                          std::size_t max_lines,
-                         std::size_t incremental_resume_line = std::numeric_limits<std::size_t>::max());
+                         std::size_t incremental_resume_line = std::numeric_limits<std::size_t>::max(),
+                         std::size_t target_end_exclusive = std::numeric_limits<std::size_t>::max(),
+                         const TextViewport* syntax_viewport = nullptr);
+
+  // Resolve folds only for the visible prefix needed by the current viewport
+  // plus a bounded look-ahead. When the requested range is already resolved
+  // and the model is not dirty, this is a no-op.
+  bool EnsureFoldsForVisibleRange(
+      const std::vector<std::string>& lines,
+      const ComputeOptions& options,
+      std::size_t visible_start_line,
+      std::size_t visible_end_line,
+      std::size_t max_lines,
+      std::size_t incremental_resume_line = std::numeric_limits<std::size_t>::max(),
+      const TextViewport* syntax_viewport = nullptr);
 
   // Toggle the collapsed state of the fold range whose opener matches
   // `opener_line`. Returns true if a matching range was found and toggled.
@@ -82,6 +98,10 @@ class FoldingModel {
 
   // Returns the fold range whose opener equals `line`, if any.
   std::optional<FoldRange> FoldStartingAt(std::size_t line) const;
+
+  // Returns the innermost fold covering `line` (maximal opener_line among ranges
+  // with opener_line <= line <= closer_line). Empty optional when unknown.
+  std::optional<FoldRange> InnermostFoldContaining(std::size_t line) const;
 
   // True iff a fold range opens at `line` and is currently collapsed.
   bool IsCollapsedAtOpener(std::size_t line) const;
@@ -110,6 +130,7 @@ class FoldingModel {
   bool complete_ = true;
   bool dirty_ = true;
   std::size_t revision_ = 0;
+  std::size_t resolved_prefix_line_count_ = 0;
 };
 
 }  // namespace microide::editor

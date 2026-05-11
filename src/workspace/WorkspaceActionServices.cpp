@@ -128,6 +128,17 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Tests:
       operations_.show_tests_sidebar();
       return true;
+    case SidebarMode::Outline: {
+      if (operations_.get_setting_value) {
+        const auto enabled = operations_.get_setting_value("editor.outline.enabled");
+        if (enabled.has_value() &&
+            (*enabled == "false" || *enabled == "0" || *enabled == "off")) {
+          return false;
+        }
+      }
+      operations_.show_outline_sidebar();
+      return true;
+    }
     case SidebarMode::Plugin:
       return operations_.show_plugin_sidebar(view.id, false);
     case SidebarMode::None:
@@ -146,6 +157,7 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Problems:
     case SidebarMode::Git:
     case SidebarMode::Tests:
+    case SidebarMode::Outline:
     case SidebarMode::Plugin:
       if (same_view) {
         operations_.close_sidebar();
@@ -267,6 +279,10 @@ void WorkspaceActionContext::ShowProjectSearchSidebar(std::string query) {
 
 bool WorkspaceActionContext::ShowCompletionOverlay(std::string* error_message) {
   return operations_.show_completion_overlay(error_message);
+}
+
+bool WorkspaceActionContext::ShowInsertSnippetOverlay(std::string* error_message) {
+  return operations_.show_insert_snippet_overlay(error_message);
 }
 
 bool WorkspaceActionContext::ShowCodeActionsOverlay(std::string* error_message) {
@@ -551,6 +567,9 @@ void WorkspaceActionContext::Undo() {
     {
       util::PerformanceTrace::Scope scope("WorkspaceActionContext::Undo::ViewportUndo");
       changed = viewport->Undo();
+    }
+    if (changed && operations_.clear_active_snippet_session_after_undo) {
+      operations_.clear_active_snippet_session_after_undo();
     }
     if (changed) {
       if (auto* compare_tab = operations_.active_compare_tab();
@@ -854,6 +873,9 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
 }
 
 void WorkspaceActionContext::NotifyEditorCaretMoved() {
+  if (operations_.notify_snippet_session_caret_moved) {
+    operations_.notify_snippet_session_caret_moved();
+  }
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
   operations_.request_focused_editor_redraw();
@@ -913,6 +935,9 @@ void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {
   const bool next_enabled = !currently_enabled;
   if (!operations_.set_setting_value(key, next_enabled ? "true" : "false")) {
     return;
+  }
+  if (id == ActionId::ToggleEditorOutline && operations_.normalize_sidebar_view_selection) {
+    operations_.normalize_sidebar_view_selection();
   }
   operations_.request_active_tab_redraw(false);
 }

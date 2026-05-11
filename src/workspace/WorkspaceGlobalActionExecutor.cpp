@@ -23,6 +23,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
   switch (id) {
     case ActionId::CodeActions:
     case ActionId::Completion:
+    case ActionId::InsertSnippet:
     case ActionId::InlineCompletion:
     case ActionId::TestsDiscover:
       return DispatchResult::Unhandled;

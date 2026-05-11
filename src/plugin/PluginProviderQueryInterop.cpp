@@ -65,6 +65,16 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
         if (candidate.insert_text.empty()) {
           candidate.insert_text = candidate.label;
         }
+        lua_getfield(state, -1, "is_snippet");
+        if (lua_isboolean(state, -1)) {
+          candidate.is_snippet = lua_toboolean(state, -1) != 0;
+        }
+        lua_pop(state, 1);
+        lua_getfield(state, -1, "snippet");
+        if (lua_isboolean(state, -1) && lua_toboolean(state, -1) != 0) {
+          candidate.is_snippet = true;
+        }
+        lua_pop(state, 1);
         if (!candidate.label.empty()) {
           results.push_back(std::move(candidate));
         }

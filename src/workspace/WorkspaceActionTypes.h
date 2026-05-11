@@ -82,6 +82,7 @@ enum class ActionId {
   PasteClipboard,
   Redo,
   ReplaceInBuffer,
+  InsertSnippet,
   SelectAll,
   Undo,
   // Editor essentials: structural & shape actions

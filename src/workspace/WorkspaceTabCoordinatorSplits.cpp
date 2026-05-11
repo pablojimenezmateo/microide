@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -393,6 +394,57 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
     *error_message = "Unknown tab: " + std::string(specifier);
   }
   return std::nullopt;
+}
+
+bool TabCoordinator::ReopenActive() {
+  if (state_.active_tab_index >= state_.open_tabs.size()) {
+    return false;
+  }
+
+  auto& tab = state_.open_tabs[state_.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor) {
+    return false;
+  }
+  const std::filesystem::path reopen_path = state_.welcome_surface.viewport.path().empty()
+                                                ? tab.path.lexically_normal()
+                                                : state_.welcome_surface.viewport.path().lexically_normal();
+  if (reopen_path.empty() || state_.welcome_surface.viewport.dirty()) {
+    return false;
+  }
+
+  editor::TextViewport reopened_view;
+  if (!reopened_view.OpenFile(reopen_path)) {
+    return false;
+  }
+  operations_.apply_editor_preferences(reopened_view);
+  operations_.apply_detected_indent_on_open(reopened_view);
+
+  if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
+    operations_.normalize_editor_split_tree(*tab.editor_state);
+    for (auto& view : tab.editor_state->views) {
+      if (view.leaf_id == tab.editor_state->active_leaf_id ||
+          operations_.editor_view_path(view) == reopen_path) {
+        view.viewport = reopened_view;
+        view.restored_path = reopen_path;
+        view.restored_cursor_line = reopened_view.cursor_line();
+        view.restored_cursor_column = reopened_view.cursor_column();
+        view.restored_scroll_line = reopened_view.scroll_line();
+        view.restored_horizontal_scroll = reopened_view.horizontal_scroll();
+        view.needs_restore = false;
+      }
+    }
+    tab.editor_state->folding_model.Clear();
+    state_.welcome_surface.viewport = reopened_view;
+  } else {
+    state_.welcome_surface.viewport = reopened_view;
+    tab.editor_state = operations_.make_editor_tab_state(reopened_view);
+  }
+  SyncActiveEditorTabMetadata();
+  operations_.invalidate_editor_blame_path(reopen_path);
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.reset_caret_blink();
+  operations_.request_editor_surface_redraw();
+  return true;
 }
 
 }  // namespace microide::workspace

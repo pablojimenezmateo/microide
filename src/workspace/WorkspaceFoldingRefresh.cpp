@@ -20,7 +20,8 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              editor::TextViewport& viewport,
                              const LanguageContract* contract,
                              std::size_t tab_size,
-                             bool fold_enabled) {
+                             bool fold_enabled,
+                             std::size_t visible_rows) {
   auto& model = tab.folding_model;
   if (!fold_enabled) {
     if (!model.ranges().empty() || !model.collapsed_flags().empty()) {
@@ -54,7 +55,11 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   }
 
   const std::size_t fold_resume_line = viewport.ConsumeFoldEditAnchorLine();
-  model.ComputeWithBudget(viewport.lines(), options, kFoldingModelComputeBudget, fold_resume_line);
+  const std::size_t visible_start = viewport.scroll_line();
+  const std::size_t visible_end =
+      visible_rows == 0 ? visible_start : visible_start + visible_rows - 1;
+  model.EnsureFoldsForVisibleRange(viewport.lines(), options, visible_start, visible_end,
+                                   kFoldingModelComputeBudget, fold_resume_line, &viewport);
   model.SetFingerprint(fingerprint);
 }
 

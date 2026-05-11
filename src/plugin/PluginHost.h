@@ -157,6 +157,7 @@ class PluginHost {
     std::string detail;
     std::string documentation;
     std::string insert_text;
+    bool is_snippet = false;
   };
 
   struct CodeActionCandidate {

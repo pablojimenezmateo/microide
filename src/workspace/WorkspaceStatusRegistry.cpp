@@ -9,14 +9,15 @@ namespace microide::workspace {
 std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_host) {
   std::vector<StatusItemView> items;
   for (const auto& contrib : plugin_host.ContributedStatusItems()) {
-    StatusItemView view;
-    view.id = contrib.id;
-    view.text = contrib.text;
-    view.tooltip = contrib.tooltip;
-    view.alignment = (contrib.alignment == "left") ? StatusAlignment::Left : StatusAlignment::Right;
-    view.priority = contrib.priority;
-    view.plugin_id = contrib.plugin_id;
-    items.push_back(std::move(view));
+    items.push_back(StatusItemView{
+        .id = contrib.id,
+        .text = contrib.text,
+        .tooltip = contrib.tooltip,
+        .alignment =
+            (contrib.alignment == "left") ? StatusAlignment::Left : StatusAlignment::Right,
+        .priority = contrib.priority,
+        .plugin_id = contrib.plugin_id,
+    });
   }
   std::sort(items.begin(), items.end(), [](const StatusItemView& a, const StatusItemView& b) {
     if (a.alignment != b.alignment) {

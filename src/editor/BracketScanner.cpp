@@ -1,10 +1,25 @@
 #include "editor/BracketScanner.h"
 
+#include "editor/SyntaxHighlighter.h"
 #include "editor/TextViewport.h"
 
 namespace microide::editor {
 
 namespace {
+
+bool IsBracketScanSuppressed(const TextViewport* viewport,
+                             std::size_t line_index,
+                             std::size_t column) {
+  if (viewport == nullptr) {
+    return false;
+  }
+  const auto& tokens = viewport->HighlightedLineTokens(line_index);
+  if (tokens.empty() || column >= tokens.size()) {
+    return false;
+  }
+  const SyntaxTokenKind kind = tokens[column];
+  return kind == SyntaxTokenKind::String || kind == SyntaxTokenKind::Comment;
+}
 
 constexpr bool IsOpener(char c) {
   return c == '{' || c == '(' || c == '[';
@@ -30,6 +45,7 @@ bool MatchForwardFromOpener(const std::vector<std::string_view>& lines,
                             std::size_t open_line,
                             std::size_t open_col,
                             std::size_t max_lines_each_side,
+                            const TextViewport* syntax_viewport,
                             BracketMatchPair* out) {
   const char open_ch = lines[open_line][open_col];
   const char close_ch = Opposite(open_ch);
@@ -42,6 +58,10 @@ bool MatchForwardFromOpener(const std::vector<std::string_view>& lines,
   while (line < end_line) {
     std::string_view text = lines[line];
     while (col < text.size()) {
+      if (IsBracketScanSuppressed(syntax_viewport, line, col)) {
+        ++col;
+        continue;
+      }
       char c = text[col];
       if (c == open_ch) {
         ++depth;
@@ -67,6 +87,7 @@ bool MatchBackwardFromCloser(const std::vector<std::string_view>& lines,
                              std::size_t close_line,
                              std::size_t close_col,
                              std::size_t max_lines_each_side,
+                             const TextViewport* syntax_viewport,
                              BracketMatchPair* out) {
   const char close_ch = lines[close_line][close_col];
   const char open_ch = Opposite(close_ch);
@@ -80,6 +101,9 @@ bool MatchBackwardFromCloser(const std::vector<std::string_view>& lines,
     std::size_t col = close_col;
     while (col > 0) {
       --col;
+      if (IsBracketScanSuppressed(syntax_viewport, close_line, col)) {
+        continue;
+      }
       char c = text[col];
       if (c == close_ch) {
         ++depth;
@@ -104,6 +128,9 @@ bool MatchBackwardFromCloser(const std::vector<std::string_view>& lines,
     std::size_t col = text.size();
     while (col > 0) {
       --col;
+      if (IsBracketScanSuppressed(syntax_viewport, line, col)) {
+        continue;
+      }
       char c = text[col];
       if (c == close_ch) {
         ++depth;
@@ -128,22 +155,28 @@ std::optional<BracketMatchPair> FindBracketMatchInLines(
     const std::vector<std::string_view>& lines,
     std::size_t caret_line,
     std::size_t caret_column,
-    std::size_t max_lines_each_side) {
+    std::size_t max_lines_each_side,
+    const TextViewport* syntax_viewport) {
   if (caret_line >= lines.size()) return std::nullopt;
   std::string_view current = lines[caret_line];
 
   // Try character at the caret first (caret is to the left of position).
   auto try_at = [&](std::size_t col, bool prefer_opener) -> std::optional<BracketMatchPair> {
     if (col >= current.size()) return std::nullopt;
+    if (IsBracketScanSuppressed(syntax_viewport, caret_line, col)) {
+      return std::nullopt;
+    }
     char c = current[col];
     BracketMatchPair pair;
     if (IsOpener(c)) {
-      if (MatchForwardFromOpener(lines, caret_line, col, max_lines_each_side, &pair)) {
+      if (MatchForwardFromOpener(lines, caret_line, col, max_lines_each_side, syntax_viewport,
+                                  &pair)) {
         pair.caret_at_opener = prefer_opener;
         return pair;
       }
     } else if (IsCloser(c)) {
-      if (MatchBackwardFromCloser(lines, caret_line, col, max_lines_each_side, &pair)) {
+      if (MatchBackwardFromCloser(lines, caret_line, col, max_lines_each_side, syntax_viewport,
+                                   &pair)) {
         pair.caret_at_opener = false;
         return pair;
       }
@@ -172,7 +205,7 @@ std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
   for (std::size_t i = 0; i < lines.size(); ++i) {
     views[i] = lines[i];
   }
-  return FindBracketMatchInLines(views, caret_line, caret_column, max_lines_each_side);
+  return FindBracketMatchInLines(views, caret_line, caret_column, max_lines_each_side, &viewport);
 }
 
 }  // namespace microide::editor

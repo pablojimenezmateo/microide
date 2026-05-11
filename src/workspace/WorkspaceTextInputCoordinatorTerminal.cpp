@@ -249,6 +249,10 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
               [](SDL_Keycode key, SDL_Keymod modifiers) {
                 return WorkspaceShell::KeycodeToAscii(key, modifiers);
               },
+          .try_editor_snippet_insert_text =
+              [this](editor::TextViewport* viewport, std::string_view text) {
+                return TrySnippetInsertTextInEditor(viewport, text);
+              },
       });
 }
 

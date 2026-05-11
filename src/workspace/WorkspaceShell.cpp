@@ -35,6 +35,12 @@ WorkspaceShell::~WorkspaceShell() {
   // Drain project background work before member teardown to avoid races on
   // git sidebar refresh state during shell destruction.
   project_background_executor_.Shutdown();
+  // Shut down the plugin runtime while every shell member it still calls back
+  // into (e.g. the pending redraw invalidation) is alive. Reverse-order member
+  // destruction would otherwise tear down `pending_render_invalidation_`
+  // before `plugin_runtime_`, and plugin teardown invokes
+  // RequestEditorSurfaceRedraw via the shell callbacks.
+  plugin_runtime_.Shutdown();
 }
 
 WorkspaceShell::SidebarMode WorkspaceShell::SidebarModeForViewId(std::string_view view_id) const {
@@ -80,7 +86,8 @@ const WorkspaceShell::MenuSpec* WorkspaceShell::FindMenuSpec(MenuId id) {
 std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId id) const {
   if (id == MenuId::SidebarMode) {
     const auto views =
-        OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies);
+        OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies,
+                            EditorOutlineEnabled());
     sidebar_mode_menu_items_.clear();
     sidebar_mode_menu_entries_.clear();
     sidebar_mode_menu_items_.reserve(views.size());
@@ -288,7 +295,8 @@ std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) 
 std::vector<std::string> WorkspaceShell::OrderedSidebarViewIds() const {
   std::vector<std::string> ids;
   const auto views =
-      OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies);
+      OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies,
+                          EditorOutlineEnabled());
   ids.reserve(views.size());
   for (const SidebarViewInfo& view : views) {
     ids.emplace_back(view.id);
@@ -299,7 +307,8 @@ std::vector<std::string> WorkspaceShell::OrderedSidebarViewIds() const {
 void WorkspaceShell::NormalizeSidebarViewSelection() {
   auto& sidebar = context_.current_project_state.sidebar;
   const auto visible_views =
-      OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies);
+      OrderedSidebarViews(plugin_runtime_.Host(), context_.current_project_state.sidebar_policies,
+                          EditorOutlineEnabled());
   const auto contains_visible_view = [&](std::string_view id) {
     return std::any_of(visible_views.begin(), visible_views.end(),
                        [id](const SidebarViewInfo& view) { return view.id == id; });

@@ -112,6 +112,10 @@ struct LspClient::Impl {
   // Ready callbacks waiting to be drained on the main thread, guarded by mutex.
   std::vector<std::function<void()>> ready_callbacks;
 
+  // When true, the client behaves as a connected server for unit tests (no subprocess).
+  std::atomic<bool> test_stub_mode{false};
+  std::function<void(std::string, DocumentSymbolCallback)> test_document_symbol_handler;
+
   // Diagnostics callback — set from main thread, called on main thread via ready_callbacks.
   OnPublishDiagnostics diagnostics_callback;
 
@@ -238,6 +242,9 @@ struct LspClient::Impl {
     }
     if (!initialized.load(std::memory_order_acquire)) {
       deferred_messages.push_back(serialized);
+      return true;
+    }
+    if (test_stub_mode.load(std::memory_order_acquire)) {
       return true;
     }
     if (!proc.IsRunning()) {
@@ -548,6 +555,9 @@ struct LspClient::Impl {
     JsonObject formatting_caps;
     formatting_caps["dynamicRegistration"] = JsonValue(false);
 
+    JsonObject document_symbol_caps;
+    document_symbol_caps["dynamicRegistration"] = JsonValue(false);
+
     JsonObject text_document_caps;
     text_document_caps["synchronization"] = JsonValue(std::move(text_doc_sync));
     text_document_caps["completion"] = JsonValue(std::move(completion_caps));
@@ -558,6 +568,7 @@ struct LspClient::Impl {
     text_document_caps["rename"] = JsonValue(std::move(rename_caps));
     text_document_caps["codeAction"] = JsonValue(std::move(code_action_caps));
     text_document_caps["formatting"] = JsonValue(std::move(formatting_caps));
+    text_document_caps["documentSymbol"] = JsonValue(std::move(document_symbol_caps));
 
     JsonObject caps;
     caps["textDocument"] = JsonValue(std::move(text_document_caps));
@@ -676,6 +687,22 @@ struct LspClient::Impl {
     TraceLspLifecycle(language_id, proc.pid(), "shutdown-begin");
     shutting_down.store(true, std::memory_order_release);
     stop_init.store(true);
+    if (test_stub_mode.load(std::memory_order_acquire)) {
+      ClearDeferredMessages();
+      ResetProtocolState();
+      {
+        std::lock_guard hook_lock(mutex);
+        test_document_symbol_handler = nullptr;
+      }
+      initialized.store(false, std::memory_order_release);
+      initializing.store(false, std::memory_order_release);
+      supports_incremental_sync.store(false, std::memory_order_release);
+      test_stub_mode.store(false, std::memory_order_release);
+      shutting_down.store(false, std::memory_order_release);
+      shutdown_complete.store(true, std::memory_order_release);
+      PushWakeEvent();
+      return;
+    }
     if (!initialized.load(std::memory_order_acquire)) {
       TraceLspLifecycle(language_id, proc.pid(), "preinit-cancel");
       StopWriterThread();

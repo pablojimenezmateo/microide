@@ -39,6 +39,56 @@ std::vector<LspClient::Location> ParseLocations(const util::JsonValue& result) {
   return locs;
 }
 
+LspClient::Range ParseLspRange(const util::JsonValue& r) {
+  LspClient::Range rng;
+  if (!r.HasKey("start") || !r.HasKey("end")) {
+    return rng;
+  }
+  rng.start.line = r["start"]["line"].AsInt();
+  rng.start.character = r["start"]["character"].AsInt();
+  rng.end.line = r["end"]["line"].AsInt();
+  rng.end.character = r["end"]["character"].AsInt();
+  return rng;
+}
+
+LspClient::DocumentSymbol ParseDocumentSymbolValue(const util::JsonValue& v) {
+  LspClient::DocumentSymbol s;
+  s.name = v["name"].IsString() ? v["name"].AsString() : "";
+  s.detail = v["detail"].IsString() ? v["detail"].AsString() : "";
+  s.kind = v["kind"].AsInt(1);
+  if (v.HasKey("location")) {
+    const auto& loc = v["location"];
+    s.range = ParseLspRange(loc["range"]);
+    s.selection_range = s.range;
+    (void)loc["uri"];
+  } else {
+    s.range = ParseLspRange(v["range"]);
+    if (v.HasKey("selectionRange")) {
+      s.selection_range = ParseLspRange(v["selectionRange"]);
+    } else {
+      s.selection_range = s.range;
+    }
+  }
+  if (v["children"].IsArray()) {
+    for (const auto& ch : v["children"].AsArray()) {
+      s.children.push_back(ParseDocumentSymbolValue(ch));
+    }
+  }
+  return s;
+}
+
+std::vector<LspClient::DocumentSymbol> ParseDocumentSymbolResult(
+    const util::JsonValue& result) {
+  std::vector<LspClient::DocumentSymbol> out;
+  if (!result.IsArray()) {
+    return out;
+  }
+  for (const auto& item : result.AsArray()) {
+    out.push_back(ParseDocumentSymbolValue(item));
+  }
+  return out;
+}
+
 }  // namespace
 
 void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback callback) {
@@ -77,6 +127,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           ci.documentation = item["documentation"].IsString() ? item["documentation"].AsString() : "";
           ci.insert_text = item["insertText"].IsString() ? item["insertText"].AsString() : "";
           if (ci.insert_text.empty()) ci.insert_text = ci.label;
+          ci.insert_text_format = item["insertTextFormat"].AsInt(1);
           items.push_back(std::move(ci));
         }
         cb(std::optional<std::vector<CompletionItem>>(std::move(items)));
@@ -254,6 +305,46 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
       });
   if (!impl_->SendMessageAfterInitialize(
           impl_->MakeRequest(id, "textDocument/rename", JsonValue(std::move(params))))) {
+    impl_->RemovePendingRequest(id);
+    failure_callback(std::nullopt);
+  }
+}
+
+void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallback callback) {
+  if (!callback) return;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+      auto handler = impl_->test_document_symbol_handler;
+      impl_->ready_callbacks.push_back(
+          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
+            if (handler) {
+              handler(std::move(uri), std::move(cb));
+            } else {
+              cb(std::nullopt);
+            }
+          });
+      return;
+    }
+  }
+  const DocumentSymbolCallback failure_callback = callback;
+  using namespace util;
+  JsonObject text_doc;
+  text_doc["uri"] = JsonValue(std::move(uri));
+  JsonObject params;
+  params["textDocument"] = JsonValue(std::move(text_doc));
+
+  const int id = impl_->RegisterPendingRequest(
+      [cb = std::move(callback)](util::JsonValue resp) {
+        if (!resp.HasKey("result")) {
+          cb(std::nullopt);
+          return;
+        }
+        cb(std::optional<std::vector<DocumentSymbol>>(
+            ParseDocumentSymbolResult(resp["result"])));
+      });
+  if (!impl_->SendMessageAfterInitialize(
+          impl_->MakeRequest(id, "textDocument/documentSymbol", JsonValue(std::move(params))))) {
     impl_->RemovePendingRequest(id);
     failure_callback(std::nullopt);
   }

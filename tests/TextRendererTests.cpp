@@ -1406,6 +1406,178 @@ void TestRenderViewModelBuilderOccurrenceSeedAndScanCachesHitOnStableFrames() {
          "caret moves that change the seed word should refill once then hit");
 }
 
+void TestParseStickyScrollMaxDepthSettingClamp() {
+  using microide::workspace::ParseStickyScrollMaxDepthSetting;
+  Expect(ParseStickyScrollMaxDepthSetting(std::nullopt) == 3,
+         "unset sticky depth defaults to three");
+  Expect(ParseStickyScrollMaxDepthSetting(std::string("8")) == 8, "Eight should clamp to eight");
+  Expect(ParseStickyScrollMaxDepthSetting(std::string("0")) == 1, "Too-small values clamp up");
+  Expect(ParseStickyScrollMaxDepthSetting(std::string("99")) == 8,
+         "Too-large values clamp down");
+}
+
+void TestComputeStickyScrollLinesRespectsNestingAndDepth() {
+  using microide::editor::FoldingModel;
+  using microide::workspace::ComputeStickyScrollLinesUncached;
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = false;
+  options.tab_size = 4;
+  FoldingModel model;
+  const std::vector<std::string> lines = {
+      "void a() {",
+      "  void b() {",
+      "    body();",
+      "  }",
+      "}",
+  };
+  Expect(model.Compute(lines, options), "fold model should compute");
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(
+      "void a() {\n"
+      "  void b() {\n"
+      "    body();\n"
+      "  }\n"
+      "}\n",
+      "/tmp/sticky-nested.cpp");
+  // Narrow height so ClampScrollState does not clamp scroll_line to zero when the
+  // buffer fits wholly in view (sticky uses the first visible logical line).
+  viewport.SetViewportSize(3, 120);
+  viewport.SetScrollLine(2);  // first visible row is logical line 2 ("    body();")
+  std::vector<std::size_t> sticky;
+  ComputeStickyScrollLinesUncached(viewport, &model, true, 3, sticky);
+  Expect(sticky.size() == 2 && sticky[0] == 0 && sticky[1] == 1,
+         "sticky band should list outer then inner opener lines for the nested block");
+
+  std::vector<std::size_t> depth1;
+  ComputeStickyScrollLinesUncached(viewport, &model, true, 1, depth1);
+  Expect(depth1.size() == 1 && depth1[0] == 1,
+         "depth cap one should keep only the innermost enclosing opener");
+}
+
+void TestRenderViewModelBuilderStickyScrollCacheHitsUntilScrollOrFoldRevision() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  using microide::editor::FoldingModel;
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = false;
+  options.tab_size = 4;
+  FoldingModel model;
+  const std::vector<std::string> lines = {
+      "void a() {",
+      "  void b() {",
+      "    body();",
+      "  }",
+      "}",
+  };
+  Expect(model.Compute(lines, options), "fold model should compute");
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(
+      "void a() {\n"
+      "  void b() {\n"
+      "    body();\n"
+      "  }\n"
+      "}\n",
+      "/tmp/sticky-cache.cpp");
+  viewport.SetViewportSize(3, 120);
+  viewport.SetScrollLine(2);
+
+  microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
+  (void)builder.BuildEditorViewModel(viewport, 8, &model, false, false, true, 3);
+  (void)builder.BuildEditorViewModel(viewport, 8, &model, false, false, true, 3);
+  Expect(microide::workspace::RenderViewModelBuilder::StickyScrollCacheMissesForTesting() == 1,
+         "first sticky build should miss the cache once");
+  Expect(microide::workspace::RenderViewModelBuilder::StickyScrollCacheHitsForTesting() == 1,
+         "unchanged scroll and fold revision should hit the sticky cache");
+
+  viewport.SetScrollLine(3);
+  (void)builder.BuildEditorViewModel(viewport, 8, &model, false, false, true, 3);
+  Expect(microide::workspace::RenderViewModelBuilder::StickyScrollCacheMissesForTesting() == 2,
+         "scroll change should invalidate the sticky cache");
+
+  microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
+  viewport.SetScrollLine(2);
+  (void)builder.BuildEditorViewModel(viewport, 8, &model, false, false, false, 3);
+  const auto vm_off = builder.BuildEditorViewModel(viewport, 8, &model, false, false, false, 3);
+  Expect(vm_off.sticky_lines.empty(),
+         "sticky scroll disabled should leave sticky_lines empty every frame");
+}
+
+void TestEditorEssentialsDisablingLayersClearsRendererCaches() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(360, 220);
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(
+      "void a() {\n"
+      "  void b() {\n"
+      "    if (true) {\n"
+      "      hello hello;\n"
+      "      hello hello;\n"
+      "      hello hello;\n"
+      "      hello hello;\n"
+      "    }\n"
+      "    hello hello;\n"
+      "    hello hello;\n"
+      "    hello hello;\n"
+      "  }\n"
+      "}\n",
+      "/tmp/essentials-cap-toggle.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.SetViewportSize(8, 120);
+  viewport.MoveCursorTo(3, 6);
+  viewport.SetScrollLine(2);
+
+  microide::editor::FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "essentials toggle fixture should compute folds");
+
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  const auto vm_on = builder.BuildEditorViewModel(viewport, 8, &folding_model, true, false, true, 3,
+                                                   true);
+  Expect(!vm_on.fold_gutter_marks.empty(),
+         "fixture should emit fold gutter marks for visible openers");
+  Expect(!vm_on.occurrence_ranges.empty(),
+         "fixture should emit occurrences for the repeated word under the caret");
+  Expect(!vm_on.sticky_lines.empty(),
+         "fixture should emit sticky ancestors while scrolled inside nested folds");
+  Expect(!vm_on.whitespace_glyph_runs.empty(),
+         "fixture should emit whitespace glyphs when the VM builder enables them");
+
+  const SDL_FRect rect{0.0f, 0.0f, 360.0f, 220.0f};
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "hello",
+                  std::nullopt, std::nullopt, {}, &vm_on,
+                  /*bracket_match_highlight_enabled=*/true,
+                  /*indent_guides_enabled=*/true,
+                  /*render_whitespace_enabled=*/true,
+                  &folding_model);
+  Expect(!renderer.last_fold_gutter_marks().empty(),
+         "enabled render pass should mirror fold gutter marks");
+
+  microide::editor::EditorViewModel vm_empty{};
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "", std::nullopt,
+                  std::nullopt, {}, &vm_empty,
+                  /*bracket_match_highlight_enabled=*/false,
+                  /*indent_guides_enabled=*/false,
+                  /*render_whitespace_enabled=*/false,
+                  nullptr);
+
+  Expect(renderer.last_fold_gutter_marks().empty(),
+         "all-off render should leave no cached fold gutter marks");
+  Expect(!renderer.last_bracket_match_pair().has_value(),
+         "bracket-match off should clear the cached pair");
+  Expect(renderer.last_indent_guide_runs().empty(),
+         "indent guides off should clear cached guide runs");
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
@@ -1463,6 +1635,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
           "TextRenderer editor view indent-guides clear cached runs when toggle is off",
           TestEditorViewRendererIndentGuidesClearOnToggleOff);
   AddTest(tests,
+          "TextRenderer editor presentation layers clear caches when toggles turn off",
+          TestEditorEssentialsDisablingLayersClearsRendererCaches);
+  AddTest(tests,
           "TextRenderer render view model occurrence scan stays viewport-bounded",
           TestRenderViewModelBuilderOccurrencesScansVisibleLinesOnly);
   AddTest(tests,
@@ -1471,6 +1646,15 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer render view model occurrence scan cache hits stable frames then invalidates",
           TestRenderViewModelBuilderOccurrenceSeedAndScanCachesHitOnStableFrames);
+  AddTest(tests,
+          "TextRenderer sticky-scroll max-depth setting parses into 1..8 range",
+          TestParseStickyScrollMaxDepthSettingClamp);
+  AddTest(tests,
+          "TextRenderer sticky-scroll unresolved openers nest with innermost capped by depth",
+          TestComputeStickyScrollLinesRespectsNestingAndDepth);
+  AddTest(tests,
+          "TextRenderer render view model sticky-scroll cache hits until scroll moves",
+          TestRenderViewModelBuilderStickyScrollCacheHitsUntilScrollOrFoldRevision);
   AddTest(tests, "TextRenderer caches repeated width lookups", TestMeasureWidthCachesRepeatedStrings);
   AddTest(tests,
           "TextRenderer invalidates width cache on scale changes",

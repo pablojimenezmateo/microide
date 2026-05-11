@@ -76,6 +76,9 @@ LspClient* LspManager::GetServer(const std::string& language_id) {
   }
 
   ServerEntry& entry = it->second;
+  if (entry.test_install && entry.client != nullptr) {
+    return entry.client.get();
+  }
   if (entry.client == nullptr) {
     util::StartupTrace::Scope trace_scope("LspManager::GetServer::InitializeServer");
     entry.last_error.clear();
@@ -106,6 +109,9 @@ LspClient* LspManager::FindStartedServer(const std::string& language_id) {
   auto it = servers_.find(language_id);
   if (it == servers_.end() || it->second.client == nullptr) {
     return nullptr;
+  }
+  if (it->second.test_install) {
+    return it->second.client.get();
   }
   return it->second.client->IsRunning() ? it->second.client.get() : nullptr;
 }
@@ -168,6 +174,12 @@ void LspManager::ShutdownAll() {
     }
   }
   retiring_clients_.clear();
+}
+
+void LspManager::InstallTestClientForTesting(const std::string& language_id,
+                                              std::unique_ptr<LspClient> client) {
+  servers_[language_id] =
+      ServerEntry{{}, "", "", {}, std::move(client), /*test_install=*/true};
 }
 
 void LspManager::CollectRetiredClients() {

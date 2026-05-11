@@ -33,7 +33,8 @@ struct SidebarViewRequest {
 std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs();
 const SidebarViewSpec* FindBuiltinSidebarView(std::string_view id);
 const SidebarViewSpec* FindBuiltinSidebarView(SidebarMode mode);
-std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host);
+std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host,
+                                            bool editor_outline_enabled = true);
 std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
                                                const plugin::PluginHost& plugin_host);
 std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host);
@@ -51,7 +52,8 @@ struct SidebarViewPolicy {
 // Views with no explicit policy entry keep their default order after policy-ordered views.
 std::vector<SidebarViewInfo> OrderedSidebarViews(
     const plugin::PluginHost& plugin_host,
-    const std::vector<SidebarViewPolicy>& policies);
+    const std::vector<SidebarViewPolicy>& policies,
+    bool editor_outline_enabled = true);
 
 // Returns the effective policy for a given view id (or a default policy with hidden=false).
 SidebarViewPolicy EffectiveSidebarViewPolicy(

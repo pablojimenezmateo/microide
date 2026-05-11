@@ -6,6 +6,8 @@
 
 namespace microide::editor {
 
+class FoldingModel;
+
 // One vertical indent-guide segment to be painted at `column` (visual column
 // in the viewport's column coordinate space) for visible rows in the inclusive
 // range [start_row, end_row]. `active` is true when the guide is the immediate
@@ -27,13 +29,18 @@ struct IndentGuideRun {
 //
 // `out` is cleared and refilled in place; capacity is preserved across calls
 // when the helper is invoked with the same destination vector.
+//
+// When `folding_model` is non-null, the caret's active-indent column prefers
+// the innermost enclosing fold opener's indentation (when the caret is past
+// the opener line); otherwise the legacy leading-indent scan applies.
 void ComputeIndentGuides(const std::vector<std::string>& lines,
                          const std::vector<std::size_t>& visible_rows,
                          std::size_t tab_size,
                          std::size_t indent_width,
                          std::size_t caret_line,
                          std::size_t caret_leading_visual_indent,
-                         std::vector<IndentGuideRun>* out);
+                         std::vector<IndentGuideRun>* out,
+                         const FoldingModel* folding_model = nullptr);
 
 // Returns the leading visual indent count for `line`, expanding tabs to
 // `tab_size` cells. Stops at the first non-whitespace character.

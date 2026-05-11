@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "editor/SingleLineEditor.h"
+#include "editor/TextViewport.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspacePromptState.h"
@@ -59,6 +60,7 @@ class TextInputCoordinator {
     std::function<void()> erase_last_terminal_pending_input_codepoint;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
+    std::function<bool(editor::TextViewport*, std::string_view)> try_editor_snippet_insert_text;
   };
 
   TextInputCoordinator(ProjectWorkspaceState& state,

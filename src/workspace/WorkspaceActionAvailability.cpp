@@ -45,6 +45,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr && operations_.active_code_actions_available();
     case ActionId::Completion:
       return active_viewport != nullptr && operations_.active_completion_available();
+    case ActionId::InsertSnippet:
+      return active_editable_viewport != nullptr &&
+             SettingEnabled(operations_, "editor.snippets.enabled", true) &&
+             !active_editable_viewport->path().empty();
     case ActionId::FindReferences:
       return active_viewport != nullptr && operations_.active_references_available();
     case ActionId::GoToDefinition:

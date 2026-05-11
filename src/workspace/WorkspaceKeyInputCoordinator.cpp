@@ -535,6 +535,17 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .accept_inline_completion = [this]() { return false; },
           .dismiss_inline_completion = [this]() {},
+          .try_snippet_tab_in_editor =
+              [this](bool shift_tab) { return TrySnippetTabInEditor(shift_tab); },
+          .try_snippet_escape_in_editor = [this]() { return TrySnippetEscapeInEditor(); },
+          .try_snippet_backspace_in_editor =
+              [this](editor::TextViewport* viewport) { return TrySnippetBackspaceInEditor(viewport); },
+          .try_snippet_delete_forward_in_editor =
+              [this](editor::TextViewport* viewport) {
+                return TrySnippetDeleteForwardInEditor(viewport);
+              },
+          .notify_snippet_session_caret_moved =
+              [this]() { NotifySnippetSessionCaretMoved(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },

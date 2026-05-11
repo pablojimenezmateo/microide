@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "editor/SnippetEngine.h"
 #include "util/JsonValue.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
@@ -127,6 +128,14 @@ editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& vi
 
 }  // namespace
 
+bool WorkspaceShell::EditorSnippetsSettingEnabled() const {
+  const auto value = GetSettingValue("editor.snippets.enabled");
+  if (!value.has_value()) {
+    return true;
+  }
+  return *value != "false" && *value != "0" && *value != "off";
+}
+
 bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();
@@ -149,12 +158,14 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
   context_.current_project_state.overlay.workflow.completion.source = "plugin";
   context_.current_project_state.overlay.workflow.completion.error = provider_error;
   for (const auto& item : items) {
+    const bool snippets_on = EditorSnippetsSettingEnabled();
     context_.current_project_state.overlay.workflow.completion.items.push_back(
         CompletionSessionItem{
             .label = item.label,
             .detail = item.detail,
             .documentation = item.documentation,
             .insert_text = item.insert_text,
+            .is_snippet = snippets_on && item.is_snippet,
         });
   }
   if (!context_.current_project_state.overlay.workflow.completion.items.empty()) {
@@ -197,11 +208,13 @@ bool WorkspaceShell::ShowCompletionOverlay(std::string* error_message) {
         } else {
           current_session.error.clear();
           for (const auto& item : *items) {
+            const bool snippets_on = EditorSnippetsSettingEnabled();
             current_session.items.push_back(CompletionSessionItem{
                 .label = item.label,
                 .detail = item.detail,
                 .documentation = item.documentation,
                 .insert_text = item.insert_text,
+                .is_snippet = snippets_on && item.insert_text_format == 2,
             });
           }
         }
@@ -233,7 +246,25 @@ bool WorkspaceShell::ApplySelectedCompletion() {
     selection_before = viewport->selection_range();
     cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
   }
-  if (!viewport->ReplaceRange(session.replacement_range, item.insert_text)) {
+  const bool want_snippet = EditorSnippetsSettingEnabled() && item.is_snippet;
+  bool snippet_applied = false;
+  if (want_snippet) {
+    if (TabEntry::EditorTabState* editor_tab = ActiveEditorTab()) {
+      viewport->BeginUndoGroup();
+      snippet_applied = editor::ExpandSnippetAtSelection(*viewport, editor_tab->snippet_session,
+                                                         session.replacement_range, item.insert_text);
+      if (!snippet_applied) {
+        if (viewport->UndoGroupActive()) {
+          viewport->EndUndoGroup();
+        }
+        if (!viewport->ReplaceRange(session.replacement_range, item.insert_text)) {
+          return false;
+        }
+      }
+    } else if (!viewport->ReplaceRange(session.replacement_range, item.insert_text)) {
+      return false;
+    }
+  } else if (!viewport->ReplaceRange(session.replacement_range, item.insert_text)) {
     return false;
   }
   if (auto* compare_tab = ActiveCompareTab();
@@ -253,6 +284,234 @@ bool WorkspaceShell::ApplySelectedCompletion() {
     RequestTabStripRedraw();
   }
   DismissOverlay(true);
+  return true;
+}
+
+bool WorkspaceShell::ShowInsertSnippetOverlay(std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (!EditorSnippetsSettingEnabled()) {
+    if (error_message != nullptr) {
+      *error_message = "Snippets are disabled";
+    }
+    return false;
+  }
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    if (error_message != nullptr) {
+      *error_message = "No active file";
+    }
+    return false;
+  }
+  const std::string language_id = DetectActiveLanguageId(*viewport);
+  const LanguageContract* contract = language_contract_.Find(language_id);
+  if (contract == nullptr || contract->snippets.empty()) {
+    if (error_message != nullptr) {
+      *error_message = "No snippets for this language";
+    }
+    return false;
+  }
+  auto& session = context_.current_project_state.overlay.workflow.completion;
+  session.items.clear();
+  session.selected_index = 0;
+  session.replacement_range = CompletionReplacementRange(*viewport);
+  session.source = "snippet";
+  session.error.clear();
+  for (const auto& sn : contract->snippets) {
+    session.items.push_back(CompletionSessionItem{
+        .label = sn.label.empty() ? sn.prefix : sn.label,
+        .detail = sn.prefix,
+        .documentation = {},
+        .insert_text = sn.body,
+        .is_snippet = true,
+    });
+  }
+  ShowOverlay(OverlayMode::Completion);
+  return true;
+}
+
+bool WorkspaceShell::TrySnippetTabInEditor(bool shift_tab) {
+  if (!EditorSnippetsSettingEnabled()) {
+    return false;
+  }
+  TabEntry::EditorTabState* tab = ActiveEditorTab();
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (tab == nullptr || viewport == nullptr || !tab->snippet_session.active) {
+    return false;
+  }
+  if (!editor::SnippetNavigateTab(*viewport, tab->snippet_session, shift_tab)) {
+    return false;
+  }
+  tab->folding_model.MarkDirty();
+  ResetCaretBlink();
+  RequestActiveEditableLastChangeRedraw();
+  RequestFocusedEditorRedraw();
+  return true;
+}
+
+bool WorkspaceShell::TrySnippetEscapeInEditor() {
+  if (!EditorSnippetsSettingEnabled()) {
+    return false;
+  }
+  TabEntry::EditorTabState* tab = ActiveEditorTab();
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (tab == nullptr || viewport == nullptr || !tab->snippet_session.active) {
+    return false;
+  }
+  if (!editor::SnippetHandleEscape(*viewport, tab->snippet_session)) {
+    return false;
+  }
+  tab->folding_model.MarkDirty();
+  ResetCaretBlink();
+  RequestActiveEditableLastChangeRedraw();
+  RequestFocusedEditorRedraw();
+  return true;
+}
+
+void WorkspaceShell::NotifySnippetSessionCaretMoved() {
+  TabEntry::EditorTabState* tab = ActiveEditorTab();
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (tab == nullptr || viewport == nullptr || !tab->snippet_session.active) {
+    return;
+  }
+  editor::SnippetOnCaretMoved(*viewport, tab->snippet_session);
+  if (!tab->snippet_session.active) {
+    tab->folding_model.MarkDirty();
+    ResetCaretBlink();
+    RequestActiveEditableLastChangeRedraw();
+    RequestFocusedEditorRedraw();
+  }
+}
+
+void WorkspaceShell::ClearActiveSnippetSessionAfterUndo() {
+  TabEntry::EditorTabState* tab = ActiveEditorTab();
+  if (tab == nullptr || !tab->snippet_session.active) {
+    return;
+  }
+  tab->snippet_session.Reset(nullptr);
+}
+
+bool WorkspaceShell::TrySnippetInsertTextInEditor(editor::TextViewport* viewport, std::string_view text) {
+  if (!EditorSnippetsSettingEnabled() || viewport == nullptr || text.empty()) {
+    return false;
+  }
+  TabEntry::EditorTabState* tab = ActiveEditorTab();
+  if (tab == nullptr || !tab->snippet_session.active) {
+    return false;
+  }
+  const bool was_dirty = viewport->dirty();
+  const std::size_t cursor_before_line = viewport->cursor_line();
+  std::vector<std::string> before_lines;
+  std::optional<editor::SelectionRange> selection_before;
+  std::optional<editor::TextPosition> cursor_before;
+  if (auto* merge_tab = ActiveMergeTab();
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+    before_lines = viewport->lines();
+    selection_before = viewport->selection_range();
+    cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+  }
+  if (!editor::SnippetTryInsertText(*viewport, tab->snippet_session, text)) {
+    return false;
+  }
+  tab->folding_model.MarkDirty();
+  if (auto* compare_tab = ActiveCompareTab();
+      compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+    RefreshCompareTabDerivedState(*compare_tab);
+    SyncCompareSelectionFromViewport(*compare_tab, true);
+  }
+  if (auto* merge_tab = ActiveMergeTab();
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport && cursor_before.has_value()) {
+    UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, *cursor_before);
+  }
+  ResetCaretBlink();
+  RequestActiveEditableLastChangeRedraw();
+  if (viewport->dirty() != was_dirty) {
+    RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line, viewport->cursor_line());
+    RequestTabStripRedraw();
+  }
+  return true;
+}
+
+bool WorkspaceShell::TrySnippetBackspaceInEditor(editor::TextViewport* viewport) {
+  if (!EditorSnippetsSettingEnabled() || viewport == nullptr) {
+    return false;
+  }
+  TabEntry::EditorTabState* tab = ActiveEditorTab();
+  if (tab == nullptr || !tab->snippet_session.active) {
+    return false;
+  }
+  const bool was_dirty = viewport->dirty();
+  const std::size_t cursor_before_line = viewport->cursor_line();
+  std::vector<std::string> before_lines;
+  std::optional<editor::SelectionRange> selection_before;
+  std::optional<editor::TextPosition> cursor_before;
+  if (auto* merge_tab = ActiveMergeTab();
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+    before_lines = viewport->lines();
+    selection_before = viewport->selection_range();
+    cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+  }
+  if (!editor::SnippetTryBackspace(*viewport, tab->snippet_session)) {
+    return false;
+  }
+  tab->folding_model.MarkDirty();
+  if (auto* compare_tab = ActiveCompareTab();
+      compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+    RefreshCompareTabDerivedState(*compare_tab);
+    SyncCompareSelectionFromViewport(*compare_tab, true);
+  }
+  if (auto* merge_tab = ActiveMergeTab();
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport && cursor_before.has_value()) {
+    UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, *cursor_before);
+  }
+  ResetCaretBlink();
+  RequestActiveEditableLastChangeRedraw();
+  if (viewport->dirty() != was_dirty) {
+    RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line, viewport->cursor_line());
+    RequestTabStripRedraw();
+  }
+  return true;
+}
+
+bool WorkspaceShell::TrySnippetDeleteForwardInEditor(editor::TextViewport* viewport) {
+  if (!EditorSnippetsSettingEnabled() || viewport == nullptr) {
+    return false;
+  }
+  TabEntry::EditorTabState* tab = ActiveEditorTab();
+  if (tab == nullptr || !tab->snippet_session.active) {
+    return false;
+  }
+  const bool was_dirty = viewport->dirty();
+  const std::size_t cursor_before_line = viewport->cursor_line();
+  std::vector<std::string> before_lines;
+  std::optional<editor::SelectionRange> selection_before;
+  std::optional<editor::TextPosition> cursor_before;
+  if (auto* merge_tab = ActiveMergeTab();
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
+    before_lines = viewport->lines();
+    selection_before = viewport->selection_range();
+    cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+  }
+  if (!editor::SnippetTryDeleteForward(*viewport, tab->snippet_session)) {
+    return false;
+  }
+  tab->folding_model.MarkDirty();
+  if (auto* compare_tab = ActiveCompareTab();
+      compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
+    RefreshCompareTabDerivedState(*compare_tab);
+    SyncCompareSelectionFromViewport(*compare_tab, true);
+  }
+  if (auto* merge_tab = ActiveMergeTab();
+      merge_tab != nullptr && viewport == &merge_tab->result_viewport && cursor_before.has_value()) {
+    UpdateMergeTrackingAfterViewportEdit(*merge_tab, before_lines, selection_before, *cursor_before);
+  }
+  ResetCaretBlink();
+  RequestActiveEditableLastChangeRedraw();
+  if (viewport->dirty() != was_dirty) {
+    RequestActiveEditableBlameNeighborhoodRedraw(cursor_before_line, viewport->cursor_line());
+    RequestTabStripRedraw();
+  }
   return true;
 }
 

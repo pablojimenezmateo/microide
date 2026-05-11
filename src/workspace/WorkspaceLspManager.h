@@ -53,6 +53,9 @@ class LspManager {
   // Stop all servers and wait for active and retiring processes to exit.
   void ShutdownAll();
 
+  // Unit tests only: install a client without a language-server subprocess.
+  void InstallTestClientForTesting(const std::string& language_id, std::unique_ptr<LspClient> client);
+
  private:
   struct ServerEntry {
     std::vector<std::string> command;
@@ -60,6 +63,7 @@ class LspManager {
     std::string cwd;
     std::string last_error;
     std::unique_ptr<LspClient> client;
+    bool test_install = false;
   };
 
   Uint32 wake_event_type_ = 0;

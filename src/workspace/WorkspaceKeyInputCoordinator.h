@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceLayout.h"
@@ -128,6 +129,11 @@ class KeyInputCoordinator {
     std::function<bool(std::string*)> request_inline_completion;
     std::function<bool()> accept_inline_completion;
     std::function<void()> dismiss_inline_completion;
+    std::function<bool(bool)> try_snippet_tab_in_editor;
+    std::function<bool()> try_snippet_escape_in_editor;
+    std::function<bool(editor::TextViewport*)> try_snippet_backspace_in_editor;
+    std::function<bool(editor::TextViewport*)> try_snippet_delete_forward_in_editor;
+    std::function<void()> notify_snippet_session_caret_moved;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(MergeTabState&,

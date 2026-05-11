@@ -22,12 +22,17 @@ LanguageContract MakeCStyle(std::string id, std::string line_comment = "//") {
   c.block_comment = {"/*", "*/"};
   c.indent_after_open_patterns = {"{", "(", "["};
   c.dedent_on_close_chars = {"}", ")", "]"};
+  c.outline_regex_patterns = {
+      R"(^\s*(?:class|struct|enum\s+class)\s+([A-Za-z_][\w]*))",
+      R"(^\s*(?:virtual\s+)?(?:void|int|bool|char|double|float|auto|inline\s+void|static\s+void|unsigned\s+long)\s+([A-Za-z_][\w]*)\s*\()",
+  };
   return c;
 }
 
 LanguageContract MakeIndentStyle(std::string id,
                                  std::string line_comment,
                                  LanguageBracketPair block_comment = {}) {
+  const bool is_python = id == "python";
   LanguageContract c;
   c.language_id = std::move(id);
   c.bracket_pairs = {{"(", ")"}, {"[", "]"}, {"{", "}"}};
@@ -39,6 +44,12 @@ LanguageContract MakeIndentStyle(std::string id,
   c.block_comment = block_comment;
   c.indent_after_open_patterns = {":", "(", "[", "{"};
   c.dedent_on_close_chars = {")", "]", "}"};
+  if (is_python) {
+    c.outline_regex_patterns = {
+        R"(^\s*def\s+([A-Za-z_][\w]*)\s*\()",
+        R"(^\s*class\s+([A-Za-z_][\w]*)\s*(?:\(|:))",
+    };
+  }
   return c;
 }
 

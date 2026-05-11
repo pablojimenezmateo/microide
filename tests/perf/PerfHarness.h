@@ -13,6 +13,9 @@
 #include <vector>
 
 #include "workspace/WorkspaceShell.h"
+#include "workspace/WorkspaceVirtualDocument.h"
+
+#include "editor/TextViewport.h"
 
 namespace microide::tests::perf {
 
@@ -71,6 +74,20 @@ class ScenarioContext {
   void StartSearch(std::string_view query);
   void OpenTerminal(std::string_view command);
   void ResizeWindow(int width, int height);
+
+  void SetSetting(std::string_view id, std::string value);
+  void ApplyEditorPreferencesToAllTabs();
+  editor::TextViewport& ActiveViewport();
+  bool SaveActiveTab();
+  void RegisterVirtualDocument(const workspace::VirtualDocumentSpec& spec);
+  bool OpenVirtualDocument(std::string_view uri);
+  bool ExpandSnippetAtCaret(std::string_view snippet_body);
+
+  /// Open an editor tab with outline + snippet placeholder session primed; drain outline debounce.
+  /// Used by `idle_soak_30s` (§13.E.3) after snippet/outline ship.
+  void PrimeEditorEssentialsIdleSoakSurface();
+
+  workspace::WorkspaceShell& Shell() { return shell_; }
 
  private:
   workspace::WorkspaceShell& shell_;

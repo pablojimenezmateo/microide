@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceOutlineFlat.h"
 
 namespace microide::workspace {
 
@@ -104,8 +105,12 @@ ScrollableListLayout SidebarMouseCoordinator::CurrentListLayout(const WorkspaceL
     return operations_.compute_plugin_sidebar_list_layout(layout.sidebar,
                                                           state_.sidebar.plugin.items.size());
   }
+  if (sidebar_mode == SidebarMode::Outline) {
+    const auto flat = BuildOutlineFlatRows(state_.sidebar.outline);
+    return operations_.compute_plugin_sidebar_list_layout(layout.sidebar, flat.size());
+  }
   return operations_.compute_tree_sidebar_list_layout(layout.sidebar,
-                                                      state_.directory_tree.entries().size());
+                                                    state_.directory_tree.entries().size());
 }
 
 }  // namespace microide::workspace

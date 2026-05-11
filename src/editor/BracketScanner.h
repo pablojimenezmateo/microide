@@ -41,12 +41,14 @@ std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
                                                  std::size_t caret_column,
                                                  std::size_t max_lines_each_side = 2000);
 
-// Lower-level scanner exposed for tests; works on a flat lines vector and uses
-// `string_kind` per line to skip string/comment regions when provided.
+// Lower-level scanner for tests. When `syntax_viewport` is non-null and line
+// indices align with `lines`, bracket characters classified as String or Comment
+// via `HighlightedLineTokens` are ignored (same rule as `FoldingModel`).
 std::optional<BracketMatchPair> FindBracketMatchInLines(
     const std::vector<std::string_view>& lines,
     std::size_t caret_line,
     std::size_t caret_column,
-    std::size_t max_lines_each_side);
+    std::size_t max_lines_each_side,
+    const TextViewport* syntax_viewport = nullptr);
 
 }  // namespace microide::editor

@@ -254,6 +254,45 @@ void ScenarioContext::ResizeWindow(int width, int height) {
   (void)SendWindowResized(shell_, width, height);
 }
 
+void ScenarioContext::SetSetting(std::string_view id, std::string value) {
+  (void)workspace::WorkspaceShell::TestAccess::SetSettingValue(shell_, id, std::move(value));
+}
+
+editor::TextViewport& ScenarioContext::ActiveViewport() {
+  return workspace::WorkspaceShell::TestAccess::ActiveEditor(shell_);
+}
+
+bool ScenarioContext::SaveActiveTab() {
+  const std::size_t index =
+      workspace::WorkspaceShell::TestAccess::ActiveTabIndex(shell_);
+  return workspace::WorkspaceShell::TestAccess::SaveTab(shell_, index);
+}
+
+void ScenarioContext::RegisterVirtualDocument(const workspace::VirtualDocumentSpec& spec) {
+  workspace::WorkspaceShell::TestAccess::RegisterVirtualDocument(shell_, spec);
+}
+
+bool ScenarioContext::OpenVirtualDocument(std::string_view uri) {
+  return workspace::WorkspaceShell::TestAccess::OpenVirtualDocument(shell_, uri);
+}
+
+bool ScenarioContext::ExpandSnippetAtCaret(std::string_view snippet_body) {
+  return workspace::WorkspaceShell::TestAccess::PerfExpandSnippetAtCaret(shell_, snippet_body);
+}
+
+void ScenarioContext::PrimeEditorEssentialsIdleSoakSurface() {
+  (void)Open("tests/perf/fixtures/large_project");
+  OpenTab("tests/perf/fixtures/large_project/pkg0/file_1.txt");
+  PumpFrames(2);
+  (void)ExecuteCommand("sidebar-show outline");
+  Type("_");
+  PumpFrames(8);
+  workspace::WorkspaceShell::TestAccess::PerfHarnessPrimeSnippetPlaceholderSession(shell_);
+  PumpFrames(4);
+  // Outline debounce is 150 ms; absorb completion-before-soak without counting toward the 27 s gate.
+  (void)Wait(std::chrono::milliseconds(400));
+}
+
 void PerfHarness::RegisterScenario(const Scenario& scenario) {
   ScenarioRegistry().push_back(scenario);
 }

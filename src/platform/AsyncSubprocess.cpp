@@ -160,7 +160,9 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
     close(stdout_pipe[1]);
 
     if (!cwd.empty()) {
-      (void)chdir(cwd.c_str());
+      if (chdir(cwd.c_str()) != 0) {
+        _exit(127);
+      }
     }
 
     std::vector<char*> raw_argv;

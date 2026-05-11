@@ -10,6 +10,8 @@ struct IndentDetection {
   bool soft_tabs = false;
   std::size_t indent_width = 4;
   bool detected = false;
+  // Count of non-blank lines actually inspected (stops at `max_inspect_lines`).
+  std::size_t non_blank_lines_inspected = 0;
 };
 
 // Inspects up to `max_inspect_lines` non-blank lines at the start of `lines`

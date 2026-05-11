@@ -397,16 +397,17 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           .color = right_row_background,
       });
       const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
-      const bool selection_active =
-          right_selection.has_value() &&
-          right_line_index >= right_selection->start.line &&
-          right_line_index <= right_selection->end.line;
-      if (selection_active) {
+      if (right_selection.has_value()) {
+        // Copy out of the optional so GCC's optimizer sees a definitely-initialized
+        // SelectionRange instead of complaining about `*right_selection` storage
+        // bytes through the inlined `std::optional` access path.
+        const editor::SelectionRange sel = *right_selection;
+        if (right_line_index >= sel.start.line && right_line_index <= sel.end.line) {
         const std::size_t line_start =
-            right_line_index == right_selection->start.line ? right_selection->start.column : 0;
+            right_line_index == sel.start.line ? sel.start.column : 0;
         const std::size_t line_end =
-            right_line_index == right_selection->end.line ? right_selection->end.column
-                                                          : compare_row.right_text.size();
+            right_line_index == sel.end.line ? sel.end.column
+                                             : compare_row.right_text.size();
         const std::size_t start_visual =
             editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text, line_start,
                                                           compare_tab->right_viewport.tab_size());
@@ -426,6 +427,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                   surface.line_height),
               .color = theme_.selection_fill,
           });
+        }
         }
       }
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =

@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-05-08.
+Reviewed on 2026-05-10.
 
 This is the single source of truth for:
 
@@ -36,7 +36,7 @@ These are implemented and should not be treated as open migration work:
   primitives instead of staying fully surface-local
 - project-local workspace state plus app-level restore of open project tabs
 - normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits
-- editor open/save/reopen, selection, clipboard, undo/redo, line numbers, soft-wrap rendering with wrap-aware caret motion and hit-testing, horizontal scrolling when wrap is off, dirty tracking, IME hooks, and project-local preferences
+- editor open/save/reopen, selection, clipboard, undo/redo, line numbers, **word wrap (soft-wrap)** with wrap-aware caret motion and hit-testing, horizontal scrolling when wrap is off, dirty tracking, IME hooks, and project-local preferences (this supersedes any older roadmap note that listed soft wrap as out of scope)
 - syntax-highlight state now uses coarse document checkpoints plus per-line memoized replay, so
   far jumps in large files do not have to rebuild highlight state from file start
 - UTF-8 boundary logic, line-ending decode or serialize, and text splitting now route through one
@@ -80,6 +80,22 @@ now requires event-driven triggers only (`push`, `pull_request`, `workflow_dispa
 periodic schedules. `perf-harness` and `fuzz` route extended coverage to manual dispatch instead of
 nightly cron runs. Current remaining blocker is repository billing for GitHub-hosted runners,
 which prevents workflow jobs from starting until account payments/spending limits are restored.
+
+Update (2026-05-10): **Editor essentials** (`editor-essential-capabilities`) — shipped in the tree:
+`WorkspaceLanguageContract` + plugin `ctx.brackets` / `ctx.comments` / `ctx.indents` /
+`ctx.snippets`, fold-aware `TextViewport` layout and gutter marks, sticky-scroll band, indent
+guides, render-whitespace overlays, bracket emphasis (string/comment-aware scan) and jump,
+contract-driven auto-close / surround / smart indent, shaping actions and viewport-bounded
+occurrence highlights, snippet engine + Insert Snippet overlay, symbol outline sidebar (LSP +
+regex fallback), save normalization, and auto-detect indent on open (see
+`docs/editor-essentials.md`). Committed perf baselines for the new scenarios live under
+`tests/perf/baselines/editor_*.json`. Remaining **partial** items per
+`openspec/changes/editor-essential-capabilities/tasks.md`: multi-caret per-caret-selection
+surround (3.3 / 3.6 follow-up — blocked on extending the multi-caret model with per-caret
+selection ranges), dedicated viewport-integrated `tests/EditorFoldingTests.cpp` matrix and
+multi-caret fold-paging coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel that
+maps cleanly (16.3 — environmental; ASAN/UBSAN focused runs clean). Pending sign-off step
+16.6 will be flipped to "shipped" once the change archives.
 
 ### 1. Plugin Platform Expansion
 
@@ -618,6 +634,7 @@ Keep these when you need deeper design context:
 - `docs/performance-findings.md`: concrete shipped performance wins worth preserving
 - `docs/startup-tracing.md`: startup profiling workflow
 - `docs/runtime-profiling.md`: runtime and redraw profiling workflow
+- `docs/editor-essentials.md`: shipped editor language contract, folding, presentation toggles, shaping, save normalization
 
 Archived (shipped or superseded):
 - `docs/archive/plugin-platform-expansion-plan.md`: plugin platform planning — shipped across Phases 1–5

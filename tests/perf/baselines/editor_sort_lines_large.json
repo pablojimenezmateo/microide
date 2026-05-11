@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":72970,"p50_allocations":72960,"p95_allocations":72969,"p95_wall_ms":33.874511400000003,"max_wall_ms":34.249625000000002,"p50_wall_ms":30.498488999999999},"scenario":"editor_sort_lines_large"}

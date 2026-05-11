@@ -10,6 +10,18 @@
 #include "platform/AsyncSubprocess.h"
 #include "util/JsonValue.h"
 
+// GCC 13's `-Wmaybe-uninitialized` produces false positives when libstdc++'s
+// `std::variant` move-constructs through emplace into a vector. The active
+// alternative is always set before the variant is moved, but GCC can't see
+// through the inlined `_Variant_storage` aliasing trick — see the open libstdc++
+// issue tracked at https://gcc.gnu.org/bugzilla/show_bug.cgi?id=80635 and
+// related reports. Suppress locally for this file rather than littering every
+// JsonValue construction site with workarounds.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
+
 namespace microide::workspace {
 
 // ---------------------------------------------------------------------------
@@ -43,7 +55,9 @@ JsonArray BuildMessagesJson(const std::vector<std::pair<std::string, std::string
     JsonObject message;
     message["role"] = role;
     message["content"] = content;
-    result.push_back(JsonValue(std::move(message)));
+    JsonValue value;
+    value.v = std::move(message);
+    result.push_back(std::move(value));
   }
   return result;
 }
@@ -57,7 +71,9 @@ JsonArray BuildToolsJson(const std::vector<WorkspaceProviderBridgeManager::ToolS
     entry["display_name"] = tool.display_name;
     entry["description"] = tool.description;
     entry["input_schema"] = tool.input_schema;
-    result.push_back(JsonValue(std::move(entry)));
+    JsonValue value;
+    value.v = std::move(entry);
+    result.push_back(std::move(value));
   }
   return result;
 }
@@ -463,3 +479,7 @@ bool WorkspaceProviderBridgeManager::WriteCommand(const std::string& agent_id,
 }
 
 }  // namespace microide::workspace
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif

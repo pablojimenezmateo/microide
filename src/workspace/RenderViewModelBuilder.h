@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <string>
 
 #include "editor/EditorViewModel.h"
 #include "workspace/WorkspaceContext.h"
@@ -10,12 +12,20 @@
 #include "workspace/WorkspaceTabState.h"
 
 #include <filesystem>
-#include <optional>
-#include <string>
 #include <string_view>
 #include <vector>
 
 namespace microide::workspace {
+
+/// Parses user/project `editor.fold.sticky_scroll.max_depth` setting (stored as string): 1..8.
+int ParseStickyScrollMaxDepthSetting(const std::optional<std::string>& value);
+
+/// Pure helper for sticky-line resolution & hit-testing (does not consult view-model caches).
+void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
+                                      const editor::FoldingModel* folding_model,
+                                      bool sticky_scroll_enabled,
+                                      int sticky_max_depth,
+                                      std::vector<std::size_t>& out_opener_lines);
 
 struct FrameSurfaceViewModel {
   struct CompareSurfaceViewModel {
@@ -117,11 +127,26 @@ class RenderViewModelBuilder {
   OverlaySurfaceViewModel BuildOverlaySurface() const;
   TextInputSurfaceViewModel BuildTextInputSurface() const;
   SidebarSurfaceViewModel BuildSidebarSurface() const;
+  /// Populates `out` with clear()+push_back / assign patterns so vector capacities are reused
+  /// when the workspace render path retains the same `EditorViewModel` object across frames.
+  void BuildEditorViewModelInto(editor::EditorViewModel& out,
+                                const editor::TextViewport& viewport,
+                                std::size_t visible_rows,
+                                const editor::FoldingModel* folding_model,
+                                bool occurrences_highlight_enabled,
+                                bool occurrences_case_sensitive,
+                                bool sticky_scroll_enabled = false,
+                                int sticky_max_depth = 3,
+                                bool render_whitespace_enabled = false) const;
+
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
                                                std::size_t visible_rows,
                                                const editor::FoldingModel* folding_model,
                                                bool occurrences_highlight_enabled,
-                                               bool occurrences_case_sensitive) const;
+                                               bool occurrences_case_sensitive,
+                                               bool sticky_scroll_enabled = false,
+                                               int sticky_max_depth = 3,
+                                               bool render_whitespace_enabled = false) const;
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
   HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
   HoverTargetsViewModel BuildHoverTargets() const;
@@ -132,6 +157,10 @@ class RenderViewModelBuilder {
       const class SettingsOverlayService& service) const;
 
   // Thread-local caches (render thread): unit tests reset between cases.
+  static void ResetStickyScrollCacheForTesting();
+  static std::uint64_t StickyScrollCacheHitsForTesting();
+  static std::uint64_t StickyScrollCacheMissesForTesting();
+
   static void ResetOccurrenceCachesForTesting();
   static std::uint64_t OccurrenceSeedCacheHitsForTesting();
   static std::uint64_t OccurrenceSeedCacheMissesForTesting();

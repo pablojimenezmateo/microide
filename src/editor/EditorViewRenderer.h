@@ -25,8 +25,13 @@ namespace microide::editor {
 struct EditorViewMetrics {
   float gutter_width = 56.0f;
   float text_x = 0.0f;
+  /// Y offset of optional sticky-scroll band (pane top inset).
+  float sticky_band_top_y = 0.0f;
+  /// First document row paints at this Y (below any sticky-scroll band rows).
   float first_line_y = 0.0f;
   float line_height = 14.0f;
+  /// Number of reserved sticky band rows (not additional document rows).
+  std::size_t sticky_scroll_rows = 0;
   std::size_t visible_rows = 1;
   std::size_t visible_columns = 8;
 };
@@ -56,7 +61,8 @@ class EditorViewRenderer {
  public:
   static EditorViewMetrics ComputeMetrics(const render::TextRenderer& text_renderer,
                                           const TextViewport& viewport,
-                                          const SDL_FRect& rect);
+                                          const SDL_FRect& rect,
+                                          std::size_t sticky_scroll_rows = 0);
 
   void Render(SDL_Renderer* renderer,
               const render::TextRenderer& text_renderer,
@@ -85,7 +91,8 @@ class EditorViewRenderer {
 
   // Test/diagnostic accessors for the indent-guides cache. Cache is keyed on
   // (viewport, layout_revision, scroll_line, visible_rows_count, indent_width,
-  //  caret_line) and reused across consecutive frames when nothing changes.
+  //  caret_line, fold_revision, folding_model revision for active emphasis)
+  // and reused across consecutive frames when nothing changes.
   const std::vector<IndentGuideRun>& last_indent_guide_runs() const {
     return indent_guides_cache_.runs;
   }
@@ -139,6 +146,7 @@ class EditorViewRenderer {
     const TextViewport* viewport = nullptr;
     std::size_t layout_revision = 0;
     std::size_t fold_revision = 0;
+    std::size_t fold_emphasis_revision = 0;
     std::size_t scroll_line = 0;
     std::size_t visible_rows_count = 0;
     std::size_t indent_width = 0;

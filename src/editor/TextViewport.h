@@ -116,6 +116,11 @@ class TextViewport {
   void DeleteForward();
   bool Undo();
   bool Redo();
+  // Merge subsequent edits into one undo stack entry until `EndUndoGroup()`.
+  // While a group is active, individual `PushHistoryEntry` calls are suppressed.
+  void BeginUndoGroup();
+  void EndUndoGroup();
+  bool UndoGroupActive() const { return !undo_group_stack_.empty(); }
   bool ReplaceRange(const SelectionRange& range,
                     std::string_view replacement,
                     bool record_undo = true);
@@ -171,6 +176,9 @@ class TextViewport {
   std::vector<TextPosition> secondary_carets() const;
   bool has_multiple_carets() const { return !secondary_carets_.empty(); }
   void AddSecondaryCaret(std::size_t line, std::size_t column);
+  // Adds a secondary caret with an active selection (anchor → position). Used
+  // by multi-caret surround and by tests; normalizes and clamps the range.
+  void AddSecondaryCaretWithRange(SelectionRange range);
   void SetSecondaryCarets(std::vector<TextPosition> carets);
   void ClearSecondaryCarets();
   bool has_selection() const;
@@ -188,10 +196,17 @@ class TextViewport {
   std::optional<SelectionRange> OccurrenceSeedSpanForHighlight() const;
   void InvalidateSyntaxHighlighting();
 
+  /// Normalizes selection endpoints so callers can reuse the same invariant as `ReplaceRange`.
+  static SelectionRange NormalizeRange(const SelectionRange& range);
+
  private:
   struct SecondaryCaret {
     TextPosition position;
     std::size_t preferred_column = 0;
+    // When set and distinct from `position`, this caret has a non-empty
+    // selection between anchor and position (same convention as the primary
+    // caret’s `selection_anchor_` + cursor).
+    std::optional<TextPosition> selection_anchor;
   };
 
   struct ViewState {
@@ -277,6 +292,8 @@ class TextViewport {
   ViewState CaptureViewState() const;
   void RestoreViewState(const ViewState& state);
   void PushHistoryEntry(HistoryEntry entry);
+  void PushHistoryEntryDirect(HistoryEntry entry);
+  void FlushActiveUndoGroup();
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,
                                                      std::string_view replacement) const;
@@ -331,7 +348,6 @@ class TextViewport {
   static std::vector<std::string> SliceLines(const std::vector<std::string>& lines,
                                              std::size_t start_line,
                                              std::size_t end_line);
-  static SelectionRange NormalizeRange(const SelectionRange& range);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
   std::size_t fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();
@@ -386,6 +402,12 @@ class TextViewport {
   std::optional<AppliedEdit> last_applied_edit_;
   const FoldingModel* folding_model_ = nullptr;
 
+  struct UndoGroupFrame {
+    std::vector<std::string> lines;
+    ViewState state;
+  };
+  std::vector<UndoGroupFrame> undo_group_stack_;
+
 #ifndef NDEBUG
  public:
   std::size_t WrappedRowLayoutBuildCountForDebug() const { return wrapped_row_layout_build_count_; }
@@ -393,8 +415,3 @@ class TextViewport {
 };
 
 }  // namespace microide::editor
-  struct WrappedVisualRow {
-    std::size_t line_index = 0;
-    std::size_t visual_start = 0;
-    std::size_t visual_end = 0;
-  };

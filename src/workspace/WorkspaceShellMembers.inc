@@ -16,6 +16,8 @@
   using ProblemsSidebarState = workspace::ProblemsSidebarState;
   using TestsSidebarState = workspace::TestsSidebarState;
   using PluginSidebarState = workspace::PluginSidebarState;
+  using OutlineSymbolNode = workspace::OutlineSymbolNode;
+  using OutlineSidebarState = workspace::OutlineSidebarState;
   using SidebarState = workspace::SidebarState;
   using DirtyPathResolution = workspace::DirtyPathResolution;
   using OverlayMode = workspace::OverlayMode;
@@ -884,6 +886,7 @@
   void ShowProblemsSidebar();
   void ShowGitSidebar();
   void ShowTestsSidebar();
+  void ShowOutlineSidebar();
   bool ShowPluginSidebar(std::string_view id, bool temporary = false);
   std::string SidebarModeControlLabel() const;
   SDL_FRect SidebarModeControlRect(const SDL_FRect& sidebar_rect) const;
@@ -1067,6 +1070,15 @@
   void OpenBufferReplace();
   void OpenProjectSearch();
   bool ShowCompletionOverlay(std::string* error_message = nullptr);
+  bool ShowInsertSnippetOverlay(std::string* error_message = nullptr);
+  bool EditorSnippetsSettingEnabled() const;
+  bool TrySnippetTabInEditor(bool shift_tab);
+  bool TrySnippetEscapeInEditor();
+  void NotifySnippetSessionCaretMoved();
+  void ClearActiveSnippetSessionAfterUndo();
+  bool TrySnippetInsertTextInEditor(editor::TextViewport* viewport, std::string_view text);
+  bool TrySnippetBackspaceInEditor(editor::TextViewport* viewport);
+  bool TrySnippetDeleteForwardInEditor(editor::TextViewport* viewport);
   bool ShowCodeActionsOverlay(std::string* error_message = nullptr);
   bool GoToLspDefinition(std::string* error_message = nullptr);
   bool FindLspReferences(std::string* error_message = nullptr);
@@ -1144,6 +1156,11 @@
   std::string ProviderApiKeyStorageKey(const AiProviderSpec& provider) const;
   std::optional<std::string> ResolveProviderApiKey(const AiProviderSpec& provider) const;
   void ConsumeLspCallbacks();
+  bool EditorOutlineEnabled() const;
+  void PollOutlineService(uint32_t time_ms);
+  void TouchOutlineDebouncedAfterEditorSync();
+  void HandleOutlineSidebarPointerDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  void RevealSelectedOutlineSidebarLine();
   bool ConsumePluginAsyncProcessCallbacks();
   bool RequestInlineCompletion(std::string* error_message = nullptr);
   bool AcceptInlineCompletion();
@@ -1496,6 +1513,7 @@
   StatusBarService status_bar_service_;
   SettingsOverlayService settings_overlay_service_;
   WorkspaceLanguageContract language_contract_;
+  WorkspaceOutlineService outline_service_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

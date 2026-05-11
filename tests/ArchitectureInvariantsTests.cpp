@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace microide::tests {
@@ -1009,6 +1010,227 @@ RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root
   return result;
 }
 
+std::optional<std::string> ExtractBraceDelimitedBody(const std::string& text,
+                                                     std::size_t open_brace_index) {
+  if (open_brace_index >= text.size() || text[open_brace_index] != '{') {
+    return std::nullopt;
+  }
+  const auto is_code = BuildCodeMask(text);
+  std::size_t depth = 0;
+  for (std::size_t i = open_brace_index; i < text.size(); ++i) {
+    if (i < is_code.size() && !is_code[i]) {
+      continue;
+    }
+    if (text[i] == '{') {
+      ++depth;
+    } else if (text[i] == '}') {
+      --depth;
+      if (depth == 0) {
+        return text.substr(open_brace_index + 1, i - open_brace_index - 1);
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::pair<std::string, std::size_t>> ExtractMemberFunctionBodyWithOffset(
+    const std::string& text, std::string_view signature_needle) {
+  const std::size_t sig = text.find(signature_needle);
+  if (sig == std::string::npos) {
+    return std::nullopt;
+  }
+  const std::size_t open = text.find('{', sig);
+  if (open == std::string::npos || open + 1 >= text.size()) {
+    return std::nullopt;
+  }
+  const auto body = ExtractBraceDelimitedBody(text, open);
+  if (!body.has_value()) {
+    return std::nullopt;
+  }
+  return std::pair<std::string, std::size_t>{*body, open + 1};
+}
+
+RuleResult CheckEssentialEditorCppModulesDoNotTouchLuaState(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "Lua VM pointers stay out of language/fold/shape helpers";
+  result.hard_fail = true;
+  const std::array<std::string_view, 4> paths = {
+      "src/workspace/WorkspaceLanguageContract.cpp",
+      "src/editor/FoldingModel.cpp",
+      "src/editor/IndentGuides.cpp",
+      "src/editor/SnippetEngine.cpp",
+  };
+  const std::regex lua_pointer(R"(\blua_State\s*\*)");
+  for (const std::string_view relative : paths) {
+    const std::filesystem::path path = repo_root / relative;
+    if (!std::filesystem::exists(path)) {
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = 1,
+          .message = "expected editor essential translation unit",
+      });
+      continue;
+    }
+    const std::string file_text = ReadText(path);
+    AppendCodeMaskRegexViolations(
+        result, path, file_text, lua_pointer,
+        "WorkspaceLanguageContract/FoldingModel/IndentGuides/SnippetEngine must stay Lua-free "
+        "at the type level (lua_State* leaks implementation coupling)");
+  }
+  return result;
+}
+
+RuleResult CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "TextViewport edit pipeline avoids full document_->lines snapshots";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/editor/TextViewport.cpp";
+  const std::string text = ReadText(path);
+  const std::array<std::string_view, 2> signatures = {
+      "bool TextViewport::ApplyLineEdit(",
+      "bool TextViewport::ApplyRangeEdit(",
+  };
+  const std::array<std::regex, 2> patterns = {
+      std::regex(R"(std::vector<std::string>\s+\w+\s*=\s*document_->lines\s*;)"),
+      std::regex(R"(auto\s+\w+\s*=\s*document_->lines\s*;)"),
+  };
+  for (const std::string_view signature : signatures) {
+    const auto body_with_offset = ExtractMemberFunctionBodyWithOffset(text, signature);
+    if (!body_with_offset.has_value()) {
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = 1,
+          .message = std::string("could not locate body for ") + std::string(signature),
+      });
+      continue;
+    }
+    const std::string& body = body_with_offset->first;
+    const std::size_t body_offset = body_with_offset->second;
+    const auto is_code = BuildCodeMask(body);
+    for (const auto& pattern : patterns) {
+      for (std::sregex_iterator it(body.begin(), body.end(), pattern), end; it != end; ++it) {
+        const std::size_t local_start = static_cast<std::size_t>(it->position());
+        const std::size_t local_len = static_cast<std::size_t>(it->length());
+        bool in_code = true;
+        for (std::size_t i = 0; i < local_len; ++i) {
+          if (local_start + i >= is_code.size() || !is_code[local_start + i]) {
+            in_code = false;
+            break;
+          }
+        }
+        if (!in_code) {
+          continue;
+        }
+        result.violations.push_back(Violation{
+            .path = path,
+            .line = LineNumberAt(text, body_offset + local_start),
+            .message = "ApplyLineEdit/ApplyRangeEdit must not snapshot-copy document_->lines",
+        });
+      }
+    }
+  }
+  return result;
+}
+
+ RuleResult CheckBuildEditorViewModelUsesIncrementalVectorWrites(
+     const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "BuildEditorViewModel clears and appends view-model vectors";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/workspace/RenderViewModelBuilder.cpp";
+  const std::string text = ReadText(path);
+  const auto body_with_offset = ExtractMemberFunctionBodyWithOffset(
+      text, "editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel");
+  if (!body_with_offset.has_value()) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "could not locate BuildEditorViewModel body for vector-style scan",
+    });
+    return result;
+  }
+  const std::string& body = body_with_offset->first;
+  const std::size_t body_offset = body_with_offset->second;
+  const auto is_code = BuildCodeMask(body);
+  const std::regex bad_assign(
+      R"re(vm\.(fold_gutter_marks|occurrence_ranges|sticky_lines|whitespace_glyph_runs)\s*=)re");
+  for (std::sregex_iterator it(body.begin(), body.end(), bad_assign), end; it != end; ++it) {
+    const std::size_t start = static_cast<std::size_t>(it->position());
+    if (start < is_code.size() && !is_code[start]) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = LineNumberAt(text, body_offset + start),
+        .message = "EditorViewModel vectors should use clear()/reserve()/push_back() or assign("
+                   "iter,iter), not whole-vector assignment",
+    });
+  }
+
+  const std::regex std_string_decls(R"(\bstd::string\b)");
+  for (std::sregex_iterator it(body.begin(), body.end(), std_string_decls), end; it != end;
+       ++it) {
+    const std::size_t start = static_cast<std::size_t>(it->position());
+    if (start >= is_code.size() || !is_code[start]) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = LineNumberAt(text, body_offset + start),
+        .message = "BuildEditorViewModel must remain free of std::string temporaries "
+                   "(view-model path should stay numeric / pointer only)",
+    });
+  }
+  return result;
+}
+
+RuleResult CheckRenderTuEditorEssentialsAvoidEphemeralLabelStrings(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "editor essentials render helpers avoid std::string fold/sticky labels";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/editor/EditorViewRenderer.cpp";
+  const std::string text = ReadText(path);
+  const std::array<std::pair<std::regex, std::string_view>, 4> patterns = {
+      std::pair{std::regex(R"(\bstd::string\b[^;\n]*FoldGutter)"),
+                "fold gutter painting must stay glyph/decoration-only (no std::string labels)"},
+      std::pair{std::regex(R"(\bstd::string\b[^;\n]*sticky_lines)"),
+                "sticky scroll rows must reuse buffer slices / views (no std::string labels)"},
+      std::pair{std::regex(R"(\bstd::string\b[^;\n]*OccurrenceRange)"),
+                "occurrence underlay is view-model driven (no std::string synthesis here)"},
+      std::pair{std::regex(R"(\bstd::string\b[^;\n]*IndentGuide)"),
+                "indent guides paint from numeric runs (no std::string labels here)"},
+  };
+  for (const auto& [pattern, message] : patterns) {
+    AppendCodeMaskRegexViolations(result, path, text, pattern, message);
+  }
+  return result;
+}
+
+RuleResult CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "WorkspaceShellRenderFrame editor VM path avoids std::string assembly";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellRenderFrame.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  const std::array<std::pair<std::regex, std::string_view>, 2> patterns = {
+      std::pair{std::regex(R"(\bstd::string\b[^;\n]*fold_gutter_marks)"),
+                "fold gutter data should come from RenderViewModelBuilder, not local strings"},
+      std::pair{std::regex(R"(\bstd::string\b[^;\n]*BuildEditorViewModel)"),
+                "BuildEditorViewModel output should remain structurally typed (no string packing)"},
+  };
+  for (const auto& [pattern, message] : patterns) {
+    AppendCodeMaskRegexViolations(result, path, text, pattern, message);
+  }
+  return result;
+}
+
 void ReportRule(const RuleResult& result) {
   if (result.violations.empty()) {
     return;
@@ -1045,6 +1267,11 @@ void TestArchitectureInvariants() {
   results.push_back(CheckNoSynchronousSubprocessInWorkspace(repo_root));
   results.push_back(CheckRenderTuDoesNotMaterializeStrings(repo_root));
   results.push_back(CheckTextViewportNoFullDocCopy(repo_root));
+  results.push_back(CheckEssentialEditorCppModulesDoNotTouchLuaState(repo_root));
+  results.push_back(CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(repo_root));
+  results.push_back(CheckBuildEditorViewModelUsesIncrementalVectorWrites(repo_root));
+  results.push_back(CheckRenderTuEditorEssentialsAvoidEphemeralLabelStrings(repo_root));
+  results.push_back(CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(repo_root));
 
   bool hard_failure = false;
   for (const RuleResult& result : results) {
@@ -1094,9 +1321,20 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "void F(){ platform::RunSubprocess({\"echo\"}, {}); }\n");
   WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
             "std::string F(){ return std::string(\"search> \") + std::string(\"x\"); }\n");
+  WriteFile(root / "src/workspace/WorkspaceLanguageContract.cpp", "// lang contract fixture\n");
+  WriteFile(root / "src/editor/IndentGuides.cpp", "// indent guides fixture\n");
+  WriteFile(root / "src/editor/SnippetEngine.cpp", "// snippet engine fixture\n");
+  WriteFile(root / "src/editor/FoldingModel.cpp", "void leak(lua_State* L){ (void)L; }\n");
   WriteFile(root / "src/editor/TextViewport.cpp",
-            "struct TextViewport{ bool F(){ std::vector<std::string> before = document_->lines; return !before.empty(); } };");
+            "std::size_t TextViewport::ReplaceAll(std::string_view, std::string_view) {\n"
+            "  std::vector<std::string> before = document_->lines;\n"
+            "  (void)before;\n"
+            "  return 0;\n"
+            "}\n");
   WriteFile(root / "tests/LegacySymbolFixture.cpp", "void X(){ WorkspacePersistenceLegacyFormat x; }\n");
+
+  Expect(!CheckEssentialEditorCppModulesDoNotTouchLuaState(root).violations.empty(),
+         "lua_State pointers should not appear in FoldingModel.cpp fixture");
 
   Expect(!CheckNoLegacyPersistenceSymbols(root).violations.empty(),
          "legacy-persistence rule should catch legacy symbols");
@@ -1106,6 +1344,18 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
          "render materialization rule should catch string construction in render TU");
   Expect(!CheckTextViewportNoFullDocCopy(root).violations.empty(),
          "TextViewport rule should catch full document copies");
+
+  WriteFile(root / "src/editor/TextViewport.cpp",
+            "std::size_t TextViewport::ReplaceAll(std::string_view, std::string_view) {\n"
+            "  return 0;\n"
+            "}\n"
+            "bool TextViewport::ApplyLineEdit(std::size_t,std::size_t,const "
+            "std::vector<std::string>&) {\n"
+            "  auto snap = document_->lines;\n"
+            "  return !snap.empty();\n"
+            "}\n");
+  Expect(!CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(root).violations.empty(),
+         "ApplyLineEdit fixture should flag full document_->lines snapshots");
 }
 
 }  // namespace

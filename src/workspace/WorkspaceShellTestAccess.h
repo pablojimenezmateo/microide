@@ -8,6 +8,8 @@
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
+#include "editor/SnippetEngine.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>

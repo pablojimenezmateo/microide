@@ -9,6 +9,7 @@
 #include "compare/CompareModel.h"
 #include "compare/MergeModel.h"
 #include "editor/FoldingModel.h"
+#include "editor/SnippetEngine.h"
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/WorkspaceLayout.h"
@@ -120,6 +121,7 @@ struct TabEntry {
     // close; rekeyed implicitly through its `(layout_revision, tab_size,
     // language_id)` fingerprint when the buffer or language changes.
     editor::FoldingModel folding_model;
+    editor::SnippetSessionState snippet_session;
   };
 
   struct DeferredTabHandle {

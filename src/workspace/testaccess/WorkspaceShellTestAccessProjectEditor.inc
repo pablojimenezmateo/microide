@@ -56,9 +56,6 @@
   static void ApplyEditorPreferencesToAllTabs(WorkspaceShell& shell) {
     shell.ApplyEditorPreferencesToAllTabs();
   }
-  static void RebuildPhase3RegistriesForTesting(WorkspaceShell& shell) {
-    shell.RebuildPhase3Registries();
-  }
 
   static editor::FoldingModel* EnsureActiveFoldingModelFresh(WorkspaceShell& shell) {
     return shell.EnsureActiveFoldingModelFresh();
@@ -84,15 +81,6 @@
   }
   static bool OutlineSidebarFromFallbackForTesting(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.outline.from_fallback;
-  }
-  static bool OutlineSidebarIndexingForTesting(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.sidebar.outline.indexing;
-  }
-  static std::size_t LanguageContractOutlinePatternCountForTesting(
-      const WorkspaceShell& shell, std::string_view language_id) {
-    const LanguageContract* contract = shell.language_contract_.Find(language_id);
-    return contract == nullptr ? static_cast<std::size_t>(-1)
-                               : contract->outline_regex_patterns.size();
   }
   static bool ActiveEditorHasSelection(const WorkspaceShell& shell) {
     const editor::TextViewport* viewport = shell.ActiveEditorViewport();

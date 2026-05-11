@@ -264,15 +264,23 @@ SDL_FRect FoldGutterMarkerRect(float gutter_x,
 
 EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer& text_renderer,
                                                      const TextViewport& viewport,
-                                                     const SDL_FRect& rect) {
+                                                     const SDL_FRect& rect,
+                                                     std::size_t sticky_scroll_rows) {
   EditorViewMetrics metrics;
   const float char_width = std::max(1.0f, text_renderer.CharWidth());
   metrics.gutter_width = ComputeGutterWidth(text_renderer, viewport.line_count());
   metrics.text_x = rect.x + metrics.gutter_width + 12.0f;
-  metrics.first_line_y = rect.y + 8.0f;
   metrics.line_height = text_renderer.LineHeight();
-  metrics.visible_rows = static_cast<std::size_t>(
-      std::max(1, static_cast<int>((rect.h - 12.0f) / metrics.line_height)));
+  metrics.sticky_band_top_y = rect.y + 8.0f;
+  const int max_total_rows =
+      std::max(1, static_cast<int>(std::floor((rect.h - 12.0f) / metrics.line_height)));
+  const std::size_t sticky_budget = static_cast<std::size_t>(std::max(0, max_total_rows - 1));
+  const std::size_t sticky_clamped = std::min(sticky_scroll_rows, sticky_budget);
+  metrics.sticky_scroll_rows = sticky_clamped;
+  metrics.first_line_y =
+      metrics.sticky_band_top_y + static_cast<float>(sticky_clamped) * metrics.line_height;
+  metrics.visible_rows =
+      static_cast<std::size_t>(std::max(1, max_total_rows - static_cast<int>(sticky_clamped)));
   metrics.visible_columns = static_cast<std::size_t>(
       std::max(8.0f, (rect.w - metrics.gutter_width - 28.0f) / char_width));
   return metrics;
@@ -338,7 +346,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     bracket_match_cache_.valid = false;
   }
 
-  const EditorViewMetrics metrics = ComputeMetrics(text_renderer, viewport, rect);
+  const std::size_t sticky_row_count =
+      view_model != nullptr ? view_model->sticky_lines.size() : 0;
+  const EditorViewMetrics metrics =
+      ComputeMetrics(text_renderer, viewport, rect, sticky_row_count);
   const SDL_FRect gutter = SDL_FRect{rect.x, rect.y, metrics.gutter_width, rect.h};
   SDL_SetRenderDrawColor(renderer, theme.gutter_background.r, theme.gutter_background.g,
                          theme.gutter_background.b, theme.gutter_background.a);
@@ -389,9 +400,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   if (indent_guides_enabled) {
     const std::size_t indent_width =
         viewport.indent_width() == 0 ? 1 : viewport.indent_width();
+    const std::size_t fold_emphasis_revision =
+        folding_model != nullptr ? folding_model->revision() : std::size_t{0};
     if (indent_guides_cache_.valid && indent_guides_cache_.viewport == &viewport &&
         indent_guides_cache_.layout_revision == viewport.layout_revision() &&
         indent_guides_cache_.fold_revision == viewport.folding_revision() &&
+        indent_guides_cache_.fold_emphasis_revision == fold_emphasis_revision &&
         indent_guides_cache_.scroll_line == scroll_line &&
         indent_guides_cache_.visible_rows_count == visible_rows_for_guides.size() &&
         indent_guides_cache_.indent_width == indent_width &&
@@ -404,10 +418,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
               : 0;
       ComputeIndentGuides(lines, visible_rows_for_guides, viewport.tab_size(),
                           indent_width, cursor_line, caret_indent,
-                          &indent_guides_cache_.runs);
+                          &indent_guides_cache_.runs, folding_model);
       indent_guides_cache_.viewport = &viewport;
       indent_guides_cache_.layout_revision = viewport.layout_revision();
       indent_guides_cache_.fold_revision = viewport.folding_revision();
+      indent_guides_cache_.fold_emphasis_revision = fold_emphasis_revision;
       indent_guides_cache_.scroll_line = scroll_line;
       indent_guides_cache_.visible_rows_count = visible_rows_for_guides.size();
       indent_guides_cache_.indent_width = indent_width;
@@ -420,6 +435,90 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     indent_guides_cache_.viewport = nullptr;
     indent_guides_cache_.runs.clear();
     indent_guides_cache_.valid = false;
+  }
+
+  if (metrics.sticky_scroll_rows > 0 && view_model != nullptr &&
+      !view_model->sticky_lines.empty()) {
+    for (std::size_t si = 0; si < view_model->sticky_lines.size(); ++si) {
+      const std::size_t line_index = view_model->sticky_lines[si];
+      if (line_index >= lines.size()) {
+        continue;
+      }
+      const float y =
+          metrics.sticky_band_top_y + static_cast<float>(si) * metrics.line_height;
+      const bool selected = line_index == cursor_line;
+      const SDL_Color row_background = selected ? theme.row_highlight : theme.editor_background;
+      const std::size_t opener_visual = viewport.VisualRowForLine(line_index);
+      if (opener_visual >= viewport.visual_line_count()) {
+        continue;
+      }
+      const auto row_meta = viewport.WrappedVisualRowLayout(opener_visual);
+      const auto row_layout = soft_wrap ? viewport.VisibleWrappedRowLayout(opener_visual)
+                                        : viewport.VisibleLineLayout(line_index);
+
+      DecoratedTextRow sticky_row;
+      sticky_row.fills.push_back(DecoratedTextFill{
+          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .color = row_background,
+      });
+      const auto layout = row_layout;
+      {
+        util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::StickyHighlightedLineTokens");
+        const std::vector<SyntaxTokenKind>& token_kinds = viewport.HighlightedLineTokens(line_index);
+        AppendLayoutSyntaxTextRuns(sticky_row, text_renderer, theme, metrics.text_x, y, layout,
+                                   selected ? theme.text_primary : theme.text_secondary,
+                                   token_kinds);
+      }
+      AppendDiagnosticUnderlines(sticky_row, text_renderer, theme, metrics.text_x, y,
+                                 metrics.line_height, lines[line_index], line_index,
+                                 row_meta.visual_start, row_meta.visual_end - row_meta.visual_start,
+                                 viewport.tab_size(), diagnostics);
+      {
+        util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::StickyDecoratedRow");
+        kDecoratedRowRenderer.RenderRow(renderer, text_renderer, sticky_row);
+      }
+      if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
+          severity.has_value()) {
+        DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
+                                   *severity);
+      }
+      if (!soft_wrap || row_meta.visual_start == 0) {
+        const auto [end_sticky, _] =
+            std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
+                          line_index + 1);
+        text_renderer.DrawStringOn(
+            renderer, gutter.x + 10.0f, y,
+            selected ? theme.current_line_number : theme.line_number,
+            selected ? theme.row_highlight : theme.gutter_background,
+            std::string_view{line_number_buf, end_sticky});
+      }
+      if (folding_model != nullptr && (!soft_wrap || row_meta.visual_start == 0) &&
+          folding_model->FoldStartingAt(line_index).has_value()) {
+        const bool collapsed = folding_model->IsCollapsedAtOpener(line_index);
+        const float mark_size = std::max(4.0f, std::min(8.0f, metrics.line_height - 6.0f));
+        const float mark_x = gutter.x + gutter.w - 4.0f - mark_size;
+        const float mark_y = y + (metrics.line_height - mark_size) * 0.5f;
+        const SDL_FRect mark_rect = SDL_FRect{mark_x, mark_y, mark_size, mark_size};
+        const SDL_Color color = selected ? theme.text_primary : theme.text_secondary;
+        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+        if (collapsed) {
+          SDL_RenderFillRect(renderer, &mark_rect);
+        } else {
+          SDL_FRect top = SDL_FRect{mark_x, mark_y, mark_size, 1.0f};
+          SDL_FRect bottom = SDL_FRect{mark_x, mark_y + mark_size - 1.0f, mark_size, 1.0f};
+          SDL_FRect left = SDL_FRect{mark_x, mark_y, 1.0f, mark_size};
+          SDL_FRect right = SDL_FRect{mark_x + mark_size - 1.0f, mark_y, 1.0f, mark_size};
+          SDL_RenderFillRect(renderer, &top);
+          SDL_RenderFillRect(renderer, &bottom);
+          SDL_RenderFillRect(renderer, &left);
+          SDL_RenderFillRect(renderer, &right);
+        }
+      }
+    }
+    SDL_SetRenderDrawColor(renderer, theme.border.r, theme.border.g, theme.border.b, theme.border.a);
+    const SDL_FRect sticky_divider =
+        SDL_FRect{rect.x, metrics.first_line_y - 1.0f, rect.w, 1.0f};
+    SDL_RenderFillRect(renderer, &sticky_divider);
   }
 
   util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
@@ -623,48 +722,90 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (render_whitespace_enabled) {
-      const std::string& line_text = lines[line_index];
       const std::size_t row_start_visual = row_meta.visual_start;
       const std::size_t row_end_visual = row_meta.visual_end;
-      const std::size_t tab_size = viewport.tab_size();
-      std::size_t visual_col = 0;
-      for (char c : line_text) {
-        std::size_t cell_width = 1;
-        if (c == '\t') {
-          const std::size_t step = tab_size == 0 ? 1 : tab_size;
-          cell_width = step - (visual_col % step);
+      const float char_width = text_renderer.CharWidth();
+      const bool use_vm_whitespace =
+          view_model != nullptr && !view_model->whitespace_glyph_runs.empty();
+      if (use_vm_whitespace) {
+        for (const WhitespaceGlyphRun& glyph : view_model->whitespace_glyph_runs) {
+          if (glyph.visual_row_index != visual_row_index) {
+            continue;
+          }
+          if (glyph.row_visual_start != row_start_visual ||
+              glyph.row_visual_end != row_end_visual) {
+            continue;
+          }
+          const float cell_x =
+              metrics.text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
+                                   char_width;
+          if (!glyph.is_tab_rule) {
+            row_desc.fills.push_back(DecoratedTextFill{
+                .rect =
+                    SDL_FRect{
+                        cell_x + char_width * 0.5f - 1.0f,
+                        y + metrics.line_height * 0.5f - 1.0f,
+                        2.0f,
+                        2.0f,
+                    },
+                .color = theme.text_disabled,
+            });
+          } else {
+            const float cell_w = static_cast<float>(glyph.cell_visual_extent) * char_width;
+            row_desc.fills.push_back(DecoratedTextFill{
+                .rect =
+                    SDL_FRect{
+                        cell_x + 2.0f,
+                        y + metrics.line_height * 0.5f,
+                        cell_w - 4.0f,
+                        1.0f,
+                    },
+                .color = theme.text_disabled,
+            });
+          }
         }
-        const std::size_t cell_start = visual_col;
-        visual_col += cell_width;
-        if (cell_start >= row_end_visual) break;
-        if (cell_start < row_start_visual) continue;
-        if (visual_col > row_end_visual) continue;
-        const float cell_x =
-            metrics.text_x +
-            static_cast<float>(cell_start - row_start_visual) * text_renderer.CharWidth();
-        if (c == ' ') {
-          row_desc.fills.push_back(DecoratedTextFill{
-              .rect =
-                  SDL_FRect{
-                      cell_x + text_renderer.CharWidth() * 0.5f - 1.0f,
-                      y + metrics.line_height * 0.5f - 1.0f,
-                      2.0f,
-                      2.0f,
-                  },
-              .color = theme.text_disabled,
-          });
-        } else if (c == '\t') {
-          const float cell_w = static_cast<float>(cell_width) * text_renderer.CharWidth();
-          row_desc.fills.push_back(DecoratedTextFill{
-              .rect =
-                  SDL_FRect{
-                      cell_x + 2.0f,
-                      y + metrics.line_height * 0.5f,
-                      cell_w - 4.0f,
-                      1.0f,
-                  },
-              .color = theme.text_disabled,
-          });
+      } else {
+        const std::string& line_text = lines[line_index];
+        const std::size_t tab_size = viewport.tab_size();
+        std::size_t visual_col = 0;
+        for (char c : line_text) {
+          std::size_t cell_width = 1;
+          if (c == '\t') {
+            const std::size_t step = tab_size == 0 ? 1 : tab_size;
+            cell_width = step - (visual_col % step);
+          }
+          const std::size_t cell_start = visual_col;
+          visual_col += cell_width;
+          if (cell_start >= row_end_visual) break;
+          if (cell_start < row_start_visual) continue;
+          if (visual_col > row_end_visual) continue;
+          const float cell_x =
+              metrics.text_x +
+              static_cast<float>(cell_start - row_start_visual) * char_width;
+          if (c == ' ') {
+            row_desc.fills.push_back(DecoratedTextFill{
+                .rect =
+                    SDL_FRect{
+                        cell_x + char_width * 0.5f - 1.0f,
+                        y + metrics.line_height * 0.5f - 1.0f,
+                        2.0f,
+                        2.0f,
+                    },
+                .color = theme.text_disabled,
+            });
+          } else if (c == '\t') {
+            const float cell_w = static_cast<float>(cell_width) * char_width;
+            row_desc.fills.push_back(DecoratedTextFill{
+                .rect =
+                    SDL_FRect{
+                        cell_x + 2.0f,
+                        y + metrics.line_height * 0.5f,
+                        cell_w - 4.0f,
+                        1.0f,
+                    },
+                .color = theme.text_disabled,
+            });
+          }
         }
       }
     }

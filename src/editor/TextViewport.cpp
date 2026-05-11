@@ -38,6 +38,81 @@ bool TextPositionLess(const TextPosition& lhs, const TextPosition& rhs) {
   return lhs.column < rhs.column;
 }
 
+inline bool PositionLessTb(const TextPosition& lhs, const TextPosition& rhs) {
+  if (lhs.line != rhs.line) {
+    return lhs.line < rhs.line;
+  }
+  return lhs.column < rhs.column;
+}
+
+std::optional<SelectionRange> SelectionRangeForSecondaryCaret(
+    const TextPosition& position,
+    const std::optional<TextPosition>& selection_anchor) {
+  if (!selection_anchor.has_value()) {
+    return std::nullopt;
+  }
+  if (selection_anchor->line == position.line && selection_anchor->column == position.column) {
+    return std::nullopt;
+  }
+  if (PositionLessTb(*selection_anchor, position)) {
+    return SelectionRange{*selection_anchor, position};
+  }
+  return SelectionRange{position, *selection_anchor};
+}
+
+TextPosition RangeEndExclusive(const SelectionRange& r) {
+  return PositionLessTb(r.start, r.end) ? r.end : r.start;
+}
+
+bool ValidateRangeColumns(const std::vector<std::string>& lines, const SelectionRange& n) {
+  if (n.start.line >= lines.size() || n.end.line >= lines.size()) {
+    return false;
+  }
+  if (n.start.column > lines[n.start.line].size() || n.end.column > lines[n.end.line].size()) {
+    return false;
+  }
+  return true;
+}
+
+std::string TextBetweenLines(const std::vector<std::string>& lines, const SelectionRange& n) {
+  const auto& a = n.start;
+  const auto& b = n.end;
+  if (a.line == b.line) {
+    return lines[a.line].substr(a.column, b.column - a.column);
+  }
+  std::string out;
+  out += lines[a.line].substr(a.column);
+  out.push_back('\n');
+  for (std::size_t i = a.line + 1; i < b.line; ++i) {
+    out += lines[i];
+    out.push_back('\n');
+  }
+  out += lines[b.line].substr(0, b.column);
+  return out;
+}
+
+void PostSurroundInnerSelection(const LanguagePair& pair,
+                                const std::string& inner,
+                                std::size_t start_line,
+                                const std::string& first_line_prefix,
+                                TextPosition* anchor,
+                                TextPosition* cursor) {
+  const std::vector<std::string> inner_lines =
+      util::SplitLines(util::NormalizeLineEndings(inner));
+  if (inner_lines.empty()) {
+    return;
+  }
+  *anchor = TextPosition{start_line, first_line_prefix.size() + pair.open.size()};
+  const std::size_t last_line = start_line + inner_lines.size() - 1;
+  // For single-line surround the inner text shares the line with the open
+  // delimiter and any leading prefix, so the cursor column must be offset by
+  // both. Multi-line surround pushes the closer onto the original last line
+  // with no extra offset.
+  const std::size_t single_line_offset =
+      (last_line == start_line) ? first_line_prefix.size() + pair.open.size() : 0;
+  *cursor = TextPosition{last_line, single_line_offset + inner_lines.back().size()};
+}
+
 bool IsIndentCharacter(char c) {
   return c == ' ' || c == '\t';
 }
@@ -593,6 +668,9 @@ void TextViewport::DeleteForward() {
 
 bool TextViewport::Undo() {
   util::PerformanceTrace::Scope perf_scope("TextViewport::Undo");
+  if (!undo_group_stack_.empty()) {
+    FlushActiveUndoGroup();
+  }
   if (document_->undo_stack.empty()) {
     return false;
   }
@@ -614,6 +692,9 @@ bool TextViewport::Undo() {
 
 bool TextViewport::Redo() {
   util::PerformanceTrace::Scope perf_scope("TextViewport::Redo");
+  if (!undo_group_stack_.empty()) {
+    FlushActiveUndoGroup();
+  }
   if (document_->redo_stack.empty()) {
     return false;
   }
@@ -957,11 +1038,55 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   secondary_carets_.push_back(SecondaryCaret{
       .position = position,
       .preferred_column = PreferredColumnForCaret(position),
+      .selection_anchor = std::nullopt,
   });
   std::sort(secondary_carets_.begin(), secondary_carets_.end(),
             [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
               return TextPositionLess(lhs.position, rhs.position);
             });
+}
+
+void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
+  if (document_->lines.empty()) {
+    return;
+  }
+  const SelectionRange norm = NormalizeRange(range);
+  if (!ValidateRangeColumns(document_->lines, norm)) {
+    return;
+  }
+  if (norm.start.line == norm.end.line && norm.start.column == norm.end.column) {
+    AddSecondaryCaret(norm.start.line, norm.start.column);
+    return;
+  }
+  TextPosition anchor = norm.start;
+  TextPosition cursor_end = norm.end;
+  if (!PositionLessTb(anchor, cursor_end)) {
+    std::swap(anchor, cursor_end);
+  }
+  const std::size_t clamped_line = std::min(cursor_end.line, document_->lines.size() - 1);
+  cursor_end.column = TextLayout::ClampTextColumn(document_->lines[clamped_line], cursor_end.column);
+  anchor.line = std::min(anchor.line, document_->lines.size() - 1);
+  anchor.column = TextLayout::ClampTextColumn(document_->lines[anchor.line], anchor.column);
+
+  if (cursor_end == TextPosition{cursor_line_, cursor_column_}) {
+    return;
+  }
+  const SecondaryCaret candidate{.position = cursor_end,
+                                 .preferred_column = PreferredColumnForCaret(cursor_end),
+                                 .selection_anchor = anchor};
+  if (std::find_if(secondary_carets_.begin(), secondary_carets_.end(),
+                   [&](const SecondaryCaret& caret) {
+                     return caret.position == candidate.position &&
+                            caret.selection_anchor == candidate.selection_anchor;
+                   }) != secondary_carets_.end()) {
+    return;
+  }
+  secondary_carets_.push_back(candidate);
+  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
+            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
+              return TextPositionLess(lhs.position, rhs.position);
+            });
+  DedupeSecondaryCaretsAgainstPrimary();
 }
 
 void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
@@ -1240,6 +1365,10 @@ void TextViewport::ResetState(std::vector<std::string> lines,
   document_->dirty = dirty;
   InvalidateVisualColumnCache();
   InvalidateDerivedCaches();
+  // ResetState is a fresh load, not an in-place edit; clear the fold edit
+  // anchor to the idle sentinel so the next user edit publishes its own
+  // first-touched line instead of being masked by the wholesale reset.
+  fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();
   EnsureCursorVisible();
 }
 
@@ -1520,10 +1649,44 @@ void TextViewport::RestoreViewState(const ViewState& state) {
 
 void TextViewport::PushHistoryEntry(HistoryEntry entry) {
   document_->redo_stack.clear();
+  if (!undo_group_stack_.empty()) {
+    return;
+  }
   document_->undo_stack.push_back(std::move(entry));
   if (document_->undo_stack.size() > kMaxHistoryEntries) {
     document_->undo_stack.pop_front();
   }
+}
+
+void TextViewport::PushHistoryEntryDirect(HistoryEntry entry) {
+  document_->redo_stack.clear();
+  document_->undo_stack.push_back(std::move(entry));
+  if (document_->undo_stack.size() > kMaxHistoryEntries) {
+    document_->undo_stack.pop_front();
+  }
+}
+
+void TextViewport::BeginUndoGroup() {
+  undo_group_stack_.push_back(
+      UndoGroupFrame{.lines = document_->lines, .state = CaptureViewState()});
+}
+
+void TextViewport::EndUndoGroup() {
+  FlushActiveUndoGroup();
+}
+
+void TextViewport::FlushActiveUndoGroup() {
+  if (undo_group_stack_.empty()) {
+    return;
+  }
+  UndoGroupFrame frame = std::move(undo_group_stack_.back());
+  undo_group_stack_.pop_back();
+  HistoryEntry agg = BuildHistoryEntryForDocumentChange(
+      frame.lines, frame.state, document_->lines, CaptureViewState());
+  if (agg.before_lines.empty() && agg.after_lines.empty()) {
+    return;
+  }
+  PushHistoryEntryDirect(std::move(agg));
 }
 
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
@@ -1901,32 +2064,29 @@ bool TextViewport::TrySurroundInsert(char ch) {
   if (pair == nullptr || pair->open.empty() || pair->close.empty()) {
     return false;
   }
-  if (InInsertionSuppressedScope(sel->start.line, sel->start.column)) {
+  const SelectionRange norm = NormalizeRange(*sel);
+  if (!ValidateRangeColumns(document_->lines, norm)) {
     return false;
   }
-  if (sel->start.line != sel->end.line) {
+  if (InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
     return false;
   }
-  const std::size_t line = sel->start.line;
-  if (line >= document_->lines.size()) {
+
+  const std::string inner = TextBetweenLines(document_->lines, norm);
+  const std::string replacement = pair->open + inner + pair->close;
+  const std::string first_prefix = document_->lines[norm.start.line].substr(0, norm.start.column);
+  TextPosition inner_anchor{};
+  TextPosition inner_cursor{};
+  PostSurroundInnerSelection(*pair, inner, norm.start.line, first_prefix, &inner_anchor,
+                             &inner_cursor);
+
+  if (!ApplyRangeEdit(norm, replacement, true)) {
     return false;
   }
-  const std::string& current_line = document_->lines[line];
-  if (sel->start.column > current_line.size() || sel->end.column > current_line.size() ||
-      sel->start.column > sel->end.column) {
-    return false;
-  }
-  std::string inner(current_line, sel->start.column, sel->end.column - sel->start.column);
-  std::string replacement = pair->open + inner + pair->close;
-  if (!ApplyRangeEdit(*sel, replacement, true)) {
-    return false;
-  }
-  const std::size_t new_inner_start = sel->start.column + pair->open.size();
-  const std::size_t new_inner_end = new_inner_start + inner.size();
-  selection_anchor_ = TextPosition{line, new_inner_start};
-  cursor_line_ = line;
-  cursor_column_ = new_inner_end;
-  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  selection_anchor_ = inner_anchor;
+  cursor_line_ = inner_cursor.line;
+  cursor_column_ = inner_cursor.column;
+  preferred_column_ = PreferredColumnForCaret(inner_cursor);
   EnsureCursorVisible();
   return true;
 }
@@ -2075,45 +2235,138 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     document_->lines.push_back("");
   }
 
-  std::vector<TextPosition> carets = secondary_carets();
-  carets.push_back(TextPosition{cursor_line_, cursor_column_});
-  std::sort(carets.begin(), carets.end(), TextPositionLess);
-  carets.erase(std::unique(carets.begin(), carets.end()), carets.end());
-  if (carets.empty()) {
-    return false;
+  struct Slot {
+    bool is_primary = false;
+    std::size_t secondary_index = 0;
+    TextPosition reference{};
+    std::optional<SelectionRange> selection;
+  };
+
+  auto slot_sort_end = [](const Slot& s) -> TextPosition {
+    if (s.selection.has_value()) {
+      return RangeEndExclusive(*s.selection);
+    }
+    return s.reference;
+  };
+
+  std::vector<Slot> slots;
+  slots.reserve(secondary_carets_.size() + 1);
+  slots.push_back(Slot{
+      .is_primary = true,
+      .secondary_index = 0,
+      .reference = {cursor_line_, cursor_column_},
+      .selection = selection_range(),
+  });
+  for (std::size_t i = 0; i < secondary_carets_.size(); ++i) {
+    const SecondaryCaret& sc = secondary_carets_[i];
+    slots.push_back(Slot{.is_primary = false,
+                         .secondary_index = i,
+                         .reference = sc.position,
+                         .selection =
+                             SelectionRangeForSecondaryCaret(sc.position, sc.selection_anchor)});
   }
+  std::sort(slots.begin(), slots.end(),
+            [&](const Slot& a, const Slot& b) { return TextPositionLess(slot_sort_end(a), slot_sort_end(b)); });
 
   const std::vector<std::string> before_lines = document_->lines;
   const ViewState before_state = CaptureViewState();
-  const TextPosition primary_before{cursor_line_, cursor_column_};
-  TextPosition primary_after = primary_before;
-  std::vector<TextPosition> updated_secondary_carets;
-  updated_secondary_carets.reserve(carets.size());
+
+  std::vector<SecondaryCaret> new_secondaries = secondary_carets_;
+  TextPosition primary_after{cursor_line_, cursor_column_};
+  std::optional<TextPosition> new_primary_anchor = selection_anchor_;
 
   bool text_changed = false;
   bool caret_changed = false;
-  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
-    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
-    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
+
+  for (auto it = slots.rbegin(); it != slots.rend(); ++it) {
+    const Slot& slot = *it;
+    const std::size_t line = std::min(slot.reference.line, document_->lines.size() - 1);
+    const std::size_t column =
+        TextLayout::ClampTextColumn(document_->lines[line], slot.reference.column);
     const std::string& current_line = document_->lines[line];
 
+    if (slot.selection.has_value()) {
+      const SelectionRange norm = NormalizeRange(*slot.selection);
+      if (!ValidateRangeColumns(document_->lines, norm)) {
+        if (!slot.is_primary) {
+          // leave new_secondaries unchanged for this index
+        }
+        continue;
+      }
+
+      const bool sel_multi = (norm.start.line != norm.end.line);
+      const auto* sur_pair =
+          lc_view_.surround_enabled ? FindSurroundOpener(lc_view_, ch) : nullptr;
+      if (sur_pair != nullptr && !sur_pair->open.empty() && !sur_pair->close.empty() && !sel_multi &&
+          !InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
+        const std::string inner = TextBetweenLines(document_->lines, norm);
+        const std::string replacement = sur_pair->open + inner + sur_pair->close;
+        const std::string first_prefix =
+            document_->lines[norm.start.line].substr(0, norm.start.column);
+        TextPosition inner_anchor{};
+        TextPosition inner_cursor{};
+        PostSurroundInnerSelection(*sur_pair, inner, norm.start.line, first_prefix,
+                                   &inner_anchor, &inner_cursor);
+        const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(norm, replacement);
+        if (!entry.has_value()) {
+          continue;
+        }
+        text_changed = true;
+        ApplyHistoryEntry(*entry, true);
+        if (slot.is_primary) {
+          primary_after = inner_cursor;
+          new_primary_anchor = inner_anchor;
+        } else {
+          new_secondaries[slot.secondary_index] = SecondaryCaret{
+              .position = inner_cursor,
+              .preferred_column = PreferredColumnForCaret(inner_cursor),
+              .selection_anchor = inner_anchor,
+          };
+        }
+        continue;
+      }
+
+      const std::optional<HistoryEntry> entry =
+          BuildRangeHistoryEntry(norm, std::string(1, static_cast<char>(ch)));
+      if (!entry.has_value()) {
+        continue;
+      }
+      text_changed = true;
+      ApplyHistoryEntry(*entry, true);
+      const TextPosition pos{entry->after_state.cursor_line, entry->after_state.cursor_column};
+      if (slot.is_primary) {
+        primary_after = pos;
+        new_primary_anchor.reset();
+      } else {
+        new_secondaries[slot.secondary_index] = SecondaryCaret{
+            .position = pos,
+            .preferred_column = PreferredColumnForCaret(pos),
+            .selection_anchor = std::nullopt,
+        };
+      }
+      continue;
+    }
+
     const auto* close_pair = lc_view_.auto_close_enabled ? FindAutoCloseCloser(lc_view_, ch) : nullptr;
-    if (close_pair != nullptr && !has_selection() && column < current_line.size() &&
-        current_line[column] == ch) {
+    if (close_pair != nullptr && column < current_line.size() && current_line[column] == ch) {
       const TextPosition updated_position{line, column + 1};
       caret_changed = true;
-      if (line == primary_before.line && column == primary_before.column) {
+      if (slot.is_primary) {
         primary_after = updated_position;
+        new_primary_anchor.reset();
       } else {
-        updated_secondary_carets.push_back(updated_position);
+        new_secondaries[slot.secondary_index] = SecondaryCaret{
+            .position = updated_position,
+            .preferred_column = PreferredColumnForCaret(updated_position),
+            .selection_anchor = std::nullopt,
+        };
       }
       continue;
     }
 
     std::string replacement(1, ch);
     const auto* open_pair = lc_view_.auto_close_enabled ? FindAutoCloseOpener(lc_view_, ch) : nullptr;
-    if (open_pair != nullptr && !has_selection() && !open_pair->close.empty() &&
-        !InInsertionSuppressedScope(line, column) &&
+    if (open_pair != nullptr && !open_pair->close.empty() && !InInsertionSuppressedScope(line, column) &&
         ShouldAutoCloseAtNext(current_line, column, lc_view_)) {
       if (!(open_pair->open == open_pair->close && column > 0 && current_line[column - 1] == ch)) {
         replacement = open_pair->open + open_pair->close;
@@ -2123,9 +2376,6 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(
         SelectionRange{TextPosition{line, column}, TextPosition{line, column}}, replacement);
     if (!entry.has_value()) {
-      if (!(line == primary_before.line && column == primary_before.column)) {
-        updated_secondary_carets.push_back(TextPosition{line, column});
-      }
       continue;
     }
     text_changed = true;
@@ -2134,10 +2384,15 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     if (replacement.size() > 1) {
       updated_position.column = column + 1;
     }
-    if (line == primary_before.line && column == primary_before.column) {
+    if (slot.is_primary) {
       primary_after = updated_position;
+      new_primary_anchor.reset();
     } else {
-      updated_secondary_carets.push_back(updated_position);
+      new_secondaries[slot.secondary_index] = SecondaryCaret{
+          .position = updated_position,
+          .preferred_column = PreferredColumnForCaret(updated_position),
+          .selection_anchor = std::nullopt,
+      };
     }
   }
 
@@ -2147,19 +2402,21 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
-  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), TextPositionLess);
-  updated_secondary_carets.erase(
-      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
-      updated_secondary_carets.end());
-  updated_secondary_carets.erase(
-      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
-      updated_secondary_carets.end());
-  secondary_carets_.clear();
-  for (const TextPosition& caret : updated_secondary_carets) {
-    AddSecondaryCaret(caret.line, caret.column);
+  if (new_primary_anchor.has_value()) {
+    selection_anchor_ = *new_primary_anchor;
+  } else {
+    selection_anchor_.reset();
   }
+  secondary_carets_ = std::move(new_secondaries);
+  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
+            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
+              return TextPositionLess(lhs.position, rhs.position);
+            });
+  DedupeSecondaryCaretsAgainstPrimary();
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
-  selection_anchor_.reset();
+  for (SecondaryCaret& sc : secondary_carets_) {
+    sc.preferred_column = PreferredColumnForCaret(sc.position);
+  }
   EnsureCursorVisible();
 
   if (!text_changed) {
@@ -2727,7 +2984,8 @@ void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
   secondary_carets_.erase(
       std::unique(secondary_carets_.begin(), secondary_carets_.end(),
                   [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
-                    return lhs.position == rhs.position;
+                    return lhs.position == rhs.position &&
+                           lhs.selection_anchor == rhs.selection_anchor;
                   }),
       secondary_carets_.end());
   const TextPosition primary{cursor_line_, cursor_column_};

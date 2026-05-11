@@ -1,0 +1,341 @@
+#include "TestSupport.h"
+
+#include "editor/EditorViewRenderer.h"
+#include "editor/FoldingModel.h"
+#include "editor/TextViewport.h"
+#include "perf/AllocationCounter.h"
+#include "render/TextRenderer.h"
+#include "render/Theme.h"
+#include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceContext.h"
+
+#include <SDL3/SDL.h>
+
+#include <cstddef>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace microide::tests {
+
+namespace {
+
+std::string ReadFixturePrefix(std::string_view relative_under_tests, std::size_t max_bytes) {
+  std::ostringstream path;
+  path << MICROIDE_TEST_SOURCE_DIR << "/" << relative_under_tests;
+  std::ifstream in(path.str(), std::ios::binary);
+  if (!in) {
+    return {};
+  }
+  std::string out;
+  out.resize(max_bytes);
+  in.read(out.data(), static_cast<std::streamsize>(max_bytes));
+  out.resize(static_cast<std::size_t>(in.gcount()));
+  return out;
+}
+
+microide::editor::FoldingModel::ComputeOptions DefaultFoldOptions() {
+  microide::editor::FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = true;
+  options.tab_size = 4;
+  return options;
+}
+
+void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+  microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
+
+  microide::editor::FoldingModel model;
+  microide::editor::TextViewport viewport;
+  std::string body = ReadFixturePrefix("perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp",
+                                         256 * 1024);
+  if (body.empty()) {
+    std::string fallback;
+    fallback.reserve(12000);
+    for (int i = 0; i < 200; ++i) {
+      fallback += "namespace n" + std::to_string(i) + " {\n";
+    }
+    for (int i = 199; i >= 0; --i) {
+      fallback += "}  // n" + std::to_string(i) + "\n";
+    }
+    body = std::move(fallback);
+  }
+  viewport.LoadContent(body, "/tmp/editor-capacity-discipline.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.SetScrollLine(40);
+  viewport.SetViewportSize(24, 160);
+  viewport.MoveCursorTo(50, 2, false);
+  Expect(model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "fold model should compute for capacity-discipline fixture");
+
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(
+      vm, viewport, 24, &model,
+      /*occurrences_highlight_enabled=*/true,
+      /*occurrences_case_sensitive=*/false,
+      /*sticky_scroll_enabled=*/true,
+      /*sticky_max_depth=*/3,
+      /*render_whitespace_enabled=*/true);
+
+  const std::size_t cap_fold = vm.fold_gutter_marks.capacity();
+  const std::size_t cap_sticky = vm.sticky_lines.capacity();
+  const std::size_t cap_occ = vm.occurrence_ranges.capacity();
+  const std::size_t cap_ws = vm.whitespace_glyph_runs.capacity();
+
+  Expect(!model.ranges().empty(), "capacity test needs a non-empty fold model");
+  Expect(!vm.sticky_lines.empty(), "warm-up build should emit sticky lines for nested fixture");
+
+  builder.BuildEditorViewModelInto(
+      vm, viewport, 24, &model,
+      /*occurrences_highlight_enabled=*/true,
+      /*occurrences_case_sensitive=*/false,
+      /*sticky_scroll_enabled=*/true,
+      /*sticky_max_depth=*/3,
+      /*render_whitespace_enabled=*/true);
+
+  Expect(vm.fold_gutter_marks.capacity() == cap_fold,
+         "fold_gutter_marks should retain capacity on a stable second frame");
+  Expect(vm.sticky_lines.capacity() == cap_sticky,
+         "sticky_lines should retain capacity on a stable second frame");
+  Expect(vm.occurrence_ranges.capacity() == cap_occ,
+         "occurrence_ranges should retain capacity on a stable second frame");
+  Expect(vm.whitespace_glyph_runs.capacity() == cap_ws,
+         "whitespace_glyph_runs should retain capacity on a stable second frame");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  // First warmed build above; measure only the steady-state frame.
+  const microide::tests::perf::AllocationSnapshot before = microide::tests::perf::Allocations::Snapshot();
+  builder.BuildEditorViewModelInto(
+      vm, viewport, 24, &model,
+      /*occurrences_highlight_enabled=*/true,
+      /*occurrences_case_sensitive=*/false,
+      /*sticky_scroll_enabled=*/true,
+      /*sticky_max_depth=*/3,
+      /*render_whitespace_enabled=*/true);
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
+         "stable editor view-model rebuild should not allocate on the heap");
+#endif
+}
+
+void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
+  // --- FoldingModel service fingerprint: layout_revision, tab_size, language_id ---
+  {
+    microide::editor::FoldingModel model;
+    microide::editor::FoldingModel::Fingerprint fp_in{};
+    fp_in.layout_revision = 1;
+    fp_in.tab_size = 4;
+    fp_in.language_id = "cpp";
+    model.SetFingerprint(fp_in);
+    const std::vector<std::string> one_line = {"x;"};
+    Expect(model.Compute(one_line, DefaultFoldOptions()), "fold model should accept trivial buffer");
+    // `Compute` does not clear `dirty_`; the workspace marks the model fresh for its fingerprint
+    // after a successful service refresh — mirror that so `IsFresh` is meaningful.
+    model.SetFingerprint(fp_in);
+    Expect(model.IsFresh(fp_in), "model should match the fingerprint it was refreshed under");
+    microide::editor::FoldingModel::Fingerprint fp_layout = fp_in;
+    fp_layout.layout_revision = 2;
+    Expect(!model.IsFresh(fp_layout),
+           "fold model IsFresh should fail when layout_revision fingerprint changes");
+    microide::editor::FoldingModel::Fingerprint fp_tab = fp_in;
+    fp_tab.tab_size = 2;
+    Expect(!model.IsFresh(fp_tab), "fold model IsFresh should fail when tab_size changes");
+    microide::editor::FoldingModel::Fingerprint fp_lang = fp_in;
+    fp_lang.language_id = "txt";
+    Expect(!model.IsFresh(fp_lang), "fold model IsFresh should fail when language_id changes");
+  }
+
+  // --- Occurrence seed: layout_revision invalidates seed detection ---
+  {
+    microide::workspace::WorkspaceContext ctx;
+    microide::workspace::RenderViewModelBuilder builder(ctx);
+    microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent("name\n", "/tmp/occ-layout-key.cpp");
+    viewport.MoveCursorTo(0, 0, false);
+    viewport.SetViewportSize(4, 80);
+    (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
+    viewport.InvalidateSyntaxHighlighting();
+    (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
+    Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 2,
+           "layout_revision bump should miss occurrence seed cache");
+  }
+
+  // --- Sticky scroll builder cache: fold model revision ---
+  {
+    microide::workspace::WorkspaceContext ctx;
+    microide::workspace::RenderViewModelBuilder builder(ctx);
+    microide::editor::FoldingModel model;
+    microide::editor::FoldingModel::ComputeOptions options;
+    options.bracket_pairs = {{'{', '}'}};
+    options.use_indent_source = false;
+    options.tab_size = 4;
+    const std::vector<std::string> lines = {
+        "void a() {",
+        "  void b() {",
+        "    body();",
+        "  }",
+        "}",
+    };
+    Expect(model.Compute(lines, options), "fold model should compute nested fixture");
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent(
+        "void a() {\n"
+        "  void b() {\n"
+        "    body();\n"
+        "  }\n"
+        "}\n",
+        "/tmp/sticky-fold-rev.cpp");
+    viewport.SetViewportSize(3, 120);
+    viewport.SetScrollLine(2);
+    microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
+    (void)builder.BuildEditorViewModel(viewport, 8, &model, false, false, true, 3);
+    Expect(model.ToggleFold(0), "nested fixture should toggle outer fold");
+    (void)builder.BuildEditorViewModel(viewport, 8, &model, false, false, true, 3);
+    Expect(microide::workspace::RenderViewModelBuilder::StickyScrollCacheMissesForTesting() == 2,
+           "fold revision change should miss sticky-scroll cache (scroll line unchanged)");
+  }
+}
+
+#if MICROIDE_HAS_SDL3_TTF
+void EnsureDummySdlVideo() {
+  static ScopedEnvVar video_driver("SDL_VIDEODRIVER", "dummy");
+  static const bool initialized = SDL_Init(SDL_INIT_VIDEO);
+  Expect(initialized, "SDL should initialize with the dummy video driver");
+}
+
+class SoftwareCanvas final {
+ public:
+  SoftwareCanvas(int width, int height) {
+    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
+    Expect(surface_ != nullptr, "allocation-discipline test should allocate a software surface");
+    renderer_ = SDL_CreateSoftwareRenderer(surface_);
+    Expect(renderer_ != nullptr, "allocation-discipline test should create a software renderer");
+  }
+
+  ~SoftwareCanvas() {
+    if (renderer_ != nullptr) {
+      SDL_DestroyRenderer(renderer_);
+    }
+    if (surface_ != nullptr) {
+      SDL_DestroySurface(surface_);
+    }
+  }
+
+  SDL_Renderer* renderer() const { return renderer_; }
+
+ private:
+  SDL_Surface* surface_ = nullptr;
+  SDL_Renderer* renderer_ = nullptr;
+};
+
+void TestIndentGuideRunsPreserveCapacityAcrossStableRenders() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(240, 140);
+  microide::render::TextRenderer text_renderer;
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("if (x) {\n    a();\n        b();\n    }\n}\n", "/tmp/indent-capacity.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(2, 8);
+
+  microide::editor::FoldingModel model;
+  Expect(model.Compute(viewport.lines(), DefaultFoldOptions()), "fold model should compute");
+  viewport.SetFoldingModel(&model);
+
+  const SDL_FRect rect{0.0f, 0.0f, 240.0f, 140.0f};
+  microide::editor::EditorViewRenderer renderer;
+
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, nullptr, false,
+                  /*indent_guides_enabled=*/true, false, &model);
+  const std::size_t cap = renderer.last_indent_guide_runs().capacity();
+  Expect(!renderer.last_indent_guide_runs().empty(),
+         "first frame should populate indent guide runs");
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                  std::nullopt, std::nullopt, {}, nullptr, false,
+                  /*indent_guides_enabled=*/true, false, &model);
+  Expect(renderer.indent_guides_cache_hits() == 1,
+         "second unchanged frame should hit the indent-guides cache");
+  Expect(renderer.last_indent_guide_runs().capacity() == cap,
+         "indent guide runs vector should preserve capacity across cache hits");
+}
+
+void TestPerFrameCacheInvalidationKeysRenderPaths() {
+  // --- Bracket match: viewport + layout_revision + primary caret (see EditorViewRenderer) ---
+  {
+    EnsureDummySdlVideo();
+    SoftwareCanvas canvas(200, 120);
+    microide::render::TextRenderer text_renderer;
+    microide::render::Theme theme = microide::render::MakeDefaultTheme();
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent("if (a) {\n  return 1;\n}\n", "/tmp/bracket-key.cpp");
+    viewport.MoveCursorTo(0, 7);
+    const SDL_FRect rect{0.0f, 0.0f, 200.0f, 120.0f};
+    microide::editor::EditorViewRenderer renderer;
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                    std::nullopt, std::nullopt, {}, nullptr,
+                    /*bracket_match_highlight_enabled=*/true);
+    Expect(renderer.bracket_match_cache_misses() == 1,
+           "bracket-match cache should miss on first frame");
+    viewport.InvalidateSyntaxHighlighting();
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                    std::nullopt, std::nullopt, {}, nullptr,
+                    /*bracket_match_highlight_enabled=*/true);
+    Expect(renderer.bracket_match_cache_misses() == 2,
+           "layout_revision bump should invalidate bracket-match cache");
+  }
+
+  // --- Indent guides: fold revision (and layout scroll geometry) ---
+  {
+    EnsureDummySdlVideo();
+    SoftwareCanvas canvas(220, 140);
+    microide::render::TextRenderer text_renderer;
+    microide::render::Theme theme = microide::render::MakeDefaultTheme();
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent("void f() {\n  body();\n}\n", "/tmp/indent-fold-rev.cpp");
+    viewport.SetTabSize(4);
+    viewport.SetIndentWidth(4);
+    viewport.MoveCursorTo(1, 2);
+    microide::editor::FoldingModel model;
+    Expect(model.Compute(viewport.lines(), DefaultFoldOptions()), "fold model should compute");
+    viewport.SetFoldingModel(&model);
+    const SDL_FRect rect{0.0f, 0.0f, 220.0f, 140.0f};
+    microide::editor::EditorViewRenderer renderer;
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                    std::nullopt, std::nullopt, {}, nullptr, false, true, false, &model);
+    Expect(renderer.indent_guides_cache_misses() == 1,
+           "first indent-guides frame should miss the cache");
+    Expect(model.ToggleFold(0), "fixture should allow toggling the outer fold");
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                    std::nullopt, std::nullopt, {}, nullptr, false, true, false, &model);
+    Expect(renderer.indent_guides_cache_misses() == 2,
+           "fold model revision change should invalidate indent-guides cache");
+  }
+}
+#endif  // MICROIDE_HAS_SDL3_TTF
+
+}  // namespace
+
+void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorRenderViewModel/IntoPreservesVectorCapacitiesOnStableFrames",
+          TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames);
+  AddTest(tests, "EditorRenderViewModel/PerFrameCacheInvalidationKeysModelAndBuilder",
+          TestPerFrameCacheInvalidationKeysModelAndBuilder);
+#if MICROIDE_HAS_SDL3_TTF
+  AddTest(tests, "EditorRenderViewModel/IndentGuideRunsPreserveCapacityAcrossCacheHits",
+          TestIndentGuideRunsPreserveCapacityAcrossStableRenders);
+  AddTest(tests, "EditorRenderViewModel/PerFrameCacheInvalidationKeysRenderPaths",
+          TestPerFrameCacheInvalidationKeysRenderPaths);
+#endif
+}
+
+}  // namespace microide::tests

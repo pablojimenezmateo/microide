@@ -29,6 +29,7 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              editor::TextViewport& viewport,
                              const LanguageContract* contract,
                              std::size_t tab_size,
-                             bool fold_enabled);
+                             bool fold_enabled,
+                             std::size_t visible_rows);
 
 }  // namespace microide::workspace

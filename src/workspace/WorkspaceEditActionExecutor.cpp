@@ -1,4 +1,5 @@
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceActionServices.h"
 
 #include <string>
 #include <utility>
@@ -41,6 +42,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       std::string error_message;
       if (!context_.ShowCompletionOverlay(&error_message)) {
         return reject(error_message.empty() ? "No completions available" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::InsertSnippet: {
+      std::string error_message;
+      if (!context_.ShowInsertSnippetOverlay(&error_message)) {
+        return reject(error_message.empty() ? "No snippets available" : error_message);
       }
       return DispatchResult::Handled;
     }

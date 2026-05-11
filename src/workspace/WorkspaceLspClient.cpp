@@ -53,7 +53,12 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
   return true;
 }
 
-bool LspClient::IsRunning() const { return impl_->proc.IsRunning(); }
+bool LspClient::IsRunning() const {
+  if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+    return true;
+  }
+  return impl_->proc.IsRunning();
+}
 
 bool LspClient::IsInitializing() const {
   return impl_->initializing.load(std::memory_order_acquire);
@@ -261,6 +266,33 @@ bool LspClient::IsShuttingDown() const {
 bool LspClient::IsShutdownComplete() const {
   return impl_->shutdown_started.load(std::memory_order_acquire) &&
          impl_->shutdown_complete.load(std::memory_order_acquire);
+}
+
+void LspClient::EnableTestStubMode() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_stub_mode.store(true, std::memory_order_release);
+  impl_->initialized.store(true, std::memory_order_release);
+  impl_->initializing.store(false, std::memory_order_release);
+  impl_->readiness_snapshot.state = ReadinessSnapshot::State::Ready;
+  impl_->readiness_snapshot.message = "Ready";
+  impl_->readiness_snapshot.indexed_count = 0;
+}
+
+void LspClient::DisableTestStubMode() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_stub_mode.store(false, std::memory_order_release);
+  impl_->test_document_symbol_handler = nullptr;
+}
+
+void LspClient::SetTestDocumentSymbolHandler(
+    std::function<void(std::string uri, DocumentSymbolCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_document_symbol_handler = std::move(handler);
+}
+
+void LspClient::ClearTestDocumentSymbolHandler() {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_document_symbol_handler = nullptr;
 }
 
 }  // namespace microide::workspace

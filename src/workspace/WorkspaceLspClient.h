@@ -65,6 +65,8 @@ class LspClient {
     std::string documentation;
     std::string insert_text;
     int sort_text_priority = 0;
+    // LSP InsertTextFormat: 1=PlainText, 2=Snippet
+    int insert_text_format = 1;
   };
 
   struct CodeAction {
@@ -78,6 +80,15 @@ class LspClient {
     std::unordered_map<std::string, std::vector<std::pair<Range, std::string>>> changes;
   };
 
+  struct DocumentSymbol {
+    std::string name;
+    std::string detail;
+    int kind = 1;
+    Range range{};
+    Range selection_range{};
+    std::vector<DocumentSymbol> children;
+  };
+
   using OnPublishDiagnostics = std::function<void(std::string uri, std::vector<Diagnostic>)>;
 
   // Async callback types — called on the main thread from DrainCallbacks().
@@ -87,6 +98,8 @@ class LspClient {
   using FormattingCallback = std::function<void(std::optional<std::string>)>;
   using LocationCallback = std::function<void(std::optional<std::vector<Location>>)>;
   using RenameCallback = std::function<void(std::optional<WorkspaceEdit>)>;
+  using DocumentSymbolCallback =
+      std::function<void(std::optional<std::vector<DocumentSymbol>>)>;
 
   LspClient();
   ~LspClient();
@@ -169,6 +182,16 @@ class LspClient {
   // Async textDocument/rename.
   void RequestRenameAsync(std::string uri, Position pos, std::string new_name,
                            RenameCallback callback);
+
+  // Async textDocument/documentSymbol.
+  void RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallback callback);
+
+  // Unit tests: pretend a connected server without starting a subprocess.
+  void EnableTestStubMode();
+  void DisableTestStubMode();
+  void SetTestDocumentSymbolHandler(
+      std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);
+  void ClearTestDocumentSymbolHandler();
 
   // Shutdown and close connection (blocks until complete).
   void BeginShutdown();

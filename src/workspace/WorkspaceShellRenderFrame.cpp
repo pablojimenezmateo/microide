@@ -61,6 +61,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   ConsumePendingProjectOpenDialogResult();
   ConsumeProjectSearchUpdates();
+  PollOutlineService(SDL_GetTicks());
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
@@ -252,14 +253,14 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                     : std::span<const editor::PublishedDiagnostic>{};
     };
     const auto draw_review_comment_markers =
-        [this, renderer](const editor::TextViewport& viewport, const SDL_FRect& pane_rect) {
+        [this, renderer](const editor::TextViewport& viewport,
+                         const SDL_FRect& pane_rect,
+                         const editor::EditorViewMetrics& editor_metrics) {
           if (renderer == nullptr || viewport.path().empty() || viewport.is_placeholder()) {
             return;
           }
 
           const std::string uri = viewport.path().generic_string();
-          const editor::EditorViewMetrics metrics =
-              editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, pane_rect);
           for (std::size_t row = 0; row < viewport.visible_lines(); ++row) {
             const std::size_t visual_row_index = viewport.scroll_line() + row;
             if (visual_row_index >= viewport.visual_line_count()) {
@@ -276,10 +277,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
               continue;
             }
             const float y =
-                metrics.first_line_y + static_cast<float>(row) * metrics.line_height;
+                editor_metrics.first_line_y + static_cast<float>(row) * editor_metrics.line_height;
             const SDL_FRect marker_rect = SDL_FRect{
-                pane_rect.x + metrics.gutter_width - 6.0f,
-                y + std::max(1.0f, (metrics.line_height - 6.0f) * 0.5f),
+                pane_rect.x + editor_metrics.gutter_width - 6.0f,
+                y + std::max(1.0f, (editor_metrics.line_height - 6.0f) * 0.5f),
                 3.0f,
                 6.0f,
             };
@@ -304,8 +305,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.occurrences.enabled", true);
     const bool occurrences_case_sensitive =
         setting_enabled("editor.search.case_sensitive", false);
-    const editor::FoldingModel* active_folding_model =
-        fold_enabled ? EnsureActiveFoldingModelFresh() : nullptr;
+    const editor::FoldingModel* active_folding_model = nullptr;
     if (!fold_enabled) {
       if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
         for (auto& view : editor_tab->views) {
@@ -313,23 +313,43 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         }
       }
     }
+    const RenderViewModelBuilder editor_render_builder(context_);
+    const bool sticky_scroll_setting_enabled =
+        setting_enabled("editor.fold.sticky_scroll.enabled", true);
+    const int sticky_scroll_max_depth =
+        ParseStickyScrollMaxDepthSetting(GetSettingValue("editor.fold.sticky_scroll.max_depth"));
+    thread_local editor::EditorViewModel tls_editor_surface_vm;
     const std::vector<EditorPaneLayout>& panes = editor_panes;
     editor::TextViewport* active_viewport = ActiveEditorViewport();
     if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
       if (active_editor_pane_rect != nullptr) {
         *active_editor_pane_rect = layout.editor_surface;
       }
-      const editor::EditorViewMetrics metrics =
+      editor::EditorViewMetrics metrics =
           editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *active_viewport,
-                                                     layout.editor_surface);
+                                                     layout.editor_surface, 0);
       active_viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      const editor::EditorViewModel editor_vm =
-          RenderViewModelBuilder(context_).BuildEditorViewModel(
-              *active_viewport, metrics.visible_rows, active_folding_model,
-              occurrences_highlight_enabled_global, occurrences_case_sensitive);
+      active_folding_model = fold_enabled ? EnsureActiveFoldingModelFresh() : nullptr;
+      const bool sticky_active =
+          fold_enabled && sticky_scroll_setting_enabled && active_folding_model != nullptr;
+      editor_render_builder.BuildEditorViewModelInto(
+          tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
+          occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
+          sticky_scroll_max_depth, render_whitespace_enabled);
+      if (!tls_editor_surface_vm.sticky_lines.empty()) {
+        metrics = editor::EditorViewRenderer::ComputeMetrics(
+            text_renderer_, *active_viewport, layout.editor_surface,
+            tls_editor_surface_vm.sticky_lines.size());
+        active_viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+        editor_render_builder.BuildEditorViewModelInto(
+            tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
+            occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
+            sticky_scroll_max_depth, render_whitespace_enabled);
+      }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
-                                   std::nullopt, {}, &editor_vm, bracket_match_highlight_enabled,
+                                   std::nullopt, {}, &tls_editor_surface_vm,
+                                   bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
                                    active_folding_model);
     }
@@ -350,15 +370,31 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (pane.active) {
         visible_editor_blame_overlay_ = blame_overlay;
       }
-      const editor::EditorViewMetrics metrics =
-          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
+      editor::EditorViewMetrics metrics =
+          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      if (pane.active) {
+        active_folding_model = fold_enabled ? EnsureActiveFoldingModelFresh() : nullptr;
+      }
+      const editor::FoldingModel* folding_for_vm =
+          fold_enabled ? active_folding_model : nullptr;
+      const bool sticky_active =
+          fold_enabled && sticky_scroll_setting_enabled && folding_for_vm != nullptr;
       const bool occurrences_for_pane =
           occurrences_highlight_enabled_global && pane.active;
-      const editor::EditorViewModel editor_vm =
-          RenderViewModelBuilder(context_).BuildEditorViewModel(
-              *viewport, metrics.visible_rows, active_folding_model, occurrences_for_pane,
-              occurrences_case_sensitive);
+      editor_render_builder.BuildEditorViewModelInto(
+          tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
+          occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
+          render_whitespace_enabled);
+      if (!tls_editor_surface_vm.sticky_lines.empty()) {
+        metrics = editor::EditorViewRenderer::ComputeMetrics(
+            text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
+        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+        editor_render_builder.BuildEditorViewModelInto(
+            tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
+            occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
+            render_whitespace_enabled);
+      }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    pane.active &&
@@ -368,22 +404,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                        : "",
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
                                    blame_overlay, diagnostics_for_viewport(*viewport),
-                                   &editor_vm,
+                                   &tls_editor_surface_vm,
                                    pane.active && bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
                                    active_folding_model);
-      draw_review_comment_markers(*viewport, pane.rect);
+      draw_review_comment_markers(*viewport, pane.rect, metrics);
 
     }
-  }
-
-  if (active_compare_tab != nullptr) {
-    RenderCompareScrollbars(renderer, layout.editor_surface, *active_compare_tab);
-  } else if (active_merge_tab != nullptr) {
-    RenderMergeScrollbars(renderer, layout.editor_surface);
-  } else {
-    const std::vector<EditorPaneLayout>& panes = editor_panes;
-    auto* editor_tab = ActiveEditorTab();
     for (const EditorPaneLayout& pane : panes) {
       editor::TextViewport* viewport =
           pane.active ? ActiveEditorViewport()
@@ -393,9 +420,30 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         continue;
       }
 
-      const editor::EditorViewMetrics metrics =
-          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect);
+      editor::EditorViewMetrics metrics =
+          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      const editor::FoldingModel* folding_for_scroll =
+          fold_enabled
+              ? (pane.active ? EnsureActiveFoldingModelFresh() : active_folding_model)
+              : nullptr;
+      const bool sticky_active =
+          fold_enabled && sticky_scroll_setting_enabled && folding_for_scroll != nullptr;
+      editor_render_builder.BuildEditorViewModelInto(
+          tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_scroll,
+          /*occurrences_highlight_enabled=*/false, occurrences_case_sensitive, sticky_active,
+          sticky_scroll_max_depth,
+          /*render_whitespace_enabled=*/false);
+      if (!tls_editor_surface_vm.sticky_lines.empty()) {
+        metrics = editor::EditorViewRenderer::ComputeMetrics(
+            text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
+        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+        editor_render_builder.BuildEditorViewModelInto(
+            tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_scroll,
+            /*occurrences_highlight_enabled=*/false, occurrences_case_sensitive, sticky_active,
+            sticky_scroll_max_depth,
+            /*render_whitespace_enabled=*/false);
+      }
       const auto scroll_layout = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
       if (scroll_layout.vertical_scrollbar.has_value()) {
         DrawScrollbar(renderer, theme_, scroll_layout.vertical_scrollbar->track,
@@ -418,6 +466,12 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           divider.node_path == context_.interaction_state.drag_editor_split_path;
       DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
     }
+  }
+
+  if (active_compare_tab != nullptr) {
+    RenderCompareScrollbars(renderer, layout.editor_surface, *active_compare_tab);
+  } else if (active_merge_tab != nullptr) {
+    RenderMergeScrollbars(renderer, layout.editor_surface);
   }
 }
 

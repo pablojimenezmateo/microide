@@ -371,6 +371,9 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   }
 
   if (event.key == SDLK_ESCAPE) {
+    if (operations_.try_snippet_escape_in_editor && operations_.try_snippet_escape_in_editor()) {
+      return true;
+    }
     operations_.dismiss_inline_completion();
     return false;
   }
@@ -381,6 +384,10 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   switch (event.key) {
     case SDLK_TAB: {
       if (editable_viewport == nullptr) {
+        return true;
+      }
+      if (operations_.try_snippet_tab_in_editor &&
+          operations_.try_snippet_tab_in_editor((modifiers & SDL_KMOD_SHIFT) != 0)) {
         return true;
       }
       const bool shift_held = (modifiers & SDL_KMOD_SHIFT) != 0;
@@ -423,12 +430,20 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       if (editable_viewport == nullptr) {
         return true;
       }
+      if (operations_.try_snippet_backspace_in_editor &&
+          operations_.try_snippet_backspace_in_editor(editable_viewport)) {
+        return true;
+      }
       return ApplyDefaultEditorEdit(operations_, *editable_viewport,
                                     "KeyInputCoordinator::HandleDefaultEditorKeyDown::Backspace",
                                     [&]() { editable_viewport->Backspace(); });
     }
     case SDLK_DELETE: {
       if (editable_viewport == nullptr) {
+        return true;
+      }
+      if (operations_.try_snippet_delete_forward_in_editor &&
+          operations_.try_snippet_delete_forward_in_editor(editable_viewport)) {
         return true;
       }
       return ApplyDefaultEditorEdit(
@@ -440,30 +455,37 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       break;
   }
 
+  const auto after_editor_caret_motion = [this]() {
+    operations_.reset_caret_blink();
+    if (operations_.notify_snippet_session_caret_moved) {
+      operations_.notify_snippet_session_caret_moved();
+    }
+  };
+
   switch (event.key) {
     case SDLK_UP:
       viewport->MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     case SDLK_DOWN:
       viewport->MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     case SDLK_LEFT:
       viewport->MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     case SDLK_RIGHT:
       viewport->MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     case SDLK_PAGEUP:
       viewport->Page(-1);
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     case SDLK_PAGEDOWN:
       viewport->Page(1);
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -471,7 +493,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       } else {
         viewport->MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
       }
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     case SDLK_END:
       if (modifiers & SDL_KMOD_CTRL) {
@@ -481,7 +503,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       } else {
         viewport->MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
       }
-      operations_.reset_caret_blink();
+      after_editor_caret_motion();
       return true;
     default:
       return false;

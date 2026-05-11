@@ -13,6 +13,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Colorscheme", ""},
       ActionSpec{ActionId::Completion, "completion", "completion", "Completions",
                  "Ctrl+Space"},
+      ActionSpec{ActionId::InsertSnippet, "insert-snippet", "insert-snippet", "Insert Snippet…",
+                 "Ctrl+Alt+J"},
       ActionSpec{ActionId::Compare, "compare", "compare [path] [commit-prefix]",
                  "Compare Against...", ""},
       ActionSpec{ActionId::CompareHead, "", "", "Compare Against HEAD", ""},

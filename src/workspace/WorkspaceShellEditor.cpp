@@ -110,7 +110,8 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
   const auto resolved = language_contract_.ResolveView(language_id);
   EnsureFoldingModelFresh(*editor_tab, *active_viewport, resolved.contract,
                           context_.current_project_state.editor_preferences.tab_size,
-                          setting_enabled("editor.fold.enabled", true));
+                          setting_enabled("editor.fold.enabled", true),
+                          active_viewport->visible_lines());
   for (auto& view : editor_tab->views) {
     view.viewport.SetFoldingModel(editor_tab->folding_model.ranges().empty() &&
                                           editor_tab->folding_model.collapsed_flags().empty()

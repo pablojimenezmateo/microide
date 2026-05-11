@@ -1,6 +1,6 @@
 # MicroIDE Roadmap
 
-Reviewed on 2026-04-21.
+Reviewed on 2026-05-10.
 
 This file is the forward-looking plan for the current branch. `docs/active-work.md` remains the
 source of truth for shipped baseline and accepted scope cuts.
@@ -31,6 +31,13 @@ It is:
 ## Immediate Slice
 
 Finish the validation and host-boundary pass before widening product scope again.
+
+Editor essentials: folding, language contract, indent guides, occurrence
+highlights, pair and indent behavior, shaping toggles, and save normalization are
+landed; finish partial surfaces (sticky scroll UI, snippet sessions, outline
+view, remaining spec tests and perf baselines) under
+`openspec/changes/editor-essential-capabilities/tasks.md` and
+`docs/editor-essentials.md`.
 
 ### 1. Validate shipped async and provider runtimes
 
@@ -210,6 +217,9 @@ Continue with:
 - asynchronous, viewport-scoped blame behavior that stays cheap enough for typing and scrolling
 - broader regression coverage where editor, compare, and merge interactions are still easy to
   break
+- complete remaining **editor essentials** work (sticky-scroll band, snippet engine and UI, outline
+  sidebar, syntax-aware bracket matching where required, and `tasks.md` section 13 perf baselines); see
+  `docs/editor-essentials.md`
 
 ### 3. Diff and merge rewrite
 
@@ -238,7 +248,6 @@ These are explicitly deferred or out of scope unless deliberately promoted into 
 - plugin marketplaces, remote install flows, or Micro-plugin compatibility
 - cloud, collaboration, account, or sync features
 - recent-project or recent-file surfaces
-- soft wrap
 - debugger UX beyond the already-landed first-pass runtime and command plumbing
 - feature work added only because a protocol supports it rather than because MicroIDE needs it
 
@@ -270,6 +279,7 @@ These were identified during the vision-alignment pass and should each become th
 - `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
 - `openspec/specs/performance-budgets/spec.md`: durable performance budget and measurement policy
 - `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
+- `docs/editor-essentials.md`: editor essentials settings, commands, and plugin contract surfaces
 - `docs/implementation-guide.md`: durable product direction
 - `docs/known-tech-debt.md`: concrete remaining debt worth preserving as a queue
 - `docs/diff-editor-merge-rewrite-plan.md`: detailed compare and merge rewrite plan (create if missing)

@@ -6,6 +6,7 @@
 
 #include "util/PerformanceTrace.h"
 #include "util/Parse.h"
+#include "workspace/WorkspaceOutlineFlat.h"
 
 namespace microide::workspace {
 
@@ -427,6 +428,18 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
       if (!line_index.has_value() || *line_index < 0 ||
           *line_index >= static_cast<int>(context_.current_project_state.sidebar.tests.entries.size())) {
+        return CursorKind::Default;
+      }
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
+      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
+    }
+    if (sidebar_mode == SidebarMode::Outline) {
+      const auto rows = BuildOutlineFlatRows(context_.current_project_state.sidebar.outline);
+      const auto list_layout = ComputePluginSidebarListLayout(layout.sidebar, rows.size());
+      const auto line_index = ScrollableListIndexAtY(list_layout, y);
+      if (!line_index.has_value() || *line_index < 0 ||
+          *line_index >= static_cast<int>(rows.size())) {
         return CursorKind::Default;
       }
       const SDL_FRect row_rect =

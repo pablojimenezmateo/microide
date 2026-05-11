@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include <optional>
+#include <string_view>
 
 #include "workspace/WorkspaceShell.h"
 
@@ -34,6 +36,8 @@ class EditorMouseCoordinator {
         compute_editor_split_node_rect;
     std::function<void(TabEntry::EditorTabState::EditorSplitNode&)> normalize_editor_split_node;
     std::function<void()> clear_drag_state;
+    std::function<std::optional<std::string>(std::string_view id)> get_setting_value;
+    std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
   };
 
   EditorMouseCoordinator(ProjectWorkspaceState& state,

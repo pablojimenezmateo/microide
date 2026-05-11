@@ -127,6 +127,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/ShapingActions.cpp
   src/editor/SingleLineEditor.cpp
   src/editor/SingleLineKeyHandler.cpp
+  src/editor/SnippetEngine.cpp
   src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
@@ -333,6 +334,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellBootstrapper.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
+  src/workspace/WorkspaceShellOutline.cpp
   src/workspace/WorkspaceShellSidebarMouse.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShellTerminalService.cpp
@@ -348,6 +350,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspManager.cpp
+  src/workspace/WorkspaceOutlineService.cpp
+  src/workspace/WorkspaceOutlineFlat.cpp
   src/workspace/WorkspaceDapManager.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
   src/workspace/WorkspaceSaveParticipants.cpp
@@ -479,9 +483,14 @@ add_executable(microide_tests
   tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
   tests/EditorEssentialsTests.cpp
+  tests/EditorRenderViewModelAllocationTests.cpp
+  tests/EditorSnippetTests.cpp
   tests/FoldingModelTests.cpp
+  tests/EditorFoldingTests.cpp
+  tests/EditorMultiCaretTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
+  tests/WorkspaceOutlineServiceTests.cpp
   tests/WorkspaceSettingsRegistryTests.cpp
   tests/WorkspaceShellChromeTests.cpp
   tests/WorkspaceShellEditorBlameTests.cpp
@@ -592,6 +601,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/AllocationCounter.cpp
     tests/perf/PerfHarness.cpp
     tests/perf/Baseline.cpp
+    tests/perf/EditorEssentialsPerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )
 
@@ -628,7 +638,8 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   endif()
 
   add_test(NAME microide_perf_tests
-           COMMAND microide_perf --smoke --iterations=1)
+           COMMAND microide_perf --smoke --iterations=1
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 
 add_executable(microide_diff_bench

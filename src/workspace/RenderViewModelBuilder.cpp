@@ -1,10 +1,15 @@
 #include "workspace/RenderViewModelBuilder.h"
 
+#include "editor/FoldingModel.h"
+
 #include "workspace/StatusBarService.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
+#include <string>
+#include <string_view>
 #include <unordered_set>
 
 namespace microide::workspace {
@@ -39,6 +44,18 @@ thread_local std::uint64_t g_occurrence_seed_hits = 0;
 thread_local std::uint64_t g_occurrence_seed_misses = 0;
 thread_local std::uint64_t g_occurrence_scan_hits = 0;
 thread_local std::uint64_t g_occurrence_scan_misses = 0;
+
+thread_local struct StickyScrollViewportCache {
+  std::uintptr_t viewport = 0;
+  std::size_t scroll_line = 0;
+  std::uint64_t fold_revision = 0;
+  bool enabled = false;
+  int max_depth = 0;
+  std::vector<std::size_t> lines;
+} g_sticky_scroll_cache;
+
+thread_local std::uint64_t g_sticky_scroll_hits = 0;
+thread_local std::uint64_t g_sticky_scroll_misses = 0;
 
 bool OccurrenceSeedCacheMatches(const editor::TextViewport& viewport,
                                 std::uintptr_t viewport_key,
@@ -206,13 +223,129 @@ SidebarMode SidebarModeFromViewId(std::string_view view_id) {
   if (view_id == "plugin") {
     return SidebarMode::Plugin;
   }
+  if (view_id == "outline") {
+    return SidebarMode::Outline;
+  }
   if (view_id == "tree") {
     return SidebarMode::Tree;
   }
   return SidebarMode::None;
 }
 
+void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
+                                std::size_t visible_rows,
+                                std::vector<editor::WhitespaceGlyphRun>* out) {
+  out->clear();
+  if (visible_rows == 0) {
+    return;
+  }
+  const auto& lines = viewport.lines();
+  const std::size_t scroll_line = viewport.scroll_line();
+  const std::size_t visual_total = viewport.visual_line_count();
+  const std::size_t tab_size = viewport.tab_size();
+  if (visual_total == 0) {
+    return;
+  }
+  for (std::size_t row = 0; row < visible_rows; ++row) {
+    const std::size_t visual_row_index = scroll_line + row;
+    if (visual_row_index >= visual_total) {
+      break;
+    }
+    const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
+    const std::size_t line_index = row_meta.line_index;
+    if (line_index >= lines.size()) {
+      continue;
+    }
+    const std::string_view line_text = lines[line_index];
+    const std::size_t row_start_visual = row_meta.visual_start;
+    const std::size_t row_end_visual = row_meta.visual_end;
+    std::size_t visual_col = 0;
+    for (char c : line_text) {
+      std::size_t cell_width = 1;
+      if (c == '\t') {
+        const std::size_t step = tab_size == 0 ? 1 : tab_size;
+        cell_width = step - (visual_col % step);
+      }
+      const std::size_t cell_start = visual_col;
+      visual_col += cell_width;
+      if (cell_start >= row_end_visual) {
+        break;
+      }
+      if (cell_start < row_start_visual) {
+        continue;
+      }
+      if (visual_col > row_end_visual) {
+        continue;
+      }
+      editor::WhitespaceGlyphRun run{};
+      run.visual_row_index = visual_row_index;
+      run.row_visual_start = row_start_visual;
+      run.row_visual_end = row_end_visual;
+      run.cell_visual_start = cell_start;
+      run.cell_visual_extent = cell_width;
+      if (c == ' ') {
+        run.is_tab_rule = false;
+        out->push_back(run);
+      } else if (c == '\t') {
+        run.is_tab_rule = true;
+        out->push_back(run);
+      }
+    }
+  }
+}
+
 }  // namespace
+
+int ParseStickyScrollMaxDepthSetting(const std::optional<std::string>& value) {
+  constexpr int kDefault = 3;
+  if (!value.has_value() || value->empty()) {
+    return kDefault;
+  }
+  try {
+    const long parsed = std::stol(*value);
+    if (parsed < 1) {
+      return 1;
+    }
+    if (parsed > 8) {
+      return 8;
+    }
+    return static_cast<int>(parsed);
+  } catch (...) {
+    return kDefault;
+  }
+}
+
+void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
+                                      const editor::FoldingModel* folding_model,
+                                      bool sticky_scroll_enabled,
+                                      int sticky_max_depth,
+                                      std::vector<std::size_t>& out_opener_lines) {
+  out_opener_lines.clear();
+  if (!sticky_scroll_enabled || folding_model == nullptr || folding_model->ranges().empty()) {
+    return;
+  }
+  const int clamped_depth = std::clamp(sticky_max_depth, 1, 8);
+  const std::size_t max_depth = static_cast<std::size_t>(clamped_depth);
+  if (viewport.visual_line_count() == 0 || viewport.scroll_line() >= viewport.visual_line_count()) {
+    return;
+  }
+  const std::size_t top_line = viewport.VisualRowLineIndex(viewport.scroll_line());
+  std::vector<std::size_t> openers;
+  openers.reserve(16);
+  for (const editor::FoldRange& range : folding_model->ranges()) {
+    if (range.opener_line < top_line && top_line <= range.closer_line) {
+      openers.push_back(range.opener_line);
+    }
+  }
+  if (openers.empty()) {
+    return;
+  }
+  std::sort(openers.begin(), openers.end());
+  openers.erase(std::unique(openers.begin(), openers.end()), openers.end());
+  const std::size_t take = std::min(max_depth, openers.size());
+  const auto start_it = openers.end() - static_cast<std::ptrdiff_t>(take);
+  out_opener_lines.assign(start_it, openers.end());
+}
 
 RenderViewModelBuilder::RenderViewModelBuilder(const WorkspaceContext& context)
     : context_(context) {}
@@ -309,15 +442,23 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   };
 }
 
-editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
+void RenderViewModelBuilder::BuildEditorViewModelInto(
+    editor::EditorViewModel& out,
     const editor::TextViewport& viewport,
     std::size_t visible_rows,
     const editor::FoldingModel* folding_model,
     bool occurrences_highlight_enabled,
-    bool occurrences_case_sensitive) const {
-  editor::EditorViewModel vm;
+    bool occurrences_case_sensitive,
+    bool sticky_scroll_enabled,
+    int sticky_max_depth,
+    bool render_whitespace_enabled) const {
+  out.fold_gutter_marks.clear();
+  out.sticky_lines.clear();
+  out.occurrence_ranges.clear();
+  out.whitespace_glyph_runs.clear();
+
   if (folding_model != nullptr && !folding_model->ranges().empty()) {
-    vm.fold_gutter_marks.reserve(visible_rows);
+    out.fold_gutter_marks.reserve(visible_rows);
     for (std::size_t row = 0; row < visible_rows; ++row) {
       const std::size_t visual_row_index = viewport.scroll_line() + row;
       if (visual_row_index >= viewport.visual_line_count()) {
@@ -330,7 +471,7 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
       if (!folding_model->FoldStartingAt(row_meta.line_index).has_value()) {
         continue;
       }
-      vm.fold_gutter_marks.push_back(editor::FoldGutterMark{
+      out.fold_gutter_marks.push_back(editor::FoldGutterMark{
           .line_index = row_meta.line_index,
           .visual_row_index = visual_row_index,
           .collapsed = folding_model->IsCollapsedAtOpener(row_meta.line_index),
@@ -338,8 +479,39 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
     }
   }
 
+  if (sticky_scroll_enabled && folding_model != nullptr && !folding_model->ranges().empty()) {
+    const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
+    const std::size_t scroll_line = viewport.scroll_line();
+    const std::uint64_t fold_revision = folding_model->revision();
+    const bool cache_hit = g_sticky_scroll_cache.viewport == viewport_key &&
+                           g_sticky_scroll_cache.scroll_line == scroll_line &&
+                           g_sticky_scroll_cache.fold_revision == fold_revision &&
+                           g_sticky_scroll_cache.enabled == sticky_scroll_enabled &&
+                           g_sticky_scroll_cache.max_depth == sticky_max_depth;
+    if (!cache_hit) {
+      ++g_sticky_scroll_misses;
+      g_sticky_scroll_cache.viewport = viewport_key;
+      g_sticky_scroll_cache.scroll_line = scroll_line;
+      g_sticky_scroll_cache.fold_revision = fold_revision;
+      g_sticky_scroll_cache.enabled = sticky_scroll_enabled;
+      g_sticky_scroll_cache.max_depth = sticky_max_depth;
+      ComputeStickyScrollLinesUncached(viewport,
+                                       folding_model,
+                                       sticky_scroll_enabled,
+                                       sticky_max_depth,
+                                       g_sticky_scroll_cache.lines);
+    } else {
+      ++g_sticky_scroll_hits;
+    }
+    out.sticky_lines.assign(g_sticky_scroll_cache.lines.begin(), g_sticky_scroll_cache.lines.end());
+  }
+
+  if (render_whitespace_enabled && !viewport.is_placeholder()) {
+    CollectWhitespaceGlyphRuns(viewport, visible_rows, &out.whitespace_glyph_runs);
+  }
+
   if (!occurrences_highlight_enabled || viewport.is_placeholder()) {
-    return vm;
+    return;
   }
 
   const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
@@ -354,13 +526,13 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
   }
 
   if (!g_occurrence_seed_cache.has_seed) {
-    return vm;
+    return;
   }
 
   const auto& seed_cache = g_occurrence_seed_cache;
 
   bool scan_hit = OccurrenceScanCacheMatches(viewport, viewport_key, visible_rows,
-                                              seed_cache.needle);
+                                             seed_cache.needle);
   if (!scan_hit) {
     ++g_occurrence_scan_misses;
     RefillOccurrenceScanCache(viewport,
@@ -376,8 +548,29 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
     ++g_occurrence_scan_hits;
   }
 
-  vm.occurrence_ranges.assign(g_occurrence_scan_cache.ranges.begin(),
+  out.occurrence_ranges.assign(g_occurrence_scan_cache.ranges.begin(),
                                g_occurrence_scan_cache.ranges.end());
+}
+
+editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
+    const editor::TextViewport& viewport,
+    std::size_t visible_rows,
+    const editor::FoldingModel* folding_model,
+    bool occurrences_highlight_enabled,
+    bool occurrences_case_sensitive,
+    bool sticky_scroll_enabled,
+    int sticky_max_depth,
+    bool render_whitespace_enabled) const {
+  editor::EditorViewModel vm;
+  BuildEditorViewModelInto(vm,
+                           viewport,
+                           visible_rows,
+                           folding_model,
+                           occurrences_highlight_enabled,
+                           occurrences_case_sensitive,
+                           sticky_scroll_enabled,
+                           sticky_max_depth,
+                           render_whitespace_enabled);
   return vm;
 }
 
@@ -484,6 +677,20 @@ void RenderViewModelBuilder::ResetOccurrenceCachesForTesting() {
   g_occurrence_seed_misses = 0;
   g_occurrence_scan_hits = 0;
   g_occurrence_scan_misses = 0;
+}
+
+void RenderViewModelBuilder::ResetStickyScrollCacheForTesting() {
+  g_sticky_scroll_cache = {};
+  g_sticky_scroll_hits = 0;
+  g_sticky_scroll_misses = 0;
+}
+
+std::uint64_t RenderViewModelBuilder::StickyScrollCacheHitsForTesting() {
+  return g_sticky_scroll_hits;
+}
+
+std::uint64_t RenderViewModelBuilder::StickyScrollCacheMissesForTesting() {
+  return g_sticky_scroll_misses;
 }
 
 std::uint64_t RenderViewModelBuilder::OccurrenceSeedCacheHitsForTesting() {

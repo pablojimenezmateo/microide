@@ -464,11 +464,11 @@ void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
          "second project should open");
   Expect(ExecuteCommand(shell, "sidebar-width 320"),
          "second project should accept its own sidebar width command");
-  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
-  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Git,
          "second project should show its own sidebar mode");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "problems",
-         "second project should keep the problems sidebar view id");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "git",
+         "second project should keep the git sidebar view id");
   Expect(std::fabs(WorkspaceShellTestAccess::SidebarWidth(shell) - 320.0f) < 0.001f,
          "second project should keep its sidebar width");
 
@@ -485,9 +485,9 @@ void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
          "switching forward to the second project should succeed");
-  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Git,
          "switching forward should restore the second project's sidebar mode");
-  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "problems",
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "git",
          "switching forward should restore the second project's sidebar view id");
   Expect(std::fabs(WorkspaceShellTestAccess::SidebarWidth(shell) - 320.0f) < 0.001f,
          "switching forward should restore the second project's sidebar width");

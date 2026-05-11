@@ -13,6 +13,8 @@
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspaceSaveNormalization.h"
 #include "workspace/WorkspaceTabState.h"
+#include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceContext.h"
 
 #include <optional>
 #include <string>
@@ -53,6 +55,45 @@ void TestBracketScannerNoMatchOnUnbalanced() {
   viewport.LoadContent("{ no closer\n", "/tmp/sample.cpp");
   auto match = microide::editor::FindBracketMatch(viewport, 0, 0);
   Expect(!match.has_value(), "unbalanced opener should not match");
+}
+
+void TestBracketScannerSkipsStringClosers() {
+  TextViewport viewport;
+  viewport.LoadContent(
+      "void f() {\n"
+      "  const char* s = \"}\";\n"
+      "}\n",
+      "/tmp/bracket-skip-str.cpp");
+  viewport.MoveCursorTo(0, 9);  // on '{' after "void f() "
+  auto match = microide::editor::FindBracketMatch(viewport, viewport.cursor_line(),
+                                                  viewport.cursor_column());
+  Expect(match.has_value(), "expected match past string literal closer");
+  Expect(match->open_line == 0 && match->open_column == 9, "open brace line 0 col 9");
+  Expect(match->close_line == 2 && match->close_column == 0,
+         "real closer should be final brace, not quoted }");
+}
+
+void TestBracketScannerSkipsCommentBraces() {
+  TextViewport viewport;
+  viewport.LoadContent(
+      "void f() {\n"
+      "  /* } */\n"
+      "  x;\n"
+      "}\n",
+      "/tmp/bracket-skip-comment.cpp");
+  viewport.MoveCursorTo(0, 9);
+  auto match = microide::editor::FindBracketMatch(viewport, 0, 9);
+  Expect(match.has_value(), "expected match skipping commented braces");
+  Expect(match->close_line == 3 && match->close_column == 0,
+         "closer should be the real function terminator");
+}
+
+void TestBracketScannerNoMatchWhenAnchorInsideString() {
+  TextViewport viewport;
+  viewport.LoadContent("auto s = \"{\";\n", "/tmp/bracket-in-str.cpp");
+  viewport.MoveCursorTo(0, 10);  // on '{' inside string literal
+  auto match = microide::editor::FindBracketMatch(viewport, 0, 10);
+  Expect(!match.has_value(), "bracket inside string should not participate in matching");
 }
 
 void TestShapingMoveLineDown() {
@@ -226,6 +267,7 @@ void TestIndentDetectSpacesMajority() {
   Expect(detected.soft_tabs, "majority spaces should yield soft_tabs=true");
   Expect(detected.indent_width == 2,
          "indent step should be detected as 2");
+  Expect(detected.non_blank_lines_inspected == 6, "short buffers inspect every non-blank line");
 }
 
 void TestIndentDetectTabsMajority() {
@@ -233,6 +275,18 @@ void TestIndentDetectTabsMajority() {
   auto detected = microide::editor::DetectIndent(lines);
   Expect(detected.detected, "tabs should be detected");
   Expect(!detected.soft_tabs, "majority tabs should yield soft_tabs=false");
+  Expect(detected.non_blank_lines_inspected == 3, "tab-majority sample uses three non-blank lines");
+}
+
+void TestIndentDetectMaxInspectBoundsNonBlankCount() {
+  std::vector<std::string> lines;
+  lines.reserve(400);
+  for (int i = 0; i < 400; ++i) {
+    lines.push_back(std::string("  line ") + std::to_string(i));
+  }
+  auto detected = microide::editor::DetectIndent(lines, /*max_inspect_lines=*/40);
+  Expect(detected.non_blank_lines_inspected == 40,
+         "detection should stop after the non-blank line budget");
 }
 
 void TestApplyDetectedIndentOnOpenUpdatesViewport() {
@@ -368,6 +422,81 @@ void TestIndentGuidesMarksActiveAtParentColumn() {
          "the caret's parent indent column should be flagged active on the caret's line");
   Expect(!active_for(8, 2),
          "the caret's own indent column should not be marked active on the caret's line");
+}
+
+void TestIndentGuidesFoldModelEmphasisOnInnerCloser() {
+  using microide::editor::ComputeIndentGuides;
+  using microide::editor::FoldingModel;
+  using microide::editor::IndentGuideRun;
+
+  std::vector<std::string> lines = {
+      "if (x) {",        // 0
+      "    if (y) {",    // 1 — four leading spaces
+      "        b();",    // 2
+      "    }",           // 3 — caret on inner closer, same leading as inner opener
+      "}",
+  };
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = false;
+  options.tab_size = 4;
+  FoldingModel model;
+  Expect(model.Compute(lines, options), "fold model should compute bracket ranges");
+
+  std::vector<std::size_t> visible_rows{0, 1, 2, 3, 4};
+  std::vector<IndentGuideRun> with_fold;
+  std::vector<IndentGuideRun> without_fold;
+  const std::size_t caret_line = 3;
+  const std::size_t caret_lead = microide::editor::LeadingVisualIndent(lines[caret_line], 4);
+  ComputeIndentGuides(lines, visible_rows, 4, 4, caret_line, caret_lead, &with_fold, &model);
+  ComputeIndentGuides(lines, visible_rows, 4, 4, caret_line, caret_lead, &without_fold,
+                        nullptr);
+
+  const auto active_columns_on_caret_line = [&](const std::vector<IndentGuideRun>& runs) {
+    std::vector<std::size_t> cols;
+    for (const auto& r : runs) {
+      if (r.active) {
+        cols.push_back(r.column);
+      }
+    }
+    return cols;
+  };
+  const auto fold_cols = active_columns_on_caret_line(with_fold);
+  Expect(!fold_cols.empty() && fold_cols[0] == 4,
+         "inner fold opener indent should drive active emphasis on the inner closer line");
+  const auto scan_cols = active_columns_on_caret_line(without_fold);
+  bool scan_has_four = false;
+  for (std::size_t c : scan_cols) {
+    if (c == 4) scan_has_four = true;
+  }
+  Expect(!scan_has_four,
+         "leading-indent-only scan should not emphasize column 4 on the inner closer line");
+}
+
+void TestRenderViewModelBuilderWhitespaceGlyphRunsToggle() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("a b\tc\n", "/tmp/ws-glyphs.txt");
+  viewport.SetTabSize(4);
+  viewport.SetScrollLine(0);
+  viewport.SetViewportSize(5, 80);
+  const auto off =
+      builder.BuildEditorViewModel(viewport, 5, nullptr, false, false, false, 3, false);
+  Expect(off.whitespace_glyph_runs.empty(), "runs should stay empty when render-whitespace is off");
+  const auto on =
+      builder.BuildEditorViewModel(viewport, 5, nullptr, false, false, false, 3, true);
+  Expect(on.whitespace_glyph_runs.size() >= 2, "viewport should expose at least two glyph runs");
+  bool saw_dot = false;
+  bool saw_tab = false;
+  for (const auto& g : on.whitespace_glyph_runs) {
+    if (!g.is_tab_rule) {
+      saw_dot = true;
+    } else {
+      saw_tab = true;
+    }
+  }
+  Expect(saw_dot && saw_tab, "visible whitespace should surface both dots and tab rules");
 }
 
 void TestLanguageContractAppliesUserOverrides() {
@@ -666,10 +795,12 @@ void TestFoldingRefreshComputesBracketRanges() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.views.front().viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
+  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract,
                                                /*tab_size=*/4,
-                                               /*fold_enabled=*/true);
+                                               /*fold_enabled=*/true,
+                                               /*visible_rows=*/viewport.visible_lines());
   Expect(!tab.folding_model.ranges().empty(),
          "fold model should have at least one range after refresh");
   Expect(tab.folding_model.ranges().front().opener_line == 0,
@@ -682,15 +813,18 @@ void TestFoldingRefreshFingerprintReusedAcrossCalls() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.views.front().viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
+  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
-  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true);
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
+                                               viewport.visible_lines());
   const auto& fp_first = tab.folding_model.fingerprint();
   // A subsequent call with the same fingerprint must not change the stored
   // fingerprint or the ranges; the model exposes IsFresh as the canonical
   // freshness check, so we verify that.
   Expect(tab.folding_model.IsFresh(fp_first),
          "model must report itself fresh after a successful compute");
-  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true);
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
+                                               viewport.visible_lines());
   Expect(tab.folding_model.IsFresh(fp_first),
          "model must remain fresh on a repeat refresh with the same inputs");
 }
@@ -699,15 +833,18 @@ void TestFoldingRefreshDisabledExpandsAndClears() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.views.front().viewport;
   viewport.LoadContent("void f() {\n  body;\n}\nvoid g() {\n  body;\n}\n", "/tmp/sample.cpp");
+  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
-  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true);
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
+                                               viewport.visible_lines());
   Expect(tab.folding_model.ranges().size() >= 1,
          "fold model should have ranges after enable");
   Expect(tab.folding_model.Collapse(0), "expected to collapse fold at line 0");
   Expect(tab.folding_model.IsCollapsedAtOpener(0),
          "fold at line 0 should be collapsed before disable");
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4,
-                                               /*fold_enabled=*/false);
+                                               /*fold_enabled=*/false,
+                                               /*visible_rows=*/viewport.visible_lines());
   Expect(tab.folding_model.ranges().empty(),
          "disabling fold must clear stored ranges");
   Expect(tab.folding_model.collapsed_flags().empty(),
@@ -718,12 +855,15 @@ void TestFoldingRefreshLanguageChangeRebuilds() {
   auto tab = MakeFoldingTab();
   auto& viewport = tab.views.front().viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
+  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto cpp = MakeCStyleFoldContract();
-  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &cpp, 4, true);
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &cpp, 4, true,
+                                               viewport.visible_lines());
   const auto cpp_fp = tab.folding_model.fingerprint();
   microide::workspace::LanguageContract other = cpp;
   other.language_id = "rust";
-  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &other, 4, true);
+  microide::workspace::EnsureFoldingModelFresh(tab, viewport, &other, 4, true,
+                                               viewport.visible_lines());
   Expect(!tab.folding_model.IsFresh(cpp_fp),
          "language id change must invalidate the prior fingerprint");
   Expect(tab.folding_model.fingerprint().language_id == "rust",
@@ -739,6 +879,12 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestBracketScannerBackwardMatch);
   AddTest(tests, "EditorEssentials/BracketScanner/NoMatchOnUnbalanced",
           TestBracketScannerNoMatchOnUnbalanced);
+  AddTest(tests, "EditorEssentials/BracketScanner/SkipsStringClosers",
+          TestBracketScannerSkipsStringClosers);
+  AddTest(tests, "EditorEssentials/BracketScanner/SkipsCommentBraces",
+          TestBracketScannerSkipsCommentBraces);
+  AddTest(tests, "EditorEssentials/BracketScanner/NoMatchWhenAnchorInsideString",
+          TestBracketScannerNoMatchWhenAnchorInsideString);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",
           TestShapingMoveLineDown);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep",
@@ -765,6 +911,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentDetectSpacesMajority);
   AddTest(tests, "EditorEssentials/IndentDetect/TabsMajority",
           TestIndentDetectTabsMajority);
+  AddTest(tests, "EditorEssentials/IndentDetect/MaxInspectBoundsNonBlankCount",
+          TestIndentDetectMaxInspectBoundsNonBlankCount);
   AddTest(tests, "EditorEssentials/IndentDetect/ApplyOnOpenUpdatesViewport",
           TestApplyDetectedIndentOnOpenUpdatesViewport);
   AddTest(tests, "EditorEssentials/IndentDetect/ApplyOnOpenSkippedWhenDisabled",
@@ -781,6 +929,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentGuidesEmitsRunsAtNestedDepths);
   AddTest(tests, "EditorEssentials/IndentGuides/MarksActiveAtParentColumn",
           TestIndentGuidesMarksActiveAtParentColumn);
+  AddTest(tests, "EditorEssentials/IndentGuides/FoldModelEmphasisOnInnerCloser",
+          TestIndentGuidesFoldModelEmphasisOnInnerCloser);
+  AddTest(tests, "EditorEssentials/RenderViewModel/WhitespaceGlyphRunsToggle",
+          TestRenderViewModelBuilderWhitespaceGlyphRunsToggle);
   AddTest(tests, "EditorEssentials/AutoClose/InsertsClose",
           TestAutoClosePairInsertsClose);
   AddTest(tests, "EditorEssentials/AutoClose/SkipOverClose",

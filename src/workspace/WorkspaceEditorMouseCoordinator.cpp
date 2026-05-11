@@ -2,14 +2,55 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <utility>
 #include <vector>
 
 #include "editor/EditorViewRenderer.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
+namespace {
+
+std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayoutBundle(
+    editor::TextViewport& viewport,
+    const SDL_FRect& editor_rect,
+    render::TextRenderer& text_renderer,
+    const std::function<std::optional<std::string>(std::string_view id)>& get_setting_value,
+    const std::function<editor::FoldingModel*()>& ensure_active_folding_model_fresh) {
+  auto setting_enabled = [&](std::string_view id, bool default_value) -> bool {
+    const auto value = get_setting_value(id);
+    if (!value.has_value()) {
+      return default_value;
+    }
+    return *value != "false" && *value != "0" && *value != "off";
+  };
+
+  const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
+  const bool sticky_setting = setting_enabled("editor.fold.sticky_scroll.enabled", true);
+  const int sticky_max_depth =
+      ParseStickyScrollMaxDepthSetting(get_setting_value("editor.fold.sticky_scroll.max_depth"));
+  editor::FoldingModel* folding_model =
+      fold_enabled ? ensure_active_folding_model_fresh() : nullptr;
+  const bool sticky_active = fold_enabled && sticky_setting && folding_model != nullptr;
+  std::vector<std::size_t> sticky_lines;
+  ComputeStickyScrollLinesUncached(viewport, folding_model, sticky_active, sticky_max_depth,
+                                   sticky_lines);
+
+  editor::EditorViewMetrics metrics =
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, editor_rect, 0);
+  viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  if (!sticky_lines.empty()) {
+    metrics = editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, editor_rect,
+                                                         sticky_lines.size());
+    viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  }
+  return {metrics, sticky_lines};
+}
+
+}  // namespace
 
 EditorMouseCoordinator::EditorMouseCoordinator(ProjectWorkspaceState& state,
                                                InteractionState& interaction_state,
@@ -55,9 +96,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return false;
   }
 
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, editor_rect);
-  viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const auto [metrics, sticky_lines] = EditorPointerLayoutBundle(
+      *viewport, editor_rect, text_renderer_, operations_.get_setting_value,
+      operations_.ensure_active_folding_model_fresh);
 
   const auto scroll_layout = operations_.compute_editor_scroll_layout(editor_rect, *viewport, metrics);
   if (scroll_layout.vertical_scrollbar.has_value() &&
@@ -87,6 +128,24 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                               interaction_state_.drag_scrollbar_offset)))));
     state_.surface.focus = FocusTarget::Editor;
     return true;
+  }
+
+  if (!sticky_lines.empty() && metrics.sticky_scroll_rows > 0 &&
+      event.button.button == SDL_BUTTON_LEFT) {
+    const float sticky_top = metrics.sticky_band_top_y;
+    const float sticky_bottom =
+        sticky_top + static_cast<float>(metrics.sticky_scroll_rows) * metrics.line_height;
+    if (event.button.y >= sticky_top && event.button.y < sticky_bottom) {
+      const std::size_t band_row = static_cast<std::size_t>(
+          (event.button.y - sticky_top) / metrics.line_height);
+      if (band_row < sticky_lines.size()) {
+        const std::size_t opener_line = sticky_lines[band_row];
+        viewport->SetScrollLine(viewport->VisualRowForLine(opener_line));
+        operations_.request_focused_editor_redraw();
+        state_.surface.focus = FocusTarget::Editor;
+        return true;
+      }
+    }
   }
 
   const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
@@ -232,9 +291,11 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
   if (viewport == nullptr) {
     return false;
   }
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, editor_rect);
-  viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const auto [metrics, metrics_sticky_scratch] =
+      EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
+                                operations_.get_setting_value,
+                                operations_.ensure_active_folding_model_fresh);
+  (void)metrics_sticky_scratch;
   const auto scroll_layout = operations_.compute_editor_scroll_layout(editor_rect, *viewport, metrics);
 
   if (interaction_state_.drag_target == DragTarget::EditorVerticalScrollbar) {
@@ -276,9 +337,11 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     return false;
   }
 
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, editor_rect);
-  viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+  const auto [metrics, selection_sticky_scratch] =
+      EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
+                                operations_.get_setting_value,
+                                operations_.ensure_active_folding_model_fresh);
+  (void)selection_sticky_scratch;
 
   const float local_y = std::max(0.0f, event.motion.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
@@ -363,6 +426,10 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
                 NormalizeEditorSplitNode(node);
               },
           .clear_drag_state = [this]() { ClearDragState(); },
+          .get_setting_value =
+              [this](std::string_view id) { return GetSettingValue(id); },
+          .ensure_active_folding_model_fresh =
+              [this]() { return EnsureActiveFoldingModelFresh(); },
       });
 }
 

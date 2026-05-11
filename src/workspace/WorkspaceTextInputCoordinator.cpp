@@ -344,6 +344,10 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
         if (viewport == nullptr) {
           return false;
         }
+        if (operations_.try_editor_snippet_insert_text &&
+            operations_.try_editor_snippet_insert_text(viewport, input)) {
+          return true;
+        }
         const bool was_dirty = viewport->dirty();
         const std::size_t cursor_before_line = viewport->cursor_line();
         std::vector<std::string> before_lines;

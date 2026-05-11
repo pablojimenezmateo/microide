@@ -59,6 +59,7 @@ IndentDetection DetectIndent(const std::vector<std::string>& lines,
     prev_indent = lead;
   }
 
+  out.non_blank_lines_inspected = inspected;
   if (tab_count == 0 && space_count == 0) return out;
 
   if (tab_count > space_count) {

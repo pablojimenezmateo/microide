@@ -229,7 +229,9 @@ class PosixAsyncProcessBackend final : public AsyncProcessBackend {
       close(stdout_pipe[1]);
 
       if (!cwd.empty()) {
-        (void)chdir(cwd.c_str());
+        if (chdir(cwd.c_str()) != 0) {
+          _exit(127);
+        }
       }
 
       std::vector<char*> raw_argv;
@@ -944,7 +946,9 @@ SubprocessResult RunSubprocessWithBackend(const std::vector<std::string>& argv,
     stdin_pipe[1].Reset();
 
     if (!options.cwd.empty()) {
-      (void)chdir(options.cwd.string().c_str());
+      if (chdir(options.cwd.string().c_str()) != 0) {
+        _exit(127);
+      }
     }
     ApplyEnvironmentOverrides(options.environment_overrides);
 
