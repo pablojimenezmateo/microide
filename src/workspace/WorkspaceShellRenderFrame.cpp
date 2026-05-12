@@ -130,7 +130,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::UpdateMouseCursor");
-    UpdateMouseCursor(mouse_x, mouse_y);
+    UpdateMouseCursor(mouse_x, mouse_y, !MenuSurfaceCapturingMouse());
   }
   return FrameToken{prepared_frame_id_, visible_line_range};
 }

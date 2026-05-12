@@ -55,8 +55,12 @@ CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
                                    std::vector<std::string> arguments,
                                    bool silence_stderr) {
   std::vector<std::string> command;
-  command.reserve(arguments.size() + 3);
+  command.reserve(arguments.size() + 4);
   command.emplace_back("git");
+  // Suppress optional index refresh so read-only commands (status, blame, etc.)
+  // never touch .git/index.lock; concurrent invocations and killed subprocesses
+  // previously left stale locks that blocked the user's own `git commit`.
+  command.emplace_back("--no-optional-locks");
   command.emplace_back("-C");
   command.push_back(root.lexically_normal().string());
   for (std::string& argument : arguments) {

@@ -5,10 +5,52 @@
 #include <cstddef>
 #include <utility>
 
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 
 namespace microide::workspace {
+namespace {
+
+void RequestMenuHoverRowRedraw(
+    const std::function<void(const SDL_FRect&)>& request_redraw_rect,
+    const std::optional<SDL_FRect>& rect) {
+  if (!rect.has_value()) {
+    return;
+  }
+  request_redraw_rect(
+      MakeRect(rect->x - 1.0f, rect->y - 1.0f, rect->w + 2.0f, rect->h + 2.0f));
+}
+
+std::optional<SDL_FRect> PopupItemRectForIndex(
+    std::span<const WorkspaceShell::VisiblePopupMenuItem> items,
+    int index) {
+  if (index < 0) {
+    return std::nullopt;
+  }
+  const auto it = std::find_if(items.begin(), items.end(),
+                               [index](const WorkspaceShell::VisiblePopupMenuItem& item) {
+                                 return static_cast<int>(item.index) == index;
+                               });
+  if (it == items.end()) {
+    return std::nullopt;
+  }
+  return it->rect;
+}
+
+bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+}
+
+bool OptionalRectsEqual(const std::optional<SDL_FRect>& lhs,
+                        const std::optional<SDL_FRect>& rhs) {
+  if (!lhs.has_value() || !rhs.has_value()) {
+    return lhs.has_value() == rhs.has_value();
+  }
+  return RectsEqual(*lhs, *rhs);
+}
+
+}  // namespace
 
 ChromeMouseCoordinator::ChromeMouseCoordinator(ProjectWorkspaceState& state,
                                                MenuSurfaceState& menu_state,
@@ -264,6 +306,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
 
 bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
                                               const WorkspaceLayout& layout) {
+  util::PerformanceTrace::Scope perf_scope("ChromeMouseCoordinator::HandleMenuMotion");
   if (!menu_state_.menu_bar_open) {
     return false;
   }
@@ -281,24 +324,36 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
 
   if (const auto submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
       submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
+    const int previous_index = menu_state_.active_submenu_item_index;
+    const auto visible_items =
+        operations_.compute_visible_popup_menu_items(menu_state_.active_submenu_id, *submenu_rect);
     menu_state_.active_submenu_item_index = -1;
-    for (const auto& item :
-         operations_.compute_visible_popup_menu_items(menu_state_.active_submenu_id, *submenu_rect)) {
+    for (const auto& item : visible_items) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
         menu_state_.active_submenu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
         break;
       }
     }
-    operations_.request_chrome_redraw();
+    if (menu_state_.active_submenu_item_index != previous_index) {
+      RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
+                                PopupItemRectForIndex(visible_items, previous_index));
+      RequestMenuHoverRowRedraw(
+          operations_.request_redraw_rect,
+          PopupItemRectForIndex(visible_items, menu_state_.active_submenu_item_index));
+    }
     return true;
   }
 
   if (const auto popup_rect =
           operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
       popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
+    const int previous_index = menu_state_.active_menu_item_index;
+    const MenuId previous_submenu_id = menu_state_.active_submenu_id;
+    const auto previous_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
+    const auto visible_items =
+        operations_.compute_visible_popup_menu_items(menu_state_.active_menu_id, *popup_rect);
     menu_state_.active_menu_item_index = -1;
-    for (const auto& item :
-         operations_.compute_visible_popup_menu_items(menu_state_.active_menu_id, *popup_rect)) {
+    for (const auto& item : visible_items) {
       if (Contains(item.rect, event.motion.x, event.motion.y)) {
         menu_state_.active_menu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
         const MenuSpec* menu = operations_.find_menu_spec(menu_state_.active_menu_id);
@@ -306,22 +361,59 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
           const auto items = operations_.menu_items(menu_state_.active_menu_id);
           const MenuItemSpec& spec = items[item.index];
           if (spec.submenu != MenuId::None) {
-            operations_.open_submenu(spec.submenu, item.rect);
+            menu_state_.active_submenu_id = spec.submenu;
+            menu_state_.active_submenu_item_index = -1;
+            menu_state_.active_submenu_anchor_rect = item.rect;
           } else {
-            operations_.close_submenu();
+            menu_state_.active_submenu_id = MenuId::None;
+            menu_state_.active_submenu_item_index = -1;
+            menu_state_.active_submenu_anchor_rect.reset();
           }
         } else {
-          operations_.close_submenu();
+          menu_state_.active_submenu_id = MenuId::None;
+          menu_state_.active_submenu_item_index = -1;
+          menu_state_.active_submenu_anchor_rect.reset();
         }
         break;
       }
     }
-    operations_.request_chrome_redraw();
+    if (menu_state_.active_menu_item_index != previous_index) {
+      RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
+                                PopupItemRectForIndex(visible_items, previous_index));
+      RequestMenuHoverRowRedraw(
+          operations_.request_redraw_rect,
+          PopupItemRectForIndex(visible_items, menu_state_.active_menu_item_index));
+    }
+    const auto current_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
+    if (previous_submenu_id != menu_state_.active_submenu_id ||
+        !OptionalRectsEqual(previous_submenu_rect, current_submenu_rect)) {
+      if (previous_submenu_rect.has_value()) {
+        operations_.request_redraw_rect(MakeRect(previous_submenu_rect->x - 1.0f,
+                                                 previous_submenu_rect->y - 1.0f,
+                                                 previous_submenu_rect->w + 2.0f,
+                                                 previous_submenu_rect->h + 2.0f));
+      }
+      if (current_submenu_rect.has_value()) {
+        operations_.request_redraw_rect(MakeRect(current_submenu_rect->x - 1.0f,
+                                                 current_submenu_rect->y - 1.0f,
+                                                 current_submenu_rect->w + 2.0f,
+                                                 current_submenu_rect->h + 2.0f));
+      }
+    }
     return true;
   }
 
-  menu_state_.active_menu_item_index = -1;
-  operations_.request_chrome_redraw();
+  if (menu_state_.active_menu_item_index >= 0) {
+    if (const auto popup_rect =
+            operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
+        popup_rect.has_value()) {
+      const auto visible_items =
+          operations_.compute_visible_popup_menu_items(menu_state_.active_menu_id, *popup_rect);
+      RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
+                                PopupItemRectForIndex(visible_items, menu_state_.active_menu_item_index));
+    }
+    menu_state_.active_menu_item_index = -1;
+  }
   return true;
 }
 
@@ -440,6 +532,7 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
           .sidebar_mode_control_rect =
               [this](const SDL_FRect& rect) { return SidebarModeControlRect(rect); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .request_redraw_rect = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
           .compute_visible_menu_bar_items =
               [this](const SDL_FRect& rect) { return ComputeVisibleMenuBarItems(rect); },
           .compute_overflow_menu_bar_items =

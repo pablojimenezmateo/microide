@@ -5,6 +5,7 @@
 #include <limits>
 #include <vector>
 
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -265,7 +266,7 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
 
 std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const {
   if (!last_mouse_position_valid_ || !context_.current_project_state.sidebar.visible ||
-      ActiveSidebarMode() != SidebarMode::Git ||
+      ActiveSidebarMode() != SidebarMode::Git || MenuSurfaceCapturingMouse() ||
       !Contains(sidebar_rect, last_mouse_x_, last_mouse_y_)) {
     return {};
   }
@@ -303,6 +304,25 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
     }
   }
   return {};
+}
+
+std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarTooltipRect(const WorkspaceLayout& layout) const {
+  const std::string label = HoveredGitSidebarTooltipLabel(layout.sidebar);
+  if (label.empty()) {
+    return std::nullopt;
+  }
+
+  const auto tooltip = detail::BuildTooltipLayout(
+      text_renderer_, label, std::max(180.0f, layout.full.w - layout.sidebar.w - 24.0f));
+  const float tooltip_x =
+      std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
+                 layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
+  const float tooltip_y =
+      last_mouse_y_ - tooltip.rect.h - 10.0f >= layout.full.y + 8.0f
+          ? last_mouse_y_ - tooltip.rect.h - 10.0f
+          : std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
+                       layout.full.y + layout.full.h - tooltip.rect.h - 8.0f);
+  return MakeRect(tooltip_x, tooltip_y, tooltip.rect.w, tooltip.rect.h);
 }
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {

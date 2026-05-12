@@ -222,6 +222,87 @@ void RunEditorMouseSelectionDrag(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
+void RunMenuHoverSwitch(ScenarioContext& context) {
+  context.ResizeWindow(1280, 720);
+  context.PumpFrames(1);
+
+  const auto file_rect =
+      workspace::WorkspaceShell::TestAccess::MenuBarItemRect(context.Shell(), "File");
+  const auto edit_rect =
+      workspace::WorkspaceShell::TestAccess::MenuBarItemRect(context.Shell(), "Edit");
+  if (!file_rect.has_value() || !edit_rect.has_value()) {
+    throw std::runtime_error("menu_hover_switch: missing File/Edit menu bar items");
+  }
+  const float file_x = file_rect->x + file_rect->w * 0.5f;
+  const float file_y = file_rect->y + file_rect->h * 0.5f;
+  if (!workspace::WorkspaceShell::TestAccess::FileMenuOpen(context.Shell())) {
+    if (!SendMouseDown(context.Shell(), file_x, file_y, SDL_BUTTON_LEFT)) {
+      throw std::runtime_error("menu_hover_switch: failed to open File menu");
+    }
+  }
+  if (!workspace::WorkspaceShell::TestAccess::FileMenuOpen(context.Shell())) {
+    throw std::runtime_error("menu_hover_switch: File menu did not stay open");
+  }
+
+  context.Measure("menu_hover_switch.160_moves", [&] {
+    for (int i = 0; i < 160; ++i) {
+      const SDL_FRect& target = (i & 1) == 0 ? *edit_rect : *file_rect;
+      const float x = target.x + target.w * 0.5f;
+      const float y = target.y + target.h * 0.5f;
+      if (!SendMouseMotion(context.Shell(), x, y, 0)) {
+        throw std::runtime_error("menu_hover_switch: hover motion was not handled");
+      }
+    }
+  });
+  context.PumpFrames(1);
+}
+
+void RunMenuPopupHoverRows(ScenarioContext& context) {
+  context.ResizeWindow(1280, 720);
+  context.PumpFrames(1);
+
+  const auto file_rect =
+      workspace::WorkspaceShell::TestAccess::MenuBarItemRect(context.Shell(), "File");
+  if (!file_rect.has_value()) {
+    throw std::runtime_error("menu_popup_hover_rows: missing File menu bar item");
+  }
+  const float file_x = file_rect->x + file_rect->w * 0.5f;
+  const float file_y = file_rect->y + file_rect->h * 0.5f;
+  if (!workspace::WorkspaceShell::TestAccess::FileMenuOpen(context.Shell())) {
+    if (!SendMouseDown(context.Shell(), file_x, file_y, SDL_BUTTON_LEFT)) {
+      throw std::runtime_error("menu_popup_hover_rows: failed to open File menu");
+    }
+  }
+  if (!workspace::WorkspaceShell::TestAccess::FileMenuOpen(context.Shell())) {
+    throw std::runtime_error("menu_popup_hover_rows: File menu did not stay open");
+  }
+
+  const auto labels = workspace::WorkspaceShell::TestAccess::VisiblePopupMenuLabels(
+      context.Shell(), workspace::WorkspaceShell::MenuId::File);
+  if (labels.size() < 2) {
+    throw std::runtime_error("menu_popup_hover_rows: File menu exposed fewer than two rows");
+  }
+  const auto first_item = workspace::WorkspaceShell::TestAccess::PopupMenuItemRect(
+      context.Shell(), workspace::WorkspaceShell::MenuId::File, labels.front());
+  const auto second_item = workspace::WorkspaceShell::TestAccess::PopupMenuItemRect(
+      context.Shell(), workspace::WorkspaceShell::MenuId::File, labels[1]);
+  if (!first_item.has_value() || !second_item.has_value()) {
+    throw std::runtime_error("menu_popup_hover_rows: missing popup row rects");
+  }
+
+  context.Measure("menu_popup_hover_rows.160_moves", [&] {
+    for (int i = 0; i < 160; ++i) {
+      const SDL_FRect& target = (i & 1) == 0 ? *second_item : *first_item;
+      const float x = target.x + target.w * 0.5f;
+      const float y = target.y + target.h * 0.5f;
+      if (!SendMouseMotion(context.Shell(), x, y, 0)) {
+        throw std::runtime_error("menu_popup_hover_rows: hover motion was not handled");
+      }
+    }
+  });
+  context.PumpFrames(1);
+}
+
 void RunEditorSortLinesLarge(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -352,6 +433,16 @@ const ScenarioRegistration g_perf_editor_mouse_selection_drag({Scenario{
     .name = "editor_mouse_selection_drag",
     .smoke = false,
     .run = RunEditorMouseSelectionDrag,
+}});
+const ScenarioRegistration g_perf_menu_hover_switch({Scenario{
+    .name = "menu_hover_switch",
+    .smoke = false,
+    .run = RunMenuHoverSwitch,
+}});
+const ScenarioRegistration g_perf_menu_popup_hover_rows({Scenario{
+    .name = "menu_popup_hover_rows",
+    .smoke = false,
+    .run = RunMenuPopupHoverRows,
 }});
 const ScenarioRegistration g_perf_editor_sort_lines_large({Scenario{
     .name = "editor_sort_lines_large",

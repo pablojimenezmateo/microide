@@ -113,6 +113,7 @@
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
   bool WindowDragRegionContains(float x, float y) const;
+  bool MenuSurfaceCapturingMouse() const;
   WindowAction ConsumeWindowAction();
 
   struct VisiblePopupMenuItem {
@@ -1151,6 +1152,7 @@
   std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
   std::optional<SDL_FRect> HoveredTabTooltipRect(const WorkspaceLayout& layout) const;
   std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
+  std::optional<SDL_FRect> HoveredGitSidebarTooltipRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
   std::vector<VisibleStripTab> ComputeVisibleBottomPanelTabs(
       const SDL_FRect& panel_header) const;
@@ -1266,7 +1268,7 @@
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
-  void UpdateMouseCursor(float x, float y);
+  void UpdateMouseCursor(float x, float y, bool update_editor_hover = true);
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;

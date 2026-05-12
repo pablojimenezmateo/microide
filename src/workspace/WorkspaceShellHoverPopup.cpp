@@ -112,6 +112,9 @@ void DrawHoverPopupLines(const render::TextRenderer& text_renderer,
 
 std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayout()
     const {
+  if (MenuSurfaceCapturingMouse()) {
+    return std::nullopt;
+  }
   const HoverPopupViewModel hover_popup_vm =
       RenderViewModelBuilder(context_).BuildHoverPopup(active_editor_hover_target_.has_value());
   if (!hover_popup_vm.visible || !hover_popup_vm.has_active_target ||
@@ -432,6 +435,11 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
 
 void WorkspaceShell::UpdateEditorHover(float x, float y) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::UpdateEditorHover");
+  if (MenuSurfaceCapturingMouse()) {
+    active_editor_hover_target_.reset();
+    editor_hover_refresh_pending_ = false;
+    return;
+  }
   const auto target = [&]() -> std::optional<EditorHoverTarget> {
     util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateEditorHover::TargetAtPosition");
     return EditorHoverTargetAtPosition(x, y);

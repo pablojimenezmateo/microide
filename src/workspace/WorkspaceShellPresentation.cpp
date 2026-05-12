@@ -59,7 +59,8 @@ std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
 }
 
 std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const {
-  if (!last_mouse_position_valid_ || context_.current_project_state.root.empty()) {
+  if (!last_mouse_position_valid_ || context_.current_project_state.root.empty() ||
+      MenuSurfaceCapturingMouse()) {
     return {};
   }
   if (!Contains(tab_strip, last_mouse_x_, last_mouse_y_)) {

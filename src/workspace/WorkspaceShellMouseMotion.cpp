@@ -36,6 +36,39 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
   const WorkspaceLayout layout = *layout_state;
+  const auto capture_blocked_hover_visuals = [this, &layout]() {
+    struct HoverVisuals {
+      std::optional<SDL_FRect> project_tab_tooltip_rect;
+      std::optional<SDL_FRect> tab_tooltip_rect;
+      std::optional<SDL_FRect> status_tooltip_rect;
+      std::optional<SDL_FRect> git_sidebar_tooltip_rect;
+      std::optional<SDL_FRect> editor_hover_popup_rect;
+    };
+
+    HoverVisuals visuals{
+        .project_tab_tooltip_rect = HoveredProjectTabTooltipRect(layout),
+        .tab_tooltip_rect = HoveredTabTooltipRect(layout),
+        .status_tooltip_rect = HoveredStatusTooltipRect(layout),
+        .git_sidebar_tooltip_rect = HoveredGitSidebarTooltipRect(layout),
+        .editor_hover_popup_rect = std::nullopt,
+    };
+    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
+      visuals.editor_hover_popup_rect = popup->rect;
+    }
+    return visuals;
+  };
+  const auto invalidate_blocked_hover_visuals = [this](const auto& visuals) {
+    const auto request = [this](const std::optional<SDL_FRect>& rect) {
+      if (rect.has_value()) {
+        RequestRedrawRect(*rect);
+      }
+    };
+    request(visuals.project_tab_tooltip_rect);
+    request(visuals.tab_tooltip_rect);
+    request(visuals.status_tooltip_rect);
+    request(visuals.git_sidebar_tooltip_rect);
+    request(visuals.editor_hover_popup_rect);
+  };
 
   if (context_.interaction_state.drag_target != DragTarget::None) {
     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
@@ -139,6 +172,18 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return handled;
   }
 
+  if (MenuSurfaceCapturingMouse()) {
+    const auto blocked_hover_visuals = capture_blocked_hover_visuals();
+    UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
+    invalidate_blocked_hover_visuals(blocked_hover_visuals);
+    if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
+      ensure_redraw([this]() { RequestChromeRedraw(); });
+      return true;
+    }
+    ensure_redraw([this]() { RequestChromeRedraw(); });
+    return true;
+  }
+
   bool hover_visual_changed = false;
   std::optional<SDL_FRect> previous_project_tab_tooltip_rect;
   std::optional<SDL_FRect> previous_tab_tooltip_rect;
@@ -214,7 +259,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                                         HoveredStatusTooltip(layout.breadcrumb),
                                         HoveredStatusTooltipRect(layout));
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
-    ensure_redraw([this]() { RequestWindowRedraw(); });
+    ensure_redraw([this]() { RequestChromeRedraw(); });
     return true;
   }
 
@@ -260,7 +305,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return true;
   }
 
-  if (context_.menu_state.menu_bar_open || context_.menu_state.tree_context_menu.open) {
+  if (MenuSurfaceCapturingMouse()) {
     ensure_redraw([this]() { RequestChromeRedraw(); });
     return true;
   }

@@ -396,6 +396,9 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
 }
 
 std::string WorkspaceShell::HoveredStatusTooltip(const SDL_FRect& breadcrumb) const {
+  if (MenuSurfaceCapturingMouse()) {
+    return {};
+  }
   for (const VisibleStatusItem& item : ComputeVisibleStatusItems(breadcrumb)) {
     if (item.hovered && !item.item.tooltip.empty()) {
       return item.item.tooltip;

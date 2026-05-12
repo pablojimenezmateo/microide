@@ -1,0 +1,69 @@
+{
+  "iterations": [
+    {
+      "phase_durations_ms": {
+        "menu_popup_hover_rows.160_moves": 4.2023089999999996
+      },
+      "bytes_allocated": 17750903,
+      "frees": 95786,
+      "bytes_freed": 17434598,
+      "allocations": 98661,
+      "wall_ms": 27.187002,
+      "index": 0
+    },
+    {
+      "phase_durations_ms": {
+        "menu_popup_hover_rows.160_moves": 3.10785
+      },
+      "bytes_allocated": 4703129,
+      "frees": 24841,
+      "bytes_freed": 4570560,
+      "allocations": 25223,
+      "wall_ms": 6.8189690000000001,
+      "index": 1
+    },
+    {
+      "phase_durations_ms": {
+        "menu_popup_hover_rows.160_moves": 3.1584949999999998
+      },
+      "bytes_allocated": 4728340,
+      "frees": 25442,
+      "bytes_freed": 4625782,
+      "allocations": 26226,
+      "wall_ms": 7.0610520000000001,
+      "index": 2
+    },
+    {
+      "phase_durations_ms": {
+        "menu_popup_hover_rows.160_moves": 3.1082809999999998
+      },
+      "bytes_allocated": 4680891,
+      "frees": 25152,
+      "bytes_freed": 4611403,
+      "allocations": 25570,
+      "wall_ms": 6.9151199999999999,
+      "index": 3
+    },
+    {
+      "phase_durations_ms": {
+        "menu_popup_hover_rows.160_moves": 3.1135899999999999
+      },
+      "bytes_allocated": 4613515,
+      "frees": 24879,
+      "bytes_freed": 4548216,
+      "allocations": 25255,
+      "wall_ms": 6.698855,
+      "index": 4
+    }
+  ],
+  "smoke": false,
+  "metrics": {
+    "max_allocations": 98661,
+    "p50_allocations": 25570,
+    "p95_allocations": 84174,
+    "p95_wall_ms": 23.161811999999998,
+    "max_wall_ms": 27.187002,
+    "p50_wall_ms": 6.9151199999999999
+  },
+  "scenario": "menu_popup_hover_rows"
+}

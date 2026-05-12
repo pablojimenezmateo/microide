@@ -109,7 +109,7 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
     return false;
   }
 
-  if (context_.menu_state.menu_bar_open || context_.menu_state.tree_context_menu.open) {
+  if (MenuSurfaceCapturingMouse()) {
     return false;
   }
 
@@ -779,14 +779,22 @@ void WorkspaceShell::ClearMouseHoverState() {
   cursor_kind_ = CursorKind::Default;
 }
 
-void WorkspaceShell::UpdateMouseCursor(float x, float y) {
+bool WorkspaceShell::MenuSurfaceCapturingMouse() const {
+  return context_.menu_state.menu_bar_open || context_.menu_state.overflow_popup_open ||
+         context_.menu_state.tree_context_menu.open;
+}
+
+void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hover) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::UpdateMouseCursor");
   last_mouse_x_ = x;
   last_mouse_y_ = y;
   last_mouse_position_valid_ = true;
-  {
+  if (update_editor_hover) {
     util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateMouseCursor::UpdateEditorHover");
     UpdateEditorHover(x, y);
+  } else {
+    active_editor_hover_target_.reset();
+    editor_hover_refresh_pending_ = false;
   }
 
   const CursorKind next_kind = CursorKindForPosition(x, y);

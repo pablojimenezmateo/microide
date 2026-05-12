@@ -62,7 +62,8 @@ void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
 }  // namespace
 
 std::string WorkspaceShell::HoveredProjectTabTooltipLabel(const SDL_FRect& project_tab_strip) const {
-  if (!last_mouse_position_valid_ || !Contains(project_tab_strip, last_mouse_x_, last_mouse_y_)) {
+  if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse() ||
+      !Contains(project_tab_strip, last_mouse_x_, last_mouse_y_)) {
     return {};
   }
 

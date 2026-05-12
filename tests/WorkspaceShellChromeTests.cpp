@@ -378,6 +378,112 @@ void TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation() {
          "menu hover redraws should stay scoped to chrome");
 }
 
+void TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto file_rect = WorkspaceShellTestAccess::MenuBarItemRect(shell, "File");
+  Expect(file_rect.has_value(), "popup hover fixture should expose the File menu item");
+  Expect(SendMouseDown(
+             shell, file_rect->x + file_rect->w * 0.5f, file_rect->y + file_rect->h * 0.5f,
+             SDL_BUTTON_LEFT),
+         "clicking the File menu should be handled");
+  Expect(WorkspaceShellTestAccess::FileMenuOpen(shell),
+         "clicking the File menu should open the File popup");
+
+  const auto labels =
+      WorkspaceShellTestAccess::VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::File);
+  Expect(labels.size() >= 2, "popup hover fixture should expose at least two File menu rows");
+
+  const auto first_item = WorkspaceShellTestAccess::PopupMenuItemRect(
+      shell, WorkspaceShell::MenuId::File, labels.front());
+  const auto second_item = WorkspaceShellTestAccess::PopupMenuItemRect(
+      shell, WorkspaceShell::MenuId::File, labels[1]);
+  Expect(first_item.has_value() && second_item.has_value(),
+         "popup hover fixture should expose the first two File menu rows");
+
+  Expect(SendMouseMotion(shell, first_item->x + first_item->w * 0.5f,
+                         first_item->y + first_item->h * 0.5f, 0),
+         "priming the first popup row hover should be handled");
+
+  SDL_Event motion_event{};
+  motion_event.type = SDL_EVENT_MOUSE_MOTION;
+  motion_event.motion.x = second_item->x + second_item->w * 0.5f;
+  motion_event.motion.y = second_item->y + second_item->h * 0.5f;
+  const auto hover_result = shell.HandleEvent(motion_event);
+  Expect(hover_result.handled, "hovering a popup row should be handled");
+  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
+         "popup row hover should stay on a partial redraw path");
+  Expect(hover_result.redraw.rects.size() <= 2,
+         "popup row hover should only dirty the affected popup rows");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, *first_item),
+         "popup row hover should redraw the previously highlighted row");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, *second_item),
+         "popup row hover should redraw the newly highlighted row");
+}
+
+void TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
+         "hovering the tab should be handled");
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+         "tab tooltip fixture should expose the relative path before opening a menu");
+
+  const auto file_rect = WorkspaceShellTestAccess::MenuBarItemRect(shell, "File");
+  Expect(file_rect.has_value(), "menu suppression fixture should expose the File menu item");
+  Expect(SendMouseDown(shell, file_rect->x + file_rect->w * 0.5f, file_rect->y + file_rect->h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "clicking the File menu should be handled");
+  Expect(WorkspaceShellTestAccess::FileMenuOpen(shell),
+         "clicking the File menu should open the File popup");
+
+  Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
+         "hover while a menu is open should stay captured by the menu surface");
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell).empty(),
+         "tab tooltips should stay suppressed while a menu is open");
+}
+
+void TestWorkspaceShellOverflowPopupSuppressesUnderlyingTabTooltip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 420, 720);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
+         "overflow suppression fixture should first expose a tab tooltip");
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+         "overflow suppression fixture should expose the relative path before opening the overflow menu");
+
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(), "overflow suppression fixture should expose the compact menu chevron");
+  Expect(SendMouseDown(shell, chevron->x + chevron->w * 0.5f, chevron->y + chevron->h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "clicking the overflow chevron should be handled");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell),
+         "clicking the overflow chevron should open the overflow popup");
+
+  Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
+         "hover while the overflow popup is open should be handled");
+  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell).empty(),
+         "tab tooltips should stay suppressed while the overflow popup is open");
+}
+
 void TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1611,6 +1717,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
   AddTest(tests, "WorkspaceShell/MenuEventsReturnPartialChromeInvalidation",
           TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation);
+  AddTest(tests, "WorkspaceShell/PopupRowHoverReturnsPopupOnlyInvalidation",
+          TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/OpenMenuSuppressesUnderlyingTabTooltip",
+          TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip);
+  AddTest(tests, "WorkspaceShell/OverflowPopupSuppressesUnderlyingTabTooltip",
+          TestWorkspaceShellOverflowPopupSuppressesUnderlyingTabTooltip);
   AddTest(tests, "WorkspaceShell/StatusRowShowsLspReadinessAndInFlightState",
           TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState);
   AddTest(tests, "WorkspaceShell/EditorCaretDirtyRectFollowsActiveCaret",
