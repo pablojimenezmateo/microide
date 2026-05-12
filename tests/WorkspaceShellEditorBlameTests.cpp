@@ -115,6 +115,58 @@ void TestWorkspaceShellEditorBlameLoadsForLargeTrackedFile() {
          "large tracked editor blame should keep commit summaries");
 }
 
+void TestWorkspaceShellEditorBlameTracksStickyScrollYOffset() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "sticky.cpp";
+  std::string content;
+  for (int i = 0; i < 60; ++i) {
+    content += "int filler_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  content += "void outer() {\n";
+  content += "  if (ready) {\n";
+  content += "    if (nested) {\n";
+  for (int i = 0; i < 25; ++i) {
+    content += "      int nested_fill_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  content += "      int blame_target = 1;\n";
+  content += "      int blame_neighbor = 2;\n";
+  content += "    }\n";
+  content += "  }\n";
+  content += "}\n";
+  WriteFile(source, content);
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add sticky blame fixture", "editor blame fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 220);
+  const std::size_t target_line = 88;
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(target_line, 0);
+  (void)WorkspaceShellTestAccess::ActiveEditorRenderMetrics(shell);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(target_line, 0);
+
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell);
+  Expect(overlay.has_value() && !overlay->lines.empty(),
+         "sticky-scroll blame fixture should expose at least one visible blame line");
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorRenderMetrics(shell);
+  Expect(metrics.sticky_scroll_rows > 0,
+         "sticky-scroll blame fixture should activate at least one sticky row");
+  const auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const std::size_t expected_row = viewport.VisualRowForLine(target_line) - viewport.scroll_line();
+  const float expected_y =
+      metrics.first_line_y + static_cast<float>(expected_row) * metrics.line_height;
+  const auto it = std::find_if(overlay->lines.begin(), overlay->lines.end(),
+                               [&](const auto& line) { return line.line_index == target_line; });
+  Expect(it != overlay->lines.end(),
+         "sticky-scroll blame fixture should include the caret line overlay");
+  Expect(std::fabs(it->rect.y - expected_y) < 0.5f,
+         "inline blame should share the same sticky-scroll-adjusted y-offset as the editor row");
+}
+
 void TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -303,6 +355,8 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForLargeTrackedFile",
           TestWorkspaceShellEditorBlameLoadsForLargeTrackedFile);
+  AddTest(tests, "WorkspaceShell/EditorBlameTracksStickyScrollYOffset",
+          TestWorkspaceShellEditorBlameTracksStickyScrollYOffset);
   AddTest(tests, "WorkspaceShell/EditorBlameHidesForDirtyBufferAndResumesAfterSave",
           TestWorkspaceShellEditorBlameHidesForDirtyBufferAndResumesAfterSave);
   AddTest(tests, "WorkspaceShell/EditorDirtyTransitionRedrawsBlameNeighborhood",

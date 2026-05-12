@@ -186,18 +186,24 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.surface_background,
         overlay_display_text(TextInputSurface::ProjectSearchOverlay, ps_fallback));
+    const std::string progress_suffix =
+        overlay_state.workflow.project_search.running
+            ? BuildSearchProgressSuffix(overlay_state.workflow.project_search.searched_files,
+                                         overlay_state.workflow.project_search.total_files)
+            : std::string{};
     const std::string summary =
-        overlay_state.workflow.project_search.results.empty()
-            ? FormatEmptyState("results")
-        : overlay_state.workflow.project_search.truncated
-            ? BuildSelectionSummary(
-                  overlay_state.workflow.project_search.selected_index,
-                  overlay_state.workflow.project_search.results.size(),
-                  " shown (capped)")
-            : BuildSelectionSummary(
-                  overlay_state.workflow.project_search.selected_index,
-                  overlay_state.workflow.project_search.results.size(),
-                  " results");
+        (overlay_state.workflow.project_search.results.empty()
+             ? FormatEmptyState("results")
+         : overlay_state.workflow.project_search.truncated
+             ? BuildSelectionSummary(
+                   overlay_state.workflow.project_search.selected_index,
+                   overlay_state.workflow.project_search.results.size(),
+                   " shown (capped)")
+             : BuildSelectionSummary(
+                   overlay_state.workflow.project_search.selected_index,
+                   overlay_state.workflow.project_search.results.size(),
+                   " results")) +
+        progress_suffix;
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
                theme_.text_muted, theme_.overlay_background, summary);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {

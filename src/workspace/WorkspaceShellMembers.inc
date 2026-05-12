@@ -831,7 +831,8 @@
   std::optional<editor::EditorBlameOverlay> BuildEditorBlameOverlay(
       editor::TextViewport& viewport,
       const SDL_FRect& rect,
-      float minimum_pane_width = 520.0f);
+      float minimum_pane_width = 520.0f,
+      std::size_t sticky_scroll_rows = 0);
   std::optional<editor::EditorBlameOverlay> BuildCompareBlameOverlay(
       CompareTabState& compare_tab,
       const CompareSurfaceLayout& surface,

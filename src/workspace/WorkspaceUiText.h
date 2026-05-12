@@ -54,6 +54,23 @@ inline std::string BuildCountStatus(std::string_view prefix,
   return text;
 }
 
+// Appends a " (X of Y files)" denominator clause when total > 0. Used by the
+// project search sidebar/overlay to surface progress on large repos so the
+// "Searching N matches" readout has a denominator while the worker is active.
+inline std::string BuildSearchProgressSuffix(std::size_t searched, std::size_t total) {
+  if (total == 0) {
+    return {};
+  }
+  std::string text;
+  text.reserve(24);
+  text += " (";
+  AppendUnsigned(text, searched);
+  text += " of ";
+  AppendUnsigned(text, total);
+  text += " files)";
+  return text;
+}
+
 inline std::string BuildSelectionSummary(std::size_t selected,
                                          std::size_t total,
                                          std::string_view suffix) {

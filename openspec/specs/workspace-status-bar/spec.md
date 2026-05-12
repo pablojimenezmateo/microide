@@ -41,6 +41,10 @@ Status-bar segments SHALL be defined by a closed enum owned by the host. Each se
 - **WHEN** the user hovers a segment for the configured tooltip delay
 - **THEN** a tooltip SHALL render with the segment's full text, mirroring the existing chrome-tab tooltip pattern
 
+#### Scenario: Footer LSP segment reports readiness, not activity
+- **WHEN** the footer LSP segment is populated
+- **THEN** the segment text SHALL reflect language-server **readiness** (attached / not attached / language unsupported) — populated through a passive query (`ensure_started=false`) that SHALL NOT start a server as a side effect — and ephemeral activity signals such as in-flight LSP requests, build/format/lint pings, or plugin progress SHALL be surfaced through the breadcrumb status ribbon (`WorkspaceStatusRegistry`) rather than the footer
+
 ### Requirement: Status Bar Reads Through View Models
 
 The status-bar render TU SHALL consume an explicit POD-like `StatusBarViewModel` produced by `RenderViewModelBuilder` and SHALL NOT call shell helpers, dereference services, or read mutable state during a draw pass, mirroring `workspace-architecture` rules.

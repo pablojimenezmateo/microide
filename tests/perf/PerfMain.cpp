@@ -39,12 +39,34 @@ struct CliOptions {
   std::vector<std::string> scenarios;
   bool update_baseline = false;
   bool smoke = false;
+  bool require_fixtures = false;
   std::size_t iterations = 10;
   std::optional<std::filesystem::path> report_json;
   std::optional<std::filesystem::path> report_text;
   std::optional<std::string> reference_runner;
   std::optional<std::string> layout_mode;
 };
+
+// Set by main() after CLI parse so scenario lambdas registered at static-init
+// time can consult the flag. Default false matches local-dev behavior (skip
+// missing fixtures); CI passes --require-fixtures so missing fixtures fail.
+bool g_require_fixtures = false;
+
+// Returns true if the fixture is present and the scenario should proceed.
+// Returns false (silent skip) when the fixture is missing and --require-fixtures
+// is not set. Throws when --require-fixtures is set — converts a quiet skip into
+// a CI failure so a missing fixture cannot mask a regression.
+bool EnsureFixtureOrSkip(const std::filesystem::path& fixture, const char* scenario_label) {
+  if (std::filesystem::is_directory(fixture)) {
+    return true;
+  }
+  if (g_require_fixtures) {
+    throw std::runtime_error(std::string(scenario_label) +
+                             ": required fixture missing: " + fixture.string());
+  }
+  std::cerr << scenario_label << ": fixture missing, skipping\n";
+  return false;
+}
 
 struct ProcessSample {
   std::uint64_t rss_bytes = 0;
@@ -188,6 +210,10 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
     }
     if (arg == "--smoke") {
       options.smoke = true;
+      continue;
+    }
+    if (arg == "--require-fixtures") {
+      options.require_fixtures = true;
       continue;
     }
     if (arg.rfind("--iterations=", 0) == 0) {
@@ -557,8 +583,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
                 std::filesystem::path("tests/perf/fixtures/file_finder_large");
-            if (!std::filesystem::is_directory(fixture)) {
-              std::cerr << "file_finder_cold: fixture missing, skipping\n";
+            if (!EnsureFixtureOrSkip(fixture, "file_finder_cold")) {
               return;
             }
             if (!context.Open(fixture)) {
@@ -577,8 +602,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
                 std::filesystem::path("tests/perf/fixtures/git_status_project");
-            if (!std::filesystem::is_directory(fixture)) {
-              std::cerr << "git_sidebar_activate: fixture missing, skipping\n";
+            if (!EnsureFixtureOrSkip(fixture, "git_sidebar_activate")) {
               return;
             }
             if (!context.Open(fixture)) {
@@ -597,8 +621,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
                 std::filesystem::path("tests/perf/fixtures/file_finder_large");
-            if (!std::filesystem::is_directory(fixture)) {
-              std::cerr << "search_first_result: fixture missing, skipping\n";
+            if (!EnsureFixtureOrSkip(fixture, "search_first_result")) {
               return;
             }
             if (!context.Open(fixture)) {
@@ -985,10 +1008,13 @@ int main(int argc, char** argv) {
   const std::optional<CliOptions> options = ParseCli(argc, argv);
   if (!options.has_value()) {
     std::cerr << "usage: microide_perf [--scenarios=a,b] [--update-baseline] [--smoke] "
-                 "[--iterations=N] [--report-json=path] [--report-text=path] "
-                 "[--reference-runner=name] [--layout-mode=auto|regular|compact]\n";
+                 "[--require-fixtures] [--iterations=N] [--report-json=path] "
+                 "[--report-text=path] [--reference-runner=name] "
+                 "[--layout-mode=auto|regular|compact]\n";
     return 1;
   }
+
+  g_require_fixtures = options->require_fixtures;
 
   PerfHarness::RunOptions run_options;
   run_options.scenario_names = options->scenarios;

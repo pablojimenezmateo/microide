@@ -43,6 +43,11 @@ struct ProjectSearchUpdate {
   std::uint64_t run_id = 0;
   std::uint64_t search_id = 0;
   std::vector<ProjectSearchResult> results;
+  // Progress counters for "X of Y files" status. `total_files` is the candidate
+  // set sized at search start; `searched_files` advances as the worker visits
+  // each file (regardless of whether the file matched).
+  std::size_t searched_files = 0;
+  std::size_t total_files = 0;
   bool truncated = false;
   bool finished = false;
   std::string error;
@@ -82,6 +87,7 @@ class ProjectSearchService {
                              const util::CancellationToken& token);
   void PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch);
   void PublishFinished(std::uint64_t run_id, SearchCompletion completion);
+  void PublishProgress(std::uint64_t run_id, std::size_t searched_files, std::size_t total_files);
   void PushWakeEvent() const;
 
   struct SearchResultBuffer {
@@ -99,6 +105,10 @@ class ProjectSearchService {
   Uint32 wake_event_type_ = 0;
   std::atomic_bool cancel_requested_{false};
   ProjectSearchUpdate pending_update_;
+  // Latest progress counters for the active run, retained across publishes so
+  // each pending update carries the denominator even when only results changed.
+  std::size_t last_progress_searched_files_ = 0;
+  std::size_t last_progress_total_files_ = 0;
   SearchResultBuffer result_buffer_;
 };
 

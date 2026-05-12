@@ -393,8 +393,8 @@ void TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState() {
   const auto lsp_it = std::find_if(initial_items.begin(), initial_items.end(), [](const auto& item) {
     return item.item.id == "host.lsp";
   });
-  Expect(lsp_it != initial_items.end() && lsp_it->item.text == "LSP: No LSP server",
-         "status row should surface the host-owned LSP readiness text");
+  Expect(lsp_it == initial_items.end(),
+         "breadcrumb status row should not duplicate host-owned LSP status");
 
   auto& project = WorkspaceShellTestAccess::CurrentProjectState(shell);
   project.lsp.request_in_flight = true;
@@ -406,9 +406,8 @@ void TestWorkspaceShellStatusRowShowsLspReadinessAndInFlightState() {
       std::find_if(in_flight_items.begin(), in_flight_items.end(), [](const auto& item) {
         return item.item.id == "host.lsp";
       });
-  Expect(in_flight_it != in_flight_items.end() &&
-             in_flight_it->item.text == "LSP: working...",
-         "status row should surface transient in-flight LSP work");
+  Expect(in_flight_it == in_flight_items.end(),
+         "breadcrumb status row should keep LSP state hidden even while requests are in flight");
 }
 
 void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {

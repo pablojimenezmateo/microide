@@ -4,6 +4,7 @@
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"

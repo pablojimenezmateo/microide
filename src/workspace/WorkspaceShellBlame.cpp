@@ -51,7 +51,8 @@ bool WorkspaceShell::EditorBlameFitsPane(const editor::TextViewport& viewport,
 std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverlay(
     editor::TextViewport& viewport,
     const SDL_FRect& rect,
-    float minimum_pane_width) {
+    float minimum_pane_width,
+    std::size_t sticky_scroll_rows) {
   if (context_.current_project_state.root.empty() || viewport.is_placeholder() || viewport.path().empty() ||
       viewport.dirty() ||
       !EditorBlameFitsPane(viewport, rect, minimum_pane_width)) {
@@ -68,7 +69,7 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
   }
 
   const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, rect);
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, rect, sticky_scroll_rows);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const std::size_t visible_start_line = viewport.VisualRowLineIndex(viewport.scroll_line());
   const project::GitBlameRequest request{

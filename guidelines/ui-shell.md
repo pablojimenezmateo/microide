@@ -88,6 +88,17 @@ sit relative to selection/caret per the editor-essential-capabilities spec.
 - The status bar and settings-style overlays are host-owned surfaces. Status-bar rows route to
   actions through segment ids, while Settings and Help/About use the shared
   settings-overlay service and view model rather than ad-hoc render or plugin-owned surfaces.
+- Status surfaces split by **time scale**, not by ownership: the footer status bar
+  (`workspace-status-bar` spec, `WorkspaceShellRenderStatusBar.cpp`) is **static identity** —
+  host-owned, closed enum, glanceable. It answers "where am I, what mode is this in, is a
+  language server attached?" Its segments are populated by `RefreshStatusBar` and the LSP
+  segment reads readiness only (`ensure_started=false`). Plugins SHALL NOT add footer
+  segments. The **breadcrumb status ribbon** (`WorkspaceStatusRegistry`,
+  `WorkspaceShell::ComputeVisibleStatusItems`) is **transient signal** — plugin-extensible,
+  priority-sorted, ephemeral. It answers "what is happening right now?" — in-flight LSP
+  requests, plugin build/format/lint pings, similar dynamic state. Plugin authors targeting
+  status SHALL contribute to the breadcrumb; do not propose adding plugin extensibility to
+  the footer.
 - Avoid embedding service logic directly in render or input handlers when a coordinator can own it.
 - Single-line shell input surfaces (prompts, command input, overlay query, sidebar search) consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`. Do not reimplement insert / backspace / delete / movement / selection / clipboard / select-all per surface.
 - The active editor viewport is owned by the active editor tab. Resolve it through `EditorTabService::ActiveViewport()` (or equivalent typed accessor); do not reintroduce a shell-level or project-level fallback under any name.

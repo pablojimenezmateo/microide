@@ -143,15 +143,26 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleProje
   const float tab_y = project_tab_strip.y + 2.0f;
   const float tab_height = std::max(18.0f, project_tab_strip.h - 2.0f);
   const float gap = 1.0f;
-  const float start_x = project_tab_strip.x + 12.0f + kTabStripOverflowReserve;
-  const float max_tab_x = std::max(
-      start_x + 120.0f,
-      project_tab_strip.x + project_tab_strip.w - 12.0f - kTabStripOverflowReserve);
-  auto tabs = BuildVisibleStripTabs(
-      widths, start_x, gap, max_tab_x,
-      static_cast<std::size_t>(std::clamp(context_.project_catalog.tab_scroll_index, 0,
-                                          std::max(0, static_cast<int>(context_.project_catalog.entries.size()) - 1))),
-      tab_y, tab_height, {}, context_.project_catalog.active_index, display_titles, tooltip_labels);
+  const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
+    const float max_tab_x = std::max(
+        start_x + 120.0f,
+        project_tab_strip.x + project_tab_strip.w - 12.0f - right_overflow_reserve);
+    return BuildVisibleStripTabs(
+        widths, start_x, gap, max_tab_x,
+        static_cast<std::size_t>(std::clamp(
+            context_.project_catalog.tab_scroll_index, 0,
+            std::max(0, static_cast<int>(context_.project_catalog.entries.size()) - 1))),
+        tab_y, tab_height, {}, context_.project_catalog.active_index, display_titles,
+        tooltip_labels);
+  };
+
+  auto tabs = build_tabs(project_tab_strip.x + 12.0f + kTabStripOverflowReserve,
+                         kTabStripOverflowReserve);
+  const bool all_tabs_visible = !tabs.empty() && tabs.front().index == 0 &&
+                                tabs.back().index + 1 == context_.project_catalog.entries.size();
+  if (all_tabs_visible) {
+    tabs = build_tabs(project_tab_strip.x, 0.0f);
+  }
   for (VisibleStripTab& tab : tabs) {
     const ProjectWorkspaceState* project = ProjectCatalogEntry(tab.index);
     const std::filesystem::path root = ProjectCatalogRoot(tab.index);
@@ -249,16 +260,29 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
   const float tab_y = tab_strip.y + 2.0f;
   const float tab_height = std::max(22.0f, tab_strip.h - 2.0f);
   const float gap = 1.0f;
-  const float start_x = tab_strip.x + 12.0f + kTabStripOverflowReserve;
   const float right_reserve = std::clamp(tab_strip.w * 0.22f, 160.0f, 240.0f);
-  const float max_tab_x = std::max(
-      start_x + 120.0f, tab_strip.x + tab_strip.w - right_reserve - kTabStripOverflowReserve);
-  return BuildVisibleStripTabs(
-      tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
-      static_cast<std::size_t>(std::clamp(context_.current_project_state.tab_scroll_index, 0,
-                                          std::max(0, static_cast<int>(context_.current_project_state.open_tabs.size()) - 1))),
-      tab_y, tab_height, {}, context_.current_project_state.active_tab_index,
-      tab_strip_geometry_cache_.display_titles, tab_strip_geometry_cache_.tooltip_labels);
+  const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
+    const float max_tab_x =
+        std::max(start_x + 120.0f,
+                 tab_strip.x + tab_strip.w - right_reserve - right_overflow_reserve);
+    return BuildVisibleStripTabs(
+        tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
+        static_cast<std::size_t>(std::clamp(
+            context_.current_project_state.tab_scroll_index, 0,
+            std::max(0, static_cast<int>(context_.current_project_state.open_tabs.size()) - 1))),
+        tab_y, tab_height, {}, context_.current_project_state.active_tab_index,
+        tab_strip_geometry_cache_.display_titles, tab_strip_geometry_cache_.tooltip_labels);
+  };
+
+  auto tabs = build_tabs(tab_strip.x + 12.0f + kTabStripOverflowReserve,
+                         kTabStripOverflowReserve);
+  const bool all_tabs_visible = !tabs.empty() && tabs.front().index == 0 &&
+                                tabs.back().index + 1 ==
+                                    context_.current_project_state.open_tabs.size();
+  if (all_tabs_visible) {
+    tabs = build_tabs(tab_strip.x, 0.0f);
+  }
+  return tabs;
 }
 
 namespace {
@@ -559,12 +583,11 @@ void WorkspaceShell::RefreshStatusBar() {
   StatusBarSegmentValue branch_segment;
   if (!context_.current_project_state.root.empty()) {
     const auto& git_state = context_.current_project_state.sidebar.git;
-    const bool tree_has_worktree_changes = std::any_of(
-        context_.current_project_state.directory_tree.entries().begin(),
-        context_.current_project_state.directory_tree.entries().end(),
-        [](const project::TreeEntry& entry) {
-          return !entry.is_directory && entry.git_status != project::GitFileStatus::Clean;
-        });
+    // Consult the directory tree's full git-status map rather than just the
+    // visible entries() — dirty files inside collapsed folders are not in
+    // entries() but still count toward repo cleanliness.
+    const bool tree_has_worktree_changes =
+        context_.current_project_state.directory_tree.has_dirty_files();
     const bool snapshot_has_worktree_changes = std::any_of(
         git_state.entries.begin(), git_state.entries.end(), [](const GitSidebarEntry& entry) {
           return entry.section == GitSidebarEntry::Section::Modified;

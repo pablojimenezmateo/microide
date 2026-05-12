@@ -186,6 +186,8 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
     run_id = ++next_run_id_;
     active_run_id_ = run_id;
     active_search_id_ = ++next_search_id_;
+    last_progress_searched_files_ = 0;
+    last_progress_total_files_ = 0;
     {
       std::unique_lock buffer_lock(result_buffer_.mutex);
       result_buffer_.search_id = active_search_id_;
@@ -313,9 +315,21 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   const std::vector<std::filesystem::path>& candidate_files = indexed_files;
   std::vector<ProjectSearchResult> batch;
   std::size_t total_results = 0;
+  std::size_t files_searched = 0;
+  const std::size_t total_files = candidate_files.size();
+  // Publish total_files immediately so the UI can show the denominator before
+  // the first match (large empty-match prefixes were otherwise invisible).
+  PublishProgress(run_id, 0, total_files);
+  // Periodic progress wake interval — coarser than per-file to avoid event spam
+  // on tiny files; fine enough for the UI to feel responsive on large repos.
+  constexpr std::size_t kProgressTickFiles = 64;
   std::array<char, 4096> probe{};
 
   for (const auto& relative_path : candidate_files) {
+    ++files_searched;
+    if (files_searched % kProgressTickFiles == 0) {
+      PublishProgress(run_id, files_searched, total_files);
+    }
     if (token.IsCancellationRequested()) {
       return {};
     }
@@ -395,6 +409,9 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   if (!batch.empty() && !token.IsCancellationRequested()) {
     PublishResults(run_id, std::move(batch));
   }
+  // Final progress publish so the finish update carries an accurate denominator
+  // and a matching searched count.
+  PublishProgress(run_id, files_searched, total_files);
   return SearchCompletion{};
 }
 
@@ -429,6 +446,8 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
     }
     pending_update_.run_id = run_id;
     pending_update_.search_id = active_search_id_;
+    pending_update_.searched_files = last_progress_searched_files_;
+    pending_update_.total_files = last_progress_total_files_;
     for (auto& result : batch) {
       if (pending_update_.results.size() >= kMaxResults) {
         break;
@@ -456,9 +475,32 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletio
     }
     pending_update_.run_id = run_id;
     pending_update_.search_id = active_search_id_;
+    pending_update_.searched_files = last_progress_searched_files_;
+    pending_update_.total_files = last_progress_total_files_;
     pending_update_.truncated = pending_update_.truncated || completion.truncated;
     pending_update_.finished = true;
     pending_update_.error = std::move(completion.error);
+  }
+  PushWakeEvent();
+}
+
+void ProjectSearchService::PublishProgress(std::uint64_t run_id,
+                                            std::size_t searched_files,
+                                            std::size_t total_files) {
+  {
+    std::lock_guard lock(mutex_);
+    if (active_run_id_ != run_id) {
+      return;
+    }
+    if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
+      pending_update_ = {};
+    }
+    pending_update_.run_id = run_id;
+    pending_update_.search_id = active_search_id_;
+    last_progress_searched_files_ = searched_files;
+    last_progress_total_files_ = total_files;
+    pending_update_.searched_files = searched_files;
+    pending_update_.total_files = total_files;
   }
   PushWakeEvent();
 }

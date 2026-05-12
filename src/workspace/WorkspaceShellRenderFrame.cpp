@@ -364,11 +364,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (pane.active && active_editor_pane_rect != nullptr) {
         *active_editor_pane_rect = pane.rect;
       }
-      const auto blame_overlay =
-          pane.active ? BuildEditorBlameOverlay(*viewport, pane.rect) : std::nullopt;
-      if (pane.active) {
-        visible_editor_blame_overlay_ = blame_overlay;
-      }
       editor::EditorViewMetrics metrics =
           editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
@@ -393,6 +388,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
             occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
             render_whitespace_enabled);
+      }
+      const auto blame_overlay =
+          pane.active ? BuildEditorBlameOverlay(*viewport, pane.rect, 520.0f,
+                                                tls_editor_surface_vm.sticky_lines.size())
+                      : std::nullopt;
+      if (pane.active) {
+        visible_editor_blame_overlay_ = blame_overlay;
       }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,

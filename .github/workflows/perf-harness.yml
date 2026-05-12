@@ -36,7 +36,7 @@ jobs:
         run: cmake --build build/microide-perf-make --target microide_perf -j8
 
       - name: Run smoke subset
-        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --smoke --iterations=1
+        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --smoke --iterations=1 --require-fixtures
 
   perf-baseline-tag:
     if: github.event_name == 'pull_request'
@@ -70,7 +70,7 @@ jobs:
         run: cmake --build build/microide-perf-make --target microide_perf -j8
 
       - name: Run full perf suite
-        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --iterations=10 --reference-runner=perf-runner-v1
+        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --iterations=10 --reference-runner=perf-runner-v1 --require-fixtures
 
   long-soak-manual:
     if: github.event_name == 'workflow_dispatch'
@@ -89,4 +89,4 @@ jobs:
       - name: Run long soak scenario (manual)
         env:
           MICROIDE_PERF_LONG_SOAK_SECONDS: "3600"
-        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --scenarios=long_soak_8h --iterations=1 --reference-runner=perf-runner-v1
+        run: xvfb-run -a ./build/microide-perf-make/microide/microide_perf --scenarios=long_soak_8h --iterations=1 --reference-runner=perf-runner-v1 --require-fixtures

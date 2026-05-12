@@ -169,7 +169,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                 ? BuildCountStatus(
                       "Searching ",
                       project_state.overlay.workflow.project_search.results.size(),
-                      " matches")
+                      " matches") +
+                      BuildSearchProgressSuffix(
+                          project_state.overlay.workflow.project_search.searched_files,
+                          project_state.overlay.workflow.project_search.total_files)
             : project_state.overlay.workflow.project_search.results.empty()
                 ? (project_state.overlay.workflow.project_search.query.text().empty()
                        ? JoinHintSegments(

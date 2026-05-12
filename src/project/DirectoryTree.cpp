@@ -366,6 +366,15 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
   }
 }
 
+bool DirectoryTree::has_dirty_files() const {
+  for (const auto& [_, status] : git_statuses_) {
+    if (status != GitFileStatus::Clean) {
+      return true;
+    }
+  }
+  return false;
+}
+
 GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path) const {
   if (git_statuses_.empty()) {
     return GitFileStatus::Clean;

@@ -24,6 +24,8 @@ void WorkspaceShell::RefreshProjectSearch() {
   context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
   context_.current_project_state.overlay.workflow.project_search.truncated = false;
   context_.current_project_state.overlay.workflow.project_search.error.clear();
+  context_.current_project_state.overlay.workflow.project_search.searched_files = 0;
+  context_.current_project_state.overlay.workflow.project_search.total_files = 0;
 
   if (context_.current_project_state.root.empty() ||
       context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
@@ -66,6 +68,14 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
 
   context_.current_project_state.overlay.workflow.project_search.truncated =
       context_.current_project_state.overlay.workflow.project_search.truncated || update.truncated;
+  if (update.total_files > 0) {
+    // The service always publishes the latest counters on each update; reflect
+    // them as-is so "Searching X matches (Y of Z files)" stays current.
+    context_.current_project_state.overlay.workflow.project_search.searched_files =
+        update.searched_files;
+    context_.current_project_state.overlay.workflow.project_search.total_files =
+        update.total_files;
+  }
   if (!update.error.empty()) {
     context_.current_project_state.overlay.workflow.project_search.error = std::move(update.error);
   }

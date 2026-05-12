@@ -344,18 +344,6 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
   static constexpr float kItemGap = 6.0f;
   static constexpr float kInset = 12.0f;
   std::vector<StatusItemView> items = ResolveStatusItems(plugin_runtime_.Host());
-  if (const editor::TextViewport* viewport = ActiveEditableViewport();
-      viewport != nullptr && !viewport->path().empty()) {
-    items.insert(items.begin(), StatusItemView{
-                                 .id = "host.lsp",
-                                 .text = const_cast<WorkspaceShell*>(this)->ActiveLspStatusText(),
-                                 .tooltip =
-                                     const_cast<WorkspaceShell*>(this)->ActiveLspStatusTooltip(),
-                                 .alignment = StatusAlignment::Left,
-                                 .priority = 1000,
-                                 .plugin_id = {},
-                             });
-  }
 
   std::vector<VisibleStatusItem> visible;
   visible.reserve(items.size());

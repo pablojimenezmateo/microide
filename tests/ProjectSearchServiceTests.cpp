@@ -23,6 +23,8 @@ struct SearchRunResult {
   std::string error;
   bool truncated = false;
   bool finished = false;
+  std::size_t final_searched_files = 0;
+  std::size_t final_total_files = 0;
 };
 
 SearchRunResult RunProjectSearch(const std::filesystem::path& root,
@@ -50,6 +52,10 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
         result.error = std::move(update.error);
       }
       result.truncated = result.truncated || update.truncated;
+      if (update.total_files > 0) {
+        result.final_searched_files = update.searched_files;
+        result.final_total_files = update.total_files;
+      }
       if (update.finished) {
         result.finished = true;
         break;
@@ -386,6 +392,64 @@ void TestProjectSearchServiceNoMatchFinishesPromptly() {
          "no-match project search should not publish any intermediate or final results");
 }
 
+void TestProjectSearchServicePublishesProgressDenominator() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha\n");
+  WriteFile(root / "b.txt", "alpha\n");
+  WriteFile(root / "c.txt", "beta\n");
+  WriteFile(root / "d.txt", "gamma\n");
+
+  const auto indexed = project::CollectProjectFiles(
+      root, project::ProjectFileScanMode::ExcludeHidden);
+  const auto run = RunProjectSearch(root, "alpha", {}, indexed);
+
+  Expect(run.finished, "progress search should finish");
+  Expect(run.final_total_files == indexed.size(),
+         "total_files should equal the candidate-set size");
+  Expect(run.final_searched_files == indexed.size(),
+         "searched_files should reach total_files when the search runs to completion");
+}
+
+void TestProjectSearchServiceProgressPublishesBeforeFirstMatch() {
+  // Sets a large no-match prefix so the worker visits many files before any
+  // match. The denominator should be published immediately at Start, before any
+  // results arrive — guarding the "0 of Y files" anchor on large empty repos.
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  for (int i = 0; i < 8; ++i) {
+    WriteFile(root / ("noise_" + std::to_string(i) + ".txt"), "nothing\n");
+  }
+  WriteFile(root / "hit.txt", "needle\n");
+
+  const auto indexed = project::CollectProjectFiles(
+      root, project::ProjectFileScanMode::ExcludeHidden);
+  ProjectSearchService service;
+  const std::uint64_t run_id = service.Start(root, "needle", {}, indexed);
+
+  std::size_t first_total_files_seen = 0;
+  bool finished = false;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto update = service.TakePendingUpdate();
+    if (update.run_id == run_id) {
+      if (first_total_files_seen == 0 && update.total_files > 0) {
+        first_total_files_seen = update.total_files;
+      }
+      if (update.finished) {
+        finished = true;
+        break;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  service.Stop();
+
+  Expect(finished, "search with progress publishing should still finish");
+  Expect(first_total_files_seen == indexed.size(),
+         "first progress publish should expose the full denominator");
+}
+
 }  // namespace
 
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
@@ -411,6 +475,10 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceUsesIndexedFileSnapshotWhenProvided);
   AddTest(tests, "ProjectSearchService/NoMatchFinishesPromptly",
           TestProjectSearchServiceNoMatchFinishesPromptly);
+  AddTest(tests, "ProjectSearchService/PublishesProgressDenominator",
+          TestProjectSearchServicePublishesProgressDenominator);
+  AddTest(tests, "ProjectSearchService/ProgressPublishesBeforeFirstMatch",
+          TestProjectSearchServiceProgressPublishesBeforeFirstMatch);
 }
 
 }  // namespace microide::tests

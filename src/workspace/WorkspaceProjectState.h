@@ -90,6 +90,11 @@ struct ProjectSearchState {
   editor::SingleLineEditor replace_text;
   std::vector<project::ProjectSearchResult> results;
   std::size_t selected_index = 0;
+  // Latest progress counters from ProjectSearchService — "X of Y files" UX.
+  // total_files is the candidate-set size pinned at search start; searched_files
+  // advances as the worker visits each file.
+  std::size_t searched_files = 0;
+  std::size_t total_files = 0;
   bool running = false;
   bool truncated = false;
   std::string error;

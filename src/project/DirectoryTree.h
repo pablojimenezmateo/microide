@@ -50,6 +50,12 @@ class DirectoryTree {
   const std::vector<TreeEntry>& entries() const { return entries_; }
   std::size_t selected_index() const { return selected_index_; }
 
+  // Whether any file in the repo (not just the currently visible tree rows)
+  // is non-Clean per the last RefreshGitStatuses. Iterating entries() alone
+  // misses dirty files inside collapsed folders, so callers that want a
+  // repo-wide signal (status bar cleanliness, etc.) should consult this.
+  bool has_dirty_files() const;
+
  private:
   void RebuildEntries(bool refresh_git_statuses);
   void AppendDirectory(const std::filesystem::path& directory,

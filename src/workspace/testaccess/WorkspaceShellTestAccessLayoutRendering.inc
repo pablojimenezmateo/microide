@@ -178,6 +178,44 @@
                                                                 *shell.ActiveEditorViewport(),
                                                                 pane);
   }
+  static std::size_t ActiveEditorStickyScrollRows(WorkspaceShell& shell,
+                                                  microide::editor::TextViewport& viewport,
+                                                  const SDL_FRect& pane) {
+    auto setting_enabled = [&](std::string_view id, bool default_value) -> bool {
+      const auto value = shell.GetSettingValue(id);
+      if (!value.has_value()) {
+        return default_value;
+      }
+      return *value != "false" && *value != "0" && *value != "off";
+    };
+    const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
+    const bool sticky_setting = setting_enabled("editor.fold.sticky_scroll.enabled", true);
+    const int sticky_max_depth =
+        ParseStickyScrollMaxDepthSetting(shell.GetSettingValue("editor.fold.sticky_scroll.max_depth"));
+    const microide::editor::EditorViewMetrics base_metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_, viewport, pane, 0);
+    viewport.SetViewportSize(base_metrics.visible_rows, base_metrics.visible_columns);
+    microide::editor::FoldingModel* folding_model =
+        fold_enabled ? shell.EnsureActiveFoldingModelFresh() : nullptr;
+    const bool sticky_active = fold_enabled && sticky_setting && folding_model != nullptr;
+    std::vector<std::size_t> sticky_lines;
+    ComputeStickyScrollLinesUncached(viewport, folding_model, sticky_active, sticky_max_depth,
+                                     sticky_lines);
+    return sticky_lines.size();
+  }
+  static microide::editor::EditorViewMetrics ActiveEditorRenderMetrics(WorkspaceShell& shell) {
+    const SDL_FRect pane = ActiveEditorPaneRect(shell);
+    auto* viewport = shell.ActiveEditorViewport();
+    if (viewport == nullptr) {
+      return {};
+    }
+    const std::size_t sticky_rows = ActiveEditorStickyScrollRows(shell, *viewport, pane);
+    const microide::editor::EditorViewMetrics metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_, *viewport, pane,
+                                                             sticky_rows);
+    viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+    return metrics;
+  }
   static std::optional<SDL_FRect> ActiveEditorLineRangeRect(WorkspaceShell& shell,
                                                             std::size_t start_line,
                                                             std::size_t end_line) {
@@ -209,7 +247,8 @@
     const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
     for (const auto& pane : panes) {
       if (pane.active) {
-        return shell.BuildEditorBlameOverlay(*viewport, pane.rect);
+        return shell.BuildEditorBlameOverlay(*viewport, pane.rect, 520.0f,
+                                             ActiveEditorStickyScrollRows(shell, *viewport, pane.rect));
       }
     }
     return viewport->is_placeholder()
