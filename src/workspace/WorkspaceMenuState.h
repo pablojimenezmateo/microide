@@ -25,6 +25,12 @@ struct MenuSurfaceState {
   int active_submenu_item_index = -1;
   std::optional<SDL_FRect> active_menu_anchor_rect;
   std::optional<SDL_FRect> active_submenu_anchor_rect;
+  // Row currently under the cursor in the popup/submenu, including disabled
+  // rows and separators (the enabled-only `active_*_item_index` above drives
+  // selection/keyboard navigation). Tracking this lets motion handlers issue
+  // a narrow row redraw on every hover transition, including disabled rows.
+  int hovered_popup_row_index = -1;
+  int hovered_submenu_row_index = -1;
   bool overflow_popup_open = false;
   std::optional<SDL_FRect> overflow_popup_anchor_rect;
   int overflow_popup_active_index = -1;

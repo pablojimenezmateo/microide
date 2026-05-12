@@ -53,6 +53,7 @@ void MenuCoordinator::OpenMenuBarMenu(MenuId id) {
   menu_state_.menu_bar_open = true;
   menu_state_.active_menu_id = id;
   menu_state_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
+  menu_state_.hovered_popup_row_index = -1;
   menu_state_.active_menu_anchor_rect.reset();
   CloseSubmenu();
   operations_.request_chrome_redraw();
@@ -68,6 +69,7 @@ void MenuCoordinator::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) 
   menu_state_.menu_bar_open = true;
   menu_state_.active_menu_id = id;
   menu_state_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
+  menu_state_.hovered_popup_row_index = -1;
   menu_state_.active_menu_anchor_rect = anchor_rect;
   CloseSubmenu();
   operations_.request_chrome_redraw();
@@ -77,6 +79,7 @@ void MenuCoordinator::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
   operations_.request_chrome_redraw();
   menu_state_.active_submenu_id = id;
   menu_state_.active_submenu_item_index = FirstEnabledMenuItemIndex(id);
+  menu_state_.hovered_submenu_row_index = -1;
   menu_state_.active_submenu_anchor_rect = anchor_rect;
   operations_.request_chrome_redraw();
 }
@@ -85,6 +88,7 @@ void MenuCoordinator::CloseSubmenu() {
   operations_.request_chrome_redraw();
   menu_state_.active_submenu_id = MenuId::None;
   menu_state_.active_submenu_item_index = -1;
+  menu_state_.hovered_submenu_row_index = -1;
   menu_state_.active_submenu_anchor_rect.reset();
   operations_.request_chrome_redraw();
 }
@@ -94,6 +98,7 @@ void MenuCoordinator::CloseMenuBar() {
   menu_state_.menu_bar_open = false;
   menu_state_.active_menu_id = MenuId::None;
   menu_state_.active_menu_item_index = -1;
+  menu_state_.hovered_popup_row_index = -1;
   menu_state_.active_menu_anchor_rect.reset();
   CloseSubmenu();
   operations_.request_chrome_redraw();

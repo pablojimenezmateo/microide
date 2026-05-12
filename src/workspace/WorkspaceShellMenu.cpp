@@ -191,6 +191,49 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(const SDL_FRect& m
   return ComputePopupMenuRect(bar_it->rect, items, bounds);
 }
 
+std::optional<WorkspaceShell::PopupRowGeometry> WorkspaceShell::HitTestPopupRow(
+    std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x, float y) {
+  if (x < popup_rect.x || x >= popup_rect.x + popup_rect.w ||
+      y < popup_rect.y || y >= popup_rect.y + popup_rect.h) {
+    return std::nullopt;
+  }
+  const float row_x = popup_rect.x + 6.0f;
+  const float row_w = std::max(0.0f, popup_rect.w - 12.0f);
+  float row_y = popup_rect.y + 6.0f;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    const float height = items[i].separator ? kWorkspaceMenuPopupSeparatorHeight
+                                             : kWorkspaceMenuPopupItemHeight;
+    if (y < row_y + height) {
+      if (y < row_y || x < row_x || x >= row_x + row_w) {
+        return std::nullopt;
+      }
+      return PopupRowGeometry{
+          .index = i, .rect = MakeRect(row_x, row_y, row_w, height),
+          .separator = items[i].separator,
+      };
+    }
+    row_y += height;
+  }
+  return std::nullopt;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::PopupRowRectByIndex(
+    std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, std::size_t index) {
+  if (index >= items.size()) {
+    return std::nullopt;
+  }
+  const float row_x = popup_rect.x + 6.0f;
+  const float row_w = std::max(0.0f, popup_rect.w - 12.0f);
+  float row_y = popup_rect.y + 6.0f;
+  for (std::size_t i = 0; i < index; ++i) {
+    row_y += items[i].separator ? kWorkspaceMenuPopupSeparatorHeight
+                                : kWorkspaceMenuPopupItemHeight;
+  }
+  const float height = items[index].separator ? kWorkspaceMenuPopupSeparatorHeight
+                                              : kWorkspaceMenuPopupItemHeight;
+  return MakeRect(row_x, row_y, row_w, height);
+}
+
 std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisiblePopupMenuItems(
     std::span<const MenuItemSpec> items,
     int active_item_index,

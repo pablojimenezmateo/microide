@@ -204,41 +204,42 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
   const WorkspaceLayout layout = *layout_state;
 
+  // Hit-test the popup using geometry only. The full ComputeVisiblePopupMenuItems
+  // path here was calling IsMenuItemEnabled/IsMenuItemChecked for every row, and
+  // CursorKindForPosition runs on every mouse motion — that cost roughly half of
+  // the per-motion handler budget while a menu was open.
   if (context_.menu_state.tree_context_menu.open) {
-    if (const auto popup_rect = ComputeTreeContextMenuRect();
-        popup_rect.has_value() && Contains(*popup_rect, x, y)) {
-      for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(TreeContextMenuItems(context_.menu_state.tree_context_menu.target),
-                                        context_.menu_state.tree_context_menu.active_item_index,
-                                        *popup_rect)) {
-        if (Contains(item.rect, x, y)) {
-          return item.separator ? CursorKind::Default : CursorKind::Pointer;
-        }
+    if (const auto popup_rect = ComputeTreeContextMenuRect(); popup_rect.has_value()) {
+      const auto items = TreeContextMenuItems(context_.menu_state.tree_context_menu.target);
+      if (const auto hit = HitTestPopupRow(items, *popup_rect, x, y); hit.has_value()) {
+        return hit->separator ? CursorKind::Default : CursorKind::Pointer;
       }
-      return CursorKind::Default;
+      if (Contains(*popup_rect, x, y)) {
+        return CursorKind::Default;
+      }
     }
   }
 
   if (context_.menu_state.menu_bar_open) {
-    if (const auto popup_rect = ActiveSubmenuRect(layout.menu_bar);
-        popup_rect.has_value() && Contains(*popup_rect, x, y)) {
-      for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(context_.menu_state.active_submenu_id, *popup_rect)) {
-        if (Contains(item.rect, x, y)) {
-          return item.separator ? CursorKind::Default : CursorKind::Pointer;
-        }
+    if (const auto popup_rect = ActiveSubmenuRect(layout.menu_bar); popup_rect.has_value()) {
+      const auto items = MenuItems(context_.menu_state.active_submenu_id);
+      if (const auto hit = HitTestPopupRow(items, *popup_rect, x, y); hit.has_value()) {
+        return hit->separator ? CursorKind::Default : CursorKind::Pointer;
       }
-      return CursorKind::Default;
+      if (Contains(*popup_rect, x, y)) {
+        return CursorKind::Default;
+      }
     }
-    if (const auto popup_rect = ComputePopupMenuRect(layout.menu_bar, context_.menu_state.active_menu_id);
-        popup_rect.has_value() && Contains(*popup_rect, x, y)) {
-      for (const VisiblePopupMenuItem& item :
-           ComputeVisiblePopupMenuItems(context_.menu_state.active_menu_id, *popup_rect)) {
-        if (Contains(item.rect, x, y)) {
-          return item.separator ? CursorKind::Default : CursorKind::Pointer;
-        }
+    if (const auto popup_rect =
+            ComputePopupMenuRect(layout.menu_bar, context_.menu_state.active_menu_id);
+        popup_rect.has_value()) {
+      const auto items = MenuItems(context_.menu_state.active_menu_id);
+      if (const auto hit = HitTestPopupRow(items, *popup_rect, x, y); hit.has_value()) {
+        return hit->separator ? CursorKind::Default : CursorKind::Pointer;
       }
-      return CursorKind::Default;
+      if (Contains(*popup_rect, x, y)) {
+        return CursorKind::Default;
+      }
     }
   }
 

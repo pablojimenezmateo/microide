@@ -288,7 +288,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredProjectTabTooltipRect(
 }
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLayout& layout) const {
-  if (!last_mouse_position_valid_) {
+  if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse()) {
     return std::nullopt;
   }
   if (!Contains(layout.tab_strip, last_mouse_x_, last_mouse_y_)) {
@@ -338,6 +338,12 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredStatusTooltipRect(const Workspac
 
 void WorkspaceShell::RenderChromeTooltips(SDL_Renderer* renderer,
                                           const WorkspaceLayout& layout) const {
+  // Chrome tooltips never fire when a menu surface owns the mouse; otherwise
+  // empty tooltip cards can paint beneath the popup (the rect probes return
+  // a rect while the gated label probes return empty text).
+  if (MenuSurfaceCapturingMouse()) {
+    return;
+  }
   if (const auto tooltip_rect = HoveredProjectTabTooltipRect(layout); tooltip_rect.has_value()) {
     const std::string tooltip_label = HoveredProjectTabTooltipLabel(layout.project_tab_strip);
     DrawTooltip(text_renderer_, renderer, theme_, *tooltip_rect,

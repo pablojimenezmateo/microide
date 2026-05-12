@@ -173,14 +173,34 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (MenuSurfaceCapturingMouse()) {
+    static const bool menu_hover_trace =
+        util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_MENU_HOVER");
+    const Uint64 t0 = menu_hover_trace ? SDL_GetTicksNS() : 0;
+    const std::size_t rects_before =
+        menu_hover_trace ? pending_render_invalidation_.rects.size() : 0;
     const auto blocked_hover_visuals = capture_blocked_hover_visuals();
+    const Uint64 t1 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
+    const Uint64 t2 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     invalidate_blocked_hover_visuals(blocked_hover_visuals);
-    if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
-      ensure_redraw([this]() { RequestChromeRedraw(); });
-      return true;
+    const Uint64 t3 = menu_hover_trace ? SDL_GetTicksNS() : 0;
+    auto chrome_coordinator = MakeChromeMouseCoordinator();
+    const Uint64 t4 = menu_hover_trace ? SDL_GetTicksNS() : 0;
+    chrome_coordinator.HandleMotion(event, layout);
+    const Uint64 t5 = menu_hover_trace ? SDL_GetTicksNS() : 0;
+    if (menu_hover_trace) {
+      const auto ms = [](Uint64 a, Uint64 b) {
+        return static_cast<double>(b - a) / 1'000'000.0;
+      };
+      SDL_Log("MICROIDE_MENU_HOVER motion ev=(%.0f,%.0f) total=%.3fms "
+              "[capture=%.3f cursor=%.3f invalidate=%.3f makeCoord=%.3f handle=%.3f] "
+              "rects+=%zu ami=%d hovered=%d",
+              event.motion.x, event.motion.y, ms(t0, t5),
+              ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t4, t5),
+              pending_render_invalidation_.rects.size() - rects_before,
+              context_.menu_state.active_menu_item_index,
+              context_.menu_state.hovered_popup_row_index);
     }
-    ensure_redraw([this]() { RequestChromeRedraw(); });
     return true;
   }
 

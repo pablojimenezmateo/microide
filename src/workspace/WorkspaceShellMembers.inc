@@ -96,7 +96,8 @@
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
   FrameToken PrepareFrameOnce(SDL_Renderer* renderer, int width, int height);
-  void RenderClip(const FrameToken& frame_token, SDL_Renderer* renderer, int width, int height);
+  void RenderClip(const FrameToken& frame_token, SDL_Renderer* renderer, int width, int height,
+                  std::optional<SDL_FRect> dirty_rect_hint = std::nullopt);
   void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
@@ -124,6 +125,22 @@
     bool hovered = false;
     bool separator = false;
   };
+
+  // Geometry-only popup row info — no IsMenuItemEnabled/IsMenuItemChecked work.
+  // Use this when only hit-testing or rect lookup is needed (mouse motion,
+  // cursor kind probe). Caches matter: the heavy enabled/checked lookups are
+  // O(items) each and were dominating per-event handler time at high mouse
+  // rates.
+  struct PopupRowGeometry {
+    std::size_t index = 0;
+    SDL_FRect rect{};
+    bool separator = false;
+  };
+
+  static std::optional<PopupRowGeometry> HitTestPopupRow(
+      std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x, float y);
+  static std::optional<SDL_FRect> PopupRowRectByIndex(
+      std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, std::size_t index);
 
   WorkspaceActionContext MakeActionContext();
 

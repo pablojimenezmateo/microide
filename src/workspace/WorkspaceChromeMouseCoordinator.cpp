@@ -317,29 +317,39 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     }
     if (item.id != menu_state_.active_menu_id) {
       operations_.open_menu_bar_menu(item.id);
+      operations_.request_chrome_redraw();
     }
-    operations_.request_chrome_redraw();
     return true;
   }
 
   if (const auto submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
       submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
-    const int previous_index = menu_state_.active_submenu_item_index;
-    const auto visible_items =
-        operations_.compute_visible_popup_menu_items(menu_state_.active_submenu_id, *submenu_rect);
-    menu_state_.active_submenu_item_index = -1;
-    for (const auto& item : visible_items) {
-      if (Contains(item.rect, event.motion.x, event.motion.y)) {
-        menu_state_.active_submenu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-        break;
+    const int previous_hovered_index = menu_state_.hovered_submenu_row_index;
+    const auto hit = operations_.hit_test_popup_row(menu_state_.active_submenu_id, *submenu_rect,
+                                                     event.motion.x, event.motion.y);
+    int hovered_index = -1;
+    bool hovered_enabled = false;
+    SDL_FRect hovered_rect{};
+    if (hit.has_value()) {
+      hovered_index = static_cast<int>(hit->index);
+      hovered_rect = hit->rect;
+      if (!hit->separator) {
+        hovered_enabled =
+            operations_.is_menu_item_enabled_at(menu_state_.active_submenu_id, hit->index);
       }
     }
-    if (menu_state_.active_submenu_item_index != previous_index) {
-      RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
-                                PopupItemRectForIndex(visible_items, previous_index));
-      RequestMenuHoverRowRedraw(
-          operations_.request_redraw_rect,
-          PopupItemRectForIndex(visible_items, menu_state_.active_submenu_item_index));
+    menu_state_.active_submenu_item_index = hovered_enabled ? hovered_index : -1;
+    menu_state_.hovered_submenu_row_index = hovered_index;
+    if (hovered_index != previous_hovered_index) {
+      if (previous_hovered_index >= 0) {
+        RequestMenuHoverRowRedraw(
+            operations_.request_redraw_rect,
+            operations_.popup_row_rect_by_index(menu_state_.active_submenu_id, *submenu_rect,
+                                                static_cast<std::size_t>(previous_hovered_index)));
+      }
+      if (hovered_index >= 0) {
+        RequestMenuHoverRowRedraw(operations_.request_redraw_rect, hovered_rect);
+      }
     }
     return true;
   }
@@ -347,42 +357,55 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
   if (const auto popup_rect =
           operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
       popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
-    const int previous_index = menu_state_.active_menu_item_index;
+    const int previous_hovered_index = menu_state_.hovered_popup_row_index;
     const MenuId previous_submenu_id = menu_state_.active_submenu_id;
     const auto previous_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
-    const auto visible_items =
-        operations_.compute_visible_popup_menu_items(menu_state_.active_menu_id, *popup_rect);
-    menu_state_.active_menu_item_index = -1;
-    for (const auto& item : visible_items) {
-      if (Contains(item.rect, event.motion.x, event.motion.y)) {
-        menu_state_.active_menu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-        const MenuSpec* menu = operations_.find_menu_spec(menu_state_.active_menu_id);
-        if (menu != nullptr && item.enabled) {
-          const auto items = operations_.menu_items(menu_state_.active_menu_id);
-          const MenuItemSpec& spec = items[item.index];
-          if (spec.submenu != MenuId::None) {
-            menu_state_.active_submenu_id = spec.submenu;
-            menu_state_.active_submenu_item_index = -1;
-            menu_state_.active_submenu_anchor_rect = item.rect;
-          } else {
-            menu_state_.active_submenu_id = MenuId::None;
-            menu_state_.active_submenu_item_index = -1;
-            menu_state_.active_submenu_anchor_rect.reset();
-          }
-        } else {
-          menu_state_.active_submenu_id = MenuId::None;
-          menu_state_.active_submenu_item_index = -1;
-          menu_state_.active_submenu_anchor_rect.reset();
-        }
-        break;
+    const auto hit = operations_.hit_test_popup_row(menu_state_.active_menu_id, *popup_rect,
+                                                     event.motion.x, event.motion.y);
+    int hovered_index = -1;
+    bool hovered_enabled = false;
+    SDL_FRect hovered_rect{};
+    if (hit.has_value()) {
+      hovered_index = static_cast<int>(hit->index);
+      hovered_rect = hit->rect;
+      if (!hit->separator) {
+        hovered_enabled =
+            operations_.is_menu_item_enabled_at(menu_state_.active_menu_id, hit->index);
       }
     }
-    if (menu_state_.active_menu_item_index != previous_index) {
-      RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
-                                PopupItemRectForIndex(visible_items, previous_index));
-      RequestMenuHoverRowRedraw(
-          operations_.request_redraw_rect,
-          PopupItemRectForIndex(visible_items, menu_state_.active_menu_item_index));
+    const MenuSpec* menu = operations_.find_menu_spec(menu_state_.active_menu_id);
+    if (hovered_enabled && menu != nullptr) {
+      const auto items = operations_.menu_items(menu_state_.active_menu_id);
+      const MenuItemSpec& spec = items[hovered_index];
+      if (spec.submenu != MenuId::None) {
+        menu_state_.active_submenu_id = spec.submenu;
+        menu_state_.active_submenu_item_index = -1;
+        menu_state_.hovered_submenu_row_index = -1;
+        menu_state_.active_submenu_anchor_rect = hovered_rect;
+      } else {
+        menu_state_.active_submenu_id = MenuId::None;
+        menu_state_.active_submenu_item_index = -1;
+        menu_state_.hovered_submenu_row_index = -1;
+        menu_state_.active_submenu_anchor_rect.reset();
+      }
+    } else {
+      menu_state_.active_submenu_id = MenuId::None;
+      menu_state_.active_submenu_item_index = -1;
+      menu_state_.hovered_submenu_row_index = -1;
+      menu_state_.active_submenu_anchor_rect.reset();
+    }
+    menu_state_.active_menu_item_index = hovered_enabled ? hovered_index : -1;
+    menu_state_.hovered_popup_row_index = hovered_index;
+    if (hovered_index != previous_hovered_index) {
+      if (previous_hovered_index >= 0) {
+        RequestMenuHoverRowRedraw(
+            operations_.request_redraw_rect,
+            operations_.popup_row_rect_by_index(menu_state_.active_menu_id, *popup_rect,
+                                                static_cast<std::size_t>(previous_hovered_index)));
+      }
+      if (hovered_index >= 0) {
+        RequestMenuHoverRowRedraw(operations_.request_redraw_rect, hovered_rect);
+      }
     }
     const auto current_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
     if (previous_submenu_id != menu_state_.active_submenu_id ||
@@ -403,16 +426,18 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     return true;
   }
 
-  if (menu_state_.active_menu_item_index >= 0) {
+  if (menu_state_.hovered_popup_row_index >= 0) {
     if (const auto popup_rect =
             operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
         popup_rect.has_value()) {
-      const auto visible_items =
-          operations_.compute_visible_popup_menu_items(menu_state_.active_menu_id, *popup_rect);
-      RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
-                                PopupItemRectForIndex(visible_items, menu_state_.active_menu_item_index));
+      RequestMenuHoverRowRedraw(
+          operations_.request_redraw_rect,
+          operations_.popup_row_rect_by_index(
+              menu_state_.active_menu_id, *popup_rect,
+              static_cast<std::size_t>(menu_state_.hovered_popup_row_index)));
     }
     menu_state_.active_menu_item_index = -1;
+    menu_state_.hovered_popup_row_index = -1;
   }
   return true;
 }
@@ -549,6 +574,19 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
           .compute_visible_popup_menu_items =
               [this](MenuId id, const SDL_FRect& rect) {
                 return ComputeVisiblePopupMenuItems(id, rect);
+              },
+          .hit_test_popup_row =
+              [this](MenuId id, const SDL_FRect& popup_rect, float x, float y) {
+                return WorkspaceShell::HitTestPopupRow(MenuItems(id), popup_rect, x, y);
+              },
+          .popup_row_rect_by_index =
+              [this](MenuId id, const SDL_FRect& popup_rect, std::size_t index) {
+                return WorkspaceShell::PopupRowRectByIndex(MenuItems(id), popup_rect, index);
+              },
+          .is_menu_item_enabled_at =
+              [this](MenuId id, std::size_t index) {
+                const auto items = MenuItems(id);
+                return index < items.size() && IsMenuItemEnabled(items[index]);
               },
           .execute_menu_item =
               [this](MenuId id, std::size_t item_index) {

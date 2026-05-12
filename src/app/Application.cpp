@@ -414,7 +414,10 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
         SDL_SetRenderClipRect(renderer_, &clip_rect);
         util::PerformanceTrace::Scope partial_scope(
             "Application::WorkspaceRender(partial-clip)");
-        workspace_shell_.RenderClip(frame_token, renderer_, width, height);
+        const SDL_FRect dirty_rect_hint{
+            static_cast<float>(clip_rect.x), static_cast<float>(clip_rect.y),
+            static_cast<float>(clip_rect.w), static_cast<float>(clip_rect.h)};
+        workspace_shell_.RenderClip(frame_token, renderer_, width, height, dirty_rect_hint);
         rendered_partial = true;
         ++rendered_clip_count;
       }

@@ -33,6 +33,15 @@ class ChromeMouseCoordinator {
     std::function<std::optional<SDL_FRect>(const SDL_FRect&)> active_submenu_rect;
     std::function<std::vector<WorkspaceShell::VisiblePopupMenuItem>(MenuId, const SDL_FRect&)>
         compute_visible_popup_menu_items;
+    // Geometry-only hit/rect lookups for mouse motion. The full
+    // `compute_visible_popup_menu_items` path probes IsMenuItemEnabled and
+    // IsMenuItemChecked per item, which dominated per-motion handler time.
+    std::function<std::optional<WorkspaceShell::PopupRowGeometry>(
+        MenuId, const SDL_FRect&, float, float)>
+        hit_test_popup_row;
+    std::function<std::optional<SDL_FRect>(MenuId, const SDL_FRect&, std::size_t)>
+        popup_row_rect_by_index;
+    std::function<bool(MenuId, std::size_t)> is_menu_item_enabled_at;
     std::function<bool(MenuId, std::size_t)> execute_menu_item;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&, MenuId)> compute_popup_menu_rect;
     std::function<const MenuSpec*(MenuId)> find_menu_spec;
