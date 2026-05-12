@@ -6,7 +6,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <future>
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "project/SubprocessHelper.h"
@@ -131,23 +130,16 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
   if (const FormatterSpec* formatter =
           filetype.empty() ? nullptr : formatter_registry_.FindFormatter(filetype);
       formatter != nullptr && !formatter->command.empty()) {
-    const std::filesystem::path formatter_cwd = context_.current_project_state.root;
-    const std::vector<std::string> formatter_command = formatter->command;
-    const std::string formatter_input = text;
-    auto formatter_promise = std::make_shared<std::promise<platform::SubprocessResult>>();
-    std::future<platform::SubprocessResult> formatter_future = formatter_promise->get_future();
-    project_background_executor_.Post(
-        [formatter_promise, formatter_cwd, formatter_command, formatter_input]() mutable {
-      platform::SubprocessResult subprocess_result =
-          project::RunSubprocess(formatter_command,
-                                 platform::SubprocessOptions{
-                                     .cwd = formatter_cwd,
-                                     .stdin_text = formatter_input,
-                                     .environment_overrides = {},
-                                 });
-      formatter_promise->set_value(std::move(subprocess_result));
-    });
-    platform::SubprocessResult result = formatter_future.get();
+    // Save is synchronous from the UI's perspective, so the formatter has to complete before
+    // we return. Running it inline avoids the misleading executor-post-then-wait pattern that
+    // implied background work but still blocked the calling thread.
+    platform::SubprocessResult result =
+        project::RunSubprocess(formatter->command,
+                               platform::SubprocessOptions{
+                                   .cwd = context_.current_project_state.root,
+                                   .stdin_text = text,
+                                   .environment_overrides = {},
+                               });
 
     if (!result.success()) {
       if (error_message != nullptr) {

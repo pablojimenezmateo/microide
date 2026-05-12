@@ -449,6 +449,8 @@ add_executable(microide_tests
   tests/RegexUtilTests.cpp
   tests/RuntimePathsTests.cpp
   tests/TaskExecutorTests.cpp
+  tests/ProjectBackgroundExecutorTests.cpp
+  tests/RenderViewModelBuilderTests.cpp
   tests/TerminalSessionTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp

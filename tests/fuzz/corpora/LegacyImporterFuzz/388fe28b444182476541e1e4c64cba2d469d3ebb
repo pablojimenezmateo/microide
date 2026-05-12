@@ -1,8 +1,0 @@
-version 5
-conv-begin c1
-msg-begin m0
-on 5
-
-msgversn 1
-msa-b5
-cgi

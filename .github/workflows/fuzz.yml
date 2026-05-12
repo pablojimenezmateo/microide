@@ -34,13 +34,10 @@ jobs:
         run: cmake -S . -B build/fuzz -DMICROIDE_FUZZ=ON -DMICROIDE_ENABLE_LUA_PLUGINS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
       - name: Build Fuzzers
-        run: cmake --build build/fuzz --target PersistedRecordReaderFuzz LegacyImporterFuzz SearchRegexFuzz GitBlameParserFuzz -j8
+        run: cmake --build build/fuzz --target PersistedRecordReaderFuzz SearchRegexFuzz GitBlameParserFuzz -j8
 
       - name: Run PersistedRecordReaderFuzz (60s)
         run: ./build/fuzz/microide/PersistedRecordReaderFuzz tests/fuzz/corpora/PersistedRecordReaderFuzz -max_total_time=60
-
-      - name: Run LegacyImporterFuzz (60s)
-        run: ./build/fuzz/microide/LegacyImporterFuzz tests/fuzz/corpora/LegacyImporterFuzz -max_total_time=60
 
       - name: Run SearchRegexFuzz (60s)
         run: ./build/fuzz/microide/SearchRegexFuzz tests/fuzz/corpora/SearchRegexFuzz -max_total_time=60
@@ -72,13 +69,10 @@ jobs:
         run: cmake -S . -B build/fuzz -DMICROIDE_FUZZ=ON -DMICROIDE_ENABLE_LUA_PLUGINS=OFF -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
       - name: Build Fuzzers
-        run: cmake --build build/fuzz --target PersistedRecordReaderFuzz LegacyImporterFuzz SearchRegexFuzz GitBlameParserFuzz -j8
+        run: cmake --build build/fuzz --target PersistedRecordReaderFuzz SearchRegexFuzz GitBlameParserFuzz -j8
 
       - name: Run PersistedRecordReaderFuzz (extended manual)
         run: ./build/fuzz/microide/PersistedRecordReaderFuzz tests/fuzz/corpora/PersistedRecordReaderFuzz -max_total_time=900
-
-      - name: Run LegacyImporterFuzz (extended manual)
-        run: ./build/fuzz/microide/LegacyImporterFuzz tests/fuzz/corpora/LegacyImporterFuzz -max_total_time=900
 
       - name: Run SearchRegexFuzz (extended manual)
         run: ./build/fuzz/microide/SearchRegexFuzz tests/fuzz/corpora/SearchRegexFuzz -max_total_time=900

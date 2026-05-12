@@ -12,7 +12,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
                                 int width,
                                 int height) {
   if (renderer == nullptr || width <= 0 || height <= 0 || prepared_frame_layout_ == std::nullopt ||
-      frame_token.frame_id_ == 0 || frame_token.frame_id_ != prepared_frame_id_) {
+      frame_token.frame_id() == 0 || frame_token.frame_id() != prepared_frame_id_) {
     return;
   }
 

@@ -1791,31 +1791,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics() {
              .c_str());
 }
 
-void TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion() {
-  Expect(true, "repo LLM plugin / chat / inline-completion path is retired");
-}
-
-
-void TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge() {
-  Expect(true, "repo OpenAI provider plugin / native bridge is retired");
-}
-
-
-void TestWorkspaceShellRepoOpenAiPluginApprovesNativeToolCalls() {
-  Expect(true, "repo OpenAI provider tool-call approval path is retired");
-}
-
-
-void TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge() {
-  Expect(true, "repo Anthropic provider plugin / native bridge is retired");
-}
-
-
-void TestWorkspaceShellRepoDeepSeekPluginUsesOpenAiCompatibilityRuntime() {
-  Expect(true, "repo DeepSeek provider plugin / OpenAI-compat runtime is retired");
-}
-
-
 void TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -2197,16 +2172,6 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave);
   AddTest(tests, "WorkspaceShell/RepoEslintPluginPublishesTypescriptConfigDiagnostics",
           TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics);
-  AddTest(tests, "WorkspaceShell/RepoLlmPluginDrivesChatAndInlineCompletion",
-          TestWorkspaceShellRepoLlmPluginDrivesChatAndInlineCompletion);
-  AddTest(tests, "WorkspaceShell/RepoOpenAiPluginUsesNativeBridge",
-          TestWorkspaceShellRepoOpenAiPluginUsesNativeBridge);
-  AddTest(tests, "WorkspaceShell/RepoOpenAiPluginApprovesNativeToolCalls",
-          TestWorkspaceShellRepoOpenAiPluginApprovesNativeToolCalls);
-  AddTest(tests, "WorkspaceShell/RepoAnthropicPluginUsesNativeBridge",
-          TestWorkspaceShellRepoAnthropicPluginUsesNativeBridge);
-  AddTest(tests, "WorkspaceShell/RepoDeepSeekPluginUsesOpenAiCompatibilityRuntime",
-          TestWorkspaceShellRepoDeepSeekPluginUsesOpenAiCompatibilityRuntime);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarOpensSelectedDiagnostic",
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",

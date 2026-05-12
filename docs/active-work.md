@@ -81,7 +81,13 @@ periodic schedules. `perf-harness` and `fuzz` route extended coverage to manual 
 nightly cron runs. Current remaining blocker is repository billing for GitHub-hosted runners,
 which prevents workflow jobs from starting until account payments/spending limits are restored.
 
-Update (2026-05-10): **Editor essentials** (`editor-essential-capabilities`) — shipped in the tree:
+Update (2026-05-12): **Editor essentials** (`editor-essential-capabilities`) — **shipped and
+archived** at
+`openspec/changes/archive/2026-05-12-editor-essential-capabilities/`. Upstream specs synced as
+`openspec/specs/editor-block-structure-affordances/`,
+`openspec/specs/editor-code-shaping-actions/`,
+`openspec/specs/editor-language-pair-and-indent/`, and the extension to
+`openspec/specs/editor-multicursor-and-wrap/`. Shipped surface:
 `WorkspaceLanguageContract` + plugin `ctx.brackets` / `ctx.comments` / `ctx.indents` /
 `ctx.snippets`, fold-aware `TextViewport` layout and gutter marks, sticky-scroll band, indent
 guides, render-whitespace overlays, bracket emphasis (string/comment-aware scan) and jump,
@@ -89,13 +95,12 @@ contract-driven auto-close / surround / smart indent, shaping actions and viewpo
 occurrence highlights, snippet engine + Insert Snippet overlay, symbol outline sidebar (LSP +
 regex fallback), save normalization, and auto-detect indent on open (see
 `docs/editor-essentials.md`). Committed perf baselines for the new scenarios live under
-`tests/perf/baselines/editor_*.json`. Remaining **partial** items per
-`openspec/changes/editor-essential-capabilities/tasks.md`: multi-caret per-caret-selection
-surround (3.3 / 3.6 follow-up — blocked on extending the multi-caret model with per-caret
-selection ranges), dedicated viewport-integrated `tests/EditorFoldingTests.cpp` matrix and
-multi-caret fold-paging coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel that
-maps cleanly (16.3 — environmental; ASAN/UBSAN focused runs clean). Pending sign-off step
-16.6 will be flipped to "shipped" once the change archives.
+`tests/perf/baselines/editor_*.json`. Remaining **partial** items in the archived
+`tasks.md`: multi-caret per-caret-selection surround (3.3 / 3.6 follow-up — blocked on
+extending the multi-caret model with per-caret selection ranges), dedicated
+viewport-integrated `tests/EditorFoldingTests.cpp` matrix and multi-caret fold-paging
+coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel that maps cleanly (16.3 —
+environmental; ASAN/UBSAN focused runs clean).
 
 ### 1. Plugin Platform Expansion
 
@@ -456,16 +461,14 @@ Open work:
     merge views, and generated content
   - `workspace/WorkspaceReviewComments.*` manages inline code review comments and discussion
     threads with state tracking
-  - `workspace/WorkspaceAuthProvider.*` manages authentication providers and active sessions
-  - `workspace/WorkspaceSecretStorage.*` now persists host-managed secrets in the config
-    directory; it is still not backed by an OS credential manager
-  - `PluginHost` gains four new Lua tables: `ctx.scm` (add), `ctx.annotations` (add),
-    `ctx.auth` (add); virtual documents and review comments are host-managed
-  - `WorkspaceShell` rebuilds SCM, annotation, and auth registries from plugin contributions on
+  - the authentication-provider and host-managed secret-storage surfaces (`WorkspaceAuthProvider.*`,
+    `WorkspaceSecretStorage.*`) have been retired alongside the Phase 5 AI scope
+  - `PluginHost` gains two new Lua tables: `ctx.scm` (add) and `ctx.annotations` (add); virtual
+    documents and review comments are host-managed
+  - `WorkspaceShell` rebuilds SCM and annotation registries from plugin contributions on
     reload, and virtual documents now open and refresh in the live tab model
-  - the Git sidebar now shows SCM and auth summary lines, review comments render as gutter markers
-    in editor and virtual-document views, and auth login, refresh, or logout now flow through
-    built-in commands plus host-owned output channels
+  - the Git sidebar now shows SCM summary lines and review comments render as gutter markers
+    in editor and virtual-document views
   - direct coverage now exists in `tests/WorkspaceShellPluginTests.cpp` and
     `tests/Phase4Tests.cpp`
 
@@ -475,8 +478,6 @@ Open work:
   control design is ready
 - extend review UX from gutter markers to richer thread panels, compose, edit, and resolve only
   after location mapping and persistence rules are stable
-- add an OS credential backend for `WorkspaceSecretStorage` when the deployment targets and secure
-  storage contract are ready
 - validate GitLens-like and GitHub-review-like workflows against the current provider seams before
   broadening them
 

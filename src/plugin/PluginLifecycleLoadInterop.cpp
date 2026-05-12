@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "plugin/LuaErrorMessage.h"
 #include "plugin/LuaRuntime.h"
 
 namespace microide::plugin::lifecycle_load_interop {
@@ -19,10 +20,7 @@ bool IsValidIdentifier(std::string_view value) {
   });
 }
 
-std::string LuaErrorString(lua_State* state) {
-  const char* message = lua_tostring(state, -1);
-  return message != nullptr ? std::string(message) : std::string("unknown Lua error");
-}
+using microide::plugin::LuaErrorString;
 
 void ConfigurePackage(lua_State* state,
                       const std::filesystem::path& plugin_root,

@@ -12,6 +12,8 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 #include <lua.hpp>
+
+#include "plugin/LuaErrorMessage.h"
 #endif
 
 namespace microide::editor::runtime_syntax {
@@ -20,10 +22,7 @@ namespace {
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
-std::string LuaErrorString(lua_State* state) {
-  const char* message = lua_tostring(state, -1);
-  return message != nullptr ? std::string(message) : std::string("unknown Lua error");
-}
+using microide::plugin::LuaErrorString;
 
 bool ReadStringArrayField(lua_State* state,
                           int table_index,

@@ -284,6 +284,46 @@ void AppendCodeMaskRegexViolations(RuleResult& result,
   }
 }
 
+// Build a per-byte mask flagging positions inside `#ifdef MICROIDE_TESTING` blocks.
+// Test-only backdoor access (e.g. `friend struct TestAccess`) is an accepted exception
+// to the workspace no-friend policy; everything outside those guards is still policed.
+std::vector<bool> BuildTestingGuardMask(const std::string& text) {
+  std::vector<bool> mask(text.size(), false);
+  std::size_t depth = 0;
+  std::size_t cursor = 0;
+  while (cursor < text.size()) {
+    const std::size_t line_end = text.find('\n', cursor);
+    const std::size_t end = (line_end == std::string::npos) ? text.size() : line_end;
+    std::size_t scan = cursor;
+    while (scan < end && std::isspace(static_cast<unsigned char>(text[scan]))) {
+      ++scan;
+    }
+    if (scan < end && text[scan] == '#') {
+      ++scan;
+      while (scan < end && std::isspace(static_cast<unsigned char>(text[scan]))) {
+        ++scan;
+      }
+      const std::string_view line(text.data() + scan, end - scan);
+      if (line.starts_with("ifdef MICROIDE_TESTING") ||
+          line.starts_with("if defined(MICROIDE_TESTING)")) {
+        ++depth;
+      } else if (depth > 0 && line.starts_with("endif")) {
+        --depth;
+      }
+    }
+    if (depth > 0) {
+      for (std::size_t i = cursor; i < end; ++i) {
+        mask[i] = true;
+      }
+    }
+    if (line_end == std::string::npos) {
+      break;
+    }
+    cursor = line_end + 1;
+  }
+  return mask;
+}
+
 RuleResult CheckWorkspaceFriends(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "workspace friend declarations";
@@ -291,12 +331,26 @@ RuleResult CheckWorkspaceFriends(const std::filesystem::path& repo_root) {
   const std::regex pattern(R"(\bfriend\s+(class|struct)\b)");
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
-    if (!entry.is_regular_file() || (entry.path().extension() != ".h" && entry.path().extension() != ".cpp")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const auto ext = entry.path().extension();
+    if (ext != ".h" && ext != ".cpp" && ext != ".inc") {
       continue;
     }
     const std::string text = ReadText(entry.path());
-    AppendViolations(result, entry.path(), text, pattern,
-                     "workspace code should not declare friend class or friend struct");
+    const auto testing_mask = BuildTestingGuardMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+      const std::size_t pos = static_cast<std::size_t>(it->position());
+      if (pos < testing_mask.size() && testing_mask[pos]) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, pos),
+          .message = "workspace code should not declare friend class or friend struct",
+      });
+    }
   }
   return result;
 }
@@ -907,6 +961,29 @@ RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_roo
   return result;
 }
 
+// Catches the anti-pattern where workspace code posts work to the background executor
+// and then immediately blocks on the resulting future — defeating the offload while
+// looking asynchronous.
+RuleResult CheckNoExecutorPostThenFutureGetInWorkspace(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "workspace executor-post-then-future-get anti-pattern";
+  result.hard_fail = true;
+  const std::regex pattern(
+      R"(project_background_executor_\s*\.\s*Post\s*\([\s\S]{0,2000}?\.\s*get\s*\(\s*\))");
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, pattern,
+        "do not Post() to ProjectBackgroundExecutor and immediately wait on the future "
+        "from the caller — either run inline or restructure to async completion");
+  }
+  return result;
+}
+
 RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "synchronous subprocess call in workspace";
@@ -943,6 +1020,45 @@ RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& r
   AppendViolations(
       result, sidebar_path, text, std::regex(R"("replace>\s*"\s*\+)"),
       "render code must not concatenate replace fallback text in render path");
+  return result;
+}
+
+RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "render translation units avoid std::to_string / std::format / fmt::format";
+  result.hard_fail = true;
+
+  std::vector<std::filesystem::path> render_files;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (name.starts_with("WorkspaceShellRender")) {
+      render_files.push_back(entry.path());
+    }
+  }
+  render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp");
+  render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverTargets.cpp");
+
+  const std::regex to_string_pattern(R"(\bstd::to_string\s*\()");
+  const std::regex std_format_pattern(R"(\bstd::format\s*\()");
+  const std::regex fmt_format_pattern(R"(\bfmt::format\s*\()");
+  for (const auto& path : render_files) {
+    if (!std::filesystem::exists(path)) {
+      continue;
+    }
+    const std::string text = ReadText(path);
+    AppendCodeMaskRegexViolations(
+        result, path, text, to_string_pattern,
+        "render TU must not call std::to_string; compute strings in RenderViewModelBuilder");
+    AppendCodeMaskRegexViolations(
+        result, path, text, std_format_pattern,
+        "render TU must not call std::format; compute strings in RenderViewModelBuilder");
+    AppendCodeMaskRegexViolations(
+        result, path, text, fmt_format_pattern,
+        "render TU must not call fmt::format; compute strings in RenderViewModelBuilder");
+  }
   return result;
 }
 
@@ -1265,7 +1381,9 @@ void TestArchitectureInvariants() {
   results.push_back(CheckLspDidOpenIsNonBlocking(repo_root));
   results.push_back(CheckNoLegacyPersistenceSymbols(repo_root));
   results.push_back(CheckNoSynchronousSubprocessInWorkspace(repo_root));
+  results.push_back(CheckNoExecutorPostThenFutureGetInWorkspace(repo_root));
   results.push_back(CheckRenderTuDoesNotMaterializeStrings(repo_root));
+  results.push_back(CheckRenderTuDoesNotCallToStringOrFormat(repo_root));
   results.push_back(CheckTextViewportNoFullDocCopy(repo_root));
   results.push_back(CheckEssentialEditorCppModulesDoNotTouchLuaState(repo_root));
   results.push_back(CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(repo_root));

@@ -5,6 +5,7 @@
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace microide::tests {
@@ -100,6 +101,24 @@ void TestStatusBarCompactDropOrder() {
          "compact status bar should preserve project and branch order");
   Expect(!vm.right_segments.empty() && vm.right_segments.back().text != "compact",
          "compact status bar should drop the layout-mode badge before essential right segments");
+  const auto find_segment = [&](StatusBarSegmentId id,
+                                  const std::vector<microide::workspace::StatusBarSegmentViewModel>&
+                                      segments) {
+    return std::any_of(segments.begin(), segments.end(),
+                       [&](const auto& seg) { return seg.id == id; });
+  };
+  Expect(!find_segment(StatusBarSegmentId::Encoding, vm.left_segments),
+         "compact mode should drop the Encoding segment");
+  Expect(!find_segment(StatusBarSegmentId::Language, vm.left_segments),
+         "compact mode should drop the Language segment");
+  Expect(!find_segment(StatusBarSegmentId::Indent, vm.left_segments),
+         "compact mode should drop the Indent segment");
+  Expect(find_segment(StatusBarSegmentId::Problems, vm.right_segments),
+         "compact mode must keep Problems visible per spec");
+  Expect(find_segment(StatusBarSegmentId::Lsp, vm.right_segments),
+         "compact mode must keep LSP visible per spec");
+  Expect(find_segment(StatusBarSegmentId::LineColumn, vm.right_segments),
+         "compact mode must keep LineColumn visible per spec");
 }
 
 }  // namespace

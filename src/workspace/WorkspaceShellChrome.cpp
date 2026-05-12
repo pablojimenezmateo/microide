@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "editor/DiagnosticsStore.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "project/GitRepository.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
@@ -613,6 +615,7 @@ void WorkspaceShell::RefreshStatusBar() {
     StatusBarSegmentValue line_col;
     line_col.text = "Ln " + std::to_string(viewport->cursor_line() + 1) + ", Col " +
                     std::to_string(viewport->cursor_column() + 1);
+    line_col.tooltip = "Go to line/column";
     line_col.visible = true;
     line_col.clickable = true;
     status_bar_service_.SetSegment(StatusBarSegmentId::LineColumn, std::move(line_col));
@@ -620,13 +623,80 @@ void WorkspaceShell::RefreshStatusBar() {
     StatusBarSegmentValue indent;
     indent.text = (viewport->soft_tabs() ? "Spaces: " : "Tabs: ") +
                   std::to_string(viewport->tab_size());
+    indent.tooltip = "Change indent settings";
     indent.visible = true;
     indent.clickable = true;
     status_bar_service_.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
+
+    StatusBarSegmentValue language;
+    const std::string filetype =
+        editor::runtime_syntax::DetectFiletype(viewport->path(), viewport->lines());
+    if (!filetype.empty()) {
+      language.text = filetype;
+      language.tooltip = "Language: " + filetype;
+      language.visible = true;
+      language.clickable = true;
+    }
+    status_bar_service_.SetSegment(StatusBarSegmentId::Language, std::move(language));
+
+    StatusBarSegmentValue encoding;
+    const std::string encoding_label = viewport->EncodingLabel();
+    const std::string line_ending_label = viewport->LineEndingLabel();
+    if (!encoding_label.empty() || !line_ending_label.empty()) {
+      if (!encoding_label.empty() && !line_ending_label.empty()) {
+        encoding.text = encoding_label + " · " + line_ending_label;
+      } else if (!encoding_label.empty()) {
+        encoding.text = encoding_label;
+      } else {
+        encoding.text = line_ending_label;
+      }
+      encoding.tooltip = "File encoding and line endings";
+      encoding.visible = true;
+    }
+    status_bar_service_.SetSegment(StatusBarSegmentId::Encoding, std::move(encoding));
   } else {
     status_bar_service_.SetSegment(StatusBarSegmentId::LineColumn, StatusBarSegmentValue{});
     status_bar_service_.SetSegment(StatusBarSegmentId::Indent, StatusBarSegmentValue{});
+    status_bar_service_.SetSegment(StatusBarSegmentId::Language, StatusBarSegmentValue{});
+    status_bar_service_.SetSegment(StatusBarSegmentId::Encoding, StatusBarSegmentValue{});
   }
+
+  StatusBarSegmentValue problems;
+  {
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    for (const editor::PublishedDiagnostic& diagnostic :
+         context_.current_project_state.diagnostics_store.SnapshotAll()) {
+      switch (diagnostic.severity) {
+        case editor::DiagnosticSeverity::Error:
+          ++errors;
+          break;
+        case editor::DiagnosticSeverity::Warning:
+          ++warnings;
+          break;
+        default:
+          break;
+      }
+    }
+    if (errors > 0 || warnings > 0) {
+      problems.text = std::to_string(errors) + " errors, " + std::to_string(warnings) + " warnings";
+      problems.tooltip = "Open Problems";
+      problems.visible = true;
+      problems.clickable = true;
+    }
+  }
+  status_bar_service_.SetSegment(StatusBarSegmentId::Problems, std::move(problems));
+
+  StatusBarSegmentValue lsp;
+  if (ActiveEditorViewport() != nullptr) {
+    std::string lsp_text = ActiveLspStatusText(/*ensure_started=*/false);
+    if (!lsp_text.empty()) {
+      lsp.text = std::move(lsp_text);
+      lsp.tooltip = ActiveLspStatusTooltip(/*ensure_started=*/false);
+      lsp.visible = true;
+    }
+  }
+  status_bar_service_.SetSegment(StatusBarSegmentId::Lsp, std::move(lsp));
 }
 
 }  // namespace microide::workspace

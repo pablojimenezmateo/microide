@@ -65,13 +65,15 @@ the combined decorations through the shared decorated-grid primitive.
 
 After the text pass for that row, the gutter paints host-owned chrome (diagnostic
 severity marker, **fold affordances** from `FoldGutterMark` / folding model state,
-line numbers, secondary carets, primary caret). **Sticky scroll** has no band in
-the renderer yet (settings/toggle only).
+line numbers, secondary carets, primary caret). **Sticky scroll** renders a
+host-owned band above the editor when fold state and the `editor.fold.sticky_scroll.enabled`
+setting agree; `RenderViewModelBuilder::BuildEditorSurface` populates
+`EditorViewModel::sticky_lines` and the renderer reserves height accordingly.
 
-**Snippet overlay:** no snippet placeholder layer exists in the editor render path
-yet (`EditorViewModel` does not carry snippet ranges); when a snippet session is
-added, it should follow the same decorated-row discipline and sit relative to
-selection/caret per the editor-essential-capabilities spec once implemented.
+**Snippet overlay:** the in-tree `editor::SnippetEngine` plus the `Insert Snippet…`
+overlay (`ActionId::InsertSnippet`, `ShowInsertSnippetOverlay`) drive snippet
+sessions. New placeholder visuals should follow the decorated-row discipline and
+sit relative to selection/caret per the editor-essential-capabilities spec.
 
 ## Interaction Rules
 

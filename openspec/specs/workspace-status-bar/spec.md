@@ -1,7 +1,14 @@
 # workspace-status-bar Specification
 
 ## Purpose
-TBD - created by archiving change responsive-layout-and-options-polish. Update Purpose after archive.
+
+The status bar is the workspace's persistent bottom-edge ribbon. It gives the user
+a glanceable summary of the active project, editor, and language-server state
+through a closed, host-owned set of segments (project + branch + cleanliness,
+language, indent, encoding, line/column, problems, LSP state, layout mode). The
+contract keeps segments host-owned and view-model-driven so plugins cannot
+fragment the surface, and so the render TU stays allocation-free in the steady
+state.
 ## Requirements
 ### Requirement: Persistent Status Bar Along The Window Bottom Edge
 

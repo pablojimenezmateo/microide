@@ -1,4 +1,5 @@
 /build/
+/build-*/
 /.microide-config
 /.microide-session
 /.codex

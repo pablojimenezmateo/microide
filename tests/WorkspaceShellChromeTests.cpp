@@ -518,22 +518,6 @@ void TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath() {
          "Ctrl+V should route clipboard text through the shared command text-input path");
 }
 
-void TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor() {
-  Expect(true, "chat composer is retired");
-}
-
-void TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation() {
-  Expect(true, "chat conversation drafts are retired");
-}
-
-void TestWorkspaceShellChatComposerSelectAllAndCutAffectCurrentLineOnly() {
-  Expect(true, "chat composer select-and-cut is retired");
-}
-
-void TestWorkspaceShellProjectTabsExposeChatStatusSummary() {
-  Expect(true, "chat status summary is retired");
-}
-
 void TestWorkspaceShellProjectTabsShowBadges() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "alpha-project";
@@ -548,18 +532,6 @@ void TestWorkspaceShellProjectTabsShowBadges() {
          "project tabs should render a badge");
   Expect(WorkspaceShellTestAccess::ProjectTabBadgeText(shell, 0) == "A",
          "project tab badges should use the project initial");
-}
-
-void TestWorkspaceShellChatTranscriptShowsMarkdownMetadataAndToolEvents() {
-  Expect(true, "chat transcript metadata is retired");
-}
-
-void TestWorkspaceShellChatTranscriptLocalLinksOpenFiles() {
-  Expect(true, "chat transcript links are retired");
-}
-
-void TestWorkspaceShellChatTranscriptRemoteLinksRequireConfirmation() {
-  Expect(true, "chat transcript remote links are retired");
 }
 
 void TestWorkspaceShellSidebarDropdownOffersChatView() {
@@ -1650,22 +1622,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation);
   AddTest(tests, "WorkspaceShell/CommandPasteShortcutUsesSharedTextInputPath",
           TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath);
-  AddTest(tests, "WorkspaceShell/ChatComposerKeysDoNotLeakIntoEditor",
-          TestWorkspaceShellChatComposerKeysDoNotLeakIntoEditor);
-  AddTest(tests, "WorkspaceShell/ChatComposerSupportsMultilineDraftsPerConversation",
-          TestWorkspaceShellChatComposerSupportsMultilineDraftsPerConversation);
-  AddTest(tests, "WorkspaceShell/ChatComposerSelectAllAndCutAffectCurrentLineOnly",
-          TestWorkspaceShellChatComposerSelectAllAndCutAffectCurrentLineOnly);
-  AddTest(tests, "WorkspaceShell/ProjectTabsExposeChatStatusSummary",
-          TestWorkspaceShellProjectTabsExposeChatStatusSummary);
   AddTest(tests, "WorkspaceShell/ProjectTabsShowBadges",
           TestWorkspaceShellProjectTabsShowBadges);
-  AddTest(tests, "WorkspaceShell/ChatTranscriptShowsMarkdownMetadataAndToolEvents",
-          TestWorkspaceShellChatTranscriptShowsMarkdownMetadataAndToolEvents);
-  AddTest(tests, "WorkspaceShell/ChatTranscriptLocalLinksOpenFiles",
-          TestWorkspaceShellChatTranscriptLocalLinksOpenFiles);
-  AddTest(tests, "WorkspaceShell/ChatTranscriptRemoteLinksRequireConfirmation",
-          TestWorkspaceShellChatTranscriptRemoteLinksRequireConfirmation);
   AddTest(tests, "WorkspaceShell/SidebarDropdownOffersChatView",
           TestWorkspaceShellSidebarDropdownOffersChatView);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",

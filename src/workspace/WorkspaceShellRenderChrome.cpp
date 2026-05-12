@@ -1,8 +1,10 @@
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cmath>
-#include <string>
+#include <string_view>
 #include <vector>
 
 #include "render/SurfacePrimitives.h"
@@ -44,7 +46,11 @@ void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
   }
 
   if (hidden_count > 0) {
-    const std::string count_text = std::to_string(hidden_count);
+    std::array<char, 24> count_buffer{};
+    const auto conv = std::to_chars(count_buffer.data(),
+                                    count_buffer.data() + count_buffer.size(), hidden_count);
+    const std::string_view count_text(count_buffer.data(),
+                                      static_cast<std::size_t>(conv.ptr - count_buffer.data()));
     const float count_x = rect.x + rect.w * 0.55f;
     const SDL_FRect count_rect{count_x, rect.y,
                                std::max(0.0f, rect.x + rect.w - count_x - 2.0f), rect.h};

@@ -65,13 +65,13 @@
 
    public:
     FrameToken() = default;
+    FrameToken(std::uint64_t frame_id, VisibleLineRange visible_line_range)
+        : frame_id_(frame_id), visible_line_range_(visible_line_range) {}
     bool valid() const { return frame_id_ != 0; }
+    std::uint64_t frame_id() const { return frame_id_; }
     const VisibleLineRange& visible_line_range() const { return visible_line_range_; }
 
    private:
-    friend class WorkspaceShell;
-    explicit FrameToken(std::uint64_t frame_id, VisibleLineRange visible_line_range)
-        : frame_id_(frame_id), visible_line_range_(visible_line_range) {}
     std::uint64_t frame_id_ = 0;
     VisibleLineRange visible_line_range_{};
   };

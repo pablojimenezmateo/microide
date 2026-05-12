@@ -198,15 +198,15 @@ Default **Edit** menu shortcuts (editor context):
 markers, not the per-language `LanguageContract` line/block fields. Contract
 comment metadata is still used where insertion and pair logic consult it.
 
-## Snippets (partial)
+## Snippets
 
 - **Settings:** `editor.snippets.enabled` (default on).
 - **Plugins:** `ctx.snippets.add{ … }` merges `prefix` / `body` / `label` / ids into
   the contract (see plugins guideline).
-- **Status:** Contributions are stored in the resolved `LanguageContract`, but
-  there is **no** `SnippetEngine`, placeholder session, completion routing, or
-  “Insert Snippet…” overlay in-tree yet (`tasks.md` task 9). The settings registry
-  description mentions future UI; treat that as aspirational until the snippet-engine tasks land.
+- **Engine:** `editor::SnippetEngine` (`src/editor/SnippetEngine.{h,cpp}`) drives
+  placeholder sessions; the `Insert Snippet…` overlay routes through
+  `ActionId::InsertSnippet` / `ShowInsertSnippetOverlay`, and completion routing
+  delivers contract snippets alongside language items.
 
 ## Save-time normalization
 

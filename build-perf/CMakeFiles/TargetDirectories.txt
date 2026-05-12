@@ -1,9 +1,0 @@
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/microide_runtime_syntax_generated.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/microide.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/microide_tests.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/microide_perf.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/microide_diff_bench.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/microide_search_bench.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/test.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/edit_cache.dir
-/home/gef/Documents/projects/microide/build-perf/CMakeFiles/rebuild_cache.dir

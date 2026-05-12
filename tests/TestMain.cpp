@@ -30,6 +30,8 @@ void RegisterRuntimePathsTests(std::vector<TestCase>& tests);
 void RegisterStringUtilTests(std::vector<TestCase>& tests);
 void RegisterSubprocessTests(std::vector<TestCase>& tests);
 void RegisterTaskExecutorTests(std::vector<TestCase>& tests);
+void RegisterProjectBackgroundExecutorTests(std::vector<TestCase>& tests);
+void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests);
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
 void RegisterTextRendererTests(std::vector<TestCase>& tests);
 void RegisterTextViewportTests(std::vector<TestCase>& tests);
@@ -223,6 +225,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterStringUtilTests(tests);
   microide::tests::RegisterSubprocessTests(tests);
   microide::tests::RegisterTaskExecutorTests(tests);
+  microide::tests::RegisterProjectBackgroundExecutorTests(tests);
+  microide::tests::RegisterRenderViewModelBuilderTests(tests);
   microide::tests::RegisterTextRendererTests(tests);
   microide::tests::RegisterTextViewportTests(tests);
   microide::tests::RegisterWindowPresentationTests(tests);

@@ -612,25 +612,39 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
     if (!seg.visible || seg.text.empty()) {
       return;
     }
-    target.push_back(StatusBarSegmentViewModel{id, seg.text, seg.clickable});
+    target.push_back(StatusBarSegmentViewModel{id, seg.text, seg.tooltip, seg.clickable});
   };
+  // Spec ordering (workspace-status-bar §"Segment list at first slice"):
+  //   left:  project, branch, language, indent, encoding
+  //   right: line/column, problems, lsp, layout-mode
   add_segment(StatusBarSegmentId::Project, vm.left_segments);
   add_segment(StatusBarSegmentId::Branch, vm.left_segments);
   add_segment(StatusBarSegmentId::Language, vm.left_segments);
   add_segment(StatusBarSegmentId::Indent, vm.left_segments);
   add_segment(StatusBarSegmentId::Encoding, vm.left_segments);
   add_segment(StatusBarSegmentId::LineColumn, vm.right_segments);
+  add_segment(StatusBarSegmentId::Problems, vm.right_segments);
   add_segment(StatusBarSegmentId::Lsp, vm.right_segments);
   add_segment(StatusBarSegmentId::LayoutMode, vm.right_segments);
 
   if (vm.layout_mode == LayoutMode::Compact) {
-    if (!vm.right_segments.empty() &&
-        vm.right_segments.back().id == StatusBarSegmentId::LayoutMode) {
-      vm.right_segments.pop_back();  // drop layout-mode badge
-    }
-    while (vm.left_segments.size() > 2) {  // keep project + branch
-      vm.left_segments.pop_back();
-    }
+    // Compact-mode drop order (workspace-status-bar §"Compact-mode segment drop order"):
+    //   layout-mode badge, encoding, language, indent display
+    // Keep: project+branch+cleanliness, line/column, problems count, LSP state
+    const auto drop_segment = [&](StatusBarSegmentId id,
+                                    std::vector<StatusBarSegmentViewModel>& segments) {
+      const auto it = std::find_if(segments.begin(), segments.end(),
+                                    [&](const StatusBarSegmentViewModel& seg) {
+                                      return seg.id == id;
+                                    });
+      if (it != segments.end()) {
+        segments.erase(it);
+      }
+    };
+    drop_segment(StatusBarSegmentId::LayoutMode, vm.right_segments);
+    drop_segment(StatusBarSegmentId::Encoding, vm.left_segments);
+    drop_segment(StatusBarSegmentId::Language, vm.left_segments);
+    drop_segment(StatusBarSegmentId::Indent, vm.left_segments);
   }
   return vm;
 }

@@ -96,6 +96,7 @@ struct HoverTargetsViewModel {
 struct StatusBarSegmentViewModel {
   StatusBarSegmentId id = StatusBarSegmentId::Project;
   std::string_view text;
+  std::string_view tooltip;
   bool clickable = false;
 };
 
