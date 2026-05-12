@@ -2,6 +2,7 @@
 
 #include "editor/IndentDetect.h"
 #include "editor/TextViewport.h"
+#include "WorkspaceShellEventHelpers.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <fstream>
@@ -180,6 +181,47 @@ void RunEditorToggleCommentLargeSelection(ScenarioContext& context) {
   });
 }
 
+void RunEditorMouseSelectionDrag(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!std::filesystem::exists(cpp_50k)) {
+    std::cerr << "editor_mouse_selection_drag: missing fixture " << cpp_50k << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  if (vp.lines().size() <= 10020) {
+    throw std::runtime_error("editor_mouse_selection_drag: file too short");
+  }
+  vp.MoveCursorTo(10000, 0, false);
+  context.PumpFrames(2);
+
+  const auto metrics = workspace::WorkspaceShell::TestAccess::ActiveEditorRenderMetrics(context.Shell());
+  const SDL_FRect pane = workspace::WorkspaceShell::TestAccess::ActiveEditorPaneRect(context.Shell());
+  const float char_width = workspace::WorkspaceShell::TestAccess::TextCharWidth(context.Shell());
+  const float y = metrics.first_line_y + metrics.line_height * 4.0f + metrics.line_height * 0.5f;
+  const float start_x = metrics.text_x + char_width * 4.0f;
+  const float end_x = std::min(metrics.text_x + char_width * 84.0f, pane.x + pane.w - 20.0f);
+  if (!(end_x > start_x) || !SendMouseDown(context.Shell(), start_x, y, SDL_BUTTON_LEFT)) {
+    throw std::runtime_error("editor_mouse_selection_drag: failed to start drag selection");
+  }
+
+  context.Measure("mouse_selection_drag.160_moves", [&] {
+    for (int i = 0; i < 160; ++i) {
+      const float t = static_cast<float>(i + 1) / 160.0f;
+      const float x = start_x + (end_x - start_x) * t;
+      if (!SendMouseMotion(context.Shell(), x, y, SDL_BUTTON_LMASK)) {
+        throw std::runtime_error("editor_mouse_selection_drag: motion was not handled");
+      }
+    }
+  });
+  if (!SendMouseUp(context.Shell(), end_x, y, SDL_BUTTON_LEFT)) {
+    throw std::runtime_error("editor_mouse_selection_drag: failed to end drag selection");
+  }
+  context.PumpFrames(1);
+}
+
 void RunEditorSortLinesLarge(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -305,6 +347,11 @@ const ScenarioRegistration g_perf_editor_toggle_comment_large({Scenario{
     .name = "editor_toggle_comment_large_selection",
     .smoke = false,
     .run = RunEditorToggleCommentLargeSelection,
+}});
+const ScenarioRegistration g_perf_editor_mouse_selection_drag({Scenario{
+    .name = "editor_mouse_selection_drag",
+    .smoke = false,
+    .run = RunEditorMouseSelectionDrag,
 }});
 const ScenarioRegistration g_perf_editor_sort_lines_large({Scenario{
     .name = "editor_sort_lines_large",

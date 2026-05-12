@@ -20,6 +20,7 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
     render::TextRenderer& text_renderer,
     const std::function<std::optional<std::string>(std::string_view id)>& get_setting_value,
     const std::function<editor::FoldingModel*()>& ensure_active_folding_model_fresh) {
+  util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::ResolvePointerLayout");
   auto setting_enabled = [&](std::string_view id, bool default_value) -> bool {
     const auto value = get_setting_value(id);
     if (!value.has_value()) {
@@ -48,6 +49,31 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
     viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   }
   return {metrics, sticky_lines};
+}
+
+std::optional<editor::EditorViewMetrics> FastEditorPointerMetricsFromViewportState(
+    const editor::TextViewport& viewport,
+    const SDL_FRect& editor_rect,
+    render::TextRenderer& text_renderer) {
+  util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::FastPointerMetrics");
+  const float line_height = std::max(1.0f, text_renderer.LineHeight());
+  const int max_total_rows =
+      std::max(1, static_cast<int>(std::floor((editor_rect.h - 12.0f) / line_height)));
+  const std::size_t visible_rows = viewport.visible_lines();
+  if (visible_rows == 0 || visible_rows > static_cast<std::size_t>(max_total_rows)) {
+    return std::nullopt;
+  }
+
+  const std::size_t sticky_budget = static_cast<std::size_t>(std::max(0, max_total_rows - 1));
+  const std::size_t sticky_rows =
+      std::min(sticky_budget, static_cast<std::size_t>(max_total_rows) - visible_rows);
+  const editor::EditorViewMetrics metrics =
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, editor_rect, sticky_rows);
+  if (metrics.visible_rows != viewport.visible_lines() ||
+      metrics.visible_columns != viewport.visible_columns()) {
+    return std::nullopt;
+  }
+  return metrics;
 }
 
 }  // namespace
@@ -245,6 +271,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
 bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
                                         const WorkspaceLayout& layout) {
+  util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleDrag");
   if (interaction_state_.drag_target == DragTarget::EditorSplitDivider) {
     auto* editor_tab = operations_.active_editor_tab();
     if (editor_tab == nullptr || editor_tab->views.size() < 2 || editor_tab->split_root == nullptr) {
@@ -326,11 +353,21 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
   if (viewport == nullptr) {
     return false;
   }
-  const auto [metrics, metrics_sticky_scratch] =
-      EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
-                                operations_.get_setting_value,
-                                operations_.ensure_active_folding_model_fresh);
-  (void)metrics_sticky_scratch;
+  editor::EditorViewMetrics metrics{};
+  if (const auto fast_metrics =
+          FastEditorPointerMetricsFromViewportState(*viewport, editor_rect, text_renderer_);
+      fast_metrics.has_value()) {
+    metrics = *fast_metrics;
+  } else {
+    util::PerformanceTrace::Scope fallback_scope(
+        "EditorMouseCoordinator::HandleDrag::FallbackPointerLayout");
+    const auto [resolved_metrics, metrics_sticky_scratch] =
+        EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
+                                  operations_.get_setting_value,
+                                  operations_.ensure_active_folding_model_fresh);
+    (void)metrics_sticky_scratch;
+    metrics = resolved_metrics;
+  }
   const auto scroll_layout = operations_.compute_editor_scroll_layout(editor_rect, *viewport, metrics);
 
   if (interaction_state_.drag_target == DragTarget::EditorVerticalScrollbar) {
@@ -358,6 +395,7 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
 
 bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
                                                    const WorkspaceLayout& layout) {
+  util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleSelectionMotion");
   const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
   const auto active_pane =
       std::find_if(panes.begin(), panes.end(),
@@ -372,11 +410,21 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     return false;
   }
 
-  const auto [metrics, selection_sticky_scratch] =
-      EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
-                                operations_.get_setting_value,
-                                operations_.ensure_active_folding_model_fresh);
-  (void)selection_sticky_scratch;
+  editor::EditorViewMetrics metrics{};
+  if (const auto fast_metrics =
+          FastEditorPointerMetricsFromViewportState(*viewport, editor_rect, text_renderer_);
+      fast_metrics.has_value()) {
+    metrics = *fast_metrics;
+  } else {
+    util::PerformanceTrace::Scope fallback_scope(
+        "EditorMouseCoordinator::HandleSelectionMotion::FallbackPointerLayout");
+    const auto [resolved_metrics, selection_sticky_scratch] =
+        EditorPointerLayoutBundle(*viewport, editor_rect, text_renderer_,
+                                  operations_.get_setting_value,
+                                  operations_.ensure_active_folding_model_fresh);
+    (void)selection_sticky_scratch;
+    metrics = resolved_metrics;
+  }
 
   const float local_y = std::max(0.0f, event.motion.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
