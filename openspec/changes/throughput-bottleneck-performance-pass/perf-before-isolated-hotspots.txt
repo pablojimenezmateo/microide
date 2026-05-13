@@ -1,0 +1,14 @@
+# microide_perf report
+runner_class=local-advisory provenance=advisory
+sdl_video_driver=dummy renderer_driver=software
+iterations=10 seed=1337 layout_mode=(default)
+isolated_app_root=(per-scenario isolated, cleaned at shutdown)
+scenarios=editor_add_cursor_next_match,editor_shaping_multi_caret,editor_mouse_selection_drag,editor_bracket_match_caret_motion,editor_auto_close_typing,editor_smart_indent_typing,editor_surround_multi_caret
+
+editor_add_cursor_next_match p50=42.8734ms p95=62.7623ms max=69.6404ms
+editor_shaping_multi_caret p50=146.265ms p95=166.67ms max=175.955ms
+editor_mouse_selection_drag p50=232.917ms p95=247.075ms max=256.793ms
+editor_bracket_match_caret_motion p50=107.563ms p95=117.441ms max=120.007ms
+editor_auto_close_typing p50=3175.22ms p95=3253.53ms max=3262.02ms
+editor_smart_indent_typing p50=3246.14ms p95=3429.92ms max=3547.84ms
+editor_surround_multi_caret p50=562.877ms p95=607.278ms max=629.235ms

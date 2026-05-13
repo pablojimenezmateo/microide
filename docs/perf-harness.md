@@ -47,6 +47,62 @@ coverage and a clear owner.
 When a hotspot class has no deterministic coverage, add a scenario + baseline in the same change
 before closing the performance pass.
 
+## Isolated Run Contract
+
+`microide_perf` runs every scenario inside an isolated app-root so local state on
+the developer's machine cannot contaminate measurements. Before SDL initialization
+the harness:
+
+1. creates a fresh directory under the system temp dir (e.g.
+   `/tmp/microide-perf-<pid>-<rand>`) with empty `config/`, `state/`, `cache/`,
+   and `data/` subdirectories
+2. sets `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, and `XDG_DATA_HOME`
+   to those subdirectories so `platform::ResolveAppDirectory(...)` cannot see real
+   user state (`~/.local/state/microide/workspace-session`, user config, plugin
+   caches, etc.)
+3. tears the sandbox down at shutdown unless `--keep-artifacts` is passed
+
+This means `cold_startup_no_project` always starts from an empty workspace
+session even when the developer has real projects restored on their machine; the
+regression test `PerfHarnessIsolation/ColdStartupIgnoresRealUserSession`
+exercises this contract end-to-end without requiring SDL.
+
+### Artifact Retention For Triage
+
+When a scenario fails and you need to inspect what the harness wrote into its
+sandbox, run with `--keep-artifacts`:
+
+```bash
+env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+  ./build/microide-perf-make/microide/microide_perf \
+    --scenarios=<failing-scenario> \
+    --iterations=1 \
+    --keep-artifacts
+```
+
+The harness prints the retained path on stderr (`[perf] keeping isolated app-root
+at /tmp/microide-perf-<pid>`). Inspect, then remove it manually when finished.
+
+### Report Provenance Metadata
+
+Each `--report-json` and `--report-text` emission now carries a metadata block at
+the top so reviewers can distinguish reference-gate evidence from local advisory
+runs without re-reading the command line:
+
+- `runner_class`: `perf-runner-v1` when `--reference-runner=perf-runner-v1` is
+  passed, otherwise `local-advisory`
+- `provenance`: `reference` for the gate runner, `advisory` for any local or
+  alternative-runner run
+- `sdl_video_driver`, `sdl_renderer_driver`: resolved at report-time from
+  `SDL_VIDEODRIVER` and the harness's hard-coded `software` renderer hint
+- `scenarios`, `iterations`, `layout_mode`, `seed`: exact workload definition
+- `isolated_app_root`: a stable string so the report records whether artifacts
+  were retained for triage
+
+Baseline updates SHALL only be taken from reports whose `provenance` is
+`reference`; local-advisory reports are useful for triage and ranking but never
+authoritative for `tests/perf/baselines/*.json` movement.
+
 ## Deterministic Input Checklist
 
 Before trusting results from a scenario run:

@@ -238,6 +238,175 @@ void TestEnsureFoldsForVisibleRangeExtendsOnScroll() {
          "extended visible-range resolve should discover the distant bracket fold");
 }
 
+// §2.4 — Indexed fold-lookup regression coverage. Builds a synthetic large
+// file with three disjoint fold ranges (before, inside, after a notional
+// viewport) and exercises the revision-keyed lookup cache via the public
+// `IsLineHidden`, `FoldStartingAt`, `IsCollapsedAtOpener`, and
+// `InnermostFoldContaining` accessors.
+std::vector<std::string> BuildFixtureWithThreeDisjointFolds() {
+  std::vector<std::string> lines;
+  lines.reserve(2048);
+  for (int i = 0; i < 100; ++i) lines.push_back("// pre filler");
+  lines.push_back("void before() {");      // 100
+  for (int i = 0; i < 30; ++i) lines.push_back("  before_body();");
+  lines.push_back("}");                    // 131
+  for (int i = 0; i < 500; ++i) lines.push_back("// mid filler");  // 132..631
+  lines.push_back("void inside() {");      // 632
+  for (int i = 0; i < 40; ++i) lines.push_back("  inside_body();");
+  lines.push_back("}");                    // 673
+  for (int i = 0; i < 500; ++i) lines.push_back("// gap filler");  // 674..1173
+  lines.push_back("void after() {");       // 1174
+  for (int i = 0; i < 20; ++i) lines.push_back("  after_body();");
+  lines.push_back("}");                    // 1195
+  for (int i = 0; i < 200; ++i) lines.push_back("// tail filler");
+  return lines;
+}
+
+void TestCollapsedFoldsBeforeAndAfterViewportDoNotHideViewportRows() {
+  const std::vector<std::string> lines = BuildFixtureWithThreeDisjointFolds();
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()), "compute should complete");
+
+  Expect(model.Collapse(100), "should collapse the before-viewport fold opener");
+  Expect(model.Collapse(1174), "should collapse the after-viewport fold opener");
+
+  // Notional viewport spans lines 632..672 (the body of `inside()`).
+  Expect(!model.IsLineHidden(632),
+         "viewport opener line must not be hidden by an out-of-range collapsed fold");
+  Expect(!model.IsLineHidden(650),
+         "viewport body line must not be hidden by an out-of-range collapsed fold");
+  Expect(!model.IsLineHidden(672),
+         "viewport last body line must not be hidden by an out-of-range collapsed fold");
+
+  // Lines genuinely inside the collapsed ranges must still report hidden.
+  Expect(model.IsLineHidden(115),
+         "line inside collapsed before-viewport fold body must be hidden");
+  Expect(model.IsLineHidden(1180),
+         "line inside collapsed after-viewport fold body must be hidden");
+
+  // Opener lines themselves remain visible (the design treats them as the one
+  // consumed visual row for a collapsed fold).
+  Expect(!model.IsLineHidden(100),
+         "opener of collapsed fold must remain visible (consumed visual row)");
+  Expect(!model.IsLineHidden(1174),
+         "opener of collapsed fold must remain visible (consumed visual row)");
+}
+
+void TestCollapsedFoldInsideViewportHidesInteriorRows() {
+  const std::vector<std::string> lines = BuildFixtureWithThreeDisjointFolds();
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()), "compute should complete");
+
+  Expect(model.Collapse(632), "should collapse the inside-viewport fold opener");
+
+  Expect(model.IsLineHidden(640),
+         "interior body line of collapsed in-viewport fold must be hidden");
+  Expect(model.IsLineHidden(672),
+         "interior closer-adjacent line of collapsed in-viewport fold must be hidden");
+  Expect(!model.IsLineHidden(632),
+         "opener of collapsed in-viewport fold remains visible");
+  // Lines just outside the fold range remain visible.
+  Expect(!model.IsLineHidden(631),
+         "line immediately before the fold opener must remain visible");
+  Expect(!model.IsLineHidden(674),
+         "line immediately after the fold closer must remain visible");
+}
+
+void TestIndexedLookupsRunAfterFoldToggleInvalidation() {
+  // The indexed cache is keyed on `revision_`, which increments on every
+  // `ToggleFold`/`Collapse`/`Expand`. After a toggle, IsLineHidden must reflect
+  // the new collapsed-flag state.
+  const std::vector<std::string> lines = BuildFixtureWithThreeDisjointFolds();
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()), "compute should complete");
+
+  // Pre-toggle: opener visible, interior visible.
+  Expect(!model.IsLineHidden(632), "interior is visible before collapse");
+  Expect(!model.IsLineHidden(640), "interior is visible before collapse");
+
+  Expect(model.Collapse(632), "collapse must succeed for a known opener");
+  Expect(model.IsLineHidden(640),
+         "indexed cache must report interior hidden immediately after collapse");
+
+  Expect(model.Expand(632), "expand must succeed after collapse");
+  Expect(!model.IsLineHidden(640),
+         "indexed cache must report interior visible immediately after expand");
+
+  Expect(model.ToggleFold(632), "toggle should re-collapse");
+  Expect(model.IsLineHidden(640),
+         "indexed cache must reflect the toggled collapsed state");
+}
+
+void TestIndexedStickyScrollParentLookupAcrossNestedFolds() {
+  // Build a deeply nested fold structure so `InnermostFoldContaining` must
+  // walk back across openers to find the parent that still contains a target
+  // line. The indexed prefix-max closer table should still return the right
+  // innermost fold.
+  std::vector<std::string> lines;
+  lines.push_back("void outer() {");          // 0
+  lines.push_back("  void mid_a() {");        // 1
+  for (int i = 0; i < 20; ++i) lines.push_back("    body();");
+  lines.push_back("  }");                     // 22
+  lines.push_back("  void mid_b() {");        // 23
+  for (int i = 0; i < 10; ++i) lines.push_back("    deeper();");
+  lines.push_back("    void inner() {");      // 34
+  for (int i = 0; i < 10; ++i) lines.push_back("      leaf();");
+  lines.push_back("    }");                   // 45
+  lines.push_back("  }");                     // 46
+  lines.push_back("}");                       // 47
+
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()),
+         "compute should complete for nested fixture");
+
+  // Line 40 is inside `inner()`, which is inside `mid_b()`, which is inside
+  // `outer()`. The innermost containing fold must be `inner()` (opener 34).
+  const auto innermost = model.InnermostFoldContaining(40);
+  Expect(innermost.has_value() && innermost->opener_line == 34,
+         "sticky-scroll parent lookup at leaf line must resolve to the innermost opener");
+
+  // Line 28 is inside `mid_b()` but BEFORE `inner()` opens. It must resolve to
+  // `mid_b()` (opener 23), not `inner()`.
+  const auto mid = model.InnermostFoldContaining(28);
+  Expect(mid.has_value() && mid->opener_line == 23,
+         "lookup before the inner opener must resolve to the surrounding mid fold");
+
+  // Line 22 is the closer of `mid_a()` — the innermost fold containing line 22
+  // is `mid_a()` itself (the closer line is inclusive).
+  const auto closer = model.InnermostFoldContaining(22);
+  Expect(closer.has_value() && closer->opener_line == 1,
+         "closer line must resolve to its own fold via the indexed lookup");
+
+  // Line 23 is the opener of `mid_b()`. It is contained by `outer()` and
+  // by `mid_b()` itself; the innermost is `mid_b()` (opener_line == 23).
+  const auto opener_self = model.InnermostFoldContaining(23);
+  Expect(opener_self.has_value() && opener_self->opener_line == 23,
+         "opener line must resolve to its own fold (inclusive of opener)");
+}
+
+void TestIndexedFoldStartingAtAndIsCollapsedAtOpenerStaySynchronized() {
+  const std::vector<std::string> lines = BuildFixtureWithThreeDisjointFolds();
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()), "compute should complete");
+
+  Expect(model.FoldStartingAt(100).has_value(),
+         "FoldStartingAt must find the known opener");
+  Expect(!model.FoldStartingAt(101).has_value(),
+         "FoldStartingAt must return nothing for a non-opener line");
+  Expect(!model.IsCollapsedAtOpener(100),
+         "IsCollapsedAtOpener defaults to false for a fresh model");
+  Expect(model.Collapse(100), "collapse should succeed");
+  Expect(model.IsCollapsedAtOpener(100),
+         "IsCollapsedAtOpener must reflect the collapsed flag");
+
+  // Sanity: looking up a line beyond the document does not crash and reports
+  // negative results.
+  Expect(!model.FoldStartingAt(lines.size() + 100).has_value(),
+         "FoldStartingAt for an out-of-range line must return nullopt");
+  Expect(!model.IsCollapsedAtOpener(lines.size() + 100),
+         "IsCollapsedAtOpener for an out-of-range line must return false");
+}
+
 }  // namespace
 
 void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
@@ -261,6 +430,16 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestEnsureFoldsForVisibleRangeBoundsInitialResolve);
   AddTest(tests, "EditorFolding/VisibleRange/ExtendsOnScroll",
           TestEnsureFoldsForVisibleRangeExtendsOnScroll);
+  AddTest(tests, "EditorFolding/IndexedLookup/CollapsedBeforeAndAfterViewportDoNotHideViewport",
+          TestCollapsedFoldsBeforeAndAfterViewportDoNotHideViewportRows);
+  AddTest(tests, "EditorFolding/IndexedLookup/CollapsedInsideViewportHidesInterior",
+          TestCollapsedFoldInsideViewportHidesInteriorRows);
+  AddTest(tests, "EditorFolding/IndexedLookup/ToggleInvalidation",
+          TestIndexedLookupsRunAfterFoldToggleInvalidation);
+  AddTest(tests, "EditorFolding/IndexedLookup/StickyScrollParentLookup",
+          TestIndexedStickyScrollParentLookupAcrossNestedFolds);
+  AddTest(tests, "EditorFolding/IndexedLookup/OpenerAndCollapsedFlagSync",
+          TestIndexedFoldStartingAtAndIsCollapsedAtOpenerStaySynchronized);
 }
 
 }  // namespace microide::tests

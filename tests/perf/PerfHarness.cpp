@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "perf/AllocationCounter.h"
+#include "perf/PerfHarnessIsolation.h"
 #include "WorkspaceShellEventHelpers.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
@@ -308,7 +309,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
   }
 
   Driver driver;
-  if (!InitializeDriver(&driver, options.random_seed)) {
+  if (!InitializeDriver(&driver, options.random_seed, options.keep_artifacts)) {
     return std::nullopt;
   }
 
@@ -364,7 +365,9 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
   return aggregate;
 }
 
-bool PerfHarness::InitializeDriver(Driver* driver, std::optional<std::uint64_t> random_seed) {
+bool PerfHarness::InitializeDriver(Driver* driver,
+                                   std::optional<std::uint64_t> random_seed,
+                                   bool keep_artifacts) {
   if (driver == nullptr) {
     return false;
   }
@@ -372,10 +375,15 @@ bool PerfHarness::InitializeDriver(Driver* driver, std::optional<std::uint64_t> 
   setenv("SDL_HINT_RENDER_DRIVER", "software", 1);
   const std::string seed_text = std::to_string(ResolveSeed(random_seed));
   setenv("MICROIDE_PERF_SEED", seed_text.c_str(), 1);
-  const std::filesystem::path isolated_config = std::filesystem::temp_directory_path() / "microide-perf-config";
-  std::error_code mkdir_error;
-  std::filesystem::create_directories(isolated_config, mkdir_error);
-  setenv("XDG_CONFIG_HOME", isolated_config.string().c_str(), 1);
+
+  std::string isolate_error;
+  driver->keep_artifacts = keep_artifacts;
+  driver->isolated_app_root = EstablishIsolatedAppRoot(keep_artifacts, &isolate_error);
+  if (driver->isolated_app_root.empty()) {
+    HarnessError() = isolate_error.empty() ? "failed to establish isolated app-root"
+                                            : isolate_error;
+    return false;
+  }
 
   if (!SDL_Init(SDL_INIT_VIDEO)) {
     HarnessError() = std::string("SDL_Init failed: ") + SDL_GetError();
@@ -424,6 +432,8 @@ void PerfHarness::ShutdownDriver(Driver* driver) {
     driver->window = nullptr;
   }
   SDL_Quit();
+  CleanupIsolatedAppRoot(driver->isolated_app_root, driver->keep_artifacts);
+  driver->isolated_app_root.clear();
 }
 
 bool PerfHarness::VerifyFixtureTree(const std::filesystem::path& root,

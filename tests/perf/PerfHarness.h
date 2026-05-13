@@ -16,6 +16,7 @@
 #include "workspace/WorkspaceVirtualDocument.h"
 
 #include "editor/TextViewport.h"
+#include "perf/PerfHarnessIsolation.h"
 
 namespace microide::tests::perf {
 
@@ -48,6 +49,19 @@ struct Aggregate {
   MetricSet metrics;
   bool smoke = false;
 };
+
+struct ReportMetadata {
+  std::string runner_class;           // e.g. "perf-runner-v1" or "local-advisory"
+  std::string sdl_video_driver;       // e.g. "dummy", "x11", "software"
+  std::string sdl_renderer_driver;    // e.g. "software"
+  std::vector<std::string> scenarios; // resolved scenario list executed
+  std::size_t iterations = 0;
+  std::string layout_mode;            // "auto" | "regular" | "compact" | ""
+  std::uint64_t seed = 0;
+  std::string provenance;             // "reference" | "advisory"
+  std::string isolated_app_root;      // path to the per-run sandbox, if any
+};
+
 
 class ScenarioContext {
  public:
@@ -111,6 +125,7 @@ class PerfHarness {
     std::size_t iterations = 10;
     std::optional<std::uint64_t> random_seed;
     std::optional<std::string> layout_mode_override;
+    bool keep_artifacts = false;
   };
 
   static void RegisterScenario(const Scenario& scenario);
@@ -127,9 +142,13 @@ class PerfHarness {
     SDL_Renderer* renderer = nullptr;
     workspace::WorkspaceShell shell;
     bool initialized = false;
+    std::filesystem::path isolated_app_root;
+    bool keep_artifacts = false;
   };
 
-  static bool InitializeDriver(Driver* driver, std::optional<std::uint64_t> random_seed);
+  static bool InitializeDriver(Driver* driver,
+                               std::optional<std::uint64_t> random_seed,
+                               bool keep_artifacts = false);
   static void ShutdownDriver(Driver* driver);
 };
 

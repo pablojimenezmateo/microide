@@ -888,6 +888,101 @@ Relevant code:
 - `src/workspace/WorkspaceLspManager.cpp` - server lifecycle management
 - `src/workspace/WorkspaceShellTooling.cpp` - LSP query methods
 
+## Throughput Bottleneck Performance Pass (2026-05-13)
+
+Captured under the `throughput-bottleneck-performance-pass` OpenSpec change after harness isolation made local advisory numbers comparable. All numbers below are p50 wall time from 10-iteration isolated dummy-driver runs; baseline updates wait for `perf-runner-v1`. Full ledger: `openspec/changes/throughput-bottleneck-performance-pass/perf-ledger.md`.
+
+### Harness isolation (`§1`)
+
+Problem:
+
+- `PerfHarness::InitializeDriver` set `XDG_CONFIG_HOME` but left `XDG_STATE_HOME`, `XDG_CACHE_HOME`, and `XDG_DATA_HOME` pointing at the developer's home directory. Scenarios like `cold_startup_no_project` restored a real 50k-line editor session and `terminal_scroll_long_output` paid 1.4 s for unrelated `WorkspaceRootView::Render` work on that restored editor.
+
+Implemented:
+
+- Per-process sandbox under `temp_directory_path()/microide-perf-<pid>[-<rand>]` with `config/state/cache/data` subdirectories, all four `XDG_*_HOME` env vars exported, sandbox cleanup at shutdown unless `--keep-artifacts` is passed.
+- `--keep-artifacts` CLI flag for triage; harness reports include runner-class, provenance, video/renderer driver, scenario list, iteration count, layout mode, seed, and sandbox status metadata.
+- Regression unit test `PerfHarnessIsolation/ColdStartupIgnoresRealUserSession` plants a real `~/.local/state/microide/workspace-session` and asserts the harness's `AppDirectories::ResolveAppDirectory(State, "microide")` resolves inside the sandbox.
+
+Impact:
+
+- `cold_startup_no_project` max: 359 → 25 ms.
+- `terminal_scroll_long_output` p50: 100 → 121 ms (now stable; previously bursty p95 553 ms / max 604 ms from restored editor contamination).
+
+### Indexed FoldingModel lookups (`§2.1–§2.2`)
+
+Problem:
+
+- `FoldingModel::{IsLineHidden,FoldStartingAt,IsCollapsedAtOpener,InnermostFoldContaining}` did linear scans over `ranges_` for every viewport row, so big files with many folds paid O(n_folds × visible_lines) per visible-frame rebuild.
+
+Implemented:
+
+- Revision-keyed lookup cache: sorted collapsed-interval list with prefix `hi`-max for O(log n) `IsLineHidden`, binary search on the already-sorted unique-opener `ranges_` for `FoldStartingAt`/`IsCollapsedAtOpener`, and a prefix `closer_line` running-max for `InnermostFoldContaining`. Cache invalidates implicitly via the existing `revision_` counter.
+
+### Non-soft-wrap viewport row mapping fast path (`§2.3`)
+
+Problem:
+
+- `TextViewport::EnsureWrappedRowLayouts()` called `VisualColumnForTextColumn` per line and queried `IsLineHidden` per line even when no folds were collapsed.
+
+Implemented:
+
+- Probe `folding_model_->collapsed_flags()` once per rebuild; skip per-line `IsLineHidden` calls when no fold is collapsed.
+- Non-soft-wrap branch reuses a constant `WrappedRowLayout` template and skips the `VisualColumnForTextColumn` walk entirely.
+
+Impact:
+
+- `editor_fold_recompute` p50: 1165 → 716 ms (−39%).
+
+### Same-line-count `ApplyHistoryEntry` fast path (`§3.1–§3.3`)
+
+Problem:
+
+- `TextViewport::ApplyHistoryEntry()` erased and re-inserted lines through the storage vector even when a history entry replaced N lines with N lines (the common case for ordinary typing and undo). For edits near the top of a 50k-line file this shifted the entire tail per keystroke.
+
+Implemented:
+
+- Same-count fast path: in-place assignment when `removed_count == inserted_lines.size()`. Encoding refresh, derived-cache invalidation, visual-column updates, cursor restoration, and applied-edit metadata are preserved.
+- New regression tests `TextViewport/SameLineCountUndoOnLargeFilePreservesContent` and `TextViewport/SameLineCountEditInvalidatesSyntaxCache`.
+
+Impact:
+
+- `editor_auto_close_typing` p50: 3175 → 728 ms (**−77%**, 4.4× speedup).
+- `editor_smart_indent_typing` p50: 3246 → 829 ms (**−74%**).
+- `editor_shaping_multi_caret` p50: 146 → 36 ms (**−76%**).
+- `editor_add_cursor_next_match` p50: 43 → 26 ms (−40%).
+- `editor_bracket_match_caret_motion` p50: 108 → 69 ms (−35%).
+
+### Slice-based multi-caret aggregate (`§3.4`)
+
+Problem:
+
+- `TryMultiCaretPairInsert()` copied the full `document_->lines` and diffed it against the post-edit document to build the aggregate undo entry, even when every caret's edit was confined to a small range of lines.
+
+Implemented:
+
+- When `ch != '\n'` and no selection spans multiple lines (the common surround / pair-insert path), snapshot only the line range bounded by the touched carets. Build the aggregate `HistoryEntry` from that slice and offset its `start_line` back into document coordinates. Conservative fallback preserves the full snapshot for newline inserts and multi-line selections.
+
+Impact:
+
+- `editor_surround_multi_caret` p50: 563 → 486 ms (−14%) — full-buffer copy reduced from 50k to ~8k lines for the 8-caret scenario.
+
+### Undo-group child-delta aggregation (`§3.5` / `§3.6`)
+
+Problem:
+
+- `BeginUndoGroup()` still degraded to whole-buffer snapshotting for grouped edits that changed line count, which left snippets and grouped completions paying an O(document size) history cost even after the same-count and multi-caret work landed.
+
+Implemented:
+
+- Undo groups now accumulate known-range child `HistoryEntry` deltas and merge them into one aggregate undo entry when the child edits stay within the evolving changed slice.
+- A documented conservative fallback reconstructs the pre-group buffer only when grouped child edits are disjoint or otherwise cannot be normalized into one contiguous aggregate entry.
+- New regression tests `TextViewport/UndoGroupMergesKnownRangeChildEdits`, `TextViewport/UndoGroupFallsBackForDisjointChildEdits`, plus snippet undo-group coverage (`EditorSnippet/ExpansionSingleUndoStep`, `EditorSnippet/MultiOccurrenceLinkedTab`).
+
+### Still pending in this pass
+
+- §4.8 manual real-window verification, §4.9 `perf-runner-v1` gate run.
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout

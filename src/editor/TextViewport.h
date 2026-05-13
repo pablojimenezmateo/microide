@@ -294,6 +294,14 @@ class TextViewport {
   void PushHistoryEntry(HistoryEntry entry);
   void PushHistoryEntryDirect(HistoryEntry entry);
   void FlushActiveUndoGroup();
+  static void ApplyHistoryEntryToLines(std::vector<std::string>& lines,
+                                       const HistoryEntry& entry,
+                                       bool forward);
+  static std::optional<HistoryEntry> TryMergeUndoGroupEntry(const HistoryEntry& aggregate,
+                                                            const HistoryEntry& next);
+  static std::vector<std::string> ReconstructUndoGroupFallbackLines(
+      const std::vector<std::string>& current_lines,
+      const std::vector<HistoryEntry>& child_entries);
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,
                                                      std::string_view replacement) const;
@@ -403,8 +411,16 @@ class TextViewport {
   const FoldingModel* folding_model_ = nullptr;
 
   struct UndoGroupFrame {
-    std::vector<std::string> lines;
+    // `before_state` is always captured at BeginUndoGroup.
     ViewState state;
+    // Known-range child edits are merged incrementally into `aggregate_entry`
+    // so grouped completions/snippets do not snapshot the whole buffer.
+    std::optional<HistoryEntry> aggregate_entry;
+    std::vector<HistoryEntry> child_entries;
+    // Conservative fallback for groups whose child deltas are disjoint or
+    // otherwise cannot be normalized into one contiguous aggregate entry.
+    bool using_fallback = false;
+    std::vector<std::string> fallback_lines;
   };
   std::vector<UndoGroupFrame> undo_group_stack_;
 

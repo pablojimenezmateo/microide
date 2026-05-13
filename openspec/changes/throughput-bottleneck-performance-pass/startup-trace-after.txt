@@ -1,0 +1,38 @@
+[perf] running scenario 1/1: cold_startup_no_project
+[startup]    46.01 ms total |     0.06 ms |   WorkspaceShell::RestoreUserConfig
+[startup]    46.28 ms total |     0.24 ms |   WorkspaceShell::RefreshAvailableColorschemeNames
+[startup]    46.53 ms total |     0.24 ms |   WorkspaceShell::ResetProjectScopedState
+[startup]    46.54 ms total |     0.01 ms |     WorkspaceShell::RestoreWorkspaceSession
+[startup]    46.54 ms total |     0.02 ms |   WorkspaceShell::RestoreWorkspaceSession
+[startup]    46.94 ms total |     0.31 ms |               DirectoryTree::RebuildEntries
+[startup]    46.95 ms total |     0.32 ms |             DirectoryTree::SetRoot
+[startup]    46.95 ms total |     0.33 ms |           DirectoryTree::SetRoot
+[startup]    46.95 ms total |     0.00 ms |             FileIndex::SetRoot
+[startup]    47.08 ms total |     0.13 ms |           FileIndex::SetRoot
+[startup]    58.42 ms total |    11.33 ms |             CollectGitStatuses
+[startup]    58.64 ms total |    11.56 ms |           DirectoryTree::RefreshGitStatuses
+[startup]    58.67 ms total |     0.00 ms |           WorkspaceProjectFileMonitor::SetProjectRoot
+[startup]    58.67 ms total |    12.05 ms |         WorkspaceShell::SetProjectRoot
+[startup]    58.68 ms total |    12.05 ms |       WorkspaceShell::SetProjectRoot
+[startup]    58.96 ms total |     0.01 ms |       WorkspaceShell::RestoreSessionState
+[startup]    60.30 ms total |     0.98 ms |       DirectoryTree::RebuildEntries
+[startup]    61.34 ms total |     0.06 ms |           PluginHost::Reload
+[startup]    61.35 ms total |     0.00 ms |           LoadSyntaxDefinitions
+[startup]    62.63 ms total |     1.28 ms |           ReloadSyntaxDefinitions
+[startup]    62.66 ms total |     1.39 ms |         PluginRuntime::Reload
+[startup]    63.20 ms total |     0.53 ms |         RebuildRegistries
+[startup]    63.20 ms total |     0.00 ms |         InvalidateSyntaxCaches
+[startup]    63.21 ms total |     0.00 ms |         NormalizeSidebarViewSelection
+[startup]    63.21 ms total |     0.00 ms |         RefreshPluginSidebar
+[startup]    63.22 ms total |     0.00 ms |         RefreshProblemsSidebar
+[startup]    63.22 ms total |     0.00 ms |         NotifyPluginsAboutOpenBuffers
+[startup]    63.23 ms total |     0.00 ms |         RequestChromeRedraw
+[startup]    63.23 ms total |     0.00 ms |         RequestEditorSurfaceRedraw
+[startup]    63.23 ms total |     1.95 ms |       WorkspaceShell::ReloadPluginsForCurrentProject
+[startup]    63.23 ms total |    16.68 ms |     WorkspaceShell::InitializeCurrentProject
+[startup]    66.38 ms total |    19.83 ms |   WorkspaceShell::OpenProjectTab
+[startup]    66.39 ms total |    66.39 ms | WorkspaceShell::Initialize
+[perf] scenario=cold_startup_no_project iteration=1/1
+[startup]    68.28 ms total |     1.85 ms |   SdlTtfTextBackend::Initialize
+[startup]    68.28 ms total |     1.86 ms | TextRenderer::EnsureInitialized
+[perf] advisory run (runner_class=local-advisory, video=dummy); not authoritative for baseline updates

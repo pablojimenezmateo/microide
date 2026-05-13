@@ -392,17 +392,58 @@ bool FoldingModel::EnsureFoldsForVisibleRange(
 
 namespace {
 
+// ranges_ is kept sorted by `opener_line` (and de-duplicated to one entry per
+// opener) after `SortDedupeRangesByOpener`. Resolve an opener via binary search.
 std::ptrdiff_t IndexOfOpener(const std::vector<FoldRange>& ranges,
                              std::size_t opener_line) {
-  for (std::size_t i = 0; i < ranges.size(); ++i) {
-    if (ranges[i].opener_line == opener_line) {
-      return static_cast<std::ptrdiff_t>(i);
-    }
+  const auto it = std::lower_bound(
+      ranges.begin(), ranges.end(), opener_line,
+      [](const FoldRange& r, std::size_t v) { return r.opener_line < v; });
+  if (it == ranges.end() || it->opener_line != opener_line) {
+    return -1;
   }
-  return -1;
+  return static_cast<std::ptrdiff_t>(it - ranges.begin());
 }
 
 }  // namespace
+
+void FoldingModel::EnsureLookupCache() const {
+  if (cached_revision_ == revision_) {
+    return;
+  }
+  cached_collapsed_intervals_.clear();
+  cached_collapsed_hi_prefix_max_.clear();
+  cached_range_closer_prefix_max_.clear();
+  cached_collapsed_intervals_.reserve(ranges_.size());
+  for (std::size_t i = 0; i < ranges_.size(); ++i) {
+    if (i < collapsed_.size() && collapsed_[i] &&
+        ranges_[i].closer_line > ranges_[i].opener_line) {
+      cached_collapsed_intervals_.push_back(
+          CollapsedInterval{ranges_[i].opener_line + 1, ranges_[i].closer_line});
+    }
+  }
+  // Collapsed intervals are emitted in opener order (ranges_ is sorted by opener),
+  // but interleave with non-collapsed entries we skipped, so the result is still
+  // sorted by `lo`. Build the prefix running-max of `hi` for IsLineHidden.
+  cached_collapsed_hi_prefix_max_.resize(cached_collapsed_intervals_.size());
+  {
+    std::size_t running = 0;
+    for (std::size_t i = 0; i < cached_collapsed_intervals_.size(); ++i) {
+      running = std::max(running, cached_collapsed_intervals_[i].hi);
+      cached_collapsed_hi_prefix_max_[i] = running;
+    }
+  }
+  // Per-range prefix running-max of `closer_line` for InnermostFoldContaining.
+  cached_range_closer_prefix_max_.resize(ranges_.size());
+  {
+    std::size_t running = 0;
+    for (std::size_t i = 0; i < ranges_.size(); ++i) {
+      running = std::max(running, ranges_[i].closer_line);
+      cached_range_closer_prefix_max_[i] = running;
+    }
+  }
+  cached_revision_ = revision_;
+}
 
 bool FoldingModel::ToggleFold(std::size_t opener_line) {
   const auto idx = IndexOfOpener(ranges_, opener_line);
@@ -448,40 +489,95 @@ void FoldingModel::ExpandAll() {
 }
 
 bool FoldingModel::IsLineHidden(std::size_t line) const {
-  for (std::size_t i = 0; i < ranges_.size(); ++i) {
-    if (!collapsed_[i]) continue;
-    // A collapsed fold consumes a single visible row anchored on the opener.
-    if (line > ranges_[i].opener_line && line <= ranges_[i].closer_line) {
-      return true;
-    }
+  EnsureLookupCache();
+  if (cached_collapsed_intervals_.empty()) {
+    return false;
   }
-  return false;
+  // Find the largest interval index whose `lo` is <= line.
+  const auto it = std::upper_bound(
+      cached_collapsed_intervals_.begin(), cached_collapsed_intervals_.end(), line,
+      [](std::size_t v, const CollapsedInterval& a) { return v < a.lo; });
+  if (it == cached_collapsed_intervals_.begin()) {
+    return false;
+  }
+  const std::size_t idx = static_cast<std::size_t>(it - cached_collapsed_intervals_.begin()) - 1;
+  // The running-max of `hi` over [0..idx] tells us whether any prefix interval
+  // covers `line`; since intervals are sorted by `lo`, lo <= line holds for the
+  // whole prefix.
+  return cached_collapsed_hi_prefix_max_[idx] >= line;
 }
 
 std::optional<FoldRange> FoldingModel::FoldStartingAt(std::size_t line) const {
-  for (const auto& r : ranges_) {
-    if (r.opener_line == line) return r;
+  const auto idx = IndexOfOpener(ranges_, line);
+  if (idx < 0) {
+    return std::nullopt;
+  }
+  return ranges_[static_cast<std::size_t>(idx)];
+}
+
+std::optional<FoldRange> FoldingModel::InnermostFoldContaining(std::size_t line) const {
+  if (ranges_.empty()) {
+    return std::nullopt;
+  }
+  // Find the rightmost range whose opener_line <= line.
+  const auto it = std::upper_bound(
+      ranges_.begin(), ranges_.end(), line,
+      [](std::size_t v, const FoldRange& r) { return v < r.opener_line; });
+  if (it == ranges_.begin()) {
+    return std::nullopt;
+  }
+  EnsureLookupCache();
+  // Walk left checking closer_line >= line. The prefix running-max of closer
+  // lets us early-exit: if max closer in [0..i] is < line, no fold in that
+  // prefix can contain `line`.
+  for (std::ptrdiff_t i = (it - ranges_.begin()) - 1; i >= 0; --i) {
+    const std::size_t idx = static_cast<std::size_t>(i);
+    if (cached_range_closer_prefix_max_[idx] < line) {
+      return std::nullopt;
+    }
+    if (ranges_[idx].closer_line >= line) {
+      return ranges_[idx];
+    }
   }
   return std::nullopt;
 }
 
-std::optional<FoldRange> FoldingModel::InnermostFoldContaining(std::size_t line) const {
-  std::optional<FoldRange> best;
-  for (const auto& r : ranges_) {
-    if (r.opener_line <= line && line <= r.closer_line) {
-      if (!best.has_value() || r.opener_line > best->opener_line) {
-        best = r;
-      }
+void FoldingModel::AppendFoldsContaining(std::size_t line,
+                                          std::vector<FoldRange>* out) const {
+  if (out == nullptr || ranges_.empty()) {
+    return;
+  }
+  const auto it = std::upper_bound(
+      ranges_.begin(), ranges_.end(), line,
+      [](std::size_t v, const FoldRange& r) { return v < r.opener_line; });
+  if (it == ranges_.begin()) {
+    return;
+  }
+  EnsureLookupCache();
+  // Collect into a local buffer first so we can reverse to outermost-first.
+  std::vector<FoldRange> ancestors;
+  ancestors.reserve(8);
+  for (std::ptrdiff_t i = (it - ranges_.begin()) - 1; i >= 0; --i) {
+    const std::size_t idx = static_cast<std::size_t>(i);
+    if (cached_range_closer_prefix_max_[idx] < line) {
+      break;
+    }
+    if (ranges_[idx].closer_line >= line) {
+      ancestors.push_back(ranges_[idx]);
     }
   }
-  return best;
+  // ancestors is in decreasing opener_line order; reverse to outer-first.
+  for (auto rit = ancestors.rbegin(); rit != ancestors.rend(); ++rit) {
+    out->push_back(*rit);
+  }
 }
 
 bool FoldingModel::IsCollapsedAtOpener(std::size_t line) const {
-  for (std::size_t i = 0; i < ranges_.size(); ++i) {
-    if (ranges_[i].opener_line == line) return collapsed_[i];
+  const auto idx = IndexOfOpener(ranges_, line);
+  if (idx < 0) {
+    return false;
   }
-  return false;
+  return collapsed_[static_cast<std::size_t>(idx)];
 }
 
 void FoldingModel::Clear() {

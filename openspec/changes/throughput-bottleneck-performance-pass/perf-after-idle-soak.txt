@@ -1,0 +1,8 @@
+# microide_perf report
+runner_class=local-advisory provenance=advisory
+sdl_video_driver=dummy renderer_driver=software
+iterations=1 seed=1337 layout_mode=(default)
+isolated_app_root=(per-scenario isolated, cleaned at shutdown)
+scenarios=idle_soak_30s
+
+idle_soak_30s p50=30460.3ms p95=30460.3ms max=30460.3ms

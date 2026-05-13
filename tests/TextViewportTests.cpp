@@ -16,6 +16,7 @@ using microide::editor::SyntaxTokenKind;
 using microide::editor::TextPosition;
 using microide::editor::TextViewport;
 using microide::editor::FoldingModel;
+using microide::editor::SelectionRange;
 
 struct ScopedRuntimeSyntaxRegistryReset {
   ~ScopedRuntimeSyntaxRegistryReset() { microide::editor::runtime_syntax::ReloadDefinitions({}); }
@@ -283,6 +284,73 @@ void TestTextViewportMultiCaretNewlineCopiesIndentationPerCaret() {
          "multi-caret newline should preserve and copy tab indentation");
 }
 
+void TestTextViewportSameLineCountUndoOnLargeFilePreservesContent() {
+  // Single-line replacements through Apply/Undo/Redo (the same-line-count
+  // fast path) must produce the same document contents as the slow path on
+  // a buffer large enough that vector tail-shifts would normally dominate.
+  const std::size_t kLineCount = 4096;
+  std::string body;
+  body.reserve(kLineCount * 12);
+  for (std::size_t i = 0; i < kLineCount; ++i) {
+    body += "alpha_";
+    body += std::to_string(i);
+    body += '\n';
+  }
+  TextViewport viewport;
+  viewport.LoadContent(body, "/tmp/applied-edit-fast-path.txt");
+
+  const std::size_t edit_line = 7;
+  const std::string original_line = viewport.lines()[edit_line];
+  const std::string original_line_after = viewport.lines()[edit_line + 1];
+  const std::size_t baseline_line_count = viewport.lines().size();
+
+  viewport.MoveCursorTo(edit_line, original_line.size());
+  viewport.InsertText("Z");
+
+  Expect(viewport.lines().size() == baseline_line_count,
+         "single-character insert must preserve line count");
+  Expect(viewport.lines()[edit_line] == original_line + "Z",
+         "single-character insert must update the affected line");
+  Expect(viewport.lines()[edit_line + 1] == original_line_after,
+         "untouched line after the edit must remain identical");
+  Expect(viewport.last_applied_edit().has_value(),
+         "fast-path insert must publish an applied edit");
+  Expect(viewport.last_applied_edit()->replacement_text == "Z",
+         "fast-path insert must publish the inserted text");
+
+  Expect(viewport.Undo(), "undo must succeed for fast-path edit");
+  Expect(viewport.lines()[edit_line] == original_line,
+         "undo via fast path must restore the original line content");
+  Expect(viewport.lines().size() == baseline_line_count,
+         "undo via fast path must preserve line count");
+
+  Expect(viewport.Redo(), "redo must succeed for fast-path edit");
+  Expect(viewport.lines()[edit_line] == original_line + "Z",
+         "redo via fast path must reapply the inserted text");
+  Expect(viewport.lines().size() == baseline_line_count,
+         "redo via fast path must preserve line count");
+}
+
+void TestTextViewportSameLineCountEditInvalidatesSyntaxCache() {
+  // After a fast-path edit the highlight token kinds for the affected line
+  // must reflect the new content rather than a stale cache.
+  TextViewport viewport;
+  viewport.LoadContent("int x;\nint y;\n", "/tmp/applied-edit-fast-path-syntax.cpp");
+  viewport.MoveCursorTo(0, 4);
+  const auto baseline_tokens = viewport.HighlightedLineTokens(0);
+  Expect(!baseline_tokens.empty(), "baseline tokens must exist before fast-path edit");
+
+  viewport.InsertText("z");
+  const auto after_insert_tokens = viewport.HighlightedLineTokens(0);
+  Expect(after_insert_tokens.size() == baseline_tokens.size() + 1,
+         "after the fast-path insert the affected line must re-tokenize to the new length");
+
+  Expect(viewport.Undo(), "undo must succeed for fast-path syntax test");
+  const auto after_undo_tokens = viewport.HighlightedLineTokens(0);
+  Expect(after_undo_tokens == baseline_tokens,
+         "undo of the fast-path insert must restore the original token kinds");
+}
+
 void TestTextViewportLastAppliedEditTracksInsertUndoRedo() {
   TextViewport viewport;
   viewport.LoadContent("alpha\n", "/tmp/applied-edit-insert.txt");
@@ -393,6 +461,66 @@ void TestTextViewportUndoRedoPreservesSecondaryCarets() {
   Expect(viewport.Redo(), "redo should succeed after undoing an edit with secondary carets");
   Expect(viewport.secondary_carets() == secondary_after_edit,
          "redo should restore the secondary caret set captured at edit time");
+}
+
+void TestTextViewportUndoGroupMergesKnownRangeChildEdits() {
+  TextViewport viewport;
+  viewport.LoadContent("header\nbody\nfooter\n", "/tmp/undo-group-merge.txt");
+  viewport.MoveCursorTo(1, 4);
+
+  viewport.BeginUndoGroup();
+  viewport.InsertText("\nchild");
+  Expect(viewport.ReplaceRange(SelectionRange{
+                                   .start = TextPosition{2, 5},
+                                   .end = TextPosition{2, 5},
+                               },
+                               "!"),
+         "contained grouped edit should apply after line-count change");
+  viewport.EndUndoGroup();
+
+  Expect(viewport.lines().size() == 5,
+         "grouped known-range edits should leave the expanded line structure");
+  Expect(viewport.lines()[1] == "body" && viewport.lines()[2] == "child!",
+         "grouped known-range edits should preserve both child mutations");
+
+  Expect(viewport.Undo(), "grouped known-range edits should undo as one step");
+  Expect(viewport.lines().size() == 4 && viewport.lines()[0] == "header" &&
+             viewport.lines()[1] == "body" && viewport.lines()[2] == "footer" &&
+             viewport.lines()[3].empty(),
+         "undo should restore the original document without requiring a full-buffer snapshot path");
+
+  Expect(viewport.Redo(), "grouped known-range edits should redo as one step");
+  Expect(viewport.lines().size() == 5 && viewport.lines()[2] == "child!",
+         "redo should restore the merged grouped edit");
+}
+
+void TestTextViewportUndoGroupFallsBackForDisjointChildEdits() {
+  TextViewport viewport;
+  viewport.LoadContent("zero\none\ntwo\nthree\n", "/tmp/undo-group-fallback.txt");
+
+  viewport.BeginUndoGroup();
+  Expect(viewport.ReplaceRange(SelectionRange{
+                                   .start = TextPosition{0, 4},
+                                   .end = TextPosition{0, 4},
+                               },
+                               "!"),
+         "first grouped edit should apply");
+  Expect(viewport.ReplaceRange(SelectionRange{
+                                   .start = TextPosition{3, 5},
+                                   .end = TextPosition{3, 5},
+                               },
+                               "?"),
+         "disjoint grouped edit should apply");
+  viewport.EndUndoGroup();
+
+  Expect(viewport.lines()[0] == "zero!" && viewport.lines()[3] == "three?",
+         "disjoint grouped edits should both remain visible after the grouped commit");
+
+  Expect(viewport.Undo(), "disjoint grouped edits should still undo atomically");
+  Expect(viewport.lines().size() == 5 && viewport.lines()[0] == "zero" &&
+             viewport.lines()[1] == "one" && viewport.lines()[2] == "two" &&
+             viewport.lines()[3] == "three" && viewport.lines()[4].empty(),
+         "fallback undo group path should restore the original document");
 }
 
 void TestTextViewportMultiCaretInsertAndUndoAreAtomic() {
@@ -971,6 +1099,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportInsertNewlineOnWhitespaceOnlyLineDoesNotCarryIndentForward);
   AddTest(tests, "TextViewport/MultiCaretNewlineCopiesIndentationPerCaret",
           TestTextViewportMultiCaretNewlineCopiesIndentationPerCaret);
+  AddTest(tests, "TextViewport/SameLineCountUndoOnLargeFilePreservesContent",
+          TestTextViewportSameLineCountUndoOnLargeFilePreservesContent);
+  AddTest(tests, "TextViewport/SameLineCountEditInvalidatesSyntaxCache",
+          TestTextViewportSameLineCountEditInvalidatesSyntaxCache);
   AddTest(tests, "TextViewport/LastAppliedEditTracksInsertUndoRedo",
           TestTextViewportLastAppliedEditTracksInsertUndoRedo);
   AddTest(tests, "TextViewport/LastAppliedEditTracksMultilineReplacement",
@@ -979,6 +1111,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportUndoRedoPreservesLatestViewState);
   AddTest(tests, "TextViewport/UndoRedoPreservesSecondaryCarets",
           TestTextViewportUndoRedoPreservesSecondaryCarets);
+  AddTest(tests, "TextViewport/UndoGroupMergesKnownRangeChildEdits",
+          TestTextViewportUndoGroupMergesKnownRangeChildEdits);
+  AddTest(tests, "TextViewport/UndoGroupFallsBackForDisjointChildEdits",
+          TestTextViewportUndoGroupFallsBackForDisjointChildEdits);
   AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
           TestTextViewportMultiCaretInsertAndUndoAreAtomic);
   AddTest(tests, "TextViewport/MultiCaretBackspaceAndDeleteForward",

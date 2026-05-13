@@ -1,0 +1,70 @@
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+microide text: built without SDL_ttf; falling back to SDL debug text
+file: "/home/gef/Documents/projects/microide/src/workspace/WorkspaceShellRenderFrame.cpp"
+left-ref: HEAD
+right-ref: WORKTREE
+runs: 5
+rows: 480
+hunks: 0
+syntax-highlighted-rows: 480
+syntax-reused-rows: 480
+syntax-token-count: 48884
+exact-line-alignment-calls: 0
+anchored-line-alignment-calls: 0
+exact-hunk-alignment-calls: 0
+fallback-hunk-alignment-calls: 0
+token-intraline-calls: 0
+codepoint-intraline-calls: 0
+read-ms-min: 4.982
+read-ms-avg: 5.972
+read-ms-max: 7.312
+diff-total-ms-min: 0.148
+diff-total-ms-avg: 0.217
+diff-total-ms-max: 0.251
+split-lines-ms-min: 0.105
+split-lines-ms-avg: 0.158
+split-lines-ms-max: 0.187
+line-alignment-ms-min: 0.000
+line-alignment-ms-avg: 0.000
+line-alignment-ms-max: 0.000
+hunk-alignment-ms-min: 0.000
+hunk-alignment-ms-avg: 0.000
+hunk-alignment-ms-max: 0.000
+intraline-ms-min: 0.000
+intraline-ms-avg: 0.000
+intraline-ms-max: 0.000
+row-assembly-ms-min: 0.043
+row-assembly-ms-avg: 0.058
+row-assembly-ms-max: 0.068
+syntax-ms-min: 4.899
+syntax-ms-avg: 13.660
+syntax-ms-max: 47.919
+row-decoration-build-ms-min: 0.348
+row-decoration-build-ms-avg: 0.582
+row-decoration-build-ms-max: 0.735
+row-paint-ms-min: 3.374
+row-paint-ms-avg: 5.283
+row-paint-ms-max: 6.566
+editor-render-ms-min: 0.172
+editor-render-ms-avg: 0.275
+editor-render-ms-max: 0.360
+compare-width-cache-hit-rate-min: 100.000
+compare-width-cache-hit-rate-avg: 100.000
+compare-width-cache-hit-rate-max: 100.000
+editor-visible-layout-cache-hit-rate-min: 100.000
+editor-visible-layout-cache-hit-rate-avg: 100.000
+editor-visible-layout-cache-hit-rate-max: 100.000
+editor-highlight-cache-hit-rate-min: 100.000
+editor-highlight-cache-hit-rate-avg: 100.000
+editor-highlight-cache-hit-rate-max: 100.000
+editor-width-cache-hit-rate-min: 100.000
+editor-width-cache-hit-rate-avg: 100.000
+editor-width-cache-hit-rate-max: 100.000

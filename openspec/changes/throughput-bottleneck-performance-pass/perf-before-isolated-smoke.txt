@@ -1,0 +1,28 @@
+# microide_perf report
+runner_class=local-advisory provenance=advisory
+sdl_video_driver=dummy renderer_driver=software
+iterations=10 seed=1337 layout_mode=(default)
+isolated_app_root=(per-scenario isolated, cleaned at shutdown)
+scenarios=cold_startup_no_project,multi_project_switch,multi_tab_cycle,typing_small_file,typing_large_file,scroll_large_file,window_resize_stress,project_search_literal,project_search_regex,linter_on_save,compare_tab_open,merge_tab_open,terminal_scroll_long_output,cold_startup_small_project,cold_startup_large_project,switch_and_idle,editor_fold_recompute,editor_fold_viewport_refresh,editor_sticky_scroll_scroll,editor_indent_guides_paint,editor_render_whitespace_paint
+
+cold_startup_no_project p50=6.59188ms p95=15.0152ms max=20.9909ms
+multi_project_switch p50=98.4459ms p95=113.426ms max=121.848ms
+multi_tab_cycle p50=254.379ms p95=266.548ms max=269.257ms
+typing_small_file p50=3.18583ms p95=9.95557ms max=14.3ms
+typing_large_file p50=3.7262ms p95=10.4614ms max=15.4261ms
+scroll_large_file p50=6.63821ms p95=17.9947ms max=25.1423ms
+window_resize_stress p50=27.3749ms p95=35.7198ms max=41.5242ms
+project_search_literal p50=54.0513ms p95=62.5593ms max=67.8325ms
+project_search_regex p50=53.9992ms p95=62.6585ms max=68.2901ms
+linter_on_save p50=123.703ms p95=129.975ms max=134.528ms
+compare_tab_open p50=3.00348ms p95=15.0307ms max=22.5948ms
+merge_tab_open p50=13.7273ms p95=22.3418ms max=23.9078ms
+terminal_scroll_long_output p50=124.84ms p95=173.857ms max=185.664ms
+cold_startup_small_project p50=5.34854ms p95=20.4525ms max=29.7977ms
+cold_startup_large_project p50=5.50293ms p95=12.526ms max=18.0316ms
+switch_and_idle p50=105.273ms p95=111.132ms max=112.713ms
+editor_fold_recompute p50=1165.08ms p95=1226.16ms max=1247.47ms
+editor_fold_viewport_refresh p50=458.789ms p95=477.04ms max=479.606ms
+editor_sticky_scroll_scroll p50=671.508ms p95=700.06ms max=702.977ms
+editor_indent_guides_paint p50=365.011ms p95=412.336ms max=439.539ms
+editor_render_whitespace_paint p50=499.231ms p95=505.378ms max=506.744ms

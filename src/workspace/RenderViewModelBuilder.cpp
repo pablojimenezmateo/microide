@@ -327,9 +327,17 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
     return;
   }
   const std::size_t top_line = viewport.VisualRowLineIndex(viewport.scroll_line());
+  // The indexed AppendFoldsContaining walk returns ranges in outer→inner order
+  // via the prefix-max-closer cache instead of a linear scan over ranges().
+  std::vector<editor::FoldRange> ancestors;
+  ancestors.reserve(8);
+  folding_model->AppendFoldsContaining(top_line, &ancestors);
+  // The sticky-scroll bar paints openers strictly above the viewport's top
+  // visible line (opener_line < top_line); drop the self-containing entry if
+  // the top happens to land on an opener.
   std::vector<std::size_t> openers;
-  openers.reserve(16);
-  for (const editor::FoldRange& range : folding_model->ranges()) {
+  openers.reserve(ancestors.size());
+  for (const editor::FoldRange& range : ancestors) {
     if (range.opener_line < top_line && top_line <= range.closer_line) {
       openers.push_back(range.opener_line);
     }
@@ -337,9 +345,8 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
   if (openers.empty()) {
     return;
   }
-  std::sort(openers.begin(), openers.end());
-  openers.erase(std::unique(openers.begin(), openers.end()), openers.end());
   const std::size_t take = std::min(max_depth, openers.size());
+  // openers is already sorted outermost-first; take the innermost `max_depth`.
   const auto start_it = openers.end() - static_cast<std::ptrdiff_t>(take);
   out_opener_lines.assign(start_it, openers.end());
 }

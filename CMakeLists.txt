@@ -499,8 +499,10 @@ add_executable(microide_tests
   tests/SingleLineEditorTests.cpp
   tests/AllocationCounterTests.cpp
   tests/PerfBaselineTests.cpp
+  tests/PerfHarnessIsolationTests.cpp
   tests/perf/AllocationCounter.cpp
   tests/perf/Baseline.cpp
+  tests/perf/PerfHarnessIsolation.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
@@ -585,6 +587,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     ${MICROIDE_CORE_SOURCES}
     tests/perf/AllocationCounter.cpp
     tests/perf/PerfHarness.cpp
+    tests/perf/PerfHarnessIsolation.cpp
     tests/perf/Baseline.cpp
     tests/perf/EditorEssentialsPerfScenarios.cpp
     tests/perf/PerfMain.cpp

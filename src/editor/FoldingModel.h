@@ -103,6 +103,11 @@ class FoldingModel {
   // with opener_line <= line <= closer_line). Empty optional when unknown.
   std::optional<FoldRange> InnermostFoldContaining(std::size_t line) const;
 
+  // Append every fold range whose `[opener_line, closer_line]` interval covers
+  // `line`, in increasing-opener order (outermost first). Uses the indexed
+  // prefix-max-closer cache so callers do not need to scan `ranges()` linearly.
+  void AppendFoldsContaining(std::size_t line, std::vector<FoldRange>* out) const;
+
   // True iff a fold range opens at `line` and is currently collapsed.
   bool IsCollapsedAtOpener(std::size_t line) const;
 
@@ -124,6 +129,16 @@ class FoldingModel {
   const Fingerprint& fingerprint() const { return fingerprint_; }
 
  private:
+  struct CollapsedInterval {
+    std::size_t lo = 0;  // first hidden line (opener + 1)
+    std::size_t hi = 0;  // last hidden line (closer, inclusive)
+  };
+
+  // Build the revision-keyed lookup tables: sorted collapsed-interval list with
+  // prefix `hi` running-max, plus a per-range prefix running-max of `closer_line`
+  // for InnermostFoldContaining. Cheap when ranges_/collapsed_ are unchanged.
+  void EnsureLookupCache() const;
+
   std::vector<FoldRange> ranges_;
   std::vector<bool> collapsed_;  // parallel to ranges_
   Fingerprint fingerprint_;
@@ -131,6 +146,11 @@ class FoldingModel {
   bool dirty_ = true;
   std::size_t revision_ = 0;
   std::size_t resolved_prefix_line_count_ = 0;
+
+  mutable std::size_t cached_revision_ = std::numeric_limits<std::size_t>::max();
+  mutable std::vector<CollapsedInterval> cached_collapsed_intervals_;
+  mutable std::vector<std::size_t> cached_collapsed_hi_prefix_max_;
+  mutable std::vector<std::size_t> cached_range_closer_prefix_max_;
 };
 
 }  // namespace microide::editor

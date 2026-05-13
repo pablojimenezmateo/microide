@@ -1,0 +1,17 @@
+[perf] running scenario 1/1: cold_startup_large_project
+[perf]    63.99 ms total |    58.95 ms | RuntimeSyntaxRegistry::EnsureInitialized
+[perf]    76.72 ms total |    12.09 ms |     WorkspaceShell::InitializeCurrentProject::SetProjectRoot
+[perf]    80.40 ms total |    15.83 ms |   WorkspaceShell::InitializeCurrentProject
+[perf]    84.97 ms total |    20.40 ms | ProjectCatalogCoordinator::Open
+[perf] scenario=cold_startup_large_project iteration=1/1
+[perf]    92.57 ms total |     7.52 ms |   ProjectCatalogCoordinator::PersistActiveEntry(root=/home/gef/Documents/projects/microide)
+[perf]    96.88 ms total |    11.84 ms | ProjectCatalogCoordinator::Open
+[perf]   117.56 ms total |     8.26 ms | ProjectCatalogCoordinator::PersistActiveEntry(root=/home/gef/Documents/projects/microide/tests/perf/fixtures/large_project)
+[perf]   128.52 ms total |    10.94 ms |         ProjectCatalogService::LoadProjectState::SetProjectFileMonitorRoot
+[perf]   128.52 ms total |    18.05 ms |     WorkspaceProjectFileMonitor::ArmPendingWatch
+[perf]   128.79 ms total |    11.21 ms |       ProjectCatalogService::LoadProjectState(root=/home/gef/Documents/projects/microide)
+[perf]   137.59 ms total |    20.01 ms |     ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=0,root=/home/gef/Documents/projects/microide)
+[perf]   147.58 ms total |     5.91 ms |     ProjectCatalogService::StoreCurrentProjectState(root=/home/gef/Documents/projects/microide/tests/perf/fixtures/large_project)
+[perf]   147.59 ms total |     9.97 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown::Entry(index=1,root=/home/gef/Documents/projects/microide/tests/perf/fixtures/large_project)
+[perf]   147.59 ms total |    30.02 ms |   ProjectCatalogCoordinator::PersistInactiveEntriesForShutdown
+[perf] advisory run (runner_class=local-advisory, video=dummy); not authoritative for baseline updates

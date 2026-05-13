@@ -1650,6 +1650,27 @@ void TextViewport::RestoreViewState(const ViewState& state) {
 void TextViewport::PushHistoryEntry(HistoryEntry entry) {
   document_->redo_stack.clear();
   if (!undo_group_stack_.empty()) {
+    for (UndoGroupFrame& frame : undo_group_stack_) {
+      if (frame.using_fallback) {
+        continue;
+      }
+      frame.child_entries.push_back(entry);
+      if (!frame.aggregate_entry.has_value()) {
+        frame.aggregate_entry = entry;
+        continue;
+      }
+      std::optional<HistoryEntry> merged =
+          TryMergeUndoGroupEntry(*frame.aggregate_entry, entry);
+      if (merged.has_value()) {
+        frame.aggregate_entry = std::move(merged);
+        continue;
+      }
+      frame.fallback_lines =
+          ReconstructUndoGroupFallbackLines(document_->lines, frame.child_entries);
+      frame.aggregate_entry.reset();
+      frame.child_entries.clear();
+      frame.using_fallback = true;
+    }
     return;
   }
   document_->undo_stack.push_back(std::move(entry));
@@ -1667,8 +1688,9 @@ void TextViewport::PushHistoryEntryDirect(HistoryEntry entry) {
 }
 
 void TextViewport::BeginUndoGroup() {
-  undo_group_stack_.push_back(
-      UndoGroupFrame{.lines = document_->lines, .state = CaptureViewState()});
+  UndoGroupFrame frame;
+  frame.state = CaptureViewState();
+  undo_group_stack_.push_back(std::move(frame));
 }
 
 void TextViewport::EndUndoGroup() {
@@ -1681,29 +1703,34 @@ void TextViewport::FlushActiveUndoGroup() {
   }
   UndoGroupFrame frame = std::move(undo_group_stack_.back());
   undo_group_stack_.pop_back();
-  HistoryEntry agg = BuildHistoryEntryForDocumentChange(
-      frame.lines, frame.state, document_->lines, CaptureViewState());
+
+  HistoryEntry agg;
+  if (frame.using_fallback) {
+    // Conservative fallback for grouped edits whose child deltas cannot be
+    // merged into one contiguous history entry.
+    agg = BuildHistoryEntryForDocumentChange(frame.fallback_lines, frame.state,
+                                             document_->lines, CaptureViewState());
+  } else if (frame.aggregate_entry.has_value()) {
+    agg = *frame.aggregate_entry;
+    agg.before_state = frame.state;
+    agg.after_state = CaptureViewState();
+  } else {
+    // No edits happened. Build an empty aggregate so the no-op check below
+    // can discard it uniformly.
+    agg = BuildHistoryEntryForDocumentChange({}, frame.state, {}, CaptureViewState());
+  }
+
   if (agg.before_lines.empty() && agg.after_lines.empty()) {
     return;
   }
-  PushHistoryEntryDirect(std::move(agg));
+  PushHistoryEntry(std::move(agg));
 }
 
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
-  const auto erase_begin =
-      document_->lines.begin() + static_cast<std::ptrdiff_t>(start_line);
-  const auto erase_end =
-      erase_begin + static_cast<std::ptrdiff_t>(std::min(removed_count, document_->lines.size() - start_line));
-  document_->lines.erase(erase_begin, erase_end);
-
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
-  document_->lines.insert(document_->lines.begin() + static_cast<std::ptrdiff_t>(start_line),
-                          inserted_lines.begin(), inserted_lines.end());
-  if (document_->lines.empty()) {
-    document_->lines.push_back("");
-  }
+  ApplyHistoryEntryToLines(document_->lines, entry, forward);
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   RefreshEncoding();
@@ -1883,6 +1910,94 @@ std::optional<AppliedEdit> TextViewport::BuildAppliedEditForHistoryEntry(
           },
       .replacement_text = util::SerializeLines(replacement_lines, util::LineEnding::LF),
   };
+}
+
+void TextViewport::ApplyHistoryEntryToLines(std::vector<std::string>& lines,
+                                            const HistoryEntry& entry,
+                                            bool forward) {
+  const std::size_t start_line = std::min(entry.start_line, lines.size());
+  const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
+  const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
+
+  const bool same_count_replacement =
+      removed_count > 0 && removed_count == inserted_lines.size() &&
+      start_line + removed_count <= lines.size();
+  if (same_count_replacement) {
+    for (std::size_t i = 0; i < removed_count; ++i) {
+      lines[start_line + i] = inserted_lines[i];
+    }
+  } else {
+    const auto erase_begin = lines.begin() + static_cast<std::ptrdiff_t>(start_line);
+    const auto erase_end = erase_begin +
+                           static_cast<std::ptrdiff_t>(std::min(removed_count, lines.size() - start_line));
+    lines.erase(erase_begin, erase_end);
+    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(start_line),
+                 inserted_lines.begin(), inserted_lines.end());
+  }
+  if (lines.empty()) {
+    lines.push_back("");
+  }
+}
+
+std::optional<TextViewport::HistoryEntry> TextViewport::TryMergeUndoGroupEntry(
+    const HistoryEntry& aggregate,
+    const HistoryEntry& next) {
+  const std::size_t aggregate_after_start = aggregate.start_line;
+  const std::size_t aggregate_after_end = aggregate.start_line + aggregate.after_lines.size();
+  const std::size_t next_start = next.start_line;
+  const std::size_t next_end = next.start_line + next.before_lines.size();
+
+  HistoryEntry merged = aggregate;
+  merged.after_state = next.after_state;
+
+  if (next_end == aggregate_after_start) {
+    merged.start_line = next.start_line;
+    merged.before_lines = next.before_lines;
+    merged.before_lines.insert(merged.before_lines.end(), aggregate.before_lines.begin(),
+                               aggregate.before_lines.end());
+    merged.after_lines = next.after_lines;
+    merged.after_lines.insert(merged.after_lines.end(), aggregate.after_lines.begin(),
+                              aggregate.after_lines.end());
+    return merged;
+  }
+
+  if (next_start == aggregate_after_end) {
+    merged.before_lines.insert(merged.before_lines.end(), next.before_lines.begin(),
+                               next.before_lines.end());
+    merged.after_lines.insert(merged.after_lines.end(), next.after_lines.begin(),
+                              next.after_lines.end());
+    return merged;
+  }
+
+  if (next_start < aggregate_after_start || next_end > aggregate_after_end) {
+    return std::nullopt;
+  }
+
+  const std::size_t relative_start = next_start - aggregate_after_start;
+  const std::size_t relative_end = relative_start + next.before_lines.size();
+  if (!std::equal(next.before_lines.begin(), next.before_lines.end(),
+                  aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
+                  aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end))) {
+    return std::nullopt;
+  }
+
+  merged.after_lines.erase(
+      merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
+      merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end));
+  merged.after_lines.insert(
+      merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
+      next.after_lines.begin(), next.after_lines.end());
+  return merged;
+}
+
+std::vector<std::string> TextViewport::ReconstructUndoGroupFallbackLines(
+    const std::vector<std::string>& current_lines,
+    const std::vector<HistoryEntry>& child_entries) {
+  std::vector<std::string> reconstructed = current_lines;
+  for (auto it = child_entries.rbegin(); it != child_entries.rend(); ++it) {
+    ApplyHistoryEntryToLines(reconstructed, *it, false);
+  }
+  return reconstructed;
 }
 
 bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
@@ -2268,7 +2383,54 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   std::sort(slots.begin(), slots.end(),
             [&](const Slot& a, const Slot& b) { return TextPositionLess(slot_sort_end(a), slot_sort_end(b)); });
 
-  const std::vector<std::string> before_lines = document_->lines;
+  // Common multi-caret pair-insert paths (surround, auto-close, plain char
+  // insert) preserve line count when no selection spans multiple lines and the
+  // inserted glyph is not a newline. Capture only the touched line range
+  // instead of snapshotting the entire document; the aggregate undo entry is
+  // built from this slice and offset back into document coordinates.
+  bool slice_safe = (ch != '\n');
+  std::size_t slice_min_line = std::numeric_limits<std::size_t>::max();
+  std::size_t slice_max_line = 0;
+  if (slice_safe) {
+    for (const Slot& slot : slots) {
+      std::size_t lo = 0;
+      std::size_t hi = 0;
+      if (slot.selection.has_value()) {
+        const SelectionRange norm = NormalizeRange(*slot.selection);
+        if (norm.start.line != norm.end.line) {
+          slice_safe = false;
+          break;
+        }
+        lo = std::min(norm.start.line, norm.end.line);
+        hi = std::max(norm.start.line, norm.end.line);
+      } else {
+        if (document_->lines.empty()) {
+          slice_safe = false;
+          break;
+        }
+        lo = std::min(slot.reference.line, document_->lines.size() - 1);
+        hi = lo;
+      }
+      slice_min_line = std::min(slice_min_line, lo);
+      slice_max_line = std::max(slice_max_line, hi);
+    }
+    if (slice_min_line == std::numeric_limits<std::size_t>::max()) {
+      slice_safe = false;
+    }
+  }
+
+  std::vector<std::string> before_lines;
+  std::size_t before_lines_start = 0;
+  if (slice_safe) {
+    slice_max_line = std::min(slice_max_line, document_->lines.size() - 1);
+    before_lines_start = slice_min_line;
+    before_lines.reserve(slice_max_line - slice_min_line + 1);
+    for (std::size_t i = slice_min_line; i <= slice_max_line; ++i) {
+      before_lines.push_back(document_->lines[i]);
+    }
+  } else {
+    before_lines = document_->lines;
+  }
   const ViewState before_state = CaptureViewState();
 
   std::vector<SecondaryCaret> new_secondaries = secondary_carets_;
@@ -2425,8 +2587,23 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
 
   document_->placeholder = false;
   document_->dirty = true;
-  const HistoryEntry aggregate_entry =
-      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  HistoryEntry aggregate_entry;
+  if (slice_safe) {
+    std::vector<std::string> after_lines_slice;
+    after_lines_slice.reserve(before_lines.size());
+    const std::size_t slice_end =
+        std::min(before_lines_start + before_lines.size(), document_->lines.size());
+    for (std::size_t i = before_lines_start; i < slice_end; ++i) {
+      after_lines_slice.push_back(document_->lines[i]);
+    }
+    aggregate_entry =
+        BuildHistoryEntryForDocumentChange(before_lines, before_state,
+                                           after_lines_slice, CaptureViewState());
+    aggregate_entry.start_line += before_lines_start;
+  } else {
+    aggregate_entry = BuildHistoryEntryForDocumentChange(before_lines, before_state,
+                                                         document_->lines, CaptureViewState());
+  }
   last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
   PushHistoryEntry(aggregate_entry);
   return true;
@@ -2830,29 +3007,53 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   wrapped_row_layouts_.reserve(document_->lines.size());
   wrapped_line_row_offsets_.reserve(document_->lines.size());
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
+  // Probe whether the folding model has any collapsed range. When none exist
+  // (the common no-folds path on a freshly-opened large file), skip the
+  // per-line `IsLineHidden` query entirely.
+  const bool has_any_collapsed_fold =
+      folding_model_ != nullptr &&
+      [this]() {
+        for (bool flag : folding_model_->collapsed_flags()) {
+          if (flag) return true;
+        }
+        return false;
+      }();
   std::size_t last_visible_row = 0;
-  for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
-    const bool line_hidden =
-        folding_model_ != nullptr && folding_model_->IsLineHidden(line_index);
-    if (line_hidden) {
-      wrapped_line_row_offsets_.push_back(last_visible_row);
-      continue;
+  if (!soft_wrap_) {
+    // Non-soft-wrap fast path: visual-row count is one per non-hidden line,
+    // and the visual column window is the same for every row. Skip the
+    // VisualColumnForTextColumn walk that the soft-wrap branch needs.
+    const WrappedRowLayout row_template{0, horizontal_scroll_,
+                                         horizontal_scroll_ + visible_columns_};
+    for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
+      if (has_any_collapsed_fold && folding_model_->IsLineHidden(line_index)) {
+        wrapped_line_row_offsets_.push_back(last_visible_row);
+        continue;
+      }
+      wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
+      last_visible_row = wrapped_row_layouts_.size();
+      WrappedRowLayout row = row_template;
+      row.line_index = line_index;
+      wrapped_row_layouts_.push_back(row);
     }
-
-    wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
-    last_visible_row = wrapped_row_layouts_.size();
-    const std::size_t line_visual_width =
-        TextLayout::VisualColumnForTextColumn(document_->lines[line_index],
-                                              document_->lines[line_index].size(), tab_size_);
-    if (!soft_wrap_) {
-      wrapped_row_layouts_.push_back(
-          WrappedRowLayout{line_index, horizontal_scroll_, horizontal_scroll_ + visible_columns_});
-    } else if (line_visual_width == 0) {
-      wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, 0, 0});
-    } else {
-      for (std::size_t start = 0; start < line_visual_width; start += wrap_columns) {
-        const std::size_t end = std::min(line_visual_width, start + wrap_columns);
-        wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, start, end});
+  } else {
+    for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
+      if (has_any_collapsed_fold && folding_model_->IsLineHidden(line_index)) {
+        wrapped_line_row_offsets_.push_back(last_visible_row);
+        continue;
+      }
+      wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
+      last_visible_row = wrapped_row_layouts_.size();
+      const std::size_t line_visual_width =
+          TextLayout::VisualColumnForTextColumn(document_->lines[line_index],
+                                                document_->lines[line_index].size(), tab_size_);
+      if (line_visual_width == 0) {
+        wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, 0, 0});
+      } else {
+        for (std::size_t start = 0; start < line_visual_width; start += wrap_columns) {
+          const std::size_t end = std::min(line_visual_width, start + wrap_columns);
+          wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, start, end});
+        }
       }
     }
   }

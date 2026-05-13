@@ -40,6 +40,7 @@ struct CliOptions {
   bool update_baseline = false;
   bool smoke = false;
   bool require_fixtures = false;
+  bool keep_artifacts = false;
   std::size_t iterations = 10;
   std::optional<std::filesystem::path> report_json;
   std::optional<std::filesystem::path> report_text;
@@ -214,6 +215,10 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
     }
     if (arg == "--require-fixtures") {
       options.require_fixtures = true;
+      continue;
+    }
+    if (arg == "--keep-artifacts") {
+      options.keep_artifacts = true;
       continue;
     }
     if (arg.rfind("--iterations=", 0) == 0) {
@@ -1008,8 +1013,9 @@ int main(int argc, char** argv) {
   const std::optional<CliOptions> options = ParseCli(argc, argv);
   if (!options.has_value()) {
     std::cerr << "usage: microide_perf [--scenarios=a,b] [--update-baseline] [--smoke] "
-                 "[--require-fixtures] [--iterations=N] [--report-json=path] "
-                 "[--report-text=path] [--reference-runner=name] "
+                 "[--require-fixtures] [--keep-artifacts] [--iterations=N] "
+                 "[--report-json=path] [--report-text=path] "
+                 "[--reference-runner=name] "
                  "[--layout-mode=auto|regular|compact]\n";
     return 1;
   }
@@ -1021,6 +1027,7 @@ int main(int argc, char** argv) {
   run_options.smoke_only = options->smoke;
   run_options.iterations = options->iterations;
   run_options.layout_mode_override = options->layout_mode;
+  run_options.keep_artifacts = options->keep_artifacts;
   std::vector<Aggregate> aggregates;
   bool all_passed = true;
   std::size_t selected_count = 0;
@@ -1113,9 +1120,78 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  // Resolve report metadata once, after harness has had a chance to set SDL_*
+  // environment hints. SDL was already torn down per-scenario, so re-read from
+  // env rather than calling SDL_GetCurrentVideoDriver.
+  ReportMetadata metadata;
+  metadata.runner_class =
+      options->reference_runner.value_or(std::string("local-advisory"));
+  metadata.provenance =
+      options->reference_runner.has_value() &&
+              *options->reference_runner == std::string("perf-runner-v1")
+          ? std::string("reference")
+          : std::string("advisory");
+  if (const char* video = std::getenv("SDL_VIDEODRIVER")) {
+    metadata.sdl_video_driver = video;
+  } else {
+    metadata.sdl_video_driver = "default";
+  }
+  metadata.sdl_renderer_driver = "software";
+  metadata.scenarios.reserve(aggregates.size());
+  for (const Aggregate& aggregate : aggregates) {
+    metadata.scenarios.push_back(aggregate.scenario_name);
+  }
+  metadata.iterations = options->iterations;
+  metadata.layout_mode = options->layout_mode.value_or(std::string{});
+  {
+    const char* seed_env = std::getenv("MICROIDE_PERF_SEED");
+    if (seed_env != nullptr && seed_env[0] != '\0') {
+      const auto parsed = microide::util::ParseSize(seed_env);
+      if (parsed.has_value()) {
+        metadata.seed = static_cast<std::uint64_t>(*parsed);
+      }
+    }
+    if (metadata.seed == 0) {
+      metadata.seed = 1337ULL;
+    }
+  }
+  // Note: per-scenario sandboxes are cleaned at shutdown by default, so this
+  // path is only meaningful with --keep-artifacts (then it points at the
+  // last scenario's sandbox).
+  if (options->keep_artifacts) {
+    metadata.isolated_app_root = "(retained per-scenario, see stderr for paths)";
+  } else {
+    metadata.isolated_app_root = "(per-scenario isolated, cleaned at shutdown)";
+  }
+
+  // Advisory banner so reviewers can distinguish local runs from gate runs.
+  if (metadata.provenance == "advisory") {
+    std::cerr << "[perf] advisory run (runner_class=" << metadata.runner_class
+              << ", video=" << metadata.sdl_video_driver
+              << "); not authoritative for baseline updates\n";
+  }
+
   if (options->report_text.has_value()) {
     std::ofstream out(*options->report_text);
     if (out) {
+      out << "# microide_perf report\n";
+      out << "runner_class=" << metadata.runner_class
+          << " provenance=" << metadata.provenance << "\n";
+      out << "sdl_video_driver=" << metadata.sdl_video_driver
+          << " renderer_driver=" << metadata.sdl_renderer_driver << "\n";
+      out << "iterations=" << metadata.iterations << " seed=" << metadata.seed
+          << " layout_mode=" << (metadata.layout_mode.empty() ? "(default)"
+                                                              : metadata.layout_mode)
+          << "\n";
+      out << "isolated_app_root=" << metadata.isolated_app_root << "\n";
+      out << "scenarios=";
+      for (std::size_t i = 0; i < metadata.scenarios.size(); ++i) {
+        if (i != 0) {
+          out << ',';
+        }
+        out << metadata.scenarios[i];
+      }
+      out << "\n\n";
       for (const Aggregate& aggregate : aggregates) {
         out << aggregate.scenario_name << " p50=" << aggregate.metrics.p50_wall_ms
             << "ms p95=" << aggregate.metrics.p95_wall_ms << "ms max="
@@ -1125,14 +1201,35 @@ int main(int argc, char** argv) {
   }
 
   if (options->report_json.has_value()) {
-    microide::util::JsonArray all;
-    all.reserve(aggregates.size());
+    microide::util::JsonArray scenarios_json;
+    scenarios_json.reserve(aggregates.size());
     for (const Aggregate& aggregate : aggregates) {
-      all.push_back(ToJson(aggregate));
+      scenarios_json.push_back(ToJson(aggregate));
     }
+    microide::util::JsonArray scenario_names_json;
+    scenario_names_json.reserve(metadata.scenarios.size());
+    for (const std::string& name : metadata.scenarios) {
+      scenario_names_json.push_back(microide::util::JsonValue(name));
+    }
+    microide::util::JsonObject metadata_json{
+        {"runner_class", metadata.runner_class},
+        {"provenance", metadata.provenance},
+        {"sdl_video_driver", metadata.sdl_video_driver},
+        {"sdl_renderer_driver", metadata.sdl_renderer_driver},
+        {"iterations", static_cast<std::int64_t>(metadata.iterations)},
+        {"layout_mode", metadata.layout_mode},
+        {"seed", static_cast<std::int64_t>(metadata.seed)},
+        {"scenarios", std::move(scenario_names_json)},
+        {"isolated_app_root", metadata.isolated_app_root},
+    };
+    microide::util::JsonObject report_json{
+        {"metadata", std::move(metadata_json)},
+        {"scenarios", std::move(scenarios_json)},
+    };
     std::ofstream out(*options->report_json);
     if (out) {
-      out << microide::util::SerializeJson(microide::util::JsonValue(std::move(all)));
+      out << microide::util::SerializeJson(
+                 microide::util::JsonValue(std::move(report_json)));
     }
   }
 

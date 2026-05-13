@@ -117,3 +117,46 @@ After implementation, capture:
 - `search-bench-after.txt`.
 
 Baseline updates are not acceptable until the same scenario set is green or intentionally moved on `perf-runner-v1`.
+
+## After Results (Local Advisory, Isolated Harness)
+
+Captured after harness isolation (§1), fold indexes (§2.1–§2.2), non-soft-wrap row mapping fast path (§2.3), same-line-count `ApplyHistoryEntry` fast path (§3.1), and slice-based multi-caret aggregate (§3.4). Reports in this directory:
+
+- `perf-before-isolated-smoke.txt/json` → `perf-after-smoke.txt/json` (10 iterations)
+- `perf-before-isolated-hotspots.txt/json` → `perf-after-hotspots.txt/json` (10 iterations)
+- `perf-before-isolated-idle.txt/json` → `perf-after-idle-soak.txt/json` (1 iteration)
+- `diff-bench-before.txt` → `diff-bench-after.txt` (5 runs)
+- `search-bench-before.txt` → `search-bench-after.txt` (5 runs)
+
+### Highest-impact deltas (p50 wall, 10-iteration isolated runs)
+
+| Scenario | Before (ms) | After (ms) | Delta |
+| --- | --- | --- | --- |
+| `editor_auto_close_typing` | 3175.22 | 727.87 | **−77%** |
+| `editor_smart_indent_typing` | 3246.14 | 829.45 | **−74%** |
+| `editor_shaping_multi_caret` | 146.27 | 35.74 | **−76%** |
+| `editor_add_cursor_next_match` | 42.87 | 25.59 | −40% |
+| `editor_fold_recompute` | 1165.08 | 715.56 | **−39%** |
+| `editor_bracket_match_caret_motion` | 107.56 | 69.46 | −35% |
+| `editor_surround_multi_caret` | 562.88 | 485.74 | −14% |
+| `editor_render_whitespace_paint` | 499.23 | 464.25 | −7% |
+| `editor_indent_guides_paint` | 365.01 | 346.55 | −5% |
+| `editor_mouse_selection_drag` | 232.92 | 222.81 | −4% |
+| `editor_fold_viewport_refresh` | 458.79 | 497.25 | +8% (noisy, within iteration variance) |
+
+`cold_startup_no_project` (pre-isolation max 359.71 ms → post-isolation max 24.50 ms) is the only smoke entry that moved purely from harness isolation rather than product code, but it now reflects a true cold start instead of restored 50k-line editor work.
+
+### Adjacent paths (unchanged, as expected)
+
+- Compare pipeline: `diff-total-ms-avg` 0.217 ms; row paint 5.28 ms; syntax 13.66 ms — same shape as `diff-bench-before.txt`.
+- Search: `kernel_sized_project node_0001` literal averages 1.06 ms across 5 runs (identical to before).
+- `idle_soak_30s` consumes the full 30 s budget without unexpected wakes.
+
+Baselines under `tests/perf/baselines/*.json` SHALL NOT be moved on the basis of these advisory numbers; the next step is a `perf-runner-v1` run with the isolated harness before any baseline change.
+
+## Remaining Work In This Pass
+
+These tasks are tracked under `tasks.md` and not yet shipped in this session:
+
+- **§4.8** — Manual real-window verification (needs human / display).
+- **§4.9** — Authoritative `perf-runner-v1` gate run.
