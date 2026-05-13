@@ -993,7 +993,7 @@ Observed:
 
 ### Still pending in this pass
 
-- §4.9 `perf-runner-v1` gate run.
+- No remaining local implementation tasks. The authoritative `perf-runner-v1` gate was intentionally skipped for this archive because runner usage was unavailable, and no perf baselines were updated.
 
 ## Notes
 

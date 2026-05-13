@@ -152,7 +152,7 @@ Captured after harness isolation (§1), fold indexes (§2.1–§2.2), non-soft-w
 - Search: `kernel_sized_project node_0001` literal averages 1.06 ms across 5 runs (identical to before).
 - `idle_soak_30s` consumes the full 30 s budget without unexpected wakes.
 
-Baselines under `tests/perf/baselines/*.json` SHALL NOT be moved on the basis of these advisory numbers; the next step is a `perf-runner-v1` run with the isolated harness before any baseline change.
+Baselines under `tests/perf/baselines/*.json` SHALL NOT be moved on the basis of these advisory numbers. This change archives without a `perf-runner-v1` gate because that runner is unavailable in the current environment, and no baseline files were updated.
 
 ### Manual real-window verification (`§4.8`, 2026-05-13)
 
@@ -173,8 +173,6 @@ Conclusion:
 - The isolated harness work removed measurement contamination, but the real-window trace still shows a severe first-render cost on a restored 50k-line editor tab.
 - Steady-state render cost is materially lower than the initial frame, but it remains borderline for smooth interaction during some redraw bursts.
 
-## Remaining Work In This Pass
+## Archive Note
 
-These tasks are tracked under `tasks.md` and not yet shipped in this session:
-
-- **§4.9** — Authoritative `perf-runner-v1` gate run.
+The authoritative `perf-runner-v1` gate (`§4.9`) was intentionally not run for this archive because GitHub/runner usage is unavailable in the current environment. The archive therefore preserves local advisory evidence only; no perf baselines were changed.
