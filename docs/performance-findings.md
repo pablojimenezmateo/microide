@@ -979,9 +979,21 @@ Implemented:
 - A documented conservative fallback reconstructs the pre-group buffer only when grouped child edits are disjoint or otherwise cannot be normalized into one contiguous aggregate entry.
 - New regression tests `TextViewport/UndoGroupMergesKnownRangeChildEdits`, `TextViewport/UndoGroupFallsBackForDisjointChildEdits`, plus snippet undo-group coverage (`EditorSnippet/ExpansionSingleUndoStep`, `EditorSnippet/MultiOccurrenceLinkedTab`).
 
+### Manual real-window trace (`§4.8`)
+
+User verification on 2026-05-13:
+
+- `env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=5 MICROIDE_TRACE_REDRAW=1 ./build/microide/microide`
+
+Observed:
+
+- First real-window `WorkspaceRootView::Render` still took **2514.65 ms** while restoring `synthetic_kernel.cpp` from the `switch_project_b` fixture.
+- The supporting startup path remained modest by comparison: `RuntimeSyntaxRegistry::EnsureInitialized` 44.07 ms, `TextViewport::OpenFile` 24.26 ms, `WorkspaceShell::InitializeCurrentProject` 42.10 ms.
+- Once the first heavy frame completed, repeated `Application::WorkspaceRender(fallback-full)` samples mostly landed around **14-18 ms**, with intermittent spikes into **27-35 ms**.
+
 ### Still pending in this pass
 
-- §4.8 manual real-window verification, §4.9 `perf-runner-v1` gate run.
+- §4.9 `perf-runner-v1` gate run.
 
 ## Notes
 

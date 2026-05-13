@@ -154,9 +154,27 @@ Captured after harness isolation (§1), fold indexes (§2.1–§2.2), non-soft-w
 
 Baselines under `tests/perf/baselines/*.json` SHALL NOT be moved on the basis of these advisory numbers; the next step is a `perf-runner-v1` run with the isolated harness before any baseline change.
 
+### Manual real-window verification (`§4.8`, 2026-05-13)
+
+User-run command:
+
+- `env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=5 MICROIDE_TRACE_REDRAW=1 ./build/microide/microide`
+
+Observed trace highlights:
+
+- First real-window `WorkspaceRootView::Render`: **2514.65 ms** (`Application::Render(full)` total 2523.46 ms) while restoring `tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp` from `switch_project_b`.
+- `RuntimeSyntaxRegistry::EnsureInitialized`: 44.07 ms.
+- `TextViewport::OpenFile(...synthetic_kernel.cpp)`: 24.26 ms.
+- `WorkspaceShell::InitializeCurrentProject`: 42.10 ms.
+- After the initial render, repeated `Application::WorkspaceRender(fallback-full)` samples mostly settled at **14-18 ms**, with a few spikes at **27-35 ms** and occasional fast frames around **5-6 ms**.
+
+Conclusion:
+
+- The isolated harness work removed measurement contamination, but the real-window trace still shows a severe first-render cost on a restored 50k-line editor tab.
+- Steady-state render cost is materially lower than the initial frame, but it remains borderline for smooth interaction during some redraw bursts.
+
 ## Remaining Work In This Pass
 
 These tasks are tracked under `tasks.md` and not yet shipped in this session:
 
-- **§4.8** — Manual real-window verification (needs human / display).
 - **§4.9** — Authoritative `perf-runner-v1` gate run.
