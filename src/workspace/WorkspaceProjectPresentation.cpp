@@ -171,15 +171,15 @@ void ApplyProjectAccent(render::Theme& theme, SDL_Color accent) {
   };
 
   theme.accent = blend(theme.accent, accent, 0.45f);
-  theme.chrome_active = blend(theme.chrome_background, accent, 0.18f);
-  theme.row_highlight = blend(theme.editor_background, accent, 0.14f);
-  const SDL_Color selection = blend(theme.editor_background, accent, 0.36f);
-  theme.selection_fill = SDL_Color{selection.r, selection.g, selection.b, 0xb4};
-  const SDL_Color search_match = blend(accent, theme.editor_background, 0.52f);
+  theme.chrome_active = blend(theme.chrome_background, accent, 0.14f);
+  theme.row_highlight = blend(theme.editor_background, accent, 0.10f);
+  const SDL_Color selection = blend(theme.editor_background, accent, 0.30f);
+  theme.selection_fill = SDL_Color{selection.r, selection.g, selection.b, 0xa8};
+  const SDL_Color search_match = blend(theme.editor_background, accent, 0.30f);
   theme.search_match = SDL_Color{search_match.r, search_match.g, search_match.b, 0x8f};
-  const SDL_Color search_match_active = blend(accent, theme.editor_background, 0.38f);
+  const SDL_Color search_match_active = blend(theme.editor_background, accent, 0.42f);
   theme.search_match_active =
-      SDL_Color{search_match_active.r, search_match_active.g, search_match_active.b, 0xc8};
+      SDL_Color{search_match_active.r, search_match_active.g, search_match_active.b, 0xa0};
 }
 
 }  // namespace microide::workspace

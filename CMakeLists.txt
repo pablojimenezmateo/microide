@@ -452,6 +452,7 @@ add_executable(microide_tests
   tests/ProjectBackgroundExecutorTests.cpp
   tests/RenderViewModelBuilderTests.cpp
   tests/TerminalSessionTests.cpp
+  tests/ThemeTests.cpp
   tests/TestMain.cpp
   tests/TestSupport.cpp
   tests/PluginHostTests.cpp
