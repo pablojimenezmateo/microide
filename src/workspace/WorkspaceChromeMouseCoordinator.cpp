@@ -22,22 +22,6 @@ void RequestMenuHoverRowRedraw(
       MakeRect(rect->x - 1.0f, rect->y - 1.0f, rect->w + 2.0f, rect->h + 2.0f));
 }
 
-std::optional<SDL_FRect> PopupItemRectForIndex(
-    std::span<const WorkspaceShell::VisiblePopupMenuItem> items,
-    int index) {
-  if (index < 0) {
-    return std::nullopt;
-  }
-  const auto it = std::find_if(items.begin(), items.end(),
-                               [index](const WorkspaceShell::VisiblePopupMenuItem& item) {
-                                 return static_cast<int>(item.index) == index;
-                               });
-  if (it == items.end()) {
-    return std::nullopt;
-  }
-  return it->rect;
-}
-
 bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
 }
