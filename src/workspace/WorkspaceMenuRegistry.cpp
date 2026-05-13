@@ -238,6 +238,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kEditorTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CloseActiveTab, "Close Tab"),
+      MenuItem(ActionId::CloseAllTabs),
       MenuItem(ActionId::CloseOtherTabs),
       MenuItem(ActionId::CloseTabsToRight),
       MenuItem(ActionId::CloseTabsToLeft),

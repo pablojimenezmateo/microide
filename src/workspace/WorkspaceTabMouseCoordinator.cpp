@@ -112,7 +112,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
     if (state_.open_tabs.empty()) {
       const SDL_FRect placeholder_tab =
-          MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
+          MakeRect(layout.tab_strip.x, layout.tab_strip.y + 2.0f, 220.0f,
                    std::max(22.0f, layout.tab_strip.h - 2.0f));
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(placeholder_tab, event.button.x, event.button.y)) {

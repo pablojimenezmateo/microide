@@ -33,7 +33,7 @@ void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
   render::FillRect(renderer, rect, background);
   render::OutlineRect(renderer, rect, theme.border);
 
-  const float cx = rect.x + rect.w * 0.32f;
+  const float cx = rect.x + 9.0f;
   const float cy = rect.y + rect.h * 0.5f;
   const float arm = std::max(3.0f, rect.h * 0.22f);
   SDL_SetRenderDrawColor(renderer, foreground.r, foreground.g, foreground.b, foreground.a);
@@ -51,9 +51,11 @@ void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
                                     count_buffer.data() + count_buffer.size(), hidden_count);
     const std::string_view count_text(count_buffer.data(),
                                       static_cast<std::size_t>(conv.ptr - count_buffer.data()));
-    const float count_x = rect.x + rect.w * 0.55f;
-    const SDL_FRect count_rect{count_x, rect.y,
-                               std::max(0.0f, rect.x + rect.w - count_x - 2.0f), rect.h};
+    const float count_x = rect.x + 15.0f;
+    const float count_right_padding = 2.0f;
+    const SDL_FRect count_rect{
+        count_x, rect.y,
+        std::max(0.0f, rect.x + rect.w - count_x - count_right_padding), rect.h};
     DrawVCenteredTextOn(text_renderer, renderer, count_rect, 0.0f, foreground, background,
                         count_text);
   }
@@ -199,7 +201,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
   if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
     const SDL_FRect placeholder_tab =
-        MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
+        MakeRect(layout.tab_strip.x, layout.tab_strip.y + 2.0f, 220.0f,
                  std::max(22.0f, layout.tab_strip.h - 2.0f));
     DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
                  StripTabStyle{

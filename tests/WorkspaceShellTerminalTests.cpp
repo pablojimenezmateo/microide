@@ -645,6 +645,17 @@ void TestWorkspaceShellTerminalTabRightClickOpensContextMenu() {
          "right-clicking a terminal tab should open the terminal tab context menu");
 }
 
+void TestWorkspaceShellTerminalTabsStartAtPanelEdge() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::ActiveTerminalTabRect(shell);
+  Expect(std::fabs(tab_rect.x - layout.bottom_panel.x) <= 0.01f,
+         "terminal tab strip should not keep extra left padding before the first tab");
+}
+
 void TestWorkspaceShellTerminalPanelRightClickOpensContextMenu() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -911,6 +922,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopyLastTerminalCommandPreservesSoftWrappedInvocation);
   AddTest(tests, "WorkspaceShell/TerminalTabRightClickOpensContextMenu",
           TestWorkspaceShellTerminalTabRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/TerminalTabsStartAtPanelEdge",
+          TestWorkspaceShellTerminalTabsStartAtPanelEdge);
   AddTest(tests, "WorkspaceShell/TerminalPanelRightClickOpensContextMenu",
           TestWorkspaceShellTerminalPanelRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/TerminalPasteActionTargetsPanelFocus",

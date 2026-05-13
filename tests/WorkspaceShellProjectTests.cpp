@@ -855,6 +855,23 @@ void TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome() {
          "closing the welcome overlay should restore editor focus when no sidebar is visible");
 }
 
+void TestWorkspaceShellWelcomeTabUsesLeftEdgeHitArea() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "welcome\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(SendMouseDown(shell, layout.tab_strip.x + 1.0f, layout.tab_strip.y + 10.0f,
+                       SDL_BUTTON_LEFT),
+         "clicking the left edge of the welcome tab should be handled");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "clicking the left edge of the welcome tab should focus the editor surface");
+}
+
 void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2266,6 +2283,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresEditorFocusOnWelcome",
           TestWorkspaceShellFilesShortcutEscapeRestoresEditorFocusOnWelcome);
+  AddTest(tests, "WorkspaceShell/WelcomeTabUsesLeftEdgeHitArea",
+          TestWorkspaceShellWelcomeTabUsesLeftEdgeHitArea);
   AddTest(tests, "WorkspaceShell/FilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild",
           TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild);
   AddTest(tests, "WorkspaceShell/ProjectOpenFromWelcomeInvalidatesCachedLayout",

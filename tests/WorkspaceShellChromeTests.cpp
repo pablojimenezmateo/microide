@@ -1075,6 +1075,8 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
 
   const auto labels = WorkspaceShellTestAccess::VisiblePopupMenuLabels(
       shell, WorkspaceShell::MenuId::EditorTabContext);
+  Expect(std::find(labels.begin(), labels.end(), "Close All Tabs") != labels.end(),
+         "editor tab context menu should expose Close All Tabs");
   Expect(std::find(labels.begin(), labels.end(), "Copy Relative Path") != labels.end(),
          "editor tab context menu should expose Copy Relative Path");
   Expect(std::find(labels.begin(), labels.end(), "Copy Absolute Path") != labels.end(),
@@ -1698,6 +1700,95 @@ void TestEditorTabStripOverflowControlsScrollAndCount() {
          "after one right-scroll the right-hidden count should decrement by one");
 }
 
+void TestEditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "tab reserve\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (int i = 0; i < 16; ++i) {
+    const std::filesystem::path file = root / ("reserve_" + std::to_string(i) + ".txt");
+    WriteFile(file, "reserve\n");
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+  }
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  const auto overflow = WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
+  Expect(overflow.hidden_left == 0 && overflow.hidden_right > 0,
+         "fixture should expose only right-side editor-tab overflow");
+
+  const SDL_FRect first_tab = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(std::fabs(first_tab.x - layout.tab_strip.x) <= 0.01f,
+         "editor tabs should reclaim the left chevron reserve when only the right overflow button is visible");
+}
+
+void TestEditorTabOverflowButtonExpandsForDoubleDigitHiddenCount() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "overflow width\n");
+
+  WorkspaceShell small_shell;
+  WorkspaceShellTestAccess::SetProjectRoot(small_shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(small_shell, 1280, 720);
+  for (int i = 0; i < 12; ++i) {
+    const std::filesystem::path file = root / ("small_" + std::to_string(i) + ".txt");
+    WriteFile(file, "small\n");
+    WorkspaceShellTestAccess::OpenFile(small_shell, file);
+  }
+  WorkspaceShellTestAccess::ActivateTab(small_shell, 0);
+  const auto small_overflow =
+      WorkspaceShellTestAccess::EditorTabOverflowControls(small_shell);
+  Expect(small_overflow.hidden_right > 0 && small_overflow.hidden_right < 10,
+         "single-digit fixture should hide fewer than 10 tabs to the right");
+  Expect(std::fabs(small_overflow.right_button.w - 28.0f) <= 0.01f,
+         "single-digit hidden count should keep the default overflow button width");
+
+  WorkspaceShell large_shell;
+  WorkspaceShellTestAccess::SetProjectRoot(large_shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(large_shell, 1280, 720);
+  for (int i = 0; i < 28; ++i) {
+    const std::filesystem::path file = root / ("large_" + std::to_string(i) + ".txt");
+    WriteFile(file, "large\n");
+    WorkspaceShellTestAccess::OpenFile(large_shell, file);
+  }
+  WorkspaceShellTestAccess::ActivateTab(large_shell, 0);
+  const auto large_overflow =
+      WorkspaceShellTestAccess::EditorTabOverflowControls(large_shell);
+  Expect(large_overflow.hidden_right > 9,
+         "double-digit fixture should hide at least 10 tabs to the right");
+  Expect(large_overflow.right_button.w > 28.0f,
+         "double-digit hidden count should widen the overflow button");
+}
+
+void TestClosingTabsWhileScrolledRecomputesOverflowImmediately() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "close overflow\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (int i = 0; i < 16; ++i) {
+    const std::filesystem::path file = root / ("c" + std::to_string(i) + ".txt");
+    WriteFile(file, "close\n");
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+  }
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 7);
+  const auto before = WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
+  Expect(before.hidden_left > 0 || before.hidden_right > 0,
+         "fixture should overflow before closing tabs");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCloseTabsToRight(shell),
+         "closing tabs to the right should succeed while scrolled");
+  const auto after = WorkspaceShellTestAccess::EditorTabOverflowControls(shell);
+  Expect(after.hidden_left == 0 && after.hidden_right == 0,
+         "closing tabs should recompute overflow immediately when the remaining tabs all fit");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
@@ -1705,6 +1796,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestViewMenuToggleReflectsBackingSetting);
   AddTest(tests, "WorkspaceShell/EditorTabStripOverflowControlsScrollAndCount",
           TestEditorTabStripOverflowControlsScrollAndCount);
+  AddTest(tests, "WorkspaceShell/EditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains",
+          TestEditorTabStripUsesLeftGapWhenOnlyRightOverflowRemains);
+  AddTest(tests, "WorkspaceShell/EditorTabOverflowButtonExpandsForDoubleDigitHiddenCount",
+          TestEditorTabOverflowButtonExpandsForDoubleDigitHiddenCount);
+  AddTest(tests, "WorkspaceShell/ClosingTabsWhileScrolledRecomputesOverflowImmediately",
+          TestClosingTabsWhileScrolledRecomputesOverflowImmediately);
   AddTest(tests, "WorkspaceShell/MenuBarOmitsRemovedMenus",
           TestWorkspaceShellMenuBarOmitsRemovedMenus);
   AddTest(tests, "WorkspaceShell/MenuBarShowsChevronWhenTruncated",

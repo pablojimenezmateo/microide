@@ -335,7 +335,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     if (context_.current_project_state.open_tabs.empty()) {
-      return Contains(MakeRect(layout.tab_strip.x + 12.0f, layout.tab_strip.y + 2.0f, 220.0f,
+      return Contains(MakeRect(layout.tab_strip.x, layout.tab_strip.y + 2.0f, 220.0f,
                                std::max(22.0f, layout.tab_strip.h - 2.0f)),
                       x, y)
                  ? CursorKind::Pointer

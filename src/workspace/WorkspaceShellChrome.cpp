@@ -95,6 +95,16 @@ namespace {
 // overflow chevrons. Reserved unconditionally so the tab-packing math
 // doesn't depend on whether overflow currently exists.
 constexpr float kTabStripOverflowReserve = 32.0f;
+
+float OverflowButtonWidthForHiddenCount(std::size_t hidden_count) {
+  const float button_w = kTabStripOverflowReserve - 4.0f;
+  const float count_padding_bonus = 12.0f;
+  return button_w + (hidden_count > 9 ? count_padding_bonus : 0.0f);
+}
+
+float OverflowStripReserveForHiddenCount(std::size_t hidden_count) {
+  return hidden_count > 0 ? OverflowButtonWidthForHiddenCount(hidden_count) + 12.0f : 0.0f;
+}
 }  // namespace
 
 void WorkspaceShell::EnsureActiveProjectVisible() {
@@ -110,7 +120,7 @@ void WorkspaceShell::EnsureActiveProjectVisible() {
   }
 
   const float strip_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 1440.0f;
-  const float start_x = 12.0f + kTabStripOverflowReserve;
+  const float start_x = kTabStripOverflowReserve;
   const float gap = 1.0f;
   const float max_tab_x =
       std::max(start_x + 120.0f, strip_width - 12.0f - kTabStripOverflowReserve);
@@ -215,15 +225,46 @@ void WorkspaceShell::EnsureActiveTabVisible() {
     tab_strip_geometry_cache_.valid = true;
   }
 
-  const float start_x = 12.0f + kTabStripOverflowReserve;
+  const float start_x = 12.0f + OverflowStripReserveForHiddenCount(1);
   const float gap = 1.0f;
-  const float right_reserve = std::clamp(tab_strip_width * 0.22f, 160.0f, 240.0f);
   const float max_tab_x =
-      std::max(start_x + 120.0f, tab_strip_width - right_reserve - kTabStripOverflowReserve);
-  context_.current_project_state.tab_scroll_index =
-      static_cast<int>(EnsureVisibleStripIndex(tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
-                                               static_cast<std::size_t>(std::max(0, context_.current_project_state.tab_scroll_index)),
-                                               context_.current_project_state.active_tab_index));
+      std::max(start_x + 120.0f, tab_strip_width - OverflowStripReserveForHiddenCount(1));
+  std::size_t first_visible = EnsureVisibleStripIndex(
+      tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
+      static_cast<std::size_t>(
+          std::max(0, context_.current_project_state.tab_scroll_index)),
+      context_.current_project_state.active_tab_index);
+
+  const auto active_fits_from = [&](std::size_t candidate_first) {
+    const float candidate_start_x =
+        candidate_first > 0 ? OverflowStripReserveForHiddenCount(1) : 0.0f;
+    float candidate_right_reserve = OverflowStripReserveForHiddenCount(1);
+    std::vector<StripSlotLayout> visible;
+    for (int pass = 0; pass < 3; ++pass) {
+      const float candidate_max_x = std::max(
+          candidate_start_x + 120.0f, tab_strip_width - candidate_right_reserve);
+      visible = ComputeVisibleStripLayouts(tab_strip_geometry_cache_.widths, candidate_start_x, gap,
+                                           candidate_max_x, candidate_first);
+      if (visible.empty()) {
+        return false;
+      }
+      const std::size_t last_visible = visible.back().index;
+      const float next_right_reserve =
+          last_visible + 1 < tab_count ? OverflowStripReserveForHiddenCount(tab_count - (last_visible + 1))
+                                       : 0.0f;
+      if (next_right_reserve == candidate_right_reserve) {
+        break;
+      }
+      candidate_right_reserve = next_right_reserve;
+    }
+    return context_.current_project_state.active_tab_index >= visible.front().index &&
+           context_.current_project_state.active_tab_index <= visible.back().index;
+  };
+  while (first_visible > 0 && active_fits_from(first_visible - 1)) {
+    --first_visible;
+  }
+
+  context_.current_project_state.tab_scroll_index = static_cast<int>(first_visible);
 }
 
 std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
@@ -260,11 +301,10 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
   const float tab_y = tab_strip.y + 2.0f;
   const float tab_height = std::max(22.0f, tab_strip.h - 2.0f);
   const float gap = 1.0f;
-  const float right_reserve = std::clamp(tab_strip.w * 0.22f, 160.0f, 240.0f);
   const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
     const float max_tab_x =
         std::max(start_x + 120.0f,
-                 tab_strip.x + tab_strip.w - right_reserve - right_overflow_reserve);
+                 tab_strip.x + tab_strip.w - right_overflow_reserve);
     return BuildVisibleStripTabs(
         tab_strip_geometry_cache_.widths, start_x, gap, max_tab_x,
         static_cast<std::size_t>(std::clamp(
@@ -274,8 +314,26 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTabs(
         tab_strip_geometry_cache_.display_titles, tab_strip_geometry_cache_.tooltip_labels);
   };
 
-  auto tabs = build_tabs(tab_strip.x + 12.0f + kTabStripOverflowReserve,
-                         kTabStripOverflowReserve);
+  float start_x = tab_strip.x + OverflowStripReserveForHiddenCount(1);
+  float right_overflow_reserve = OverflowStripReserveForHiddenCount(1);
+  std::vector<VisibleStripTab> tabs;
+  for (int pass = 0; pass < 3; ++pass) {
+    tabs = build_tabs(start_x, right_overflow_reserve);
+    if (tabs.empty()) {
+      break;
+    }
+    const auto overflow = ComputeTabOverflowControls(tab_strip, tabs);
+    const float next_start_x =
+        tab_strip.x + OverflowStripReserveForHiddenCount(overflow.hidden_left);
+    const float next_right_overflow_reserve =
+        OverflowStripReserveForHiddenCount(overflow.hidden_right);
+    if (next_start_x == start_x &&
+        next_right_overflow_reserve == right_overflow_reserve) {
+      break;
+    }
+    start_x = next_start_x;
+    right_overflow_reserve = next_right_overflow_reserve;
+  }
   const bool all_tabs_visible = !tabs.empty() && tabs.front().index == 0 &&
                                 tabs.back().index + 1 ==
                                     context_.current_project_state.open_tabs.size();
@@ -300,15 +358,16 @@ WorkspaceShell::TabStripOverflowControls BuildTabStripOverflowControls(
   controls.hidden_right =
       last_visible + 1 < total_count ? total_count - (last_visible + 1) : 0;
 
-  const float button_w = kTabStripOverflowReserve - 4.0f;
+  const float left_button_w = OverflowButtonWidthForHiddenCount(controls.hidden_left);
+  const float right_button_w = OverflowButtonWidthForHiddenCount(controls.hidden_right);
   const float button_y = strip.y + 4.0f;
   const float button_h = std::max(16.0f, strip.h - 8.0f);
   if (controls.hidden_left > 0) {
-    controls.left_button = MakeRect(strip.x + 8.0f, button_y, button_w, button_h);
+    controls.left_button = MakeRect(strip.x + 8.0f, button_y, left_button_w, button_h);
   }
   if (controls.hidden_right > 0) {
     controls.right_button =
-        MakeRect(strip.x + strip.w - button_w - 8.0f, button_y, button_w, button_h);
+        MakeRect(strip.x + strip.w - right_button_w - 8.0f, button_y, right_button_w, button_h);
   }
   return controls;
 }
@@ -459,7 +518,7 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleBotto
   const float tab_y = panel_header.y + 2.0f;
   const float tab_height = std::max(18.0f, panel_header.h - 2.0f);
   const float gap = 1.0f;
-  const float start_x = panel_header.x + 12.0f;
+  const float start_x = panel_header.x;
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
   const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
   return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, 0, tab_y, tab_height,
@@ -552,7 +611,7 @@ std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTermi
   const float tab_y = panel_header.y + 2.0f;
   const float tab_height = std::max(18.0f, panel_header.h - 2.0f);
   const float gap = 1.0f;
-  const float start_x = panel_header.x + 12.0f;
+  const float start_x = panel_header.x;
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
   const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
   return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, 0, tab_y, tab_height,
