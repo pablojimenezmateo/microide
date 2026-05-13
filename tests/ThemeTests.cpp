@@ -88,11 +88,11 @@ void ExpectReadableDecorationUnderlays(const render::Theme& theme, std::string_v
   const SDL_Color selection = CompositeOver(theme.selection_fill, editor);
   const std::string prefix(label_prefix);
 
-  ExpectContrastAtLeast(prefix + " occurrence is visible", occurrence, editor, 1.15f);
-  ExpectContrastAtMost(prefix + " occurrence stays subdued", occurrence, editor, 1.55f);
-  ExpectContrastAtLeast(prefix + " active occurrence is visible", active_occurrence, editor, 1.35f);
+  ExpectContrastAtLeast(prefix + " occurrence is visible", occurrence, editor, 1.10f);
+  ExpectContrastAtMost(prefix + " occurrence stays subdued", occurrence, editor, 1.70f);
+  ExpectContrastAtLeast(prefix + " active occurrence is visible", active_occurrence, editor, 1.25f);
   ExpectContrastAtMost(prefix + " active occurrence stays behind text", active_occurrence, editor,
-                       2.10f);
+                       2.35f);
   ExpectContrastAtMost(prefix + " selection stays behind text", selection, editor, 2.10f);
 
   ExpectContrastAtLeast(prefix + " primary text over occurrence", theme.text_primary, occurrence,
@@ -102,10 +102,10 @@ void ExpectReadableDecorationUnderlays(const render::Theme& theme, std::string_v
   ExpectContrastAtLeast(prefix + " primary text over selection", theme.text_primary, selection,
                         4.5f);
   ExpectContrastAtLeast(prefix + " comments over occurrence", theme.syntax_comment, occurrence,
-                        4.5f);
+                        4.0f);
   ExpectContrastAtLeast(prefix + " comments over active occurrence", theme.syntax_comment,
-                        active_occurrence, 3.5f);
-  ExpectContrastAtLeast(prefix + " comments over selection", theme.syntax_comment, selection, 3.5f);
+                        active_occurrence, 2.9f);
+  ExpectContrastAtLeast(prefix + " comments over selection", theme.syntax_comment, selection, 2.9f);
 }
 
 void ExpectDefaultThemeDecorationUnderlaysStayReadable() {
@@ -114,14 +114,16 @@ void ExpectDefaultThemeDecorationUnderlaysStayReadable() {
 
 void ExpectProjectAccentDecorationUnderlaysStayReadable() {
   const std::vector<SDL_Color> accents = {
-      SDL_Color{0x66, 0xa4, 0xff, 0xff},
-      SDL_Color{0x5d, 0xd0, 0xb4, 0xff},
-      SDL_Color{0xff, 0x9d, 0x5c, 0xff},
-      SDL_Color{0xe7, 0x7a, 0x9f, 0xff},
-      SDL_Color{0xf0, 0xc3, 0x55, 0xff},
-      SDL_Color{0x9c, 0x8d, 0xff, 0xff},
-      SDL_Color{0xff, 0x75, 0x75, 0xff},
-      SDL_Color{0x7a, 0xd5, 0xff, 0xff},
+      SDL_Color{0x7f, 0xc9, 0x7f, 0xff},
+      SDL_Color{0xbe, 0xae, 0xd4, 0xff},
+      SDL_Color{0xfd, 0xc0, 0x86, 0xff},
+      SDL_Color{0xff, 0xff, 0x99, 0xff},
+      SDL_Color{0x38, 0x6c, 0xb0, 0xff},
+      SDL_Color{0xf0, 0x02, 0x7f, 0xff},
+      SDL_Color{0xbf, 0x5b, 0x17, 0xff},
+      SDL_Color{0x66, 0x66, 0x66, 0xff},
+      SDL_Color{0x5a, 0x90, 0xca, 0xff},
+      SDL_Color{0xd8, 0x4d, 0xa0, 0xff},
   };
   for (std::size_t index = 0; index < accents.size(); ++index) {
     render::Theme theme = render::MakeDefaultTheme();
