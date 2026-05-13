@@ -1,0 +1,1 @@
+idle_soak_30s p50=30780ms p95=30780ms max=30780ms

@@ -1,0 +1,1 @@
+terminal_scroll_long_output p50=1525.49ms p95=1525.49ms max=1525.49ms

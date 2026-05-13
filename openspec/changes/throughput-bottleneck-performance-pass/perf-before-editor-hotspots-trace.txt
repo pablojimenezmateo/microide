@@ -1,0 +1,4 @@
+editor_fold_recompute p50=3378.75ms p95=3378.75ms max=3378.75ms
+editor_auto_close_typing p50=3795.08ms p95=3795.08ms max=3795.08ms
+editor_smart_indent_typing p50=3947.19ms p95=3947.19ms max=3947.19ms
+editor_surround_multi_caret p50=2389.46ms p95=2389.46ms max=2389.46ms

@@ -1,0 +1,12 @@
+project-root: "tests/perf/fixtures/kernel_sized_project"
+query: node_0001
+pattern-mode: literal
+case-mode: smart
+show-hidden: no
+runs: 5
+results: 0
+truncated: no
+run-ms: 1.07 1.06 1.05 1.05 1.05
+min-ms: 1.05
+max-ms: 1.07
+avg-ms: 1.06
