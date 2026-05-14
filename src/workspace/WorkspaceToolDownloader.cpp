@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceToolDownloader.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <future>
 
@@ -31,6 +32,52 @@ std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& pa
     }
     return stdout_text.substr(0, split);
   };
+  auto parse_certutil_digest = [](const std::string& stdout_text) -> std::optional<std::string> {
+    for (std::size_t offset = 0; offset < stdout_text.size();) {
+      const std::size_t next = stdout_text.find('\n', offset);
+      std::string line = stdout_text.substr(
+          offset, next == std::string::npos ? std::string::npos : next - offset);
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+
+      std::string digest;
+      digest.reserve(line.size());
+      bool valid = true;
+      for (char ch : line) {
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+          continue;
+        }
+        if (!std::isxdigit(static_cast<unsigned char>(ch))) {
+          valid = false;
+          break;
+        }
+        digest.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+      }
+      if (valid && digest.size() == 64) {
+        return digest;
+      }
+
+      if (next == std::string::npos) {
+        break;
+      }
+      offset = next + 1;
+    }
+    return std::nullopt;
+  };
+#ifdef _WIN32
+  auto certutil_path = []() {
+    const char* system_root = std::getenv("SystemRoot");
+    if (system_root == nullptr || system_root[0] == '\0') {
+      system_root = std::getenv("WINDIR");
+    }
+    const std::filesystem::path root =
+        (system_root != nullptr && system_root[0] != '\0')
+            ? std::filesystem::path(system_root)
+            : std::filesystem::path("C:\\Windows");
+    return (root / "System32" / "certutil.exe").lexically_normal();
+  };
+#endif
 
   const platform::SubprocessResult sha256sum =
       project::RunSubprocess({"sha256sum", path.string()});
@@ -43,6 +90,13 @@ std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& pa
   if (shasum.success()) {
     return parse_digest(shasum.stdout_text);
   }
+#ifdef _WIN32
+  const platform::SubprocessResult certutil =
+      project::RunSubprocess({certutil_path().string(), "-hashfile", path.string(), "SHA256"});
+  if (certutil.success()) {
+    return parse_certutil_digest(certutil.stdout_text);
+  }
+#endif
   return std::nullopt;
 }
 

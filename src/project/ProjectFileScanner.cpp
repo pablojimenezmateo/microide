@@ -33,9 +33,9 @@ void CollectFiles(const std::filesystem::path& root,
       continue;
     }
 
-    const std::filesystem::path relative = std::filesystem::relative(path, root, error);
-    if (error || relative.empty()) {
-      error.clear();
+    const std::filesystem::path relative =
+        path.lexically_normal().lexically_relative(root.lexically_normal());
+    if (relative.empty()) {
       ++iterator;
       continue;
     }

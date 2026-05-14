@@ -15,6 +15,7 @@
 #include "util/JsonValue.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
+#include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
 
@@ -36,6 +37,11 @@ std::string FileUriForPath(const std::filesystem::path& path) {
   const std::string raw = path.lexically_normal().generic_string();
   std::ostringstream encoded;
   encoded << "file://";
+#ifdef _WIN32
+  if (!raw.empty() && raw.front() != '/') {
+    encoded << '/';
+  }
+#endif
   for (unsigned char ch : raw) {
     if (IsUnreservedUriByte(ch)) {
       encoded << static_cast<char>(ch);
@@ -81,6 +87,12 @@ std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
   if (decoded.empty()) {
     return std::nullopt;
   }
+#ifdef _WIN32
+  if (decoded.size() >= 3 && decoded[0] == '/' && std::isalpha(decoded[1]) != 0 &&
+      decoded[2] == ':') {
+    decoded.erase(decoded.begin());
+  }
+#endif
   return std::filesystem::path(decoded).lexically_normal();
 }
 
@@ -723,8 +735,7 @@ bool WorkspaceShell::FindLspReferences(std::string* error_message) {
           const std::string label =
               context_.current_project_state.root.empty()
                   ? path->generic_string()
-                  : std::filesystem::relative(*path, context_.current_project_state.root)
-                        .generic_string();
+                  : RelativePathLabel(context_.current_project_state.root, *path);
           output_channels_.AppendLine(
               "lsp.references", "LSP References",
               label + ":" + std::to_string(location.range.start.line + 1) + ":" +

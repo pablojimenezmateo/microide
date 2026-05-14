@@ -44,6 +44,17 @@ PluginHost::Callbacks MakePluginHostCallbacks() {
   };
 }
 
+class ScopedPluginConfigHomeEnv {
+ public:
+  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_home)
+      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
+        appdata_("APPDATA", config_home.string()) {}
+
+ private:
+  ScopedEnvVar xdg_config_home_;
+  ScopedEnvVar appdata_;
+};
+
 void TestPluginHostLoadsPluginsAndDispatchesLifecycle() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -114,7 +125,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   std::vector<std::filesystem::path> opened_paths;
   PluginHost host;
@@ -213,7 +224,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   std::vector<std::string> sink_errors;
   PluginHost host;
@@ -264,7 +275,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -284,9 +295,55 @@ void TestPluginHostPhase2Apis() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   WriteFile(project_root / "README.md", "plugin host phase2\n");
 
-  WritePluginInit(
-      global_plugins, "phase2",
-      R"(local ide = require("microide")
+  const char* plugin_script =
+#if defined(_WIN32)
+      R"WIN(local ide = require("microide")
+return ide.plugin({
+  id = "phase2",
+  setup = function(ctx)
+    ctx.sidebar.add({
+      id = "problems",
+      label = "Problems",
+      snapshot = function()
+        return {
+          { label = "README", detail = "2:3", path = "README.md", line = 2, column = 3 }
+        }
+      end,
+      on_confirm = function(item)
+        ctx.log("confirm:" .. item.path .. ":" .. tostring(item.line) .. ":" .. tostring(item.column))
+      end
+    })
+
+    ctx.commands.add("phase2.probe", function(ctx, args)
+      local readme = ctx.files.read_text("README.md") or "missing"
+      local exists = ctx.files.exists("README.md")
+      local wrote = ctx.files.write_text("notes.txt", "written by plugin\n")
+      local cat = ctx.process.run({"cmd", "/c", "more"}, { stdin = "stdin payload\n", cwd = "." })
+      local pwd = ctx.process.run({"cmd", "/c", "cd"}, { cwd = "." })
+      local envset = ctx.process.run({"cmd", "/c", "echo|set /p=%PHASE2_SET_ENV%"}, {
+        cwd = ".",
+        env = { PHASE2_SET_ENV = "plugin-value" }
+      })
+      local envunset = ctx.process.run({"cmd", "/c",
+        "if defined PHASE2_REMOVE_ENV (echo|set /p=set) else (echo|set /p=unset)"}, {
+        cwd = ".",
+        env = { PHASE2_REMOVE_ENV = false }
+      })
+      ctx.log("read:" .. readme)
+      ctx.log("exists:" .. tostring(exists))
+      ctx.log("wrote:" .. tostring(wrote))
+      ctx.log("cat:" .. tostring(cat.exit_code) .. ":" .. cat.stdout)
+      ctx.log("pwd:" .. tostring(pwd.exit_code) .. ":" .. pwd.stdout)
+      ctx.log("envset:" .. tostring(envset.exit_code) .. ":" .. envset.stdout)
+      ctx.log("envunset:" .. tostring(envunset.exit_code) .. ":" .. envunset.stdout)
+      ctx.workspace.open_file("README.md", 2, 3)
+      ctx.sidebar.show("problems")
+    end)
+  end
+})
+)WIN";
+#else
+      R"WIN(local ide = require("microide")
 return ide.plugin({
   id = "phase2",
   setup = function(ctx)
@@ -332,9 +389,12 @@ return ide.plugin({
     end)
   end
 })
-)");
+)WIN";
+#endif
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  WritePluginInit(global_plugins, "phase2", plugin_script);
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
   ScopedEnvVar phase2_remove_env("PHASE2_REMOVE_ENV", "outer");
 
   std::optional<PluginHost::OpenFileRequest> opened_file;
@@ -374,9 +434,18 @@ return ide.plugin({
   Expect(std::find(host.Messages().begin(), host.Messages().end(), "phase2: exists:true") !=
              host.Messages().end(),
          "ctx.files.exists should report existing project-relative files");
-  Expect(std::find(host.Messages().begin(), host.Messages().end(),
-                   "phase2: cat:0:stdin payload\n") != host.Messages().end(),
-         "ctx.process.run should capture stdout and stdin");
+  const auto cat_message =
+      std::find_if(host.Messages().begin(), host.Messages().end(), [](const std::string& message) {
+        return message.rfind("phase2: cat:0:stdin payload", 0) == 0;
+      });
+  Expect(cat_message != host.Messages().end(),
+         ([&]() {
+           std::string dump = "ctx.process.run should capture stdout and stdin; messages:";
+           for (const auto& message : host.Messages()) {
+             dump += " [" + message + "]";
+           }
+           return dump;
+         })());
   const auto pwd_message =
       std::find_if(host.Messages().begin(), host.Messages().end(), [](const std::string& message) {
         return message.rfind("phase2: pwd:0:", 0) == 0;
@@ -384,12 +453,21 @@ return ide.plugin({
   Expect(pwd_message != host.Messages().end() &&
              pwd_message->find(project_root.lexically_normal().string()) != std::string::npos,
          "ctx.process.run should honor cwd relative to the active project");
+#if defined(_WIN32)
+  Expect(std::find(host.Messages().begin(), host.Messages().end(),
+                   "phase2: envset:1:plugin-value") != host.Messages().end(),
+         "ctx.process.run should apply environment overrides");
+  Expect(std::find(host.Messages().begin(), host.Messages().end(),
+                   "phase2: envunset:1:unset") != host.Messages().end(),
+         "ctx.process.run should allow clearing inherited environment variables");
+#else
   Expect(std::find(host.Messages().begin(), host.Messages().end(),
                    "phase2: envset:0:plugin-value") != host.Messages().end(),
          "ctx.process.run should apply environment overrides");
   Expect(std::find(host.Messages().begin(), host.Messages().end(),
                    "phase2: envunset:0:unset") != host.Messages().end(),
          "ctx.process.run should allow clearing inherited environment variables");
+#endif
 
   std::vector<PluginHost::SidebarItem> items;
   Expect(host.SnapshotSidebar("problems", &items, &command_error),
@@ -401,8 +479,8 @@ return ide.plugin({
          "plugin host should dispatch sidebar confirm handlers");
   Expect(host.Messages().size() == 1 &&
              host.Messages().front() == "phase2: confirm:" +
-                                          (project_root / "README.md").lexically_normal().string() +
-                                          ":2:3",
+                                         (project_root / "README.md").lexically_normal().generic_string() +
+                                         ":2:3",
          "plugin sidebar confirm handlers should receive resolved item paths and locations");
 }
 
@@ -451,7 +529,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   microide::editor::DiagnosticsStore diagnostics_store;
   PluginHost host;
@@ -533,7 +611,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   int redraw_requests = 0;
   PluginHost host;
@@ -589,7 +667,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -699,7 +777,7 @@ return ide.plugin({
 })
 )lua");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -778,7 +856,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -825,7 +903,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   auto callbacks = MakePluginHostCallbacks();
@@ -841,7 +919,7 @@ return ide.plugin({
   Expect(host.Reload(project_root), "phase5 workspace plugin should reload successfully");
   std::string command_error;
   Expect(host.ExecuteCommand("phase5.probe-active-buffer", {}, &command_error),
-         "phase5 workspace command should execute");
+         ("phase5 workspace command should execute: " + command_error).c_str());
   Expect(command_error.empty(), "successful phase5 workspace command should not set an error");
   Expect(!host.Messages().empty() &&
              host.Messages().back() == "phase5-workspace: active:README.md:2:5",
@@ -873,7 +951,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -901,7 +979,7 @@ void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
 
   CopyRepoPlugin(global_plugins, "typescript-lsp");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -945,7 +1023,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -999,7 +1077,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
@@ -1055,7 +1133,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());

@@ -728,7 +728,7 @@ void TestWorkspaceShellTerminalTabsDragReorderToStart() {
          "dragging should start from a terminal tab press");
 
   const SDL_FRect first_rect = WorkspaceShellTestAccess::TerminalTabRect(shell, 0);
-  const float drop_x = first_rect.x - 8.0f;
+  const float drop_x = first_rect.x + 1.0f;
   const float drop_y = first_rect.y + first_rect.h * 0.5f;
   Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK),
          "dragging across terminal tabs should be handled");

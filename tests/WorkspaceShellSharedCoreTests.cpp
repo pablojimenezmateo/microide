@@ -455,7 +455,8 @@ void TestWorkspaceSharedChromeTextModel() {
 
 
 void TestWorkspaceReadmeCommandDocsStayInSync() {
-  const std::string readme = ReadFile(TestRoot().parent_path() / "README.md");
+  const std::string readme =
+      microide::util::NormalizeLineEndings(ReadFile(TestRoot().parent_path() / "README.md"));
   const std::string start_marker = "Current commands:\n";
   const std::string end_marker = "\nMerge example:\n";
   const std::size_t start = readme.find(start_marker);

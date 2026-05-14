@@ -134,14 +134,14 @@ void GitPorcelainParser::RecordGitStatus(std::unordered_map<std::string, GitFile
                                          std::filesystem::path relative_path,
                                          GitFileStatus status) {
   relative_path = relative_path.lexically_normal();
-  const std::string normalized = relative_path.string();
+  const std::string normalized = relative_path.generic_string();
   if (!normalized.empty() && normalized != ".") {
     statuses[normalized] = CombineGitStatus(statuses[normalized], status);
   }
 
   std::filesystem::path dir = relative_path.parent_path();
   while (!dir.empty() && dir != ".") {
-    const std::string key = dir.lexically_normal().string();
+    const std::string key = dir.lexically_normal().generic_string();
     statuses[key] = CombineGitStatus(statuses[key], status);
     const auto next = dir.parent_path();
     if (next == dir) {

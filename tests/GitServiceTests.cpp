@@ -194,10 +194,8 @@ void TestGitOutgoingBranchFiles() {
 
   InitializeGitRepo(repo_path);
   CommitAll(repo_path, "base fixture", "base fixture");
-  RequireCommandSuccess(
-      "git -C '" + EscapedRepoPath(repo_path) +
-          "' checkout -b feature/git-view >/dev/null 2>/dev/null",
-      "git checkout feature branch");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "feature/git-view"},
+                           "git checkout feature branch");
 
   WriteFile(repo_path / "src/session.cpp", ReadFile(head_dir / "src/session.cpp"));
   WriteFile(repo_path / "src/new_panel.cpp", ReadFile(head_dir / "src/new_panel.cpp"));
@@ -236,10 +234,8 @@ void TestGitOutgoingBaseChoiceResolution() {
 
   InitializeGitRepo(repo_path);
   CommitAll(repo_path, "base fixture", "base fixture");
-  RequireCommandSuccess(
-      "git -C '" + EscapedRepoPath(repo_path) +
-          "' checkout -b feature/outgoing-base >/dev/null 2>/dev/null",
-      "git checkout feature branch");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "feature/outgoing-base"},
+                           "git checkout feature branch");
 
   WriteFile(repo_path / "src" / "alpha.cpp", "int alpha() {\n  return 10;\n}\n");
   CommitAll(repo_path, "feature alpha", "feature alpha");
@@ -286,23 +282,18 @@ void TestGitResolvePrBaseReferenceFromGhMergeBase() {
 
   InitializeGitRepo(repo_path);
   CommitAll(repo_path, "base fixture", "base fixture");
-  RequireCommandSuccess(
-      "git -C '" + EscapedRepoPath(repo_path) +
-          "' checkout -b release/2.0 >/dev/null 2>/dev/null",
-      "git checkout release branch");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "release/2.0"},
+                           "git checkout release branch");
   WriteFile(repo_path / "README.md", ReadFile(repo_path / "README.md") + "\nrelease-only\n");
   CommitAll(repo_path, "release fixture", "release fixture");
 
-  RequireCommandSuccess(
-      "git -C '" + EscapedRepoPath(repo_path) +
-          "' checkout -b feature/pr-base >/dev/null 2>/dev/null",
-      "git checkout feature branch");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "feature/pr-base"},
+                           "git checkout feature branch");
   WriteFile(repo_path / "src/pr_only.cpp", "int main() { return 0; }\n");
   CommitAll(repo_path, "feature fixture", "feature fixture");
-  RequireCommandSuccess(
-      "git -C '" + EscapedRepoPath(repo_path) +
-          "' config branch.feature/pr-base.gh-merge-base release/2.0 >/dev/null 2>/dev/null",
-      "git config gh merge base");
+  RequireGitCommandSuccess(repo_path,
+                           {"config", "branch.feature/pr-base.gh-merge-base", "release/2.0"},
+                           "git config gh merge base");
 
   const auto base_ref = ResolveGitBaseReference(repo_path);
   Expect(base_ref.has_value(), "git base reference should resolve from gh-merge-base");

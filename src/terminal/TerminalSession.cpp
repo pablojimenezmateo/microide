@@ -430,6 +430,56 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   return result.started;
 }
 
+#ifdef MICROIDE_TESTING
+bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& working_directory,
+                                                 std::string_view command) {
+  Stop();
+  {
+    std::scoped_lock lock(mutex_);
+    working_directory_ = working_directory;
+    default_launch_label_ =
+        command.empty() ? ShellProgramName(DefaultShellPath()) : std::string(command);
+    launch_label_ = default_launch_label_;
+    lines_ = {TerminalLine{}};
+    current_style_ = TerminalStyle{};
+    escape_sequence_buffer_.clear();
+    pending_utf8_sequence_.clear();
+    backend_.reset();
+    child_pid_ = -1;
+    running_ = false;
+    stop_requested_ = false;
+    wake_event_pending_ = false;
+    escape_mode_ = EscapeMode::None;
+    osc_escape_pending_ = false;
+    pending_clipboard_text_.reset();
+    use_alternate_screen_ = false;
+    mouse_tracking_normal_ = false;
+    mouse_tracking_drag_ = false;
+    mouse_tracking_any_ = false;
+    mouse_sgr_ext_mode_ = false;
+    application_cursor_keys_mode_ = false;
+    origin_mode_ = false;
+    auto_wrap_mode_ = true;
+    bracketed_paste_mode_ = false;
+    focus_event_mode_ = false;
+    cursor_visible_ = true;
+    primary_screen_ = ScreenState{};
+    alternate_screen_ = ScreenState{};
+    rows_ = 24;
+    columns_ = 80;
+    cursor_row_ = 0;
+    cursor_column_ = 0;
+    saved_cursor_row_ = 0;
+    saved_cursor_column_ = 0;
+    snapshot_generation_ = 1;
+    ResetScrollRegionLocked();
+    test_sent_bytes_.clear();
+  }
+  PushWakeEvent();
+  return true;
+}
+#endif
+
 void TerminalSession::Stop() {
   std::unique_ptr<platform::TerminalBackend> backend;
   int child_pid = -1;

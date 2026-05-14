@@ -74,11 +74,21 @@ void TestProjectSearchServiceLiteralModesAndCaseControls() {
   WriteFile(root / "notes.txt", "Alpha alpha ALPHA\n");
   WriteFile(root / "special.txt", "alp.a [abc]\n");
 
-  const auto smart_literal = RunProjectSearch(root, "alpha");
+  const auto indexed_files =
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+  const std::string indexed_file_count_message =
+      "project file scan should discover both visible files; got " +
+      std::to_string(indexed_files.size());
+  Expect(indexed_files.size() == 2, indexed_file_count_message);
+
+  const auto smart_literal = RunProjectSearch(root, "alpha", {}, indexed_files);
   Expect(smart_literal.finished, "smart literal project search should finish");
   Expect(smart_literal.error.empty(), "smart literal project search should not error");
+  const std::string smart_literal_count_message =
+      "default literal smart-case search should match every case variant; got " +
+      std::to_string(smart_literal.results.size());
   Expect(smart_literal.results.size() == 3,
-         "default literal smart-case search should match every case variant");
+         smart_literal_count_message);
   Expect(smart_literal.results[0].relative_path == std::filesystem::path("notes.txt"),
          "default literal search should report the first matching file");
   Expect(smart_literal.results[0].relative_path_string == "notes.txt",

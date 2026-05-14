@@ -19,6 +19,22 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
+class ScopedProjectAppHomes {
+ public:
+  ScopedProjectAppHomes(const std::filesystem::path& state_home,
+                        const std::filesystem::path& config_home)
+      : xdg_state_home_("XDG_STATE_HOME", state_home.string()),
+        xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
+        localappdata_("LOCALAPPDATA", state_home.string()),
+        appdata_("APPDATA", config_home.string()) {}
+
+ private:
+  ScopedEnvVar xdg_state_home_;
+  ScopedEnvVar xdg_config_home_;
+  ScopedEnvVar localappdata_;
+  ScopedEnvVar appdata_;
+};
+
 bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
   return SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL) &&
          WorkspaceShellTestAccess::HandleTextInput(shell, command) &&
@@ -530,8 +546,7 @@ void TestWorkspaceShellProjectOpenShowsDefaultTerminalPanel() {
   WriteFile(root / "README.md", "project\n");
   const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state";
   const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config";
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedProjectAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
@@ -1105,8 +1120,7 @@ void TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart() {
 
   const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state";
   const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config";
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedProjectAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -1132,8 +1146,7 @@ void TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart() {
 
   const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state";
   const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config";
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedProjectAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -2065,7 +2078,7 @@ void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
          "idle project watchers should not schedule a zero-delay wake when no change is pending");
 
   WriteFile(root / "watched.txt", "changed\n");
-  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
+  Expect(WaitForProjectReload(shell, std::chrono::seconds(1)),
          "project watcher reload should detect filesystem changes");
   bool settled = false;
   for (int attempt = 0; attempt < 10; ++attempt) {

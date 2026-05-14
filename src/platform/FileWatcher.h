@@ -38,7 +38,7 @@ class FileTreeWatcher {
  private:
   struct NativeBackend;
 
-  void RefreshNativeBackendLocked();
+  std::unique_ptr<NativeBackend> RefreshNativeBackendLocked();
   void ResetNextPollAt();
   void NotifyWake();
 

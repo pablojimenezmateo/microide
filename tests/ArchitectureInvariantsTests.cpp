@@ -29,7 +29,7 @@ struct RuleResult {
 };
 
 std::filesystem::path RepoRoot() {
-  return std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).parent_path();
+  return std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).lexically_normal().parent_path();
 }
 
 std::string ReadText(const std::filesystem::path& path) {
@@ -832,7 +832,8 @@ RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root
     if (ext != ".h" && ext != ".hpp" && ext != ".cpp") {
       continue;
     }
-    const std::string rel = std::filesystem::relative(entry.path(), repo_root).string();
+    const std::string rel = entry.path().lexically_normal().lexically_relative(
+                                repo_root.lexically_normal()).generic_string();
     if (rel.starts_with("src/persistence/") || rel == "src/workspace/WorkspacePersistenceService.h" ||
         rel == "src/workspace/WorkspacePersistenceService.cpp" ||
         rel == "src/workspace/WorkspacePersistenceLegacyImporter.cpp" ||
@@ -1352,44 +1353,69 @@ void ReportRule(const RuleResult& result) {
     return;
   }
   std::cerr << "ArchitectureInvariants warning: " << result.label << '\n';
+  const std::filesystem::path repo_root = RepoRoot().lexically_normal();
   for (const Violation& violation : result.violations) {
-    std::cerr << "  " << std::filesystem::relative(violation.path, RepoRoot()).string() << ':'
-              << violation.line << ": " << violation.message << '\n';
+    const std::filesystem::path relative =
+        violation.path.lexically_normal().lexically_relative(repo_root);
+    const std::filesystem::path display_path =
+        relative.empty() ? violation.path.lexically_normal() : relative;
+    std::cerr << "  " << display_path.generic_string() << ':' << violation.line << ": "
+              << violation.message << '\n';
   }
 }
 
 void TestArchitectureInvariants() {
   const std::filesystem::path repo_root = RepoRoot();
   std::vector<RuleResult> results;
-  results.push_back(CheckWorkspaceFriends(repo_root));
-  results.push_back(CheckCoordinatorShellConstructors(repo_root));
-  results.push_back(CheckThrowingStoParsers(repo_root));
-  results.push_back(CheckPluginTranslationUnitSize(repo_root));
-  results.push_back(CheckCoordinatorTuSize(repo_root));
-  results.push_back(CheckViewModelBackReferences(repo_root));
-  results.push_back(CheckPersistenceFileIoBoundary(repo_root));
-  results.push_back(CheckPluginDrainBeforeTeardown(repo_root));
-  results.push_back(CheckSinglePluginReloadPerActivation(repo_root));
-  results.push_back(CheckCompareRenderStructuralGate(repo_root));
-  results.push_back(CheckPerClipRenderPathDoesNotRunFramePrep(repo_root));
-  results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.h", 400));
-  results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShell.cpp", 600));
-  results.push_back(CheckShellFileSize(repo_root, "src/workspace/WorkspaceShellTestAccess.h", 600));
-  results.push_back(CheckRenderSurfaceStateAccess(repo_root));
-  results.push_back(CheckRenderSurfaceGeometryAccess(repo_root));
-  results.push_back(CheckNoSynchronousSubprocessWaitInWorkspace(repo_root));
-  results.push_back(CheckLspDidOpenIsNonBlocking(repo_root));
-  results.push_back(CheckNoLegacyPersistenceSymbols(repo_root));
-  results.push_back(CheckNoSynchronousSubprocessInWorkspace(repo_root));
-  results.push_back(CheckNoExecutorPostThenFutureGetInWorkspace(repo_root));
-  results.push_back(CheckRenderTuDoesNotMaterializeStrings(repo_root));
-  results.push_back(CheckRenderTuDoesNotCallToStringOrFormat(repo_root));
-  results.push_back(CheckTextViewportNoFullDocCopy(repo_root));
-  results.push_back(CheckEssentialEditorCppModulesDoNotTouchLuaState(repo_root));
-  results.push_back(CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(repo_root));
-  results.push_back(CheckBuildEditorViewModelUsesIncrementalVectorWrites(repo_root));
-  results.push_back(CheckRenderTuEditorEssentialsAvoidEphemeralLabelStrings(repo_root));
-  results.push_back(CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(repo_root));
+  const auto run_rule = [&](const char* label, auto&& fn) {
+    try {
+      results.push_back(fn(repo_root));
+    } catch (const std::exception& error) {
+      throw std::runtime_error(std::string(label) + ": " + error.what());
+    }
+  };
+  run_rule("CheckWorkspaceFriends", CheckWorkspaceFriends);
+  run_rule("CheckCoordinatorShellConstructors", CheckCoordinatorShellConstructors);
+  run_rule("CheckThrowingStoParsers", CheckThrowingStoParsers);
+  run_rule("CheckPluginTranslationUnitSize", CheckPluginTranslationUnitSize);
+  run_rule("CheckCoordinatorTuSize", CheckCoordinatorTuSize);
+  run_rule("CheckViewModelBackReferences", CheckViewModelBackReferences);
+  run_rule("CheckPersistenceFileIoBoundary", CheckPersistenceFileIoBoundary);
+  run_rule("CheckPluginDrainBeforeTeardown", CheckPluginDrainBeforeTeardown);
+  run_rule("CheckSinglePluginReloadPerActivation", CheckSinglePluginReloadPerActivation);
+  run_rule("CheckCompareRenderStructuralGate", CheckCompareRenderStructuralGate);
+  run_rule("CheckPerClipRenderPathDoesNotRunFramePrep", CheckPerClipRenderPathDoesNotRunFramePrep);
+  run_rule("CheckShellFileSize(WorkspaceShell.h)",
+           [&](const std::filesystem::path& root) {
+             return CheckShellFileSize(root, "src/workspace/WorkspaceShell.h", 400);
+           });
+  run_rule("CheckShellFileSize(WorkspaceShell.cpp)",
+           [&](const std::filesystem::path& root) {
+             return CheckShellFileSize(root, "src/workspace/WorkspaceShell.cpp", 600);
+           });
+  run_rule("CheckShellFileSize(WorkspaceShellTestAccess.h)",
+           [&](const std::filesystem::path& root) {
+             return CheckShellFileSize(root, "src/workspace/WorkspaceShellTestAccess.h", 600);
+           });
+  run_rule("CheckRenderSurfaceStateAccess", CheckRenderSurfaceStateAccess);
+  run_rule("CheckRenderSurfaceGeometryAccess", CheckRenderSurfaceGeometryAccess);
+  run_rule("CheckNoSynchronousSubprocessWaitInWorkspace", CheckNoSynchronousSubprocessWaitInWorkspace);
+  run_rule("CheckLspDidOpenIsNonBlocking", CheckLspDidOpenIsNonBlocking);
+  run_rule("CheckNoLegacyPersistenceSymbols", CheckNoLegacyPersistenceSymbols);
+  run_rule("CheckNoSynchronousSubprocessInWorkspace", CheckNoSynchronousSubprocessInWorkspace);
+  run_rule("CheckNoExecutorPostThenFutureGetInWorkspace", CheckNoExecutorPostThenFutureGetInWorkspace);
+  run_rule("CheckRenderTuDoesNotMaterializeStrings", CheckRenderTuDoesNotMaterializeStrings);
+  run_rule("CheckRenderTuDoesNotCallToStringOrFormat", CheckRenderTuDoesNotCallToStringOrFormat);
+  run_rule("CheckTextViewportNoFullDocCopy", CheckTextViewportNoFullDocCopy);
+  run_rule("CheckEssentialEditorCppModulesDoNotTouchLuaState", CheckEssentialEditorCppModulesDoNotTouchLuaState);
+  run_rule("CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot",
+           CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot);
+  run_rule("CheckBuildEditorViewModelUsesIncrementalVectorWrites",
+           CheckBuildEditorViewModelUsesIncrementalVectorWrites);
+  run_rule("CheckRenderTuEditorEssentialsAvoidEphemeralLabelStrings",
+           CheckRenderTuEditorEssentialsAvoidEphemeralLabelStrings);
+  run_rule("CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings",
+           CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings);
 
   bool hard_failure = false;
   for (const RuleResult& result : results) {

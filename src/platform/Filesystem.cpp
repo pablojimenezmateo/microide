@@ -102,8 +102,8 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
     if (root_type == PathType::Missing) {
       continue;
     }
-    append_entry(root, root_type);
     if (root_type != PathType::Directory) {
+      append_entry(root, root_type);
       continue;
     }
 
@@ -121,6 +121,9 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
         if (type == PathType::Directory) {
           it.disable_recursion_pending();
         }
+        continue;
+      }
+      if (type == PathType::Directory) {
         continue;
       }
       append_entry(path, type);

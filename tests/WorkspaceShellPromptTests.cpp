@@ -318,8 +318,7 @@ void TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges() {
   std::filesystem::remove(deleted);
   WriteFile(staged_added, "int meaning = 42;\n");
   WriteFile(untracked, "scratch\n");
-  RequireCommandSuccess("git -C '" + EscapedRepoPath(root) + "' add -A >/dev/null 2>/dev/null",
-                        "prepare staged changes");
+  RequireGitCommandSuccess(root, {"add", "-A"}, "prepare staged changes");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -401,8 +400,7 @@ void TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs() {
   WriteFile(untracked, "scratch\n");
   WorkspaceShellTestAccess::OpenFile(shell, staged_added);
   WorkspaceShellTestAccess::OpenFile(shell, untracked);
-  RequireCommandSuccess("git -C '" + EscapedRepoPath(root) + "' add -A >/dev/null 2>/dev/null",
-                        "prepare staged changes");
+  RequireGitCommandSuccess(root, {"add", "-A"}, "prepare staged changes");
 
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);

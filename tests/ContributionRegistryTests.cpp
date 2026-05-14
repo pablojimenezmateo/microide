@@ -40,6 +40,17 @@ using microide::workspace::SerializeSettingValue;
 using microide::workspace::SettingType;
 using microide::workspace::SidebarViewPolicy;
 
+class ScopedPluginConfigHomeEnv {
+ public:
+  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_root)
+      : xdg_config_home_("XDG_CONFIG_HOME", config_root.string()),
+        appdata_("APPDATA", config_root.string()) {}
+
+ private:
+  ScopedEnvVar xdg_config_home_;
+  ScopedEnvVar appdata_;
+};
+
 // ---------------------------------------------------------------------------
 // Keybinding registry – built-ins
 // ---------------------------------------------------------------------------
@@ -258,7 +269,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedSettings().empty(),
          "plugin should have contributed at least one setting");
@@ -295,7 +306,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedMenuEntries().empty(), "plugin should contribute menu entries");
   Expect(host.ContributedMenuEntries().front().menu == "file",
@@ -332,7 +343,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedKeybindings().empty(), "plugin should contribute keybindings");
   Expect(host.ContributedKeybindings().front().key_chord == "Ctrl+Shift+S",
@@ -368,7 +379,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
   host.Reload(temp.path() / "project");
   Expect(!host.ContributedStatusItems().empty(), "plugin should contribute status items");
   Expect(host.ContributedStatusItems().front().text == "ready", "status text should match");
@@ -400,7 +411,7 @@ return ide.plugin({
 )");
 
   PluginHost host;
-  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
   host.Reload(temp.path() / "project");
   Expect(host.ContributedStatusItems().front().text == "0", "initial status text should be 0");
   host.ExecuteCommand("update.status.tick", {});
@@ -485,7 +496,7 @@ return ide.plugin({
     return std::nullopt;
   };
   host.SetCallbacks(std::move(callbacks));
-  ScopedEnvVar env("XDG_CONFIG_HOME", (temp.path() / "config").string());
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
   host.Reload(temp.path() / "project");
   host.ExecuteCommand("settings.get.read", {});
   Expect(get_setting_called, "get_setting callback should be called");

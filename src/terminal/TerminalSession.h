@@ -93,6 +93,10 @@ class TerminalSession {
   void SetWakeEventType(Uint32 event_type);
   bool Start(const std::filesystem::path& working_directory, std::string_view command = {});
   void Stop();
+#ifdef MICROIDE_TESTING
+  bool StartPlaceholderForTesting(const std::filesystem::path& working_directory,
+                                  std::string_view command = {});
+#endif
   void Resize(std::size_t rows, std::size_t columns);
   void SendBytes(std::string_view bytes);
   void SendKey(Key key);

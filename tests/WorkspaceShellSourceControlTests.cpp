@@ -41,6 +41,20 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOver
   return WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
 }
 
+bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_count) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    if (WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count &&
+        !WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count;
+}
+
 void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -84,7 +98,7 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
 
-  Expect(WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == 1,
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
          "git sidebar tooltip fixture should expose a single modified entry");
 
   const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
@@ -140,7 +154,7 @@ void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
 
   const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
-  Expect(entries.size() == 2,
+  Expect(WaitForGitSidebarEntryCount(shell, 2),
          "git sidebar selection fixture should expose two modified entries");
 
   const SDL_FRect row_rect = WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, 1);
@@ -174,9 +188,8 @@ void TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries() {
 
   InitializeGitRepo(root);
   CommitAll(root, "base fixture", "base fixture");
-  RequireCommandSuccess(
-      "git -C '" + EscapedRepoPath(root) + "' checkout -b feature/outgoing-base >/dev/null 2>/dev/null",
-      "git checkout feature branch");
+  RequireGitCommandSuccess(root, {"checkout", "-b", "feature/outgoing-base"},
+                           "git checkout feature branch");
 
   WriteFile(alpha, "int alpha() {\n  return 10;\n}\n");
   CommitAll(root, "feature alpha", "feature alpha");
@@ -187,7 +200,8 @@ void TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 2),
+         "git outgoing-base fixture should expose two initial outgoing entries");
 
   auto count_outgoing = [&]() {
     return static_cast<int>(std::count_if(
@@ -209,7 +223,8 @@ void TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries() {
       .custom_ref = {},
   };
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "previous-commit outgoing base should settle to one outgoing entry");
   Expect(state.sidebar.git.base_ref == "HEAD~1",
          "previous-commit outgoing base should use HEAD~1");
   Expect(count_outgoing() == 1,
@@ -227,7 +242,8 @@ void TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries() {
       .custom_ref = "HEAD~2",
   };
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 2),
+         "specific-ref outgoing base should settle back to two outgoing entries");
   Expect(state.sidebar.git.base_ref == "HEAD~2",
          "specific-ref outgoing base should preserve the exact ref string");
   Expect(count_outgoing() == 2,
@@ -246,7 +262,8 @@ void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0),
+         "git outgoing-base menu fixture should settle the initial sidebar refresh");
   WorkspaceShellTestAccess::CurrentProjectState(shell).sidebar.git.outgoing_base_choice =
       microide::workspace::OutgoingBaseChoice{
           .kind = microide::workspace::OutgoingBaseChoice::Kind::SpecificRef,

@@ -48,15 +48,19 @@ local function supported_path_kind(path)
   return nil
 end
 
-local function eslint_binary(ctx)
-  local project_root = ctx.workspace.project_root()
-  if ctx.files.exists("node_modules/.bin/eslint") then
-    if type(project_root) == "string" and project_root ~= "" then
-      return project_root .. "/node_modules/.bin/eslint"
-    end
-    return "node_modules/.bin/eslint"
+local function is_windows_project_root(project_root)
+  return type(project_root) == "string" and project_root:match("^%a:[/\\]") ~= nil
+end
+
+local function append_args(prefix, suffix)
+  local command = {}
+  for _, value in ipairs(prefix) do
+    command[#command + 1] = value
   end
-  return "eslint"
+  for _, value in ipairs(suffix) do
+    command[#command + 1] = value
+  end
+  return command
 end
 
 local function has_yarn_lock(ctx)
@@ -96,6 +100,34 @@ local function shell_with_user_env(argv)
   return shell_command(argv)
 end
 
+local function local_binary_command(ctx, name, args)
+  local project_root = ctx.workspace.project_root()
+  if type(project_root) ~= "string" or project_root == "" then
+    return nil
+  end
+
+  local base_relative_path = "node_modules/.bin/" .. name
+  if is_windows_project_root(project_root) then
+    local cmd_relative_path = base_relative_path .. ".cmd"
+    if ctx.files.exists(cmd_relative_path) then
+      return append_args({ "cmd.exe", "/d", "/c", project_root .. "/" .. cmd_relative_path }, args)
+    end
+    if ctx.files.exists(base_relative_path) then
+      return {
+        "bash",
+        "-lc",
+        shell_with_user_env(append_args({ project_root .. "/" .. base_relative_path }, args)),
+      }
+    end
+  end
+
+  if ctx.files.exists(base_relative_path) then
+    return append_args({ project_root .. "/" .. base_relative_path }, args)
+  end
+
+  return nil
+end
+
 local function eslint_command(ctx, relative_path, report_path, use_yarn)
   if use_yarn then
     return {
@@ -114,8 +146,7 @@ local function eslint_command(ctx, relative_path, report_path, use_yarn)
       }),
     }
   end
-  return {
-    eslint_binary(ctx),
+  local args = {
     "--no-error-on-unmatched-pattern",
     "--format",
     "json",
@@ -123,26 +154,16 @@ local function eslint_command(ctx, relative_path, report_path, use_yarn)
     report_path,
     relative_path,
   }
-end
-
-local function tsc_binary(ctx)
-  local project_root = ctx.workspace.project_root()
-  if ctx.files.exists("node_modules/.bin/tsc") then
-    if type(project_root) == "string" and project_root ~= "" then
-      return project_root .. "/node_modules/.bin/tsc"
-    end
-    return "node_modules/.bin/tsc"
-  end
-  return "tsc"
+  return local_binary_command(ctx, "eslint", args) or append_args({ "eslint" }, args)
 end
 
 local function tsc_command(ctx, relative_path)
   if has_yarn_lock(ctx) then
     return {
-      "bash",
-      "-lc",
-      shell_with_user_env({
-        tsc_binary(ctx),
+        "bash",
+        "-lc",
+        shell_with_user_env({
+        "tsc",
         "-p",
         relative_path,
         "--pretty",
@@ -150,13 +171,13 @@ local function tsc_command(ctx, relative_path)
       }),
     }
   end
-  return {
-    tsc_binary(ctx),
+  local args = {
     "-p",
     relative_path,
     "--pretty",
     "false",
   }
+  return local_binary_command(ctx, "tsc", args) or append_args({ "tsc" }, args)
 end
 
 local function eslint_requires_yarn(result)

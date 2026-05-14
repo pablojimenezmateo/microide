@@ -32,13 +32,12 @@ void PushBufferTable(lua_State* state,
   lua_setfield(state, -2, "name");
 
   if (!current_project_root.empty()) {
-    std::error_code error;
     const std::filesystem::path relative =
-        std::filesystem::relative(normalized_path, current_project_root, error);
+        normalized_path.lexically_relative(current_project_root.lexically_normal());
     const bool starts_with_parent =
         relative.begin() != relative.end() &&
         *relative.begin() == std::filesystem::path("..");
-    if (!error && !relative.empty() && !starts_with_parent) {
+    if (!relative.empty() && !starts_with_parent) {
       lua_pushstring(state, relative.generic_string().c_str());
       lua_setfield(state, -2, "relative_path");
     }

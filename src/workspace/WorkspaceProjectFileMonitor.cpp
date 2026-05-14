@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceProjectFileMonitor.h"
 
+#include <algorithm>
+#include <cctype>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,17 +28,54 @@ class WorkspaceProjectFileMonitor::ProjectTraversalFilter {
       return false;
     }
 
-    std::error_code error;
-    const std::filesystem::path relative = std::filesystem::relative(normalized_path, root_, error);
-    if (error || relative.empty()) {
+    const std::filesystem::path relative = RelativeToRoot(normalized_path);
+    if (relative.empty()) {
       return true;
     }
 
     const auto& matcher = MatcherForParentDirectory(normalized_path.parent_path().lexically_normal());
-    return !matcher.Ignored(relative, is_directory);
+    if (matcher.Ignored(relative, is_directory)) {
+      return false;
+    }
+    for (std::filesystem::path parent = relative.parent_path();
+         !parent.empty() && parent != std::filesystem::path(".");
+         parent = parent.parent_path()) {
+      if (matcher.Ignored(parent.lexically_normal(), true)) {
+        return false;
+      }
+    }
+    return true;
   }
 
- private:
+  private:
+  std::filesystem::path RelativeToRoot(const std::filesystem::path& path) const {
+    const std::filesystem::path relative = path.lexically_relative(root_);
+    if (!relative.empty()) {
+      return relative.lexically_normal();
+    }
+#ifdef _WIN32
+    const std::string path_text = path.generic_string();
+    const std::string root_text = root_.generic_string();
+    if (path_text.size() <= root_text.size()) {
+      return {};
+    }
+    auto lower_copy = [](std::string text) {
+      std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+      });
+      return text;
+    };
+    const std::string lower_path = lower_copy(path_text);
+    const std::string lower_root = lower_copy(root_text);
+    if (lower_path.rfind(lower_root, 0) != 0 || path_text[root_text.size()] != '/') {
+      return {};
+    }
+    return std::filesystem::path(path_text.substr(root_text.size() + 1)).lexically_normal();
+#else
+    return {};
+#endif
+  }
+
   const project::IgnoreMatcher& MatcherForParentDirectory(const std::filesystem::path& directory) {
     if (directory.empty() || directory == root_) {
       return root_matcher_;
@@ -272,14 +311,6 @@ bool WorkspaceProjectFileMonitor::HasVisibleChangesSinceDeferredArming() const {
   std::error_code root_error;
   if (!std::filesystem::exists(root, root_error)) {
     return false;
-  }
-
-  std::error_code root_time_error;
-  const auto root_time = std::filesystem::last_write_time(root, root_time_error);
-  if (!root_time_error &&
-      filter->Includes(root, platform::ReadPathType(root)) &&
-      root_time > *baseline) {
-    return true;
   }
 
   constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
