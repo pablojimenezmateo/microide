@@ -53,6 +53,12 @@ class Application {
   bool redraw_trace_verbose_enabled_ = false;
   int scene_texture_width_ = 0;
   int scene_texture_height_ = 0;
+  // Wall-clock timestamp of the most recent window-resize / pixel-size-change
+  // event. Used to coalesce scene-texture reallocation during active resize
+  // drags so we don't pay GPU texture alloc per resize event. Zero means "no
+  // recent resize"; the texture is allowed to be (re)allocated immediately.
+  Uint64 last_resize_event_ns_ = 0;
+  bool presentation_state_dirty_ = true;
   Uint64 redraw_trace_frames_ = 0;
   Uint64 redraw_trace_full_frames_ = 0;
   Uint64 redraw_trace_partial_frames_ = 0;

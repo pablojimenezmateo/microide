@@ -111,6 +111,10 @@
   float UiScale() const { return ui_scale_; }
   render::TextClipPadding PartialRedrawClipPadding() const;
   void SetWindowPresentationState(WindowPresentationState state);
+  // Returns the last value pushed via SetWindowPresentationState. Used by the
+  // outer app loop so it can skip re-querying SDL window/render dimensions on
+  // every frame when nothing has invalidated the cached state.
+  std::optional<WindowPresentationState> CurrentWindowPresentationState() const;
   void SetDialogWindow(SDL_Window* window) { dialog_window_ = window; }
   SDL_HitTestResult WindowHitTest(float x, float y) const;
   bool WindowDragRegionContains(float x, float y) const;

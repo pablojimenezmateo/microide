@@ -23,6 +23,13 @@ constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
 constexpr Uint64 kRenderTraceLogInterval = 120;
 constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
+// Coalesce scene-texture reallocation during active resize drags. While
+// SDL_EVENT_WINDOW_RESIZED / SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED keep firing,
+// we render through the fallback path (no retained texture) instead of paying
+// a GPU texture alloc per event. After this many nanoseconds without a resize
+// event, the next render rebuilds the scene texture once and resumes the
+// retained-redraw fast path.
+constexpr Uint64 kSceneTextureResizeSettleNs = 150ULL * 1'000'000ULL;
 
 bool EventUsesRenderCoordinates(Uint32 event_type) {
   switch (event_type) {
@@ -302,9 +309,20 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       };
     case SDL_EVENT_WINDOW_SHOWN:
     case SDL_EVENT_WINDOW_EXPOSED:
-    case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+      presentation_state_dirty_ = true;
+      UpdateRendererPresentation();
+      return workspace::WorkspaceShell::EventResult{
+          .handled = true,
+          .redraw = workspace::WorkspaceShell::RenderInvalidation{
+              .full = true,
+              .rects = {},
+          },
+      };
+    case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+      presentation_state_dirty_ = true;
+      last_resize_event_ns_ = SDL_GetTicksNS();
       UpdateRendererPresentation();
       return workspace::WorkspaceShell::EventResult{
           .handled = true,
@@ -459,6 +477,24 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     return false;
   }
 
+  // Fast path: when no window event has invalidated the cached presentation,
+  // skip the SDL_GetRenderOutputSize / SDL_GetWindowDisplayScale queries plus
+  // SDL_SetRenderLogicalPresentation reapply. They are individually cheap but
+  // run every frame of the render loop, so caching saves measurable time on
+  // steady-state full-redraw frames.
+  if (!presentation_state_dirty_) {
+    const auto cached = workspace_shell_.CurrentWindowPresentationState();
+    if (cached.has_value()) {
+      if (logical_width != nullptr) {
+        *logical_width = cached->logical_width;
+      }
+      if (logical_height != nullptr) {
+        *logical_height = cached->logical_height;
+      }
+      return true;
+    }
+  }
+
   const auto presentation =
       CaptureWindowPresentationState(window_, renderer_, workspace_shell_.UiScale());
   if (!presentation.has_value()) {
@@ -473,6 +509,7 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     return false;
   }
 
+  presentation_state_dirty_ = false;
   if (logical_width != nullptr) {
     *logical_width = presentation->logical_width;
   }
@@ -502,6 +539,21 @@ bool Application::EnsureSceneTexture(int logical_width, int logical_height) {
   if (scene_texture_ != nullptr && scene_texture_width_ == logical_width &&
       scene_texture_height_ == logical_height) {
     return true;
+  }
+
+  // Coalesce: while the user is actively dragging the window we'd otherwise
+  // destroy and recreate the full-window render target on every resize event.
+  // Hold off on the realloc and let this frame fall through to the
+  // fallback-full path (which renders directly to the window). Once
+  // kSceneTextureResizeSettleNs elapses without a resize event, the texture
+  // is rebuilt exactly once.
+  if (last_resize_event_ns_ != 0) {
+    const Uint64 now_ns = SDL_GetTicksNS();
+    if (now_ns - last_resize_event_ns_ < kSceneTextureResizeSettleNs) {
+      DestroySceneTexture();
+      return false;
+    }
+    last_resize_event_ns_ = 0;
   }
 
   DestroySceneTexture();

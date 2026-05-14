@@ -84,6 +84,14 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   }
 }
 
+std::optional<WorkspaceShell::WindowPresentationState>
+WorkspaceShell::CurrentWindowPresentationState() const {
+  if (window_presentation_.logical_width <= 0 || window_presentation_.logical_height <= 0) {
+    return std::nullopt;
+  }
+  return window_presentation_;
+}
+
 render::TextClipPadding WorkspaceShell::PartialRedrawClipPadding() const {
   return text_renderer_.ClipPadding();
 }
