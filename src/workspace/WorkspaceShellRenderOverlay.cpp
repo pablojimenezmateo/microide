@@ -79,7 +79,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
                        current_surface == TextInputSurface::BufferSearch);
     DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 44.0f),
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.surface_background,
         overlay_display_text(TextInputSurface::BufferSearch, bs_fallback));
@@ -129,7 +129,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         renderer, theme_, overlay_field_rect(overlay.y + 62.0f),
         current_surface == TextInputSurface::BufferReplaceReplace);
     DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 44.0f),
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
         overlay_state.buffer_search_field == BufferSearchField::Search
             ? theme_.text_primary
@@ -137,7 +137,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
         theme_.surface_background,
         overlay_display_text(TextInputSurface::BufferReplaceSearch, br_search_fallback));
     DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
+        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 62.0f),
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
         overlay_state.buffer_search_field == BufferSearchField::Replace
             ? theme_.text_primary
@@ -186,7 +186,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
                        current_surface == TextInputSurface::ProjectSearchOverlay);
     DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 44.0f),
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.surface_background,
         overlay_display_text(TextInputSurface::ProjectSearchOverlay, ps_fallback));
@@ -243,7 +243,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
     DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 62.0f),
                        current_surface == TextInputSurface::CommitPicker);
     DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
+        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 62.0f),
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.surface_background,
         overlay_display_text(TextInputSurface::CommitPicker, cp_fallback));
