@@ -263,6 +263,7 @@ void TabCoordinator::Activate(std::size_t index) {
 
   if (state_.active_tab_index == index) {
     auto& active_tab = state_.open_tabs[index];
+    SyncActiveEditorTabMetadata();
     state_.surface.focus = FocusTarget::Editor;
     operations_.reset_caret_blink();
     operations_.request_active_tab_redraw(
@@ -427,8 +428,10 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
   const bool path_changed = tab.path != active_path;
   tab.path = active_path;
   tab.title = viewport != nullptr ? EditorTabLabel(*viewport) : "untitled";
-  if (path_changed && !active_path.empty()) {
-    state_.directory_tree.SelectPath(active_path);
+  if (!active_path.empty() && state_.directory_tree.SelectPathIfVisible(active_path)) {
+    operations_.reveal_selected_tree_sidebar_line();
+  } else if (path_changed && !active_path.empty() &&
+             state_.directory_tree.SelectPath(active_path)) {
     operations_.reveal_selected_tree_sidebar_line();
   }
 }

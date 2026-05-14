@@ -207,6 +207,54 @@ void TestWorkspaceShellStatusBarShowsSourceControlState() {
          "status bar branch segment should stay hidden when branch is shown in the primary segment");
 }
 
+void TestWorkspaceShellTerminalWakeRefreshesStatusBarAfterCommit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int value() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add git metadata refresh fixture", "git metadata refresh fixture");
+  WriteFile(source, "int value() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "git metadata refresh fixture should open");
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  const auto dirty_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (std::chrono::steady_clock::now() < dirty_deadline &&
+         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+  Expect(WorkspaceShellTestAccess::StatusBarSegmentText(
+             shell, microide::workspace::StatusBarSegmentId::Project)
+                 .find("[dirty]") != std::string::npos,
+         "status bar should start dirty before the external commit");
+
+  CommitAll(root, "Commit tracked change", "git metadata refresh post-open commit");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+
+  const auto clean_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < clean_deadline) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    WorkspaceShellTestAccess::RefreshStatusBar(shell);
+    if (WorkspaceShellTestAccess::StatusBarSegmentText(
+            shell, microide::workspace::StatusBarSegmentId::Project)
+            .find("[clean]") != std::string::npos) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  const std::string project_segment = WorkspaceShellTestAccess::StatusBarSegmentText(
+      shell, microide::workspace::StatusBarSegmentId::Project);
+  Expect(project_segment.find("[clean]") != std::string::npos,
+         "terminal wake refresh should update the status bar after a commit");
+}
+
 void TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1002,6 +1050,31 @@ void TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender() {
 
   Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > 0,
          "rendering should not snap tree scrolling back to keep the selected row visible");
+}
+
+void TestWorkspaceShellTabSwitchSelectsActiveTreePath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path first = root / "alpha.cpp";
+  const std::filesystem::path second = root / "beta.cpp";
+  WriteFile(first, "int alpha() { return 1; }\n");
+  WriteFile(second, "int beta() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == second.lexically_normal(),
+         "opening the second tab should select its path in the project tree");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == first.lexically_normal(),
+         "activating the first tab should select its path in the project tree");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(shell) == second.lexically_normal(),
+         "activating the second tab should select its path in the project tree");
 }
 
 void TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories() {
@@ -2229,6 +2302,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown);
   AddTest(tests, "WorkspaceShell/StatusBarShowsSourceControlState",
           TestWorkspaceShellStatusBarShowsSourceControlState);
+  AddTest(tests, "WorkspaceShell/TerminalWakeRefreshesStatusBarAfterCommit",
+          TestWorkspaceShellTerminalWakeRefreshesStatusBarAfterCommit);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshDispatchIsNonBlocking",
           TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking);
   AddTest(tests, "WorkspaceShell/ProjectSwitchDiscardsStaleGitSidebarRefreshResult",
@@ -2295,6 +2370,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTreeCollapseAllowsOpenDescendantsAndReselectReveal);
   AddTest(tests, "WorkspaceShell/TreeScrollDoesNotSnapToSelectionDuringRender",
           TestWorkspaceShellTreeScrollDoesNotSnapToSelectionDuringRender);
+  AddTest(tests, "WorkspaceShell/TabSwitchSelectsActiveTreePath",
+          TestWorkspaceShellTabSwitchSelectsActiveTreePath);
   AddTest(tests, "WorkspaceShell/TreeCollapseButtonCollapsesAllOpenDirectories",
           TestWorkspaceShellTreeCollapseButtonCollapsesAllOpenDirectories);
   AddTest(tests, "WorkspaceShell/TreeHeaderCompactsBeforeButtonsOverlap",
