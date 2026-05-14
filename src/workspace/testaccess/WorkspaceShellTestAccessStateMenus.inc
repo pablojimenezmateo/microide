@@ -200,6 +200,18 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.SidebarModeControlRect(layout.sidebar);
   }
+  static SDL_FRect SearchSidebarModeButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ProjectSearchModeButtonRect(layout.sidebar);
+  }
+  static SDL_FRect SearchSidebarCaseButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ProjectSearchCaseButtonRect(layout.sidebar);
+  }
+  static SDL_FRect SearchSidebarHiddenButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return shell.ProjectSearchHiddenButtonRect(layout.sidebar);
+  }
   static SDL_FRect TreeSidebarCollapseButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.TreeSidebarCollapseButtonRect(layout.sidebar);

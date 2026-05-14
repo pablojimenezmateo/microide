@@ -36,6 +36,9 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
   const WorkspaceLayout layout = *layout_state;
+  const bool previous_mouse_position_valid = last_mouse_position_valid_;
+  const float previous_mouse_x = last_mouse_x_;
+  const float previous_mouse_y = last_mouse_y_;
   const auto capture_blocked_hover_visuals = [this, &layout]() {
     struct HoverVisuals {
       std::optional<SDL_FRect> project_tab_tooltip_rect;
@@ -68,6 +71,96 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     request(visuals.status_tooltip_rect);
     request(visuals.git_sidebar_tooltip_rect);
     request(visuals.editor_hover_popup_rect);
+  };
+  const auto rects_equal = [](const SDL_FRect& lhs, const SDL_FRect& rhs) {
+    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+  };
+  const auto optional_rects_equal = [&rects_equal](const std::optional<SDL_FRect>& lhs,
+                                                   const std::optional<SDL_FRect>& rhs) {
+    if (!lhs.has_value() || !rhs.has_value()) {
+      return lhs.has_value() == rhs.has_value();
+    }
+    return rects_equal(*lhs, *rhs);
+  };
+  const auto request_hover_button_redraw = [this](const std::optional<SDL_FRect>& rect) {
+    if (!rect.has_value()) {
+      return;
+    }
+    RequestRedrawRect(MakeRect(rect->x - 1.0f, rect->y - 1.0f, rect->w + 2.0f, rect->h + 2.0f));
+  };
+  const auto sidebar_hover_button_rect_at =
+      [this, &layout](float x, float y) -> std::optional<SDL_FRect> {
+    if (!context_.current_project_state.sidebar.visible || MenuSurfaceCapturingMouse() ||
+        !Contains(layout.sidebar, x, y)) {
+      return std::nullopt;
+    }
+
+    const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
+    if (Contains(sidebar_mode_rect, x, y)) {
+      return sidebar_mode_rect;
+    }
+
+    switch (ActiveSidebarMode()) {
+      case SidebarMode::Search: {
+        const SDL_FRect mode_rect = ProjectSearchModeButtonRect(layout.sidebar);
+        if (Contains(mode_rect, x, y)) {
+          return mode_rect;
+        }
+        const SDL_FRect case_rect = ProjectSearchCaseButtonRect(layout.sidebar);
+        if (Contains(case_rect, x, y)) {
+          return case_rect;
+        }
+        const SDL_FRect hidden_rect = ProjectSearchHiddenButtonRect(layout.sidebar);
+        if (Contains(hidden_rect, x, y)) {
+          return hidden_rect;
+        }
+        return std::nullopt;
+      }
+      case SidebarMode::Git: {
+        if (CanStageAllGitSidebarEntries()) {
+          const SDL_FRect stage_rect = GitSidebarStageAllButtonRect(layout.sidebar);
+          if (Contains(stage_rect, x, y)) {
+            return stage_rect;
+          }
+        }
+        if (CanDiscardAllGitSidebarEntries()) {
+          const SDL_FRect discard_rect = GitSidebarDiscardAllButtonRect(layout.sidebar);
+          if (Contains(discard_rect, x, y)) {
+            return discard_rect;
+          }
+        }
+        const SDL_FRect refresh_rect = GitSidebarRefreshButtonRect(layout.sidebar);
+        if (Contains(refresh_rect, x, y)) {
+          return refresh_rect;
+        }
+        if (const auto outgoing_base_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
+            outgoing_base_rect.has_value() && Contains(*outgoing_base_rect, x, y)) {
+          return outgoing_base_rect;
+        }
+        return std::nullopt;
+      }
+      case SidebarMode::Tree: {
+        if (context_.current_project_state.directory_tree.CanCollapseAll()) {
+          const SDL_FRect collapse_rect = TreeSidebarCollapseButtonRect(layout.sidebar);
+          if (Contains(collapse_rect, x, y)) {
+            return collapse_rect;
+          }
+        }
+        const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
+        if (Contains(refresh_rect, x, y)) {
+          return refresh_rect;
+        }
+        return std::nullopt;
+      }
+      case SidebarMode::None:
+      case SidebarMode::Chat:
+      case SidebarMode::Problems:
+      case SidebarMode::Tests:
+      case SidebarMode::Plugin:
+        return std::nullopt;
+    }
+
+    return std::nullopt;
   };
 
   if (context_.interaction_state.drag_target != DragTarget::None) {
@@ -205,6 +298,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   bool hover_visual_changed = false;
+  bool sidebar_hover_button_changed = false;
   std::optional<SDL_FRect> previous_project_tab_tooltip_rect;
   std::optional<SDL_FRect> previous_tab_tooltip_rect;
   std::optional<SDL_FRect> previous_status_tooltip_rect;
@@ -231,6 +325,19 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           "WorkspaceShell::HandleMouseMotion::UpdateMouseCursor");
       UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
     }
+    const std::optional<SDL_FRect> previous_sidebar_hover_button_rect =
+        previous_mouse_position_valid
+            ? sidebar_hover_button_rect_at(previous_mouse_x, previous_mouse_y)
+            : std::nullopt;
+    const std::optional<SDL_FRect> current_sidebar_hover_button_rect =
+        sidebar_hover_button_rect_at(static_cast<float>(event.motion.x),
+                                     static_cast<float>(event.motion.y));
+    sidebar_hover_button_changed = !optional_rects_equal(previous_sidebar_hover_button_rect,
+                                                         current_sidebar_hover_button_rect);
+    if (sidebar_hover_button_changed) {
+      request_hover_button_redraw(previous_sidebar_hover_button_rect);
+      request_hover_button_redraw(current_sidebar_hover_button_rect);
+    }
     const bool current_action_hovered =
         EditorHoverPopupPrimaryActionHovered(static_cast<float>(event.motion.x),
                                              static_cast<float>(event.motion.y));
@@ -238,9 +345,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                            previous_action_hovered != current_action_hovered;
   }
 
-  const auto rects_equal = [](const SDL_FRect& lhs, const SDL_FRect& rhs) {
-    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
-  };
   const auto request_tooltip_redraw_if_changed =
       [this, &rects_equal](const std::string& previous_label,
                            const std::optional<SDL_FRect>& previous_rect,
@@ -306,7 +410,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
 
-  return hover_visual_changed || chrome_tooltip_visual_changed;
+  return hover_visual_changed || chrome_tooltip_visual_changed || sidebar_hover_button_changed;
 }
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {

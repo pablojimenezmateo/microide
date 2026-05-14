@@ -422,6 +422,118 @@ void TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation() {
          "popup row hover should redraw the newly highlighted row");
 }
 
+void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path nested_dir = root / "src" / "nested";
+  const std::filesystem::path source = nested_dir / "main.cpp";
+  std::filesystem::create_directories(nested_dir);
+  WriteFile(source, "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const SDL_FRect mode_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
+  const SDL_FRect collapse_rect = WorkspaceShellTestAccess::TreeSidebarCollapseButtonRect(shell);
+  Expect(mode_rect.w > 0.0f && collapse_rect.w > 0.0f,
+         "tree hover fixture should expose sidebar mode and collapse buttons");
+
+  Expect(SendMouseMotion(shell, mode_rect.x + mode_rect.w * 0.5f,
+                         mode_rect.y + mode_rect.h * 0.5f, 0),
+         "priming the sidebar mode hover should be handled");
+
+  SDL_Event motion_event{};
+  motion_event.type = SDL_EVENT_MOUSE_MOTION;
+  motion_event.motion.x = collapse_rect.x + collapse_rect.w * 0.5f;
+  motion_event.motion.y = collapse_rect.y + collapse_rect.h * 0.5f;
+  const auto hover_result = shell.HandleEvent(motion_event);
+  Expect(hover_result.handled, "switching tree header hover should be handled");
+  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
+         "tree header hover should stay on a partial redraw path");
+  Expect(hover_result.redraw.rects.size() <= 2,
+         "tree header hover should only dirty the affected controls");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, mode_rect),
+         "tree header hover should redraw the previously hovered control");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, collapse_rect),
+         "tree header hover should redraw the newly hovered control");
+}
+
+void TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "main.cpp", "int main() {}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "main", false);
+
+  const SDL_FRect mode_rect = WorkspaceShellTestAccess::SearchSidebarModeButtonRect(shell);
+  const SDL_FRect case_rect = WorkspaceShellTestAccess::SearchSidebarCaseButtonRect(shell);
+  Expect(mode_rect.w > 0.0f && case_rect.w > 0.0f,
+         "search hover fixture should expose the mode and case buttons");
+
+  Expect(SendMouseMotion(shell, mode_rect.x + mode_rect.w * 0.5f,
+                         mode_rect.y + mode_rect.h * 0.5f, 0),
+         "priming the search mode hover should be handled");
+
+  SDL_Event motion_event{};
+  motion_event.type = SDL_EVENT_MOUSE_MOTION;
+  motion_event.motion.x = case_rect.x + case_rect.w * 0.5f;
+  motion_event.motion.y = case_rect.y + case_rect.h * 0.5f;
+  const auto hover_result = shell.HandleEvent(motion_event);
+  Expect(hover_result.handled, "switching search header hover should be handled");
+  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
+         "search header hover should stay on a partial redraw path");
+  Expect(hover_result.redraw.rects.size() <= 2,
+         "search header hover should only dirty the affected controls");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, mode_rect),
+         "search header hover should redraw the previously hovered control");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, case_rect),
+         "search header hover should redraw the newly hovered control");
+}
+
+void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add git hover fixture", "git hover fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+
+  const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
+  Expect(top_action_rects[0].w > 0.0f && top_action_rects[2].w > 0.0f,
+         "git hover fixture should expose the stage-all and refresh buttons");
+
+  Expect(SendMouseMotion(shell, top_action_rects[0].x + top_action_rects[0].w * 0.5f,
+                         top_action_rects[0].y + top_action_rects[0].h * 0.5f, 0),
+         "priming the git stage-all hover should be handled");
+
+  SDL_Event motion_event{};
+  motion_event.type = SDL_EVENT_MOUSE_MOTION;
+  motion_event.motion.x = top_action_rects[2].x + top_action_rects[2].w * 0.5f;
+  motion_event.motion.y = top_action_rects[2].y + top_action_rects[2].h * 0.5f;
+  const auto hover_result = shell.HandleEvent(motion_event);
+  Expect(hover_result.handled, "switching git header hover should be handled");
+  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
+         "git header hover should stay on a partial redraw path");
+  Expect(hover_result.redraw.rects.size() <= 2,
+         "git header hover should only dirty the affected controls");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, top_action_rects[0]),
+         "git header hover should redraw the previously hovered control");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, top_action_rects[2]),
+         "git header hover should redraw the newly hovered control");
+}
+
 void TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1816,6 +1928,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuEventsReturnPartialChromeInvalidation);
   AddTest(tests, "WorkspaceShell/PopupRowHoverReturnsPopupOnlyInvalidation",
           TestWorkspaceShellPopupRowHoverReturnsPopupOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/TreeSidebarHeaderHoverReturnsButtonOnlyInvalidation",
+          TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/SearchSidebarHeaderHoverReturnsButtonOnlyInvalidation",
+          TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/GitSidebarHeaderHoverReturnsButtonOnlyInvalidation",
+          TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation);
   AddTest(tests, "WorkspaceShell/OpenMenuSuppressesUnderlyingTabTooltip",
           TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip);
   AddTest(tests, "WorkspaceShell/OverflowPopupSuppressesUnderlyingTabTooltip",
