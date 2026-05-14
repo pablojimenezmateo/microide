@@ -242,7 +242,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
       const float inset = 18.0f;
       const float text_x = overlay.x + inset;
-      float text_y = overlay.y + 44.0f;
+      const auto overlay_field_text_y = [&](float row_y) {
+        const SDL_FRect field =
+            MakeRect(overlay.x + 12.0f, row_y - 4.0f, std::max(0.0f, overlay.w - 24.0f), 18.0f);
+        return field.y + std::floor((field.h - line_height) * 0.5f);
+      };
+      float text_y = overlay_field_text_y(overlay.y + 44.0f);
       const float available_width = std::max(1.0f, overlay.w - inset * 2.0f);
       SingleLineViewMetrics vm;
       switch (surface) {
@@ -255,7 +260,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
                                             available_width);
           break;
         case TextInputSurface::BufferReplaceReplace:
-          text_y = overlay.y + 62.0f;
+          text_y = overlay_field_text_y(overlay.y + 62.0f);
           vm = ComputeSingleLineViewMetrics(*text_input_vm.buffer_search_replace, "replace: ",
                                             available_width);
           break;
@@ -264,7 +269,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
                                             available_width);
           break;
         case TextInputSurface::CommitPicker:
-          text_y = overlay.y + 62.0f;
+          text_y = overlay_field_text_y(overlay.y + 62.0f);
           vm = ComputeSingleLineViewMetrics(*text_input_vm.commit_picker_query, "> ",
                                             available_width);
           break;

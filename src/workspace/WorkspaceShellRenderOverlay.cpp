@@ -53,6 +53,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
   const auto overlay_field_rect = [&](float text_y) {
     return MakeRect(overlay.x + 12.0f, text_y - 4.0f, std::max(0.0f, overlay.w - 24.0f), 18.0f);
   };
+  const auto overlay_field_text_y = [&](float row_y) {
+    const SDL_FRect field = overlay_field_rect(row_y);
+    return field.y + std::floor((field.h - text_renderer_.LineHeight()) * 0.5f);
+  };
 
   ClampOverlayScrollRow(overlay);
   const auto overlay_list_layout = ComputeOverlayListLayout(overlay);
@@ -331,7 +335,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const Workspac
                theme_.text_primary, theme_.chrome_background, "Find File");
     DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
                        current_surface == TextInputSurface::FileFinder);
-    DrawSingleLineTextTail(renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
+    DrawSingleLineTextTail(renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 44.0f),
                            std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
                            theme_.text_secondary, theme_.surface_background,
                            "> " + project_state.file_finder.query());
