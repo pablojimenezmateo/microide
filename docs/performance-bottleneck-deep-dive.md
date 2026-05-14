@@ -47,6 +47,10 @@ The following high-priority frame-path optimizations are now implemented:
 4. Status bar repository validity cache:
    fallback repository validity probing is cached by normalized project root to avoid repeated
    per-frame `GitRepository(...).IsValid()` filesystem checks.
+5. LSP status snapshot reuse in status bar and bottom panel:
+   status-bar LSP text/tooltip now reuse a single readiness snapshot per refresh, and bottom-panel
+   LSP label rendering uses non-starting status lookup (`ensure_started=false`) to avoid render-path
+   startup/probe work.
 
 ## Executive Summary
 

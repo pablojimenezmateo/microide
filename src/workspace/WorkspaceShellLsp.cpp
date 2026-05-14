@@ -201,19 +201,31 @@ LspClient::ReadinessSnapshot WorkspaceShell::ActiveLspReadinessSnapshot(bool ens
 }
 
 std::string WorkspaceShell::ActiveLspStatusText(bool ensure_started) {
-  const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
-  if (context_.current_project_state.lsp.request_in_flight) {
-    return "LSP: working...";
-  }
-  return "LSP: " + LspReadinessMessage(snapshot);
+  std::string text;
+  std::string tooltip;
+  ActiveLspStatusStrings(ensure_started, text, tooltip);
+  return text;
 }
 
 std::string WorkspaceShell::ActiveLspStatusTooltip(bool ensure_started) {
+  std::string text;
+  std::string tooltip;
+  ActiveLspStatusStrings(ensure_started, text, tooltip);
+  return tooltip;
+}
+
+void WorkspaceShell::ActiveLspStatusStrings(bool ensure_started,
+                                            std::string& text,
+                                            std::string& tooltip) {
   const LspClient::ReadinessSnapshot snapshot = ActiveLspReadinessSnapshot(ensure_started);
   if (context_.current_project_state.lsp.request_in_flight) {
-    return "Language server request in progress";
+    text = "LSP: working...";
+    tooltip = "Language server request in progress";
+    return;
   }
-  return "Language server: " + LspReadinessMessage(snapshot);
+  const std::string readiness = LspReadinessMessage(snapshot);
+  text = "LSP: " + readiness;
+  tooltip = "Language server: " + readiness;
 }
 
 void WorkspaceShell::BeginTrackedLspRequest() {

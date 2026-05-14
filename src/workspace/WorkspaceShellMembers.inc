@@ -1027,6 +1027,7 @@
   const LspManager& CurrentLspManager() const;
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
+  void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
   std::string ActiveLspStatusText(bool ensure_started = true);
   std::string ActiveLspStatusTooltip(bool ensure_started = true);
   void BeginTrackedLspRequest();

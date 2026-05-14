@@ -204,7 +204,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
 
   if (const editor::TextViewport* viewport = ActiveEditableViewport();
       viewport != nullptr && !viewport->path().empty()) {
-    const std::string lsp_status_text = ActiveLspStatusText();
+    const std::string lsp_status_text = ActiveLspStatusText(/*ensure_started=*/false);
     const float status_width = text_renderer_.MeasureWidth(lsp_status_text);
     const float status_right = visible_panel_tabs.empty()
                                    ? panel_header.x + panel_header.w - 12.0f

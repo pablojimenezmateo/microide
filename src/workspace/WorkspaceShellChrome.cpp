@@ -709,7 +709,9 @@ void WorkspaceShell::RefreshStatusBar() {
   status_bar_service_.SetSegment(StatusBarSegmentId::LayoutMode,
                                   std::move(layout_mode_segment));
 
-  if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+  const editor::TextViewport* const active_viewport = ActiveEditorViewport();
+  if (active_viewport != nullptr) {
+    const editor::TextViewport* const viewport = active_viewport;
     StatusBarSegmentValue line_col;
     line_col.text = "Ln " + std::to_string(viewport->cursor_line() + 1) + ", Col " +
                     std::to_string(viewport->cursor_column() + 1);
@@ -785,11 +787,13 @@ void WorkspaceShell::RefreshStatusBar() {
   status_bar_service_.SetSegment(StatusBarSegmentId::Problems, std::move(problems));
 
   StatusBarSegmentValue lsp;
-  if (ActiveEditorViewport() != nullptr) {
-    std::string lsp_text = ActiveLspStatusText(/*ensure_started=*/false);
+  if (active_viewport != nullptr) {
+    std::string lsp_text;
+    std::string lsp_tooltip;
+    ActiveLspStatusStrings(/*ensure_started=*/false, lsp_text, lsp_tooltip);
     if (!lsp_text.empty()) {
       lsp.text = std::move(lsp_text);
-      lsp.tooltip = ActiveLspStatusTooltip(/*ensure_started=*/false);
+      lsp.tooltip = std::move(lsp_tooltip);
       lsp.visible = true;
     }
   }
