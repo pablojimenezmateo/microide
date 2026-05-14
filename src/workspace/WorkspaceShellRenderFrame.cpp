@@ -103,7 +103,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
   }
   if (panel_vm.content == PanelContentKind::Terminal && ActiveTerminalTab() != nullptr) {
-    ResizeTerminalToPanel(layout.bottom_panel);
+    const SDL_FRect& panel = layout.bottom_panel;
+    const auto& cached = last_terminal_panel_rect_;
+    const bool unchanged = cached.has_value() && cached->x == panel.x && cached->y == panel.y &&
+                           cached->w == panel.w && cached->h == panel.h;
+    if (!unchanged) {
+      ResizeTerminalToPanel(panel);
+      last_terminal_panel_rect_ = panel;
+    }
+  } else {
+    last_terminal_panel_rect_.reset();
   }
   prepared_frame_layout_ = layout;
   prepared_frame_draw_editor_caret_ =

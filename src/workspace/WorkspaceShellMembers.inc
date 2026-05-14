@@ -1333,6 +1333,10 @@
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
   std::uint64_t prepared_frame_id_ = 0;
+  // Last bottom-panel rect for which ResizeTerminalToPanel was invoked. When
+  // the panel rect is unchanged between frames there's nothing to recompute,
+  // so we skip the call entirely. Reset when no terminal is active.
+  std::optional<SDL_FRect> last_terminal_panel_rect_;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
   SaveParticipantRegistry save_participant_registry_;
