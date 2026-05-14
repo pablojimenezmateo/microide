@@ -439,39 +439,16 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
     return false;
   }
 
-  // Honor flipped natural-scrolling on macOS/Wayland trackpads where the OS
-  // already inverts the y-axis sign for us — applying the inversion again
-  // would double-invert. SDL3 reports the flipped state per event.
-  const float flip_sign =
-      event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f;
-  const float raw_dy = event.wheel.y * flip_sign;
-  const float raw_dx = event.wheel.x * flip_sign;
-  // Discard non-finite deltas defensively; otherwise a NaN would poison the
-  // accumulator and silently break scrolling for the rest of the session.
-  const float safe_dy = std::isfinite(raw_dy) ? raw_dy : 0.0f;
-  const float safe_dx = std::isfinite(raw_dx) ? raw_dx : 0.0f;
-
-  float& accum_y = context_.interaction_state.wheel_accumulator_y;
-  float& accum_x = context_.interaction_state.wheel_accumulator_x;
-  // If the user reverses direction mid-stream, drop residual fractional motion
-  // from the opposite direction so the reversal feels immediate instead of
-  // having to "burn through" the residue.
-  if ((safe_dy > 0.0f && accum_y < 0.0f) || (safe_dy < 0.0f && accum_y > 0.0f)) {
-    accum_y = 0.0f;
-  }
-  if ((safe_dx > 0.0f && accum_x < 0.0f) || (safe_dx < 0.0f && accum_x > 0.0f)) {
-    accum_x = 0.0f;
-  }
-  accum_y += safe_dy;
-  accum_x += safe_dx;
-
-  const int vertical_ticks = static_cast<int>(std::trunc(accum_y));
-  int axis_horizontal_ticks = static_cast<int>(std::trunc(accum_x));
-  accum_y -= static_cast<float>(vertical_ticks);
-  accum_x -= static_cast<float>(axis_horizontal_ticks);
+  // Fold the raw float wheel deltas into whole-line ticks via the shared
+  // accumulator helper. Pulling this out keeps WorkspaceInteractionState
+  // unit-testable without spinning up a full WorkspaceShell.
+  const WheelTicks ticks = AccumulateWheelEvent(
+      context_.interaction_state, event.wheel.y, event.wheel.x,
+      event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED);
+  const int vertical_ticks = ticks.vertical;
   const int horizontal_ticks =
-      axis_horizontal_ticks != 0
-          ? axis_horizontal_ticks
+      ticks.horizontal != 0
+          ? ticks.horizontal
           : ((SDL_GetModState() & SDL_KMOD_SHIFT) != 0 ? -vertical_ticks : 0);
   if (vertical_ticks == 0 && horizontal_ticks == 0) {
     return false;

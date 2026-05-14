@@ -1347,6 +1347,170 @@ RuleResult CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(
   return result;
 }
 
+// SdlTtfTextBackend must not regress to issuing one SDL_RenderTexture per
+// character. Per-glyph dispatch was the steady-state cost that the
+// 2026-05-14 render-perf pass replaced with a per-string composite cache.
+// If a future refactor reintroduces a per-character DrawString loop we want
+// the regression to be loud and immediate.
+RuleResult CheckSdlTtfBackendNoPerGlyphLoop(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "SdlTtfTextBackend must not regress to per-glyph SDL_RenderTexture loops";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/render/SdlTtfTextBackend.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  // The legacy per-glyph dispatcher was named DrawFastAsciiString. The new
+  // composite path uses BuildAsciiCompositeSurface (single SDL_RenderTexture
+  // per cached string). DrawFastAsciiString must stay deleted.
+  AppendCodeMaskRegexViolations(
+      result, path, text, std::regex(R"(\bDrawFastAsciiString\b)"),
+      "per-glyph DrawFastAsciiString path was removed in the 2026-05-14 perf pass; "
+      "ASCII text must render through ResolveEntry+BuildAsciiCompositeSurface so the "
+      "steady-state path is one SDL_RenderTexture call per cached (text, color)");
+  return result;
+}
+
+// DecoratedTextGridRenderer::RenderRow must keep emitting SDL_RenderFillRects
+// for same-color fill runs. Without this batching the editor row paint flips
+// SDL3's draw-color state once per fill, breaking the internal command
+// batcher and roughly doubling fill-side CPU.
+RuleResult CheckDecoratedTextGridRendererBatchesFills(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "DecoratedTextGridRenderer must coalesce same-color fills via SDL_RenderFillRects";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/editor/DecoratedTextGridRenderer.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  if (text.find("SDL_RenderFillRects") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "DecoratedTextGridRenderer.cpp must call SDL_RenderFillRects to batch "
+                   "same-color fills; do not regress to one SDL_RenderFillRect per fill",
+    });
+  }
+  return result;
+}
+
+// EditorViewRenderer::Render must reuse scratch DecoratedTextRow members
+// across rows/frames instead of constructing fresh per-row instances. The
+// scratch_row_ / sticky_scratch_row_ members on the renderer keep their
+// fills/runs/underlines vector capacity alive across frames; falling back to
+// per-row stack instances allocates and frees ~150 vectors per frame in a
+// typical editor pane.
+RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "EditorViewRenderer must reuse scratch DecoratedTextRow members";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/editor/EditorViewRenderer.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  // A stack-local `DecoratedTextRow name;` declaration inside the renderer is
+  // the regression we want to catch. Reference-bindings of the scratch
+  // members (`DecoratedTextRow& name = scratch_row_;`) are allowed and use
+  // `&`.
+  AppendCodeMaskRegexViolations(
+      result, path, text,
+      std::regex(R"(\bDecoratedTextRow\s+[A-Za-z_][A-Za-z_0-9]*\s*;)"),
+      "do not declare a fresh DecoratedTextRow per row; use scratch_row_/sticky_scratch_row_");
+  // Also require the scratch members to be referenced — if a refactor removes
+  // them but the regex above still passes (e.g. via auto), this catches it.
+  if (text.find("scratch_row_") == std::string::npos ||
+      text.find("sticky_scratch_row_") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "EditorViewRenderer.cpp must consume scratch_row_ and sticky_scratch_row_",
+    });
+  }
+  return result;
+}
+
+// Application::EnsureSceneTexture must coalesce reallocation across resize
+// bursts. Without the resize-time check, dragging the window destroyed and
+// recreated the full-window render target on every WINDOW_RESIZED event.
+RuleResult CheckApplicationCoalescesResize(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "Application must coalesce scene-texture realloc during resize bursts";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/app/Application.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  if (text.find("last_resize_event_ns_") == std::string::npos ||
+      text.find("kSceneTextureResizeSettleNs") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "Application::EnsureSceneTexture must guard reallocation behind "
+                   "last_resize_event_ns_ + kSceneTextureResizeSettleNs to coalesce resize bursts",
+    });
+  }
+  return result;
+}
+
+// HandleMouseWheel must accumulate fractional wheel.y deltas. Without the
+// accumulator, smooth-scroll trackpad input (event.wheel.integer_y == 0,
+// event.wheel.y ~ 0.3) produces no scroll until enough deltas land in a
+// single discrete tick.
+RuleResult CheckMouseWheelUsesFractionalAccumulator(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "HandleMouseWheel must use the fractional wheel accumulator";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellMouseMotion.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  if (text.find("AccumulateWheelEvent") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "HandleMouseWheel must funnel event.wheel.y/x through "
+                   "AccumulateWheelEvent so fractional deltas accumulate across events",
+    });
+  }
+  // The legacy form that rounds fractional deltas to zero must not be
+  // reintroduced as the only source of the wheel tick.
+  AppendCodeMaskRegexViolations(
+      result, path, text,
+      std::regex(R"(integer_y\s*!=\s*0\s*\?\s*event\.wheel\.integer_y\s*:\s*static_cast<int>\(std::lround)"),
+      "do not derive wheel ticks directly from event.wheel.integer_y / lround(y); "
+      "feed event.wheel.{y,x} into AccumulateWheelEvent and consume the returned ticks");
+  return result;
+}
+
+// PrepareFrameOnce must short-circuit ResizeTerminalToPanel when the bottom
+// panel rect is unchanged from the previous frame. Without this the resize
+// call ran every frame (its internal short-circuit avoided the actual
+// terminal resize but the rect math and trace marker still ran).
+RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "PrepareFrameOnce must cache the last terminal panel rect";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellRenderFrame.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  if (text.find("last_terminal_panel_rect_") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "PrepareFrameOnce must consult last_terminal_panel_rect_ before "
+                   "calling ResizeTerminalToPanel; the call is otherwise made every render frame",
+    });
+  }
+  return result;
+}
+
 void ReportRule(const RuleResult& result) {
   if (result.violations.empty()) {
     return;
@@ -1390,6 +1554,15 @@ void TestArchitectureInvariants() {
   results.push_back(CheckBuildEditorViewModelUsesIncrementalVectorWrites(repo_root));
   results.push_back(CheckRenderTuEditorEssentialsAvoidEphemeralLabelStrings(repo_root));
   results.push_back(CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(repo_root));
+  // 2026-05-14 render-perf invariants. Each guards a specific regression
+  // that the same-day perf pass closed; the doc lives at
+  // docs/render-perf-findings-2026-05-14.md.
+  results.push_back(CheckSdlTtfBackendNoPerGlyphLoop(repo_root));
+  results.push_back(CheckDecoratedTextGridRendererBatchesFills(repo_root));
+  results.push_back(CheckEditorViewRendererUsesScratchRows(repo_root));
+  results.push_back(CheckApplicationCoalescesResize(repo_root));
+  results.push_back(CheckMouseWheelUsesFractionalAccumulator(repo_root));
+  results.push_back(CheckBottomPanelTerminalRectCache(repo_root));
 
   bool hard_failure = false;
   for (const RuleResult& result : results) {

@@ -500,6 +500,7 @@ add_executable(microide_tests
   tests/Phase4Tests.cpp
   tests/Phase5Tests.cpp
   tests/SingleLineEditorTests.cpp
+  tests/WheelAccumulatorTests.cpp
   tests/AllocationCounterTests.cpp
   tests/PerfBaselineTests.cpp
   tests/PerfHarnessIsolationTests.cpp

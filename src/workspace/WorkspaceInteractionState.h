@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cmath>
 #include <cstddef>
 #include <vector>
 
@@ -59,5 +60,42 @@ struct InteractionState {
   float wheel_accumulator_y = 0.0f;
   float wheel_accumulator_x = 0.0f;
 };
+
+struct WheelTicks {
+  int vertical = 0;
+  int horizontal = 0;
+};
+
+// Pure helper extracted from WorkspaceShell::HandleMouseWheel so the
+// accumulator behavior can be unit-tested independently of the full event
+// dispatch path. Folds the raw SDL wheel deltas into whole-line ticks using
+// the persistent `wheel_accumulator_{x,y}` state on `interaction`. Mutates
+// the accumulators in place and returns the ticks that should be dispatched
+// to downstream coordinators this event. `flipped` mirrors
+// `event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED`. Non-finite inputs are
+// dropped defensively so a stray NaN cannot poison the accumulator.
+inline WheelTicks AccumulateWheelEvent(InteractionState& interaction,
+                                       float raw_y,
+                                       float raw_x,
+                                       bool flipped) {
+  const float flip_sign = flipped ? -1.0f : 1.0f;
+  const float dy = std::isfinite(raw_y) ? raw_y * flip_sign : 0.0f;
+  const float dx = std::isfinite(raw_x) ? raw_x * flip_sign : 0.0f;
+  float& accum_y = interaction.wheel_accumulator_y;
+  float& accum_x = interaction.wheel_accumulator_x;
+  if ((dy > 0.0f && accum_y < 0.0f) || (dy < 0.0f && accum_y > 0.0f)) {
+    accum_y = 0.0f;
+  }
+  if ((dx > 0.0f && accum_x < 0.0f) || (dx < 0.0f && accum_x > 0.0f)) {
+    accum_x = 0.0f;
+  }
+  accum_y += dy;
+  accum_x += dx;
+  const int vertical = static_cast<int>(std::trunc(accum_y));
+  const int horizontal = static_cast<int>(std::trunc(accum_x));
+  accum_y -= static_cast<float>(vertical);
+  accum_x -= static_cast<float>(horizontal);
+  return WheelTicks{.vertical = vertical, .horizontal = horizontal};
+}
 
 }  // namespace microide::workspace
