@@ -153,6 +153,30 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
   }
 }
 
+namespace {
+
+bool ColorsEqual(SDL_Color a, SDL_Color b) noexcept {
+  return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+// Flush a contiguous run of same-color fill rects in a single
+// SDL_RenderFillRects call. SDL3's internal batcher already coalesces
+// fills, but it does so per (renderer, draw color) state — every
+// SDL_SetRenderDrawColor flips the active state, which causes the batcher
+// to flush. Grouping by color before drawing minimizes those flushes.
+void FlushFillRun(SDL_Renderer* renderer,
+                  SDL_Color color,
+                  std::vector<SDL_FRect>& batch) {
+  if (batch.empty()) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  SDL_RenderFillRects(renderer, batch.data(), static_cast<int>(batch.size()));
+  batch.clear();
+}
+
+}  // namespace
+
 void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
                                           const render::TextRenderer& text_renderer,
                                           const DecoratedTextRow& row) const {
@@ -160,13 +184,26 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
     return;
   }
 
+  // Coalesce contiguous fills that share a color into one SDL_RenderFillRects
+  // call. The fill_batch_ scratch keeps the rectangles flat for SDL3 to
+  // consume. Order is preserved relative to the input so painters layered
+  // earlier still draw under painters layered later when colors differ.
+  std::vector<SDL_FRect>& batch = fill_batch_scratch_;
+  batch.clear();
+  SDL_Color active_color{};
+  bool batch_open = false;
   for (const DecoratedTextFill& fill : row.fills) {
     if (fill.rect.w <= 0.0f || fill.rect.h <= 0.0f) {
       continue;
     }
-    SDL_SetRenderDrawColor(renderer, fill.color.r, fill.color.g, fill.color.b, fill.color.a);
-    SDL_RenderFillRect(renderer, &fill.rect);
+    if (!batch_open || !ColorsEqual(active_color, fill.color)) {
+      FlushFillRun(renderer, active_color, batch);
+      active_color = fill.color;
+      batch_open = true;
+    }
+    batch.push_back(fill.rect);
   }
+  FlushFillRun(renderer, active_color, batch);
 
   for (const DecoratedTextRun& run : row.runs) {
     if (run.text.empty()) {
@@ -175,6 +212,12 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
     text_renderer.DrawString(renderer, run.x, run.y, run.color, run.text);
   }
 
+  // Underlines are dimmed copies of the diagnostic palette. Their dim_alpha
+  // depends only on the source color's alpha channel, so all underlines that
+  // share a source color end up with the same final color and can also be
+  // batched.
+  active_color = SDL_Color{};
+  batch_open = false;
   for (const DecoratedUnderline& underline : row.underlines) {
     if (underline.rect.w <= 0.0f || underline.rect.h <= 0.0f) {
       continue;
@@ -182,10 +225,16 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
     const Uint8 dim_alpha =
         static_cast<Uint8>(std::clamp(std::lround(static_cast<double>(underline.color.a) * 0.55),
                                       0l, 255l));
-    SDL_SetRenderDrawColor(renderer, underline.color.r, underline.color.g, underline.color.b,
-                           dim_alpha);
-    SDL_RenderFillRect(renderer, &underline.rect);
+    const SDL_Color rendered_color{underline.color.r, underline.color.g, underline.color.b,
+                                   dim_alpha};
+    if (!batch_open || !ColorsEqual(active_color, rendered_color)) {
+      FlushFillRun(renderer, active_color, batch);
+      active_color = rendered_color;
+      batch_open = true;
+    }
+    batch.push_back(underline.rect);
   }
+  FlushFillRun(renderer, active_color, batch);
 }
 
 }  // namespace microide::editor

@@ -74,6 +74,13 @@ class DecoratedTextGridRenderer {
   void RenderRow(SDL_Renderer* renderer,
                  const render::TextRenderer& text_renderer,
                  const DecoratedTextRow& row) const;
+
+ private:
+  // Scratch buffer used to coalesce same-color fill runs into a single
+  // SDL_RenderFillRects batch. Reused across rows; capacity persists across
+  // frames so per-row batching does not allocate. Mutable so RenderRow stays
+  // logically const.
+  mutable std::vector<SDL_FRect> fill_batch_scratch_;
 };
 
 }  // namespace microide::editor
