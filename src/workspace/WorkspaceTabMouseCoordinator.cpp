@@ -267,9 +267,19 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
     return false;
   }
   const WorkspaceLayout layout = *layout_state;
+  // During an active tab drag, the strip "captures" the pointer horizontally:
+  // a drop slightly past the left or right edge of the strip should still
+  // reorder (pinned to start or end) instead of silently dropping the event.
+  // The previous Contains(strip, x, y) check rejected those drops outright,
+  // which is why a "drag terminal tab to the start" landed at panel_header.x
+  // - 8px and produced no reorder. We still require y to be inside the
+  // strip's vertical band so wildly off-axis drops don't reorder by accident.
+  const auto in_strip_band = [](const SDL_FRect& strip, float y) {
+    return y >= strip.y && y < strip.y + strip.h;
+  };
   switch (tab_drag_state_.kind) {
     case TabDragKind::Project:
-      if (Contains(layout.project_tab_strip, event.motion.x, event.motion.y) &&
+      if (in_strip_band(layout.project_tab_strip, static_cast<float>(event.motion.y)) &&
           !project_catalog_.entries.empty()) {
         const auto visible_tabs = operations_.compute_visible_project_tabs(layout.project_tab_strip);
         const std::size_t insertion_slot = StripInsertionSlot(
@@ -284,7 +294,7 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
       }
       return true;
     case TabDragKind::Editor:
-      if (Contains(layout.tab_strip, event.motion.x, event.motion.y) &&
+      if (in_strip_band(layout.tab_strip, static_cast<float>(event.motion.y)) &&
           !state_.open_tabs.empty()) {
         const auto visible_tabs = operations_.compute_visible_tabs(layout.tab_strip);
         const std::size_t insertion_slot =
@@ -302,7 +312,8 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
         const SDL_FRect panel_header =
             MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                      kWorkspaceBottomPanelHeaderHeight);
-        if (Contains(panel_header, event.motion.x, event.motion.y) && !state_.terminal_tabs.empty()) {
+        if (in_strip_band(panel_header, static_cast<float>(event.motion.y)) &&
+            !state_.terminal_tabs.empty()) {
           const auto visible_tabs = operations_.compute_visible_terminal_tabs(panel_header);
           const std::size_t insertion_slot = StripInsertionSlot(
               panel_header, visible_tabs, static_cast<float>(event.motion.x), state_.terminal_tabs.size());
