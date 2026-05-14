@@ -1355,6 +1355,19 @@
   StatusBarService status_bar_service_;
   SettingsOverlayService settings_overlay_service_;
   WorkspaceLanguageContract language_contract_;
+  struct LiveSettingsEditorSnapshot {
+    std::filesystem::path project_root;
+    std::size_t tab_size = 0;
+    std::size_t indent_width = 0;
+    bool soft_tabs = false;
+    bool soft_wrap = false;
+    std::optional<std::string> auto_close_enabled;
+    std::optional<std::string> surround_enabled;
+    std::optional<std::string> smart_indent_enabled;
+    std::optional<std::string> save_trim_trailing_whitespace;
+    std::optional<std::string> save_ensure_final_newline;
+  };
+  std::optional<LiveSettingsEditorSnapshot> last_live_settings_editor_snapshot_;
   Uint32 git_blame_event_type_ = 0;
   Uint32 git_sidebar_event_type_ = 0;
   Uint32 terminal_event_type_ = 0;

@@ -140,21 +140,18 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
     if (id == "editor.tab_size") {
       if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
         prefs.tab_size = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
-        ApplyEditorPreferencesToAllTabs();
       }
       return;
     }
     if (id == "editor.indent_width") {
       if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
         prefs.indent_width = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
-        ApplyEditorPreferencesToAllTabs();
       }
       return;
     }
     if (id == "editor.soft_tabs") {
       if (const bool* parsed = std::get_if<bool>(&*parsed_builtin_value); parsed != nullptr) {
         prefs.soft_tabs = *parsed;
-        ApplyEditorPreferencesToAllTabs();
       }
       return;
     }
@@ -162,7 +159,6 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
       if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
           parsed != nullptr) {
         prefs.soft_wrap = *parsed == "word";
-        ApplyEditorPreferencesToAllTabs();
       }
       return;
     }
@@ -225,9 +221,39 @@ void WorkspaceShell::ApplyLiveSettings() {
     }
   }
 
-  // Keep per-tab editor runtime knobs (save normalization and language-pair
-  // toggles) aligned with effective settings after any setting write.
-  ApplyEditorPreferencesToAllTabs();
+  LiveSettingsEditorSnapshot snapshot;
+  snapshot.project_root = context_.current_project_state.root.lexically_normal();
+  snapshot.tab_size = context_.current_project_state.editor_preferences.tab_size;
+  snapshot.indent_width = context_.current_project_state.editor_preferences.indent_width;
+  snapshot.soft_tabs = context_.current_project_state.editor_preferences.soft_tabs;
+  snapshot.soft_wrap = context_.current_project_state.editor_preferences.soft_wrap;
+  snapshot.auto_close_enabled = GetSettingValue("editor.brackets.auto_close.enabled");
+  snapshot.surround_enabled = GetSettingValue("editor.brackets.surround.enabled");
+  snapshot.smart_indent_enabled = GetSettingValue("editor.indent.smart.enabled");
+  snapshot.save_trim_trailing_whitespace =
+      GetSettingValue("editor.save.trim_trailing_whitespace");
+  snapshot.save_ensure_final_newline =
+      GetSettingValue("editor.save.ensure_final_newline");
+  const bool snapshot_matches =
+      last_live_settings_editor_snapshot_.has_value() &&
+      last_live_settings_editor_snapshot_->project_root == snapshot.project_root &&
+      last_live_settings_editor_snapshot_->tab_size == snapshot.tab_size &&
+      last_live_settings_editor_snapshot_->indent_width == snapshot.indent_width &&
+      last_live_settings_editor_snapshot_->soft_tabs == snapshot.soft_tabs &&
+      last_live_settings_editor_snapshot_->soft_wrap == snapshot.soft_wrap &&
+      last_live_settings_editor_snapshot_->auto_close_enabled == snapshot.auto_close_enabled &&
+      last_live_settings_editor_snapshot_->surround_enabled == snapshot.surround_enabled &&
+      last_live_settings_editor_snapshot_->smart_indent_enabled == snapshot.smart_indent_enabled &&
+      last_live_settings_editor_snapshot_->save_trim_trailing_whitespace ==
+          snapshot.save_trim_trailing_whitespace &&
+      last_live_settings_editor_snapshot_->save_ensure_final_newline ==
+          snapshot.save_ensure_final_newline;
+  if (!snapshot_matches) {
+    // Keep per-tab editor runtime knobs (save normalization and language-pair
+    // toggles) aligned with effective settings after relevant settings change.
+    ApplyEditorPreferencesToAllTabs();
+    last_live_settings_editor_snapshot_ = snapshot;
+  }
 }
 
 void WorkspaceShell::OpenSettingsOverlay() {
