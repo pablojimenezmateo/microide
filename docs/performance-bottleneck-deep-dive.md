@@ -31,6 +31,23 @@ The following P0 measurement tooling is now implemented in code:
    stale baselines `editor_outline_regex_fallback` and `editor_outline_lsp_refresh` were removed
    because no matching scenarios are registered.
 
+## Implemented Runtime Optimizations (2026-05-14, Ongoing Slices)
+
+The following high-priority frame-path optimizations are now implemented:
+
+1. Settings generation gate for editor preference reapply:
+   per-frame `ApplyEditorPreferencesToAllTabs()` work is skipped when effective settings have not
+   changed.
+2. Status bar language cache:
+   language detection and language-contract-derived language labels are cached by active file and
+   invalidated only on relevant editor/tab transitions.
+3. Diagnostics severity aggregates:
+   `DiagnosticsStore` now maintains cached severity counts and a revision counter so status-bar
+   problems indicators avoid per-frame `SnapshotAll()` materialization.
+4. Status bar repository validity cache:
+   fallback repository validity probing is cached by normalized project root to avoid repeated
+   per-frame `GitRepository(...).IsValid()` filesystem checks.
+
 ## Executive Summary
 
 The largest remaining costs are broad invalidation, repeated per-frame work, and large copies. The

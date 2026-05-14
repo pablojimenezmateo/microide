@@ -1360,6 +1360,11 @@
     std::string filetype;
   };
   StatusBarLanguageCache status_bar_language_cache_;
+  struct StatusBarRepoCache {
+    std::filesystem::path project_root;
+    bool valid = false;
+  };
+  std::optional<StatusBarRepoCache> status_bar_repo_cache_;
   SettingsOverlayService settings_overlay_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {

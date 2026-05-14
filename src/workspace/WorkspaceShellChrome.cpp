@@ -643,6 +643,8 @@ void WorkspaceShell::RefreshStatusBar() {
   StatusBarSegmentValue project_segment;
   StatusBarSegmentValue branch_segment;
   if (!context_.current_project_state.root.empty()) {
+    const std::filesystem::path project_root =
+        context_.current_project_state.root.lexically_normal();
     const auto& git_state = context_.current_project_state.sidebar.git;
     const bool has_git_snapshot =
         git_state.repo_available || !git_state.branch_label.empty() || !git_state.base_ref.empty() ||
@@ -655,9 +657,17 @@ void WorkspaceShell::RefreshStatusBar() {
         !has_git_snapshot &&
         context_.current_project_state.directory_tree.has_dirty_files();
     const bool has_worktree_changes = snapshot_has_worktree_changes || tree_has_worktree_changes;
-    const bool repo_available =
-        git_state.repo_available ||
-        project::GitRepository(context_.current_project_state.root).IsValid();
+    bool repo_available = git_state.repo_available;
+    if (!repo_available) {
+      if (!status_bar_repo_cache_.has_value() ||
+          status_bar_repo_cache_->project_root != project_root) {
+        status_bar_repo_cache_ = StatusBarRepoCache{
+            .project_root = project_root,
+            .valid = project::GitRepository(project_root).IsValid(),
+        };
+      }
+      repo_available = status_bar_repo_cache_->valid;
+    }
     const std::string cleanliness =
         repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm";
     std::string branch_label = context_.current_project_state.sidebar.git.branch_label;
@@ -682,6 +692,9 @@ void WorkspaceShell::RefreshStatusBar() {
     project_segment.visible = true;
     project_segment.clickable = true;
     branch_segment = {};
+  }
+  if (context_.current_project_state.root.empty()) {
+    status_bar_repo_cache_.reset();
   }
   status_bar_service_.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
   status_bar_service_.SetSegment(StatusBarSegmentId::Branch, std::move(branch_segment));
