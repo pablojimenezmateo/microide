@@ -110,11 +110,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void CloseFonts();
   void LoadFallbackFonts();
   bool CanUseFastAscii(std::string_view text) const;
-  void DrawFastAsciiString(SDL_Renderer* renderer,
-                           float x,
-                           float y,
-                           SDL_Color color,
-                           std::string_view text);
+  SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
   CacheEntry* ResolveEntry(std::string_view text,
                            SDL_Color color,
                            const SDL_Color* background);

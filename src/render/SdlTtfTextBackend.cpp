@@ -19,7 +19,10 @@ namespace microide::render {
 namespace {
 
 constexpr float kFontPointSize = 13.0f;
-constexpr std::size_t kMaxCacheEntries = 2048;
+// Cache stores whole-string composites. Editor content can produce more unique
+// (text, color) pairs than the legacy per-glyph cache, so the upper bound is
+// larger than the 2048 used when each entry held a single glyph.
+constexpr std::size_t kMaxCacheEntries = 4096;
 constexpr float kMinPresentationScale = 0.1f;
 }  // namespace
 
@@ -177,11 +180,6 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
     return;
   }
 
-  if (CanUseFastAscii(text)) {
-    DrawFastAsciiString(renderer, x, y, color, text);
-    return;
-  }
-
   CacheEntry* entry = ResolveEntry(text, color, nullptr);
   if (entry == nullptr || entry->texture == nullptr) {
     return;
@@ -205,28 +203,7 @@ void SdlTtfTextBackend::DrawStringOn(SDL_Renderer* renderer,
                                      SDL_Color background,
                                      std::string_view text) {
   (void) background;
-  if (renderer == nullptr || renderer != renderer_ || text.empty()) {
-    return;
-  }
-
-  if (CanUseFastAscii(text)) {
-    DrawFastAsciiString(renderer, x, y, color, text);
-  } else {
-    CacheEntry* entry = ResolveEntry(text, color, nullptr);
-    if (entry == nullptr || entry->texture == nullptr) {
-      return;
-    }
-
-    const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
-    const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
-    const SDL_FRect destination = SDL_FRect{
-        x,
-        y,
-        static_cast<float>(entry->width) / scale_x,
-        static_cast<float>(entry->height) / scale_y,
-    };
-    SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
-  }
+  DrawString(renderer, x, y, color, text);
 }
 
 void SdlTtfTextBackend::ClearCache() {
@@ -253,39 +230,45 @@ bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
   return true;
 }
 
-void SdlTtfTextBackend::DrawFastAsciiString(SDL_Renderer* renderer,
-                                            float x,
-                                            float y,
-                                            SDL_Color color,
-                                            std::string_view text) {
-  if (renderer == nullptr || renderer != renderer_ || text.empty()) {
-    return;
+SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text,
+                                                           SDL_Color color) {
+  if (font_ == nullptr || text.empty()) {
+    return nullptr;
   }
 
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
-  const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
-  const float cell_width = char_width_;
+  const float cell_width_px = char_width_ * scale_x;
+  const int font_height_px = std::max(1, TTF_GetFontHeight(font_));
+  const int total_width_px =
+      std::max(1, static_cast<int>(std::ceil(static_cast<float>(text.size()) * cell_width_px)));
+
+  SDL_Surface* composite = SDL_CreateSurface(total_width_px, font_height_px, SDL_PIXELFORMAT_RGBA32);
+  if (composite == nullptr) {
+    return nullptr;
+  }
+  // Start transparent. Per-glyph blits supply the visible pixels at exact cell
+  // positions; spaces and outside-cell gaps remain alpha=0.
+  if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
+    SDL_DestroySurface(composite);
+    return nullptr;
+  }
+  SDL_SetSurfaceBlendMode(composite, SDL_BLENDMODE_BLEND);
 
   for (std::size_t index = 0; index < text.size(); ++index) {
-    const char ch = text[index];
+    const unsigned char ch = static_cast<unsigned char>(text[index]);
     if (ch == ' ') {
       continue;
     }
-
-    const std::string_view glyph_text(&text[index], 1);
-    CacheEntry* entry = ResolveEntry(glyph_text, color, nullptr);
-    if (entry == nullptr || entry->texture == nullptr) {
+    SDL_Surface* glyph_surface = TTF_RenderGlyph_Blended(font_, ch, color);
+    if (glyph_surface == nullptr) {
       continue;
     }
-
-    const SDL_FRect destination = SDL_FRect{
-        x + static_cast<float>(index) * cell_width,
-        y,
-        static_cast<float>(entry->width) / scale_x,
-        static_cast<float>(entry->height) / scale_y,
-    };
-    SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
+    const int dst_x = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
+    SDL_Rect dst_rect{dst_x, 0, glyph_surface->w, glyph_surface->h};
+    SDL_BlitSurface(glyph_surface, nullptr, composite, &dst_rect);
+    SDL_DestroySurface(glyph_surface);
   }
+  return composite;
 }
 
 std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
@@ -444,7 +427,18 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
     return &it->second;
   }
 
-  SDL_Surface* surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
+  // ASCII strings render through a cell-positioned composite (per-glyph blits
+  // into a single surface) so the resulting texture is one whole-string draw
+  // call at runtime, while preserving the deterministic monospaced cell layout
+  // that the ASCII-spacing regressions depend on. Non-ASCII falls back to the
+  // SDL_ttf whole-string blended path, which already handles shaped glyphs.
+  SDL_Surface* surface = nullptr;
+  if (CanUseFastAscii(text)) {
+    surface = BuildAsciiCompositeSurface(text, color);
+  }
+  if (surface == nullptr) {
+    surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
+  }
   if (surface == nullptr) {
     return nullptr;
   }
