@@ -327,6 +327,51 @@ Worth tracing whether the watcher arming can run on
   reported every 120 frames. Target: < 6 ms steady-state full-frame at
   60 Hz vsync so partial-redraw bursts have headroom.
 
+## Status (2026-05-14 same-day pass)
+
+The P0 items, two P1 items, and the high-leverage parts of the editor-render
+P1 are now landed on `feat/performance-pass-6`:
+
+- ASCII text rendering now caches one composite texture per (text, color) and
+  emits a single `SDL_RenderTexture` call per draw. The cell-positioned layout
+  that the existing `SdlTtfAscii*` regressions verify is preserved
+  byte-for-byte.
+- Scene-texture realloc during a resize drag is coalesced behind a 150 ms
+  settle window; the fallback-full render path covers the drag duration.
+- `UpdateRendererPresentation` caches its result behind a dirty flag set by
+  the relevant `SDL_EVENT_WINDOW_*` events instead of running every frame.
+- Mouse-wheel events accumulate fractional `event.wheel.y` deltas so smooth
+  trackpad input emits whole-line ticks predictably. `SDL_MOUSEWHEEL_FLIPPED`
+  and `NaN`-guard handling are now correct.
+- `EditorViewRenderer::Render` reuses scratch members for `DecoratedTextRow`,
+  visible-rows-for-guides, and the lowered query/line scratches; the
+  no-search frame skips the `ToLower` allocation entirely.
+- `DecoratedTextGridRenderer::RenderRow` coalesces same-color fills and
+  underlines into `SDL_RenderFillRects` runs so SDL3's batcher isn't flushed
+  per color flip.
+- `PrepareFrameOnce` now skips `ResizeTerminalToPanel` when the bottom-panel
+  rect is byte-identical to the previous frame.
+
+### Still deferred
+
+- **Mouse-motion allocation reduction (P1).** `HoveredProjectTabTooltipLabel`
+  / `HoveredTabTooltipLabel` still return `std::string` by value, and
+  `ComputeVisibleProjectTabs` / `ComputeVisibleTabs` still allocate three
+  vectors of strings on every call. A clean fix requires returning a
+  `string_view` into a stable per-frame cache, which means restructuring
+  the `Hovered*` API plus the per-frame cache invariants. Deferring to a
+  dedicated pass.
+- **Pixel-precision scroll (P0 #3, deeper half).** Today's accumulator gives
+  fractional-input correctness; a real pixel-precision scroll surface
+  requires adding sub-line offset to `TextViewport` and adjusting the
+  render-row loop to draw a partial top/bottom row. Recommended as its own
+  openspec change.
+- **Glyph-atlas + `SDL_RenderGeometry`.** The composite-per-string cache
+  collapses today's per-glyph storm into one draw per (text, color), which
+  is the high-leverage win. A proper atlas would let multi-string runs
+  share a single draw call. Worth doing if profiling still shows text as
+  the dominant cost after this pass settles.
+
 ## Out of scope here
 
 - Plugin host churn (cross-process IPC, LSP wakeups) — the live trace
