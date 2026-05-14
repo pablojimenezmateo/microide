@@ -2,6 +2,7 @@
 
 #include "editor/DiagnosticsStore.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <utility>
 #include <vector>
@@ -181,6 +182,51 @@ void TestDiagnosticsStoreClearsPathPrefixes() {
          "clear-prefix should preserve diagnostics outside the deleted subtree");
 }
 
+void TestDiagnosticsStoreTracksSeverityCountsAndRevision() {
+  DiagnosticsStore store;
+  const std::filesystem::path path = "/tmp/project/main.cpp";
+
+  Expect(store.revision() == 0, "revision should start at zero");
+  Expect(store.ErrorCount() == 0 && store.WarningCount() == 0 && store.InfoCount() == 0 &&
+             store.HintCount() == 0,
+         "severity counters should start at zero");
+
+  Expect(store.ReplaceForOwnerFile(
+             "lint", path,
+             {MakeDiagnostic(0, 0, 0, 1, DiagnosticSeverity::Error, "error"),
+              MakeDiagnostic(1, 0, 1, 1, DiagnosticSeverity::Warning, "warning"),
+              MakeDiagnostic(2, 0, 2, 1, DiagnosticSeverity::Info, "info"),
+              MakeDiagnostic(3, 0, 3, 1, DiagnosticSeverity::Hint, "hint")}),
+         "first diagnostics publish should change store state");
+  const std::uint64_t first_revision = store.revision();
+  Expect(first_revision > 0, "revision should advance after first publish");
+  Expect(store.ErrorCount() == 1 && store.WarningCount() == 1 && store.InfoCount() == 1 &&
+             store.HintCount() == 1,
+         "severity counters should track merged diagnostics");
+
+  Expect(!store.ReplaceForOwnerFile(
+             "lint", path,
+             {MakeDiagnostic(0, 0, 0, 1, DiagnosticSeverity::Error, "error"),
+              MakeDiagnostic(1, 0, 1, 1, DiagnosticSeverity::Warning, "warning"),
+              MakeDiagnostic(2, 0, 2, 1, DiagnosticSeverity::Info, "info"),
+              MakeDiagnostic(3, 0, 3, 1, DiagnosticSeverity::Hint, "hint")}),
+         "publishing identical diagnostics should be a no-op");
+  Expect(store.revision() == first_revision,
+         "revision should not advance for no-op updates");
+
+  Expect(store.ClearOwnerFile("lint", path),
+         "clearing owner diagnostics should change store state");
+  Expect(store.ErrorCount() == 0 && store.WarningCount() == 0 && store.InfoCount() == 0 &&
+             store.HintCount() == 0,
+         "severity counters should return to zero after clear");
+  const std::uint64_t second_revision = store.revision();
+  Expect(second_revision > first_revision, "revision should advance on clear");
+
+  store.Clear();
+  Expect(store.revision() == second_revision,
+         "clearing an already-empty store should be a no-op");
+}
+
 }  // namespace
 
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
@@ -193,6 +239,8 @@ void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests) {
           TestDiagnosticsStoreRetargetsPathPrefixes);
   AddTest(tests, "DiagnosticsStore/ClearsPathPrefixes",
           TestDiagnosticsStoreClearsPathPrefixes);
+  AddTest(tests, "DiagnosticsStore/TracksSeverityCountsAndRevision",
+          TestDiagnosticsStoreTracksSeverityCountsAndRevision);
 }
 
 }  // namespace microide::tests

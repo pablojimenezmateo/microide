@@ -760,21 +760,8 @@ void WorkspaceShell::RefreshStatusBar() {
 
   StatusBarSegmentValue problems;
   {
-    std::size_t errors = 0;
-    std::size_t warnings = 0;
-    for (const editor::PublishedDiagnostic& diagnostic :
-         context_.current_project_state.diagnostics_store.SnapshotAll()) {
-      switch (diagnostic.severity) {
-        case editor::DiagnosticSeverity::Error:
-          ++errors;
-          break;
-        case editor::DiagnosticSeverity::Warning:
-          ++warnings;
-          break;
-        default:
-          break;
-      }
-    }
+    const std::size_t errors = context_.current_project_state.diagnostics_store.ErrorCount();
+    const std::size_t warnings = context_.current_project_state.diagnostics_store.WarningCount();
     if (errors > 0 || warnings > 0) {
       problems.text = std::to_string(errors) + " errors, " + std::to_string(warnings) + " warnings";
       problems.tooltip = "Open Problems";

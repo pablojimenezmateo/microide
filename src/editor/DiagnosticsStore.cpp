@@ -118,6 +118,48 @@ void DiagnosticsStore::SortDiagnostics(std::vector<PublishedDiagnostic>* diagnos
             });
 }
 
+DiagnosticsStore::SeveritySummary DiagnosticsStore::SummarizeDiagnostics(
+    const std::vector<PublishedDiagnostic>& diagnostics) {
+  SeveritySummary summary;
+  for (const PublishedDiagnostic& diagnostic : diagnostics) {
+    switch (diagnostic.severity) {
+      case DiagnosticSeverity::Error:
+        ++summary.errors;
+        break;
+      case DiagnosticSeverity::Warning:
+        ++summary.warnings;
+        break;
+      case DiagnosticSeverity::Info:
+        ++summary.infos;
+        break;
+      case DiagnosticSeverity::Hint:
+        ++summary.hints;
+        break;
+    }
+  }
+  return summary;
+}
+
+void DiagnosticsStore::AddSummary(const SeveritySummary& summary) {
+  error_count_ += summary.errors;
+  warning_count_ += summary.warnings;
+  info_count_ += summary.infos;
+  hint_count_ += summary.hints;
+}
+
+void DiagnosticsStore::RemoveSummary(const SeveritySummary& summary) {
+  error_count_ -= std::min(error_count_, summary.errors);
+  warning_count_ -= std::min(warning_count_, summary.warnings);
+  info_count_ -= std::min(info_count_, summary.infos);
+  hint_count_ -= std::min(hint_count_, summary.hints);
+}
+
+void DiagnosticsStore::BumpRevision() {
+  if (++revision_ == 0) {
+    revision_ = 1;
+  }
+}
+
 void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   if (path_key.empty()) {
     return;
@@ -137,12 +179,31 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   }
 
   if (merged.diagnostics.empty()) {
-    merged_by_path_.erase(std::string(path_key));
+    const auto existing = merged_by_path_.find(std::string(path_key));
+    if (existing != merged_by_path_.end()) {
+      RemoveSummary(existing->second.summary);
+      merged_by_path_.erase(existing);
+      BumpRevision();
+    }
     return;
   }
 
   SortDiagnostics(&merged.diagnostics);
-  merged_by_path_[std::string(path_key)] = std::move(merged);
+  merged.summary = SummarizeDiagnostics(merged.diagnostics);
+  auto existing = merged_by_path_.find(std::string(path_key));
+  if (existing == merged_by_path_.end()) {
+    AddSummary(merged.summary);
+    merged_by_path_[std::string(path_key)] = std::move(merged);
+    BumpRevision();
+    return;
+  }
+  if (existing->second == merged) {
+    return;
+  }
+  RemoveSummary(existing->second.summary);
+  AddSummary(merged.summary);
+  existing->second = std::move(merged);
+  BumpRevision();
 }
 
 bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
@@ -171,8 +232,10 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
   FileDiagnostics next{
       .path = normalized_path,
       .diagnostics = CollectPublishedDiagnostics(owner_key, normalized_path, std::move(diagnostics)),
+      .summary = {},
   };
   SortDiagnostics(&next.diagnostics);
+  next.summary = SummarizeDiagnostics(next.diagnostics);
 
   const auto existing = owner_entries.find(path_key);
   if (existing != owner_entries.end() && existing->second == next) {
@@ -321,8 +384,16 @@ bool DiagnosticsStore::ClearPathPrefix(const std::filesystem::path& path_prefix)
 }
 
 void DiagnosticsStore::Clear() {
+  if (diagnostics_by_owner_.empty() && merged_by_path_.empty()) {
+    return;
+  }
   diagnostics_by_owner_.clear();
   merged_by_path_.clear();
+  error_count_ = 0;
+  warning_count_ = 0;
+  info_count_ = 0;
+  hint_count_ = 0;
+  BumpRevision();
 }
 
 const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPath(

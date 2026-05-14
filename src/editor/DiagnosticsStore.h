@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -62,22 +63,47 @@ class DiagnosticsStore {
   const std::vector<PublishedDiagnostic>* FindByPath(const std::filesystem::path& path) const;
   std::vector<PublishedDiagnostic> SnapshotAll() const;
   std::vector<PublishedDiagnostic> SnapshotForOwner(std::string_view owner) const;
+  std::size_t ErrorCount() const { return error_count_; }
+  std::size_t WarningCount() const { return warning_count_; }
+  std::size_t InfoCount() const { return info_count_; }
+  std::size_t HintCount() const { return hint_count_; }
+  std::uint64_t revision() const { return revision_; }
 
  private:
+  struct SeveritySummary {
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    std::size_t infos = 0;
+    std::size_t hints = 0;
+
+    bool operator==(const SeveritySummary&) const = default;
+  };
+
   struct FileDiagnostics {
     std::filesystem::path path;
     std::vector<PublishedDiagnostic> diagnostics;
+    SeveritySummary summary;
 
     bool operator==(const FileDiagnostics&) const = default;
   };
 
   static std::string PathKey(const std::filesystem::path& path);
   static void SortDiagnostics(std::vector<PublishedDiagnostic>* diagnostics);
+  static SeveritySummary SummarizeDiagnostics(
+      const std::vector<PublishedDiagnostic>& diagnostics);
+  void AddSummary(const SeveritySummary& summary);
+  void RemoveSummary(const SeveritySummary& summary);
+  void BumpRevision();
   void RebuildPath(std::string_view path_key);
 
   std::unordered_map<std::string, std::unordered_map<std::string, FileDiagnostics>>
       diagnostics_by_owner_;
   std::unordered_map<std::string, FileDiagnostics> merged_by_path_;
+  std::size_t error_count_ = 0;
+  std::size_t warning_count_ = 0;
+  std::size_t info_count_ = 0;
+  std::size_t hint_count_ = 0;
+  std::uint64_t revision_ = 0;
 };
 
 }  // namespace microide::editor
