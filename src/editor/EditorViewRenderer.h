@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "editor/BracketScanner.h"
+#include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsStore.h"
 #include "editor/EditorViewModel.h"
 #include "editor/FoldingModel.h"
@@ -159,6 +160,15 @@ class EditorViewRenderer {
   mutable IndentGuidesCache indent_guides_cache_;
 
   mutable std::vector<FoldGutterMark> last_fold_gutter_marks_;
+
+  // Scratch buffers reused across rows and frames so the editor render hot
+  // path does not allocate (and free) three std::vector instances per visible
+  // row per frame. Cleared between rows; capacity persists across frames.
+  mutable DecoratedTextRow scratch_row_;
+  mutable DecoratedTextRow sticky_scratch_row_;
+  mutable std::vector<std::size_t> visible_rows_for_guides_scratch_;
+  mutable std::string lowered_search_query_scratch_;
+  mutable std::string lowered_line_scratch_;
 };
 
 }  // namespace microide::editor

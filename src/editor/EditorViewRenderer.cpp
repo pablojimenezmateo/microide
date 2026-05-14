@@ -368,10 +368,21 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const auto& secondary_carets = viewport.secondary_carets();
   const auto selection = viewport.selection_range();
   char line_number_buf[20];
-  const std::string lowered_search_query = ToLower(search_query);
+  // Skip the ToLower allocation entirely on the common no-search frame; reuse
+  // the scratch buffer when a query is active so the std::string capacity
+  // persists across frames.
+  if (search_query.empty()) {
+    lowered_search_query_scratch_.clear();
+  } else {
+    lowered_search_query_scratch_.resize(search_query.size());
+    std::transform(search_query.begin(), search_query.end(),
+                   lowered_search_query_scratch_.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  }
+  const std::string& lowered_search_query = lowered_search_query_scratch_;
   std::size_t blame_index = 0;
   std::size_t secondary_caret_index = 0;
-  std::string lowered_line_scratch;
+  std::string& lowered_line_scratch = lowered_line_scratch_;
   last_fold_gutter_marks_.clear();
   if (view_model != nullptr) {
     last_fold_gutter_marks_.insert(last_fold_gutter_marks_.end(),
@@ -384,8 +395,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
   // Build the visible-row→buffer-line map once so the indent-guides compute
   // and the per-row paint loop can both consume it. The visible-rows count is
-  // also part of the indent-guides cache key.
-  std::vector<std::size_t> visible_rows_for_guides;
+  // also part of the indent-guides cache key. The scratch member preserves
+  // capacity across frames so this loop does not reallocate every render.
+  std::vector<std::size_t>& visible_rows_for_guides = visible_rows_for_guides_scratch_;
+  visible_rows_for_guides.clear();
   if (indent_guides_enabled) {
     visible_rows_for_guides.reserve(metrics.visible_rows);
     for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
@@ -456,7 +469,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const auto row_layout = soft_wrap ? viewport.VisibleWrappedRowLayout(opener_visual)
                                         : viewport.VisibleLineLayout(line_index);
 
-      DecoratedTextRow sticky_row;
+      DecoratedTextRow& sticky_row = sticky_scratch_row_;
+      sticky_row.fills.clear();
+      sticky_row.runs.clear();
+      sticky_row.underlines.clear();
       sticky_row.fills.push_back(DecoratedTextFill{
           .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
           .color = row_background,
@@ -544,7 +560,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         line_index >= active_search_match->start.line &&
         line_index <= active_search_match->end.line;
     const SDL_Color row_background = selected ? theme.row_highlight : theme.editor_background;
-    DecoratedTextRow row_desc;
+    DecoratedTextRow& row_desc = scratch_row_;
+    row_desc.fills.clear();
+    row_desc.runs.clear();
+    row_desc.underlines.clear();
     if (selected) {
       row_desc.fills.push_back(DecoratedTextFill{
           .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
