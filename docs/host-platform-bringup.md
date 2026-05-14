@@ -12,7 +12,7 @@ Linux:
 sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev \
   libpcre2-dev libcurl4-openssl-dev
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
-cmake --build build --target microide microide_tests microide_provider_bridge -j8
+cmake --build build --target microide microide_tests -j8
 ```
 
 macOS:
@@ -20,7 +20,7 @@ macOS:
 ```bash
 brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 curl
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
-cmake --build build --target microide microide_tests microide_provider_bridge -j8
+cmake --build build --target microide microide_tests -j8
 ```
 
 Windows (MSYS2 UCRT64):
@@ -30,9 +30,9 @@ pacman -S --needed --noconfirm \
   mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja \
   mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-SDL3 \
   mingw-w64-ucrt-x86_64-SDL3_ttf mingw-w64-ucrt-x86_64-pcre2 \
-  mingw-w64-ucrt-x86_64-curl pkgconf
+  pkgconf
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
-cmake --build build --target microide microide_tests microide_provider_bridge -j8
+cmake --build build --target microide microide_tests -j8
 ```
 
 ## Launch Layout
@@ -41,7 +41,7 @@ cmake --build build --target microide microide_tests microide_provider_bridge -j
   `build/microide/assets`.
 - macOS builds produce a `microide.app` bundle and copy runtime assets into
   `Contents/Resources/assets`.
-- Windows desktop builds copy runtime assets beside `microide.exe`.
+- Windows desktop builds copy runtime assets and runtime DLLs beside `microide.exe`.
 
 `platform/RuntimePaths.*` is the authoritative runtime asset lookup path. For local validation, set
 `MICROIDE_ASSET_ROOT=/absolute/path/to/assets` to override asset discovery.
@@ -58,3 +58,9 @@ asset discovery, terminal backends, subprocess launch, or file watching:
 
 This slice now covers the host-owned directory, runtime asset, trash, subprocess, terminal, and
 watcher seams that define supported-host bring-up.
+
+On Windows, run the full suite with:
+
+```bash
+ctest --test-dir build --output-on-failure -j1
+```
