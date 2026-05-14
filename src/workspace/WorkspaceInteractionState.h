@@ -50,6 +50,14 @@ struct InteractionState {
   Uint64 last_title_bar_click_ms = 0;
   float last_title_bar_click_x = 0.0f;
   float last_title_bar_click_y = 0.0f;
+  // Sub-tick wheel accumulators. High-resolution trackpads and touchpads emit
+  // many SDL_EVENT_MOUSE_WHEEL events with fractional `y`/`x` deltas. The
+  // legacy path used `event.wheel.integer_y` which rounds those to zero, so
+  // smooth-scroll input produced a stair-step of "no scroll, no scroll, then a
+  // 3-line jump". We accumulate the float deltas across events and only emit
+  // whole-tick scrolls when |accumulator| >= 1.
+  float wheel_accumulator_y = 0.0f;
+  float wheel_accumulator_x = 0.0f;
 };
 
 }  // namespace microide::workspace
