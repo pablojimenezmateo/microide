@@ -42,6 +42,7 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   root_ = absolute_root;
   expanded_paths_.clear();
   expanded_paths_.insert(NormalizePathKey(root_));
+  manually_collapsed_paths_.clear();
   RebuildEntries(false);
   return true;
 }
@@ -111,6 +112,7 @@ bool DirectoryTree::SelectPath(const std::filesystem::path& path) {
        !current.empty() && current != root_ && current.native().rfind(root_.native(), 0) == 0;
        current = current.parent_path()) {
     expanded_paths_.insert(NormalizePathKey(current));
+    manually_collapsed_paths_.erase(NormalizePathKey(current));
   }
 
   RebuildEntries(false);
@@ -143,6 +145,28 @@ bool DirectoryTree::SelectPathIfVisible(const std::filesystem::path& path) {
   return false;
 }
 
+bool DirectoryTree::HasManuallyCollapsedAncestor(const std::filesystem::path& path) const {
+  if (root_.empty() || path.empty()) {
+    return false;
+  }
+
+  std::error_code error;
+  const auto absolute_path = std::filesystem::absolute(path, error);
+  if (error || absolute_path.empty()) {
+    return false;
+  }
+
+  const auto normalized_path = absolute_path.lexically_normal();
+  for (auto current = normalized_path.parent_path();
+       !current.empty() && current != root_ && current.native().rfind(root_.native(), 0) == 0;
+       current = current.parent_path()) {
+    if (manually_collapsed_paths_.contains(NormalizePathKey(current))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void DirectoryTree::ExpandSelection() {
   if (entries_.empty()) {
     return;
@@ -155,6 +179,7 @@ void DirectoryTree::ExpandSelection() {
 
   const auto key = NormalizePathKey(entry.path);
   if (expanded_paths_.insert(key).second) {
+    manually_collapsed_paths_.erase(key);
     RebuildEntries(false);
     return;
   }
@@ -171,6 +196,7 @@ void DirectoryTree::CollapseSelection() {
 
   const auto& entry = entries_[selected_index_];
   if (entry.is_directory && entry.expanded && entry.path != root_) {
+    manually_collapsed_paths_.insert(NormalizePathKey(entry.path));
     expanded_paths_.erase(NormalizePathKey(entry.path));
     RebuildEntries(false);
     return;
@@ -196,6 +222,12 @@ void DirectoryTree::CollapseAll() {
 
   const auto selected_path =
       entries_.empty() ? root_ : entries_[selected_index_].path.lexically_normal();
+  manually_collapsed_paths_.clear();
+  for (const auto& entry : entries_) {
+    if (entry.is_directory && entry.path != root_) {
+      manually_collapsed_paths_.insert(NormalizePathKey(entry.path));
+    }
+  }
   expanded_paths_.clear();
   expanded_paths_.insert(NormalizePathKey(root_));
   RebuildEntries(false);
@@ -226,8 +258,10 @@ std::optional<std::filesystem::path> DirectoryTree::ActivateSelection() {
   if (entry.is_directory) {
     const auto key = NormalizePathKey(entry.path);
     if (entry.expanded && entry.path != root_) {
+      manually_collapsed_paths_.insert(key);
       expanded_paths_.erase(key);
     } else {
+      manually_collapsed_paths_.erase(key);
       expanded_paths_.insert(key);
     }
     RebuildEntries(false);

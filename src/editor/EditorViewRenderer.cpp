@@ -536,6 +536,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     const float y = metrics.first_line_y + static_cast<float>(row) * metrics.line_height;
+    const std::size_t row_visual_origin =
+        soft_wrap ? row_meta.visual_start : viewport.horizontal_scroll();
     const bool selected = line_index == cursor_line;
     const bool active_search_line =
         active_search_match.has_value() &&
@@ -583,7 +585,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             TextLayout::VisualColumnForTextColumn(lines[line_index], match_start, viewport.tab_size());
         const std::size_t end_visual = TextLayout::VisualColumnForTextColumn(
             lines[line_index], match_end, viewport.tab_size());
-        const std::size_t row_start_visual = row_meta.visual_start;
+        const std::size_t row_start_visual = row_visual_origin;
         const std::size_t row_end_visual = row_meta.visual_end;
         const std::size_t visible_start = std::max(start_visual, row_start_visual);
         const std::size_t visible_end = std::min(end_visual, row_end_visual);
@@ -609,7 +611,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (view_model != nullptr && !view_model->occurrence_ranges.empty()) {
-      const std::size_t row_start_visual_occ = row_meta.visual_start;
+      const std::size_t row_start_visual_occ = row_visual_origin;
       const std::size_t row_end_visual_occ = row_meta.visual_end;
       for (const OccurrenceRange& occ : view_model->occurrence_ranges) {
         if (occ.line_index != line_index || occ.start_column >= occ.end_column) {
@@ -653,7 +655,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           TextLayout::VisualColumnForTextColumn(lines[line_index], line_start, viewport.tab_size());
       const std::size_t end_visual =
           TextLayout::VisualColumnForTextColumn(lines[line_index], line_end, viewport.tab_size());
-      const std::size_t row_start_visual = row_meta.visual_start;
+      const std::size_t row_start_visual = row_visual_origin;
       const std::size_t row_end_visual = row_meta.visual_end;
       const std::size_t visible_start = std::max(start_visual, row_start_visual);
       const std::size_t visible_end = std::min(end_visual, row_end_visual);
@@ -679,7 +681,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         if (bracket_column >= lines[line_index].size()) return;
         const std::size_t cell_visual = TextLayout::VisualColumnForTextColumn(
             lines[line_index], bracket_column, viewport.tab_size());
-        const std::size_t row_start_visual = row_meta.visual_start;
+        const std::size_t row_start_visual = row_visual_origin;
         const std::size_t row_end_visual = row_meta.visual_end;
         if (cell_visual < row_start_visual || cell_visual >= row_end_visual) return;
         row_desc.fills.push_back(DecoratedTextFill{

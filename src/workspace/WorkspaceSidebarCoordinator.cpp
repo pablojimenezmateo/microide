@@ -477,6 +477,21 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
   });
 }
 
+void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
+  if (context_.current_project_state.root.empty() ||
+      context_.current_project_state.sidebar.git.refreshing) {
+    return;
+  }
+
+  constexpr Uint64 kAutomaticGitRefreshThrottleMs = 750;
+  const Uint64 now_ms = SDL_GetTicks();
+  if (now_ms < next_automatic_git_sidebar_refresh_ms_) {
+    return;
+  }
+  next_automatic_git_sidebar_refresh_ms_ = now_ms + kAutomaticGitRefreshThrottleMs;
+  RequestGitSidebarRefresh();
+}
+
 bool WorkspaceShell::ConsumePendingGitSidebarRefreshSnapshot(
     GitSidebarState::RefreshSnapshot* snapshot) {
   if (snapshot == nullptr) {

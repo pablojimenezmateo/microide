@@ -769,6 +769,7 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
         "WorkspaceShell::ReloadProjectIfFilesChanged::ReloadCleanOpenBuffersFromDisk");
     ReloadCleanOpenBuffersFromDisk();
   }
+  RequestAutomaticGitSidebarRefresh();
   return true;
 }
 

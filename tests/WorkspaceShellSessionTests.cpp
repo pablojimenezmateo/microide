@@ -1595,6 +1595,46 @@ void TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll() {
          "hydrated deferred tab should restore cursor and scroll metadata");
 }
 
+void TestWorkspaceShellRestoreSessionTabSwitchSelectsTreePath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "src" / "alpha.txt";
+  const std::filesystem::path beta = root / "docs" / "beta.txt";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "tree selection restore fixture should open the project");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha),
+         "tree selection restore fixture should open the primary tab");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
+         "tree selection restore fixture should open the secondary tab");
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+  WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored),
+         "tree selection restore fixture should restore the workspace session");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(restored) == alpha.lexically_normal(),
+         "restored active tab should select its file path in the project tree");
+
+  WorkspaceShellTestAccess::ActivateTab(restored, 1);
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(restored) == beta.lexically_normal(),
+         "switching restored tabs should select the active file path in the project tree");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1700,6 +1740,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs);
   AddTest(tests, "WorkspaceShell/DeferredTabHydrationPreservesCursorAndScroll",
           TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll);
+  AddTest(tests, "WorkspaceShell/RestoreSessionTabSwitchSelectsTreePath",
+          TestWorkspaceShellRestoreSessionTabSwitchSelectsTreePath);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesOutgoingBaseChoice",
           TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",

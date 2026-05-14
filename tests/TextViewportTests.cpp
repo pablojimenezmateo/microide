@@ -207,6 +207,28 @@ void TestTextViewportHighlightCheckpointsPreserveMultilineState() {
          "syntax should still recover to non-comment token classes after a multiline region closes");
 }
 
+void TestTextViewportLineCommentEndsAtLineBoundary() {
+  TextViewport viewport;
+  viewport.LoadContent("const before = 1;\n// comment line\nlet after = 2;\n", "/tmp/comment-state.ts");
+
+  const auto& comment_tokens = viewport.HighlightedLineTokens(1);
+  Expect(!comment_tokens.empty(), "line-comment fixture should still produce syntax tokens");
+  Expect(std::all_of(comment_tokens.begin(), comment_tokens.end(),
+                     [](SyntaxTokenKind kind) { return kind == SyntaxTokenKind::Comment; }),
+         "TypeScript line comments should classify the whole comment line as comment");
+
+  const auto& after_tokens = viewport.HighlightedLineTokens(2);
+  Expect(!after_tokens.empty(), "line-comment fixture should still produce tokens after comments");
+  Expect(after_tokens.size() >= 3, "post-comment line should expose per-byte syntax tokens");
+  Expect(after_tokens[0] == SyntaxTokenKind::Keyword &&
+             after_tokens[1] == SyntaxTokenKind::Keyword &&
+             after_tokens[2] == SyntaxTokenKind::Keyword,
+         "TypeScript line comments should not leak comment state into the next line");
+  Expect(std::any_of(after_tokens.begin(), after_tokens.end(),
+                     [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Comment; }),
+         "post-comment TypeScript code should recover to non-comment token classes");
+}
+
 void TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints() {
   TextViewport viewport;
   std::string content;
@@ -1091,6 +1113,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportHighlightCheckpointsBoundFarReplay);
   AddTest(tests, "TextViewport/HighlightCheckpointsPreserveMultilineState",
           TestTextViewportHighlightCheckpointsPreserveMultilineState);
+  AddTest(tests, "TextViewport/LineCommentEndsAtLineBoundary",
+          TestTextViewportLineCommentEndsAtLineBoundary);
   AddTest(tests, "TextViewport/EditingNearTailDoesNotRebuildFarCheckpoints",
           TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints);
   AddTest(tests, "TextViewport/InsertNewlineCopiesLeadingIndentation",

@@ -642,16 +642,17 @@ void WorkspaceShell::RefreshStatusBar() {
   StatusBarSegmentValue branch_segment;
   if (!context_.current_project_state.root.empty()) {
     const auto& git_state = context_.current_project_state.sidebar.git;
-    // Consult the directory tree's full git-status map rather than just the
-    // visible entries() — dirty files inside collapsed folders are not in
-    // entries() but still count toward repo cleanliness.
-    const bool tree_has_worktree_changes =
-        context_.current_project_state.directory_tree.has_dirty_files();
+    const bool has_git_snapshot =
+        git_state.repo_available || !git_state.branch_label.empty() || !git_state.base_ref.empty() ||
+        !git_state.base_label.empty() || !git_state.entries.empty();
     const bool snapshot_has_worktree_changes = std::any_of(
         git_state.entries.begin(), git_state.entries.end(), [](const GitSidebarEntry& entry) {
           return entry.section == GitSidebarEntry::Section::Modified;
         });
-    const bool has_worktree_changes = tree_has_worktree_changes || snapshot_has_worktree_changes;
+    const bool tree_has_worktree_changes =
+        !has_git_snapshot &&
+        context_.current_project_state.directory_tree.has_dirty_files();
+    const bool has_worktree_changes = snapshot_has_worktree_changes || tree_has_worktree_changes;
     const bool repo_available =
         git_state.repo_available ||
         project::GitRepository(context_.current_project_state.root).IsValid();

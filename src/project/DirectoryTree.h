@@ -40,6 +40,7 @@ class DirectoryTree {
   void SetSelectedIndex(std::size_t index);
   bool SelectPath(const std::filesystem::path& path);
   bool SelectPathIfVisible(const std::filesystem::path& path);
+  bool HasManuallyCollapsedAncestor(const std::filesystem::path& path) const;
   void ExpandSelection();
   void CollapseSelection();
   void CollapseAll();
@@ -69,6 +70,7 @@ class DirectoryTree {
   std::vector<TreeEntry> entries_;
   std::unordered_map<std::string, GitFileStatus> git_statuses_;
   std::unordered_set<std::string> expanded_paths_;
+  std::unordered_set<std::string> manually_collapsed_paths_;
   std::size_t selected_index_ = 0;
 };
 

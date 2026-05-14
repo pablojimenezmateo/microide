@@ -56,3 +56,12 @@ Run a focused subset of the in-tree test binary with one or more substring filte
 ./build/microide/microide_tests TextRenderer
 ./build/microide/microide_tests "WorkspaceShell/EditorDirty"
 ```
+
+Discover runner options and available tests with:
+
+```bash
+./build/microide/microide_tests --help
+./build/microide/microide_tests --list-tests
+./build/microide/microide_tests --gtest_list_tests
+./build/microide/microide_tests --gtest_filter="WorkspaceShell/*Status*"
+```

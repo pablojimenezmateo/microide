@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TestRunnerCli.h"
 
 #include <SDL3/SDL.h>
 
@@ -77,6 +78,7 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests);
 void RegisterFoldingModelTests(std::vector<TestCase>& tests);
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests);
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests);
+void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
 
 }  // namespace microide::tests
 
@@ -153,8 +155,21 @@ bool MatchesGtestFilter(std::string_view test_name, std::string_view filter_expr
   return true;
 }
 
+struct GtestListNameParts {
+  std::string_view suite;
+  std::string_view test;
+};
+
+GtestListNameParts SplitGtestListName(std::string_view test_name) {
+  const std::size_t separator = test_name.find('/');
+  if (separator == std::string_view::npos) {
+    return {"Ungrouped", test_name};
+  }
+  return {test_name.substr(0, separator), test_name.substr(separator + 1)};
+}
+
 bool IsSelected(const std::string& test_name,
-                const std::vector<std::string_view>& substring_filters,
+                const std::vector<std::string>& substring_filters,
                 const std::string* gtest_filter) {
   if (gtest_filter != nullptr) {
     return MatchesGtestFilter(test_name, *gtest_filter);
@@ -170,36 +185,65 @@ bool IsSelected(const std::string& test_name,
   return false;
 }
 
+void ListSelectedTestsFlat(const std::vector<microide::tests::TestCase>& tests,
+                           const std::vector<std::string>& substring_filters,
+                           const std::string* gtest_filter) {
+  for (const auto& test : tests) {
+    if (!IsSelected(test.name, substring_filters, gtest_filter)) {
+      continue;
+    }
+    std::cout << test.name << '\n';
+  }
+}
+
+void ListSelectedTestsGtest(const std::vector<microide::tests::TestCase>& tests,
+                            const std::vector<std::string>& substring_filters,
+                            const std::string* gtest_filter) {
+  std::string_view current_suite;
+  bool have_suite = false;
+  for (const auto& test : tests) {
+    if (!IsSelected(test.name, substring_filters, gtest_filter)) {
+      continue;
+    }
+    const GtestListNameParts parts = SplitGtestListName(test.name);
+    if (!have_suite || parts.suite != current_suite) {
+      current_suite = parts.suite;
+      have_suite = true;
+      std::cout << current_suite << ".\n";
+    }
+    std::cout << "  " << parts.test << '\n';
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   const auto shutdown_sdl = []() { SDL_Quit(); };
-  bool verbose = false;
-  std::vector<std::string_view> filters;
-  std::optional<std::string> gtest_filter;
-  filters.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
+  std::vector<std::string_view> args;
+  args.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i] != nullptr ? std::string_view(argv[i]) : std::string_view{};
-    if (arg == "--verbose") {
-      verbose = true;
-      continue;
-    }
-    constexpr std::string_view kFilterPrefix = "--filter=";
-    constexpr std::string_view kGtestFilterPrefix = "--gtest_filter=";
-    if (arg.substr(0, kFilterPrefix.size()) == kFilterPrefix) {
-      gtest_filter = std::string(arg.substr(kFilterPrefix.size()));
-      continue;
-    }
-    if (arg.substr(0, kGtestFilterPrefix.size()) == kGtestFilterPrefix) {
-      gtest_filter = std::string(arg.substr(kGtestFilterPrefix.size()));
-      continue;
-    }
     if (!arg.empty()) {
-      filters.push_back(arg);
+      args.push_back(arg);
     }
+  }
+  const auto parsed = microide::tests::ParseTestRunnerArgs(args);
+  if (parsed.error.has_value()) {
+    std::cerr << "microide_tests: " << *parsed.error << "\n\n";
+    microide::tests::PrintTestRunnerUsage(
+        std::cerr, argc > 0 && argv[0] != nullptr ? std::string_view(argv[0]) : "microide_tests");
+    shutdown_sdl();
+    return 2;
+  }
+  if (parsed.options.show_help) {
+    microide::tests::PrintTestRunnerUsage(
+        std::cout, argc > 0 && argv[0] != nullptr ? std::string_view(argv[0]) : "microide_tests");
+    shutdown_sdl();
+    return 0;
   }
 
   std::vector<microide::tests::TestCase> tests;
+  microide::tests::RegisterTestRunnerCliTests(tests);
   microide::tests::RegisterAppDirectoriesTests(tests);
   microide::tests::RegisterCompareModelTests(tests);
   microide::tests::RegisterDiagnosticsStoreTests(tests);
@@ -269,20 +313,35 @@ int main(int argc, char** argv) {
   bool ran_any = false;
   std::size_t selected_count = 0;
   for (const auto& test : tests) {
-    if (!IsSelected(test.name, filters, gtest_filter ? &*gtest_filter : nullptr)) {
+    if (!IsSelected(test.name, parsed.options.substring_filters, parsed.options.gtest_filter ? &*parsed.options.gtest_filter : nullptr)) {
       continue;
     }
     ++selected_count;
   }
 
+  if (parsed.options.list_mode != microide::tests::TestListMode::None) {
+    if (parsed.options.list_mode == microide::tests::TestListMode::Gtest) {
+      ListSelectedTestsGtest(tests, parsed.options.substring_filters,
+                             parsed.options.gtest_filter ? &*parsed.options.gtest_filter
+                                                         : nullptr);
+    } else {
+      ListSelectedTestsFlat(tests, parsed.options.substring_filters,
+                            parsed.options.gtest_filter ? &*parsed.options.gtest_filter
+                                                        : nullptr);
+    }
+    shutdown_sdl();
+    return selected_count == 0 ? 1 : 0;
+  }
+
   std::size_t current_index = 0;
   for (const auto& test : tests) {
-    if (!IsSelected(test.name, filters, gtest_filter ? &*gtest_filter : nullptr)) {
+    if (!IsSelected(test.name, parsed.options.substring_filters,
+                    parsed.options.gtest_filter ? &*parsed.options.gtest_filter : nullptr)) {
       continue;
     }
     ran_any = true;
     ++current_index;
-    if (verbose) {
+    if (parsed.options.verbose) {
       std::cerr << "[" << current_index << "/" << selected_count << "] " << test.name << '\n';
     }
     try {

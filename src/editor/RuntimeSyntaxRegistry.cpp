@@ -83,7 +83,8 @@ std::size_t AdvanceToNextCodePoint(std::string_view text, std::size_t offset) {
 
 std::optional<MatchRange> FindFirstRegex(std::string_view text,
                                          const CompiledRegex& pattern,
-                                         const CompiledRegex* skip = nullptr) {
+                                         const CompiledRegex* skip = nullptr,
+                                         bool allow_zero_length = false) {
   if (!pattern.valid()) {
     return std::nullopt;
   }
@@ -96,7 +97,7 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
       std::fill(masked_buf.begin() + static_cast<std::ptrdiff_t>(match.start),
                 masked_buf.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
     }
-    return FindFirstRegex(masked_buf, pattern, nullptr);
+    return FindFirstRegex(masked_buf, pattern, nullptr, allow_zero_length);
   }
 
   auto& match_data = ReusableMatchData(pattern);
@@ -110,7 +111,8 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
   }
 
   util::RegexMatchRange range;
-  if (!pattern.CaptureRange(match_data, text.size(), &range) || range.start >= range.end) {
+  if (!pattern.CaptureRange(match_data, text.size(), &range) ||
+      range.start > range.end || (!allow_zero_length && range.start >= range.end)) {
     return std::nullopt;
   }
   return MatchRange{range.start, range.end};
@@ -728,7 +730,7 @@ std::size_t HighlightRegion(const Registry& registry,
   while (cursor <= line.size()) {
     const std::string_view tail = line.substr(cursor);
     const std::optional<MatchRange> end_match =
-        FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr);
+        FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr, true);
     const bool closes_immediately = end_match.has_value() && end_match->start == 0;
     const std::size_t search_limit = end_match.has_value() ? end_match->start : tail.size();
     const Definition* definition = DefinitionById(registry, definition_id);

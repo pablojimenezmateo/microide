@@ -653,6 +653,77 @@ void TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers
          "the gutter should still draw later logical line numbers once each");
 }
 
+void TestEditorViewRendererSearchHighlightsTrackHorizontalScroll() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(220, 72);
+
+  Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255),
+         "horizontal-scroll search renderer test should set the software canvas background");
+  Expect(SDL_RenderClear(canvas.renderer()),
+         "horizontal-scroll search renderer test should clear the software canvas");
+
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.editor_background = SDL_Color{0x08, 0x08, 0x08, 0xff};
+  theme.row_highlight = theme.editor_background;
+  theme.search_match = SDL_Color{0x24, 0x74, 0x24, 0xff};
+  theme.search_match_active = SDL_Color{0x24, 0x24, 0x74, 0xff};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("0123456789 target suffix\n", "/tmp/editor-scroll-search.cpp");
+  viewport.SetHorizontalScroll(7);
+
+  const SDL_FRect rect{0.0f, 0.0f, 220.0f, 72.0f};
+  const auto metrics =
+      microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect);
+  microide::editor::EditorViewRenderer renderer;
+  renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "target");
+
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr,
+         "horizontal-scroll search renderer test should read software pixels");
+
+  const int row_y = static_cast<int>(metrics.first_line_y + 2.0f);
+  const std::size_t match_start_column = viewport.lines().front().find("target");
+  const std::size_t match_start_visual = microide::editor::TextLayout::VisualColumnForTextColumn(
+      viewport.lines().front(), match_start_column, viewport.tab_size());
+  const int expected_start_x = static_cast<int>(
+      metrics.text_x + static_cast<float>(match_start_visual - viewport.horizontal_scroll()));
+  const int expected_end_x = expected_start_x + static_cast<int>(std::string_view("target").size()) - 1;
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+
+  Expect(SDL_ReadSurfacePixel(pixels, expected_start_x, row_y, &r, &g, &b, &a),
+         "horizontal-scroll search renderer test should read the scrolled match pixel");
+  Expect(r == theme.search_match.r && g == theme.search_match.g &&
+             b == theme.search_match.b && a == theme.search_match.a,
+         "search highlight should move left with the horizontally scrolled text");
+
+  int first_highlight_x = -1;
+  int last_highlight_x = -1;
+  for (int x = 0; x < pixels->w; ++x) {
+    Expect(SDL_ReadSurfacePixel(pixels, x, row_y, &r, &g, &b, &a),
+           "horizontal-scroll search renderer test should scan rendered row pixels");
+    if (r == theme.search_match.r && g == theme.search_match.g && b == theme.search_match.b &&
+        a == theme.search_match.a) {
+      if (first_highlight_x < 0) {
+        first_highlight_x = x;
+      }
+      last_highlight_x = x;
+    }
+  }
+  Expect(first_highlight_x == expected_start_x,
+         "search highlight should start at the horizontally scrolled text position");
+  Expect(last_highlight_x == expected_end_x,
+         "search highlight width should stay anchored to the scrolled match span");
+
+  SDL_DestroySurface(pixels);
+}
+
 #ifndef NDEBUG
 void TestEditorViewRendererReusesWrapCacheAcrossFrames() {
   EnsureDummySdlVideo();
@@ -1590,6 +1661,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view uses wrapped rows and suppresses continuation gutter numbers",
           TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers);
+  AddTest(tests,
+          "TextRenderer editor view search highlights track horizontal scroll",
+          TestEditorViewRendererSearchHighlightsTrackHorizontalScroll);
 #ifndef NDEBUG
   AddTest(tests,
           "TextRenderer editor view reuses wrap cache across frames",

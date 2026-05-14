@@ -425,14 +425,14 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
 
   const std::filesystem::path active_path =
       viewport != nullptr ? viewport->path().lexically_normal() : std::filesystem::path{};
-  const bool path_changed = tab.path != active_path;
   tab.path = active_path;
   tab.title = viewport != nullptr ? EditorTabLabel(*viewport) : "untitled";
   if (!active_path.empty() && state_.directory_tree.SelectPathIfVisible(active_path)) {
     operations_.reveal_selected_tree_sidebar_line();
-  } else if (path_changed && !active_path.empty() &&
+  } else if (!active_path.empty() &&
+             !state_.directory_tree.HasManuallyCollapsedAncestor(active_path) &&
              state_.directory_tree.SelectPath(active_path)) {
-    operations_.reveal_selected_tree_sidebar_line();
+      operations_.reveal_selected_tree_sidebar_line();
   }
 }
 

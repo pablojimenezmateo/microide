@@ -112,6 +112,19 @@ void TestDirectoryTreeShowsHiddenIgnoredEntries() {
          "hidden ignored directories should be tagged as ignored");
 }
 
+void TestDirectoryTreeSelectPathExpandsAncestors() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path nested = root / "src" / "main.cpp";
+  WriteFile(nested, "int main() {}\n");
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open nested-path fixture root");
+  Expect(tree.SelectPath(nested), "directory tree should select the nested file path");
+  Expect(FindEntry(tree, nested) != nullptr,
+         "selecting a nested file path should expand ancestors and materialize the file row");
+}
+
 }  // namespace
 
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
@@ -121,6 +134,8 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
           TestDirectoryTreeTracksMaterializationIndependentlyFromIgnoredStatus);
   AddTest(tests, "DirectoryTree/ShowsHiddenIgnoredEntries",
           TestDirectoryTreeShowsHiddenIgnoredEntries);
+  AddTest(tests, "DirectoryTree/SelectPathExpandsAncestors",
+          TestDirectoryTreeSelectPathExpandsAncestors);
 }
 
 }  // namespace microide::tests

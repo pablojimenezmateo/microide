@@ -454,6 +454,8 @@ add_executable(microide_tests
   tests/TerminalSessionTests.cpp
   tests/ThemeTests.cpp
   tests/TestMain.cpp
+  tests/TestRunnerCli.cpp
+  tests/TestRunnerCliTests.cpp
   tests/TestSupport.cpp
   tests/PluginHostTests.cpp
   tests/ParseTests.cpp

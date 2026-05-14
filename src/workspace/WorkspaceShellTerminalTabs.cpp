@@ -138,6 +138,7 @@ void WorkspaceShell::ReapExitedTerminalTabs() {
 void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   const bool panel_visible_before = BottomPanelVisible();
   const std::size_t tab_count_before = context_.current_project_state.terminal_tabs.size();
+  const bool had_terminal_tabs = tab_count_before > 0;
   for (const auto& terminal_tab : context_.current_project_state.terminal_tabs) {
     if (terminal_tab == nullptr) {
       continue;
@@ -151,6 +152,9 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   }
   ReapExitedTerminalTabs();
   SyncTerminalFocusState();
+  if (had_terminal_tabs) {
+    RequestAutomaticGitSidebarRefresh();
+  }
   if (BottomPanelVisible() != panel_visible_before || context_.current_project_state.terminal_tabs.size() != tab_count_before) {
     RequestWindowRedraw();
   } else if (panel_visible_before) {
