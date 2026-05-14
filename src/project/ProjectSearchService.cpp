@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "app/BackgroundTaskCounter.h"
+#include "util/PerformanceCounters.h"
 #include "util/RegexUtil.h"
 
 namespace microide::project {
@@ -122,6 +123,8 @@ class PreparedLiteralQuery {
   bool case_sensitive() const { return case_sensitive_; }
 
   std::string LowerLine(std::string_view line) const {
+    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
+    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
     return case_sensitive_ ? std::string{} : ToLowerAscii(line);
   }
 
@@ -232,10 +235,13 @@ ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
 
 std::vector<ProjectSearchResult> ProjectSearchService::SnapshotResults(
     std::uint64_t search_id) const {
+  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectSnapshotResultsCalls);
   std::shared_lock buffer_lock(result_buffer_.mutex);
   if (search_id == 0 || result_buffer_.search_id != search_id) {
     return {};
   }
+  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectSnapshotResultsCount,
+                              result_buffer_.results.size());
   return result_buffer_.results;
 }
 
@@ -487,6 +493,7 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletio
 void ProjectSearchService::PublishProgress(std::uint64_t run_id,
                                             std::size_t searched_files,
                                             std::size_t total_files) {
+  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectProgressPublishes);
   {
     std::lock_guard lock(mutex_);
     if (active_run_id_ != run_id) {

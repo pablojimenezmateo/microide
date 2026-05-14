@@ -11,6 +11,26 @@ The local measurements below used the existing perf harness under SDL dummy vide
 for ranking bottlenecks, but the authoritative gate remains `perf-runner-v1` and the documented
 baseline workflow in `docs/perf-harness.md`.
 
+## Implemented Tooling (2026-05-14)
+
+The following P0 measurement tooling is now implemented in code:
+
+1. Phase allocation metrics in perf scenarios:
+   `ScenarioContext::Measure(...)` now records per-phase wall time plus allocations/frees and
+   bytes allocated/freed.
+2. Global perf counters with per-iteration deltas in perf JSON:
+   `util::PerformanceCounters` now tracks frame prep, editor invalidation/layout rebuild, terminal
+   snapshot/trim, search/file-finder, and text-renderer cache counters.
+3. Perf report output wiring:
+   `microide_perf` JSON now includes `phase_metrics` and `perf_counters` per iteration, while
+   text reports include top counter totals per scenario.
+4. Baseline inventory drift guard:
+   `microide_perf` now fails early if `tests/perf/baselines/*.json` contains scenario baselines
+   that are not registered in the harness.
+5. Baseline inventory cleanup:
+   stale baselines `editor_outline_regex_fallback` and `editor_outline_lsp_refresh` were removed
+   because no matching scenarios are registered.
+
 ## Executive Summary
 
 The largest remaining costs are broad invalidation, repeated per-frame work, and large copies. The
@@ -559,4 +579,3 @@ explicit system.
 Avoid treating software-rendered text as a collection of arbitrary full strings forever. That model
 is easy to implement but mismatched to code editing, where most scrolled lines are unique and most
 glyphs are not.
-

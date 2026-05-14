@@ -4,6 +4,7 @@
 #include <filesystem>
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "util/PerformanceCounters.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
 #include "workspace/WorkspaceIndentDetectApply.h"
@@ -79,6 +80,7 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
+  util::AddPerformanceCounter(util::PerfCounterId::FrameApplyEditorPreferencesAllTabsCalls);
   ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
   for (auto& tab : context_.current_project_state.open_tabs) {
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {

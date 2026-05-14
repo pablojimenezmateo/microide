@@ -1,6 +1,7 @@
 #include "terminal/TerminalSession.h"
 
 #include "platform/TerminalBackend.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
@@ -626,6 +627,7 @@ bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
                                                  std::size_t max_lines,
                                                  std::uint64_t previous_generation,
                                                  TerminalLineRangeSnapshot* snapshot) const {
+  util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCalls);
   if (snapshot == nullptr) {
     return false;
   }
@@ -642,6 +644,15 @@ bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
   }
 
   const std::size_t end_row = std::min(lines_.size(), start_row + max_lines);
+  util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCopiedLines,
+                              end_row - start_row);
+  std::uint64_t copied_cells = 0;
+  for (auto it = lines_.begin() + static_cast<std::ptrdiff_t>(start_row);
+       it != lines_.begin() + static_cast<std::ptrdiff_t>(end_row); ++it) {
+    copied_cells += it->cells.size();
+  }
+  util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCopiedCells,
+                              copied_cells);
   snapshot->lines.assign(lines_.begin() + static_cast<std::ptrdiff_t>(start_row),
                          lines_.begin() + static_cast<std::ptrdiff_t>(end_row));
   return true;
@@ -1825,6 +1836,8 @@ void TerminalSession::TrimScrollbackLocked() {
   }
 
   const std::size_t trim_count = lines_.size() - max_lines;
+  util::AddPerformanceCounter(util::PerfCounterId::TerminalTrimScrollbackCalls);
+  util::AddPerformanceCounter(util::PerfCounterId::TerminalTrimScrollbackLines, trim_count);
   lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
   cursor_row_ = cursor_row_ > trim_count ? cursor_row_ - trim_count : 0;
   saved_cursor_row_ = saved_cursor_row_ > trim_count ? saved_cursor_row_ - trim_count : 0;

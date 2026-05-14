@@ -1,6 +1,7 @@
 #include "workspace/RenderViewModelBuilder.h"
 
 #include "editor/FoldingModel.h"
+#include "util/PerformanceCounters.h"
 
 #include "workspace/StatusBarService.h"
 
@@ -455,6 +456,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     bool sticky_scroll_enabled,
     int sticky_max_depth,
     bool render_whitespace_enabled) const {
+  util::AddPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls);
   out.fold_gutter_marks.clear();
   out.sticky_lines.clear();
   out.occurrence_ranges.clear();

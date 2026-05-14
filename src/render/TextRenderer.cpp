@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "render/DebugTextBackend.h"
+#include "util/PerformanceCounters.h"
 #include "util/StartupTrace.h"
 #include "util/StringUtil.h"
 
@@ -78,9 +79,11 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
   }
 
   ++width_cache_queries_;
+  util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
   const auto cached = width_cache_.find(text);
   if (cached != width_cache_.end()) {
     ++width_cache_hits_;
+    util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheHits);
     return cached->second;
   }
 

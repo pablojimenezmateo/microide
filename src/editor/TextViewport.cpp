@@ -4,6 +4,7 @@
 #include <cctype>
 #include <limits>
 
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
@@ -1497,6 +1498,9 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
   EnsureDocument();
   ++document_->layout_revision;
   const std::size_t safe_start = std::min(start_line, document_->lines.size());
+  util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesCalls);
+  util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesLines,
+                              document_->lines.size() - safe_start);
 
   // Folding incremental scan anchors at lines >= fold_edit_anchor_line_. Zero
   // forces a bracket rescan without prefix reuse; SIZE_MAX sentinel means idle.
@@ -1600,6 +1604,7 @@ void TextViewport::InvalidateSyntaxHighlighting() {
 }
 
 void TextViewport::RefreshEncoding() {
+  util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
   document_->encoding = DetectEncoding(document_->lines);
 }
 
@@ -3006,6 +3011,9 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   wrapped_line_row_offsets_.clear();
   wrapped_row_layouts_.reserve(document_->lines.size());
   wrapped_line_row_offsets_.reserve(document_->lines.size());
+  util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsRebuilds);
+  util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsLineVisits,
+                              document_->lines.size());
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
   // Probe whether the folding model has any collapsed range. When none exist
   // (the common no-folds path on a freshly-opened large file), skip the

@@ -15,6 +15,7 @@
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
 #include "WorkspaceShellEventHelpers.h"
+#include "util/PerformanceCounters.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
@@ -211,16 +212,26 @@ bool ScenarioContext::AssertNoAllocationsDuringDraw(std::string* error) {
 }
 
 double ScenarioContext::Measure(std::string_view phase_name, const std::function<void()>& action) {
+  const AllocationSnapshot before = Allocations::Snapshot();
   const auto start = std::chrono::steady_clock::now();
   action();
   const auto end = std::chrono::steady_clock::now();
+  const AllocationDelta delta = Allocations::DeltaSince(before);
   const double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
-  phase_durations_ms_.emplace_back(std::string(phase_name), elapsed_ms);
+  phase_metrics_.push_back(Iteration::PhaseMetrics{
+      .name = std::string(phase_name),
+      .wall_ms = elapsed_ms,
+      .allocations = static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.allocations)),
+      .frees = static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.frees)),
+      .bytes_allocated =
+          static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.bytes_allocated)),
+      .bytes_freed = static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.bytes_freed)),
+  });
   return elapsed_ms;
 }
 
-std::vector<std::pair<std::string, double>> ScenarioContext::TakePhaseDurations() {
-  return std::move(phase_durations_ms_);
+std::vector<Iteration::PhaseMetrics> ScenarioContext::TakePhaseMetrics() {
+  return std::move(phase_metrics_);
 }
 
 std::uint64_t ScenarioContext::RandomU64() {
@@ -329,6 +340,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
         return std::nullopt;
       }
     }
+    const util::PerfCounterSnapshot counter_before = util::CapturePerformanceCounters();
     const AllocationSnapshot before = Allocations::Snapshot();
     const auto start = std::chrono::steady_clock::now();
     try {
@@ -344,6 +356,11 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     }
     const auto end = std::chrono::steady_clock::now();
     const AllocationDelta delta = Allocations::DeltaSince(before);
+    const util::PerfCounterSnapshot counter_after = util::CapturePerformanceCounters();
+    std::vector<std::pair<std::string, std::uint64_t>> counter_deltas;
+    for (const auto& [name, value] : util::NonZeroCounterDelta(counter_before, counter_after)) {
+      counter_deltas.emplace_back(std::string(name), value);
+    }
     aggregate.iterations.push_back(Iteration{
         .index = i,
         .metrics =
@@ -357,7 +374,8 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
                 .bytes_freed =
                     static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.bytes_freed)),
             },
-        .phase_durations_ms = context.TakePhaseDurations(),
+        .phase_metrics = context.TakePhaseMetrics(),
+        .perf_counters = std::move(counter_deltas),
     });
   }
   aggregate.metrics = AggregateMetrics(aggregate.iterations);

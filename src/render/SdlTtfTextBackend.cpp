@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "platform/RuntimePaths.h"
+#include "util/PerformanceCounters.h"
 #include "util/StartupTrace.h"
 
 namespace microide::render {
@@ -435,9 +436,11 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
       .background = background == nullptr ? SDL_Color{} : *background,
   };
   if (auto it = cache_.find(key_view); it != cache_.end()) {
+    util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheHits);
     cache_order_.splice(cache_order_.end(), cache_order_, it->second.order);
     return &it->second;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheMisses);
 
   // ASCII strings render through a cell-positioned composite (per-glyph blits
   // into a single surface) so the resulting texture is one whole-string draw
@@ -488,6 +491,7 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
     auto evict_it = cache_.find(cache_order_.front());
     cache_order_.pop_front();
     if (evict_it != cache_.end()) {
+      util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheEvictions);
       if (evict_it->second.texture != nullptr) {
         SDL_DestroyTexture(evict_it->second.texture);
       }

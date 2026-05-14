@@ -4,6 +4,7 @@
 #include <cctype>
 #include <limits>
 
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 
 namespace microide::project {
@@ -142,11 +143,13 @@ std::string FileFinder::ToLower(std::string value) {
 
 void FileFinder::EnsureCacheBuilt() {
   util::PerformanceTrace::Scope perf_scope("FileFinder::EnsureCacheBuilt");
+  util::AddPerformanceCounter(util::PerfCounterId::FileFinderCacheBuildCalls);
   if (cache_ready_ || index_ == nullptr) {
     return;
   }
 
   const auto files = index_->Snapshot();
+  util::AddPerformanceCounter(util::PerfCounterId::FileFinderCacheEntriesBuilt, files.size());
   cached_entries_.clear();
   cached_entries_.reserve(files.size());
   for (const auto& path : files) {

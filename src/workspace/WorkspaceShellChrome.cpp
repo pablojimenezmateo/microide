@@ -9,6 +9,7 @@
 #include "editor/DiagnosticsStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "project/GitRepository.h"
+#include "util/PerformanceCounters.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
@@ -638,6 +639,7 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
 }
 
 void WorkspaceShell::RefreshStatusBar() {
+  util::AddPerformanceCounter(util::PerfCounterId::FrameRefreshStatusBarCalls);
   StatusBarSegmentValue project_segment;
   StatusBarSegmentValue branch_segment;
   if (!context_.current_project_state.root.empty()) {

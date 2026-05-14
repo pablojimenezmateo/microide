@@ -20,6 +20,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -267,6 +269,36 @@ double SamplePercentile(std::vector<double>& values, double p) {
   }
   const double weight = idx - static_cast<double>(lo);
   return values[lo] * (1.0 - weight) + values[hi] * weight;
+}
+
+std::vector<std::string> FindStaleBaselineScenarios(const std::vector<Scenario>& scenarios) {
+  std::unordered_set<std::string> registered;
+  for (const Scenario& scenario : scenarios) {
+    registered.insert(scenario.name);
+  }
+
+  std::vector<std::string> stale;
+  std::error_code error;
+  const std::filesystem::path baseline_dir = "tests/perf/baselines";
+  if (!std::filesystem::exists(baseline_dir, error) || error) {
+    return stale;
+  }
+  for (const std::filesystem::directory_entry& entry :
+       std::filesystem::directory_iterator(baseline_dir, error)) {
+    if (error || !entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path file = entry.path();
+    if (file.extension() != ".json") {
+      continue;
+    }
+    const std::string scenario_name = file.stem().string();
+    if (registered.find(scenario_name) == registered.end()) {
+      stale.push_back(scenario_name);
+    }
+  }
+  std::sort(stale.begin(), stale.end());
+  return stale;
 }
 
 void EnforceP95Microseconds(const char* label, std::vector<double>& samples_us, double p95_budget_us) {
@@ -964,6 +996,28 @@ void RegisterBuiltInScenarios() {
   });
 }
 
+std::vector<std::pair<std::string, std::uint64_t>> AggregateCounterTotals(
+    const Aggregate& aggregate) {
+  std::unordered_map<std::string, std::uint64_t> totals;
+  for (const Iteration& iteration : aggregate.iterations) {
+    for (const auto& [name, value] : iteration.perf_counters) {
+      totals[name] += value;
+    }
+  }
+  std::vector<std::pair<std::string, std::uint64_t>> ordered;
+  ordered.reserve(totals.size());
+  for (auto& entry : totals) {
+    ordered.push_back(entry);
+  }
+  std::sort(ordered.begin(), ordered.end(), [](const auto& lhs, const auto& rhs) {
+    if (lhs.second != rhs.second) {
+      return lhs.second > rhs.second;
+    }
+    return lhs.first < rhs.first;
+  });
+  return ordered;
+}
+
 util::JsonValue ToJson(const Aggregate& aggregate) {
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -972,9 +1026,21 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
   util::JsonArray iterations_json;
   iterations_json.reserve(aggregate.iterations.size());
   for (const Iteration& iteration : aggregate.iterations) {
-    util::JsonObject phase_json;
-    for (const auto& phase : iteration.phase_durations_ms) {
-      phase_json[phase.first] = phase.second;
+    util::JsonObject phase_duration_json;
+    util::JsonObject phase_metrics_json;
+    for (const Iteration::PhaseMetrics& phase : iteration.phase_metrics) {
+      phase_duration_json[phase.name] = phase.wall_ms;
+      phase_metrics_json[phase.name] = util::JsonObject{
+          {"wall_ms", phase.wall_ms},
+          {"allocations", static_cast<std::int64_t>(phase.allocations)},
+          {"frees", static_cast<std::int64_t>(phase.frees)},
+          {"bytes_allocated", static_cast<std::int64_t>(phase.bytes_allocated)},
+          {"bytes_freed", static_cast<std::int64_t>(phase.bytes_freed)},
+      };
+    }
+    util::JsonObject counters_json;
+    for (const auto& [name, value] : iteration.perf_counters) {
+      counters_json[name] = static_cast<std::int64_t>(value);
     }
     util::JsonObject iteration_json;
     iteration_json["index"] = static_cast<std::int64_t>(iteration.index);
@@ -983,7 +1049,9 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
     iteration_json["frees"] = static_cast<std::int64_t>(iteration.metrics.frees);
     iteration_json["bytes_allocated"] = static_cast<std::int64_t>(iteration.metrics.bytes_allocated);
     iteration_json["bytes_freed"] = static_cast<std::int64_t>(iteration.metrics.bytes_freed);
-    iteration_json["phase_durations_ms"] = std::move(phase_json);
+    iteration_json["phase_durations_ms"] = std::move(phase_duration_json);
+    iteration_json["phase_metrics"] = std::move(phase_metrics_json);
+    iteration_json["perf_counters"] = std::move(counters_json);
     iterations_json.push_back(std::move(iteration_json));
   }
 #if defined(__GNUC__) && !defined(__clang__)
@@ -1028,6 +1096,15 @@ int main(int argc, char** argv) {
   run_options.iterations = options->iterations;
   run_options.layout_mode_override = options->layout_mode;
   run_options.keep_artifacts = options->keep_artifacts;
+  const auto stale_baselines = FindStaleBaselineScenarios(PerfHarness::RegisteredScenarios());
+  if (!stale_baselines.empty()) {
+    std::cerr << "stale perf baselines found for unregistered scenarios:\n";
+    for (const std::string& name : stale_baselines) {
+      std::cerr << "  - " << name << "\n";
+    }
+    std::cerr << "remove or restore these scenarios before running perf baselines\n";
+    return 1;
+  }
   std::vector<Aggregate> aggregates;
   bool all_passed = true;
   std::size_t selected_count = 0;
@@ -1196,6 +1273,18 @@ int main(int argc, char** argv) {
         out << aggregate.scenario_name << " p50=" << aggregate.metrics.p50_wall_ms
             << "ms p95=" << aggregate.metrics.p95_wall_ms << "ms max="
             << aggregate.metrics.max_wall_ms << "ms\n";
+        const auto totals = AggregateCounterTotals(aggregate);
+        if (!totals.empty()) {
+          out << "  counters:";
+          const std::size_t limit = std::min<std::size_t>(totals.size(), 12);
+          for (std::size_t i = 0; i < limit; ++i) {
+            out << (i == 0 ? " " : ", ") << totals[i].first << "=" << totals[i].second;
+          }
+          if (totals.size() > limit) {
+            out << ", ...";
+          }
+          out << "\n";
+        }
       }
     }
   }

@@ -38,9 +38,19 @@ struct MetricSet {
 };
 
 struct Iteration {
+  struct PhaseMetrics {
+    std::string name;
+    double wall_ms = 0.0;
+    std::uint64_t allocations = 0;
+    std::uint64_t frees = 0;
+    std::uint64_t bytes_allocated = 0;
+    std::uint64_t bytes_freed = 0;
+  };
+
   std::size_t index = 0;
   MetricSnapshot metrics;
-  std::vector<std::pair<std::string, double>> phase_durations_ms;
+  std::vector<PhaseMetrics> phase_metrics;
+  std::vector<std::pair<std::string, std::uint64_t>> perf_counters;
 };
 
 struct Aggregate {
@@ -81,7 +91,7 @@ class ScenarioContext {
                           std::chrono::milliseconds timeout);
   bool AssertNoAllocationsDuringDraw(std::string* error = nullptr);
   double Measure(std::string_view phase_name, const std::function<void()>& action);
-  std::vector<std::pair<std::string, double>> TakePhaseDurations();
+  std::vector<Iteration::PhaseMetrics> TakePhaseMetrics();
   std::uint64_t RandomU64();
   void OpenFileFinder();
   void ActivateGitSidebar();
@@ -108,7 +118,7 @@ class ScenarioContext {
   SDL_Window* window_ = nullptr;
   SDL_Renderer* renderer_ = nullptr;
   std::mt19937_64 rng_;
-  std::vector<std::pair<std::string, double>> phase_durations_ms_;
+  std::vector<Iteration::PhaseMetrics> phase_metrics_;
 };
 
 struct Scenario {

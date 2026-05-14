@@ -204,6 +204,7 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalSession.cpp
   src/util/JsonValue.cpp
   src/util/Parse.cpp
+  src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
@@ -659,6 +660,7 @@ add_executable(microide_diff_bench
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
+  src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
   src/util/Parse.cpp
   src/util/StartupTrace.cpp
@@ -684,6 +686,7 @@ endif()
 
 add_executable(microide_search_bench
   src/app/BackgroundTaskCounter.cpp
+  src/util/PerformanceCounters.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp
