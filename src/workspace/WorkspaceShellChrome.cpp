@@ -714,8 +714,19 @@ void WorkspaceShell::RefreshStatusBar() {
     status_bar_service_.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
 
     StatusBarSegmentValue language;
-    const std::string filetype =
-        editor::runtime_syntax::DetectFiletype(viewport->path(), viewport->lines());
+    const std::filesystem::path viewport_path = viewport->path().lexically_normal();
+    std::string filetype;
+    if (status_bar_language_cache_.viewport == viewport &&
+        status_bar_language_cache_.layout_revision == viewport->layout_revision() &&
+        status_bar_language_cache_.path == viewport_path) {
+      filetype = status_bar_language_cache_.filetype;
+    } else {
+      filetype = editor::runtime_syntax::DetectFiletype(viewport_path, viewport->lines());
+      status_bar_language_cache_.viewport = viewport;
+      status_bar_language_cache_.layout_revision = viewport->layout_revision();
+      status_bar_language_cache_.path = viewport_path;
+      status_bar_language_cache_.filetype = filetype;
+    }
     if (!filetype.empty()) {
       language.text = filetype;
       language.tooltip = "Language: " + filetype;
@@ -740,6 +751,7 @@ void WorkspaceShell::RefreshStatusBar() {
     }
     status_bar_service_.SetSegment(StatusBarSegmentId::Encoding, std::move(encoding));
   } else {
+    status_bar_language_cache_ = {};
     status_bar_service_.SetSegment(StatusBarSegmentId::LineColumn, StatusBarSegmentValue{});
     status_bar_service_.SetSegment(StatusBarSegmentId::Indent, StatusBarSegmentValue{});
     status_bar_service_.SetSegment(StatusBarSegmentId::Language, StatusBarSegmentValue{});

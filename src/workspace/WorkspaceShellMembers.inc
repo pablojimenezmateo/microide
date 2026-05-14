@@ -1353,6 +1353,13 @@
   PersistenceService persistence_service_;
   LayoutModeService layout_mode_service_;
   StatusBarService status_bar_service_;
+  struct StatusBarLanguageCache {
+    const editor::TextViewport* viewport = nullptr;
+    std::uint64_t layout_revision = 0;
+    std::filesystem::path path;
+    std::string filetype;
+  };
+  StatusBarLanguageCache status_bar_language_cache_;
   SettingsOverlayService settings_overlay_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {
