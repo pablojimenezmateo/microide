@@ -252,17 +252,29 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
     SDL_DestroySurface(composite);
     return nullptr;
   }
-  SDL_SetSurfaceBlendMode(composite, SDL_BLENDMODE_BLEND);
 
   for (std::size_t index = 0; index < text.size(); ++index) {
-    const unsigned char ch = static_cast<unsigned char>(text[index]);
+    const char ch = text[index];
     if (ch == ' ') {
       continue;
     }
-    SDL_Surface* glyph_surface = TTF_RenderGlyph_Blended(font_, ch, color);
+    // Use TTF_RenderText_Blended on a single-character string (not
+    // TTF_RenderGlyph_Blended) so the rasterized pixels match what the
+    // pre-2026-05-14 per-glyph path produced byte-for-byte. The two SDL_ttf
+    // APIs route through different rendering pipelines: the string variant
+    // honors the font's hinting/bearing more faithfully, which is the
+    // typography users are visually anchored to. Skipping the glyph API also
+    // keeps the existing SdlTtfAscii regression tests pixel-identical.
+    SDL_Surface* glyph_surface = TTF_RenderText_Blended(font_, &ch, 1, color);
     if (glyph_surface == nullptr) {
       continue;
     }
+    // Tell BlitSurface to use straight copy (BLENDMODE_NONE on the source).
+    // The composite was initialized to fully-transparent zero, so a straight
+    // copy preserves the per-pixel alpha that SDL_ttf produced. Leaving
+    // BlitSurface in its default blend mode can mix the rendered alpha with
+    // the (zero) destination alpha and produces a perceptibly thinner glyph.
+    SDL_SetSurfaceBlendMode(glyph_surface, SDL_BLENDMODE_NONE);
     const int dst_x = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
     SDL_Rect dst_rect{dst_x, 0, glyph_surface->w, glyph_surface->h};
     SDL_BlitSurface(glyph_surface, nullptr, composite, &dst_rect);
