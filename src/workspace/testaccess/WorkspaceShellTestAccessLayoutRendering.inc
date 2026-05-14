@@ -27,6 +27,14 @@
     }
     return {};
   }
+  static std::vector<std::string> EditorTabDisplayTitles(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    std::vector<std::string> titles;
+    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {
+      titles.push_back(tab.display_title);
+    }
+    return titles;
+  }
   static WorkspaceShell::TabStripOverflowControls EditorTabOverflowControls(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

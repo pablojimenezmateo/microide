@@ -272,6 +272,14 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
 }
 
 bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
+  // Reordering the open_tabs vector invalidates the cached display_titles /
+  // tooltip_labels / widths in tab_strip_geometry_cache_, which only keys on
+  // (tab_count, window_width). Without this drop, the next ComputeVisibleTabs
+  // call hits a stale cache and the rendered tab labels stay in the
+  // pre-reorder positions even though the underlying tabs have moved — so
+  // the tab strip shows the wrong labels while the active editor content
+  // already reflects the new order.
+  tab_strip_geometry_cache_.valid = false;
   return MakeEditorTabService().MoveActiveTo(index);
 }
 

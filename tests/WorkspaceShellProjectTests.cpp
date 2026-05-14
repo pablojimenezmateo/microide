@@ -2062,6 +2062,20 @@ void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
          "dragged editor tab should stay active after reordering");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == file_a.lexically_normal(),
          "dragged editor tab should keep its buffer active");
+  // The cached tab-strip geometry (display_titles / tooltip_labels / widths)
+  // is keyed only on (tab_count, window_width). A reorder leaves both unchanged
+  // and used to produce stale labels in the rendered strip while the underlying
+  // open_tabs vector had already shuffled — content moved, names didn't.
+  // ComputeVisibleTabs now drives the cache invalidation through
+  // WorkspaceShell::MoveActiveTabTo, so the visible titles must reflect the
+  // post-reorder order rather than the pre-reorder one.
+  const auto visible_titles = WorkspaceShellTestAccess::EditorTabDisplayTitles(shell);
+  Expect(visible_titles.size() == 3,
+         "tab reorder should not change the number of visible tab labels");
+  Expect(visible_titles[0] == "beta.cpp" && visible_titles[1] == "alpha.cpp" &&
+             visible_titles[2] == "gamma.cpp",
+         "rendered tab labels must follow the reordered open_tabs vector — the "
+         "tab_strip_geometry_cache_ must invalidate on every reorder");
 }
 
 void TestWorkspaceShellProjectTabWheelScrollsStrip() {
