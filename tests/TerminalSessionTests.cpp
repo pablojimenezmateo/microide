@@ -425,10 +425,10 @@ void TestTerminalSessionTracksCellForegroundAndBackgroundStyles() {
   const auto lines = session.SnapshotLines();
   Expect(lines.size() == 1 && lines[0].cells.size() >= 2,
          "styled terminal output should preserve at least the written cells");
-  Expect(lines[0].cells[0].character == 'A' && lines[0].cells[0].style.foreground.has_value() &&
+  Expect(lines[0].cells[0].ascii_character() == 'A' && lines[0].cells[0].style.foreground.has_value() &&
              lines[0].cells[0].style.background.has_value(),
          "terminal cells should retain parsed foreground and background SGR styles");
-  Expect(lines[0].cells[1].character == 'B' && !lines[0].cells[1].style.foreground.has_value() &&
+  Expect(lines[0].cells[1].ascii_character() == 'B' && !lines[0].cells[1].style.foreground.has_value() &&
              !lines[0].cells[1].style.background.has_value(),
          "terminal style reset should stop coloring subsequent cells");
 }
@@ -468,9 +468,9 @@ void TestTerminalSessionTracksInverseVideoStyle() {
   const auto lines = session.SnapshotLines();
   Expect(lines.size() == 1 && lines[0].cells.size() >= 2,
          "inverse-video fixture should preserve the rendered cells");
-  Expect(lines[0].cells[0].character == 'A' && lines[0].cells[0].style.inverse,
+  Expect(lines[0].cells[0].ascii_character() == 'A' && lines[0].cells[0].style.inverse,
          "SGR 7 should mark terminal cells as inverse video");
-  Expect(lines[0].cells[1].character == 'B' && !lines[0].cells[1].style.inverse,
+  Expect(lines[0].cells[1].ascii_character() == 'B' && !lines[0].cells[1].style.inverse,
          "SGR 27 should clear inverse video for later cells");
 }
 
@@ -528,9 +528,48 @@ void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
 }
 #endif
 
+void TestTerminalCellIsTriviallyCopyableAndCompact() {
+  // 2026-05-15 perf deep-dive round 2 Finding 8: TerminalCell must use inline UTF-8 storage so
+  // scrollback snapshots/trims become bulk memcpys instead of per-cell std::string moves, and the
+  // per-cell footprint stays small for large terminals.
+  using microide::terminal::TerminalCell;
+  static_assert(std::is_trivially_copyable_v<TerminalCell>,
+                "TerminalCell must be trivially copyable to support bulk snapshot copies");
+  // 4 bytes inline + 1 length byte + TerminalStyle (~24 bytes for two optional SDL_Color +
+  // two bools). Cap at 64 to leave headroom for alignment.
+  static_assert(sizeof(TerminalCell) <= 64,
+                "TerminalCell footprint regressed; inline storage and trivial copyability are the "
+                "point of Finding 8");
+
+  // Functional invariants of the inline storage.
+  TerminalCell ascii;
+  ascii.SetAscii('Q');
+  Expect(ascii.length == 1 && ascii.bytes[0] == 'Q',
+         "SetAscii should record a single-byte glyph at bytes[0]");
+  Expect(ascii.DisplayText() == "Q",
+         "DisplayText must return the inline byte for an ASCII cell");
+  Expect(ascii.ascii_character() == 'Q',
+         "ascii_character must mirror the stored ASCII byte");
+
+  TerminalCell utf8;
+  utf8.SetUtf8("\xE2\x9C\x93");  // ✓ (3-byte UTF-8)
+  Expect(utf8.length == 3,
+         "SetUtf8 should record the full byte count of a multi-byte glyph");
+  Expect(utf8.DisplayText() == std::string_view("\xE2\x9C\x93", 3),
+         "DisplayText must return the inline UTF-8 sequence for non-ASCII cells");
+  Expect(utf8.ascii_character() == '\0',
+         "ascii_character must return NUL for multi-byte cells");
+
+  TerminalCell empty;
+  Expect(empty.length == 0 && empty.DisplayText().empty(),
+         "default-constructed cell is empty and reports an empty DisplayText");
+}
+
 }  // namespace
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/CellIsTriviallyCopyableAndCompact",
+          TestTerminalCellIsTriviallyCopyableAndCompact);
   AddTest(tests, "TerminalSession/LineFeedScrollRegion",
           TestTerminalSessionScrollsBottomMarginOnLineFeed);
   AddTest(tests, "TerminalSession/ReverseIndexScrollRegion",

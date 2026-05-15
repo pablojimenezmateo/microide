@@ -23,7 +23,7 @@ microide::terminal::TerminalLine MakeTerminalLine(std::string_view text) {
   line.cells.reserve(text.size());
   for (char c : text) {
     microide::terminal::TerminalCell cell;
-    cell.character = c;
+    cell.SetAscii(c);
     line.cells.push_back(cell);
   }
   return line;

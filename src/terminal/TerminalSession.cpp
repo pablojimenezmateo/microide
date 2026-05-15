@@ -300,22 +300,20 @@ bool ClipboardPayloadIsText(std::string_view text) {
 }
 
 TerminalCell MakeAsciiTerminalCell(char character, const TerminalStyle& style) {
-  return TerminalCell{
-      .character = character,
-      .text = {},
-      .style = style,
-  };
+  TerminalCell cell;
+  cell.SetAscii(character);
+  cell.style = style;
+  return cell;
 }
 
 TerminalCell MakeUtf8TerminalCell(std::string_view glyph, const TerminalStyle& style) {
   if (glyph.size() == 1 && static_cast<unsigned char>(glyph.front()) < 0x80) {
     return MakeAsciiTerminalCell(glyph.front(), style);
   }
-  return TerminalCell{
-      .character = '\0',
-      .text = std::string(glyph),
-      .style = style,
-  };
+  TerminalCell cell;
+  cell.SetUtf8(glyph);
+  cell.style = style;
+  return cell;
 }
 
 }  // namespace

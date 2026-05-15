@@ -4,6 +4,8 @@
 
 #include "platform/TerminalBackend.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -20,6 +22,9 @@ struct TerminalSessionTestAccess;
 
 namespace microide::terminal {
 
+// (Include is local to keep TerminalCell trivially copyable; placed here to avoid disturbing
+//  the public include order of consumers that only forward-declare TerminalSession.)
+
 struct TerminalStyle {
   std::optional<SDL_Color> foreground;
   std::optional<SDL_Color> background;
@@ -28,15 +33,38 @@ struct TerminalStyle {
 };
 
 struct TerminalCell {
-  char character = '\0';
-  std::string text;
+  // Inline UTF-8 storage. ASCII glyphs use length=1; multi-byte UTF-8 sequences fit in 2..4 bytes.
+  // length=0 marks an empty/uninitialized cell. The cell is now trivially copyable, so terminal
+  // snapshots and scrollback trims become bulk memcpys instead of per-cell std::string moves.
+  // (Round-2 Finding 8.)
+  std::array<char, 4> bytes{};
+  std::uint8_t length = 0;
   TerminalStyle style;
 
   std::string_view DisplayText() const {
-    if (!text.empty()) {
-      return text;
+    return length == 0 ? std::string_view{} : std::string_view(bytes.data(), length);
+  }
+
+  // Convenience for callers that only care about the ASCII case (tests, scratch fixtures, etc.).
+  // Returns '\0' for empty cells or for cells whose first byte is a UTF-8 lead byte.
+  char ascii_character() const {
+    if (length == 1) {
+      return bytes[0];
     }
-    return character == '\0' ? std::string_view{} : std::string_view(&character, 1);
+    return '\0';
+  }
+
+  void SetAscii(char c) {
+    bytes[0] = c;
+    length = 1;
+  }
+
+  void SetUtf8(std::string_view glyph) {
+    const std::size_t copy_len = std::min<std::size_t>(glyph.size(), bytes.size());
+    for (std::size_t i = 0; i < copy_len; ++i) {
+      bytes[i] = glyph[i];
+    }
+    length = static_cast<std::uint8_t>(copy_len);
   }
 };
 
