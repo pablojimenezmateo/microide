@@ -1305,7 +1305,8 @@
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
-  void UpdateMouseCursor(float x, float y, bool update_editor_hover = true);
+  void UpdateMouseCursor(float x, float y, bool update_editor_hover = true,
+                         bool workspace_layout_recomputed = false);
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
@@ -1464,3 +1465,13 @@
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;
+  struct TerminalForegroundRunScratch {
+    std::size_t start_column = 0;
+    std::size_t end_column_exclusive = 0;
+    SDL_Color foreground{};
+    std::size_t blob_offset = 0;
+    std::size_t blob_length = 0;
+    bool has_visible_text = false;
+  };
+  mutable std::vector<TerminalForegroundRunScratch> terminal_foreground_runs_scratch_;
+  mutable std::string terminal_foreground_runs_blob_;

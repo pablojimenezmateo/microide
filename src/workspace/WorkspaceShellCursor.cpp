@@ -785,15 +785,19 @@ bool WorkspaceShell::MenuSurfaceCapturingMouse() const {
          context_.menu_state.tree_context_menu.open;
 }
 
-void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hover) {
+void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hover,
+                                       bool workspace_layout_recomputed) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::UpdateMouseCursor");
+  const bool mouse_moved =
+      !last_mouse_position_valid_ || x != last_mouse_x_ || y != last_mouse_y_;
   last_mouse_x_ = x;
   last_mouse_y_ = y;
   last_mouse_position_valid_ = true;
-  if (update_editor_hover) {
+  if (update_editor_hover &&
+      (mouse_moved || editor_hover_refresh_pending_ || workspace_layout_recomputed)) {
     util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateMouseCursor::UpdateEditorHover");
     UpdateEditorHover(x, y);
-  } else {
+  } else if (!update_editor_hover) {
     active_editor_hover_target_.reset();
     editor_hover_refresh_pending_ = false;
   }

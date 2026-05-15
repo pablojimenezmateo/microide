@@ -7,6 +7,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <list>
 #include <memory>
@@ -111,6 +112,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void LoadFallbackFonts();
   bool CanUseFastAscii(std::string_view text) const;
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
+  void ClearAsciiGlyphSurfaces();
+  SDL_Surface* ResolveAsciiGlyphSurface(char ch, SDL_Color color);
+  static std::uint64_t PackAsciiGlyphCacheKey(char ch, SDL_Color color);
   CacheEntry* ResolveEntry(std::string_view text,
                            SDL_Color color,
                            const SDL_Color* background);
@@ -127,6 +131,13 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   bool ttf_initialized_ = false;
   std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual> cache_;
   std::list<CacheKey> cache_order_;
+
+  struct AsciiGlyphSurfaceEntry {
+    SDL_Surface* surface = nullptr;
+    std::list<std::uint64_t>::iterator order;
+  };
+  std::unordered_map<std::uint64_t, AsciiGlyphSurfaceEntry> ascii_glyph_surfaces_;
+  std::list<std::uint64_t> ascii_glyph_surface_order_;
 };
 
 }  // namespace microide::render

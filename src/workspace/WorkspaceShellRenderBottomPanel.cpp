@@ -117,6 +117,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       column = run_end;
     }
 
+    terminal_foreground_runs_scratch_.clear();
+    terminal_foreground_runs_blob_.clear();
+
     for (std::size_t column = 0; column < visible_columns;) {
       const auto& cell = line.cells[column];
       const bool selected = TerminalCellSelected(row_index, column);
@@ -135,29 +138,38 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         ++run_end;
       }
 
-      // Reuse a single scratch string across rows and frames so terminal output paint stays
-      // allocation-bounded by line width, not by `runs × frames`. Capacity persists in steady state.
-      thread_local std::string run_text_scratch;
-      run_text_scratch.clear();
-      run_text_scratch.reserve(run_end - column);
+      const std::size_t blob_start = terminal_foreground_runs_blob_.size();
       bool has_non_space = false;
       for (std::size_t index = column; index < run_end; ++index) {
         const std::string_view display_text = line.cells[index].DisplayText();
         if (display_text.empty()) {
-          run_text_scratch.push_back(' ');
+          terminal_foreground_runs_blob_.push_back(' ');
           continue;
         }
         if (display_text != " ") {
           has_non_space = true;
         }
-        run_text_scratch.append(display_text);
+        terminal_foreground_runs_blob_.append(display_text);
       }
-
-      if (has_non_space) {
-        const float run_x = x + static_cast<float>(column) * char_width;
-        text_renderer_.DrawString(renderer, run_x, y, foreground, run_text_scratch);
-      }
+      TerminalForegroundRunScratch run{};
+      run.start_column = column;
+      run.end_column_exclusive = run_end;
+      run.foreground = foreground;
+      run.blob_offset = blob_start;
+      run.blob_length = terminal_foreground_runs_blob_.size() - blob_start;
+      run.has_visible_text = has_non_space;
+      terminal_foreground_runs_scratch_.push_back(run);
       column = run_end;
+    }
+
+    for (const TerminalForegroundRunScratch& run : terminal_foreground_runs_scratch_) {
+      if (!run.has_visible_text) {
+        continue;
+      }
+      const float run_x = x + static_cast<float>(run.start_column) * char_width;
+      const std::string_view run_text(terminal_foreground_runs_blob_.data() + run.blob_offset,
+                                      run.blob_length);
+      text_renderer_.DrawString(renderer, run_x, y, run.foreground, run_text);
     }
   };
 

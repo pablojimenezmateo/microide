@@ -3052,7 +3052,29 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   if (!document_) {
     return;
   }
-  if (wrapped_row_layouts_revision_ == document_->layout_revision &&
+  // Probe whether the folding model has any collapsed range. When none exist
+  // (the common no-folds path on a freshly-opened large file), skip the
+  // per-line `IsLineHidden` query entirely. O(1) via the maintained counter
+  // — the previous std::vector<bool> linear scan was paid on every edit.
+  const bool has_any_collapsed_fold =
+      folding_model_ != nullptr && folding_model_->has_any_collapsed_fold();
+  const bool trivial_now = !soft_wrap_ && !has_any_collapsed_fold;
+
+  // Trivial-layout cache: mapping depends only on wrap/fold/tab/width state,
+  // not on `layout_revision` (text edits). Without this branch, every
+  // keystroke bumped `layout_revision` and forced an O(1) "rebuild" that still
+  // cleared vectors and re-hit counters (Finding 16 / round-2 P2).
+  if (wrapped_row_layouts_trivial_ && trivial_now &&
+      wrapped_row_layouts_tab_size_ == tab_size_ &&
+      wrapped_row_layouts_visible_columns_ == visible_columns_ &&
+      wrapped_row_layouts_soft_wrap_ == soft_wrap_ &&
+      wrapped_row_layouts_folding_model_ == folding_model_ &&
+      wrapped_row_layouts_fold_revision_ ==
+          (folding_model_ != nullptr ? folding_model_->revision() : 0)) {
+    return;
+  }
+
+  if (!trivial_now && wrapped_row_layouts_revision_ == document_->layout_revision &&
       wrapped_row_layouts_tab_size_ == tab_size_ &&
       wrapped_row_layouts_visible_columns_ == visible_columns_ &&
       wrapped_row_layouts_soft_wrap_ == soft_wrap_ &&
@@ -3065,12 +3087,6 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   wrapped_row_layouts_.clear();
   wrapped_line_row_offsets_.clear();
   util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsRebuilds);
-  // Probe whether the folding model has any collapsed range. When none exist
-  // (the common no-folds path on a freshly-opened large file), skip the
-  // per-line `IsLineHidden` query entirely. O(1) via the maintained counter
-  // — the previous std::vector<bool> linear scan was paid on every edit.
-  const bool has_any_collapsed_fold =
-      folding_model_ != nullptr && folding_model_->has_any_collapsed_fold();
 
   // Trivial-layout fast path: visual row index equals document line index, the
   // visual window is the same for every row, and no line is hidden. Skip the

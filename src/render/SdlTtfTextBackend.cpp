@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <unordered_set>
 #include <utility>
@@ -25,6 +26,7 @@ constexpr float kFontPointSize = 13.0f;
 // larger than the 2048 used when each entry held a single glyph.
 constexpr std::size_t kMaxCacheEntries = 4096;
 constexpr float kMinPresentationScale = 0.1f;
+constexpr std::size_t kMaxAsciiGlyphSurfaceEntries = 512;
 }  // namespace
 
 std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* renderer) {
@@ -208,6 +210,7 @@ void SdlTtfTextBackend::DrawStringOn(SDL_Renderer* renderer,
 }
 
 void SdlTtfTextBackend::ClearCache() {
+  ClearAsciiGlyphSurfaces();
   for (auto& [_, entry] : cache_) {
     if (entry.texture != nullptr) {
       SDL_DestroyTexture(entry.texture);
@@ -229,6 +232,61 @@ bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
     }
   }
   return true;
+}
+
+void SdlTtfTextBackend::ClearAsciiGlyphSurfaces() {
+  for (auto& [_, entry] : ascii_glyph_surfaces_) {
+    if (entry.surface != nullptr) {
+      SDL_DestroySurface(entry.surface);
+    }
+  }
+  ascii_glyph_surfaces_.clear();
+  ascii_glyph_surface_order_.clear();
+}
+
+std::uint64_t SdlTtfTextBackend::PackAsciiGlyphCacheKey(char ch, SDL_Color color) {
+  return (static_cast<std::uint64_t>(static_cast<unsigned char>(color.r)) << 56) |
+         (static_cast<std::uint64_t>(static_cast<unsigned char>(color.g)) << 48) |
+         (static_cast<std::uint64_t>(static_cast<unsigned char>(color.b)) << 40) |
+         (static_cast<std::uint64_t>(static_cast<unsigned char>(color.a)) << 32) |
+         static_cast<std::uint64_t>(static_cast<unsigned char>(ch));
+}
+
+SDL_Surface* SdlTtfTextBackend::ResolveAsciiGlyphSurface(char ch, SDL_Color color) {
+  if (font_ == nullptr) {
+    return nullptr;
+  }
+  const std::uint64_t key = PackAsciiGlyphCacheKey(ch, color);
+  if (const auto it = ascii_glyph_surfaces_.find(key); it != ascii_glyph_surfaces_.end()) {
+    ascii_glyph_surface_order_.splice(ascii_glyph_surface_order_.end(), ascii_glyph_surface_order_,
+                                      it->second.order);
+    return it->second.surface;
+  }
+
+  SDL_Surface* glyph_surface = TTF_RenderText_Blended(font_, &ch, 1, color);
+  if (glyph_surface == nullptr) {
+    return nullptr;
+  }
+
+  AsciiGlyphSurfaceEntry entry;
+  entry.surface = glyph_surface;
+  ascii_glyph_surface_order_.push_back(key);
+  entry.order = std::prev(ascii_glyph_surface_order_.end());
+  ascii_glyph_surfaces_.emplace(key, std::move(entry));
+
+  while (ascii_glyph_surface_order_.size() > kMaxAsciiGlyphSurfaceEntries) {
+    const std::uint64_t evict_key = ascii_glyph_surface_order_.front();
+    ascii_glyph_surface_order_.pop_front();
+    const auto evict_it = ascii_glyph_surfaces_.find(evict_key);
+    if (evict_it != ascii_glyph_surfaces_.end()) {
+      if (evict_it->second.surface != nullptr) {
+        SDL_DestroySurface(evict_it->second.surface);
+      }
+      ascii_glyph_surfaces_.erase(evict_it);
+    }
+  }
+
+  return glyph_surface;
 }
 
 SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text,
@@ -259,14 +317,7 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
     if (ch == ' ') {
       continue;
     }
-    // Use TTF_RenderText_Blended on a single-character string (not
-    // TTF_RenderGlyph_Blended) so the rasterized pixels match what the
-    // pre-2026-05-14 per-glyph path produced byte-for-byte. The two SDL_ttf
-    // APIs route through different rendering pipelines: the string variant
-    // honors the font's hinting/bearing more faithfully, which is the
-    // typography users are visually anchored to. Skipping the glyph API also
-    // keeps the existing SdlTtfAscii regression tests pixel-identical.
-    SDL_Surface* glyph_surface = TTF_RenderText_Blended(font_, &ch, 1, color);
+    SDL_Surface* glyph_surface = ResolveAsciiGlyphSurface(ch, color);
     if (glyph_surface == nullptr) {
       continue;
     }
@@ -279,7 +330,6 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
     const int dst_x = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
     SDL_Rect dst_rect{dst_x, 0, glyph_surface->w, glyph_surface->h};
     SDL_BlitSurface(glyph_surface, nullptr, composite, &dst_rect);
-    SDL_DestroySurface(glyph_surface);
   }
   return composite;
 }

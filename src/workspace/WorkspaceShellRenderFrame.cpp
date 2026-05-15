@@ -91,6 +91,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   project_state.panel.height = clamped_panel_height;
 
   WorkspaceLayout layout;
+  bool workspace_layout_recomputed = false;
   if (layout_dirty_ || !prepared_frame_layout_.has_value()) {
     layout = ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
                            panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
@@ -100,6 +101,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
     layout_dirty_ = false;
+    workspace_layout_recomputed = true;
   } else {
     layout = *prepared_frame_layout_;
   }
@@ -149,7 +151,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::UpdateMouseCursor");
-    UpdateMouseCursor(mouse_x, mouse_y, !MenuSurfaceCapturingMouse());
+    UpdateMouseCursor(mouse_x, mouse_y, !MenuSurfaceCapturingMouse(), workspace_layout_recomputed);
   }
   return FrameToken{prepared_frame_id_, visible_line_range};
 }
