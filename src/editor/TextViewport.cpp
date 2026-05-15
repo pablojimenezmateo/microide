@@ -867,16 +867,46 @@ LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
   return layout;
 }
 
+TextViewport::WrappedRowLayout TextViewport::WrappedRowAt(std::size_t visual_row_index) const {
+  if (wrapped_row_layouts_trivial_) {
+    return WrappedRowLayout{visual_row_index, horizontal_scroll_,
+                            horizontal_scroll_ + visible_columns_};
+  }
+  if (wrapped_row_layouts_.empty()) {
+    return WrappedRowLayout{};
+  }
+  const std::size_t clamped = std::min<std::size_t>(visual_row_index,
+                                                    wrapped_row_layouts_.size() - 1);
+  return wrapped_row_layouts_[clamped];
+}
+
+std::size_t TextViewport::WrappedRowCount() const {
+  if (wrapped_row_layouts_trivial_) {
+    return document_ != nullptr ? document_->lines.size() : 0;
+  }
+  return wrapped_row_layouts_.size();
+}
+
+std::size_t TextViewport::WrappedLineRowOffset(std::size_t line_index) const {
+  if (wrapped_row_layouts_trivial_) {
+    return line_index;
+  }
+  if (wrapped_line_row_offsets_.empty() || line_index >= wrapped_line_row_offsets_.size()) {
+    return 0;
+  }
+  return wrapped_line_row_offsets_[line_index];
+}
+
 LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) const {
   if (!soft_wrap_) {
     return VisibleLineLayout(visual_row_index);
   }
   EnsureWrappedRowLayouts();
-  if (visual_row_index >= wrapped_row_layouts_.size()) {
+  if (visual_row_index >= WrappedRowCount()) {
     return LayoutLine{};
   }
 
-  const WrappedRowLayout& row = wrapped_row_layouts_[visual_row_index];
+  const WrappedRowLayout row = WrappedRowAt(visual_row_index);
   LayoutLine layout = TextLayout::BuildVisibleLine(document_->lines[row.line_index], row.visual_start,
                                                    visible_columns_, tab_size_);
   if (row.line_index == cursor_line_ && visual_row_index == CursorVisualRow()) {
@@ -892,10 +922,10 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) c
 
 TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t visual_row_index) const {
   EnsureWrappedRowLayouts();
-  if (visual_row_index >= wrapped_row_layouts_.size()) {
+  if (visual_row_index >= WrappedRowCount()) {
     return {};
   }
-  const WrappedRowLayout& row = wrapped_row_layouts_[visual_row_index];
+  const WrappedRowLayout row = WrappedRowAt(visual_row_index);
   return WrappedVisualRow{
       .line_index = row.line_index,
       .visual_start = row.visual_start,
@@ -908,12 +938,13 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
     return {};
   }
   EnsureWrappedRowLayouts();
-  if (wrapped_row_layouts_.empty()) {
+  const std::size_t row_count = WrappedRowCount();
+  if (row_count == 0) {
     return {};
   }
-  const std::size_t clamped_row = std::min<std::size_t>(
-      std::max(0, visual_row), wrapped_row_layouts_.size() - 1);
-  const WrappedRowLayout& layout = wrapped_row_layouts_[clamped_row];
+  const std::size_t clamped_row =
+      std::min<std::size_t>(std::max(0, visual_row), row_count - 1);
+  const WrappedRowLayout layout = WrappedRowAt(clamped_row);
   const std::size_t width = layout.visual_end - layout.visual_start;
   const std::size_t local_max = width;
   const std::size_t clamped_local = std::min<std::size_t>(std::max(0, visual_col), local_max);
@@ -927,7 +958,7 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
 
 int TextViewport::VisualRowCount() const {
   EnsureWrappedRowLayouts();
-  return static_cast<int>(wrapped_row_layouts_.size());
+  return static_cast<int>(WrappedRowCount());
 }
 
 std::size_t TextViewport::visual_line_count() const {
@@ -936,15 +967,20 @@ std::size_t TextViewport::visual_line_count() const {
 
 std::size_t TextViewport::VisualRowLineIndex(std::size_t visual_row_index) const {
   EnsureWrappedRowLayouts();
-  if (wrapped_row_layouts_.empty()) {
+  if (WrappedRowCount() == 0) {
     return 0;
   }
-  return wrapped_row_layouts_[std::min<std::size_t>(visual_row_index, wrapped_row_layouts_.size() - 1)]
-      .line_index;
+  return WrappedRowAt(visual_row_index).line_index;
 }
 
 std::size_t TextViewport::VisualRowForLine(std::size_t line_index) const {
   EnsureWrappedRowLayouts();
+  if (wrapped_row_layouts_trivial_) {
+    if (document_ == nullptr || document_->lines.empty()) {
+      return 0;
+    }
+    return std::min<std::size_t>(line_index, document_->lines.size() - 1);
+  }
   if (wrapped_line_row_offsets_.empty()) {
     return 0;
   }
@@ -1592,6 +1628,7 @@ void TextViewport::InvalidateVisualColumnCache() {
   wrapped_row_layouts_soft_wrap_ = false;
   wrapped_row_layouts_folding_model_ = nullptr;
   wrapped_row_layouts_fold_revision_ = 0;
+  wrapped_row_layouts_trivial_ = false;
 }
 
 void TextViewport::InvalidateLayoutCaches() {
@@ -3009,23 +3046,46 @@ void TextViewport::EnsureWrappedRowLayouts() const {
 
   wrapped_row_layouts_.clear();
   wrapped_line_row_offsets_.clear();
-  wrapped_row_layouts_.reserve(document_->lines.size());
-  wrapped_line_row_offsets_.reserve(document_->lines.size());
   util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsRebuilds);
-  util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsLineVisits,
-                              document_->lines.size());
-  const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
   // Probe whether the folding model has any collapsed range. When none exist
   // (the common no-folds path on a freshly-opened large file), skip the
   // per-line `IsLineHidden` query entirely. O(1) via the maintained counter
   // — the previous std::vector<bool> linear scan was paid on every edit.
   const bool has_any_collapsed_fold =
       folding_model_ != nullptr && folding_model_->has_any_collapsed_fold();
+
+  // Trivial-layout fast path: visual row index equals document line index, the
+  // visual window is the same for every row, and no line is hidden. Skip the
+  // O(line_count) vector population entirely and have the readers synthesize
+  // the row data inline. This is the steady state for a freshly-opened large
+  // file with soft-wrap off; the previous implementation paid an O(line_count)
+  // rebuild on every keystroke under exactly those conditions.
+  if (!soft_wrap_ && !has_any_collapsed_fold) {
+    wrapped_row_layouts_trivial_ = true;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsLineVisits, 0);
+    wrapped_row_layouts_tab_size_ = tab_size_;
+    wrapped_row_layouts_visible_columns_ = visible_columns_;
+    wrapped_row_layouts_revision_ = document_->layout_revision;
+    wrapped_row_layouts_soft_wrap_ = soft_wrap_;
+    wrapped_row_layouts_folding_model_ = folding_model_;
+    wrapped_row_layouts_fold_revision_ =
+        folding_model_ != nullptr ? folding_model_->revision() : 0;
+#ifndef NDEBUG
+    ++wrapped_row_layout_build_count_;
+#endif
+    return;
+  }
+
+  wrapped_row_layouts_trivial_ = false;
+  wrapped_row_layouts_.reserve(document_->lines.size());
+  wrapped_line_row_offsets_.reserve(document_->lines.size());
+  util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsLineVisits,
+                              document_->lines.size());
+  const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
   std::size_t last_visible_row = 0;
   if (!soft_wrap_) {
-    // Non-soft-wrap fast path: visual-row count is one per non-hidden line,
-    // and the visual column window is the same for every row. Skip the
-    // VisualColumnForTextColumn walk that the soft-wrap branch needs.
+    // Non-soft-wrap with collapsed folds: still need wrapped_line_row_offsets_
+    // so we can skip hidden lines, but the row payload is uniform.
     const WrappedRowLayout row_template{0, horizontal_scroll_,
                                          horizontal_scroll_ + visible_columns_};
     for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
@@ -3094,17 +3154,23 @@ std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) con
     return visual;
   }
   EnsureWrappedRowLayouts();
-  if (wrapped_row_layouts_.empty()) {
+  if (WrappedRowCount() == 0) {
     return 0;
   }
-  const WrappedRowLayout& row = wrapped_row_layouts_[CursorVisualRowForCaret(caret)];
+  const WrappedRowLayout row = WrappedRowAt(CursorVisualRowForCaret(caret));
   return visual >= row.visual_start ? visual - row.visual_start : 0;
 }
 
 std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) const {
   EnsureWrappedRowLayouts();
-  if (document_->lines.empty() || caret.line >= document_->lines.size() ||
-      wrapped_line_row_offsets_.size() != document_->lines.size()) {
+  if (document_->lines.empty() || caret.line >= document_->lines.size()) {
+    return 0;
+  }
+  // Trivial-layout path: identity mapping, no per-line offset vector to consult.
+  if (wrapped_row_layouts_trivial_) {
+    return caret.line;
+  }
+  if (wrapped_line_row_offsets_.size() != document_->lines.size()) {
     return 0;
   }
   const std::size_t base_row = wrapped_line_row_offsets_[caret.line];
@@ -3138,11 +3204,12 @@ std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(
     std::size_t preferred_column,
     std::size_t target_row) const {
   EnsureWrappedRowLayouts();
-  if (wrapped_row_layouts_.empty()) {
+  const std::size_t row_count = WrappedRowCount();
+  if (row_count == 0) {
     return 0;
   }
-  const std::size_t clamped_row = std::min(target_row, wrapped_row_layouts_.size() - 1);
-  const WrappedRowLayout& target = wrapped_row_layouts_[clamped_row];
+  const std::size_t clamped_row = std::min(target_row, row_count - 1);
+  const WrappedRowLayout target = WrappedRowAt(clamped_row);
   if (!soft_wrap_) {
     const std::size_t desired_absolute = horizontal_scroll_ + preferred_column;
     return desired_absolute;
@@ -3203,14 +3270,15 @@ void TextViewport::AdvanceCaretVertical(TextPosition& caret,
                                         std::size_t& preferred_column,
                                         int delta) const {
   EnsureWrappedRowLayouts();
-  if (wrapped_row_layouts_.empty()) {
+  const std::size_t row_count = WrappedRowCount();
+  if (row_count == 0) {
     return;
   }
   const std::size_t current_row = CursorVisualRowForCaret(caret);
-  const int max_row = static_cast<int>(wrapped_row_layouts_.size()) - 1;
+  const int max_row = static_cast<int>(row_count) - 1;
   const std::size_t target_row =
       static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
-  const WrappedRowLayout& target = wrapped_row_layouts_[target_row];
+  const WrappedRowLayout target = WrappedRowAt(target_row);
   const std::size_t target_visual_column =
       ResolveSoftWrapCursorColumnForTargetRow(caret, preferred_column, target_row);
   caret.line = target.line_index;

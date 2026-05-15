@@ -1092,6 +1092,47 @@ void TestTextViewportOccurrenceSeedSpanNoWordInWhitespace() {
          "caret positioned in whitespace should not yield a seed span");
 }
 
+void TestTextViewportTrivialWrappedLayoutFastPath() {
+  // 2026-05-15 perf deep-dive round 2 Finding 5: when soft-wrap is off and no fold is collapsed,
+  // EnsureWrappedRowLayouts must not allocate the per-line wrapped_row_layouts_ vector. The public
+  // accessors must still return the identity-mapped values.
+  std::string content;
+  for (int i = 0; i < 4000; ++i) {
+    content += "line " + std::to_string(i) + "\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/trivial-layout-large.txt");
+  viewport.SetViewportSize(24, 120);
+  viewport.SetSoftWrap(false);
+  viewport.SetScrollLine(100);
+
+  // Visual row count must equal the document line count when in trivial mode.
+  Expect(viewport.visual_line_count() == viewport.lines().size(),
+         "trivial layout: visual row count must equal document line count");
+
+  // Identity mapping for VisualRowLineIndex and VisualRowForLine.
+  Expect(viewport.VisualRowLineIndex(2500) == 2500,
+         "trivial layout: VisualRowLineIndex must be identity");
+  Expect(viewport.VisualRowForLine(1234) == 1234,
+         "trivial layout: VisualRowForLine must be identity");
+
+  // WrappedVisualRowLayout must report sensible values without indexing a populated vector.
+  const auto row = viewport.WrappedVisualRowLayout(500);
+  Expect(row.line_index == 500,
+         "trivial layout: wrapped visual row layout returns synthesized line index");
+  Expect(row.visual_start == viewport.horizontal_scroll(),
+         "trivial layout: visual_start equals horizontal_scroll");
+  Expect(row.visual_end == viewport.horizontal_scroll() + 120,
+         "trivial layout: visual_end equals horizontal_scroll + visible_columns");
+
+  // Editing once must not blow up. The trivial fast-path is the point of the test, so we also
+  // sanity-check that an edit keeps the identity invariant (no soft-wrap, no folds).
+  viewport.MoveCursorTo(50, 0);
+  viewport.InsertText("X");
+  Expect(viewport.visual_line_count() == viewport.lines().size(),
+         "trivial layout: edit should not break the identity invariant");
+}
+
 }  // namespace
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
@@ -1187,6 +1228,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportOccurrenceSeedSpanRejectsMultiLineSelection);
   AddTest(tests, "TextViewport/OccurrenceSeedSpanNoWordInWhitespace",
           TestTextViewportOccurrenceSeedSpanNoWordInWhitespace);
+  AddTest(tests, "TextViewport/TrivialWrappedLayoutFastPath",
+          TestTextViewportTrivialWrappedLayoutFastPath);
   AddTest(tests, "TextViewport/ReplaceAllUndoRedoHandlesLargeSparseDocument",
           TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeDisambiguatesCppHeader",

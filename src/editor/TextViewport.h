@@ -341,6 +341,15 @@ class TextViewport {
   void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();
   void EnsureWrappedRowLayouts() const;
+  // Returns the row payload for `visual_row_index`. Synthesizes the result
+  // inline in the trivial-layout fast path (no soft-wrap, no collapsed folds)
+  // so callers do not have to index into a vector that was never built.
+  WrappedRowLayout WrappedRowAt(std::size_t visual_row_index) const;
+  // Number of visual rows. O(1) in either path; in trivial mode this is the
+  // document line count (less hidden lines).
+  std::size_t WrappedRowCount() const;
+  // Document line for the row's offset table; identity in trivial mode.
+  std::size_t WrappedLineRowOffset(std::size_t line_index) const;
   void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column, int delta) const;
   void AdvanceCaretHorizontal(TextPosition& caret, int delta) const;
   void DedupeSecondaryCaretsAgainstPrimary();
@@ -383,6 +392,13 @@ class TextViewport {
   mutable bool wrapped_row_layouts_soft_wrap_ = false;
   mutable const FoldingModel* wrapped_row_layouts_folding_model_ = nullptr;
   mutable std::size_t wrapped_row_layouts_fold_revision_ = 0;
+  // Trivial-layout fast path: when soft-wrap is off AND no fold is collapsed,
+  // the visual row ↔ document line mapping is identity. In that case
+  // `wrapped_row_layouts_` / `wrapped_line_row_offsets_` are left empty and
+  // the readers synthesize the row data on the fly. This avoids the
+  // O(line_count) vector rebuild that the previous implementation paid for
+  // on every edit of a large file.
+  mutable bool wrapped_row_layouts_trivial_ = false;
 #ifndef NDEBUG
   mutable std::size_t wrapped_row_layout_build_count_ = 0;
 #endif
