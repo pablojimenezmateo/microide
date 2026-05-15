@@ -600,13 +600,17 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         cache_it = inserted_it;
       }
 
+      const std::size_t row_start_visual_match = row_visual_origin;
+      const std::size_t row_end_visual_match = row_meta.visual_end;
+      // 2026-05-15 Finding 13: resolve source→visual column via the row's already-built
+      // LayoutLine instead of re-walking the document line per decoration.
       for (const auto& [match_start, match_end] : cache_it->second) {
-        const std::size_t start_visual =
-            TextLayout::VisualColumnForTextColumn(lines[line_index], match_start, viewport.tab_size());
-        const std::size_t end_visual = TextLayout::VisualColumnForTextColumn(
-            lines[line_index], match_end, viewport.tab_size());
-        const std::size_t row_start_visual = row_visual_origin;
-        const std::size_t row_end_visual = row_meta.visual_end;
+        const std::size_t start_visual = TextLayout::VisualColumnFromLayoutClipped(
+            row_layout, row_start_visual_match, row_end_visual_match, match_start);
+        const std::size_t end_visual = TextLayout::VisualColumnFromLayoutClipped(
+            row_layout, row_start_visual_match, row_end_visual_match, match_end);
+        const std::size_t row_start_visual = row_start_visual_match;
+        const std::size_t row_end_visual = row_end_visual_match;
         const std::size_t visible_start = std::max(start_visual, row_start_visual);
         const std::size_t visible_end = std::min(end_visual, row_end_visual);
         if (visible_end > visible_start) {
@@ -651,10 +655,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         }
         const std::size_t match_start = occ.start_column;
         const std::size_t match_end = occ.end_column;
-        const std::size_t start_visual =
-            TextLayout::VisualColumnForTextColumn(lines[line_index], match_start, viewport.tab_size());
-        const std::size_t end_visual = TextLayout::VisualColumnForTextColumn(
-            lines[line_index], match_end, viewport.tab_size());
+        const std::size_t start_visual = TextLayout::VisualColumnFromLayoutClipped(
+            row_layout, row_start_visual_occ, row_end_visual_occ, match_start);
+        const std::size_t end_visual = TextLayout::VisualColumnFromLayoutClipped(
+            row_layout, row_start_visual_occ, row_end_visual_occ, match_end);
         const std::size_t visible_start = std::max(start_visual, row_start_visual_occ);
         const std::size_t visible_end = std::min(end_visual, row_end_visual_occ);
         if (visible_end <= visible_start) {
@@ -683,12 +687,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           line_index == selection->start.line ? selection->start.column : 0;
       const std::size_t line_end =
           line_index == selection->end.line ? selection->end.column : lines[line_index].size();
-      const std::size_t start_visual =
-          TextLayout::VisualColumnForTextColumn(lines[line_index], line_start, viewport.tab_size());
-      const std::size_t end_visual =
-          TextLayout::VisualColumnForTextColumn(lines[line_index], line_end, viewport.tab_size());
       const std::size_t row_start_visual = row_visual_origin;
       const std::size_t row_end_visual = row_meta.visual_end;
+      const std::size_t start_visual = TextLayout::VisualColumnFromLayoutClipped(
+          row_layout, row_start_visual, row_end_visual, line_start);
+      const std::size_t end_visual = TextLayout::VisualColumnFromLayoutClipped(
+          row_layout, row_start_visual, row_end_visual, line_end);
       const std::size_t visible_start = std::max(start_visual, row_start_visual);
       const std::size_t visible_end = std::min(end_visual, row_end_visual);
       if (visible_end > visible_start) {
@@ -711,10 +715,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
         if (bracket_line != line_index) return;
         if (bracket_column >= lines[line_index].size()) return;
-        const std::size_t cell_visual = TextLayout::VisualColumnForTextColumn(
-            lines[line_index], bracket_column, viewport.tab_size());
         const std::size_t row_start_visual = row_visual_origin;
         const std::size_t row_end_visual = row_meta.visual_end;
+        const std::size_t cell_visual = TextLayout::VisualColumnFromLayoutClipped(
+            row_layout, row_start_visual, row_end_visual, bracket_column);
         if (cell_visual < row_start_visual || cell_visual >= row_end_visual) return;
         row_desc.fills.push_back(DecoratedTextFill{
             .rect =

@@ -120,6 +120,37 @@ LayoutLine TextLayout::BuildVisibleLine(const std::string& line,
   return result;
 }
 
+std::size_t TextLayout::VisualColumnFromLayoutClipped(const LayoutLine& layout,
+                                                       std::size_t row_start_visual,
+                                                       std::size_t row_end_visual,
+                                                       std::size_t source_column) {
+  // Empty layout: any source column is "off-row". A sentinel beyond row_end_visual lets std::min
+  // clip the decoration correctly.
+  if (layout.source_columns.empty()) {
+    return row_end_visual + 1;
+  }
+  // lower_bound returns the first cell whose source byte is >= source_column. That cell's visual
+  // column is `row_start_visual + cell_index`.
+  const auto& sc = layout.source_columns;
+  const auto it = std::lower_bound(sc.begin(), sc.end(), source_column);
+  if (it == sc.end()) {
+    // source_column is past the last visible source byte. The "natural" visual column for that
+    // position is the cell immediately after the last visible cell — i.e.
+    // `row_start_visual + source_columns.size()`. That value:
+    //   - equals row_end_visual when the row is filled, giving a correct clip;
+    //   - equals "just past the end of a short line" when the line is shorter than the row, giving
+    //     a correct end-of-line decoration boundary;
+    //   - is always >= the legacy walk result for in-window source columns.
+    return row_start_visual + sc.size();
+  }
+  if (it == sc.begin() && *it > source_column) {
+    // source_column precedes the leftmost visible source byte → before the row's left edge.
+    return row_start_visual > 0 ? row_start_visual - 1 : 0;
+  }
+  const std::size_t cell_index = static_cast<std::size_t>(it - sc.begin());
+  return row_start_visual + cell_index;
+}
+
 std::size_t TextLayout::AdvanceVisualColumn(std::size_t visual_column,
                                             char character,
                                             std::size_t tab_size) {

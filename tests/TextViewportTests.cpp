@@ -1092,6 +1092,64 @@ void TestTextViewportOccurrenceSeedSpanNoWordInWhitespace() {
          "caret positioned in whitespace should not yield a seed span");
 }
 
+void TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk() {
+  // 2026-05-15 perf deep-dive round 2 Finding 13: the binary-search resolution from an
+  // already-built LayoutLine must agree with the legacy O(line_length) walk for source columns
+  // inside the row window, and must return clipping sentinels for columns outside the window.
+  using microide::editor::TextLayout;
+  const std::string line = "ab\tcd\tef";  // 2 ASCII, tab → col 4, ASCII, tab → col 8, ASCII
+  const std::size_t tab_size = 4;
+
+  // Full-line window: source_columns covers every visible cell.
+  {
+    const auto layout = TextLayout::BuildVisibleLine(line, /*horizontal_scroll=*/0,
+                                                      /*visible_columns=*/80, tab_size);
+    for (std::size_t c = 0; c <= line.size(); ++c) {
+      const std::size_t walked = TextLayout::VisualColumnForTextColumn(line, c, tab_size);
+      const std::size_t clipped = TextLayout::VisualColumnFromLayoutClipped(
+          layout, /*row_start_visual=*/0, /*row_end_visual=*/80, c);
+      // Inside the window, the helper must return the exact visual column.
+      Expect(clipped == walked,
+             "VisualColumnFromLayoutClipped must match VisualColumnForTextColumn inside the row");
+    }
+  }
+
+  // Scrolled window: only the trailing part of the line is in the layout's source_columns.
+  {
+    const std::size_t horizontal_scroll = 4;
+    const std::size_t visible_columns = 8;
+    const auto layout = TextLayout::BuildVisibleLine(line, horizontal_scroll, visible_columns,
+                                                      tab_size);
+    const std::size_t row_start = horizontal_scroll;
+    const std::size_t row_end = horizontal_scroll + visible_columns;
+
+    // Source column 0 is before the row window. Helper should return a value <= row_start so
+    // std::max(.., row_start) clips correctly to row_start.
+    const std::size_t before = TextLayout::VisualColumnFromLayoutClipped(layout, row_start,
+                                                                          row_end, 0);
+    Expect(before <= row_start,
+           "source columns before the row window must return <= row_start (clip sentinel)");
+    Expect(std::max<std::size_t>(before, row_start) == row_start,
+           "clipping via std::max with row_start must produce row_start");
+
+    // Source column at or past line end maps to "just past the last visible source byte". For a
+    // line that fits entirely within the row, that visual column equals the position immediately
+    // after the last char — std::min with row_end produces the correct end-of-line decoration
+    // boundary.
+    const std::size_t at_end = TextLayout::VisualColumnFromLayoutClipped(
+        layout, row_start, row_end, line.size());
+    const std::size_t past_end = TextLayout::VisualColumnFromLayoutClipped(
+        layout, row_start, row_end, line.size() + 5);
+    Expect(at_end == past_end,
+           "source columns at/past line end must return the same end-of-line visual column");
+    // The legacy walk gives the visual column of the position past the last char of "ab\\tcd\\tef".
+    const std::size_t walked_end =
+        TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size);
+    Expect(at_end == walked_end || at_end >= row_end,
+           "end-of-line helper result must agree with the legacy walk or clip beyond row_end");
+  }
+}
+
 void TestTextViewportSecondaryCaretPositionsCacheStability() {
   // 2026-05-15 perf deep-dive round 2 Finding 10: secondary_caret_positions() must reuse the
   // same underlying storage across calls when the carets are unchanged, so the render path does
@@ -1253,6 +1311,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportOccurrenceSeedSpanRejectsMultiLineSelection);
   AddTest(tests, "TextViewport/OccurrenceSeedSpanNoWordInWhitespace",
           TestTextViewportOccurrenceSeedSpanNoWordInWhitespace);
+  AddTest(tests, "TextLayout/VisualColumnFromLayoutClippedMatchesWalk",
+          TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk);
   AddTest(tests, "TextViewport/SecondaryCaretPositionsCacheStability",
           TestTextViewportSecondaryCaretPositionsCacheStability);
   AddTest(tests, "TextViewport/TrivialWrappedLayoutFastPath",
