@@ -41,7 +41,7 @@
 
 ## 7. Sanitizer And Harness Validation
 
-- [ ] 7.1 Run `cmake --preset microide-asan && ctest --test-dir build/microide-asan --output-on-failure`. Done when 100 % pass.
+- [x] 7.1 Run `cmake --preset microide-asan && ctest --test-dir build/microide-asan --output-on-failure`. Done when 100 % pass.
 - [ ] 7.2 Run `cmake --preset microide-ubsan && ctest --test-dir build/microide-ubsan --output-on-failure`. Done when 100 % pass.
 - [ ] 7.3 Run `cmake --preset microide-tsan && ctest --test-dir build/microide-tsan --output-on-failure` (after `sudo sysctl vm.mmap_rnd_bits=28`). Done when 100 % pass.
 - [ ] 7.4 Run the full `microide_perf --smoke` smoke set locally and capture the JSON. Confirm `editor_sticky_scroll_scroll`, `editor_render_whitespace_paint`, and `editor_indent_guides_paint` p50 are ≤ pre-change values; capture absolute numbers in the PR description.
