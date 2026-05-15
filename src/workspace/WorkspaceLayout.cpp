@@ -745,4 +745,16 @@ SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {
                   final_height);
 }
 
+bool operator==(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept {
+  auto rect_eq = [](const SDL_FRect& a, const SDL_FRect& b) {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+  };
+  return lhs.layout_mode == rhs.layout_mode && rect_eq(lhs.full, rhs.full) &&
+         rect_eq(lhs.menu_bar, rhs.menu_bar) && rect_eq(lhs.project_tab_strip, rhs.project_tab_strip) &&
+         rect_eq(lhs.tab_strip, rhs.tab_strip) && rect_eq(lhs.bottom_panel, rhs.bottom_panel) &&
+         rect_eq(lhs.content, rhs.content) && rect_eq(lhs.sidebar, rhs.sidebar) &&
+         rect_eq(lhs.editor_area, rhs.editor_area) && rect_eq(lhs.breadcrumb, rhs.breadcrumb) &&
+         rect_eq(lhs.editor_surface, rhs.editor_surface) && rect_eq(lhs.status_bar, rhs.status_bar);
+}
+
 }  // namespace microide::workspace

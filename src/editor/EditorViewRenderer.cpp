@@ -934,18 +934,19 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
       for (std::size_t idx = secondary_caret_index;
            idx < secondary_carets.size() && secondary_carets[idx].line == line_index; ++idx) {
-        const std::size_t visual_column = TextLayout::VisualColumnForTextColumn(
-            lines[line_index], secondary_carets[idx].column, viewport.tab_size());
-        const std::size_t row_start_visual = row_meta.visual_start;
-        const bool caret_hits_last_column =
-            visual_column == row_meta.visual_end && row_meta.visual_end == row_layout.visual_columns;
-        if (visual_column < row_start_visual ||
-            (visual_column >= row_meta.visual_end && !caret_hits_last_column)) {
+        const std::size_t row_start_visual_sc = row_visual_origin;
+        const std::size_t row_end_visual_sc = row_meta.visual_end;
+        const std::size_t visual_column = TextLayout::VisualColumnFromLayoutClipped(
+            row_layout, row_start_visual_sc, row_end_visual_sc, secondary_carets[idx].column);
+        const bool caret_hits_last_column = visual_column == row_end_visual_sc &&
+                                            row_end_visual_sc == row_layout.visual_columns;
+        if (visual_column < row_start_visual_sc ||
+            (visual_column >= row_end_visual_sc && !caret_hits_last_column)) {
           continue;
         }
         const float caret_x =
             metrics.text_x +
-            static_cast<float>(visual_column - row_start_visual) *
+            static_cast<float>(visual_column - row_start_visual_sc) *
                 text_renderer.CharWidth();
         const SDL_FRect caret =
             SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};

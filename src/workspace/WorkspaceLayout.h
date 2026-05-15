@@ -41,6 +41,11 @@ struct WorkspaceLayout {
   LayoutMode layout_mode = LayoutMode::Regular;
 };
 
+bool operator==(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept;
+inline bool operator!=(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept {
+  return !(lhs == rhs);
+}
+
 struct ScrollbarGeometry {
   SDL_FRect track{};
   SDL_FRect thumb{};

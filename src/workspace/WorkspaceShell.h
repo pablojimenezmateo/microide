@@ -67,6 +67,7 @@
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspacePromptState.h"
+#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceRootView.h"
 #include "workspace/WorkspaceStatusRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"

@@ -6,7 +6,7 @@ Date: 2026-05-15
 
 | # | Finding                                                | Status |
 | - | ------------------------------------------------------ | ------ |
-| 1 | View-model surfaces rebuilt 2-3×/frame                  | partial (string-view fallbacks; redundant Build* calls are now allocation-free) |
+| 1 | View-model surfaces rebuilt 2-3×/frame                  | done  (prepare owns sidebar/bottom/text-input VMs once/frame; clip cache shares frame+overlay across `RenderClip`; render TUs reuse) |
 | 2 | Per-row paint loops over flat run vectors              | done  (whitespace_row_offsets CSR + occurrence binary search) |
 | 3 | RefreshStatusBar synchronous git                       | done  (cached project segment + invariant lint) |
 | 4 | std::stol with try/catch                                | done  (util::ParseInt rewrite) |
@@ -18,7 +18,7 @@ Date: 2026-05-15
 | 10 | secondary_carets() allocates vectors per call         | done  (span accessor + cache stability) |
 | 11 | sticky/occurrence vectors copied on cache hit        | done  (std::span<const T> view models) |
 | 12 | Unordered_set in occurrence scan refresh             | done  (sorted thread_local vector) |
-| 13 | VisualColumnFromLayout binary search                 | deferred — fits naturally with Finding 16's revision split |
+| 13 | VisualColumnFromLayout binary search                 | partial (editor row loop + secondary carets; compare/diagnostics paths still walk bytes where noted in round 3) |
 | 14 | IndentGuides per-row segments                        | done  (coalesce into multi-row runs) |
 | 15 | Glyph atlas for SDL_ttf cache misses                  | deferred — separate text-rendering pass |
 | 16 | Single layout_revision cascade                       | partial (Findings 5/6 closed the visible-cost paths; full revision split is the next pass) |
@@ -766,8 +766,7 @@ in. Otherwise this work decays the next time someone adds a "small" feature.
 
 ### P1: Frame-prep cleanups
 
-Findings 1, 3, 4, 11, 12, 17, 18 — collectively reduce the steady-frame cost from "rebuild several
-surfaces + allocate ~20 strings + maybe spawn `git`" to "read prepared view models".
+Findings **1** (done: prepare-scoped sidebar/bottom/text-input VMs + per-clip frame/overlay cache), **3, 4, 11, 12, 17** (done). Finding **18** remains deferred (event-revision / steady-frame infrastructure).
 
 ### P2: Editor invalidation surgery
 

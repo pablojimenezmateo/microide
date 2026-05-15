@@ -98,9 +98,17 @@
   FrameToken PrepareFrameOnce(SDL_Renderer* renderer, int width, int height);
   void RenderClip(const FrameToken& frame_token, SDL_Renderer* renderer, int width, int height,
                   std::optional<SDL_FRect> dirty_rect_hint = std::nullopt);
+  void EnsureClipFrameAndOverlayViewModels(const WorkspaceLayout& layout) const;
   void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
+  void RootViewRenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RootViewRenderActiveWorkspaceSurface(SDL_Renderer* renderer,
+                                            const WorkspaceLayout& layout,
+                                            const FrameToken& frame_token,
+                                            bool draw_editor_caret,
+                                            std::optional<SDL_FRect>* active_editor_pane_rect);
+  void RootViewRenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   IdleWaitState CurrentIdleWaitState() const;
   std::optional<Uint32> NextAnimationDelayMs() const;
   bool ConsumePostRenderFullRedrawRequest();
@@ -1100,16 +1108,22 @@
   WorkspaceRootView MakeRootView();
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
-  void RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderFrameBase(SDL_Renderer* renderer,
+                       const WorkspaceLayout& layout,
+                       const FrameSurfaceViewModel& frame_vm) const;
   void RenderActiveWorkspaceSurface(SDL_Renderer* renderer,
                                     const WorkspaceLayout& layout,
                                     const FrameToken& frame_token,
                                     bool draw_editor_caret,
-                                    std::optional<SDL_FRect>* active_editor_pane_rect);
+                                    std::optional<SDL_FRect>* active_editor_pane_rect,
+                                    const FrameSurfaceViewModel& frame_vm,
+                                    const OverlaySurfaceViewModel& overlay_vm);
   void RenderWindowChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderChromeTooltips(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
-  void RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
+  void RenderOverlaySurface(SDL_Renderer* renderer,
+                            const WorkspaceLayout& layout,
+                            const OverlaySurfaceViewModel& overlay_vm);
   void RenderBottomPanelSurface(SDL_Renderer* renderer,
                                 const WorkspaceLayout& layout,
                                 std::size_t terminal_line_count);
@@ -1334,6 +1348,16 @@
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
   std::uint64_t prepared_frame_id_ = 0;
+  // `BuildFrameSurface` / `BuildOverlaySurface` are shared across `RenderClip` iterations (partial
+  // redraw) and between `RenderFrameBase` + `RenderActiveWorkspaceSurface` within one clip.
+  mutable bool clip_frame_overlay_view_models_valid_ = false;
+  mutable std::uint64_t clip_frame_overlay_view_models_frame_id_ = 0;
+  mutable WorkspaceLayout clip_frame_overlay_view_models_layout_{};
+  mutable std::optional<FrameSurfaceViewModel> clip_cached_frame_vm_;
+  mutable std::optional<OverlaySurfaceViewModel> clip_cached_overlay_vm_;
+  mutable std::optional<SidebarSurfaceViewModel> prepare_cached_sidebar_vm_;
+  mutable std::optional<BottomPanelSurfaceViewModel> prepare_cached_bottom_panel_vm_;
+  mutable std::optional<TextInputSurfaceViewModel> prepare_cached_text_input_vm_;
   // Last bottom-panel rect for which ResizeTerminalToPanel was invoked. When
   // the panel rect is unchanged between frames there's nothing to recompute,
   // so we skip the call entirely. Reset when no terminal is active.

@@ -8,8 +8,9 @@ namespace microide::workspace {
 
 using namespace detail;
 
-void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-  const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
+void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
+                                          const WorkspaceLayout& layout,
+                                          const OverlaySurfaceViewModel& overlay_vm) {
   const OverlayState& overlay_state = *overlay_vm.state;
   ProjectWorkspaceState& project_state = *overlay_vm.project_state;
   if (!overlay_vm.visible) {

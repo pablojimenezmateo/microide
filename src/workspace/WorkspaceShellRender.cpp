@@ -57,6 +57,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   std::optional<SDL_FRect> active_editor_pane_rect;
   visible_editor_blame_overlay_.reset();
 
+  EnsureClipFrameAndOverlayViewModels(layout);
   // Heavy subsystems (editor surface, sidebar, bottom panel, settings overlay)
   // walk their own scenes top-to-bottom even when SDL clip rects would mask the
   // pixels. Threading the dirty rect lets us short-circuit these on partial
@@ -99,10 +100,11 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     }
   }
 
-  RenderFrameBase(renderer, layout);
+  RenderFrameBase(renderer, layout, *clip_cached_frame_vm_);
   if (!skip_editor_surface) {
     RenderActiveWorkspaceSurface(renderer, layout, frame_token, prepared_frame_draw_editor_caret_,
-                                 &active_editor_pane_rect);
+                                 &active_editor_pane_rect, *clip_cached_frame_vm_,
+                                 *clip_cached_overlay_vm_);
     if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
       util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::RefreshHover");
       UpdateEditorHover(last_mouse_x_, last_mouse_y_);
@@ -116,7 +118,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   if (!skip_sidebar) {
     RenderSidebarSurface(renderer, layout);
   }
-  RenderOverlaySurface(renderer, layout);
+  RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
   if (!skip_bottom_panel) {
     RenderBottomPanelSurface(
         renderer, layout,

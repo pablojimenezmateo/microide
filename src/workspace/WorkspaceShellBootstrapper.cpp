@@ -165,7 +165,7 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
               },
           .render_frame_base =
               [shell](SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-                shell->RenderFrameBase(renderer, layout);
+                shell->RootViewRenderFrameBase(renderer, layout);
               },
       },
       WorkspaceRootView::Views{
@@ -176,7 +176,7 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
                              const WorkspaceLayout& layout,
                              bool draw_editor_caret,
                              std::optional<SDL_FRect>* active_editor_pane_rect) {
-                        shell->RenderActiveWorkspaceSurface(
+                        shell->RootViewRenderActiveWorkspaceSurface(
                             renderer, layout, WorkspaceShell::FrameToken{}, draw_editor_caret,
                             active_editor_pane_rect);
                       },
@@ -203,7 +203,7 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
               }),
           .overlay = WorkspaceOverlayView(
               [shell](SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-                shell->RenderOverlaySurface(renderer, layout);
+                shell->RootViewRenderOverlaySurface(renderer, layout);
               }),
           .panel = WorkspacePanelView(
               WorkspacePanelView::Operations{

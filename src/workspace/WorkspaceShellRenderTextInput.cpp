@@ -150,10 +150,16 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
 std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextInputVisual(
     const WorkspaceLayout& layout,
     const std::optional<SDL_FRect>& active_editor_pane_rect) const {
-  const RenderViewModelBuilder view_model_builder(context_);
-  const OverlaySurfaceViewModel overlay_vm = view_model_builder.BuildOverlaySurface();
-  const SidebarSurfaceViewModel sidebar_vm = view_model_builder.BuildSidebarSurface();
-  const TextInputSurfaceViewModel text_input_vm = view_model_builder.BuildTextInputSurface();
+  EnsureClipFrameAndOverlayViewModels(layout);
+  const OverlaySurfaceViewModel& overlay_vm = *clip_cached_overlay_vm_;
+  if (!prepare_cached_sidebar_vm_.has_value()) {
+    prepare_cached_sidebar_vm_.emplace(RenderViewModelBuilder(context_).BuildSidebarSurface());
+  }
+  if (!prepare_cached_text_input_vm_.has_value()) {
+    prepare_cached_text_input_vm_.emplace(RenderViewModelBuilder(context_).BuildTextInputSurface());
+  }
+  const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
+  const TextInputSurfaceViewModel& text_input_vm = *prepare_cached_text_input_vm_;
   const TextInputSurface surface = text_input_vm.current_surface;
   const float line_height = text_renderer_.LineHeight();
   const float char_width = std::max(1.0f, text_renderer_.CharWidth());

@@ -59,6 +59,11 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     return FrameToken{};
   }
 
+  clip_frame_overlay_view_models_valid_ = false;
+  prepare_cached_sidebar_vm_.reset();
+  prepare_cached_bottom_panel_vm_.reset();
+  prepare_cached_text_input_vm_.reset();
+
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   util::AddPerformanceCounter(util::PerfCounterId::FramePrepareCalls);
   ConsumePendingProjectOpenDialogResult();
@@ -66,11 +71,14 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
-  const SidebarSurfaceViewModel sidebar_vm = RenderViewModelBuilder(context_).BuildSidebarSurface();
-  const BottomPanelSurfaceViewModel panel_vm =
-      RenderViewModelBuilder(context_).BuildBottomPanelSurface();
+  const RenderViewModelBuilder view_models(context_);
+  prepare_cached_sidebar_vm_.emplace(view_models.BuildSidebarSurface());
+  prepare_cached_bottom_panel_vm_.emplace(view_models.BuildBottomPanelSurface());
+  const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
+  const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
   ApplyLiveSettings();
+  prepare_cached_text_input_vm_.emplace(view_models.BuildTextInputSurface());
   const float clamped_sidebar_width =
       ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
   const float clamped_panel_height =
@@ -150,8 +158,47 @@ void WorkspaceShell::PrepareRenderFrame(SDL_Renderer* renderer, int width, int h
   (void)PrepareFrameOnce(renderer, width, height);
 }
 
-void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const {
-  const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
+void WorkspaceShell::EnsureClipFrameAndOverlayViewModels(const WorkspaceLayout& layout) const {
+  if (clip_frame_overlay_view_models_valid_ &&
+      clip_frame_overlay_view_models_frame_id_ == prepared_frame_id_ &&
+      clip_frame_overlay_view_models_layout_ == layout) {
+    return;
+  }
+  clip_cached_frame_vm_.emplace(RenderViewModelBuilder(context_).BuildFrameSurface(layout));
+  util::AddPerformanceCounter(util::PerfCounterId::RenderViewModelBuildFrameSurfaceCalls, 1);
+  clip_cached_overlay_vm_.emplace(RenderViewModelBuilder(context_).BuildOverlaySurface());
+  util::AddPerformanceCounter(util::PerfCounterId::RenderViewModelBuildOverlaySurfaceCalls, 1);
+  clip_frame_overlay_view_models_layout_ = layout;
+  clip_frame_overlay_view_models_frame_id_ = prepared_frame_id_;
+  clip_frame_overlay_view_models_valid_ = true;
+}
+
+void WorkspaceShell::RootViewRenderFrameBase(SDL_Renderer* renderer,
+                                             const WorkspaceLayout& layout) const {
+  EnsureClipFrameAndOverlayViewModels(layout);
+  RenderFrameBase(renderer, layout, *clip_cached_frame_vm_);
+}
+
+void WorkspaceShell::RootViewRenderActiveWorkspaceSurface(
+    SDL_Renderer* renderer,
+    const WorkspaceLayout& layout,
+    const FrameToken& frame_token,
+    bool draw_editor_caret,
+    std::optional<SDL_FRect>* active_editor_pane_rect) {
+  EnsureClipFrameAndOverlayViewModels(layout);
+  RenderActiveWorkspaceSurface(renderer, layout, frame_token, draw_editor_caret, active_editor_pane_rect,
+                               *clip_cached_frame_vm_, *clip_cached_overlay_vm_);
+}
+
+void WorkspaceShell::RootViewRenderOverlaySurface(SDL_Renderer* renderer,
+                                                  const WorkspaceLayout& layout) {
+  EnsureClipFrameAndOverlayViewModels(layout);
+  RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
+}
+
+void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
+                                   const WorkspaceLayout& layout,
+                                   const FrameSurfaceViewModel& frame_vm) const {
   DrawFilledRect(renderer, layout.full, theme_.window_background);
   DrawFilledRect(renderer, layout.menu_bar, theme_.chrome_background);
   DrawFilledRect(renderer,
@@ -220,11 +267,11 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const WorkspaceLayout& layout,
     const FrameToken& frame_token,
     bool draw_editor_caret,
-    std::optional<SDL_FRect>* active_editor_pane_rect) {
+    std::optional<SDL_FRect>* active_editor_pane_rect,
+    const FrameSurfaceViewModel& frame_vm,
+    const OverlaySurfaceViewModel& overlay_vm) {
   (void)frame_token;
-  const FrameSurfaceViewModel frame_vm = RenderViewModelBuilder(context_).BuildFrameSurface(layout);
   ProjectWorkspaceState& project_state = *frame_vm.project_state;
-  const OverlaySurfaceViewModel overlay_vm = RenderViewModelBuilder(context_).BuildOverlaySurface();
   CompareTabState* active_compare_tab = nullptr;
   MergeTabState* active_merge_tab = nullptr;
   if (frame_vm.compare_surface.has_value() &&

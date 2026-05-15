@@ -41,6 +41,8 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "render.text_texture_cache_hits",
     "render.text_texture_cache_misses",
     "render.text_texture_cache_evictions",
+    "render.view_model_build_frame_surface_calls",
+    "render.view_model_build_overlay_surface_calls",
 };
 
 std::size_t ToIndex(PerfCounterId id) {

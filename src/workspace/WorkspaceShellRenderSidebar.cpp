@@ -4,7 +4,6 @@
 #include <cmath>
 #include <string>
 
-#include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
 namespace microide::workspace {
@@ -37,9 +36,8 @@ std::string_view BuildProjectSearchResultLabel(std::size_t line,
 }  // namespace
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-  const RenderViewModelBuilder view_model_builder(context_);
-  const SidebarSurfaceViewModel sidebar_vm = view_model_builder.BuildSidebarSurface();
-  const TextInputSurfaceViewModel text_input_vm = view_model_builder.BuildTextInputSurface();
+  const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
+  const TextInputSurfaceViewModel& text_input_vm = *prepare_cached_text_input_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
   if (!sidebar_vm.visible) {
     return;
