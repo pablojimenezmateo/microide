@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
 #if defined(__linux__)
@@ -849,6 +850,76 @@ void RegisterBuiltInScenarios() {
             }
             EnforceP95Microseconds("editor_render_whitespace_paint.scroll_overlay_frame", samples_us,
                                    30'000.0);
+            context.PumpFrames(2);
+          },
+  });
+  // openspec change split-layout-revision-tiers — the contract scenario.
+  //
+  // After the tier split, pure scrolling over a syntax-highlighted file MUST
+  // NOT bump `content_revision`, `syntax_revision`, or `layout_shape_revision`.
+  // Only `presentation_revision` may move (selection caret, hover overlay).
+  // The scenario asserts the per-tier counters directly so a future change
+  // that re-introduces a cross-tier invalidation on the scroll path fails
+  // here regardless of wall-time impact.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_scroll_only_no_content_bump",
+      .smoke = true,
+      .run =
+          [](ScenarioContext& context) {
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(20);
+            // Capture counters AFTER warm-up so the initial file-load
+            // invalidations are excluded from the measurement window.
+            const std::uint64_t content_before =
+                microide::util::ReadPerformanceCounter(
+                    microide::util::PerfCounterId::EditorContentRevisionBumps);
+            const std::uint64_t syntax_before =
+                microide::util::ReadPerformanceCounter(
+                    microide::util::PerfCounterId::EditorSyntaxRevisionBumps);
+            const std::uint64_t layout_shape_before =
+                microide::util::ReadPerformanceCounter(
+                    microide::util::PerfCounterId::EditorLayoutShapeRevisionBumps);
+            std::vector<double> samples_us;
+            samples_us.reserve(100);
+            for (int i = 0; i < 100; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              context.Scroll((i % 2 == 0) ? -2 : 2);
+              context.PumpFrames(1);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+            }
+            const std::uint64_t content_after =
+                microide::util::ReadPerformanceCounter(
+                    microide::util::PerfCounterId::EditorContentRevisionBumps);
+            const std::uint64_t syntax_after =
+                microide::util::ReadPerformanceCounter(
+                    microide::util::PerfCounterId::EditorSyntaxRevisionBumps);
+            const std::uint64_t layout_shape_after =
+                microide::util::ReadPerformanceCounter(
+                    microide::util::PerfCounterId::EditorLayoutShapeRevisionBumps);
+            if (content_after != content_before) {
+              throw std::runtime_error(
+                  "editor_scroll_only_no_content_bump: scrolling bumped "
+                  "content_revision (delta=" +
+                  std::to_string(content_after - content_before) + ")");
+            }
+            if (syntax_after != syntax_before) {
+              throw std::runtime_error(
+                  "editor_scroll_only_no_content_bump: scrolling bumped "
+                  "syntax_revision (delta=" +
+                  std::to_string(syntax_after - syntax_before) + ")");
+            }
+            if (layout_shape_after != layout_shape_before) {
+              throw std::runtime_error(
+                  "editor_scroll_only_no_content_bump: scrolling bumped "
+                  "layout_shape_revision (delta=" +
+                  std::to_string(layout_shape_after - layout_shape_before) +
+                  ")");
+            }
+            EnforceP95Microseconds(
+                "editor_scroll_only_no_content_bump.scroll_frame", samples_us,
+                30'000.0);
             context.PumpFrames(2);
           },
   });
