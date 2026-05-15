@@ -242,7 +242,60 @@ The debt items tracked as 8–12 in this document are now resolved or explicitly
 
 Remaining debt focus stays on items 5 and 6 unless new profiling demonstrates regressions.
 
-## 13. Split `document_->layout_revision` Into Tiered Revisions
+## 13. Do Not Revisit The Editor Glyph Atlas Without GPU Renderer + ≥ 10 % Texture-Cache Miss Rate
+
+Source: `docs/performance-bottleneck-deep-dive-4.md` "Rejected experiment: ASCII glyph atlas".
+
+Impact:
+- Saves engineering time on a previously-attempted dead end.
+
+What was tried (2026-05-15):
+- One alpha-only `SDL_Texture` ASCII atlas keyed by `(font face, font size)`,
+  per-glyph src rects, `SDL_RenderGeometry` fast path in `SdlTtfTextBackend`,
+  per-vertex color, three perf counters, opt-in flag.
+- End-to-end working: counters fire, evictions stay at 0, texture-cache misses
+  drop to ~1 per iteration.
+
+Measured outcome:
+- Wall-time regression on every editor paint scenario on the software renderer:
+  `editor_render_whitespace_paint` +81 %, `editor_sticky_scroll_scroll` +83 %,
+  `editor_indent_guides_paint` +48 %.
+- Reverted in full. `MICROIDE_RENDER_GLYPH_ATLAS` no longer exists.
+
+Why we were wrong:
+- The composite texture cache is at > 99 % hit rate on every paint scenario,
+  so cache-miss thrash is **not** the bottleneck the design targeted.
+- `DrawString` is called at the **run** level, not the cell level — the
+  composite cache already operates on whole same-color runs and is served by
+  one `SDL_RenderTexture` call per cached string.
+- `SDL_RenderGeometry` in the software renderer is not a free batched
+  primitive: per-vertex color modulation forces per-pixel attribute
+  interpolation, so the atlas's "one call per run" submits strictly more
+  per-pixel rasterization work than the composite blit it replaces.
+
+Do not propose another glyph-atlas variant for the editor text path unless
+**all three** of the following preconditions hold (lifted verbatim from the
+round-4 rejection section so reviewers can hold any future proposal to them):
+
+1. MicroIDE is rendering through a **GPU backend, not software**. The
+   software path remains the perf-gated path; per-pixel work scales the same
+   way for `SDL_RenderTexture` and `SDL_RenderGeometry` there.
+2. A **measured fixture exists where `render.text_texture_cache_misses /
+   cells_visited` exceeds ~10 % in steady state.** Today's number is < 1 %.
+3. A trace shows `BuildAsciiCompositeSurface` /
+   `SDL_CreateTextureFromSurface` as a **top-3 hotspot** on
+   `perf-runner-v1`. Today they are far below the per-pixel blit cost.
+
+If those preconditions ever hold, the right shape is *"reuse atlas data to
+build a composite string texture on cache miss"* — preserving the
+one-`SDL_RenderTexture`-per-cached-string draw shape the software renderer
+is happy with — not the per-quad geometry approach attempted here.
+
+The OpenSpec record of the experiment is kept at
+`openspec/changes/text-renderer-glyph-atlas/` for archaeological purposes
+only. It is rejected; **do not apply**.
+
+## 14. Split `document_->layout_revision` Into Tiered Revisions
 
 Source: `docs/performance-bottleneck-deep-dive-2.md` Finding 16,
 `docs/performance-bottleneck-deep-dive-3.md` partial,

@@ -298,7 +298,7 @@ Closing Finding 2 likely closes most of this. Re-measure after.
 | Round-2 # | Theme | Status now |
 | --------- | ----- | ---------- |
 | 8 | `TerminalCell` `std::string` per cell | **done** (inline UTF-8, `37f58bb`) — but per-line cell vector still allocates; see Finding 3 |
-| 15 | Glyph atlas | **open** — counters now in place to size it |
+| 15 | Glyph atlas | **rejected** — prototyped, measured a +48–83 % wall-time regression on the software renderer; see "Rejected experiment: ASCII glyph atlas" below for the preconditions any future revisit MUST meet |
 | 16 | Single `layout_revision` cascade | **open** — Finding 4 is the same root |
 | 18 | `PrepareFrameOnce` idle | **open** — Finding 5 |
 
@@ -346,7 +346,117 @@ inline Python.
 
 - Compare-surface and large-merge work (round-3 7, 11) — re-confirmed open,
   not measured here.
-- Glyph atlas (round-2 15) — deferred; sizing study should come after Finding
-  1 lands and stops dirtying the atlas.
+- Glyph atlas (round-2 15) — **rejected after measurement**; see
+  the "Rejected experiment" section below.
 - LSP `didOpen` (round-3 6) — still the right move, but blocked on the LSP
   bridge refactor pencilled in elsewhere.
+
+---
+
+## Rejected experiment: ASCII glyph atlas
+
+Date: 2026-05-15.
+
+### What was tried
+
+Following the round-2 Finding 15 / round-3 P5 carry-over, an ASCII glyph
+atlas was prototyped in `SdlTtfTextBackend`:
+
+- One alpha-only `SDL_Texture` keyed by `(font face, font size)` covering
+  codepoints `0x20..0x7E`, built once at `TextRenderer::EnsureInitialized`
+  (rebuilt only on font reload).
+- `DrawString` fast path: for every same-color ASCII run, build a
+  per-glyph vertex/index pair in `thread_local` scratch buffers and submit
+  the whole run via a single `SDL_RenderGeometry` call against the atlas
+  texture. Foreground color applied per-vertex (`SDL_FColor`), so color
+  stays out of the texture-cache key entirely.
+- Three perf counters added to make the experiment measurable:
+  `render.glyph_atlas_hits`, `render.glyph_atlas_fallbacks`,
+  `render.glyph_atlas_evictions`.
+- Behind `MICROIDE_RENDER_GLYPH_ATLAS=1` opt-in flag for the trial.
+
+The implementation worked end-to-end: counters fired correctly
+(~2 M `glyph_atlas_hits` per `editor_sticky_scroll_scroll` iteration),
+`glyph_atlas_evictions` stayed at 0, and `text_texture_cache_misses`
+dropped to ~1 per iteration.
+
+### What happened
+
+The atlas **regressed** every editor paint scenario on the software renderer:
+
+| Scenario                          | atlas-off p50 | atlas-on p50 | Δ         |
+| --------------------------------- | ------------: | -----------: | --------: |
+| `editor_render_whitespace_paint`  | 803 ms        | 1 453 ms     | **+81 %** |
+| `editor_sticky_scroll_scroll`     | 1 020 ms      | 1 869 ms     | **+83 %** |
+| `editor_indent_guides_paint`      | 645 ms        | 954 ms       | **+48 %** |
+
+The atlas, flag, counters, and supporting infrastructure were reverted in
+full — none of it remains in `src/`. `MICROIDE_RENDER_GLYPH_ATLAS` is gone
+and the three counters were dropped from `src/util/PerformanceCounters.{h,cpp}`.
+
+### Why the design didn't work
+
+The hypothesis in round-2 Finding 15 was *"editor content with syntax
+highlighting produces unique color-per-token strings, so scrolling a large
+file rapidly evicts entries and re-builds composite surfaces."* On
+measurement, that premise turned out to be wrong on real workloads:
+
+1. **`render.text_texture_cache_hits` is already > 99 % on every paint
+   scenario.** The composite cache is healthy; it isn't thrashing.
+2. **`DrawString` is called at the *run* level, not the *cell* level.**
+   `EditorViewRenderer` and `DecoratedTextGridRenderer` batch same-color
+   cells into a single `run.text` string and call `DrawString` once for
+   the whole run. The composite cache keys on that whole string. With
+   < 1 % miss rate, nearly every run is served by **one**
+   `SDL_RenderTexture` call against a pre-baked string texture.
+3. **The atlas un-batches that work.** Each cell becomes its own quad
+   with 4 vertices and 6 indices. For a 50-row × 80-column visible region
+   with mixed coloring, the atlas path emits roughly 4 000 quads per frame
+   where the composite path emits ~50 textured rectangles.
+4. **`SDL_RenderGeometry` is not a free batched primitive on the software
+   renderer.** Per-vertex color modulation forces per-pixel attribute
+   interpolation (color × sampled-texel), and total per-pixel work scales
+   with quad count × quad area. The "one call per run" win is real on a
+   GPU pipeline; the software backend ends up doing strictly more
+   rasterization work than the composite blit.
+
+In other words: the atlas would have helped if cache-miss thrash had been
+the bottleneck. It isn't. The composite cache is already doing the
+equivalent of what an atlas does, at a strictly coarser (and therefore
+cheaper) granularity for the software renderer.
+
+### Do not revisit this without these preconditions
+
+Do not propose another glyph-atlas variant for the editor text path
+unless **all** of the following preconditions hold:
+
+- **MicroIDE is rendering through a GPU backend, not software.** The
+  software path has been the perf-gated path since the harness landed and
+  remains the dominant cost reported on `perf-runner-v1`.
+  `SDL_RenderGeometry` in the software renderer rasterizes per-pixel just
+  like `SDL_RenderTexture`, so the "batched submission" win does not
+  exist there.
+- **A measured fixture exists where `render.text_texture_cache_misses /
+  cells_visited` exceeds ~10 % in steady state.** If that miss rate is
+  below ~1 % (today's number), the composite cache is already doing the
+  heavy lifting and any atlas-style replacement will pay more, not less,
+  per pixel.
+- **A profile of the composite path shows
+  `BuildAsciiCompositeSurface` / `SDL_CreateTextureFromSurface` as a
+  top-3 hotspot** on the perf-runner trace. Today it is far below the
+  per-pixel blit cost.
+
+If those preconditions ever hold, the right starting point is **not**
+the per-quad-geometry approach attempted here — it is "reuse atlas data
+to *build* a composite string texture on cache miss" so the hot path
+still draws one texture per cached string. That preserves the per-string
+draw-call shape the software renderer is happy with and is closer in
+shape to the existing `ResolveAsciiGlyphSurface` per-glyph cache than to
+`SDL_RenderGeometry`.
+
+The corresponding OpenSpec proposal at
+`openspec/changes/text-renderer-glyph-atlas/` is kept as a record of the
+experiment (proposal, design, specs, tasks). **It SHALL NOT be applied.**
+This section is the official status of round-2 Finding 15 and round-3
+P5: **rejected on measurement, do not retry without the preconditions
+above**.

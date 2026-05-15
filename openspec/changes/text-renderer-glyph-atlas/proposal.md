@@ -1,3 +1,10 @@
+> **STATUS: REJECTED (2026-05-15).** This change was prototyped end-to-end
+> behind an opt-in flag and **regressed** every editor paint scenario on the
+> software renderer by 48–83 % wall-time. The implementation was reverted in
+> full. See `docs/performance-bottleneck-deep-dive-4.md` →
+> "Rejected experiment: ASCII glyph atlas" for the measured outcome and the
+> three preconditions any future revisit MUST meet. Do not apply.
+
 ## Why
 
 Editor text paint dominates the perf budget on the software renderer.
