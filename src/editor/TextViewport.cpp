@@ -1056,6 +1056,24 @@ std::vector<TextPosition> TextViewport::secondary_carets() const {
   return carets;
 }
 
+std::span<const TextPosition> TextViewport::secondary_caret_positions() const {
+  // Quick reject: matching sizes + identical elements means the cache is current and we can
+  // hand out the existing view without touching the heap.
+  const bool in_sync =
+      secondary_caret_positions_cache_.size() == secondary_carets_.size() &&
+      std::equal(secondary_carets_.begin(), secondary_carets_.end(),
+                 secondary_caret_positions_cache_.begin(),
+                 [](const SecondaryCaret& a, const TextPosition& b) { return a.position == b; });
+  if (!in_sync) {
+    secondary_caret_positions_cache_.clear();
+    secondary_caret_positions_cache_.reserve(secondary_carets_.size());
+    for (const SecondaryCaret& caret : secondary_carets_) {
+      secondary_caret_positions_cache_.push_back(caret.position);
+    }
+  }
+  return secondary_caret_positions_cache_;
+}
+
 void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   if (document_->lines.empty()) {
     return;

@@ -1092,6 +1092,31 @@ void TestTextViewportOccurrenceSeedSpanNoWordInWhitespace() {
          "caret positioned in whitespace should not yield a seed span");
 }
 
+void TestTextViewportSecondaryCaretPositionsCacheStability() {
+  // 2026-05-15 perf deep-dive round 2 Finding 10: secondary_caret_positions() must reuse the
+  // same underlying storage across calls when the carets are unchanged, so the render path does
+  // not allocate a fresh vector per frame.
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/secondary-carets-span.txt");
+  viewport.AddSecondaryCaret(1, 2);
+  viewport.AddSecondaryCaret(2, 3);
+
+  const auto first = viewport.secondary_caret_positions();
+  const auto second = viewport.secondary_caret_positions();
+  Expect(first.size() == 2,
+         "secondary_caret_positions reports the registered caret count");
+  Expect(first.data() == second.data(),
+         "back-to-back secondary_caret_positions calls must reuse storage (no per-call alloc)");
+
+  // After a mutation, the cache must refresh — and may pick a new data pointer if it had to grow,
+  // but in steady state it should typically stay put. The functional invariant is that the
+  // returned positions match secondary_carets_.
+  viewport.AddSecondaryCaret(0, 1);
+  const auto third = viewport.secondary_caret_positions();
+  Expect(third.size() == 3,
+         "secondary_caret_positions reflects the new caret after AddSecondaryCaret");
+}
+
 void TestTextViewportTrivialWrappedLayoutFastPath() {
   // 2026-05-15 perf deep-dive round 2 Finding 5: when soft-wrap is off and no fold is collapsed,
   // EnsureWrappedRowLayouts must not allocate the per-line wrapped_row_layouts_ vector. The public
@@ -1228,6 +1253,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportOccurrenceSeedSpanRejectsMultiLineSelection);
   AddTest(tests, "TextViewport/OccurrenceSeedSpanNoWordInWhitespace",
           TestTextViewportOccurrenceSeedSpanNoWordInWhitespace);
+  AddTest(tests, "TextViewport/SecondaryCaretPositionsCacheStability",
+          TestTextViewportSecondaryCaretPositionsCacheStability);
   AddTest(tests, "TextViewport/TrivialWrappedLayoutFastPath",
           TestTextViewportTrivialWrappedLayoutFastPath);
   AddTest(tests, "TextViewport/ReplaceAllUndoRedoHandlesLargeSparseDocument",

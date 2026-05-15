@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <span>
 #include <vector>
 
 #include "editor/LanguageContractView.h"
@@ -174,6 +175,12 @@ class TextViewport {
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
   std::vector<TextPosition> secondary_carets() const;
+  // Render-path accessor: returns a view into a cached vector that mirrors
+  // `secondary_carets_`. The cache is rebuilt only when the positions
+  // actually differ (size mismatch or any element changed), so steady-state
+  // frames pay only an O(N) compare instead of allocating a fresh vector.
+  // Result is valid until the next mutating operation on this viewport.
+  std::span<const TextPosition> secondary_caret_positions() const;
   bool has_multiple_carets() const { return !secondary_carets_.empty(); }
   void AddSecondaryCaret(std::size_t line, std::size_t column);
   // Adds a secondary caret with an active selection (anchor → position). Used
@@ -384,6 +391,9 @@ class TextViewport {
   bool save_ensure_final_newline_ = false;
   LanguageContractView lc_view_;
   std::vector<SecondaryCaret> secondary_carets_;
+  // Cache for secondary_caret_positions(): mirrors `secondary_carets_.position` and is rebuilt
+  // lazily when sizes differ or any element changed. Capacity persists across rebuilds.
+  mutable std::vector<TextPosition> secondary_caret_positions_cache_;
   mutable std::vector<WrappedRowLayout> wrapped_row_layouts_;
   mutable std::vector<std::size_t> wrapped_line_row_offsets_;
   mutable std::size_t wrapped_row_layouts_tab_size_ = 0;

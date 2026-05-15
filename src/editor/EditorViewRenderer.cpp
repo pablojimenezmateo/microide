@@ -364,7 +364,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const std::size_t scroll_line = viewport.scroll_line();
   const std::size_t cursor_line = viewport.cursor_line();
   const bool soft_wrap = viewport.soft_wrap();
-  const auto& secondary_carets = viewport.secondary_carets();
+  // 2026-05-15 perf deep-dive round 2 Finding 10: span accessor avoids the per-frame vector
+  // allocation that secondary_carets() performed when the caret set is stable.
+  const std::span<const TextPosition> secondary_carets = viewport.secondary_caret_positions();
   const auto selection = viewport.selection_range();
   char line_number_buf[20];
   // Skip the ToLower allocation entirely on the common no-search frame; reuse
