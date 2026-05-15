@@ -1366,6 +1366,19 @@
     bool valid = false;
   };
   std::optional<StatusBarRepoCache> status_bar_repo_cache_;
+  struct StatusBarEditorSegmentsCache {
+    const editor::TextViewport* viewport = nullptr;
+    std::size_t cursor_line = 0;
+    std::size_t cursor_column = 0;
+    bool soft_tabs = false;
+    std::size_t tab_size = 0;
+    std::size_t errors = 0;
+    std::size_t warnings = 0;
+    std::string line_column_text;
+    std::string indent_text;
+    std::string problems_text;
+  };
+  StatusBarEditorSegmentsCache status_bar_editor_segments_cache_;
   SettingsOverlayService settings_overlay_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {

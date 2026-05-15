@@ -712,17 +712,35 @@ void WorkspaceShell::RefreshStatusBar() {
   const editor::TextViewport* const active_viewport = ActiveEditorViewport();
   if (active_viewport != nullptr) {
     const editor::TextViewport* const viewport = active_viewport;
+    if (status_bar_editor_segments_cache_.viewport != viewport ||
+        status_bar_editor_segments_cache_.cursor_line != viewport->cursor_line() ||
+        status_bar_editor_segments_cache_.cursor_column != viewport->cursor_column()) {
+      status_bar_editor_segments_cache_.viewport = viewport;
+      status_bar_editor_segments_cache_.cursor_line = viewport->cursor_line();
+      status_bar_editor_segments_cache_.cursor_column = viewport->cursor_column();
+      status_bar_editor_segments_cache_.line_column_text =
+          "Ln " + std::to_string(viewport->cursor_line() + 1) + ", Col " +
+          std::to_string(viewport->cursor_column() + 1);
+    }
     StatusBarSegmentValue line_col;
-    line_col.text = "Ln " + std::to_string(viewport->cursor_line() + 1) + ", Col " +
-                    std::to_string(viewport->cursor_column() + 1);
+    line_col.text = status_bar_editor_segments_cache_.line_column_text;
     line_col.tooltip = "Go to line/column";
     line_col.visible = true;
     line_col.clickable = true;
     status_bar_service_.SetSegment(StatusBarSegmentId::LineColumn, std::move(line_col));
 
+    if (status_bar_editor_segments_cache_.viewport != viewport ||
+        status_bar_editor_segments_cache_.soft_tabs != viewport->soft_tabs() ||
+        status_bar_editor_segments_cache_.tab_size != viewport->tab_size()) {
+      status_bar_editor_segments_cache_.viewport = viewport;
+      status_bar_editor_segments_cache_.soft_tabs = viewport->soft_tabs();
+      status_bar_editor_segments_cache_.tab_size = viewport->tab_size();
+      status_bar_editor_segments_cache_.indent_text =
+          (viewport->soft_tabs() ? "Spaces: " : "Tabs: ") +
+          std::to_string(viewport->tab_size());
+    }
     StatusBarSegmentValue indent;
-    indent.text = (viewport->soft_tabs() ? "Spaces: " : "Tabs: ") +
-                  std::to_string(viewport->tab_size());
+    indent.text = status_bar_editor_segments_cache_.indent_text;
     indent.tooltip = "Change indent settings";
     indent.visible = true;
     indent.clickable = true;
@@ -767,6 +785,9 @@ void WorkspaceShell::RefreshStatusBar() {
     status_bar_service_.SetSegment(StatusBarSegmentId::Encoding, std::move(encoding));
   } else {
     status_bar_language_cache_ = {};
+    status_bar_editor_segments_cache_.viewport = nullptr;
+    status_bar_editor_segments_cache_.line_column_text.clear();
+    status_bar_editor_segments_cache_.indent_text.clear();
     status_bar_service_.SetSegment(StatusBarSegmentId::LineColumn, StatusBarSegmentValue{});
     status_bar_service_.SetSegment(StatusBarSegmentId::Indent, StatusBarSegmentValue{});
     status_bar_service_.SetSegment(StatusBarSegmentId::Language, StatusBarSegmentValue{});
@@ -778,10 +799,21 @@ void WorkspaceShell::RefreshStatusBar() {
     const std::size_t errors = context_.current_project_state.diagnostics_store.ErrorCount();
     const std::size_t warnings = context_.current_project_state.diagnostics_store.WarningCount();
     if (errors > 0 || warnings > 0) {
-      problems.text = std::to_string(errors) + " errors, " + std::to_string(warnings) + " warnings";
+      if (status_bar_editor_segments_cache_.errors != errors ||
+          status_bar_editor_segments_cache_.warnings != warnings) {
+        status_bar_editor_segments_cache_.errors = errors;
+        status_bar_editor_segments_cache_.warnings = warnings;
+        status_bar_editor_segments_cache_.problems_text =
+            std::to_string(errors) + " errors, " + std::to_string(warnings) + " warnings";
+      }
+      problems.text = status_bar_editor_segments_cache_.problems_text;
       problems.tooltip = "Open Problems";
       problems.visible = true;
       problems.clickable = true;
+    } else {
+      status_bar_editor_segments_cache_.errors = 0;
+      status_bar_editor_segments_cache_.warnings = 0;
+      status_bar_editor_segments_cache_.problems_text.clear();
     }
   }
   status_bar_service_.SetSegment(StatusBarSegmentId::Problems, std::move(problems));

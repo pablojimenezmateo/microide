@@ -51,6 +51,9 @@ The following high-priority frame-path optimizations are now implemented:
    status-bar LSP text/tooltip now reuse a single readiness snapshot per refresh, and bottom-panel
    LSP label rendering uses non-starting status lookup (`ensure_started=false`) to avoid render-path
    startup/probe work.
+6. Status bar stable-string caches:
+   line/column, indent, and problems segment strings now reuse cached text and only rebuild when
+   cursor position, editor indent settings, or diagnostics severity totals change.
 
 ## Executive Summary
 
