@@ -2,6 +2,34 @@
 
 Date: 2026-05-15
 
+## Status snapshot (2026-05-15, end of pass)
+
+| # | Finding                                                | Status |
+| - | ------------------------------------------------------ | ------ |
+| 1 | View-model surfaces rebuilt 2-3×/frame                  | partial (string-view fallbacks; redundant Build* calls are now allocation-free) |
+| 2 | Per-row paint loops over flat run vectors              | done  (whitespace_row_offsets CSR + occurrence binary search) |
+| 3 | RefreshStatusBar synchronous git                       | done  (cached project segment + invariant lint) |
+| 4 | std::stol with try/catch                                | done  (util::ParseInt rewrite) |
+| 5 | Wrapped-row layout rebuild per edit                    | done  (trivial-layout fast path skips the vector build) |
+| 6 | FoldingModel O(N²) remap + FindPair linear scan        | done  (indexed remap + 256-entry bracket table) |
+| 7 | Render-TU string materializations                      | done  (string_view + thread_local scratches + lint guard) |
+| 8 | TerminalCell carries std::string per cell              | deferred — std::string SSO makes the heap-pressure cost small; full rewrite to inline storage belongs with the scrollback ring/page refactor (round-1 Finding 6) |
+| 9 | Width-cache LRU duplicates key strings                  | done  (deque of string_view into map keys) |
+| 10 | secondary_carets() allocates vectors per call         | done  (span accessor + cache stability) |
+| 11 | sticky/occurrence vectors copied on cache hit        | done  (std::span<const T> view models) |
+| 12 | Unordered_set in occurrence scan refresh             | done  (sorted thread_local vector) |
+| 13 | VisualColumnFromLayout binary search                 | deferred — fits naturally with Finding 16's revision split |
+| 14 | IndentGuides per-row segments                        | done  (coalesce into multi-row runs) |
+| 15 | Glyph atlas for SDL_ttf cache misses                  | deferred — separate text-rendering pass |
+| 16 | Single layout_revision cascade                       | partial (Findings 5/6 closed the visible-cost paths; full revision split is the next pass) |
+| 17 | Per-frame scratch vectors that should be members     | done  (ComputeSingleLineViewMetrics thread_local scratch) |
+| 18 | PrepareFrameOnce queue consumers                     | deferred — needs event-revision accounting infrastructure |
+| 19 | Lint coverage gaps                                   | done  (5 new ArchitectureInvariants rules + targeted fixtures) |
+
+Deferred items are tracked individually and will be tackled in follow-up passes.
+
+---
+
 This is a follow-up investigation after the round-1 fixes (`docs/performance-bottleneck-deep-dive.md`)
 were implemented. The first deep dive removed the worst frame-prep regressions; this round digs
 deeper into render-path translation units, edit invalidation, terminal text storage, and several
