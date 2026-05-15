@@ -49,14 +49,6 @@ void DrawFoldGutterMarker(SDL_Renderer* renderer,
   SDL_RenderFillRect(renderer, &vertical);
 }
 
-std::string ToLower(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return lowered;
-}
-
 void DrawPlaceholderView(SDL_Renderer* renderer,
                          const render::TextRenderer& text_renderer,
                          const render::Theme& theme,
@@ -242,11 +234,18 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
   draw_panel(tool_panel, "Tool Shortcuts", kToolShortcuts, 148.0f);
   draw_panel(command_panel, "Command Palette", kCommands, 0.0f);
 
-  const std::string backend_label = "text renderer: " + std::string(text_renderer.BackendName());
-  const float backend_width = text_renderer.MeasureWidth(backend_label);
+  // Backend label is rebuilt only when the placeholder view is drawn (i.e. there is no open file).
+  // Still cheap, but reuse a thread_local so the placeholder paint stays allocation-free per
+  // frame.
+  thread_local std::string backend_label_scratch;
+  backend_label_scratch.clear();
+  backend_label_scratch.reserve(20 + text_renderer.BackendName().size());
+  backend_label_scratch.append("text renderer: ");
+  backend_label_scratch.append(text_renderer.BackendName());
+  const float backend_width = text_renderer.MeasureWidth(backend_label_scratch);
   text_renderer.DrawStringOn(renderer, card.x + card.w - backend_width - 18.0f,
                              card.y + card.h - 24.0f, theme.text_disabled,
-                             theme.surface_raised, backend_label);
+                             theme.surface_raised, backend_label_scratch);
 }
 
 }  // namespace

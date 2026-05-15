@@ -61,7 +61,9 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
                      popup.w - 8.0f, kWorkspaceMenuPopupItemHeight);
         const bool hovered = last_mouse_position_valid_ &&
                              Contains(row, last_mouse_x_, last_mouse_y_);
-        DrawMenuRow(text_renderer_, renderer, theme_, row, spec ? std::string(spec->label) : std::string{},
+        // DrawMenuRow takes std::string_view; pass directly without materializing a per-row string.
+        DrawMenuRow(text_renderer_, renderer, theme_, row,
+                    spec ? std::string_view(spec->label) : std::string_view{},
                     {}, /*enabled=*/true, hovered, /*checked=*/false);
       }
     }

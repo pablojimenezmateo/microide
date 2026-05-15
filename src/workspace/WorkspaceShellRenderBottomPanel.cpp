@@ -137,24 +137,27 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         ++run_end;
       }
 
-      std::string run_text;
-      run_text.reserve(run_end - column);
+      // Reuse a single scratch string across rows and frames so terminal output paint stays
+      // allocation-bounded by line width, not by `runs × frames`. Capacity persists in steady state.
+      thread_local std::string run_text_scratch;
+      run_text_scratch.clear();
+      run_text_scratch.reserve(run_end - column);
       bool has_non_space = false;
       for (std::size_t index = column; index < run_end; ++index) {
         const std::string_view display_text = line.cells[index].DisplayText();
         if (display_text.empty()) {
-          run_text.push_back(' ');
+          run_text_scratch.push_back(' ');
           continue;
         }
         if (display_text != " ") {
           has_non_space = true;
         }
-        run_text.append(display_text);
+        run_text_scratch.append(display_text);
       }
 
       if (has_non_space) {
         const float run_x = x + static_cast<float>(column) * char_width;
-        text_renderer_.DrawString(renderer, run_x, y, foreground, run_text);
+        text_renderer_.DrawString(renderer, run_x, y, foreground, run_text_scratch);
       }
       column = run_end;
     }
@@ -188,12 +191,15 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                       ? theme_.text_primary
                       : theme_.text_secondary);
   } else {
-    std::string header_label = "Command";
+    // Header label is one of: "Command" (default), "Output" (no channel match), or the channel's
+    // label/id. Hold via string_view so the constant case allocates nothing per frame.
+    std::string_view header_label = "Command";
     if (output_panel) {
       header_label = "Output";
       for (const auto& channel : output_channels_.Channels()) {
         if (channel.id == panel_vm.output_channel_id) {
-          header_label = channel.label.empty() ? channel.id : channel.label;
+          header_label = channel.label.empty() ? std::string_view(channel.id)
+                                                : std::string_view(channel.label);
           break;
         }
       }
@@ -361,8 +367,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
               if (!display_text.empty()) {
                 const SDL_Color cursor_foreground =
                     resolve_terminal_colors(cell.style, false).second;
+                // DrawString takes std::string_view; pass the view directly without copying.
                 text_renderer_.DrawString(renderer, cursor_x, cursor_y, cursor_foreground,
-                                          std::string(display_text));
+                                          display_text);
               }
             }
           }
@@ -392,11 +399,19 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const auto visual =
         (current_surface == panel_surface) ? BuildActiveTextInputVisual(layout, std::nullopt)
                                            : std::nullopt;
-    const std::string panel_fallback =
-        "> " + panel_vm.command_state->input.text();
-    const std::string_view panel_display_text =
-        (visual.has_value() && !visual->displayed_text.empty()) ? std::string_view(visual->displayed_text)
-                                                                : std::string_view(panel_fallback);
+    // Avoid materializing "> "+input every frame: assemble into a thread_local scratch on the
+    // fallback path only when the visual hasn't supplied displayed text.
+    thread_local std::string panel_fallback_scratch;
+    std::string_view panel_display_text;
+    if (visual.has_value() && !visual->displayed_text.empty()) {
+      panel_display_text = visual->displayed_text;
+    } else {
+      panel_fallback_scratch.clear();
+      panel_fallback_scratch.reserve(2 + panel_vm.command_state->input.text().size());
+      panel_fallback_scratch.append("> ");
+      panel_fallback_scratch.append(panel_vm.command_state->input.text());
+      panel_display_text = panel_fallback_scratch;
+    }
     DrawSingleLineTextTail(
         renderer, prompt_rect.x + 6.0f,
         prompt_rect.y + std::floor((prompt_rect.h - text_renderer_.LineHeight()) * 0.5f),

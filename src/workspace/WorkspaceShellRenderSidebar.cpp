@@ -17,10 +17,14 @@ constexpr float kSidebarInset = 10.0f;
 constexpr float kTreeIndentWidth = 14.0f;
 constexpr float kTreeChevronSlotWidth = 12.0f;
 
-std::string BuildProjectSearchResultLabel(std::size_t line,
-                                          std::size_t column,
-                                          std::string_view snippet) {
-  std::string label;
+// Reuse a thread-local scratch so the per-result label assembly is allocation-bounded by max label
+// width, not by `results × frames`. The render path only inspects the returned view immediately
+// after this call, so the scratch's lifetime is safe.
+std::string_view BuildProjectSearchResultLabel(std::size_t line,
+                                                std::size_t column,
+                                                std::string_view snippet) {
+  thread_local std::string label;
+  label.clear();
   label.reserve(snippet.size() + 32);
   AppendUnsigned(label, line + 1);
   label += ":";
@@ -231,7 +235,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
                                   selected);
 
-      const std::string label =
+      const std::string_view label =
           BuildProjectSearchResultLabel(result.line, result.column, result.preview);
       DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 6.0f,
                           selected ? theme_.text_primary : theme_.text_secondary,
@@ -334,7 +338,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                                   selected);
 
       const char git_marker = GitMarker(entry.status);
-      const std::string marker_text = git_marker == ' ' ? "" : std::string(1, git_marker);
+      // Hold the marker as a single-char string_view into the local `git_marker` storage to avoid
+      // the per-row std::string allocation.
+      const std::string_view marker_text =
+          git_marker == ' ' ? std::string_view{} : std::string_view(&git_marker, 1);
       const float marker_width =
           marker_text.empty() ? 0.0f : text_renderer_.MeasureWidth(marker_text);
       const GitSidebarEntryActionLayout actions =
@@ -476,7 +483,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const float chevron_center_y = row_rect.y + row_rect.h * 0.5f;
       const char git_marker = GitMarker(entry.git_status);
       const bool has_git_marker = git_marker != ' ';
-      const std::string git_marker_text = has_git_marker ? std::string(1, git_marker) : "";
+      // Hold as a single-char view into the local `git_marker` storage; allocation-free per row.
+      const std::string_view git_marker_text =
+          has_git_marker ? std::string_view(&git_marker, 1) : std::string_view{};
       const float marker_width =
           has_git_marker ? text_renderer_.MeasureWidth(git_marker_text) : 0.0f;
       const float marker_x = row_rect.x + row_rect.w - marker_width - 8.0f;

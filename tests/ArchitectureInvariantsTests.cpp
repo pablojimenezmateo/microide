@@ -1622,6 +1622,58 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
   return result;
 }
 
+RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
+    const std::filesystem::path& repo_root) {
+  // 2026-05-15 perf deep-dive round 2 Finding 7: render TUs used to construct
+  // `std::string(1, ch)` for single-char git markers and `std::string("prefix ")` /
+  // `"prefix " + …` for prompt scaffolds, allocating once per row/frame. The
+  // fixes route through std::string_view (the marker case) or a thread_local
+  // scratch (the prompt case). This rule blocks the regression.
+  RuleResult result;
+  result.label = "render TUs do not materialize std::string(1, ch) / prefix-concat strings";
+  result.hard_fail = true;
+
+  std::vector<std::filesystem::path> render_files;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (name.starts_with("WorkspaceShellRender") || name == "WorkspaceShellHoverPopup.cpp" ||
+        name == "WorkspaceShellHoverTargets.cpp") {
+      render_files.push_back(entry.path());
+    }
+  }
+  render_files.push_back(repo_root / "src/editor/EditorViewRenderer.cpp");
+  render_files.push_back(repo_root / "src/editor/DecoratedTextGridRenderer.cpp");
+
+  // `std::string(1, x)` materializes a 1-char std::string — use a string_view over the char
+  // storage instead. `std::string(<view>)` is also a per-call allocation.
+  const std::regex single_char_pattern(R"(std::string\s*\(\s*1\s*,)");
+  // `"literal" + <expr>` concatenation in a render TU.
+  const std::regex literal_plus_pattern(R"("[^"\n]*"\s*\+\s*[A-Za-z_])");
+  // Plain `std::string("literal")` constructions in render TUs (occasional helpful in tests but
+  // not in hot paint paths).
+  const std::regex string_from_view_pattern(R"(std::string\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\.)");
+
+  for (const auto& path : render_files) {
+    if (!std::filesystem::exists(path)) {
+      continue;
+    }
+    const std::string text = ReadText(path);
+    AppendCodeMaskRegexViolations(
+        result, path, text, single_char_pattern,
+        "render TU must not build std::string(1, ch); use std::string_view over the char storage");
+    AppendCodeMaskRegexViolations(
+        result, path, text, literal_plus_pattern,
+        "render TU must not concatenate literal + identifier; use a thread_local scratch or "
+        "compose the string in RenderViewModelBuilder");
+    (void)string_from_view_pattern;  // currently advisory; some constructors of derived types
+                                      // still match; left in code for future tightening.
+  }
+  return result;
+}
+
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root) {
   // sticky_lines and occurrence_ranges are spans into thread_local builder caches. Reverting them
   // to owning std::vectors reintroduces the per-frame element copy that Finding 11 closed.
@@ -1712,6 +1764,7 @@ void TestArchitectureInvariants() {
   results.push_back(CheckStatusBarRefreshIsAsyncOnly(repo_root));
   results.push_back(CheckSidebarSurfaceFallbackUsesStringView(repo_root));
   results.push_back(CheckEditorViewModelStickyAndOccurrenceAreSpans(repo_root));
+  results.push_back(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(repo_root));
 
   bool hard_failure = false;
   for (const RuleResult& result : results) {
@@ -1830,6 +1883,17 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "std::string_view replace_fallback_text; };\n");
   Expect(CheckSidebarSurfaceFallbackUsesStringView(root).violations.empty(),
          "sidebar-fallback rule should pass on the string_view fixture");
+
+  // Finding 7: no std::string(1, ch) or "literal" + identifier in render TUs.
+  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+            "void F(char m, const std::string& s){ auto x = std::string(1, m); "
+            "auto y = std::string(\"foo: \") + s; (void)x; (void)y; }\n");
+  Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "render-string rule should catch single-char std::string and literal+ident concat");
+  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+            "void F(char m, const std::string& s){ std::string_view x(&m, 1); (void)x; (void)s; }\n");
+  Expect(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "render-string rule should pass on the string_view rewrite fixture");
 
   // Finding 11: EditorViewModel sticky/occurrence stay as spans.
   WriteFile(root / "src/editor/EditorViewModel.h",
