@@ -1366,6 +1366,16 @@
     bool valid = false;
   };
   std::optional<StatusBarRepoCache> status_bar_repo_cache_;
+  // Caches the rendered "branch [cleanliness]" project segment so RefreshStatusBar does not rebuild
+  // these strings every frame. Keyed by the inputs that participate in the segment text/tooltip.
+  struct StatusBarProjectSegmentCache {
+    std::string branch_label;
+    std::string cleanliness;
+    std::string text;
+    std::string tooltip;
+    bool valid = false;
+  };
+  StatusBarProjectSegmentCache status_bar_project_segment_cache_;
   struct StatusBarEditorSegmentsCache {
     const editor::TextViewport* viewport = nullptr;
     std::size_t cursor_line = 0;

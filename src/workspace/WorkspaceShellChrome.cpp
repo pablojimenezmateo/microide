@@ -28,24 +28,6 @@ std::string ProjectTabBadgeText(std::string_view label) {
   return "P";
 }
 
-std::string ResolveBranchLabel(const std::filesystem::path& root) {
-  const project::GitRepository repo(root);
-  if (!repo.IsValid()) {
-    return {};
-  }
-  if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
-      symbolic_ref.success()) {
-    std::string label = symbolic_ref.output;
-    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
-      label.pop_back();
-    }
-    if (!label.empty()) {
-      return label;
-    }
-  }
-  return "HEAD";
-}
-
 }  // namespace
 
 std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::BuildVisibleStripTabs(
@@ -668,14 +650,13 @@ void WorkspaceShell::RefreshStatusBar() {
       }
       repo_available = status_bar_repo_cache_->valid;
     }
-    const std::string cleanliness =
+    const std::string_view cleanliness =
         repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm";
-    std::string branch_label = context_.current_project_state.sidebar.git.branch_label;
-    if (branch_label.empty() && repo_available) {
-      context_.current_project_state.sidebar.git.branch_label =
-          ResolveBranchLabel(context_.current_project_state.root);
-      branch_label = context_.current_project_state.sidebar.git.branch_label;
-    }
+    // Branch label is provided by the async sidebar git refresh. Render render render
+    // synchronous `git symbolic-ref` from the shell thread used to live here; it is no
+    // longer permitted (Finding 3 of perf deep-dive round 2) — fall through to async-known
+    // fallbacks instead and let the next refresh fill `branch_label` in.
+    std::string_view branch_label = context_.current_project_state.sidebar.git.branch_label;
     if (branch_label.empty() && repo_available) {
       branch_label = git_state.base_label;
     }
@@ -685,16 +666,39 @@ void WorkspaceShell::RefreshStatusBar() {
     if (branch_label.empty()) {
       branch_label = "no-scm";
     }
-    project_segment.text = branch_label == "no-scm" && cleanliness == "no-scm"
-                               ? std::string("no-scm")
-                               : branch_label + " [" + cleanliness + "]";
-    project_segment.tooltip = "Open Source Control (" + cleanliness + ")";
+
+    auto& cache = status_bar_project_segment_cache_;
+    const bool cache_hit = cache.valid && cache.branch_label == branch_label &&
+                           cache.cleanliness == cleanliness;
+    if (!cache_hit) {
+      cache.branch_label.assign(branch_label);
+      cache.cleanliness.assign(cleanliness);
+      if (branch_label == "no-scm" && cleanliness == "no-scm") {
+        cache.text = "no-scm";
+      } else {
+        cache.text.clear();
+        cache.text.reserve(branch_label.size() + cleanliness.size() + 3);
+        cache.text.append(branch_label);
+        cache.text.append(" [");
+        cache.text.append(cleanliness);
+        cache.text.append("]");
+      }
+      cache.tooltip.clear();
+      cache.tooltip.reserve(cleanliness.size() + 22);
+      cache.tooltip.append("Open Source Control (");
+      cache.tooltip.append(cleanliness);
+      cache.tooltip.append(")");
+      cache.valid = true;
+    }
+    project_segment.text = cache.text;
+    project_segment.tooltip = cache.tooltip;
     project_segment.visible = true;
     project_segment.clickable = true;
     branch_segment = {};
   }
   if (context_.current_project_state.root.empty()) {
     status_bar_repo_cache_.reset();
+    status_bar_project_segment_cache_ = {};
   }
   status_bar_service_.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
   status_bar_service_.SetSegment(StatusBarSegmentId::Branch, std::move(branch_segment));

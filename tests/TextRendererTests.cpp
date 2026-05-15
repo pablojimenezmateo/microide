@@ -1481,10 +1481,18 @@ void TestParseStickyScrollMaxDepthSettingClamp() {
   using microide::workspace::ParseStickyScrollMaxDepthSetting;
   Expect(ParseStickyScrollMaxDepthSetting(std::nullopt) == 3,
          "unset sticky depth defaults to three");
+  Expect(ParseStickyScrollMaxDepthSetting(std::string()) == 3,
+         "empty sticky depth defaults to three");
   Expect(ParseStickyScrollMaxDepthSetting(std::string("8")) == 8, "Eight should clamp to eight");
   Expect(ParseStickyScrollMaxDepthSetting(std::string("0")) == 1, "Too-small values clamp up");
   Expect(ParseStickyScrollMaxDepthSetting(std::string("99")) == 8,
          "Too-large values clamp down");
+  // The previous implementation used try/catch around std::stol. The util::ParseInt rewrite must
+  // preserve the "garbage input falls back to default" behavior without exceptions.
+  Expect(ParseStickyScrollMaxDepthSetting(std::string("abc")) == 3,
+         "non-numeric setting should fall back to the default sticky depth");
+  Expect(ParseStickyScrollMaxDepthSetting(std::string("3xyz")) == 3,
+         "trailing garbage should fall back to the default sticky depth");
 }
 
 void TestComputeStickyScrollLinesRespectsNestingAndDepth() {

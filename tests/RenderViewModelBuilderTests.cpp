@@ -6,6 +6,8 @@
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 
+#include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace microide::tests {
@@ -62,6 +64,44 @@ void TestBuilderConstructsAllSurfaceViewModels() {
          "BuildSettingsOverlay should report invisible when the service is closed");
 }
 
+void TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage() {
+  // 2026-05-15 perf deep-dive round 2 Finding 1: BuildSidebarSurface is called multiple times per
+  // frame. The fallback fields must be std::string_view backed by either compile-time constants or
+  // live state, never per-call std::string allocations.
+  static_assert(std::is_same_v<decltype(microide::workspace::SidebarSurfaceViewModel::
+                                            query_fallback_text),
+                                std::string_view>,
+                "SidebarSurfaceViewModel::query_fallback_text must be std::string_view");
+  static_assert(std::is_same_v<decltype(microide::workspace::SidebarSurfaceViewModel::
+                                            replace_fallback_text),
+                                std::string_view>,
+                "SidebarSurfaceViewModel::replace_fallback_text must be std::string_view");
+
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+
+  // Empty query: fallback should point at the static "Search in project" placeholder. Two builds
+  // back-to-back must return the same data pointer to prove no per-call allocation.
+  const auto first = builder.BuildSidebarSurface();
+  const auto second = builder.BuildSidebarSurface();
+  Expect(first.query_fallback_text == "Search in project",
+         "empty query should fall back to the default placeholder");
+  Expect(first.replace_fallback_text == "Replace in project",
+         "empty replace should fall back to the default placeholder");
+  Expect(first.query_fallback_text.data() == second.query_fallback_text.data(),
+         "back-to-back BuildSidebarSurface calls must reuse the same fallback storage "
+         "(no per-call std::string allocation)");
+  Expect(first.replace_fallback_text.data() == second.replace_fallback_text.data(),
+         "back-to-back BuildSidebarSurface calls must reuse the same fallback storage "
+         "for the replace placeholder");
+
+  // OverlaySurfaceViewModel.buffer_search_query_text similarly. Must be a view.
+  static_assert(std::is_same_v<decltype(microide::workspace::OverlaySurfaceViewModel::
+                                            buffer_search_query_text),
+                                std::string_view>,
+                "OverlaySurfaceViewModel::buffer_search_query_text must be std::string_view");
+}
+
 void TestBuilderStatusBarSurfacesTooltipFromService() {
   WorkspaceContext context;
   StatusBarService service;
@@ -91,6 +131,8 @@ void TestBuilderStatusBarSurfacesTooltipFromService() {
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/ConstructsAllSurfaceViewModels",
           TestBuilderConstructsAllSurfaceViewModels);
+  AddTest(tests, "RenderViewModelBuilder/SidebarFallbacksAreViewsIntoStableStorage",
+          TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage);
   AddTest(tests, "RenderViewModelBuilder/StatusBarSurfacesTooltipFromService",
           TestBuilderStatusBarSurfacesTooltipFromService);
 }

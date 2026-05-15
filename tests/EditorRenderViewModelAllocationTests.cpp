@@ -84,9 +84,11 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
       /*render_whitespace_enabled=*/true);
 
   const std::size_t cap_fold = vm.fold_gutter_marks.capacity();
-  const std::size_t cap_sticky = vm.sticky_lines.capacity();
-  const std::size_t cap_occ = vm.occurrence_ranges.capacity();
   const std::size_t cap_ws = vm.whitespace_glyph_runs.capacity();
+  // sticky_lines / occurrence_ranges are spans into thread_local builder caches; verify the span
+  // identity (data pointer) is preserved on cache hits so no copy happens per frame.
+  const std::size_t* sticky_data_first = vm.sticky_lines.data();
+  const microide::editor::OccurrenceRange* occ_data_first = vm.occurrence_ranges.data();
 
   Expect(!model.ranges().empty(), "capacity test needs a non-empty fold model");
   Expect(!vm.sticky_lines.empty(), "warm-up build should emit sticky lines for nested fixture");
@@ -101,10 +103,10 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
 
   Expect(vm.fold_gutter_marks.capacity() == cap_fold,
          "fold_gutter_marks should retain capacity on a stable second frame");
-  Expect(vm.sticky_lines.capacity() == cap_sticky,
-         "sticky_lines should retain capacity on a stable second frame");
-  Expect(vm.occurrence_ranges.capacity() == cap_occ,
-         "occurrence_ranges should retain capacity on a stable second frame");
+  Expect(vm.sticky_lines.data() == sticky_data_first,
+         "sticky_lines span should point at the same cache storage on a stable second frame");
+  Expect(vm.occurrence_ranges.data() == occ_data_first,
+         "occurrence_ranges span should point at the same cache storage on a stable second frame");
   Expect(vm.whitespace_glyph_runs.capacity() == cap_ws,
          "whitespace_glyph_runs should retain capacity on a stable second frame");
 

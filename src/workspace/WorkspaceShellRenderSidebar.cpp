@@ -105,7 +105,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto visual =
         sidebar_needs_visual ? BuildActiveTextInputVisual(layout, std::nullopt) : std::nullopt;
     const auto sidebar_display_text = [&](TextInputSurface surface,
-                                          const std::string& fallback) -> std::string_view {
+                                          std::string_view fallback) -> std::string_view {
       if (visual.has_value() && visual->surface == surface && !visual->displayed_text.empty()) {
         return visual->displayed_text;
       }

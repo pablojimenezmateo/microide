@@ -44,7 +44,9 @@ struct OverlaySurfaceViewModel {
   OverlayMode mode = OverlayMode::FileFinder;
   int scroll_row = 0;
   TextInputSurface current_surface = TextInputSurface::None;
-  std::string buffer_search_query_text;
+  // View into live SingleLineEditor state; valid for the duration of the frame the view model is
+  // used. Storing a view here keeps BuildOverlaySurface allocation-free per frame.
+  std::string_view buffer_search_query_text;
   const OverlayState* state = nullptr;
   ProjectWorkspaceState* project_state = nullptr;
 };
@@ -68,8 +70,11 @@ struct SidebarSurfaceViewModel {
   SidebarMode mode = SidebarMode::Tree;
   int scroll_row = 0;
   bool project_search_editing = false;
-  std::string query_fallback_text;
-  std::string replace_fallback_text;
+  // Either a constant placeholder or a view into live `project_search.{query,replace_text}` state.
+  // Safe to hold as a view because rendering is single-threaded and the underlying state outlives
+  // the view model. Avoids per-frame `std::string` allocations on every BuildSidebarSurface() call.
+  std::string_view query_fallback_text;
+  std::string_view replace_fallback_text;
   ProjectWorkspaceState* project_state = nullptr;
 };
 

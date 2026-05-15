@@ -85,7 +85,11 @@ WorkspaceShell::SingleLineViewMetrics WorkspaceShell::ComputeSingleLineViewMetri
     std::size_t start;
     float width;
   };
-  std::vector<CharEntry> before_cursor;
+  // Reuse capacity across calls; multiple text-input surfaces (overlay, prompt, sidebar) each call
+  // this helper per frame, and reallocating the inner vector ~5×/frame is wasted work.
+  thread_local std::vector<CharEntry> before_cursor_scratch;
+  std::vector<CharEntry>& before_cursor = before_cursor_scratch;
+  before_cursor.clear();
   before_cursor.reserve(64);
   for (std::size_t pos = 0; pos < cursor_byte;) {
     const std::size_t next = util::NextUtf8Boundary(full_text, pos);

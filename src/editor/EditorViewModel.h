@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <span>
 #include <vector>
 
 namespace microide::editor {
@@ -32,10 +33,14 @@ struct WhitespaceGlyphRun {
 
 struct EditorViewModel {
   std::vector<FoldGutterMark> fold_gutter_marks;
-  std::vector<OccurrenceRange> occurrence_ranges;
+  // `occurrence_ranges` and `sticky_lines` are views into thread_local builder caches owned by
+  // `RenderViewModelBuilder`. They stay valid until the next BuildEditorViewModelInto on the
+  // same thread, which matches the render-frame lifetime of this view model. The view-into-cache
+  // form avoids the per-frame element copy that the previous owning vectors required.
+  std::span<const OccurrenceRange> occurrence_ranges;
   // Logical opener line indices from outer enclosing fold to inner, pinned in the sticky band
   // (top row = outer scope). Empty when sticky scroll is disabled or no enclosing folds apply.
-  std::vector<std::size_t> sticky_lines;
+  std::span<const std::size_t> sticky_lines;
   std::vector<WhitespaceGlyphRun> whitespace_glyph_runs;
 };
 

@@ -1,6 +1,7 @@
 #include "workspace/RenderViewModelBuilder.h"
 
 #include "editor/FoldingModel.h"
+#include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 
 #include "workspace/StatusBarService.h"
@@ -11,7 +12,6 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 
 namespace microide::workspace {
 
@@ -147,8 +147,11 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
 
   scan_cache.ranges.clear();
 
-  std::unordered_set<std::size_t> visible_line_indices;
-  visible_line_indices.reserve(visible_rows);
+  // Reused across calls; cleared (not reallocated) every refresh. Wrapped rows
+  // can share a buffer line, so we sort+unique instead of carrying a hash set.
+  thread_local std::vector<std::size_t> visible_line_indices_scratch;
+  std::vector<std::size_t>& visible_line_indices = visible_line_indices_scratch;
+  visible_line_indices.clear();
   const std::size_t scroll = viewport.scroll_line();
   const std::size_t visual_total = viewport.visual_line_count();
   for (std::size_t row = 0; row < visible_rows; ++row) {
@@ -157,8 +160,12 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
       break;
     }
     const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
-    visible_line_indices.insert(row_meta.line_index);
+    visible_line_indices.push_back(row_meta.line_index);
   }
+  std::sort(visible_line_indices.begin(), visible_line_indices.end());
+  visible_line_indices.erase(
+      std::unique(visible_line_indices.begin(), visible_line_indices.end()),
+      visible_line_indices.end());
 
   const auto& lines = viewport.lines();
   const std::string_view needle_view(needle.data(), needle.size());
@@ -299,18 +306,11 @@ int ParseStickyScrollMaxDepthSetting(const std::optional<std::string>& value) {
   if (!value.has_value() || value->empty()) {
     return kDefault;
   }
-  try {
-    const long parsed = std::stol(*value);
-    if (parsed < 1) {
-      return 1;
-    }
-    if (parsed > 8) {
-      return 8;
-    }
-    return static_cast<int>(parsed);
-  } catch (...) {
+  const auto parsed = util::ParseInt(*value);
+  if (!parsed.has_value()) {
     return kDefault;
   }
+  return std::clamp(*parsed, 1, 8);
 }
 
 void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
@@ -420,19 +420,14 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   const std::string_view replace_text =
       editing_replace ? project_search.edit_buffer.text() : project_search.replace_text.text();
 
-  std::string query_fallback_text;
-  if (query_text.empty()) {
-    query_fallback_text = "Search in project";
-  } else {
-    query_fallback_text = std::string(query_text);
-  }
-
-  std::string replace_fallback_text;
-  if (replace_text.empty()) {
-    replace_fallback_text = "Replace in project";
-  } else {
-    replace_fallback_text = std::string(replace_text);
-  }
+  // String constants live in static storage; live state is owned by the project state which
+  // outlives this view model. Either way the view is safe to hold for the duration of a frame.
+  constexpr std::string_view kQueryPlaceholder = "Search in project";
+  constexpr std::string_view kReplacePlaceholder = "Replace in project";
+  const std::string_view query_fallback_text =
+      query_text.empty() ? kQueryPlaceholder : query_text;
+  const std::string_view replace_fallback_text =
+      replace_text.empty() ? kReplacePlaceholder : replace_text;
 
   return SidebarSurfaceViewModel{
       .visible = context_.current_project_state.sidebar.visible,
@@ -440,8 +435,8 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .scroll_row = context_.current_project_state.sidebar.scroll_row,
       .project_search_editing =
           context_.current_project_state.overlay.workflow.project_search.editing,
-      .query_fallback_text = std::move(query_fallback_text),
-      .replace_fallback_text = std::move(replace_fallback_text),
+      .query_fallback_text = query_fallback_text,
+      .replace_fallback_text = replace_fallback_text,
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }
@@ -458,8 +453,8 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     bool render_whitespace_enabled) const {
   util::AddPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls);
   out.fold_gutter_marks.clear();
-  out.sticky_lines.clear();
-  out.occurrence_ranges.clear();
+  out.sticky_lines = {};
+  out.occurrence_ranges = {};
   out.whitespace_glyph_runs.clear();
 
   if (folding_model != nullptr && !folding_model->ranges().empty()) {
@@ -508,7 +503,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     } else {
       ++g_sticky_scroll_hits;
     }
-    out.sticky_lines.assign(g_sticky_scroll_cache.lines.begin(), g_sticky_scroll_cache.lines.end());
+    out.sticky_lines = std::span<const std::size_t>(g_sticky_scroll_cache.lines);
   }
 
   if (render_whitespace_enabled && !viewport.is_placeholder()) {
@@ -553,8 +548,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     ++g_occurrence_scan_hits;
   }
 
-  out.occurrence_ranges.assign(g_occurrence_scan_cache.ranges.begin(),
-                               g_occurrence_scan_cache.ranges.end());
+  out.occurrence_ranges = std::span<const editor::OccurrenceRange>(g_occurrence_scan_cache.ranges);
 }
 
 editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(

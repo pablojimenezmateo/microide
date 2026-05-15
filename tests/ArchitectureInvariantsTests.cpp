@@ -1511,6 +1511,149 @@ RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_r
   return result;
 }
 
+// 2026-05-15 P0 lint additions (perf deep-dive round 2 Finding 19). Each guards a regression that
+// the same-day fixes closed; see docs/performance-bottleneck-deep-dive-2.md.
+
+RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "no std::sto* parsing in render/view-model translation units";
+  result.hard_fail = true;
+  const std::regex pattern(R"(\bstd::(stol|stoi|stoul|stoll|stod|stof|stold)\s*\()");
+
+  std::vector<std::filesystem::path> targets;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (name.starts_with("WorkspaceShellRender") || name == "RenderViewModelBuilder.cpp" ||
+        name == "WorkspaceShellChrome.cpp" || name == "WorkspaceShellHoverPopup.cpp" ||
+        name == "WorkspaceShellHoverTargets.cpp") {
+      targets.push_back(entry.path());
+    }
+  }
+  targets.push_back(repo_root / "src/editor/EditorViewRenderer.cpp");
+  targets.push_back(repo_root / "src/editor/DecoratedTextGridRenderer.cpp");
+
+  for (const auto& path : targets) {
+    if (!std::filesystem::exists(path)) {
+      continue;
+    }
+    const std::string text = ReadText(path);
+    AppendCodeMaskRegexViolations(
+        result, path, text, pattern,
+        "render/view-model TU must use util::ParseInt/ParseFloat instead of std::sto*");
+  }
+  return result;
+}
+
+RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_root) {
+  // RefreshStatusBar runs in PrepareFrameOnce. It MUST NOT spawn subprocesses or
+  // synchronously consult `git symbolic-ref`/`rev-parse` -- the branch label is
+  // populated by the async sidebar git coordinator. The previous synchronous
+  // `git symbolic-ref --short HEAD` fallback was removed in
+  // docs/performance-bottleneck-deep-dive-2.md Finding 3 to eliminate per-frame
+  // UI stalls.
+  RuleResult result;
+  result.label = "RefreshStatusBar must not run synchronous git from the frame path";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellChrome.cpp";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  const auto is_code = BuildCodeMask(text);
+  // Block any `repo.Execute(` or `git symbolic-ref` mention in the file. The IsValid() probe is
+  // still allowed because it is a filesystem-only check cached by status_bar_repo_cache_.
+  const std::array<std::regex, 3> patterns = {
+      std::regex(R"(\brepo\.Execute\s*\()"),
+      std::regex(R"(\.Execute\s*\(\s*\{\s*\"symbolic-ref\")"),
+      std::regex(R"(\bResolveBranchLabel\s*\()"),
+  };
+  for (const auto& pattern : patterns) {
+    for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+      const auto pos = static_cast<std::size_t>(it->position());
+      if (pos < is_code.size() && !is_code[pos]) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = LineNumberAt(text, pos),
+          .message = "RefreshStatusBar must not synchronously run git; the branch label is "
+                     "populated by the async sidebar git refresh path",
+      });
+    }
+  }
+  return result;
+}
+
+RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path& repo_root) {
+  // BuildSidebarSurface() is called multiple times per frame. The fallback text fields used to be
+  // std::string and allocated on every call. They are now std::string_view so the typical render
+  // frame is allocation-free. The header is the load-bearing surface for this rule.
+  RuleResult result;
+  result.label = "SidebarSurfaceViewModel fallback fields stay as std::string_view";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/workspace/RenderViewModelBuilder.h";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  // Require that the two fields are declared as `std::string_view`. A naive grep is enough because
+  // the field appears exactly once and never inside a comment.
+  const std::regex query_pattern(R"(std::string_view\s+query_fallback_text\b)");
+  const std::regex replace_pattern(R"(std::string_view\s+replace_fallback_text\b)");
+  if (!std::regex_search(text, query_pattern)) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "SidebarSurfaceViewModel::query_fallback_text must be std::string_view "
+                   "to keep BuildSidebarSurface allocation-free per frame",
+    });
+  }
+  if (!std::regex_search(text, replace_pattern)) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "SidebarSurfaceViewModel::replace_fallback_text must be std::string_view "
+                   "to keep BuildSidebarSurface allocation-free per frame",
+    });
+  }
+  return result;
+}
+
+RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root) {
+  // sticky_lines and occurrence_ranges are spans into thread_local builder caches. Reverting them
+  // to owning std::vectors reintroduces the per-frame element copy that Finding 11 closed.
+  RuleResult result;
+  result.label = "EditorViewModel sticky/occurrence fields stay as std::span";
+  result.hard_fail = true;
+  const std::filesystem::path path = repo_root / "src/editor/EditorViewModel.h";
+  if (!std::filesystem::exists(path)) {
+    return result;
+  }
+  const std::string text = ReadText(path);
+  const std::regex sticky_pattern(R"(std::span<\s*const\s+std::size_t\s*>\s+sticky_lines\b)");
+  const std::regex occ_pattern(R"(std::span<\s*const\s+OccurrenceRange\s*>\s+occurrence_ranges\b)");
+  if (!std::regex_search(text, sticky_pattern)) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "EditorViewModel::sticky_lines must be std::span<const std::size_t> "
+                   "(view into RenderViewModelBuilder cache)",
+    });
+  }
+  if (!std::regex_search(text, occ_pattern)) {
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = 1,
+        .message = "EditorViewModel::occurrence_ranges must be std::span<const OccurrenceRange> "
+                   "(view into RenderViewModelBuilder cache)",
+    });
+  }
+  return result;
+}
+
 void ReportRule(const RuleResult& result) {
   if (result.violations.empty()) {
     return;
@@ -1563,6 +1706,12 @@ void TestArchitectureInvariants() {
   results.push_back(CheckApplicationCoalescesResize(repo_root));
   results.push_back(CheckMouseWheelUsesFractionalAccumulator(repo_root));
   results.push_back(CheckBottomPanelTerminalRectCache(repo_root));
+  // 2026-05-15 perf deep-dive round 2 invariants. See
+  // docs/performance-bottleneck-deep-dive-2.md.
+  results.push_back(CheckNoStdStoInRenderOrBuilderTus(repo_root));
+  results.push_back(CheckStatusBarRefreshIsAsyncOnly(repo_root));
+  results.push_back(CheckSidebarSurfaceFallbackUsesStringView(repo_root));
+  results.push_back(CheckEditorViewModelStickyAndOccurrenceAreSpans(repo_root));
 
   bool hard_failure = false;
   for (const RuleResult& result : results) {
@@ -1647,6 +1796,52 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "}\n");
   Expect(!CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(root).violations.empty(),
          "ApplyLineEdit fixture should flag full document_->lines snapshots");
+
+  // --- 2026-05-15 perf deep-dive round 2 fixtures ---
+
+  // Finding 19/4: std::sto* must not appear in render/view-model TUs.
+  WriteFile(root / "src/workspace/RenderViewModelBuilder.cpp",
+            "int Parse() { return static_cast<int>(std::stol(\"3\")); }\n");
+  Expect(!CheckNoStdStoInRenderOrBuilderTus(root).violations.empty(),
+         "std::sto* rule should catch std::stol in RenderViewModelBuilder.cpp");
+  WriteFile(root / "src/workspace/RenderViewModelBuilder.cpp",
+            "int Parse() { return util::ParseInt(\"3\").value_or(3); }\n");
+  Expect(CheckNoStdStoInRenderOrBuilderTus(root).violations.empty(),
+         "std::sto* rule should accept the util::ParseInt rewrite");
+
+  // Finding 3: RefreshStatusBar must not synchronously run git.
+  WriteFile(root / "src/workspace/WorkspaceShellChrome.cpp",
+            "std::string F(const Repo& repo) { return repo.Execute({\"symbolic-ref\"}).output; }\n");
+  Expect(!CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
+         "status-bar rule should catch synchronous repo.Execute in WorkspaceShellChrome.cpp");
+  WriteFile(root / "src/workspace/WorkspaceShellChrome.cpp",
+            "std::string F() { return std::string(\"async-only\"); }\n");
+  Expect(CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
+         "status-bar rule should pass on async-only fixture");
+
+  // Finding 1: SidebarSurfaceViewModel fallback fields stay as string_view.
+  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+            "struct SidebarSurfaceViewModel { std::string query_fallback_text; "
+            "std::string replace_fallback_text; };\n");
+  Expect(!CheckSidebarSurfaceFallbackUsesStringView(root).violations.empty(),
+         "sidebar-fallback rule should catch std::string fallback fields");
+  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+            "struct SidebarSurfaceViewModel { std::string_view query_fallback_text; "
+            "std::string_view replace_fallback_text; };\n");
+  Expect(CheckSidebarSurfaceFallbackUsesStringView(root).violations.empty(),
+         "sidebar-fallback rule should pass on the string_view fixture");
+
+  // Finding 11: EditorViewModel sticky/occurrence stay as spans.
+  WriteFile(root / "src/editor/EditorViewModel.h",
+            "struct EditorViewModel { std::vector<std::size_t> sticky_lines; "
+            "std::vector<OccurrenceRange> occurrence_ranges; };\n");
+  Expect(!CheckEditorViewModelStickyAndOccurrenceAreSpans(root).violations.empty(),
+         "editor view-model rule should catch owning vector fields");
+  WriteFile(root / "src/editor/EditorViewModel.h",
+            "struct EditorViewModel { std::span<const std::size_t> sticky_lines; "
+            "std::span<const OccurrenceRange> occurrence_ranges; };\n");
+  Expect(CheckEditorViewModelStickyAndOccurrenceAreSpans(root).violations.empty(),
+         "editor view-model rule should pass on the span fixture");
 }
 
 }  // namespace
