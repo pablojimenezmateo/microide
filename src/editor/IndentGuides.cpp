@@ -71,23 +71,49 @@ void ComputeIndentGuides(const std::vector<std::string>& lines,
     }
   }
 
+  // Pass 1: emit per-row guides into a scratch vector, then coalesce vertical
+  // runs of identical (column, active) values into single segments. The
+  // renderer paints a rectangle per IndentGuideRun, so collapsing 50 rows ×
+  // 8 indent levels from 400 single-row segments into ~8 vertical segments
+  // is a 50× reduction in render-loop work.
+  thread_local std::vector<IndentGuideRun> per_row_scratch;
+  per_row_scratch.clear();
+
   for (std::size_t row = 0; row < visible_rows.size(); ++row) {
     const std::size_t line_index = visible_rows[row];
     if (line_index >= lines.size()) continue;
     const std::size_t leading = LeadingVisualIndent(lines[line_index], tab_size);
     if (leading == 0) continue;
-    // Emit a guide at every indent step that the line participates in: columns
-    // indent_width, 2*indent_width, ..., up to and including leading. The
-    // guide at column == leading marks the line's own indent boundary;
-    // shallower guides mark the parent blocks the line is nested inside.
     for (std::size_t column = indent_width; column <= leading; column += indent_width) {
       IndentGuideRun guide;
       guide.column = column;
       guide.start_row = row;
       guide.end_row = row;
       guide.active = (line_index == caret_line && column == active_column);
-      out->push_back(guide);
+      per_row_scratch.push_back(guide);
     }
+  }
+
+  // Pass 2: coalesce. Sort by (column, active, start_row) so adjacent rows with
+  // identical column/active merge naturally. Then sweep to merge contiguous
+  // runs (end_row + 1 == next.start_row).
+  std::sort(per_row_scratch.begin(), per_row_scratch.end(),
+            [](const IndentGuideRun& a, const IndentGuideRun& b) {
+              if (a.column != b.column) return a.column < b.column;
+              if (a.active != b.active) return a.active < b.active;
+              return a.start_row < b.start_row;
+            });
+  out->reserve(per_row_scratch.size());
+  for (const IndentGuideRun& guide : per_row_scratch) {
+    if (!out->empty()) {
+      IndentGuideRun& back = out->back();
+      if (back.column == guide.column && back.active == guide.active &&
+          back.end_row + 1 == guide.start_row) {
+        back.end_row = guide.end_row;
+        continue;
+      }
+    }
+    out->push_back(guide);
   }
 }
 

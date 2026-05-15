@@ -723,8 +723,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (indent_guides_to_paint != nullptr) {
       const std::size_t row_start_visual = row_meta.visual_start;
       const std::size_t row_end_visual = row_meta.visual_end;
+      // Guides are now stored as vertical runs `[start_row, end_row]`; honor
+      // both ends so a multi-row guide draws on every row it covers.
       for (const auto& guide : *indent_guides_to_paint) {
-        if (guide.start_row != row) continue;
+        if (row < guide.start_row || row > guide.end_row) continue;
         if (guide.column < row_start_visual || guide.column >= row_end_visual) continue;
         const SDL_Color color = guide.active ? theme.text_muted : theme.border;
         row_desc.fills.push_back(DecoratedTextFill{

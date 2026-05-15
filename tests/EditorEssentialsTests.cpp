@@ -436,15 +436,28 @@ void TestIndentGuidesEmitsRunsAtNestedDepths() {
   ComputeIndentGuides(lines, visible_rows, /*tab_size=*/4, /*indent_width=*/4,
                       /*caret_line=*/SIZE_MAX, /*caret_leading=*/0, &runs);
 
-  const auto count_at = [&](std::size_t column, std::size_t row) {
-    return std::count_if(runs.begin(), runs.end(), [&](const IndentGuideRun& r) {
-      return r.column == column && r.start_row == row;
+  // 2026-05-15 perf deep-dive round 2 Finding 14: guides are now stored as
+  // multi-row runs `[start_row, end_row]` to coalesce the per-row segments
+  // the renderer used to walk. A guide "covers" a row when start_row<=row<=end_row.
+  const auto covers = [&](std::size_t column, std::size_t row) {
+    return std::any_of(runs.begin(), runs.end(), [&](const IndentGuideRun& r) {
+      return r.column == column && r.start_row <= row && row <= r.end_row;
     });
   };
-  Expect(count_at(4, 2) == 1, "depth-1 line should produce a guide at column 4");
-  Expect(count_at(4, 4) == 1 && count_at(8, 4) == 1,
-         "depth-2 line should produce guides at columns 4 and 8");
-  Expect(count_at(4, 6) == 0, "closing brace at column 0 should produce no guides");
+  Expect(covers(4, 2), "depth-1 line should be covered by a guide at column 4");
+  Expect(covers(4, 4) && covers(8, 4),
+         "depth-2 line should be covered by guides at columns 4 and 8");
+  Expect(!covers(4, 6), "closing brace at column 0 should not be covered by a column-4 guide");
+  Expect(!covers(8, 2), "depth-1 line should not be covered by a column-8 guide");
+
+  // Coalescing: the column-4 guide should span the contiguous run rows 2..5 as
+  // a single segment instead of four per-row entries.
+  const auto col4_run = std::find_if(runs.begin(), runs.end(), [](const IndentGuideRun& r) {
+    return r.column == 4 && r.start_row == 2;
+  });
+  Expect(col4_run != runs.end(), "column-4 guide should start at row 2");
+  Expect(col4_run->end_row == 5,
+         "column-4 guide should coalesce rows 2..5 into one run (depth-1 contiguous block)");
 }
 
 void TestIndentGuidesMarksActiveAtParentColumn() {
