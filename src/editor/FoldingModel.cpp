@@ -1,7 +1,9 @@
 #include "editor/FoldingModel.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <utility>
 
@@ -46,12 +48,37 @@ struct StackEntry {
   std::size_t line;
 };
 
-const std::pair<char, char>* FindPair(char ch,
-                                      const std::vector<std::pair<char, char>>& pairs) {
-  for (const auto& p : pairs) {
-    if (p.first == ch || p.second == ch) return &p;
+// 256-entry table: BracketKind[byte] selects which pair the byte belongs to (1..127), or 0 when the
+// byte is not a bracket character at all. The bracket-scan inner loop runs once per source byte, so
+// the previous std::vector<std::pair<char,char>> linear scan was paid for every byte. The lookup
+// makes the per-byte check a single load + compare.
+struct BracketLookupTable {
+  // For each input byte: 0 = not a bracket, otherwise index+1 into the source `pairs` vector.
+  std::array<std::uint8_t, 256> kind_for_byte{};
+  // Cached `(open, close)` for each used kind. Index 0 is unused.
+  std::array<std::pair<char, char>, 32> pair_for_kind{};
+  bool any_bracket = false;
+};
+
+BracketLookupTable BuildBracketLookupTable(const std::vector<std::pair<char, char>>& pairs) {
+  BracketLookupTable table;
+  // Cap at 31 distinct pairs; FoldingModel inputs ship 3-4 pairs in practice.
+  const std::size_t capped = std::min<std::size_t>(pairs.size(), 31);
+  for (std::size_t i = 0; i < capped; ++i) {
+    const std::uint8_t kind = static_cast<std::uint8_t>(i + 1);
+    const auto& pair = pairs[i];
+    const auto open_byte = static_cast<unsigned char>(pair.first);
+    const auto close_byte = static_cast<unsigned char>(pair.second);
+    if (table.kind_for_byte[open_byte] == 0) {
+      table.kind_for_byte[open_byte] = kind;
+    }
+    if (table.kind_for_byte[close_byte] == 0) {
+      table.kind_for_byte[close_byte] = kind;
+    }
+    table.pair_for_kind[kind] = pair;
+    table.any_bracket = true;
   }
-  return nullptr;
+  return table;
 }
 
 bool IsSuppressedBracketToken(const TextViewport* viewport,
@@ -81,6 +108,7 @@ bool BuildBracketStackPrefix(const std::vector<std::string>& lines,
     stack.clear();
     return true;
   }
+  const BracketLookupTable table = BuildBracketLookupTable(pairs);
   stack.clear();
   stack.reserve(64);
   for (std::size_t line_index = 0; line_index < prefix_end_exclusive &&
@@ -93,16 +121,18 @@ bool BuildBracketStackPrefix(const std::vector<std::string>& lines,
     lines_visited++;
     const std::string& line = lines[line_index];
     for (std::size_t column = 0; column < line.size(); ++column) {
+      const auto byte = static_cast<unsigned char>(line[column]);
+      const std::uint8_t kind = table.kind_for_byte[byte];
+      if (kind == 0) continue;
       if (IsSuppressedBracketToken(syntax_viewport, line_index, column)) {
         continue;
       }
-      const char c = line[column];
-      const auto* p = FindPair(c, pairs);
-      if (p == nullptr) continue;
-      if (p->first == p->second) continue;
-      if (c == p->first) {
-        stack.push_back({p->first, p->second, line_index});
-      } else if (c == p->second && !stack.empty() && stack.back().close == c) {
+      const auto& pair = table.pair_for_kind[kind];
+      if (pair.first == pair.second) continue;
+      const char c = static_cast<char>(byte);
+      if (c == pair.first) {
+        stack.push_back({pair.first, pair.second, line_index});
+      } else if (c == pair.second && !stack.empty() && stack.back().close == c) {
         stack.pop_back();
       }
     }
@@ -122,6 +152,7 @@ void ScanBracketRangesTail(const std::vector<std::string>& lines,
                            bool& complete,
                            const TextViewport* syntax_viewport) {
   if (pairs.empty()) return;
+  const BracketLookupTable table = BuildBracketLookupTable(pairs);
   const std::size_t scan_end = std::min(end_line_exclusive, lines.size());
   for (std::size_t line_index = begin_line; line_index < scan_end; ++line_index) {
     if (max_line_visits != 0 && lines_visited >= max_line_visits) {
@@ -131,16 +162,18 @@ void ScanBracketRangesTail(const std::vector<std::string>& lines,
     lines_visited++;
     const std::string& line = lines[line_index];
     for (std::size_t column = 0; column < line.size(); ++column) {
+      const auto byte = static_cast<unsigned char>(line[column]);
+      const std::uint8_t kind = table.kind_for_byte[byte];
+      if (kind == 0) continue;
       if (IsSuppressedBracketToken(syntax_viewport, line_index, column)) {
         continue;
       }
-      const char c = line[column];
-      const auto* p = FindPair(c, pairs);
-      if (p == nullptr) continue;
-      if (p->first == p->second) continue;
-      if (c == p->first) {
-        stack.push_back({p->first, p->second, line_index});
-      } else if (c == p->second && !stack.empty() && stack.back().close == c) {
+      const auto& pair = table.pair_for_kind[kind];
+      if (pair.first == pair.second) continue;
+      const char c = static_cast<char>(byte);
+      if (c == pair.first) {
+        stack.push_back({pair.first, pair.second, line_index});
+      } else if (c == pair.second && !stack.empty() && stack.back().close == c) {
         const StackEntry top = stack.back();
         stack.pop_back();
         if (line_index > top.line) {
@@ -224,19 +257,55 @@ void ScanIndentRanges(const std::vector<std::string>& lines,
   }
 }
 
+// Indexes only the collapsed previous openers. `(opener_line, closer_line, source)` matches the
+// equality predicate the previous O(N·M) loop checked.
+struct CollapsedOpenerKey {
+  std::size_t opener_line;
+  std::size_t closer_line;
+  FoldSource source;
+  bool operator==(const CollapsedOpenerKey& other) const noexcept {
+    return opener_line == other.opener_line && closer_line == other.closer_line &&
+           source == other.source;
+  }
+};
+
 void RemapCollapsedFlags(const std::vector<FoldRange>& previous_ranges,
                          const std::vector<bool>& previous_collapsed,
+                         std::size_t previous_collapsed_count,
                          const std::vector<FoldRange>& new_ranges,
-                         std::vector<bool>& out_collapsed) {
+                         std::vector<bool>& out_collapsed,
+                         std::size_t& out_collapsed_count) {
   out_collapsed.assign(new_ranges.size(), false);
+  out_collapsed_count = 0;
+  if (previous_collapsed_count == 0 || previous_ranges.empty() || new_ranges.empty()) {
+    return;
+  }
+
+  // Collect just the collapsed previous openers (typically tiny: only ranges
+  // the user explicitly toggled), sorted by opener_line for a binary search.
+  std::vector<std::pair<std::size_t, std::size_t>> collapsed_index;
+  collapsed_index.reserve(previous_collapsed_count);
+  for (std::size_t j = 0; j < previous_ranges.size(); ++j) {
+    if (previous_collapsed[j]) {
+      collapsed_index.emplace_back(previous_ranges[j].opener_line, j);
+    }
+  }
+  std::sort(collapsed_index.begin(), collapsed_index.end());
+
   for (std::size_t i = 0; i < new_ranges.size(); ++i) {
-    for (std::size_t j = 0; j < previous_ranges.size(); ++j) {
-      if (previous_ranges[j].opener_line == new_ranges[i].opener_line &&
-          previous_ranges[j].closer_line == new_ranges[i].closer_line &&
-          previous_ranges[j].source == new_ranges[i].source) {
-        out_collapsed[i] = previous_collapsed[j];
+    const auto& nr = new_ranges[i];
+    auto it = std::lower_bound(
+        collapsed_index.begin(), collapsed_index.end(),
+        std::pair<std::size_t, std::size_t>{nr.opener_line, 0},
+        [](const auto& a, const auto& b) { return a.first < b.first; });
+    while (it != collapsed_index.end() && it->first == nr.opener_line) {
+      const FoldRange& pr = previous_ranges[it->second];
+      if (pr.closer_line == nr.closer_line && pr.source == nr.source) {
+        out_collapsed[i] = true;
+        ++out_collapsed_count;
         break;
       }
+      ++it;
     }
   }
 }
@@ -274,8 +343,15 @@ bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
                                      std::size_t incremental_resume_line,
                                      std::size_t target_end_exclusive,
                                      const TextViewport* syntax_viewport) {
-  const std::vector<FoldRange> previous_ranges = ranges_;
-  const std::vector<bool> previous_collapsed = collapsed_;
+  // Skip the expensive previous-state copies when nothing was collapsed; the
+  // remap is then a no-op and the new state is just `all-false`.
+  const std::size_t previous_collapsed_count = collapsed_count_;
+  std::vector<FoldRange> previous_ranges;
+  std::vector<bool> previous_collapsed;
+  if (previous_collapsed_count > 0) {
+    previous_ranges = ranges_;
+    previous_collapsed = collapsed_;
+  }
   const std::size_t line_count = lines.size();
   constexpr std::size_t kNoResume = std::numeric_limits<std::size_t>::max();
   const std::size_t scan_end =
@@ -283,6 +359,7 @@ bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
 
   ranges_.clear();
   collapsed_.clear();
+  collapsed_count_ = 0;
   complete_ = scan_end >= line_count;
 
   auto merge_indent_and_finish = [&](std::vector<FoldRange> bracket_ranges,
@@ -297,7 +374,13 @@ bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
     ranges_.insert(ranges_.end(), bracket_ranges.begin(), bracket_ranges.end());
     ranges_.insert(ranges_.end(), indent_ranges.begin(), indent_ranges.end());
     SortDedupeRangesByOpener(ranges_);
-    RemapCollapsedFlags(previous_ranges, previous_collapsed, ranges_, collapsed_);
+    if (previous_collapsed_count > 0) {
+      RemapCollapsedFlags(previous_ranges, previous_collapsed, previous_collapsed_count,
+                          ranges_, collapsed_, collapsed_count_);
+    } else {
+      collapsed_.assign(ranges_.size(), false);
+      collapsed_count_ = 0;
+    }
     complete_ = complete_ && bracket_scan_complete && scan_end >= line_count;
     resolved_prefix_line_count_ = scan_end;
     ++revision_;
@@ -448,8 +531,11 @@ void FoldingModel::EnsureLookupCache() const {
 bool FoldingModel::ToggleFold(std::size_t opener_line) {
   const auto idx = IndexOfOpener(ranges_, opener_line);
   if (idx < 0) return false;
-  collapsed_[static_cast<std::size_t>(idx)] =
-      !collapsed_[static_cast<std::size_t>(idx)];
+  const std::size_t pos = static_cast<std::size_t>(idx);
+  const bool was_collapsed = collapsed_[pos];
+  collapsed_[pos] = !was_collapsed;
+  collapsed_count_ += was_collapsed ? std::size_t{0} : std::size_t{1};
+  collapsed_count_ -= was_collapsed ? std::size_t{1} : std::size_t{0};
   ++revision_;
   return true;
 }
@@ -459,6 +545,7 @@ bool FoldingModel::Collapse(std::size_t opener_line) {
   if (idx < 0) return false;
   if (collapsed_[static_cast<std::size_t>(idx)]) return false;
   collapsed_[static_cast<std::size_t>(idx)] = true;
+  ++collapsed_count_;
   ++revision_;
   return true;
 }
@@ -468,23 +555,26 @@ bool FoldingModel::Expand(std::size_t opener_line) {
   if (idx < 0) return false;
   if (!collapsed_[static_cast<std::size_t>(idx)]) return false;
   collapsed_[static_cast<std::size_t>(idx)] = false;
+  --collapsed_count_;
   ++revision_;
   return true;
 }
 
 void FoldingModel::CollapseAll() {
-  if (std::all_of(collapsed_.begin(), collapsed_.end(), [](bool collapsed) { return collapsed; })) {
+  if (collapsed_count_ == collapsed_.size()) {
     return;
   }
   std::fill(collapsed_.begin(), collapsed_.end(), true);
+  collapsed_count_ = collapsed_.size();
   ++revision_;
 }
 
 void FoldingModel::ExpandAll() {
-  if (std::none_of(collapsed_.begin(), collapsed_.end(), [](bool collapsed) { return collapsed; })) {
+  if (collapsed_count_ == 0) {
     return;
   }
   std::fill(collapsed_.begin(), collapsed_.end(), false);
+  collapsed_count_ = 0;
   ++revision_;
 }
 
@@ -583,6 +673,7 @@ bool FoldingModel::IsCollapsedAtOpener(std::size_t line) const {
 void FoldingModel::Clear() {
   ranges_.clear();
   collapsed_.clear();
+  collapsed_count_ = 0;
   complete_ = true;
   dirty_ = true;
   resolved_prefix_line_count_ = 0;

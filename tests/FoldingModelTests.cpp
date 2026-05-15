@@ -407,6 +407,78 @@ void TestIndexedFoldStartingAtAndIsCollapsedAtOpenerStaySynchronized() {
          "IsCollapsedAtOpener for an out-of-range line must return false");
 }
 
+void TestHasAnyCollapsedFoldTracksCounter() {
+  // 2026-05-15 perf deep-dive round 2 Finding 5: has_any_collapsed_fold() must be O(1) and stay in
+  // sync with the public Collapse / Expand / ToggleFold / CollapseAll / ExpandAll mutators. The
+  // wrapped-row layout build relies on this probe per edit; reverting to a linear scan would
+  // reintroduce the per-edit O(fold_count) work the rewrite removed.
+  const std::vector<std::string> lines = {
+      "void f() {",
+      "  void g() {",
+      "    body();",
+      "  }",
+      "}",
+  };
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()), "compute should complete");
+  Expect(!model.has_any_collapsed_fold(),
+         "fresh model with no Collapse() calls has no collapsed fold");
+  Expect(model.Collapse(0), "outer fold should collapse");
+  Expect(model.has_any_collapsed_fold(),
+         "Collapse must update the has-any-collapsed counter");
+  Expect(model.Collapse(1), "inner fold should also collapse");
+  Expect(model.has_any_collapsed_fold(),
+         "second Collapse must keep the counter positive");
+  Expect(model.Expand(0), "outer fold should expand");
+  Expect(model.has_any_collapsed_fold(),
+         "after one Expand, the inner fold still keeps the counter positive");
+  Expect(model.Expand(1), "inner fold should expand");
+  Expect(!model.has_any_collapsed_fold(),
+         "all Expand() should bring the counter back to zero");
+  // ToggleFold: collapsed -> expanded round-trip
+  Expect(model.ToggleFold(0), "toggle should flip outer fold");
+  Expect(model.has_any_collapsed_fold(), "toggle to collapsed bumps counter");
+  Expect(model.ToggleFold(0), "toggle should flip outer fold back");
+  Expect(!model.has_any_collapsed_fold(), "toggle to expanded zeroes counter");
+  // CollapseAll / ExpandAll
+  model.CollapseAll();
+  Expect(model.has_any_collapsed_fold(), "CollapseAll must set counter");
+  model.ExpandAll();
+  Expect(!model.has_any_collapsed_fold(), "ExpandAll must reset counter");
+  model.Clear();
+  Expect(!model.has_any_collapsed_fold(), "Clear must reset counter");
+}
+
+void TestRemapCollapsedFlagsPreservesCollapsedAcrossRecompute() {
+  // 2026-05-15 perf deep-dive round 2 Finding 6: the O(N²) remap was rewritten to an indexed O(N)
+  // loop that only walks the previously-collapsed openers. This test asserts the remap still
+  // preserves collapsed state across a recompute where ranges are unchanged.
+  const std::vector<std::string> lines = {
+      "void f() {",
+      "  void g() {",
+      "    body();",
+      "  }",
+      "}",
+  };
+  FoldingModel model;
+  Expect(model.Compute(lines, DefaultCStyleOptions()), "first compute should complete");
+  Expect(model.Collapse(1), "inner fold collapses");
+  Expect(model.has_any_collapsed_fold(), "inner fold is collapsed pre-recompute");
+  // Recompute the same buffer; the inner fold must still be collapsed after the remap.
+  Expect(model.Compute(lines, DefaultCStyleOptions()), "recompute should complete");
+  Expect(model.has_any_collapsed_fold(),
+         "remap must preserve the collapsed inner fold across a recompute");
+  Expect(model.IsCollapsedAtOpener(1),
+         "the specific opener that was collapsed must remain collapsed");
+
+  // When nothing was collapsed, the recompute fast-path skips RemapCollapsedFlags entirely.
+  FoldingModel fresh_model;
+  Expect(fresh_model.Compute(lines, DefaultCStyleOptions()),
+         "fresh recompute should still complete with the no-collapsed fast path");
+  Expect(!fresh_model.has_any_collapsed_fold(),
+         "fresh recompute with no prior Collapse should produce no collapsed flags");
+}
+
 }  // namespace
 
 void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
@@ -440,6 +512,10 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestIndexedStickyScrollParentLookupAcrossNestedFolds);
   AddTest(tests, "EditorFolding/IndexedLookup/OpenerAndCollapsedFlagSync",
           TestIndexedFoldStartingAtAndIsCollapsedAtOpenerStaySynchronized);
+  AddTest(tests, "EditorFolding/HasAnyCollapsedFoldTracksCounter",
+          TestHasAnyCollapsedFoldTracksCounter);
+  AddTest(tests, "EditorFolding/RemapCollapsedFlagsPreservesCollapsedAcrossRecompute",
+          TestRemapCollapsedFlagsPreservesCollapsedAcrossRecompute);
 }
 
 }  // namespace microide::tests

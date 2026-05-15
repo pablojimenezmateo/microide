@@ -191,9 +191,16 @@ void TextRenderer::RememberMeasuredWidth(std::string text, float width) const {
     return;
   }
 
-  width_cache_order_.push_back(it->first);
+  // Store a view into the map key — unordered_map element references stay valid across rehashes,
+  // so this is both safe and ~2× more memory-efficient than carrying duplicate std::string copies.
+  width_cache_order_.push_back(std::string_view(it->first));
   while (width_cache_order_.size() > kWidthCacheCapacity) {
-    width_cache_.erase(width_cache_order_.front());
+    // unordered_map::erase is not transparent; transparent find() yields an iterator that erase
+    // does accept. Avoids materializing a temporary std::string just to drop the entry.
+    if (auto evict_it = width_cache_.find(width_cache_order_.front());
+        evict_it != width_cache_.end()) {
+      width_cache_.erase(evict_it);
+    }
     width_cache_order_.pop_front();
   }
 }

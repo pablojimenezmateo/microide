@@ -115,6 +115,9 @@ class FoldingModel {
 
   const std::vector<FoldRange>& ranges() const { return ranges_; }
   const std::vector<bool>& collapsed_flags() const { return collapsed_; }
+  // O(1) probe for "is any fold collapsed". Replaces the linear scan of
+  // `collapsed_flags()` that the wrapped-row layout build used to do every edit.
+  bool has_any_collapsed_fold() const { return collapsed_count_ > 0; }
   bool complete() const { return complete_; }
   std::size_t revision() const { return revision_; }
 
@@ -141,6 +144,8 @@ class FoldingModel {
 
   std::vector<FoldRange> ranges_;
   std::vector<bool> collapsed_;  // parallel to ranges_
+  // Maintained alongside `collapsed_` so `has_any_collapsed_fold()` is O(1).
+  std::size_t collapsed_count_ = 0;
   Fingerprint fingerprint_;
   bool complete_ = true;
   bool dirty_ = true;

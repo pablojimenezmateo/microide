@@ -64,8 +64,11 @@ class TextRenderer {
 
   std::unique_ptr<TextRendererBackend> backend_;
   bool attempted_optional_backend_ = false;
+  // `width_cache_order_` stores std::string_view pointing at the map's keys. `unordered_map` does
+  // not invalidate references to elements on rehash, so the views stay valid for the lifetime of
+  // the entry. This avoids the per-entry duplicate std::string the previous deque held.
   mutable std::unordered_map<std::string, float, StringHash, std::equal_to<>> width_cache_;
-  mutable std::deque<std::string> width_cache_order_;
+  mutable std::deque<std::string_view> width_cache_order_;
   mutable std::string width_cache_backend_name_ = "debug";
   mutable float width_cache_scale_x_ = 1.0f;
   mutable float width_cache_scale_y_ = 1.0f;

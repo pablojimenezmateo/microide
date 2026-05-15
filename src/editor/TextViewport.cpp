@@ -3017,15 +3017,10 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
   // Probe whether the folding model has any collapsed range. When none exist
   // (the common no-folds path on a freshly-opened large file), skip the
-  // per-line `IsLineHidden` query entirely.
+  // per-line `IsLineHidden` query entirely. O(1) via the maintained counter
+  // — the previous std::vector<bool> linear scan was paid on every edit.
   const bool has_any_collapsed_fold =
-      folding_model_ != nullptr &&
-      [this]() {
-        for (bool flag : folding_model_->collapsed_flags()) {
-          if (flag) return true;
-        }
-        return false;
-      }();
+      folding_model_ != nullptr && folding_model_->has_any_collapsed_fold();
   std::size_t last_visible_row = 0;
   if (!soft_wrap_) {
     // Non-soft-wrap fast path: visual-row count is one per non-hidden line,
