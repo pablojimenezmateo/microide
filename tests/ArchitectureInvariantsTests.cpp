@@ -923,6 +923,32 @@ RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) 
   return result;
 }
 
+// Forbids reintroducing a single combined `layout_revision` member or
+// accessor on `TextViewport::DocumentState`. The four-tier revision model
+// (content/syntax/layout_shape/presentation) replaced it intentionally; a
+// regression here would re-merge invalidations across tiers and silently
+// undo the openspec change `split-layout-revision-tiers`.
+RuleResult CheckTextViewportNoCombinedLayoutRevision(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "TextViewport tiered revisions (no combined layout_revision)";
+  result.hard_fail = true;
+  const std::filesystem::path header = repo_root / "src/editor/TextViewport.h";
+  if (!std::filesystem::exists(header)) {
+    return result;
+  }
+  const std::string text = ReadText(header);
+  // Look for a `layout_revision` member or accessor on the DocumentState.
+  // FoldingModel::Snapshot::layout_revision is in a different header and
+  // intentionally retains its name, so scoping to TextViewport.h is enough.
+  const std::regex pattern(R"(\blayout_revision\b)");
+  AppendCodeMaskRegexViolations(
+      result, header, text, pattern,
+      "do not reintroduce a combined layout_revision on TextViewport::DocumentState; "
+      "use content_revision / syntax_revision / layout_shape_revision / "
+      "presentation_revision per openspec change split-layout-revision-tiers");
+  return result;
+}
+
 RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "legacy persistence symbols";
@@ -1739,6 +1765,7 @@ void TestArchitectureInvariants() {
   results.push_back(CheckNoSynchronousSubprocessWaitInWorkspace(repo_root));
   results.push_back(CheckLspDidOpenIsNonBlocking(repo_root));
   results.push_back(CheckNoLegacyPersistenceSymbols(repo_root));
+  results.push_back(CheckTextViewportNoCombinedLayoutRevision(repo_root));
   results.push_back(CheckNoSynchronousSubprocessInWorkspace(repo_root));
   results.push_back(CheckNoExecutorPostThenFutureGetInWorkspace(repo_root));
   results.push_back(CheckRenderTuDoesNotMaterializeStrings(repo_root));

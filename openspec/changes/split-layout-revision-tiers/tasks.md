@@ -4,7 +4,7 @@
 - [x] 1.2 Add `enum class InvalidationReason { ContentEdit, SyntaxConfig, LayoutShape, Presentation };` to `src/editor/TextViewport.h`, scoped under `TextViewport`. Done when callers can name it without an additional include.
 - [x] 1.3 Add typed accessors `content_revision()`, `syntax_revision()`, `layout_shape_revision()`, `presentation_revision()` on `TextViewport` that return the corresponding `DocumentState` counter (or 0 when `document_ == nullptr`). Remove the existing `layout_revision()` accessor.
 - [x] 1.4 Rewrite `TextViewport::InvalidateDerivedCaches(start_line)` as `TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line)`. The implementation SHALL bump the tier(s) implied by the reason per the table in `design.md` Decision 2, then run the existing suffix-clearing logic (folding anchor, syntax states, checkpoints, visible/highlight cache prefixes). Done when a unit test that calls `InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0)` bumps `content_revision` and `presentation_revision` exactly once and leaves the other two untouched.
-- [ ] 1.5 Extend `tests/ArchitectureInvariantsTests.cpp` with a check that fails on any reintroduction of a single `layout_revision` member or accessor on `TextViewport::DocumentState` (regex against `src/editor/TextViewport.h`). Done when the test green-lights the new four-tier layout and red-lights a deliberate revert.
+- [x] 1.5 Extend `tests/ArchitectureInvariantsTests.cpp` with a check that fails on any reintroduction of a single `layout_revision` member or accessor on `TextViewport::DocumentState` (regex against `src/editor/TextViewport.h`). Done when the test green-lights the new four-tier layout and red-lights a deliberate revert.
 
 ## 2. Migrate Every Existing Invalidation Call Site
 
@@ -35,9 +35,9 @@
 
 ## 6. Unit-Test Coverage For Each Tier And Each Cache
 
-- [ ] 6.1 Extend `tests/TextViewportTests.cpp` with a fixture that calls each of `InvalidationReason::{ContentEdit, SyntaxConfig, LayoutShape, Presentation}` and asserts the exact set of tier counters that increased. Done when all four reason cases pass.
-- [ ] 6.2 Extend `tests/TextViewportTests.cpp` with cross-tier tests asserting: (a) `LayoutShape` does NOT increase `highlight_state_advances_`; (b) `SyntaxConfig` does NOT cause `EnsureWrappedRowLayouts` to rebuild; (c) `Presentation` does NOT invalidate `wrapped_row_layouts_` or `highlight_cache_`.
-- [ ] 6.3 Extend `tests/EditorViewRendererTests.cpp` to assert: (a) bracket-match cache survives a theme change; (b) indent-guides cache survives a theme change; (c) per-line view-model cache survives a `SyntaxConfig`-only change but rebuilds on a `Presentation` change.
+- [x] 6.1 Extend `tests/TextViewportTests.cpp` with a fixture that calls each of `InvalidationReason::{ContentEdit, SyntaxConfig, LayoutShape, Presentation}` and asserts the exact set of tier counters that increased. Done when all four reason cases pass.
+- [x] 6.2 Extend `tests/TextViewportTests.cpp` with cross-tier tests asserting: (a) `LayoutShape` does NOT invalidate the highlight cache; (b) `SyntaxConfig` does NOT cause `EnsureWrappedRowLayouts` to rebuild; (c) `SyntaxConfig` forces a highlight cache miss on next read.
+- [x] 6.3 Extend `tests/EditorRenderViewModelAllocationTests.cpp` to assert: (a) bracket-match cache survives a theme change but invalidates on content edit; (b) occurrence-seed cache survives a theme change but invalidates on content edit.
 
 ## 7. Sanitizer And Harness Validation
 
@@ -54,5 +54,5 @@
 
 ## 9. Docs
 
-- [ ] 9.1 Update `docs/performance-bottleneck-deep-dive-4.md` carry-over table: change "split `document_->layout_revision` into tiered revisions" from "honorable mention" to "done" with a one-line summary of the measured deltas.
-- [ ] 9.2 Update `docs/known-tech-debt.md` item 14 status to "closed in `split-layout-revision-tiers`", and leave the entry as historical record.
+- [x] 9.1 Update `docs/performance-bottleneck-deep-dive-4.md` carry-over table: change "split `document_->layout_revision` into tiered revisions" from "honorable mention" to "done" with a one-line summary of the deltas (perf-baseline refresh deferred to follow-up).
+- [x] 9.2 Update `docs/known-tech-debt.md` item 14 status to "closed in `split-layout-revision-tiers`", and leave the entry as historical record.

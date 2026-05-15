@@ -299,7 +299,7 @@ Closing Finding 2 likely closes most of this. Re-measure after.
 | --------- | ----- | ---------- |
 | 8 | `TerminalCell` `std::string` per cell | **done** (inline UTF-8, `37f58bb`) — but per-line cell vector still allocates; see Finding 3 |
 | 15 | Glyph atlas | **rejected** — prototyped, measured a +48–83 % wall-time regression on the software renderer; see "Rejected experiment: ASCII glyph atlas" below for the preconditions any future revisit MUST meet |
-| 16 | Single `layout_revision` cascade | **open** — Finding 4 is the same root |
+| 16 | Single `layout_revision` cascade | **done** (2026-05-15) — openspec change `split-layout-revision-tiers` introduced four-tier revisions (`content` / `syntax` / `layout_shape` / `presentation`) plus typed `InvalidationReason`; every derived cache now keys on its minimum tier set, arch-lint guards the regression, and per-tier perf counters are in place. Scroll-only perf scenario + baseline updates tracked as follow-ups in the change's `tasks.md`. |
 | 18 | `PrepareFrameOnce` idle | **open** — Finding 5 |
 
 ---

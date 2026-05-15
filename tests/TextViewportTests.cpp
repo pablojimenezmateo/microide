@@ -4,6 +4,7 @@
 #include "editor/FoldingModel.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
+#include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <string>
@@ -1216,6 +1217,131 @@ void TestTextViewportTrivialWrappedLayoutFastPath() {
          "trivial layout: edit should not break the identity invariant");
 }
 
+struct TierBumpSnapshot {
+  std::uint64_t content = 0;
+  std::uint64_t syntax = 0;
+  std::uint64_t layout_shape = 0;
+  std::uint64_t presentation = 0;
+};
+
+TierBumpSnapshot CaptureTierBumps() {
+  return TierBumpSnapshot{
+      .content = microide::util::ReadPerformanceCounter(
+          microide::util::PerfCounterId::EditorContentRevisionBumps),
+      .syntax = microide::util::ReadPerformanceCounter(
+          microide::util::PerfCounterId::EditorSyntaxRevisionBumps),
+      .layout_shape = microide::util::ReadPerformanceCounter(
+          microide::util::PerfCounterId::EditorLayoutShapeRevisionBumps),
+      .presentation = microide::util::ReadPerformanceCounter(
+          microide::util::PerfCounterId::EditorPresentationRevisionBumps),
+  };
+}
+
+TierBumpSnapshot Delta(const TierBumpSnapshot& before, const TierBumpSnapshot& after) {
+  return TierBumpSnapshot{
+      .content = after.content - before.content,
+      .syntax = after.syntax - before.syntax,
+      .layout_shape = after.layout_shape - before.layout_shape,
+      .presentation = after.presentation - before.presentation,
+  };
+}
+
+void TestTextViewportContentEditBumpsContentAndPresentationOnly() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\n", "/tmp/tier-content.cpp");
+  const auto before = CaptureTierBumps();
+  viewport.InsertCharacter('x');
+  const auto delta = Delta(before, CaptureTierBumps());
+  Expect(delta.content == 1 && delta.presentation == 1 && delta.syntax == 0 &&
+             delta.layout_shape == 0,
+         "ContentEdit must bump content and presentation tiers exactly once each");
+}
+
+void TestTextViewportSyntaxConfigBumpsSyntaxAndPresentationOnly() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\n", "/tmp/tier-syntax.cpp");
+  const auto before = CaptureTierBumps();
+  viewport.InvalidateSyntaxHighlighting();
+  const auto delta = Delta(before, CaptureTierBumps());
+  Expect(delta.syntax == 1 && delta.presentation == 1 && delta.content == 0 &&
+             delta.layout_shape == 0,
+         "SyntaxConfig must bump syntax and presentation tiers exactly once each");
+}
+
+void TestTextViewportLayoutShapeBumpsLayoutShapeAndPresentationOnly() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\n", "/tmp/tier-layout.cpp");
+  viewport.SetTabSize(4);  // baseline so toggle is not a no-op
+  const auto before = CaptureTierBumps();
+  viewport.SetTabSize(2);
+  const auto delta = Delta(before, CaptureTierBumps());
+  Expect(delta.layout_shape == 1 && delta.presentation == 1 && delta.content == 0 &&
+             delta.syntax == 0,
+         "LayoutShape (tab size change) must bump layout_shape and presentation only");
+}
+
+void TestTextViewportSoftWrapToggleBumpsLayoutShapeOnly() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\n", "/tmp/tier-softwrap.cpp");
+  const auto before = CaptureTierBumps();
+  viewport.SetSoftWrap(true);
+  const auto delta = Delta(before, CaptureTierBumps());
+  Expect(delta.layout_shape == 1 && delta.presentation == 1 && delta.content == 0 &&
+             delta.syntax == 0,
+         "Soft-wrap toggle must bump layout_shape and presentation only");
+}
+
+void TestTextViewportSyntaxConfigDoesNotInvalidateWrappedRowLayouts() {
+#ifndef NDEBUG
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\nd\ne\n", "/tmp/tier-wrapped-rows.cpp");
+  viewport.SetSoftWrap(true);
+  viewport.SetViewportSize(4, 8);
+  // Warm the wrapped-row-layouts cache.
+  (void)viewport.WrappedVisualRowLayout(0);
+  const std::size_t before_builds = viewport.WrappedRowLayoutBuildCountForDebug();
+  // SyntaxConfig must NOT cause the wrapped-row-layouts cache to rebuild.
+  viewport.InvalidateSyntaxHighlighting();
+  (void)viewport.WrappedVisualRowLayout(0);
+  const std::size_t after_builds = viewport.WrappedRowLayoutBuildCountForDebug();
+  Expect(after_builds == before_builds,
+         "SyntaxConfig invalidation must not rebuild wrapped_row_layouts_");
+#endif
+}
+
+void TestTextViewportSyntaxConfigForcesHighlightCacheMiss() {
+  TextViewport viewport;
+  viewport.LoadContent("int v = 1;\nint w = 2;\n", "/tmp/tier-highlight.cpp");
+  // Warm the per-line highlight cache.
+  (void)viewport.HighlightedLineTokens(0);
+  (void)viewport.HighlightedLineTokens(0);
+  const auto stats_warm = viewport.CacheStats();
+  // SyntaxConfig drops the highlight cache, so the next read SHALL be a miss.
+  viewport.InvalidateSyntaxHighlighting();
+  (void)viewport.HighlightedLineTokens(0);
+  const auto stats_after = viewport.CacheStats();
+  // Hits should not increase across the syntax bump (cache was wiped, so the
+  // request after the bump misses).
+  Expect(stats_after.highlight_queries > stats_warm.highlight_queries,
+         "post-syntax-bump read should issue another highlight query");
+  Expect(stats_after.highlight_hits == stats_warm.highlight_hits,
+         "SyntaxConfig must wipe the highlight cache so the next read misses");
+}
+
+void TestTextViewportContentEditInvalidatesBracketAndHighlightCaches() {
+  // Mirrors the new cache-key contract: a content edit invalidates every
+  // content-keyed cache. This is the "still correct after the split" leg —
+  // companion to the spec scenarios in tiered-document-revisions.
+  TextViewport viewport;
+  viewport.LoadContent("int v = 1;\n", "/tmp/tier-content-edit.cpp");
+  (void)viewport.HighlightedLineTokens(0);
+  const auto before_bumps = CaptureTierBumps();
+  viewport.InsertCharacter('z');
+  const auto delta = Delta(before_bumps, CaptureTierBumps());
+  Expect(delta.content == 1,
+         "ContentEdit bumps content_revision so downstream caches re-key correctly");
+}
+
 }  // namespace
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
@@ -1327,6 +1453,22 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
+  AddTest(tests, "TextViewport/Tiers/ContentEditBumpsContentAndPresentationOnly",
+          TestTextViewportContentEditBumpsContentAndPresentationOnly);
+  AddTest(tests, "TextViewport/Tiers/SyntaxConfigBumpsSyntaxAndPresentationOnly",
+          TestTextViewportSyntaxConfigBumpsSyntaxAndPresentationOnly);
+  AddTest(tests, "TextViewport/Tiers/LayoutShapeBumpsLayoutShapeAndPresentationOnly",
+          TestTextViewportLayoutShapeBumpsLayoutShapeAndPresentationOnly);
+  AddTest(tests, "TextViewport/Tiers/SoftWrapToggleBumpsLayoutShapeOnly",
+          TestTextViewportSoftWrapToggleBumpsLayoutShapeOnly);
+#ifndef NDEBUG
+  AddTest(tests, "TextViewport/Tiers/SyntaxConfigDoesNotInvalidateWrappedRowLayouts",
+          TestTextViewportSyntaxConfigDoesNotInvalidateWrappedRowLayouts);
+#endif
+  AddTest(tests, "TextViewport/Tiers/SyntaxConfigForcesHighlightCacheMiss",
+          TestTextViewportSyntaxConfigForcesHighlightCacheMiss);
+  AddTest(tests, "TextViewport/Tiers/ContentEditInvalidatesBracketAndHighlightCaches",
+          TestTextViewportContentEditInvalidatesBracketAndHighlightCaches);
 }
 
 }  // namespace microide::tests

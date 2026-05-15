@@ -297,6 +297,22 @@ only. It is rejected; **do not apply**.
 
 ## 14. Split `document_->layout_revision` Into Tiered Revisions
 
+Status:
+- **Closed on 2026-05-15** by openspec change `split-layout-revision-tiers`
+  (commit a0fdc58). `TextViewport::DocumentState` now exposes four tiered
+  revisions (`content_revision`, `syntax_revision`, `layout_shape_revision`,
+  `presentation_revision`) plus an `InvalidationReason` enum on the rewritten
+  `InvalidateDerivedCaches(reason, start_line)` entry point; every derived
+  cache (wrapped-row layouts, highlight, bracket-match, indent-guides,
+  occurrence seed/scan, status-bar language, folding fingerprint) keys on the
+  minimum tier set it actually depends on. The architectural-lint test now
+  hard-fails on reintroduction of a combined `layout_revision` member on
+  `DocumentState`. Per-tier perf counters
+  (`editor.{content,syntax,layout_shape,presentation}_revision_bumps`) are in
+  place; the `editor_scroll_only_no_content_bump` perf scenario and updated
+  baselines are deferred follow-ups tracked in
+  `openspec/changes/split-layout-revision-tiers/tasks.md`.
+
 Source: `docs/performance-bottleneck-deep-dive-2.md` Finding 16,
 `docs/performance-bottleneck-deep-dive-3.md` partial,
 `docs/performance-bottleneck-deep-dive-4.md` Finding 4 (partial).
