@@ -242,6 +242,54 @@ The debt items tracked as 8–12 in this document are now resolved or explicitly
 
 Remaining debt focus stays on items 5 and 6 unless new profiling demonstrates regressions.
 
+## 13. Split `document_->layout_revision` Into Tiered Revisions
+
+Source: `docs/performance-bottleneck-deep-dive-2.md` Finding 16,
+`docs/performance-bottleneck-deep-dive-3.md` partial,
+`docs/performance-bottleneck-deep-dive-4.md` Finding 4 (partial).
+
+Impact:
+- Medium-to-high. Every edit currently bumps a single `document_->layout_revision`,
+  invalidating four logically independent caches in `TextViewport`:
+  visible-line layout, syntax-highlight tokens + checkpoints, fold model, and presentation
+  (width cache key set, decoration spans). A one-character insertion past the visible region
+  still cascades into derived-cache wipes across the suffix of the document.
+- The round-4 lazy-invalidation cursors (`line_highlight_states_valid_through_`,
+  `highlight_checkpoints_valid_through_`) made the reset O(1), but **readers still recompute**
+  unnecessarily because scrolls and non-content edits still bump the same revision.
+
+Proposed shape (round-2 #16 / round-3 cascade):
+
+- Split the single revision into four tiers on `TextViewport::Document`:
+  - `content_revision` — bumped by edits to `lines`.
+  - `syntax_revision` — bumped by language/theme/contract change.
+  - `layout_shape_revision` — bumped by soft-wrap toggle, fold collapse, tab size, visible-columns.
+  - `presentation_revision` — bumped by decoration / overlay-only changes (no buffer mutation).
+- Re-key each cache on the **minimum set** of revisions it actually depends on:
+  - `wrapped_row_layouts_` → `layout_shape_revision` (the round-4 fix already proves the value of dropping the fold-rev dependency).
+  - `visible_line_cache_` → `content_revision`, `presentation_revision`.
+  - `highlight_cache_` / `line_highlight_states_` / `highlight_checkpoints_` → `content_revision` + `syntax_revision`.
+  - Width / texture caches in `TextRenderer` → `syntax_revision` (color theme) + font-id; do not invalidate on content edits.
+- Make `InvalidateDerivedCaches(start_line)` route to the tier that actually changed
+  instead of bumping a global revision.
+
+Reproduction / measurement:
+
+- Baseline today: `editor_sticky_scroll_scroll` p50 ~1.08 s (3 iters), `editor_indent_guides_paint` ~0.64 s, `editor_render_whitespace_paint` ~0.80 s.
+- Counters to watch: `editor.invalidate_derived_caches_lines`,
+  `editor.ensure_wrapped_row_layouts_rebuilds`, `editor.highlight_cache_forced_misses`.
+- Add a scroll-only fixture asserting that scrolling does not bump `content_revision`.
+
+Notes:
+
+- This is the documented "honorable mention" alongside the font-atlas work
+  (`docs/performance-bottleneck-deep-dive-4.md`). Surface is wide — touches every
+  cache invalidation site across `TextViewport`, `EditorViewRenderer`, and the render
+  view-model builder — so it should be scoped as its own openspec change rather than
+  bundled with smaller optimization passes.
+- Expected impact: 10–30 % wall-time reduction across many editor scenarios; unlocks
+  additional small wins (width-cache stability across edits, per-tier counters).
+
 ## 12. 2026-04-29 Sanitizer/Fuzz Triage Snapshot
 
 Status:
