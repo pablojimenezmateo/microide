@@ -44,6 +44,48 @@ microide::editor::FoldingModel::ComputeOptions DefaultFoldOptions() {
   return options;
 }
 
+void TestWhitespaceRowOffsetsIndexFlatGlyphRuns() {
+  // 2026-05-15 perf deep-dive round 2 Finding 2: whitespace_row_offsets must be a CSR-style index
+  // into whitespace_glyph_runs so the per-row paint loop can iterate only its row's runs instead
+  // of filtering the flat vector.
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("    indent\n\tspaced\n  hi\nplain\n", "/tmp/ws-row-offsets.txt");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.SetViewportSize(4, 80);
+  viewport.SetScrollLine(0);
+
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/4, /*folding_model=*/nullptr,
+                                    /*occurrences_highlight_enabled=*/false,
+                                    /*occurrences_case_sensitive=*/false,
+                                    /*sticky_scroll_enabled=*/false,
+                                    /*sticky_max_depth=*/3,
+                                    /*render_whitespace_enabled=*/true);
+
+  Expect(vm.whitespace_row_offsets.size() == 5,
+         "whitespace_row_offsets must have visible_rows+1 entries (CSR layout)");
+  Expect(vm.whitespace_row_offsets.front() == 0,
+         "whitespace_row_offsets starts at zero");
+  Expect(vm.whitespace_row_offsets.back() == vm.whitespace_glyph_runs.size(),
+         "whitespace_row_offsets last entry must equal the flat run count");
+  // Monotonic non-decreasing offsets.
+  for (std::size_t r = 0; r + 1 < vm.whitespace_row_offsets.size(); ++r) {
+    Expect(vm.whitespace_row_offsets[r] <= vm.whitespace_row_offsets[r + 1],
+           "whitespace_row_offsets must be monotonic non-decreasing");
+  }
+  // Row 3 ("plain") has no whitespace, so its slice must be empty.
+  Expect(vm.whitespace_row_offsets[3] == vm.whitespace_row_offsets[4],
+         "row with no whitespace produces an empty CSR slice");
+  // Row 0 starts with four spaces, so its slice must be non-empty.
+  Expect(vm.whitespace_row_offsets[1] > vm.whitespace_row_offsets[0],
+         "row with leading spaces should produce whitespace glyph runs");
+}
+
 void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
   microide::workspace::WorkspaceContext ctx;
   microide::workspace::RenderViewModelBuilder builder(ctx);
@@ -328,6 +370,8 @@ void TestPerFrameCacheInvalidationKeysRenderPaths() {
 }  // namespace
 
 void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorRenderViewModel/WhitespaceRowOffsetsIndexFlatGlyphRuns",
+          TestWhitespaceRowOffsetsIndexFlatGlyphRuns);
   AddTest(tests, "EditorRenderViewModel/IntoPreservesVectorCapacitiesOnStableFrames",
           TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames);
   AddTest(tests, "EditorRenderViewModel/PerFrameCacheInvalidationKeysModelAndBuilder",

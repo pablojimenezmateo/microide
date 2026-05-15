@@ -239,26 +239,39 @@ SidebarMode SidebarModeFromViewId(std::string_view view_id) {
 
 void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
                                 std::size_t visible_rows,
-                                std::vector<editor::WhitespaceGlyphRun>* out) {
+                                std::vector<editor::WhitespaceGlyphRun>* out,
+                                std::vector<std::size_t>* out_row_offsets) {
   out->clear();
+  out_row_offsets->clear();
   if (visible_rows == 0) {
     return;
   }
+  // CSR layout: out_row_offsets has size visible_rows + 1; the last entry is the total run count.
+  out_row_offsets->reserve(visible_rows + 1);
+  out_row_offsets->push_back(0);
   const auto& lines = viewport.lines();
   const std::size_t scroll_line = viewport.scroll_line();
   const std::size_t visual_total = viewport.visual_line_count();
   const std::size_t tab_size = viewport.tab_size();
+  const auto finalize_remaining_rows = [&](std::size_t starting_row) {
+    for (std::size_t r = starting_row; r < visible_rows; ++r) {
+      out_row_offsets->push_back(out->size());
+    }
+  };
   if (visual_total == 0) {
+    finalize_remaining_rows(0);
     return;
   }
   for (std::size_t row = 0; row < visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= visual_total) {
-      break;
+      finalize_remaining_rows(row);
+      return;
     }
     const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
     const std::size_t line_index = row_meta.line_index;
     if (line_index >= lines.size()) {
+      out_row_offsets->push_back(out->size());
       continue;
     }
     const std::string_view line_text = lines[line_index];
@@ -296,6 +309,7 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
         out->push_back(run);
       }
     }
+    out_row_offsets->push_back(out->size());
   }
 }
 
@@ -456,6 +470,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   out.sticky_lines = {};
   out.occurrence_ranges = {};
   out.whitespace_glyph_runs.clear();
+  out.whitespace_row_offsets.clear();
 
   if (folding_model != nullptr && !folding_model->ranges().empty()) {
     out.fold_gutter_marks.reserve(visible_rows);
@@ -507,7 +522,8 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   }
 
   if (render_whitespace_enabled && !viewport.is_placeholder()) {
-    CollectWhitespaceGlyphRuns(viewport, visible_rows, &out.whitespace_glyph_runs);
+    CollectWhitespaceGlyphRuns(viewport, visible_rows, &out.whitespace_glyph_runs,
+                                &out.whitespace_row_offsets);
   }
 
   if (!occurrences_highlight_enabled || viewport.is_placeholder()) {

@@ -632,8 +632,20 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (view_model != nullptr && !view_model->occurrence_ranges.empty()) {
       const std::size_t row_start_visual_occ = row_visual_origin;
       const std::size_t row_end_visual_occ = row_meta.visual_end;
-      for (const OccurrenceRange& occ : view_model->occurrence_ranges) {
-        if (occ.line_index != line_index || occ.start_column >= occ.end_column) {
+      // Round-2 Finding 2: occurrence_ranges is sorted by line_index (see
+      // RefillOccurrenceScanCache). Binary-search for this row's slice instead of scanning the
+      // full vector per visible row.
+      const auto occ_data = view_model->occurrence_ranges.data();
+      const auto occ_end_ptr = occ_data + view_model->occurrence_ranges.size();
+      const auto occ_lo = std::lower_bound(
+          occ_data, occ_end_ptr, line_index,
+          [](const OccurrenceRange& r, std::size_t l) { return r.line_index < l; });
+      const auto occ_hi = std::upper_bound(
+          occ_lo, occ_end_ptr, line_index,
+          [](std::size_t l, const OccurrenceRange& r) { return l < r.line_index; });
+      for (auto occ_it = occ_lo; occ_it < occ_hi; ++occ_it) {
+        const OccurrenceRange& occ = *occ_it;
+        if (occ.start_column >= occ.end_column) {
           continue;
         }
         const std::size_t match_start = occ.start_column;
@@ -748,13 +760,16 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const std::size_t row_start_visual = row_meta.visual_start;
       const std::size_t row_end_visual = row_meta.visual_end;
       const float char_width = text_renderer.CharWidth();
+      // Round-2 Finding 2: use the CSR-style row-offset table so we iterate only this row's runs
+      // instead of scanning the flat whitespace_glyph_runs vector.
       const bool use_vm_whitespace =
-          view_model != nullptr && !view_model->whitespace_glyph_runs.empty();
+          view_model != nullptr && !view_model->whitespace_glyph_runs.empty() &&
+          row + 1 < view_model->whitespace_row_offsets.size();
       if (use_vm_whitespace) {
-        for (const WhitespaceGlyphRun& glyph : view_model->whitespace_glyph_runs) {
-          if (glyph.visual_row_index != visual_row_index) {
-            continue;
-          }
+        const std::size_t run_begin = view_model->whitespace_row_offsets[row];
+        const std::size_t run_end = view_model->whitespace_row_offsets[row + 1];
+        for (std::size_t gi = run_begin; gi < run_end; ++gi) {
+          const WhitespaceGlyphRun& glyph = view_model->whitespace_glyph_runs[gi];
           if (glyph.row_visual_start != row_start_visual ||
               glyph.row_visual_end != row_end_visual) {
             continue;

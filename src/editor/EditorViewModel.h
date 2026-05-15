@@ -42,6 +42,11 @@ struct EditorViewModel {
   // (top row = outer scope). Empty when sticky scroll is disabled or no enclosing folds apply.
   std::span<const std::size_t> sticky_lines;
   std::vector<WhitespaceGlyphRun> whitespace_glyph_runs;
+  // CSR-style index into `whitespace_glyph_runs`: for visible row `r`, runs are in
+  // [whitespace_row_offsets[r], whitespace_row_offsets[r+1]). Size is `visible_rows + 1` whenever
+  // whitespace painting is enabled and `visible_rows > 0`. Lets the per-row paint loop iterate
+  // only its own runs instead of filtering the flat vector. (Round-2 Finding 2.)
+  std::vector<std::size_t> whitespace_row_offsets;
 };
 
 }  // namespace microide::editor
