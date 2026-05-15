@@ -319,9 +319,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   if (bracket_match_highlight_enabled) {
     const std::size_t caret_line = viewport.cursor_line();
     const std::size_t caret_column = viewport.cursor_column();
-    const std::size_t layout_revision = viewport.layout_revision();
+    const std::uint64_t content_revision = viewport.content_revision();
     if (bracket_match_cache_.valid && bracket_match_cache_.viewport == &viewport &&
-        bracket_match_cache_.layout_revision == layout_revision &&
+        bracket_match_cache_.content_revision == content_revision &&
         bracket_match_cache_.caret_line == caret_line &&
         bracket_match_cache_.caret_column == caret_column) {
       bracket_match_pair = bracket_match_cache_.pair;
@@ -329,7 +329,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     } else {
       bracket_match_pair = FindBracketMatch(viewport, caret_line, caret_column);
       bracket_match_cache_.viewport = &viewport;
-      bracket_match_cache_.layout_revision = layout_revision;
+      bracket_match_cache_.content_revision = content_revision;
       bracket_match_cache_.caret_line = caret_line;
       bracket_match_cache_.caret_column = caret_column;
       bracket_match_cache_.pair = bracket_match_pair;
@@ -338,7 +338,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
   } else if (bracket_match_cache_.valid) {
     bracket_match_cache_.viewport = nullptr;
-    bracket_match_cache_.layout_revision = 0;
+    bracket_match_cache_.content_revision = 0;
     bracket_match_cache_.caret_line = 0;
     bracket_match_cache_.caret_column = 0;
     bracket_match_cache_.pair.reset();
@@ -417,7 +417,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     const std::size_t fold_emphasis_revision =
         folding_model != nullptr ? folding_model->revision() : std::size_t{0};
     if (indent_guides_cache_.valid && indent_guides_cache_.viewport == &viewport &&
-        indent_guides_cache_.layout_revision == viewport.layout_revision() &&
+        indent_guides_cache_.content_revision == viewport.content_revision() &&
+        indent_guides_cache_.layout_shape_revision == viewport.layout_shape_revision() &&
         indent_guides_cache_.fold_revision == viewport.folding_revision() &&
         indent_guides_cache_.fold_emphasis_revision == fold_emphasis_revision &&
         indent_guides_cache_.scroll_line == scroll_line &&
@@ -434,7 +435,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                           indent_width, cursor_line, caret_indent,
                           &indent_guides_cache_.runs, folding_model);
       indent_guides_cache_.viewport = &viewport;
-      indent_guides_cache_.layout_revision = viewport.layout_revision();
+      indent_guides_cache_.content_revision = viewport.content_revision();
+      indent_guides_cache_.layout_shape_revision = viewport.layout_shape_revision();
       indent_guides_cache_.fold_revision = viewport.folding_revision();
       indent_guides_cache_.fold_emphasis_revision = fold_emphasis_revision;
       indent_guides_cache_.scroll_line = scroll_line;
@@ -575,7 +577,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (!lowered_search_query.empty()) {
       const SearchMatchCacheKey cache_key{
           .viewport = &viewport,
-          .layout_revision = viewport.layout_revision(),
+          .content_revision = viewport.content_revision(),
           .line_index = line_index,
           .query = lowered_search_query,
       };

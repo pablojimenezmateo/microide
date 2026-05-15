@@ -196,7 +196,8 @@ void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
     Expect(!model.IsFresh(fp_lang), "fold model IsFresh should fail when language_id changes");
   }
 
-  // --- Occurrence seed: layout_revision invalidates seed detection ---
+  // --- Occurrence seed: content_revision invalidates seed detection,
+  //     syntax_revision does NOT (the seed is built from buffer bytes only).
   {
     microide::workspace::WorkspaceContext ctx;
     microide::workspace::RenderViewModelBuilder builder(ctx);
@@ -206,10 +207,16 @@ void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
     viewport.MoveCursorTo(0, 0, false);
     viewport.SetViewportSize(4, 80);
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
+    // SyntaxConfig bump: seed cache survives.
     viewport.InvalidateSyntaxHighlighting();
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
+    Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 1,
+           "SyntaxConfig bump must not invalidate the content-keyed occurrence seed cache");
+    // ContentEdit bump: seed cache is dropped because the buffer bytes changed.
+    viewport.InsertCharacter('x');
+    (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
     Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 2,
-           "layout_revision bump should miss occurrence seed cache");
+           "ContentEdit must invalidate the occurrence seed cache");
   }
 
   // --- Sticky scroll builder cache: fold model revision ---
@@ -314,7 +321,7 @@ void TestIndentGuideRunsPreserveCapacityAcrossStableRenders() {
 }
 
 void TestPerFrameCacheInvalidationKeysRenderPaths() {
-  // --- Bracket match: viewport + layout_revision + primary caret (see EditorViewRenderer) ---
+  // --- Bracket match: viewport + content_revision + primary caret (see EditorViewRenderer) ---
   {
     EnsureDummySdlVideo();
     SoftwareCanvas canvas(200, 120);
@@ -330,12 +337,21 @@ void TestPerFrameCacheInvalidationKeysRenderPaths() {
                     /*bracket_match_highlight_enabled=*/true);
     Expect(renderer.bracket_match_cache_misses() == 1,
            "bracket-match cache should miss on first frame");
+    // SyntaxConfig bump: bracket-match cache survives — bracket positions
+    // depend on buffer bytes, not on theme / syntax contract.
     viewport.InvalidateSyntaxHighlighting();
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
                     std::nullopt, std::nullopt, {}, nullptr,
                     /*bracket_match_highlight_enabled=*/true);
+    Expect(renderer.bracket_match_cache_misses() == 1,
+           "SyntaxConfig bump must not invalidate the content-keyed bracket-match cache");
+    // ContentEdit bump: bytes changed, cache must miss.
+    viewport.InsertCharacter('z');
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                    std::nullopt, std::nullopt, {}, nullptr,
+                    /*bracket_match_highlight_enabled=*/true);
     Expect(renderer.bracket_match_cache_misses() == 2,
-           "layout_revision bump should invalidate bracket-match cache");
+           "ContentEdit must invalidate the bracket-match cache");
   }
 
   // --- Indent guides: fold revision (and layout scroll geometry) ---

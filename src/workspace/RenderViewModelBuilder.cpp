@@ -19,7 +19,9 @@ namespace {
 
 thread_local struct OccurrenceSeedDetectCache {
   std::uintptr_t viewport = 0;
-  std::uint64_t layout_revision = 0;
+  // Occurrence seed text comes from the buffer at the caret; only content
+  // mutations can change what the seed string is.
+  std::uint64_t content_revision = 0;
   std::size_t caret_line = 0;
   std::size_t caret_column = 0;
   bool case_sensitive = false;
@@ -33,7 +35,8 @@ thread_local struct OccurrenceSeedDetectCache {
 
 thread_local struct OccurrenceViewportScanCache {
   std::uintptr_t viewport = 0;
-  std::uint64_t layout_revision = 0;
+  // Scan results enumerate occurrences of the needle inside buffer bytes.
+  std::uint64_t content_revision = 0;
   std::size_t scroll_line = 0;
   std::size_t visible_rows = 0;
   bool case_sensitive = false;
@@ -62,7 +65,7 @@ bool OccurrenceSeedCacheMatches(const editor::TextViewport& viewport,
                                 std::uintptr_t viewport_key,
                                 bool case_sensitive_flag) {
   return g_occurrence_seed_cache.viewport == viewport_key &&
-         g_occurrence_seed_cache.layout_revision == viewport.layout_revision() &&
+         g_occurrence_seed_cache.content_revision == viewport.content_revision() &&
          g_occurrence_seed_cache.caret_line == viewport.cursor_line() &&
          g_occurrence_seed_cache.caret_column == viewport.cursor_column() &&
          g_occurrence_seed_cache.case_sensitive == case_sensitive_flag;
@@ -73,7 +76,7 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
                                bool occurrences_case_sensitive) {
   auto& seed_cache = g_occurrence_seed_cache;
   seed_cache.viewport = viewport_key;
-  seed_cache.layout_revision = viewport.layout_revision();
+  seed_cache.content_revision = viewport.content_revision();
   seed_cache.caret_line = viewport.cursor_line();
   seed_cache.caret_column = viewport.cursor_column();
   seed_cache.case_sensitive = occurrences_case_sensitive;
@@ -120,7 +123,7 @@ bool OccurrenceScanCacheMatches(const editor::TextViewport& viewport,
   }
   const std::size_t scroll_line = viewport.scroll_line();
   return g_occurrence_scan_cache.viewport == viewport_key &&
-         g_occurrence_scan_cache.layout_revision == viewport.layout_revision() &&
+         g_occurrence_scan_cache.content_revision == viewport.content_revision() &&
          g_occurrence_scan_cache.scroll_line == scroll_line &&
          g_occurrence_scan_cache.visible_rows == visible_rows &&
          g_occurrence_scan_cache.case_sensitive ==
@@ -139,7 +142,7 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
                                bool occurrences_case_sensitive) {
   auto& scan_cache = g_occurrence_scan_cache;
   scan_cache.viewport = viewport_key;
-  scan_cache.layout_revision = viewport.layout_revision();
+  scan_cache.content_revision = viewport.content_revision();
   scan_cache.scroll_line = viewport.scroll_line();
   scan_cache.visible_rows = visible_rows;
   scan_cache.case_sensitive = occurrences_case_sensitive;
@@ -696,7 +699,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
 void RenderViewModelBuilder::ResetOccurrenceCachesForTesting() {
   g_occurrence_seed_cache = {};
   g_occurrence_scan_cache.viewport = 0;
-  g_occurrence_scan_cache.layout_revision = 0;
+  g_occurrence_scan_cache.content_revision = 0;
   g_occurrence_scan_cache.scroll_line = 0;
   g_occurrence_scan_cache.visible_rows = 0;
   g_occurrence_scan_cache.case_sensitive = false;

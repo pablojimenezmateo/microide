@@ -58,6 +58,21 @@ class TextViewport {
     Bytes,
   };
 
+  // Cause classification for derived-cache invalidation. Callers pass the
+  // reason that triggered the call; the implementation fans this out into
+  // tier bumps per the table in
+  // openspec/changes/split-layout-revision-tiers/design.md Decision 2:
+  //   ContentEdit  → content_revision + presentation_revision
+  //   SyntaxConfig → syntax_revision + presentation_revision
+  //   LayoutShape  → layout_shape_revision + presentation_revision
+  //   Presentation → presentation_revision only
+  enum class InvalidationReason {
+    ContentEdit,
+    SyntaxConfig,
+    LayoutShape,
+    Presentation,
+  };
+
   struct WrappedVisualRow {
     std::size_t line_index = 0;
     std::size_t visual_start = 0;
@@ -142,7 +157,18 @@ class TextViewport {
   std::size_t visible_lines() const { return visible_lines_; }
   std::size_t visible_columns() const { return visible_columns_; }
   std::size_t line_count() const { return document_->lines.size(); }
-  std::size_t layout_revision() const { return document_ != nullptr ? document_->layout_revision : 0; }
+  std::uint64_t content_revision() const {
+    return document_ != nullptr ? document_->content_revision : 0;
+  }
+  std::uint64_t syntax_revision() const {
+    return document_ != nullptr ? document_->syntax_revision : 0;
+  }
+  std::uint64_t layout_shape_revision() const {
+    return document_ != nullptr ? document_->layout_shape_revision : 0;
+  }
+  std::uint64_t presentation_revision() const {
+    return document_ != nullptr ? document_->presentation_revision : 0;
+  }
   // Minimum line index affected by the last layout invalidation (used by the
   // folding model to preserve stable bracket folds above the edit). Reset by
   // `ConsumeFoldEditAnchorLine()` after the host reads it for a recompute.
@@ -252,7 +278,16 @@ class TextViewport {
     TextEncoding encoding = TextEncoding::ASCII;
     bool placeholder = true;
     bool dirty = false;
-    std::size_t layout_revision = 0;
+    // Four-tier cache-invalidation revisions. Each counter monotonically
+    // increases when a mutation of its kind occurs. Derived caches key on the
+    // minimum tier set they actually depend on so a theme change does not
+    // invalidate wrapped-row layouts, a scroll does not invalidate the
+    // highlight cache, and so on. See
+    // openspec/changes/split-layout-revision-tiers/ for the full contract.
+    std::uint64_t content_revision = 0;
+    std::uint64_t syntax_revision = 0;
+    std::uint64_t layout_shape_revision = 0;
+    std::uint64_t presentation_revision = 0;
   };
 
   struct VisibleLineCacheKey {
@@ -344,8 +379,8 @@ class TextViewport {
   bool TryInsertNewlineSplitBraces();
   bool InInsertionSuppressedScope(std::size_t line, std::size_t column) const;
   bool TryMultiCaretPairInsert(char ch);
-  void InvalidateDerivedCaches();
-  void InvalidateDerivedCaches(std::size_t start_line);
+  void InvalidateDerivedCaches(InvalidationReason reason);
+  void InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line);
   void InvalidateVisualColumnCache();
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
@@ -404,7 +439,7 @@ class TextViewport {
   mutable std::vector<std::size_t> wrapped_line_row_offsets_;
   mutable std::size_t wrapped_row_layouts_tab_size_ = 0;
   mutable std::size_t wrapped_row_layouts_visible_columns_ = 0;
-  mutable std::size_t wrapped_row_layouts_revision_ = 0;
+  mutable std::uint64_t wrapped_row_layouts_layout_shape_revision_ = 0;
   mutable bool wrapped_row_layouts_soft_wrap_ = false;
   mutable const FoldingModel* wrapped_row_layouts_folding_model_ = nullptr;
   mutable std::size_t wrapped_row_layouts_fold_revision_ = 0;
@@ -422,7 +457,7 @@ class TextViewport {
   mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
   mutable std::deque<std::size_t> cached_visual_line_columns_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
-  mutable std::size_t cached_max_visual_columns_revision_ = 0;
+  mutable std::uint64_t cached_max_visual_columns_content_revision_ = 0;
   mutable std::unordered_map<VisibleLineCacheKey, LayoutLine, VisibleLineCacheKeyHash>
       visible_line_cache_;
   mutable std::deque<VisibleLineCacheKey> visible_line_cache_order_;
@@ -438,7 +473,8 @@ class TextViewport {
   mutable std::vector<SyntaxState> highlight_checkpoints_;
   // Same lazy-invalidation pattern for the periodic checkpoint vector.
   mutable std::size_t highlight_checkpoints_valid_through_ = 0;
-  mutable std::size_t highlight_state_revision_ = 0;
+  mutable std::uint64_t highlight_state_content_revision_ = 0;
+  mutable std::uint64_t highlight_state_syntax_revision_ = 0;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;
   mutable std::size_t highlight_queries_ = 0;

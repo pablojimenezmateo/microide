@@ -82,7 +82,7 @@ class EditorViewRenderer {
               const FoldingModel* folding_model = nullptr) const;
 
   // Test/diagnostic accessors for the bracket-match cache. The cache is keyed
-  // on (viewport, layout_revision, primary_caret_line, primary_caret_column)
+  // on (viewport, content_revision, primary_caret_line, primary_caret_column)
   // and reused across consecutive frames when nothing actionable changes.
   const std::optional<BracketMatchPair>& last_bracket_match_pair() const {
     return bracket_match_cache_.pair;
@@ -91,9 +91,10 @@ class EditorViewRenderer {
   std::size_t bracket_match_cache_misses() const { return bracket_match_cache_.misses; }
 
   // Test/diagnostic accessors for the indent-guides cache. Cache is keyed on
-  // (viewport, layout_revision, scroll_line, visible_rows_count, indent_width,
-  //  caret_line, fold_revision, folding_model revision for active emphasis)
-  // and reused across consecutive frames when nothing changes.
+  // (viewport, content_revision, layout_shape_revision, scroll_line,
+  //  visible_rows_count, indent_width, caret_line, fold_revision,
+  //  folding_model revision for active emphasis) and reused across
+  // consecutive frames when nothing changes.
   const std::vector<IndentGuideRun>& last_indent_guide_runs() const {
     return indent_guides_cache_.runs;
   }
@@ -104,12 +105,12 @@ class EditorViewRenderer {
  private:
   struct SearchMatchCacheKey {
     const TextViewport* viewport = nullptr;
-    std::size_t layout_revision = 0;
+    std::uint64_t content_revision = 0;
     std::size_t line_index = 0;
     std::string query;
 
     bool operator==(const SearchMatchCacheKey& other) const noexcept {
-      return viewport == other.viewport && layout_revision == other.layout_revision &&
+      return viewport == other.viewport && content_revision == other.content_revision &&
              line_index == other.line_index && query == other.query;
     }
   };
@@ -117,7 +118,8 @@ class EditorViewRenderer {
   struct SearchMatchCacheKeyHash {
     std::size_t operator()(const SearchMatchCacheKey& key) const noexcept {
       std::size_t h = std::hash<const TextViewport*>{}(key.viewport);
-      h ^= key.layout_revision * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+      h ^= static_cast<std::size_t>(key.content_revision) * 2654435761ULL + 0x9e3779b9ULL +
+           (h << 6) + (h >> 2);
       h ^= key.line_index * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
       h ^= std::hash<std::string>{}(key.query) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
       return h;
@@ -133,7 +135,9 @@ class EditorViewRenderer {
 
   struct BracketMatchCache {
     const TextViewport* viewport = nullptr;
-    std::size_t layout_revision = 0;
+    // Bracket positions depend on bytes only, not on theme, layout shape, or
+    // overlay state — keyed on content_revision exclusively.
+    std::uint64_t content_revision = 0;
     std::size_t caret_line = 0;
     std::size_t caret_column = 0;
     bool valid = false;
@@ -145,7 +149,10 @@ class EditorViewRenderer {
 
   struct IndentGuidesCache {
     const TextViewport* viewport = nullptr;
-    std::size_t layout_revision = 0;
+    // Indent guides depend on the bytes of each line (content) and on
+    // indent-width / tab-size geometry (layout shape).
+    std::uint64_t content_revision = 0;
+    std::uint64_t layout_shape_revision = 0;
     std::size_t fold_revision = 0;
     std::size_t fold_emphasis_revision = 0;
     std::size_t scroll_line = 0;

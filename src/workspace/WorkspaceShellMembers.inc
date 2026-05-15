@@ -1381,7 +1381,9 @@
   StatusBarService status_bar_service_;
   struct StatusBarLanguageCache {
     const editor::TextViewport* viewport = nullptr;
-    std::uint64_t layout_revision = 0;
+    // Language detection inspects file path + first line bytes; only content
+    // mutations can change the result.
+    std::uint64_t content_revision = 0;
     std::filesystem::path path;
     std::string filetype;
   };

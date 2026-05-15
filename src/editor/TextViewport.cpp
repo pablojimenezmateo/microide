@@ -332,6 +332,10 @@ void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visibl
   visible_columns_ = next_visible_columns;
   if (wrap_width_changed) {
     horizontal_scroll_ = 0;
+    // Soft-wrap reflow on a width change is a layout-shape mutation.
+    if (document_ != nullptr) {
+      InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
+    }
     return;
   }
   ClampScrollState();
@@ -355,9 +359,14 @@ void TextViewport::SetTabSize(std::size_t tab_size) {
   tab_size_ = next_tab_size;
   cached_max_visual_columns_.reset();
   cached_max_visual_columns_tab_size_ = 0;
-  cached_max_visual_columns_revision_ = 0;
+  cached_max_visual_columns_content_revision_ = 0;
   visible_line_cache_.clear();
   visible_line_cache_order_.clear();
+  // Tab size is a layout-shape attribute: bump the corresponding tier so
+  // wrapped-row-layout caches downstream see the change.
+  if (document_ != nullptr) {
+    InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
+  }
   ClampCursorColumn();
   ClampScrollState();
   EnsureCursorVisible();
@@ -386,6 +395,10 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position);
+  }
+  // Soft-wrap toggle is a layout-shape mutation.
+  if (document_ != nullptr) {
+    InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
   }
   ClampScrollState();
   EnsureCursorVisible();
@@ -1275,7 +1288,8 @@ bool TextViewport::DeleteCurrentLine() {
     document_->placeholder = false;
     document_->dirty = true;
     RefreshEncoding();
-    InvalidateDerivedCaches(0);
+    // Multi-line delete is a content edit; bump the content tier.
+    InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
     InvalidateVisualColumnCache();
     EnsureCursorVisible();
     PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
@@ -1439,7 +1453,9 @@ void TextViewport::ResetState(std::vector<std::string> lines,
   document_->placeholder = placeholder;
   document_->dirty = dirty;
   InvalidateVisualColumnCache();
-  InvalidateDerivedCaches();
+  // ResetState replaces every line; classify as a content edit so the
+  // content tier reflects the change and dependent caches are dropped.
+  InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
   // ResetState is a fresh load, not an in-place edit; clear the fold edit
   // anchor to the idle sentinel so the next user edit publishes its own
   // first-touched line instead of being masked by the wholesale reset.
@@ -1470,7 +1486,8 @@ void TextViewport::EnsureHighlightCaches() const {
   }
 
   EnsureInitialHighlightState();
-  if (highlight_state_revision_ != document_->layout_revision) {
+  if (highlight_state_content_revision_ != document_->content_revision ||
+      highlight_state_syntax_revision_ != document_->syntax_revision) {
     // Lazy invalidation: leave the existing buffer in place and just reset
     // the validity cursors. Readers gate on the cursor (see
     // CachedHighlightStateAt / CachedHighlightCheckpointAt). The previous
@@ -1478,7 +1495,8 @@ void TextViewport::EnsureHighlightCaches() const {
     // full O(N) wipe on every layout-revision bump.
     line_highlight_states_valid_through_ = 0;
     highlight_checkpoints_valid_through_ = 0;
-    highlight_state_revision_ = document_->layout_revision;
+    highlight_state_content_revision_ = document_->content_revision;
+    highlight_state_syntax_revision_ = document_->syntax_revision;
   }
   if (line_highlight_states_.size() != document_->lines.size()) {
     line_highlight_states_.resize(document_->lines.size());
@@ -1590,13 +1608,49 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
   return state;
 }
 
-void TextViewport::InvalidateDerivedCaches() {
-  InvalidateDerivedCaches(0);
+void TextViewport::InvalidateDerivedCaches(InvalidationReason reason) {
+  InvalidateDerivedCaches(reason, 0);
 }
 
-void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
+void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line) {
   EnsureDocument();
-  ++document_->layout_revision;
+  // Tier fan-out: each reason bumps exactly the tiers it implies. Every
+  // reason bumps presentation_revision because any cause of invalidation
+  // changes at least the rendered pixels. Counters are incremented per tier
+  // bump so a smoke run can assert which tiers moved.
+  ++document_->presentation_revision;
+  util::AddPerformanceCounter(util::PerfCounterId::EditorPresentationRevisionBumps);
+  if (reason == InvalidationReason::ContentEdit) {
+    ++document_->content_revision;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorContentRevisionBumps);
+  } else if (reason == InvalidationReason::SyntaxConfig) {
+    ++document_->syntax_revision;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorSyntaxRevisionBumps);
+  } else if (reason == InvalidationReason::LayoutShape) {
+    ++document_->layout_shape_revision;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLayoutShapeRevisionBumps);
+  }
+
+  // Caches below are content-derived (visible-line layout, highlight tokens,
+  // fold edit anchor). They only need rebuilding on a content edit; pure
+  // syntax/layout-shape/presentation invalidations do not touch them.
+  if (reason != InvalidationReason::ContentEdit) {
+    if (reason == InvalidationReason::SyntaxConfig) {
+      // Highlight cache depends on syntax_revision. Drop it fully — the
+      // start_line argument is meaningless for a theme/contract change.
+      highlight_cache_.clear();
+      highlight_cache_order_.clear();
+      initial_highlight_state_.reset();
+      line_highlight_states_.clear();
+      line_highlight_states_valid_through_ = 0;
+      highlight_checkpoints_.clear();
+      highlight_checkpoints_valid_through_ = 0;
+      highlight_state_content_revision_ = document_->content_revision;
+      highlight_state_syntax_revision_ = document_->syntax_revision;
+    }
+    return;
+  }
+
   const std::size_t safe_start = std::min(start_line, document_->lines.size());
   util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesCalls);
   util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesLines,
@@ -1622,7 +1676,8 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
     line_highlight_states_valid_through_ = 0;
     highlight_checkpoints_.clear();
     highlight_checkpoints_valid_through_ = 0;
-    highlight_state_revision_ = document_->layout_revision;
+    highlight_state_content_revision_ = document_->content_revision;
+    highlight_state_syntax_revision_ = document_->syntax_revision;
     return;
   }
 
@@ -1674,7 +1729,8 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
       highlight_checkpoints_valid_through_ = 1;
     }
   }
-  highlight_state_revision_ = document_->layout_revision;
+  highlight_state_content_revision_ = document_->content_revision;
+  highlight_state_syntax_revision_ = document_->syntax_revision;
 }
 
 std::size_t TextViewport::ConsumeFoldEditAnchorLine() {
@@ -1688,12 +1744,12 @@ void TextViewport::InvalidateVisualColumnCache() {
   cached_max_visual_columns_line_index_.reset();
   cached_visual_line_columns_.clear();
   cached_max_visual_columns_tab_size_ = 0;
-  cached_max_visual_columns_revision_ = 0;
+  cached_max_visual_columns_content_revision_ = 0;
   wrapped_row_layouts_.clear();
   wrapped_line_row_offsets_.clear();
   wrapped_row_layouts_tab_size_ = 0;
   wrapped_row_layouts_visible_columns_ = 0;
-  wrapped_row_layouts_revision_ = 0;
+  wrapped_row_layouts_layout_shape_revision_ = 0;
   wrapped_row_layouts_soft_wrap_ = false;
   wrapped_row_layouts_folding_model_ = nullptr;
   wrapped_row_layouts_fold_revision_ = 0;
@@ -1701,12 +1757,19 @@ void TextViewport::InvalidateVisualColumnCache() {
 }
 
 void TextViewport::InvalidateLayoutCaches() {
+  // The only remaining caller (ReplaceAll) just mutated buffer content, so
+  // route this through the content tier. We still wipe the visual-column
+  // cache because the column metrics depend on the new line widths.
   InvalidateVisualColumnCache();
-  InvalidateDerivedCaches(0);
+  InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
 }
 
 void TextViewport::InvalidateSyntaxHighlighting() {
-  InvalidateLayoutCaches();
+  // External callers invoke this when language identification or theme
+  // configuration changes — a syntax-tier mutation, not a content edit.
+  // The visual-column cache and wrapped-row layouts are unaffected by a
+  // syntax change, so leave them in place.
+  InvalidateDerivedCaches(InvalidationReason::SyntaxConfig, 0);
 }
 
 void TextViewport::RefreshEncoding() {
@@ -1845,7 +1908,8 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   RefreshEncoding();
-  InvalidateDerivedCaches(start_line);
+  // Undo/redo replays a content delta starting at start_line.
+  InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line);
   UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines);
   EnsureCursorVisible();
 }
@@ -2999,7 +3063,7 @@ void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
     *cached_max_visual_columns_line_index_ = static_cast<std::size_t>(
         static_cast<std::ptrdiff_t>(*cached_max_visual_columns_line_index_) + delta);
   }
-  cached_max_visual_columns_revision_ = document_->layout_revision;
+  cached_max_visual_columns_content_revision_ = document_->content_revision;
 }
 
 void TextViewport::ClampCursorColumn() {
@@ -3070,7 +3134,7 @@ void TextViewport::EnsureCursorVisible() {
 std::size_t TextViewport::MaxVisualColumns() const {
   if (cached_max_visual_columns_.has_value() &&
       cached_max_visual_columns_tab_size_ == tab_size_ &&
-      cached_max_visual_columns_revision_ == document_->layout_revision) {
+      cached_max_visual_columns_content_revision_ == document_->content_revision) {
     return *cached_max_visual_columns_;
   }
 
@@ -3095,7 +3159,7 @@ std::size_t TextViewport::MaxVisualColumns() const {
   cached_max_visual_columns_ = max_columns;
   cached_max_visual_columns_line_index_ = max_line;
   cached_max_visual_columns_tab_size_ = tab_size_;
-  cached_max_visual_columns_revision_ = document_->layout_revision;
+  cached_max_visual_columns_content_revision_ = document_->content_revision;
   return *cached_max_visual_columns_;
 }
 
@@ -3124,7 +3188,8 @@ void TextViewport::EnsureWrappedRowLayouts() const {
     return;
   }
 
-  if (!trivial_now && wrapped_row_layouts_revision_ == document_->layout_revision &&
+  if (!trivial_now &&
+      wrapped_row_layouts_layout_shape_revision_ == document_->layout_shape_revision &&
       wrapped_row_layouts_tab_size_ == tab_size_ &&
       wrapped_row_layouts_visible_columns_ == visible_columns_ &&
       wrapped_row_layouts_soft_wrap_ == soft_wrap_ &&
@@ -3149,7 +3214,7 @@ void TextViewport::EnsureWrappedRowLayouts() const {
     util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsLineVisits, 0);
     wrapped_row_layouts_tab_size_ = tab_size_;
     wrapped_row_layouts_visible_columns_ = visible_columns_;
-    wrapped_row_layouts_revision_ = document_->layout_revision;
+    wrapped_row_layouts_layout_shape_revision_ = document_->layout_shape_revision;
     wrapped_row_layouts_soft_wrap_ = soft_wrap_;
     wrapped_row_layouts_folding_model_ = folding_model_;
     wrapped_row_layouts_fold_revision_ =
@@ -3210,7 +3275,7 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   }
   wrapped_row_layouts_tab_size_ = tab_size_;
   wrapped_row_layouts_visible_columns_ = visible_columns_;
-  wrapped_row_layouts_revision_ = document_->layout_revision;
+  wrapped_row_layouts_layout_shape_revision_ = document_->layout_shape_revision;
   wrapped_row_layouts_soft_wrap_ = soft_wrap_;
   wrapped_row_layouts_folding_model_ = folding_model_;
   wrapped_row_layouts_fold_revision_ =

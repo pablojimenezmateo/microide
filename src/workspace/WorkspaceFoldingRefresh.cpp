@@ -34,7 +34,9 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   }
 
   editor::FoldingModel::Fingerprint fingerprint;
-  fingerprint.layout_revision = static_cast<std::uint64_t>(viewport.layout_revision());
+  // FoldingModel's fingerprint identifies the source bytes the bracket scan
+  // was built from; only content mutations change those.
+  fingerprint.layout_revision = viewport.content_revision();
   fingerprint.tab_size = tab_size == 0 ? 1 : tab_size;
   fingerprint.language_id = contract == nullptr ? std::string{} : contract->language_id;
 
