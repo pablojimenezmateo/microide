@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 
 namespace microide::workspace {
@@ -176,6 +177,7 @@ WorkspaceWakeController::WorkspaceWakeController(Operations operations)
 
 EventResult WorkspaceWakeController::HandleScheduledWake() const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceWakeController::HandleScheduledWake");
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceScheduledWakes);
   if (operations_.reload_plugins_if_assets_changed(false)) {
     return EventResult{
         .handled = true,

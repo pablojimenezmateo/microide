@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
 
@@ -53,6 +54,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
       menu_hover_trace && context_.menu_state.menu_bar_open ? SDL_GetTicksNS() : 0;
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceRootView::Render");
+  util::AddPerformanceCounter(util::PerfCounterId::RenderClipInvocations);
   const WorkspaceLayout& layout = *prepared_frame_layout_;
   std::optional<SDL_FRect> active_editor_pane_rect;
   visible_editor_blame_overlay_.reset();

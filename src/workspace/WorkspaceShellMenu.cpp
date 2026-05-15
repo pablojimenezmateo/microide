@@ -37,6 +37,12 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
                                     : window_buttons.front().rect.x - 8.0f;
 
   // First pass: measure widths and determine whether all items fit.
+  // MenuSpec::label is a `string_view` over static storage, so the measured
+  // width is stable for the lifetime of the process (until the font reloads).
+  // Cache by label-data pointer to avoid 8 width-cache map lookups per
+  // ComputeVisibleMenuBarItems call — `menu_hover_switch` hits this path many
+  // times per frame (round-4 Finding 6).
+  static thread_local std::unordered_map<const char*, float> spec_label_width_cache;
   std::vector<std::pair<MenuId, float>> measured;
   measured.reserve(8);
   float total_x = x;
@@ -45,8 +51,16 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
     if (!IsMenuBarTopLevelMenu(spec.id)) {
       continue;
     }
-    const float width =
-        std::clamp(text_renderer_.MeasureWidth(spec.label) + 28.0f, 56.0f, 116.0f);
+    const char* key = spec.label.data();
+    auto cached = spec_label_width_cache.find(key);
+    float raw_width;
+    if (cached != spec_label_width_cache.end()) {
+      raw_width = cached->second;
+    } else {
+      raw_width = text_renderer_.MeasureWidth(spec.label);
+      spec_label_width_cache.emplace(key, raw_width);
+    }
+    const float width = std::clamp(raw_width + 28.0f, 56.0f, 116.0f);
     measured.emplace_back(spec.id, width);
     total_x += width + 4.0f;
   }

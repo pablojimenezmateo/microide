@@ -169,6 +169,12 @@ class TextViewport {
   std::size_t VisualRowLineIndex(std::size_t visual_row_index) const;
   std::size_t VisualRowForLine(std::size_t line_index) const;
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;
+  // Non-forcing variant: returns the cached token span if the line is in the
+  // syntax-highlight LRU, otherwise an empty span. Does not trigger
+  // `EnsureHighlightCaches` or `HighlightLine`. Callers that walk large line
+  // ranges (e.g. the folding bracket scanner) use this to avoid thrashing the
+  // LRU on lines that may be far outside the visible region.
+  std::span<const SyntaxTokenKind> HighlightedLineTokensIfCached(std::size_t line_index) const;
   bool syntax_highlighting_enabled() const { return !document_->placeholder; }
   TextViewportCacheStats CacheStats() const;
   void ResetCacheStats() const;
@@ -424,7 +430,14 @@ class TextViewport {
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
   mutable std::vector<SyntaxState> line_highlight_states_;
+  // Lazy invalidation cursor: entries `[line_highlight_states_valid_through_,
+  // line_highlight_states_.size())` are stale and must be ignored by readers.
+  // We bump this on edits instead of resetting each entry to `SyntaxState{}`,
+  // which was an O(lines - start) loop on every keystroke (round-4 Finding 4).
+  mutable std::size_t line_highlight_states_valid_through_ = 0;
   mutable std::vector<SyntaxState> highlight_checkpoints_;
+  // Same lazy-invalidation pattern for the periodic checkpoint vector.
+  mutable std::size_t highlight_checkpoints_valid_through_ = 0;
   mutable std::size_t highlight_state_revision_ = 0;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;

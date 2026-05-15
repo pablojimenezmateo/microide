@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <utility>
 
 #include "editor/TextViewport.h"
@@ -81,14 +82,16 @@ BracketLookupTable BuildBracketLookupTable(const std::vector<std::pair<char, cha
   return table;
 }
 
-bool IsSuppressedBracketToken(const TextViewport* viewport,
-                              std::size_t line_index,
-                              std::size_t column) {
-  if (viewport == nullptr) {
-    return false;
-  }
-  const auto& tokens = viewport->HighlightedLineTokens(line_index);
-  if (tokens.empty() || column >= tokens.size()) {
+// Per-line token span hoisted by the bracket scanners. When the syntax-highlight
+// LRU is cold for this line, `tokens` is empty and the bracket is **not**
+// suppressed — far-from-viewport scans then over-emit a few fold ranges for
+// brackets inside strings/comments, which is cheap to live with. The
+// alternative was a `viewport->HighlightedLineTokens(line_index)` call **per
+// bracket byte**, which forced full syntax highlighting of every scanned line
+// and thrashed the 256-entry LRU on large-document fold recomputes
+// (perf round-4 Finding 1).
+inline bool IsSuppressedBracketAt(std::span<const SyntaxTokenKind> tokens, std::size_t column) {
+  if (column >= tokens.size()) {
     return false;
   }
   const SyntaxTokenKind kind = tokens[column];
@@ -120,11 +123,18 @@ bool BuildBracketStackPrefix(const std::vector<std::string>& lines,
     }
     lines_visited++;
     const std::string& line = lines[line_index];
+    // Hoist the syntax-highlight token lookup out of the per-byte loop and use
+    // the non-forcing accessor. Empty span = uncached → no suppression. See
+    // IsSuppressedBracketAt and perf round-4 Finding 1.
+    const std::span<const SyntaxTokenKind> tokens =
+        syntax_viewport != nullptr
+            ? syntax_viewport->HighlightedLineTokensIfCached(line_index)
+            : std::span<const SyntaxTokenKind>{};
     for (std::size_t column = 0; column < line.size(); ++column) {
       const auto byte = static_cast<unsigned char>(line[column]);
       const std::uint8_t kind = table.kind_for_byte[byte];
       if (kind == 0) continue;
-      if (IsSuppressedBracketToken(syntax_viewport, line_index, column)) {
+      if (!tokens.empty() && IsSuppressedBracketAt(tokens, column)) {
         continue;
       }
       const auto& pair = table.pair_for_kind[kind];
@@ -161,11 +171,15 @@ void ScanBracketRangesTail(const std::vector<std::string>& lines,
     }
     lines_visited++;
     const std::string& line = lines[line_index];
+    const std::span<const SyntaxTokenKind> tokens =
+        syntax_viewport != nullptr
+            ? syntax_viewport->HighlightedLineTokensIfCached(line_index)
+            : std::span<const SyntaxTokenKind>{};
     for (std::size_t column = 0; column < line.size(); ++column) {
       const auto byte = static_cast<unsigned char>(line[column]);
       const std::uint8_t kind = table.kind_for_byte[byte];
       if (kind == 0) continue;
-      if (IsSuppressedBracketToken(syntax_viewport, line_index, column)) {
+      if (!tokens.empty() && IsSuppressedBracketAt(tokens, column)) {
         continue;
       }
       const auto& pair = table.pair_for_kind[kind];

@@ -1008,6 +1008,7 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   }
 
   util::PerformanceTrace::Scope miss_scope("TextViewport::HighlightedLineTokens::CacheMiss");
+  util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheForcedMisses);
   const SyntaxState previous_state = HighlightStateBeforeLine(line_index);
   HighlightedLine highlighted;
   {
@@ -1017,14 +1018,33 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
                                                    previous_state);
   }
   line_highlight_states_[line_index] = highlighted.end_state;
+  if (line_index >= line_highlight_states_valid_through_) {
+    line_highlight_states_valid_through_ = line_index + 1;
+  }
 
   if (highlight_cache_.size() >= kHighlightCacheLimit) {
     highlight_cache_.erase(highlight_cache_order_.front());
     highlight_cache_order_.pop_front();
+    util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
   }
   auto [it, _] = highlight_cache_.emplace(line_index, highlighted.tokens);
   highlight_cache_order_.push_back(line_index);
   return it->second;
+}
+
+std::span<const SyntaxTokenKind> TextViewport::HighlightedLineTokensIfCached(
+    std::size_t line_index) const {
+  if (line_index >= document_->lines.size()) {
+    return {};
+  }
+  if (!syntax_highlighting_enabled()) {
+    return {};
+  }
+  const auto it = highlight_cache_.find(line_index);
+  if (it == highlight_cache_.end()) {
+    return {};
+  }
+  return std::span<const SyntaxTokenKind>(it->second.data(), it->second.size());
 }
 
 TextViewportCacheStats TextViewport::CacheStats() const {
@@ -1451,20 +1471,32 @@ void TextViewport::EnsureHighlightCaches() const {
 
   EnsureInitialHighlightState();
   if (highlight_state_revision_ != document_->layout_revision) {
-    line_highlight_states_.assign(document_->lines.size(), SyntaxState{});
-    highlight_checkpoints_.clear();
+    // Lazy invalidation: leave the existing buffer in place and just reset
+    // the validity cursors. Readers gate on the cursor (see
+    // CachedHighlightStateAt / CachedHighlightCheckpointAt). The previous
+    // implementation called `assign(size, SyntaxState{})` here, which was a
+    // full O(N) wipe on every layout-revision bump.
+    line_highlight_states_valid_through_ = 0;
+    highlight_checkpoints_valid_through_ = 0;
     highlight_state_revision_ = document_->layout_revision;
   }
   if (line_highlight_states_.size() != document_->lines.size()) {
-    line_highlight_states_.assign(document_->lines.size(), SyntaxState{});
+    line_highlight_states_.resize(document_->lines.size());
+    line_highlight_states_valid_through_ =
+        std::min(line_highlight_states_valid_through_, line_highlight_states_.size());
   }
   const std::size_t checkpoint_count =
       ((document_->lines.size() - 1) / kHighlightCheckpointInterval) + 1;
   if (highlight_checkpoints_.size() != checkpoint_count) {
-    highlight_checkpoints_.assign(checkpoint_count, SyntaxState{});
+    highlight_checkpoints_.resize(checkpoint_count);
+    highlight_checkpoints_valid_through_ =
+        std::min(highlight_checkpoints_valid_through_, highlight_checkpoints_.size());
   }
   if (!highlight_checkpoints_.empty()) {
     highlight_checkpoints_.front() = *initial_highlight_state_;
+    if (highlight_checkpoints_valid_through_ < 1) {
+      highlight_checkpoints_valid_through_ = 1;
+    }
   }
 }
 
@@ -1475,13 +1507,15 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
       checkpoint_index >= highlight_checkpoints_.size()) {
     return;
   }
-  if (IsCachedHighlightState(highlight_checkpoints_[checkpoint_index])) {
+  if (checkpoint_index < highlight_checkpoints_valid_through_ &&
+      IsCachedHighlightState(highlight_checkpoints_[checkpoint_index])) {
     return;
   }
 
   std::size_t previous_checkpoint = checkpoint_index;
   while (previous_checkpoint > 0 &&
-         !IsCachedHighlightState(highlight_checkpoints_[previous_checkpoint])) {
+         (previous_checkpoint >= highlight_checkpoints_valid_through_ ||
+          !IsCachedHighlightState(highlight_checkpoints_[previous_checkpoint]))) {
     --previous_checkpoint;
   }
 
@@ -1494,7 +1528,8 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
   util::PerformanceTrace::Scope replay_scope(
       "TextViewport::EnsureHighlightCheckpoint::ReplayToCheckpoint");
   for (; line < target_line; ++line) {
-    if (IsCachedHighlightState(line_highlight_states_[line])) {
+    if (line < line_highlight_states_valid_through_ &&
+        IsCachedHighlightState(line_highlight_states_[line])) {
       state = line_highlight_states_[line];
     } else {
       {
@@ -1503,12 +1538,19 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
         state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
       }
       line_highlight_states_[line] = state;
+      if (line >= line_highlight_states_valid_through_) {
+        line_highlight_states_valid_through_ = line + 1;
+      }
       ++highlight_checkpoint_advances_;
     }
     const std::size_t next_line = line + 1;
     if (next_line < document_->lines.size() &&
         next_line % kHighlightCheckpointInterval == 0) {
-      highlight_checkpoints_[next_line / kHighlightCheckpointInterval] = state;
+      const std::size_t cp_idx = next_line / kHighlightCheckpointInterval;
+      highlight_checkpoints_[cp_idx] = state;
+      if (cp_idx >= highlight_checkpoints_valid_through_) {
+        highlight_checkpoints_valid_through_ = cp_idx + 1;
+      }
     }
   }
 }
@@ -1529,7 +1571,8 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
 
   util::PerformanceTrace::Scope replay_scope("TextViewport::HighlightStateBeforeLine::Replay");
   for (std::size_t line = checkpoint_line; line < line_index; ++line) {
-    if (IsCachedHighlightState(line_highlight_states_[line])) {
+    if (line < line_highlight_states_valid_through_ &&
+        IsCachedHighlightState(line_highlight_states_[line])) {
       state = line_highlight_states_[line];
       continue;
     }
@@ -1539,6 +1582,9 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
       state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
     }
     line_highlight_states_[line] = state;
+    if (line >= line_highlight_states_valid_through_) {
+      line_highlight_states_valid_through_ = line + 1;
+    }
     ++highlight_state_advances_;
   }
   return state;
@@ -1573,7 +1619,9 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
     highlight_cache_order_.clear();
     initial_highlight_state_.reset();
     line_highlight_states_.clear();
+    line_highlight_states_valid_through_ = 0;
     highlight_checkpoints_.clear();
+    highlight_checkpoints_valid_through_ = 0;
     highlight_state_revision_ = document_->layout_revision;
     return;
   }
@@ -1603,25 +1651,28 @@ void TextViewport::InvalidateDerivedCaches(std::size_t start_line) {
       highlight_cache_order_.end());
 
   if (line_highlight_states_.size() != document_->lines.size()) {
-    line_highlight_states_.resize(document_->lines.size(), SyntaxState{});
+    line_highlight_states_.resize(document_->lines.size());
   }
-  for (std::size_t line = safe_start; line < line_highlight_states_.size(); ++line) {
-    line_highlight_states_[line] = SyntaxState{};
-  }
+  // Lazy invalidation: drop the validity cursor instead of looping
+  // SyntaxState{} into ~50 000 entries on every keystroke.
+  line_highlight_states_valid_through_ =
+      std::min(line_highlight_states_valid_through_, safe_start);
 
   const std::size_t checkpoint_count =
       document_->lines.empty() ? 0
                                : ((document_->lines.size() - 1) / kHighlightCheckpointInterval) + 1;
   if (highlight_checkpoints_.size() != checkpoint_count) {
-    highlight_checkpoints_.resize(checkpoint_count, SyntaxState{});
+    highlight_checkpoints_.resize(checkpoint_count);
   }
   const std::size_t checkpoint_start = safe_start / kHighlightCheckpointInterval;
-  for (std::size_t index = checkpoint_start; index < highlight_checkpoints_.size(); ++index) {
-    highlight_checkpoints_[index] = SyntaxState{};
-  }
+  highlight_checkpoints_valid_through_ =
+      std::min(highlight_checkpoints_valid_through_, checkpoint_start);
   if (!highlight_checkpoints_.empty()) {
     EnsureInitialHighlightState();
     highlight_checkpoints_.front() = *initial_highlight_state_;
+    if (highlight_checkpoints_valid_through_ < 1) {
+      highlight_checkpoints_valid_through_ = 1;
+    }
   }
   highlight_state_revision_ = document_->layout_revision;
 }
@@ -3060,17 +3111,16 @@ void TextViewport::EnsureWrappedRowLayouts() const {
       folding_model_ != nullptr && folding_model_->has_any_collapsed_fold();
   const bool trivial_now = !soft_wrap_ && !has_any_collapsed_fold;
 
-  // Trivial-layout cache: mapping depends only on wrap/fold/tab/width state,
-  // not on `layout_revision` (text edits). Without this branch, every
-  // keystroke bumped `layout_revision` and forced an O(1) "rebuild" that still
-  // cleared vectors and re-hit counters (Finding 16 / round-2 P2).
-  if (wrapped_row_layouts_trivial_ && trivial_now &&
-      wrapped_row_layouts_tab_size_ == tab_size_ &&
-      wrapped_row_layouts_visible_columns_ == visible_columns_ &&
-      wrapped_row_layouts_soft_wrap_ == soft_wrap_ &&
-      wrapped_row_layouts_folding_model_ == folding_model_ &&
-      wrapped_row_layouts_fold_revision_ ==
-          (folding_model_ != nullptr ? folding_model_->revision() : 0)) {
+  // Trivial-layout cache: in trivial mode the readers (WrappedRowAt,
+  // WrappedRowCount, WrappedLineRowOffset, VisualRowForLine) synthesize from
+  // the **current** `horizontal_scroll_`/`visible_columns_`/`tab_size_` —
+  // they do not read the cached `wrapped_row_layouts_` vectors. So once
+  // trivial, the cache stays valid until trivial_now flips. Earlier we also
+  // checked tab_size / visible_columns / folding_model / fold_revision here;
+  // those triggered a full rebuild on every keystroke because the folding
+  // model bumps its revision on each edit even when nothing is collapsed
+  // (round-4 Finding 2).
+  if (wrapped_row_layouts_trivial_ && trivial_now) {
     return;
   }
 

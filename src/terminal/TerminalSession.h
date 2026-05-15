@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -161,7 +162,7 @@ class TerminalSession {
 
  private:
   struct ScreenState {
-    std::vector<TerminalLine> lines = {TerminalLine{}};
+    std::deque<TerminalLine> lines = {TerminalLine{}};
     std::size_t cursor_row = 0;
     std::size_t cursor_column = 0;
     std::size_t saved_cursor_row = 0;
@@ -227,7 +228,12 @@ class TerminalSession {
   void PushWakeEvent() const;
 
   mutable std::mutex mutex_;
-  std::vector<TerminalLine> lines_ = {TerminalLine{}};
+  // `std::deque` so the scrollback trim `pop_front`-equivalent erase is
+  // amortized O(1) per element with no tail moves — `std::vector::erase(begin)`
+  // moved up to ~2 000 tail elements per trim under heavy output
+  // (round-4 Finding 3). Random access (`lines_[i]`) and iterator-based
+  // algorithms (`std::rotate`, `assign`, snapshot copy) still work.
+  std::deque<TerminalLine> lines_ = {TerminalLine{}};
   ScreenState primary_screen_;
   ScreenState alternate_screen_;
   std::unique_ptr<platform::TerminalBackend> backend_;

@@ -596,7 +596,7 @@ std::size_t TerminalSession::LineCount() const {
 
 std::vector<TerminalLine> TerminalSession::SnapshotLines() const {
   std::scoped_lock lock(mutex_);
-  return lines_;
+  return std::vector<TerminalLine>(lines_.begin(), lines_.end());
 }
 
 std::vector<TerminalLine> TerminalSession::SnapshotLineRange(std::size_t start_row,
@@ -1527,7 +1527,9 @@ bool TerminalSession::EncodeMouseEventLocked(MouseButton button,
 
 void TerminalSession::EnsureCursorLineExistsLocked() {
   if (lines_.size() <= cursor_row_) {
+    const std::size_t grew = cursor_row_ + 1 - lines_.size();
     lines_.resize(cursor_row_ + 1);
+    util::AddPerformanceCounter(util::PerfCounterId::TerminalScrollbackLinesAllocated, grew);
   }
 }
 
@@ -1553,7 +1555,7 @@ void TerminalSession::SaveActiveScreenLocked() {
 
 void TerminalSession::RestoreSavedScreenLocked() {
   const ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
-  lines_ = screen.lines.empty() ? std::vector<TerminalLine>{TerminalLine{}} : screen.lines;
+  lines_ = screen.lines.empty() ? std::deque<TerminalLine>{TerminalLine{}} : screen.lines;
   pending_utf8_sequence_.clear();
   if (use_alternate_screen_) {
     lines_.resize(std::max<std::size_t>(1, rows_));
@@ -1829,7 +1831,14 @@ void TerminalSession::TrimScrollbackLocked() {
   const std::size_t max_lines = use_alternate_screen_ ? std::max<std::size_t>(1, rows_)
                                                       : kMaxScrollbackLines +
                                                             std::max<std::size_t>(1, rows_);
-  if (lines_.size() <= max_lines) {
+  // Coalesce trims: only act once we are 25 % above the target, then trim all
+  // the way down to `max_lines`. The previous implementation trimmed on every
+  // newline once the cap was reached, calling `vector::erase(begin, …)` ~6 700
+  // times per `terminal_scroll_long_output` iteration; each erase walked the
+  // remaining N tail elements. Coalescing cuts the call count by an order of
+  // magnitude (round-4 Finding 3).
+  const std::size_t trim_high_watermark = max_lines + max_lines / 4 + 1;
+  if (lines_.size() < trim_high_watermark) {
     return;
   }
 

@@ -38,6 +38,11 @@ enum class PerfCounterId : std::size_t {
   RenderTextTextureCacheEvictions,
   RenderViewModelBuildFrameSurfaceCalls,
   RenderViewModelBuildOverlaySurfaceCalls,
+  EditorHighlightCacheForcedMisses,
+  EditorHighlightCacheEvictions,
+  RenderClipInvocations,
+  WorkspaceScheduledWakes,
+  TerminalScrollbackLinesAllocated,
   Count,
 };
 

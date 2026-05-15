@@ -275,8 +275,17 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
     const float line_y = panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height;
     if (terminal_panel) {
+      // panel_line_count comes from `session.LineCount()` sampled outside the
+      // session mutex, while `terminal_lines` is the locked snapshot. They can
+      // disagree when scrollback is trimmed between the two calls — the
+      // snapshot is the source of truth for what to draw. Guard against that
+      // skew before indexing (round-4 Finding 3 follow-on).
+      const std::size_t snapshot_index = static_cast<std::size_t>(index) - first_row;
+      if (snapshot_index >= terminal_lines->size()) {
+        break;
+      }
       draw_terminal_line(panel_layout.text_x, line_y, panel_layout.text_width,
-                         (*terminal_lines)[static_cast<std::size_t>(index) - first_row],
+                         (*terminal_lines)[snapshot_index],
                          static_cast<std::size_t>(index));
       continue;
     }
