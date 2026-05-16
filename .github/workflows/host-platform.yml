@@ -24,7 +24,7 @@ jobs:
               sudo apt-get update
               sudo apt-get install -y \
                 cmake ninja-build pkg-config git patchelf \
-                libpcre2-dev libcurl4-openssl-dev \
+                libpcre2-dev libcurl4-openssl-dev liblua5.4-dev \
                 libfreetype-dev libharfbuzz-dev \
                 libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
                 libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev \
@@ -38,7 +38,7 @@ jobs:
             dist_dir: dist/microide-macos
             shell: bash
             deps: |
-              brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 curl dylibbundler
+              brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 lua curl dylibbundler
           - os: windows-2022
             artifact: microide-windows-x86_64
             package_script: ./scripts/ci/package-windows.sh
@@ -52,6 +52,7 @@ jobs:
                 mingw-w64-ucrt-x86_64-sdl3 \
                 mingw-w64-ucrt-x86_64-sdl3-ttf \
                 mingw-w64-ucrt-x86_64-pcre2 \
+                mingw-w64-ucrt-x86_64-lua \
                 pkgconf \
                 git
 
@@ -74,7 +75,7 @@ jobs:
         run: ${{ matrix.deps }}
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
+        run: cmake -S . -B build -G Ninja
 
       - name: Build
         run: cmake --build build --target microide microide_tests
@@ -122,7 +123,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             cmake ninja-build pkg-config git \
-            libpcre2-dev libcurl4-openssl-dev \
+            libpcre2-dev libcurl4-openssl-dev liblua5.4-dev \
             libfreetype-dev libharfbuzz-dev \
             libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libxi-dev libxss-dev libxkbcommon-dev \
