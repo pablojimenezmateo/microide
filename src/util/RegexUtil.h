@@ -6,10 +6,9 @@
 
 #include <pcre2.h>
 
-#include <SDL3/SDL.h>
-
 #include <atomic>
 #include <cstddef>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -87,7 +86,8 @@ class CompiledRegex {
       if (jit_rc != 0) {
         static std::atomic<bool> jit_warned{false};
         if (!jit_warned.exchange(true)) {
-          SDL_Log("RegexUtil: PCRE2 JIT unavailable (rc=%d); using interpreted mode", jit_rc);
+          std::fprintf(stderr, "RegexUtil: PCRE2 JIT unavailable (rc=%d); using interpreted mode\n",
+                       jit_rc);
         }
       }
       code_ = std::shared_ptr<pcre2_code>(code, pcre2_code_free);

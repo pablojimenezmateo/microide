@@ -104,13 +104,13 @@ jobs:
       matrix:
         include:
           - preset: microide-asan
-            binary_dir: build/microide-asan-make
+            binary_dir: build/microide-asan
             soft_fail: false
           - preset: microide-ubsan
-            binary_dir: build/microide-ubsan-make
+            binary_dir: build/microide-ubsan
             soft_fail: false
           - preset: microide-tsan
-            binary_dir: build/microide-tsan-make
+            binary_dir: build/microide-tsan
             soft_fail: false
     continue-on-error: ${{ matrix.soft_fail }}
     steps:

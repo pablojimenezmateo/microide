@@ -16,7 +16,6 @@ DIST_DIR="${DIST_DIR:-dist/microide-macos}"
 
 APP_BUNDLE_SRC="${BUILD_DIR}/microide/microide.app"
 PLAIN_BIN_SRC="${BUILD_DIR}/microide/microide"
-PROVIDER_BRIDGE_SRC="${BUILD_DIR}/microide/microide_provider_bridge"
 
 mkdir -p "${DIST_DIR}"
 
@@ -35,8 +34,6 @@ else
   exit 1
 fi
 
-cp "${PROVIDER_BRIDGE_SRC}" "${DIST_DIR}/"
-
 if ! command -v dylibbundler >/dev/null 2>&1; then
   brew install dylibbundler
 fi
@@ -48,11 +45,5 @@ dylibbundler -od -b -ns \
   -d "${MAIN_LIBS_DIR}/" \
   -p "${MAIN_RPATH}"
 
-dylibbundler -od -b -ns \
-  -x "${DIST_DIR}/microide_provider_bridge" \
-  -d "${DIST_DIR}/libs/" \
-  -p "@executable_path/libs/"
-
 ls -lh "${DIST_DIR}" 2>/dev/null || true
 [[ -d "${MAIN_LIBS_DIR}" ]] && ls -lh "${MAIN_LIBS_DIR}" 2>/dev/null || true
-[[ -d "${DIST_DIR}/libs" ]] && ls -lh "${DIST_DIR}/libs" 2>/dev/null || true

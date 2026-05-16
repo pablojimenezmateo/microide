@@ -670,6 +670,8 @@ struct FileIndexWatcher::Impl {
   bool poll_mode = false;
   std::thread poll_worker;
   std::atomic<bool> stop_poll{false};
+  std::thread initial_scan_worker;
+  std::atomic<bool> stop_initial_scan{false};
   bool warned_fallback = false;
 
   ~Impl() {
@@ -677,7 +679,16 @@ struct FileIndexWatcher::Impl {
     StopPoll();
   }
 
+  void StopInitialScan() {
+    stop_initial_scan.store(true, std::memory_order_release);
+    if (initial_scan_worker.joinable()) {
+      initial_scan_worker.join();
+    }
+    stop_initial_scan.store(false, std::memory_order_release);
+  }
+
   void StopNative() {
+    StopInitialScan();
     if (!native_active) {
       return;
     }
@@ -698,10 +709,23 @@ struct FileIndexWatcher::Impl {
   }
 
   void StopPoll() {
+    StopInitialScan();
     stop_poll.store(true, std::memory_order_release);
     if (poll_worker.joinable()) {
       poll_worker.join();
     }
+  }
+
+  void StartInitialScan() {
+    StopInitialScan();
+    stop_initial_scan.store(false, std::memory_order_release);
+    auto matcher = ignore_matcher;
+    initial_scan_worker = std::thread([this, matcher]() {
+      IndexUpdateBatch initial = BuildInitialBatch(root, matcher.get(), &stop_initial_scan);
+      if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
+        callback(std::move(initial));
+      }
+    });
   }
 
   static void FsEventsCallback(ConstFSEventStreamRef /*stream_ref*/,

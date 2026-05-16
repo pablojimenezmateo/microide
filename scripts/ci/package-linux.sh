@@ -12,7 +12,6 @@ DIST_DIR="${DIST_DIR:-dist/microide-linux}"
 
 mkdir -p "${DIST_DIR}/lib"
 cp "${BUILD_DIR}/microide/microide" "${DIST_DIR}/"
-cp "${BUILD_DIR}/microide/microide_provider_bridge" "${DIST_DIR}/"
 
 # Copy SDL3 + SDL3_ttf shared libraries (with versioned symlinks) from the
 # install prefix used by scripts/ci/install-sdl3-linux.sh.
@@ -27,6 +26,5 @@ if ! command -v patchelf >/dev/null 2>&1; then
   sudo apt-get install -y patchelf
 fi
 patchelf --set-rpath '$ORIGIN/lib' "${DIST_DIR}/microide"
-patchelf --set-rpath '$ORIGIN/lib' "${DIST_DIR}/microide_provider_bridge"
 
 ls -lh "${DIST_DIR}" "${DIST_DIR}/lib"
