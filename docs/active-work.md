@@ -290,7 +290,7 @@ Current state:
   screen model and escape handling while host launch/resize/shutdown behavior sits behind a host
   service boundary
 - CMake now supports macOS bundle output, Windows desktop output, and non-`pkg-config` package
-  discovery for PCRE2 and libcurl
+  discovery for PCRE2
 - local bring-up now exists for Linux, macOS, and Windows host-facing build or test paths, while
   CI is intentionally deferred until the cross-platform backends settle
 

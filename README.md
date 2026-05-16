@@ -6,6 +6,15 @@ Think VSCode-shaped surface area with Zed-class responsiveness.
 
 For the authoritative in-scope/non-goal list see `openspec/specs/product-vision/spec.md`.
 
+## About
+
+microide is **100% vibecoded**: every source file, test, and document in this repository
+was written by AI coding agents (a mix of Claude, GPT, and other tools) under human
+direction. There is no hand-written code path. The repo is published as a real-world
+experiment in agent-driven development — interesting to read, useful to build on, but
+not pitched as production-ready software. Expect rough edges, expect the architecture
+notes to reflect what the agents settled on rather than a hand-curated design.
+
 ## Highlights
 
 ### Editing
@@ -68,7 +77,7 @@ Requirements:
 - SDL3 development package
 - optional: SDL3_ttf for the real font backend
 
-Windows setup and dependency install notes live in [docs/windows-build.md](docs/windows-build.md).
+Default build:
 
 ```bash
 cmake -S . -B build
@@ -76,32 +85,11 @@ cmake --build build -j8
 ./build/microide/microide
 ```
 
-### Ubuntu — building SDL3 and SDL3_ttf from source
+Platform-specific setup, dependency install, and bring-up notes live in dedicated docs:
 
-If your distro does not package recent enough SDL3 or SDL3_ttf:
-
-```bash
-sudo apt install build-essential cmake git
-
-# SDL3
-git clone https://github.com/libsdl-org/SDL.git && cd SDL
-sudo apt-get install build-essential git make pkg-config cmake ninja-build gnome-desktop-testing \
-  libasound2-dev libpulse-dev libaudio-dev libfribidi-dev libjack-dev libsndio-dev \
-  libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
-  libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
-  libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev \
-  libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
-cmake -S . -B build && cmake --build build -j8 && sudo cmake --install build && cd ..
-
-# SDL3_ttf
-git clone https://github.com/libsdl-org/SDL_ttf.git && cd SDL_ttf
-sudo apt install libfreetype-dev
-cmake -S . -B build && cmake --build build -j8 && sudo cmake --install build && cd ..
-```
-
-Font: if `SDL3_ttf` is available at configure time, MicroIDE looks for
-`assets/fonts/JetBrainsMono-Regular.ttf` (copied to `build/microide/assets/` by CMake), then
-common system font locations, and falls back to the SDL debug-text backend if neither is found.
+- [docs/linux-build.md](docs/linux-build.md) — Ubuntu/Debian, including building SDL3/SDL3_ttf from source
+- [docs/windows-build.md](docs/windows-build.md) — MSYS2 UCRT64 setup and Windows-specific notes
+- [docs/host-platform-bringup.md](docs/host-platform-bringup.md) — short macOS / Linux / Windows package summary and focused host-facing regression slice
 
 ## Project State
 
@@ -313,3 +301,8 @@ See `docs/startup-tracing.md` and `docs/runtime-profiling.md` for full workflows
   `ctx.code_actions.add`, `ctx.tasks.add`, `ctx.tools.add`, `ctx.debuggers.add`,
   `ctx.tests.add`, `ctx.scm.add`, `ctx.annotations.add`, `ctx.auth.add`
 - Syntax: `syntax/*.lua` inside plugin directories, loaded on project open and `plugins-reload`
+
+## License
+
+microide is released under the [MIT License](LICENSE).
+Copyright © 2026 Pablo Jiménez Mateo.

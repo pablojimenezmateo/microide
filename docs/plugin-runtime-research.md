@@ -1,6 +1,6 @@
 # Plugin Runtime Research
 
-Reviewed on 2026-04-19.
+Reviewed on 2026-05-16.
 
 Scope:
 
@@ -137,7 +137,7 @@ The biggest blockers are:
 
 1. `WorkspaceShell` still owns too much.
 
-   - `docs/production-tech-debt-review.md` already calls this out as the highest-impact remaining debt.
+   - `docs/archive/production-tech-debt-review.md` already called this out as the highest-impact remaining debt.
    - `src/workspace/WorkspaceShell.h` still carries sidebar state, action metadata, prompts, projects, tabs, terminal state, hover state, and render helpers in one class.
 
 2. Sidebar modes are hardcoded product state, not registered contributions.
@@ -394,7 +394,7 @@ Plugins should be able to register namespaced commands:
 
 - `eslint.run`
 - `eslint.show-problems`
-- `llm.ask-selection`
+- `format.run`
 
 Required host behavior:
 
@@ -403,7 +403,7 @@ Required host behavior:
 - optional keybinding integration
 - optional menu exposure later
 
-This is a strong fit for the existing direction in `docs/production-tech-debt-review.md`, which already recommends moving away from shell-centered action dispatch.
+This is a strong fit for the existing direction in `docs/archive/production-tech-debt-review.md`, which already recommended moving away from shell-centered action dispatch.
 
 ### 2. Sidebar Provider Registry
 
@@ -443,7 +443,7 @@ This is enough to build:
 - project search
 - source control
 - problems list
-- LLM conversation list or prompt history list
+- test or task results list
 
 It is not enough for arbitrary custom widget trees, and that is good. The first plugin API should not turn the sidebar into a second rendering engine.
 
@@ -723,24 +723,12 @@ The first plugin system should solve concrete editor extension problems, not bec
 
 If the architecture can support ESLint cleanly, the plugin system is probably on the right track.
 
-## Example: LLM Plugin
-
-An LLM integration can fit the same architecture, but it should not define the architecture.
-
-What it can reasonably use early:
-
-- commands such as `llm.ask-selection`
-- scratch buffers for prompt/response output
-- sidebar contribution for conversation history or prompts
-- file and selection access
-
-What it should not force too early:
-
-- arbitrary sidebar widget trees
-- custom rendering loops
-- built-in chat product assumptions
-
-This matters because the shell should not grow plugin surface area around the most complex plugin idea first.
+> Note: AI, chat, inline-completion, and provider-bridge workflows are retired
+> product scope (see `docs/implementation-guide.md` and the Phase 5 retirement note
+> in `docs/active-work.md`). Earlier revisions of this doc included an "LLM plugin"
+> sketch as a second exemplar; it has been removed deliberately. New plugin-facing
+> seams should be motivated by ESLint-class, formatter-class, or language-server
+> workflows that the host already supports end to end.
 
 ## Recommended Directory And Module Layout
 

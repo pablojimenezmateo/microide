@@ -1,6 +1,6 @@
 # Host Platform Bring-Up
 
-Reviewed on 2026-04-25.
+Reviewed on 2026-05-16.
 
 This file records the local build and validation path for the current host-platform support slice.
 
@@ -10,7 +10,7 @@ Linux:
 
 ```bash
 sudo apt-get install -y cmake ninja-build pkg-config libsdl3-dev libsdl3-ttf-dev \
-  libpcre2-dev libcurl4-openssl-dev
+  libpcre2-dev
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
 cmake --build build --target microide microide_tests -j8
 ```
@@ -18,7 +18,7 @@ cmake --build build --target microide microide_tests -j8
 macOS:
 
 ```bash
-brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2 curl
+brew install cmake ninja pkg-config sdl3 sdl3_ttf pcre2
 cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
 cmake --build build --target microide microide_tests -j8
 ```
