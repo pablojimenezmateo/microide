@@ -12,6 +12,10 @@ env:
 jobs:
   perf-smoke:
     runs-on: ubuntu-24.04
+    # Advisory: shared GitHub-hosted runners cannot meet the perf budgets
+    # reliably with --iterations=1. The hard gate is perf-gate on the
+    # self-hosted perf-runner-v1 label.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
