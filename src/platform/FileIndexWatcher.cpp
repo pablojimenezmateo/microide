@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -52,6 +53,40 @@ bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
   return it != relative_path.end() && *it == std::filesystem::path(".git");
 }
 
+bool TryComputeRelativePath(const std::filesystem::path& absolute_path,
+                            const std::filesystem::path& root,
+                            std::filesystem::path& relative_path) {
+  const std::filesystem::path normalized_path = absolute_path.lexically_normal();
+  const std::filesystem::path normalized_root = root.lexically_normal();
+  std::filesystem::path relative = normalized_path.lexically_relative(normalized_root);
+  if (!relative.empty()) {
+    relative_path = std::move(relative);
+    return true;
+  }
+#ifdef _WIN32
+  const std::string path_text = normalized_path.generic_string();
+  const std::string root_text = normalized_root.generic_string();
+  if (path_text.size() <= root_text.size()) {
+    return false;
+  }
+  auto lower_copy = [](std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
+      return static_cast<char>(std::tolower(ch));
+    });
+    return text;
+  };
+  const std::string lower_path = lower_copy(path_text);
+  const std::string lower_root = lower_copy(root_text);
+  if (lower_path.rfind(lower_root, 0) != 0 || path_text[root_text.size()] != '/') {
+    return false;
+  }
+  relative_path = std::filesystem::path(path_text.substr(root_text.size() + 1)).lexically_normal();
+  return !relative_path.empty();
+#else
+  return false;
+#endif
+}
+
 bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory,
                                 const std::filesystem::path& root,
                                 const project::IgnoreMatcher* matcher) {
@@ -61,9 +96,9 @@ bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory,
   if (matcher == nullptr) {
     return false;
   }
-  std::error_code error;
-  auto relative = std::filesystem::relative(directory, root, error);
-  if (error || relative.empty() || relative == std::filesystem::path(".")) {
+  std::filesystem::path relative;
+  if (!TryComputeRelativePath(directory, root, relative) ||
+      relative == std::filesystem::path(".")) {
     return false;
   }
   return matcher->Ignored(relative.lexically_normal(), /*is_directory=*/true);
@@ -72,9 +107,8 @@ bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory,
 bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
                                  const std::filesystem::path& root,
                                  std::filesystem::path& relative_path) {
-  std::error_code rel_error;
-  std::filesystem::path rel = std::filesystem::relative(absolute_path, root, rel_error);
-  if (rel_error || rel.empty()) {
+  std::filesystem::path rel;
+  if (!TryComputeRelativePath(absolute_path, root, rel) || rel.empty()) {
     return false;
   }
   rel = rel.lexically_normal();
@@ -83,6 +117,28 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
   }
   relative_path = std::move(rel);
   return true;
+}
+
+bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& relative_path,
+                                     const project::IgnoreMatcher* matcher) {
+  if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
+    return true;
+  }
+  if (matcher == nullptr) {
+    return false;
+  }
+  const std::filesystem::path normalized = relative_path.lexically_normal();
+  if (matcher->Ignored(normalized, false)) {
+    return true;
+  }
+  for (std::filesystem::path parent = normalized.parent_path();
+       !parent.empty() && parent != std::filesystem::path(".");
+       parent = parent.parent_path()) {
+    if (matcher->Ignored(parent.lexically_normal(), true)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Build an initial IndexUpdateBatch by scanning root recursively.
@@ -835,13 +891,24 @@ struct FileIndexWatcher::Impl {
   bool poll_mode = false;
   std::thread poll_worker;
   std::atomic<bool> stop_poll{false};
+  std::thread initial_scan_worker;
+  std::atomic<bool> stop_initial_scan{false};
 
   ~Impl() {
     StopNative();
     StopPoll();
   }
 
+  void StopInitialScan() {
+    stop_initial_scan.store(true, std::memory_order_release);
+    if (initial_scan_worker.joinable()) {
+      initial_scan_worker.join();
+    }
+    stop_initial_scan.store(false, std::memory_order_release);
+  }
+
   void StopNative() {
+    StopInitialScan();
     if (!native_active) {
       return;
     }
@@ -863,10 +930,23 @@ struct FileIndexWatcher::Impl {
   }
 
   void StopPoll() {
+    StopInitialScan();
     stop_poll.store(true, std::memory_order_release);
     if (poll_worker.joinable()) {
       poll_worker.join();
     }
+  }
+
+  void StartInitialScan() {
+    StopInitialScan();
+    stop_initial_scan.store(false, std::memory_order_release);
+    initial_scan_worker = std::thread([this]() {
+      IndexUpdateBatch initial =
+          BuildInitialBatch(root, ignore_matcher.get(), &stop_initial_scan);
+      if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
+        callback(std::move(initial));
+      }
+    });
   }
 
   bool StartNative() {
@@ -952,7 +1032,7 @@ struct FileIndexWatcher::Impl {
             reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(ptr);
         const std::wstring wname(info->FileName, info->FileNameLength / sizeof(WCHAR));
         const std::filesystem::path rel = std::filesystem::path(wname).lexically_normal();
-        if (rel.empty() || IsGitMetadataRelativePath(rel)) {
+        if (ShouldIgnoreTrackedRelativePath(rel, ignore_matcher.get())) {
           if (info->NextEntryOffset == 0) {
             break;
           }
@@ -1213,15 +1293,7 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   // Try native backend
   if (impl_->StartNative()) {
     impl_->is_native.store(true, std::memory_order_release);
-#if defined(__linux__)
     impl_->StartInitialScan();
-#else
-    // Emit initial batch first (on the calling thread, synchronous, before starting watcher)
-    if (impl_->callback) {
-      IndexUpdateBatch initial = BuildInitialBatch(impl_->root, impl_->ignore_matcher.get());
-      impl_->callback(std::move(initial));
-    }
-#endif
     return true;
   }
 
@@ -1231,15 +1303,7 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   }
 #endif
 
-#if defined(__linux__)
   impl_->StartInitialScan();
-#else
-  // Emit initial batch first (on the calling thread, synchronous, before starting watcher)
-  if (impl_->callback) {
-    IndexUpdateBatch initial = BuildInitialBatch(impl_->root, impl_->ignore_matcher.get());
-    impl_->callback(std::move(initial));
-  }
-#endif
   impl_->StartPollFallback();
   return true;
 }

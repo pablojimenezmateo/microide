@@ -172,12 +172,12 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() const {
   const std::filesystem::path path = viewport->path().lexically_normal();
   std::string path_label;
   if (!context_.current_project_state.root.empty() && !path.empty()) {
-    std::error_code error;
-    const std::filesystem::path relative = std::filesystem::relative(path, context_.current_project_state.root, error);
+    const std::filesystem::path relative =
+        path.lexically_relative(context_.current_project_state.root);
     const bool starts_with_parent =
         relative.begin() != relative.end() &&
         *relative.begin() == std::filesystem::path("..");
-    if (!error && !relative.empty() && !starts_with_parent) {
+    if (!relative.empty() && !starts_with_parent) {
       path_label = relative.generic_string();
     }
   }

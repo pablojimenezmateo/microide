@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceActionRequests.h"
+#include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
@@ -127,13 +128,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
 
       std::string clipboard_text;
       if (id == ActionId::CopyRelativePath) {
-        std::error_code error;
-        const std::filesystem::path relative =
-            std::filesystem::relative(path, context_.ProjectRoot(), error);
-        if (error || relative.empty()) {
+        clipboard_text = RelativePathLabel(context_.ProjectRoot(), path);
+        if (clipboard_text.empty() ||
+            clipboard_text == path.lexically_normal().generic_string()) {
           return reject("Unable to resolve a relative path for the selection");
         }
-        clipboard_text = relative.generic_string();
       } else {
         clipboard_text = path.lexically_normal().string();
       }

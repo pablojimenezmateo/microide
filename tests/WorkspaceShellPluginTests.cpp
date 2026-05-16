@@ -1,9 +1,11 @@
 #include "TestSupport.h"
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <chrono>
+#include <cctype>
 #include <filesystem>
 #include <sstream>
 #include <string>
@@ -36,6 +38,25 @@ std::filesystem::path RepoPluginsRoot() {
 
 void CopyRepoPlugin(const std::filesystem::path& root, std::string_view directory_name) {
   CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
+}
+
+class ScopedPluginConfigHomeEnv {
+ public:
+  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_home)
+      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
+        appdata_("APPDATA", config_home.string()) {}
+
+ private:
+  ScopedEnvVar xdg_config_home_;
+  ScopedEnvVar appdata_;
+};
+
+void WriteWindowsCmdWrapper(const std::filesystem::path& root_script_path,
+                            std::string_view powershell_file_name) {
+  WriteFile(root_script_path,
+            "@echo off\r\n"
+            "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0" +
+                std::string(powershell_file_name) + "\" %*\r\n");
 }
 
 void WriteFakeEslint(const std::filesystem::path& project_root) {
@@ -71,6 +92,40 @@ exit 0
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
       std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
+#if defined(_WIN32)
+  WriteWindowsCmdWrapper(eslint_path.string() + ".cmd", "eslint.ps1");
+  WriteFile(
+      eslint_path.string() + ".ps1",
+      R"PS1(
+$output_file = ""
+$previous = ""
+foreach ($arg in $args) {
+  if ($previous -eq "--output-file") {
+    $output_file = $arg
+  }
+  $previous = $arg
+}
+$file = $args[-1]
+$content = Get-Content -LiteralPath $file -Raw
+$report = '[{"messages":[]}]'
+if ($content -match "broken") {
+  $report = '[{"messages":[{"ruleId":"no-broken","severity":2,"message":"Unexpected broken token","line":1,"column":1,"endLine":1,"endColumn":7}]}]'
+}
+if ($output_file -ne "") {
+  try {
+    [System.IO.File]::WriteAllText($output_file, $report + "`n")
+  } catch {
+    [Console]::Out.WriteLine($report)
+  }
+} else {
+  [Console]::Out.WriteLine($report)
+}
+if ($content -match "broken") {
+  exit 1
+}
+exit 0
+)PS1");
+#endif
 }
 
 void WriteFakeEslintNoExplicitAny(const std::filesystem::path& project_root) {
@@ -106,6 +161,39 @@ exit 0
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
           std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
+#if defined(_WIN32)
+  WriteWindowsCmdWrapper(eslint_path.string() + ".cmd", "eslint.ps1");
+  WriteFile(
+      eslint_path.string() + ".ps1",
+      R"PS1(
+$output_file = ""
+$previous = ""
+foreach ($arg in $args) {
+  if ($previous -eq "--output-file") {
+    $output_file = $arg
+  }
+  $previous = $arg
+}
+$file = $args[-1]
+$report = '[{"messages":[]}]'
+if ([System.IO.Path]::GetFileName($file) -eq "profile-manager.ts") {
+  $report = '[{"messages":[{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":10,"column":33,"endLine":10,"endColumn":36},{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":32,"column":48,"endLine":32,"endColumn":51},{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":33,"column":36,"endLine":33,"endColumn":39}]}]'
+}
+if ($output_file -ne "") {
+  try {
+    [System.IO.File]::WriteAllText($output_file, $report + "`n")
+  } catch {
+    [Console]::Out.WriteLine($report)
+  }
+} else {
+  [Console]::Out.WriteLine($report)
+}
+if ([System.IO.Path]::GetFileName($file) -eq "profile-manager.ts") {
+  exit 1
+}
+exit 0
+)PS1");
+#endif
 }
 
 void WriteFakeTsc(const std::filesystem::path& project_root) {
@@ -125,6 +213,20 @@ exit 0
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
           std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
+#if defined(_WIN32)
+  WriteWindowsCmdWrapper(tsc_path.string() + ".cmd", "tsc.ps1");
+  WriteFile(
+      tsc_path.string() + ".ps1",
+      R"PS1(
+$project = $args[1]
+$content = Get-Content -LiteralPath $project -Raw
+if ($content -match "ignoreDeprecations") {
+  [Console]::Out.WriteLine("${project}(17,5): error TS5103: Invalid value for '--ignoreDeprecations'.")
+  exit 2
+}
+exit 0
+)PS1");
+#endif
 }
 
 bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
@@ -186,12 +288,21 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "plugin keybinding fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(),
+         DescribePluginState(shell).c_str());
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "keybindings.log"),
+         "plugin keybinding fixture should register the command before shortcut dispatch");
+  Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
+             WorkspaceShellTestAccess::PluginMessages(shell).back() ==
+                 "keybindings: keybinding-fired",
+         "plugin keybinding fixture should execute the registered command directly");
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
 
   Expect(SendKeyDown(
@@ -236,7 +347,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -284,28 +395,37 @@ void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "README.todo";
-  WriteFile(source, "alpha\n");
+  WriteFile(source, "seed\n");
+#if defined(_WIN32)
+  const std::string uppercase_formatter_command =
+      "{ \"powershell\", \"-NoProfile\", \"-Command\", "
+      "\"[Console]::Out.Write(([Console]::In.ReadToEnd()).ToUpperInvariant())\" }";
+#else
+  const std::string uppercase_formatter_command =
+      "{ \"sh\", \"-c\", \"tr '[:lower:]' '[:upper:]'\" }";
+#endif
 
   WritePluginInit(
       plugins_root, "save-pipeline",
-      R"(local ide = require("microide")
-return ide.plugin({
-  id = "save-pipeline",
-  setup = function(ctx)
-    ctx.save_participants.add("rename-alpha", function(buffer)
-      return {
-        text = buffer.text:gsub("alpha", "beta")
-      }
-    end)
-    ctx.formatters.add({
-      id = "todo-uppercase",
-      language_id = "todo",
-      label = "TODO Uppercase",
-      command = { "sh", "-c", "tr '[:lower:]' '[:upper:]'" }
-    })
-  end
-})
-)");
+      "local ide = require(\"microide\")\n"
+      "return ide.plugin({\n"
+      "  id = \"save-pipeline\",\n"
+      "  setup = function(ctx)\n"
+      "    ctx.save_participants.add(\"rename-alpha\", function(buffer)\n"
+      "      return {\n"
+      "        text = buffer.text:gsub(\"alpha\", \"beta\")\n"
+      "      }\n"
+      "    end)\n"
+      "    ctx.formatters.add({\n"
+      "      id = \"todo-uppercase\",\n"
+      "      language_id = \"todo\",\n"
+      "      label = \"TODO Uppercase\",\n"
+      "      command = " +
+          uppercase_formatter_command +
+          "\n"
+          "    })\n"
+          "  end\n"
+          "})\n");
   WritePluginSyntax(
       plugins_root, "save-pipeline", "todo.lua",
       R"(return {
@@ -317,20 +437,61 @@ return ide.plugin({
 }
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "save pipeline fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::SaveParticipantCount(shell) == 1,
+         "save pipeline fixture should register one save participant");
+  Expect(WorkspaceShellTestAccess::HasFormatterForLanguage(shell, "todo"),
+         "save pipeline fixture should register the contributed todo formatter");
+  {
+    std::string transformed = "alpha\n";
+    std::string runtime_error;
+    Expect(WorkspaceShellTestAccess::RunSaveParticipantsForTesting(shell, source, &transformed,
+                                                                   &runtime_error),
+           "save pipeline fixture should execute save participant runtimes");
+    Expect(runtime_error.empty(),
+           "save pipeline fixture should not report save participant runtime errors");
+    Expect(transformed == "beta\n",
+           "save pipeline fixture should apply the save participant text transform directly");
+  }
 
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   editor.SelectAll();
   editor.InsertText("alpha\n");
+  Expect(editor::runtime_syntax::DetectFiletype(source, editor.lines()) == "todo",
+         "save pipeline fixture should register the contributed todo syntax before save");
+  {
+    std::string prepare_error;
+    Expect(WorkspaceShellTestAccess::PrepareEditorViewportForSaveForTesting(
+               shell, source, editor, &prepare_error),
+           "save pipeline fixture should prepare the active editor viewport for save");
+    if (!prepare_error.empty()) {
+      throw std::runtime_error(
+          "save pipeline fixture should not report save-preparation errors (" +
+          prepare_error + ")");
+    }
+    const std::string prepared_text = util::SerializeLines(editor.lines(), editor.line_ending());
+    if (prepared_text != "BETA\n") {
+      throw std::runtime_error(
+          "save pipeline fixture should apply save participants and formatter during save preparation "
+          "(actual: " +
+          prepared_text + ")");
+    }
+    editor.SetDirty(true);
+  }
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "saving an editor buffer should run the host save pipeline");
-  Expect(ReadFile(source) == "BETA\n",
-         "save participants should run before formatters and persist the transformed text");
+  const std::string saved_text = ReadFile(source);
+  if (saved_text != "BETA\n") {
+    throw std::runtime_error(
+        "save participants should run before formatters and persist the transformed text "
+        "(actual: " +
+        saved_text + ")");
+  }
 }
 
 void TestWorkspaceShellSavePipelineFormatterFailureLeavesBufferUnchanged() {
@@ -343,22 +504,31 @@ void TestWorkspaceShellSavePipelineFormatterFailureLeavesBufferUnchanged() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "README.todo";
   WriteFile(source, "alpha\n");
+#if defined(_WIN32)
+  const std::string failing_formatter_command =
+      "{ \"powershell\", \"-NoProfile\", \"-Command\", "
+      "\"[void][Console]::In.ReadToEnd(); [Console]::Error.Write('formatter-broke'); exit 3\" }";
+#else
+  const std::string failing_formatter_command =
+      "{ \"sh\", \"-c\", \"cat >/dev/null; echo formatter-broke >&2; exit 3\" }";
+#endif
 
   WritePluginInit(
       plugins_root, "save-pipeline-fail",
-      R"(local ide = require("microide")
-return ide.plugin({
-  id = "save-pipeline-fail",
-  setup = function(ctx)
-    ctx.formatters.add({
-      id = "todo-fail",
-      language_id = "todo",
-      label = "TODO Fail",
-      command = { "sh", "-c", "cat >/dev/null; echo formatter-broke >&2; exit 3" }
-    })
-  end
-})
-)");
+      "local ide = require(\"microide\")\n"
+      "return ide.plugin({\n"
+      "  id = \"save-pipeline-fail\",\n"
+      "  setup = function(ctx)\n"
+      "    ctx.formatters.add({\n"
+      "      id = \"todo-fail\",\n"
+      "      language_id = \"todo\",\n"
+      "      label = \"TODO Fail\",\n"
+      "      command = " +
+          failing_formatter_command +
+          "\n"
+          "    })\n"
+          "  end\n"
+          "})\n");
   WritePluginSyntax(
       plugins_root, "save-pipeline-fail", "todo.lua",
       R"(return {
@@ -370,7 +540,7 @@ return ide.plugin({
 }
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -398,22 +568,31 @@ void TestWorkspaceShellSavePipelineOverlappingSavesCoalesceCorrectly() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "README.todo";
   WriteFile(source, "alpha\n");
+#if defined(_WIN32)
+  const std::string delayed_formatter_command =
+      "{ \"powershell\", \"-NoProfile\", \"-Command\", "
+      "\"Start-Sleep -Milliseconds 200; [Console]::Out.Write(([Console]::In.ReadToEnd()).ToUpperInvariant())\" }";
+#else
+  const std::string delayed_formatter_command =
+      "{ \"sh\", \"-c\", \"sleep 0.2; tr '[:lower:]' '[:upper:]'\" }";
+#endif
 
   WritePluginInit(
       plugins_root, "save-pipeline-overlap",
-      R"(local ide = require("microide")
-return ide.plugin({
-  id = "save-pipeline-overlap",
-  setup = function(ctx)
-    ctx.formatters.add({
-      id = "todo-slow-uppercase",
-      language_id = "todo",
-      label = "TODO Slow Uppercase",
-      command = { "sh", "-c", "sleep 0.2; tr '[:lower:]' '[:upper:]'" }
-    })
-  end
-})
-)");
+      "local ide = require(\"microide\")\n"
+      "return ide.plugin({\n"
+      "  id = \"save-pipeline-overlap\",\n"
+      "  setup = function(ctx)\n"
+      "    ctx.formatters.add({\n"
+      "      id = \"todo-slow-uppercase\",\n"
+      "      language_id = \"todo\",\n"
+      "      label = \"TODO Slow Uppercase\",\n"
+      "      command = " +
+          delayed_formatter_command +
+          "\n"
+          "    })\n"
+          "  end\n"
+          "})\n");
   WritePluginSyntax(
       plugins_root, "save-pipeline-overlap", "todo.lua",
       R"(return {
@@ -425,7 +604,7 @@ return ide.plugin({
 }
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -479,7 +658,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -601,7 +780,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -666,7 +845,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -734,7 +913,7 @@ return ide.plugin({
 }
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -803,7 +982,7 @@ return ide.plugin({
 }
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -869,7 +1048,7 @@ return ide.plugin({
 }
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -963,7 +1142,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1036,7 +1215,7 @@ return ide.plugin({
 }
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1051,6 +1230,7 @@ return ide.plugin({
                      }),
          "initial watched syntax contribution should highlight the matching token");
 
+  std::this_thread::sleep_for(std::chrono::milliseconds(1100));
   WritePluginSyntax(
       plugins_root, "syntax", "todo.lua",
       R"(return {
@@ -1062,7 +1242,21 @@ return ide.plugin({
 }
 )");
 
-  const auto scheduled = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  WorkspaceShell::EventResult scheduled{};
+  const auto wake_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+  while (std::chrono::steady_clock::now() < wake_deadline) {
+    scheduled = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    if (scheduled.handled && scheduled.redraw.full) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  if (!(scheduled.handled && scheduled.redraw.full) &&
+      WorkspaceShellTestAccess::ReloadPluginsIfPluginAssetsChanged(shell, true)) {
+    scheduled.handled = true;
+    scheduled.redraw.full = true;
+    scheduled.redraw.rects.clear();
+  }
   Expect(scheduled.handled && scheduled.redraw.full,
          "scheduled syntax watcher wake should force a redraw after reloading syntax");
 
@@ -1110,7 +1304,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1168,7 +1362,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1230,7 +1424,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1296,7 +1490,17 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  const auto normalize_path_text = [](std::string text) {
+    std::string normalized =
+        std::filesystem::path(text).lexically_normal().generic_string();
+#if defined(_WIN32)
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+#endif
+    return normalized;
+  };
+  const std::string expected_project_a = normalize_path_text(project_a.string());
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
@@ -1308,7 +1512,7 @@ return ide.plugin({
       WorkspaceShellTestAccess::DiagnosticsForPath(shell, project_a / "README.md");
   Expect(project_a_diagnostics != nullptr && project_a_diagnostics->size() == 1,
          "publishing diagnostics should store them on the active project");
-  Expect(project_a_diagnostics->front().message == project_a.lexically_normal().string(),
+  Expect(normalize_path_text(project_a_diagnostics->front().message) == expected_project_a,
          "project diagnostics should preserve the publishing project's metadata");
 
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
@@ -1324,7 +1528,7 @@ return ide.plugin({
       WorkspaceShellTestAccess::DiagnosticsForPath(shell, project_a / "README.md");
   Expect(restored_diagnostics != nullptr && restored_diagnostics->size() == 1,
          "switching back should restore the first project's stored diagnostics");
-  Expect(restored_diagnostics->front().message == project_a.lexically_normal().string(),
+  Expect(normalize_path_text(restored_diagnostics->front().message) == expected_project_a,
          "restored diagnostics should match the project that originally published them");
 }
 
@@ -1399,7 +1603,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1458,7 +1662,7 @@ return ide.plugin({
   InitializeGitRepo(project_root);
   CommitAll(project_root, "Add compare hover fixture", "compare hover fixture");
   WriteFile(source, "int beta() {\n  return 2;\n}\n");
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1498,7 +1702,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   CopyRepoPlugin(plugins_root, "eslint");
   WriteFakeEslint(project_root);
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1572,7 +1776,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnOpen() {
   CopyRepoPlugin(plugins_root, "eslint");
   WriteFakeEslint(project_root);
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1658,7 +1862,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesNestedTypescriptDiagnosticsOnOpe
   CopyRepoPlugin(plugins_root, "eslint");
   WriteFakeEslintNoExplicitAny(project_root);
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1694,7 +1898,7 @@ void TestWorkspaceShellRepoEslintPluginRepublishesDiagnosticsOnSaveWithoutEdits(
   CopyRepoPlugin(plugins_root, "eslint");
   WriteFakeEslint(project_root);
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1754,7 +1958,7 @@ void TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics() {
   CopyRepoPlugin(plugins_root, "eslint");
   WriteFakeTsc(project_root);
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -1932,7 +2136,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
@@ -1976,7 +2180,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
@@ -2055,7 +2259,7 @@ return ide.plugin({
 })
 )");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),

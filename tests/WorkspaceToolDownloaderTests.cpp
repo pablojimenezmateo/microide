@@ -19,6 +19,7 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
   std::filesystem::create_directories(bin_dir);
   WriteFile(source, "payload\n");
 
+#if !defined(_WIN32)
   // Keep PATH scoped to this fixture so `sha256sum` is absent and fallback uses `shasum`.
   const std::filesystem::path shasum_path = bin_dir / "shasum";
   WriteFile(shasum_path,
@@ -28,6 +29,7 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
                                                 std::filesystem::perms::owner_read |
                                                 std::filesystem::perms::owner_write,
                                std::filesystem::perm_options::add);
+#endif
 
   ScopedEnvVar path_env("PATH", bin_dir.string());
 
@@ -37,7 +39,7 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
       downloader.Download("tool", source.string(),
                           "d4e4877bac978b7952f0d544fc52ebff5411d351d129f1f056fa43f11da9af2b");
   Expect(downloaded.has_value(),
-         "tool download should succeed when sha256sum is missing but shasum fallback succeeds");
+         "tool download should succeed when sha256sum is missing but a fallback hash tool succeeds");
   Expect(downloaded == std::optional<std::filesystem::path>(cache_dir / "tool"),
          "successful download should return the cached tool path");
 }

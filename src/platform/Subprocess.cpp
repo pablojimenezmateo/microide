@@ -524,8 +524,12 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   mutable_command.push_back(L'\0');
   std::wstring cwd = options.cwd.empty() ? std::wstring{} : options.cwd.wstring();
   std::wstring environment_block = BuildEnvironmentBlock(options.environment_overrides);
-  if (!CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, TRUE, 0,
-                      environment_block.data(),
+  void* environment =
+      options.environment_overrides.empty() ? nullptr : static_cast<void*>(environment_block.data());
+  const DWORD creation_flags =
+      options.environment_overrides.empty() ? 0 : CREATE_UNICODE_ENVIRONMENT;
+  if (!CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, TRUE, creation_flags,
+                      environment,
                       cwd.empty() ? nullptr : cwd.c_str(), &startup_info, &process_info)) {
     result.exit_code = -1;
     result.stderr_text = "CreateProcessW failed";

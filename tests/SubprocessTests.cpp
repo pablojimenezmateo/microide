@@ -40,17 +40,25 @@ void TestSubprocessCapturesStdoutAndStdin() {
 
 void TestSubprocessCapturesStderrAndCwd() {
   TemporaryDirectory temp_dir;
-  const auto pwd_result = RunSubprocess({"pwd"}, SubprocessOptions{
-                                                     .cwd = temp_dir.path(),
-                                                     .stdin_text = {},
-                                                     .environment_overrides = {},
-                                                     .capture_stdout = true,
-                                                     .capture_stderr = true,
-                                                     .silence_stderr = false,
-                                                 });
+#if defined(_WIN32)
+  const std::vector<std::string> cwd_command{"cmd", "/c", "cd"};
+#else
+  const std::vector<std::string> cwd_command{"pwd"};
+#endif
+  const auto pwd_result = RunSubprocess(cwd_command, SubprocessOptions{
+                                                         .cwd = temp_dir.path(),
+                                                         .stdin_text = {},
+                                                         .environment_overrides = {},
+                                                         .capture_stdout = true,
+                                                         .capture_stderr = true,
+                                                         .silence_stderr = false,
+                                                     });
   Expect(pwd_result.exit_code == 0, "subprocess pwd fixture should exit successfully");
-  Expect(pwd_result.stdout_text.find(temp_dir.path().lexically_normal().string()) != std::string::npos,
-         "subprocess execution should honor the requested working directory");
+  const std::string expected_cwd = temp_dir.path().lexically_normal().string();
+  const std::string cwd_message =
+      "subprocess execution should honor the requested working directory; expected '" +
+      expected_cwd + "' in '" + pwd_result.stdout_text + "'";
+  Expect(pwd_result.stdout_text.find(expected_cwd) != std::string::npos, cwd_message);
 
   const auto stderr_result = RunSubprocess({"git", "definitely-not-a-command"});
   Expect(stderr_result.exit_code != 0,

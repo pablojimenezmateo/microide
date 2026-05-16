@@ -1,6 +1,7 @@
 #include "project/DirectoryTree.h"
 
 #include <algorithm>
+#include <cctype>
 #include <system_error>
 
 #include "project/GitStatusService.h"
@@ -101,16 +102,21 @@ bool DirectoryTree::SelectPath(const std::filesystem::path& path) {
     return true;
   }
 
-  const auto relative = std::filesystem::relative(normalized_path, root_, error);
-  if (error || relative.empty() ||
+  const auto relative = normalized_path.lexically_relative(root_);
+  if (relative.empty() ||
       (relative.begin() != relative.end() &&
        *relative.begin() == std::filesystem::path(".."))) {
     return false;
   }
 
-  for (auto current = normalized_path.parent_path();
-       !current.empty() && current != root_ && current.native().rfind(root_.native(), 0) == 0;
+  for (auto current = normalized_path.parent_path(); !current.empty() && current != root_;
        current = current.parent_path()) {
+    const auto current_relative = current.lexically_relative(root_);
+    if (current_relative.empty() ||
+        (current_relative.begin() != current_relative.end() &&
+         *current_relative.begin() == std::filesystem::path(".."))) {
+      break;
+    }
     expanded_paths_.insert(NormalizePathKey(current));
     manually_collapsed_paths_.erase(NormalizePathKey(current));
   }
@@ -314,7 +320,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
                                     int depth,
                                     const IgnoreMatcher& matcher) {
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::AppendDirectory");
-  if (!IsExpanded(directory)) {
+  if (directory != root_ && !IsExpanded(directory)) {
     return;
   }
 
@@ -326,9 +332,8 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
   while (!error && iterator != end) {
     const auto path = iterator->path();
     const std::string sort_key = path.filename().string();
-    std::error_code relative_error;
-    const auto relative = std::filesystem::relative(path, root_, relative_error);
-    if (relative_error || relative.empty()) {
+    const auto relative = path.lexically_relative(root_);
+    if (relative.empty()) {
       iterator.increment(error);
       continue;
     }
@@ -414,9 +419,8 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path) c
     return GitFileStatus::Clean;
   }
 
-  std::error_code error;
-  std::filesystem::path relative = std::filesystem::relative(path, root_, error);
-  if (error || relative.empty() || relative == ".") {
+  const std::filesystem::path relative = path.lexically_relative(root_);
+  if (relative.empty() || relative == ".") {
     return GitFileStatus::Clean;
   }
 
@@ -435,7 +439,14 @@ bool DirectoryTree::CanCollapseAll() const {
 std::string DirectoryTree::NormalizePathKey(const std::filesystem::path& path) {
   std::error_code error;
   const auto absolute = std::filesystem::absolute(path, error);
-  return error ? path.lexically_normal().string() : absolute.lexically_normal().string();
+  std::string key =
+      error ? path.lexically_normal().generic_string() : absolute.lexically_normal().generic_string();
+#ifdef _WIN32
+  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+#endif
+  return key;
 }
 
 }  // namespace microide::project

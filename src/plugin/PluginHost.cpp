@@ -176,10 +176,9 @@ struct PluginHost::Impl {
     if (current_project_root.empty() || path.empty()) {
       return std::nullopt;
     }
-    std::error_code error;
     const std::filesystem::path relative =
-        std::filesystem::relative(path.lexically_normal(), current_project_root, error);
-    if (error || relative.empty()) {
+        path.lexically_normal().lexically_relative(current_project_root.lexically_normal());
+    if (relative.empty()) {
       return std::nullopt;
     }
     return relative.generic_string();
@@ -191,12 +190,12 @@ struct PluginHost::Impl {
                          std::optional<std::string_view> text = std::nullopt) const {
     lua_createtable(state, 0, 3);
     const std::filesystem::path normalized_path = path.lexically_normal();
-    const std::string path_string = normalized_path.string();
+    const std::string path_string = normalized_path.generic_string();
     lua_pushlstring(state, path_string.c_str(), path_string.size());
     lua_setfield(state, -2, "path");
 
     const std::string relative_path = RelativePathString(normalized_path).value_or(
-        normalized_path.filename().empty() ? normalized_path.string()
+        normalized_path.filename().empty() ? normalized_path.generic_string()
                                            : normalized_path.filename().string());
     lua_pushlstring(state, relative_path.c_str(), relative_path.size());
     lua_setfield(state, -2, "relative_path");

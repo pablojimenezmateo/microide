@@ -4,10 +4,12 @@
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
 
@@ -318,12 +320,19 @@ void TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges() {
   std::filesystem::remove(deleted);
   WriteFile(staged_added, "int meaning = 42;\n");
   WriteFile(untracked, "scratch\n");
-  RequireCommandSuccess("git -C '" + EscapedRepoPath(root) + "' add -A >/dev/null 2>/dev/null",
-                        "prepare staged changes");
+  RequireGitCommandSuccess(root, {"add", "-A"}, "prepare staged changes");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  {
+    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < git_deadline &&
+           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
 
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
@@ -364,7 +373,14 @@ void TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors() {
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  {
+    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < git_deadline &&
+           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
 
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
@@ -401,10 +417,17 @@ void TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs() {
   WriteFile(untracked, "scratch\n");
   WorkspaceShellTestAccess::OpenFile(shell, staged_added);
   WorkspaceShellTestAccess::OpenFile(shell, untracked);
-  RequireCommandSuccess("git -C '" + EscapedRepoPath(root) + "' add -A >/dev/null 2>/dev/null",
-                        "prepare staged changes");
+  RequireGitCommandSuccess(root, {"add", "-A"}, "prepare staged changes");
 
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  {
+    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (std::chrono::steady_clock::now() < git_deadline &&
+           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
 

@@ -39,6 +39,72 @@ std::string ResolveGitBranchLabelFallback(const std::filesystem::path& project_r
 }  // namespace
 
 void SidebarCoordinator::RefreshGit() {
+  if (state_.sidebar.git.refreshing &&
+      operations_.consume_git_refresh_snapshot != nullptr) {
+    GitSidebarState::RefreshSnapshot pending_snapshot;
+    if (!operations_.consume_git_refresh_snapshot(&pending_snapshot)) {
+      if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
+        operations_.request_sidebar_redraw();
+      }
+      return;
+    }
+
+    const std::filesystem::path previous_path =
+        state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
+            ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].path
+            : std::filesystem::path{};
+    const GitSidebarEntry::Section previous_section =
+        state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
+            ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].section
+            : GitSidebarEntry::Section::Modified;
+
+    state_.sidebar.git.entries.clear();
+    state_.sidebar.git.branch_label.clear();
+    state_.sidebar.git.base_ref.clear();
+    state_.sidebar.git.base_label.clear();
+    state_.sidebar.git.repo_available = false;
+    state_.sidebar.git.selected_index = 0;
+
+    for (const auto& entry : pending_snapshot.entries) {
+      state_.sidebar.git.entries.push_back(GitSidebarEntry{
+          .section = entry.section,
+          .path = (project_root_ / entry.relative_path).lexically_normal(),
+          .relative_path = entry.relative_path,
+          .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
+          .conflicted = entry.conflicted,
+          .staged = entry.staged,
+          .provider_id = {},
+          .provider_label = {},
+          .supports_stage = true,
+          .supports_discard = true,
+      });
+    }
+    state_.sidebar.git.repo_available = pending_snapshot.repo_available;
+    state_.sidebar.git.branch_label = pending_snapshot.branch_label;
+    state_.sidebar.git.base_ref = pending_snapshot.base_ref;
+    state_.sidebar.git.base_label = pending_snapshot.base_label;
+    state_.sidebar.git.refreshing = false;
+
+    for (std::size_t i = 0; i < state_.sidebar.git.entries.size(); ++i) {
+      if (state_.sidebar.git.entries[i].path == previous_path &&
+          state_.sidebar.git.entries[i].section == previous_section) {
+        state_.sidebar.git.selected_index = i;
+        RevealSelectedGitLine();
+        if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
+          operations_.request_sidebar_redraw();
+        }
+        return;
+      }
+    }
+
+    RevealSelectedGitLine();
+    operations_.request_window_redraw();
+    if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
+      operations_.request_sidebar_redraw();
+    }
+    return;
+  }
+
   const std::filesystem::path previous_path =
       state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
           ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].path

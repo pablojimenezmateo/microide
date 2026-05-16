@@ -1,8 +1,21 @@
 #include "project/GitCommandUtil.h"
 
+#include <cctype>
+
 #include "platform/Subprocess.h"
 
 namespace microide::project::internal {
+
+namespace {
+
+std::string LowerAscii(std::string text) {
+  for (char& ch : text) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  return text;
+}
+
+}  // namespace
 
 bool HasGitMarker(const std::filesystem::path& root) {
   return !root.empty() && std::filesystem::exists(root / ".git");
@@ -15,12 +28,27 @@ std::optional<std::filesystem::path> AbsoluteToRelativePath(
     return std::nullopt;
   }
 
-  std::error_code error;
-  const std::filesystem::path relative = std::filesystem::relative(
-      absolute_path.lexically_normal(), root.lexically_normal(), error);
-  if (error || relative.empty() ||
+  const std::filesystem::path relative =
+      absolute_path.lexically_normal().lexically_relative(root.lexically_normal());
+  if (relative.empty() ||
       (relative.begin() != relative.end() &&
        *relative.begin() == std::filesystem::path(".."))) {
+#if defined(_WIN32)
+    const std::string root_text = root.lexically_normal().generic_string();
+    const std::string path_text = absolute_path.lexically_normal().generic_string();
+    std::string lowered_root = LowerAscii(root_text);
+    std::string lowered_path = LowerAscii(path_text);
+    const std::string lowered_root_prefix =
+        lowered_root.ends_with('/') ? lowered_root : lowered_root + "/";
+    const std::string root_prefix = root_text.ends_with('/') ? root_text : root_text + "/";
+    if (lowered_path == lowered_root) {
+      return std::filesystem::path(".");
+    }
+    if (lowered_path.size() > lowered_root_prefix.size() &&
+        lowered_path.rfind(lowered_root_prefix, 0) == 0) {
+      return std::filesystem::path(path_text.substr(root_prefix.size())).lexically_normal();
+    }
+#endif
     return std::nullopt;
   }
   return relative.lexically_normal();

@@ -143,9 +143,8 @@ void IgnoreMatcher::LoadIgnoreFile(const std::filesystem::path& path) {
     return;
   }
 
-  std::error_code error;
-  const auto base_relative = std::filesystem::relative(path.parent_path(), root_, error);
-  if (error) {
+  const auto base_relative = path.parent_path().lexically_relative(root_);
+  if (base_relative.empty() && path.parent_path().lexically_normal() != root_) {
     return;
   }
 

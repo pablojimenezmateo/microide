@@ -5,10 +5,12 @@
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
 
@@ -509,6 +511,14 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  {
+    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (std::chrono::steady_clock::now() < git_deadline &&
+           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
 
   const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
   Expect(top_action_rects[0].w > 0.0f && top_action_rects[2].w > 0.0f,
@@ -854,6 +864,12 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (std::chrono::steady_clock::now() < git_deadline &&
+         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 
   const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
   (void)SendMouseMotion(
@@ -1204,7 +1220,10 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
   Expect(WorkspaceShellTestAccess::ExecuteCopyRelativePath(shell),
          "Copy Relative Path should execute from the active tab");
   Expect(clipboard_text == "src/alpha.cpp",
-         "Copy Relative Path should copy the active tab path relative to the project root");
+         ("Copy Relative Path should copy the active tab path relative to the project root "
+          "(actual: " +
+          clipboard_text + ")")
+             .c_str());
 
   clipboard_text.clear();
   Expect(WorkspaceShellTestAccess::ExecuteCopyAbsolutePath(shell),

@@ -9,12 +9,12 @@ GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(const std::filesystem::pa
   GitSidebarEntryTextModel model;
   model.primary_label = normalized_path.filename().string();
   if (model.primary_label.empty()) {
-    model.primary_label = normalized_path.empty() ? "." : normalized_path.string();
+    model.primary_label = normalized_path.empty() ? "." : normalized_path.generic_string();
   }
 
   const std::filesystem::path parent = normalized_path.parent_path();
   if (!parent.empty() && parent != ".") {
-    model.secondary_label = parent.string();
+    model.secondary_label = parent.generic_string();
   }
   if (staged) {
     if (!model.secondary_label.empty()) {

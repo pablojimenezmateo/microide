@@ -17,6 +17,17 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
+class ScopedPluginConfigHomeEnv {
+ public:
+  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_root)
+      : xdg_config_home_("XDG_CONFIG_HOME", config_root.string()),
+        appdata_("APPDATA", config_root.string()) {}
+
+ private:
+  ScopedEnvVar xdg_config_home_;
+  ScopedEnvVar appdata_;
+};
+
 void WritePluginInit(const std::filesystem::path& root,
                      std::string_view directory_name,
                      std::string_view content) {
@@ -89,7 +100,7 @@ return ide.plugin({
 })
 )lua");
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -146,7 +157,7 @@ void TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions() {
 import json
 import pathlib
 import sys
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 project_root = None
 
@@ -185,7 +196,10 @@ while True:
     if method == "initialize":
         root_uri = msg.get("params", {}).get("rootUri", "")
         if root_uri.startswith("file://"):
-            project_root = pathlib.Path(root_uri[len("file://"):])
+            decoded_root = unquote(root_uri[len("file://"):])
+            if len(decoded_root) >= 3 and decoded_root[0] == "/" and decoded_root[2] == ":":
+                decoded_root = decoded_root[1:]
+            project_root = pathlib.Path(decoded_root)
         write_message({
             "jsonrpc": "2.0",
             "id": msg["id"],
@@ -306,7 +320,7 @@ return ide.plugin({
 })
 )lua"));
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -525,7 +539,7 @@ return ide.plugin({
 })
 )lua"));
 
-  ScopedEnvVar xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedPluginConfigHomeEnv config_env(config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
@@ -555,13 +569,14 @@ void TestPhase5DeferredTabHydrationCompletesBeforeDidOpenDiagnostics() {
 
   const std::filesystem::path home = temp_dir.path() / "home";
   const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
-  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
   std::filesystem::create_directories(home);
   std::filesystem::create_directories(xdg_state_home);
-  std::filesystem::create_directories(xdg_config_home);
+  std::filesystem::create_directories(config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
   ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedEnvVar scoped_localappdata("LOCALAPPDATA", xdg_state_home.string());
+  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", config_home.string());
+  ScopedEnvVar scoped_appdata("APPDATA", config_home.string());
 
   const std::filesystem::path server_path = project_root / "phase5_delayed_didopen_lsp.py";
   WriteFile(server_path, R"py(#!/usr/bin/env python3

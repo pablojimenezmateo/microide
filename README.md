@@ -68,6 +68,8 @@ Requirements:
 - SDL3 development package
 - optional: SDL3_ttf for the real font backend
 
+Windows setup and dependency install notes live in [docs/windows-build.md](docs/windows-build.md).
+
 ```bash
 cmake -S . -B build
 cmake --build build -j8

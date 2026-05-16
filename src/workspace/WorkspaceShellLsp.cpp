@@ -32,6 +32,11 @@ std::string FileUriForPath(const std::filesystem::path& path) {
   const std::string raw = path.lexically_normal().generic_string();
   std::ostringstream encoded;
   encoded << "file://";
+#ifdef _WIN32
+  if (!raw.empty() && raw.front() != '/') {
+    encoded << '/';
+  }
+#endif
   for (unsigned char ch : raw) {
     if (IsUnreservedUriByte(ch)) {
       encoded << static_cast<char>(ch);
@@ -77,6 +82,12 @@ std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
   if (decoded.empty()) {
     return std::nullopt;
   }
+#ifdef _WIN32
+  if (decoded.size() >= 3 && decoded[0] == '/' && std::isalpha(decoded[1]) != 0 &&
+      decoded[2] == ':') {
+    decoded.erase(decoded.begin());
+  }
+#endif
   return std::filesystem::path(decoded).lexically_normal();
 }
 

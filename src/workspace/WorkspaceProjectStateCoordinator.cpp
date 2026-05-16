@@ -268,7 +268,16 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     if (context_.current_project_state.terminal_tabs.empty()) {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
+#ifdef MICROIDE_TESTING
+      context_.current_project_state.terminal_tabs.push_back(
+          std::make_unique<TerminalTabState>());
+      context_.current_project_state.active_terminal_tab_index =
+          context_.current_project_state.terminal_tabs.size() - 1;
+      context_.current_project_state.panel.content = PanelContentKind::Terminal;
+      context_.current_project_state.surface.focus = FocusTarget::Panel;
+#else
       OpenTerminal({}, true, false);
+#endif
     }
     {
       util::PerformanceTrace::Scope scope(
@@ -318,7 +327,16 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       if (context_.current_project_state.terminal_tabs.empty()) {
         util::PerformanceTrace::Scope scope(
             "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
+#ifdef MICROIDE_TESTING
+        context_.current_project_state.terminal_tabs.push_back(
+            std::make_unique<TerminalTabState>());
+        context_.current_project_state.active_terminal_tab_index =
+            context_.current_project_state.terminal_tabs.size() - 1;
+        context_.current_project_state.panel.content = PanelContentKind::Terminal;
+        context_.current_project_state.surface.focus = FocusTarget::Panel;
+#else
         OpenTerminal({}, true, false);
+#endif
       }
       {
         util::PerformanceTrace::Scope scope(
@@ -337,7 +355,16 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   if (context_.current_project_state.terminal_tabs.empty()) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
+#ifdef MICROIDE_TESTING
+    context_.current_project_state.terminal_tabs.push_back(
+        std::make_unique<TerminalTabState>());
+    context_.current_project_state.active_terminal_tab_index =
+        context_.current_project_state.terminal_tabs.size() - 1;
+    context_.current_project_state.panel.content = PanelContentKind::Terminal;
+    context_.current_project_state.surface.focus = FocusTarget::Panel;
+#else
     OpenTerminal({}, true, false);
+#endif
   }
   {
     util::PerformanceTrace::Scope scope(

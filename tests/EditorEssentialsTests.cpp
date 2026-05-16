@@ -16,6 +16,7 @@
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceContext.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <string_view>

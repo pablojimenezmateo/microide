@@ -419,6 +419,17 @@ if(APPLE)
   target_link_libraries(microide PRIVATE "-framework CoreFoundation" "-framework CoreServices")
 endif()
 
+if(WIN32)
+  get_filename_component(MICROIDE_TOOLCHAIN_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  add_custom_command(TARGET microide POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+            -DINPUT_FILE=$<TARGET_FILE:microide>
+            -DOUTPUT_DIR=$<TARGET_FILE_DIR:microide>
+            -DSEARCH_DIRS=${MICROIDE_TOOLCHAIN_BIN_DIR}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyRuntimeDependencies.cmake"
+    COMMAND_EXPAND_LISTS)
+endif()
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic)
   if(MICROIDE_WARNINGS_AS_ERRORS)

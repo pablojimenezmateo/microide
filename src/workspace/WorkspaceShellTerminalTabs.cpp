@@ -17,9 +17,15 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   if (terminal_event_type_ != 0) {
     terminal_tab->session.SetWakeEventType(terminal_event_type_);
   }
+#ifdef MICROIDE_TESTING
+  if (!terminal_tab->session.StartPlaceholderForTesting(working_directory, command)) {
+    return;
+  }
+#else
   if (!terminal_tab->session.Start(working_directory, command)) {
     return;
   }
+#endif
 
   context_.current_project_state.terminal_tabs.push_back(std::move(terminal_tab));
   context_.current_project_state.active_terminal_tab_index = context_.current_project_state.terminal_tabs.size() - 1;

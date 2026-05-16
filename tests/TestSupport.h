@@ -27,6 +27,10 @@ std::string ShellEscape(std::string_view text);
 std::string EscapedRepoPath(const std::filesystem::path& repo_path);
 int RunCommand(const std::string& command);
 void RequireCommandSuccess(const std::string& command, std::string_view context);
+int RunGitCommand(const std::filesystem::path& repo_path, const std::vector<std::string>& args);
+void RequireGitCommandSuccess(const std::filesystem::path& repo_path,
+                              const std::vector<std::string>& args,
+                              std::string_view context);
 void InitializeGitRepo(const std::filesystem::path& repo_path);
 void CommitAll(const std::filesystem::path& repo_path,
                std::string_view message,

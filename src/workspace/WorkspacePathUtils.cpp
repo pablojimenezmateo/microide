@@ -8,15 +8,16 @@ std::string RelativePathLabel(const std::filesystem::path& root,
     return {};
   }
 
-  std::error_code error;
-  const auto relative = std::filesystem::relative(path, root, error);
+  const auto normalized_path = path.lexically_normal();
+  const auto normalized_root = root.lexically_normal();
+  const auto relative = normalized_path.lexically_relative(normalized_root);
   const bool starts_with_parent =
       relative.begin() != relative.end() &&
       *relative.begin() == std::filesystem::path("..");
-  if (!error && !relative.empty() && !starts_with_parent) {
-    return relative.lexically_normal().string();
+  if (!relative.empty() && !starts_with_parent) {
+    return relative.lexically_normal().generic_string();
   }
-  return path.lexically_normal().string();
+  return normalized_path.generic_string();
 }
 
 bool PathEqualsOrWithin(const std::filesystem::path& candidate,
@@ -30,10 +31,8 @@ bool PathEqualsOrWithin(const std::filesystem::path& candidate,
     return true;
   }
 
-  std::error_code error;
-  const std::filesystem::path relative =
-      std::filesystem::relative(normalized_candidate, normalized_root, error);
-  if (error || relative.empty()) {
+  const std::filesystem::path relative = normalized_candidate.lexically_relative(normalized_root);
+  if (relative.empty()) {
     return false;
   }
   const std::string relative_text = relative.generic_string();
@@ -53,10 +52,9 @@ std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
     return normalized_new_prefix;
   }
 
-  std::error_code error;
   const std::filesystem::path relative =
-      std::filesystem::relative(normalized_path, normalized_old_prefix, error);
-  if (error || relative.empty()) {
+      normalized_path.lexically_relative(normalized_old_prefix);
+  if (relative.empty()) {
     return normalized_path;
   }
   return (normalized_new_prefix / relative).lexically_normal();

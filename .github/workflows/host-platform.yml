@@ -52,7 +52,6 @@ jobs:
                 mingw-w64-ucrt-x86_64-sdl3 \
                 mingw-w64-ucrt-x86_64-sdl3-ttf \
                 mingw-w64-ucrt-x86_64-pcre2 \
-                mingw-w64-ucrt-x86_64-curl \
                 pkgconf
 
     runs-on: ${{ matrix.os }}
@@ -77,10 +76,15 @@ jobs:
         run: cmake -S . -B build -G Ninja -DMICROIDE_ENABLE_LUA_PLUGINS=OFF
 
       - name: Build
-        run: cmake --build build --target microide microide_tests microide_provider_bridge
+        run: cmake --build build --target microide microide_tests
 
       - name: Host-Facing Regression Slice
+        if: matrix.os != 'windows-2022'
         run: ./build/microide/microide_tests AppDirectories RuntimePaths FileOperationService Subprocess TerminalSession FileWatcher
+
+      - name: Windows Full Test Suite
+        if: matrix.os == 'windows-2022'
+        run: ctest --test-dir build --output-on-failure -j1
 
       - name: Package Distribution
         run: ${{ matrix.package_script }}

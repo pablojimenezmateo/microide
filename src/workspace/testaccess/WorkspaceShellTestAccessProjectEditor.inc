@@ -356,6 +356,24 @@
   static const std::vector<std::string>& PluginErrors(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Errors();
   }
+  static std::size_t SaveParticipantCount(const WorkspaceShell& shell) {
+    return shell.save_participant_registry_.Specs().size();
+  }
+  static bool HasFormatterForLanguage(WorkspaceShell& shell, std::string_view language_id) {
+    return shell.formatter_registry_.FindFormatter(std::string(language_id)) != nullptr;
+  }
+  static bool RunSaveParticipantsForTesting(WorkspaceShell& shell,
+                                            const std::filesystem::path& path,
+                                            std::string* text,
+                                            std::string* error_message) {
+    return shell.plugin_runtime_.Host().RunSaveParticipants(path, text, error_message);
+  }
+  static bool PrepareEditorViewportForSaveForTesting(WorkspaceShell& shell,
+                                                     const std::filesystem::path& path,
+                                                     editor::TextViewport& viewport,
+                                                     std::string* error_message) {
+    return shell.PrepareEditorViewportForSave(path, viewport, error_message);
+  }
   static const std::vector<plugin::PluginHost::ContributedAuthProvider>& ContributedAuthProviders(
       const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().ContributedAuthProviders();
@@ -396,6 +414,9 @@
   }
   static WorkspaceShell::EventResult HandleScheduledWake(WorkspaceShell& shell) {
     return shell.HandleScheduledWake();
+  }
+  static bool ReloadPluginsIfPluginAssetsChanged(WorkspaceShell& shell, bool force_check) {
+    return shell.ReloadPluginsIfPluginAssetsChanged(force_check);
   }
   static const std::vector<std::string>* OutputChannelEntries(const WorkspaceShell& shell,
                                                               std::string_view id) {

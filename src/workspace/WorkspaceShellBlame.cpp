@@ -7,6 +7,8 @@
 #include <optional>
 #include <sstream>
 
+#include "project/GitCommandUtil.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -59,12 +61,9 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildEditorBlameOverla
     return std::nullopt;
   }
 
-  std::error_code error;
-  const auto relative_path = std::filesystem::relative(
-      viewport.path().lexically_normal(), context_.current_project_state.root.lexically_normal(), error);
-  if (error || relative_path.empty() ||
-      (relative_path.begin() != relative_path.end() &&
-       *relative_path.begin() == std::filesystem::path(".."))) {
+  if (!project::internal::AbsoluteToRelativePath(context_.current_project_state.root,
+                                                 viewport.path())
+           .has_value()) {
     return std::nullopt;
   }
 
@@ -157,12 +156,9 @@ std::optional<editor::EditorBlameOverlay> WorkspaceShell::BuildCompareBlameOverl
     return std::nullopt;
   }
 
-  std::error_code error;
-  const auto relative_path = std::filesystem::relative(
-      compare_tab.right_viewport.path().lexically_normal(), context_.current_project_state.root.lexically_normal(), error);
-  if (error || relative_path.empty() ||
-      (relative_path.begin() != relative_path.end() &&
-       *relative_path.begin() == std::filesystem::path(".."))) {
+  if (!project::internal::AbsoluteToRelativePath(context_.current_project_state.root,
+                                                 compare_tab.right_viewport.path())
+           .has_value()) {
     return std::nullopt;
   }
 

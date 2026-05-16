@@ -21,6 +21,22 @@ using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 using microide::compare::MergeChoice;
 
+class ScopedSessionAppHomes {
+ public:
+  ScopedSessionAppHomes(const std::filesystem::path& state_home,
+                        const std::filesystem::path& config_home)
+      : xdg_state_home_("XDG_STATE_HOME", state_home.string()),
+        xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
+        localappdata_("LOCALAPPDATA", state_home.string()),
+        appdata_("APPDATA", config_home.string()) {}
+
+ private:
+  ScopedEnvVar xdg_state_home_;
+  ScopedEnvVar xdg_config_home_;
+  ScopedEnvVar localappdata_;
+  ScopedEnvVar appdata_;
+};
+
 bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
          lhs.y + lhs.h > rhs.y;
@@ -52,8 +68,7 @@ void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   InitializeGitRepo(root);
   CommitAll(root, "base fixture", "base fixture");
@@ -126,8 +141,7 @@ void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   InitializeGitRepo(repo_root);
   CommitAll(repo_root, "base fixture", "base fixture");
@@ -213,8 +227,7 @@ void TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false),
@@ -339,8 +352,7 @@ void TestWorkspaceShellRestoreSessionPreservesRenamedWorkingTreeCompareState() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   InitializeGitRepo(root);
   CommitAll(root, "base fixture", "base fixture");
@@ -688,8 +700,7 @@ void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -732,8 +743,7 @@ void TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -773,8 +783,7 @@ void TestWorkspaceShellQuitShutdownPersistsDirtyEditorBuffers() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
@@ -1438,8 +1447,7 @@ void TestWorkspaceShellRestoreSessionPreservesMergeNavigationState() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -1506,8 +1514,7 @@ void TestWorkspaceShellRestoreSessionDefersInactiveCleanEditorTabs() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -1556,8 +1563,7 @@ void TestWorkspaceShellDeferredTabHydrationPreservesCursorAndScroll() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -1647,8 +1653,7 @@ void TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice() {
   std::filesystem::create_directories(xdg_state_home);
   std::filesystem::create_directories(xdg_config_home);
   ScopedEnvVar scoped_home("HOME", home.string());
-  ScopedEnvVar scoped_xdg_state_home("XDG_STATE_HOME", xdg_state_home.string());
-  ScopedEnvVar scoped_xdg_config_home("XDG_CONFIG_HOME", xdg_config_home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);

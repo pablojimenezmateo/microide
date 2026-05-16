@@ -1,6 +1,11 @@
 #include "TestSupport.h"
 
+#include "platform/Subprocess.h"
+
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -19,7 +24,7 @@ void Expect(bool condition, std::string_view message) {
 }
 
 std::filesystem::path TestRoot() {
-  return std::filesystem::path(MICROIDE_TEST_SOURCE_DIR);
+  return std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).lexically_normal();
 }
 
 std::filesystem::path FixturePath(std::string_view relative_path) {
@@ -47,16 +52,18 @@ void WriteFile(const std::filesystem::path& path, const std::string& content) {
 }
 
 void CopyTree(const std::filesystem::path& source, const std::filesystem::path& destination) {
-  std::filesystem::create_directories(destination);
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(source)) {
-    const auto relative = std::filesystem::relative(entry.path(), source);
-    const auto target = destination / relative;
+  const std::filesystem::path normalized_source = source.lexically_normal();
+  const std::filesystem::path normalized_destination = destination.lexically_normal();
+  std::filesystem::create_directories(normalized_destination);
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(normalized_source)) {
+    const auto relative = entry.path().lexically_relative(normalized_source);
+    const auto target = normalized_destination / relative;
     if (entry.is_directory()) {
       std::filesystem::create_directories(target);
       continue;
     }
     std::filesystem::create_directories(target.parent_path());
-    std::filesystem::copy_file(entry.path(), target, std::filesystem::copy_options::overwrite_existing);
+    WriteFile(target, ReadFile(entry.path()));
   }
 }
 
@@ -74,11 +81,27 @@ std::string ShellEscape(std::string_view text) {
 }
 
 std::string EscapedRepoPath(const std::filesystem::path& repo_path) {
-  return ShellEscape(repo_path.string());
+  std::string path = repo_path.lexically_normal().generic_string();
+  std::replace(path.begin(), path.end(), '\\', '/');
+#if defined(_WIN32)
+  if (path.size() >= 3 && std::isalpha(static_cast<unsigned char>(path[0])) && path[1] == ':' &&
+      path[2] == '/') {
+    path = "/" + std::string(1, static_cast<char>(std::tolower(static_cast<unsigned char>(path[0])))) +
+           path.substr(2);
+  }
+#endif
+  return ShellEscape(path);
 }
 
 int RunCommand(const std::string& command) {
+#if defined(_WIN32)
+  platform::SubprocessOptions options;
+  options.capture_stdout = false;
+  options.capture_stderr = false;
+  return platform::RunSubprocess({"C:\\msys64\\usr\\bin\\bash.exe", "-lc", command}, options).exit_code;
+#else
   return std::system(command.c_str());
+#endif
 }
 
 void RequireCommandSuccess(const std::string& command, std::string_view context) {
@@ -87,36 +110,63 @@ void RequireCommandSuccess(const std::string& command, std::string_view context)
   }
 }
 
+int RunGitCommand(const std::filesystem::path& repo_path, const std::vector<std::string>& args) {
+  platform::SubprocessOptions options;
+  options.cwd = repo_path;
+  options.capture_stdout = false;
+  options.capture_stderr = false;
+
+  std::vector<std::string> command;
+  command.reserve(args.size() + 1);
+  command.emplace_back("git");
+  command.insert(command.end(), args.begin(), args.end());
+  return platform::RunSubprocess(command, options).exit_code;
+}
+
+void RequireGitCommandSuccess(const std::filesystem::path& repo_path,
+                              const std::vector<std::string>& args,
+                              std::string_view context) {
+  if (RunGitCommand(repo_path, args) != 0) {
+    std::ostringstream command_text;
+    command_text << "git";
+    for (const auto& arg : args) {
+      command_text << ' ' << arg;
+    }
+    throw std::runtime_error(std::string(context) + ": command failed: " + command_text.str());
+  }
+}
+
 void InitializeGitRepo(const std::filesystem::path& repo_path) {
-  const std::string escaped_repo = EscapedRepoPath(repo_path);
-  RequireCommandSuccess(
-      "git -c init.defaultBranch=main init '" + escaped_repo + "' >/dev/null 2>/dev/null",
-      "git init");
-  RequireCommandSuccess(
-      "git -C '" + escaped_repo + "' config user.name 'Microide Tests' >/dev/null 2>/dev/null",
-      "git config user.name");
-  RequireCommandSuccess(
-      "git -C '" + escaped_repo +
-          "' config user.email 'microide-tests@example.com' >/dev/null 2>/dev/null",
-      "git config user.email");
+  std::filesystem::create_directories(repo_path);
+  RequireGitCommandSuccess(repo_path, {"-c", "init.defaultBranch=main", "init", "."}, "git init");
+  RequireGitCommandSuccess(repo_path, {"config", "user.name", "Microide Tests"},
+                           "git config user.name");
+  RequireGitCommandSuccess(repo_path, {"config", "user.email", "microide-tests@example.com"},
+                           "git config user.email");
 }
 
 void CommitAll(const std::filesystem::path& repo_path,
                std::string_view message,
                std::string_view context) {
-  const std::string escaped_repo = EscapedRepoPath(repo_path);
-  RequireCommandSuccess("git -C '" + escaped_repo + "' add . >/dev/null 2>/dev/null",
-                        std::string(context) + " add");
-  RequireCommandSuccess(
-      "git -C '" + escaped_repo + "' commit -m '" + std::string(message) +
-          "' >/dev/null 2>/dev/null",
-      std::string(context) + " commit");
+  RequireGitCommandSuccess(repo_path, {"add", "."}, std::string(context) + " add");
+  RequireGitCommandSuccess(repo_path, {"commit", "-m", std::string(message)},
+                           std::string(context) + " commit");
 }
 
 TemporaryDirectory::TemporaryDirectory() {
-  path_ = std::filesystem::temp_directory_path() /
-          ("microide-tests-" + std::to_string(std::rand()) + "-" + std::to_string(std::rand()));
-  std::filesystem::create_directories(path_);
+  static std::atomic<unsigned long long> counter{0};
+  const auto base = std::filesystem::temp_directory_path();
+  for (;;) {
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto id = counter.fetch_add(1, std::memory_order_relaxed);
+    const auto candidate =
+        base / ("microide-tests-" + std::to_string(stamp) + "-" + std::to_string(id));
+    std::error_code error;
+    if (std::filesystem::create_directories(candidate, error) && !error) {
+      path_ = candidate;
+      break;
+    }
+  }
 }
 
 TemporaryDirectory::~TemporaryDirectory() {
