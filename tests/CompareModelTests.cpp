@@ -225,9 +225,9 @@ void TestCompareCodeTokenChangedSpans() {
 
 void TestCompareAssignmentPrefixStaysUnchanged() {
   const std::string left =
-      "const groupedPayouts = (statement?.payouts ?? []).concat(...(statement?.payout_installments.map(cp) => {";
+      "const groupedOrders = (invoice?.orders ?? []).concat(...(invoice?.order_lines.map(cp) => {";
   const std::string right =
-      "const groupedPayouts = getExpandedStatementPayouts(statement).reduce((acc: GroupedPayouts[], item: ExpandedStatementPayout) => {";
+      "const groupedOrders = getExpandedInvoiceOrders(invoice).reduce((acc: GroupedOrders[], item: ExpandedInvoiceOrder) => {";
   const auto model = BuildCompareModel(left, right);
 
   Expect(model.rows.size() == 1, "assignment prefix diff should produce one row");
@@ -235,21 +235,21 @@ void TestCompareAssignmentPrefixStaysUnchanged() {
   Expect(row.kind == CompareRowKind::Modified, "assignment prefix row should be modified");
   Expect(!row.left_changed_spans.empty() && !row.right_changed_spans.empty(),
          "assignment prefix diff should still report changed spans");
-  Expect(RangeIsUnchanged(row.left_text, row.left_changed_spans, "const groupedPayouts = "),
+  Expect(RangeIsUnchanged(row.left_text, row.left_changed_spans, "const groupedOrders = "),
          "assignment prefix diff should keep the left assignment prefix unchanged");
-  Expect(RangeIsUnchanged(row.right_text, row.right_changed_spans, "const groupedPayouts = "),
+  Expect(RangeIsUnchanged(row.right_text, row.right_changed_spans, "const groupedOrders = "),
          "assignment prefix diff should keep the right assignment prefix unchanged");
 }
 
 void TestCompareLongQueryChangedSpansKeepSharedClause() {
   const std::string left =
-      "*, has_pending_payouts, profiles!statements_profile_id_fkey(*, "
-      "teams_profiles(team_id)), payout_installments(*, payouts(${payoutsQuery})), "
-      "p_total: payouts(value.sum()),";
+      "*, has_pending_orders, profiles!invoices_profile_id_fkey(*, "
+      "groups_profiles(group_id)), order_lines(*, orders(${ordersQuery})), "
+      "p_total: orders(value.sum()),";
   const std::string right =
-      "*, has_pending_payouts, profiles!statements_profile_id_fkey(*, "
-      "teams_profiles(team_id)), payouts(${payoutsQuery}), p_total: payouts(value.sum()), "
-      "pi_total: payout_installments(amount.sum()), issues(*)";
+      "*, has_pending_orders, profiles!invoices_profile_id_fkey(*, "
+      "groups_profiles(group_id)), orders(${ordersQuery}), p_total: orders(value.sum()), "
+      "pi_total: order_lines(amount.sum()), issues(*)";
   const auto model = BuildCompareModel(left, right);
 
   Expect(model.rows.size() == 1, "long query span diff should produce one row");
@@ -257,10 +257,10 @@ void TestCompareLongQueryChangedSpansKeepSharedClause() {
   Expect(row.kind == CompareRowKind::Modified, "long query span row should be modified");
   Expect(!row.left_changed_spans.empty() && !row.right_changed_spans.empty(),
          "long query span diff should still report changed spans");
-  Expect(RangeIsUnchanged(row.left_text, row.left_changed_spans, "p_total: payouts(value.sum()),"),
+  Expect(RangeIsUnchanged(row.left_text, row.left_changed_spans, "p_total: orders(value.sum()),"),
          "long query left should keep the shared aggregate clause unchanged");
   Expect(RangeIsUnchanged(row.right_text, row.right_changed_spans,
-                          "p_total: payouts(value.sum()),"),
+                          "p_total: orders(value.sum()),"),
          "long query right should keep the shared aggregate clause unchanged");
 }
 
@@ -278,21 +278,21 @@ void TestCompareRepeatedStructureKeepsSharedBlockUnchanged() {
     column: 'effective_date',
     options: {
       ascending: true,
-      referencedTable: 'payouts'
+      referencedTable: 'orders'
     },
   },
   {
     column: 'id',
     options: {
       ascending: true,
-      referencedTable: 'payouts'
+      referencedTable: 'orders'
     },
   },
   {
     column: 'effective_date',
     options: {
       ascending: true,
-      referencedTable: 'payout_installments.payouts'
+      referencedTable: 'order_lines.orders'
     },
   },
 ]
@@ -310,20 +310,20 @@ return order
     column: 'effective_date',
     options: {
       ascending: true,
-      referencedTable: 'payouts'
+      referencedTable: 'orders'
     },
   },
   {
     column: 'id',
     options: {
       ascending: true,
-      referencedTable: 'payouts'
+      referencedTable: 'orders'
     },
   },
 ]
-const { isLoading, items: statements } = useSupabaseTable<
-  StatementsDetailsType,
-  TablesInsert<'statements'>
+const { isLoading, items: invoices } = useSupabaseTable<
+  InvoicesDetailsType,
+  TablesInsert<'invoices'>
 >()
 return order
 )RIGHT");
@@ -342,16 +342,16 @@ return order
       saw_id_unchanged = true;
     }
     if (row.kind == CompareRowKind::Deleted &&
-        row.left_text == "      referencedTable: 'payout_installments.payouts'") {
+        row.left_text == "      referencedTable: 'order_lines.orders'") {
       saw_deleted_installment_reference = true;
     }
     if (row.kind == CompareRowKind::Added &&
-        row.right_text == "const { isLoading, items: statements } = useSupabaseTable<") {
+        row.right_text == "const { isLoading, items: invoices } = useSupabaseTable<") {
       saw_added_table_hook = true;
     }
 
     Expect(!(row.left_text == "    column: 'id'," &&
-             row.right_text == "const { isLoading, items: statements } = useSupabaseTable<"),
+             row.right_text == "const { isLoading, items: invoices } = useSupabaseTable<"),
            "repeated structure diff should not pair the shared order block with the new hook");
   }
 
@@ -360,7 +360,7 @@ return order
   Expect(saw_id_unchanged,
          "repeated structure diff should keep the third shared object entry unchanged");
   Expect(saw_deleted_installment_reference,
-         "repeated structure diff should keep the extra payout_installments entry deleted");
+         "repeated structure diff should keep the extra order_lines entry deleted");
   Expect(saw_added_table_hook,
          "repeated structure diff should keep the new useSupabaseTable block added");
 }
@@ -368,33 +368,33 @@ return order
 void TestCompareImportExpansionKeepsFollowingImportsUnchanged() {
   std::string left =
       "import {\n"
-      "  GroupedPayouts,\n"
-      "  HistoricStatementsType,\n"
-      "  PayoutWithJoins,\n"
-      "  StatementsDetailsType\n"
-      "} from '@dolfin/business/custom_types'\n"
-      "import { Database, Tables, TablesInsert } from '@dolfin/business/db_types'\n"
-      "import { payoutsQuery } from '@dolfin/business/shared_queries'\n"
-      "import { QueryKeys } from '@dolfin/hooks/queryKeys'\n"
-      "import { useOrgContext } from '@dolfin/hooks/state/organization'\n"
-      "import { useSupabaseClient } from '@dolfin/hooks/supabase'\n"
-      "import { useSupabaseTable } from '@dolfin/hooks/supabase-table'\n";
+      "  GroupedOrders,\n"
+      "  HistoricInvoicesType,\n"
+      "  OrderWithJoins,\n"
+      "  InvoicesDetailsType\n"
+      "} from '@example/business/custom_types'\n"
+      "import { Database, Tables, TablesInsert } from '@example/business/db_types'\n"
+      "import { ordersQuery } from '@example/business/shared_queries'\n"
+      "import { QueryKeys } from '@example/hooks/queryKeys'\n"
+      "import { useOrgContext } from '@example/hooks/state/organization'\n"
+      "import { useSupabaseClient } from '@example/hooks/supabase'\n"
+      "import { useSupabaseTable } from '@example/hooks/supabase-table'\n";
   std::string right =
       "import {\n"
-      "  GroupedPayouts,\n"
-      "  HistoricStatementsType,\n"
-      "  PayoutWithJoins,\n"
-      "  StatementsDetailsType\n"
-      "} from '@dolfin/business/custom_types'\n"
-      "import { Database, Tables, TablesInsert } from '@dolfin/business/db_types'\n"
+      "  GroupedOrders,\n"
+      "  HistoricInvoicesType,\n"
+      "  OrderWithJoins,\n"
+      "  InvoicesDetailsType\n"
+      "} from '@example/business/custom_types'\n"
+      "import { Database, Tables, TablesInsert } from '@example/business/db_types'\n"
       "import {\n"
-      "  payoutsQuery,\n"
-      "  payoutsQueryWithoutInstallments\n"
-      "} from '@dolfin/business/shared_queries'\n"
-      "import { QueryKeys } from '@dolfin/hooks/queryKeys'\n"
-      "import { useOrgContext } from '@dolfin/hooks/state/organization'\n"
-      "import { useSupabaseClient } from '@dolfin/hooks/supabase'\n"
-      "import { useSupabaseTable } from '@dolfin/hooks/supabase-table'\n";
+      "  ordersQuery,\n"
+      "  ordersQueryWithoutLines\n"
+      "} from '@example/business/shared_queries'\n"
+      "import { QueryKeys } from '@example/hooks/queryKeys'\n"
+      "import { useOrgContext } from '@example/hooks/state/organization'\n"
+      "import { useSupabaseClient } from '@example/hooks/supabase'\n"
+      "import { useSupabaseTable } from '@example/hooks/supabase-table'\n";
 
   for (int i = 0; i < 220; ++i) {
     left += "const filler_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
@@ -402,14 +402,14 @@ void TestCompareImportExpansionKeepsFollowingImportsUnchanged() {
   }
 
   left +=
-      "import { StatementNavigator } from './statement-navigator'\n"
-      "import StatementsHistoricChart from './statementsHistoricChart'\n"
-      "import StatementWaterfallChart from './statementWaterfallChart'\n";
+      "import { InvoiceNavigator } from './invoice-navigator'\n"
+      "import InvoicesHistoricChart from './invoicesHistoricChart'\n"
+      "import InvoiceWaterfallChart from './invoiceWaterfallChart'\n";
   right +=
-      "import { StatementNavigator } from './statement-navigator'\n"
-      "import StatementsHistoricChart from './statementsHistoricChart'\n"
-      "import StatementWaterfallChart from './statementWaterfallChart'\n"
-      "import { ExpandedStatementPayout, getExpandedStatementPayouts } from './utils'\n";
+      "import { InvoiceNavigator } from './invoice-navigator'\n"
+      "import InvoicesHistoricChart from './invoicesHistoricChart'\n"
+      "import InvoiceWaterfallChart from './invoiceWaterfallChart'\n"
+      "import { ExpandedInvoiceOrder, getExpandedInvoiceOrders } from './utils'\n";
 
   for (int i = 220; i < 520; ++i) {
     left += "const filler_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
@@ -420,13 +420,13 @@ void TestCompareImportExpansionKeepsFollowingImportsUnchanged() {
       "    column: 'id',\n"
       "    options: {\n"
       "      ascending: true,\n"
-      "      referencedTable: 'payout_installments.payouts.payout_installments'\n"
+      "      referencedTable: 'order_lines.orders.order_lines'\n"
       "    }\n";
   right +=
       "    column: 'id',\n"
       "    options: {\n"
       "      ascending: true,\n"
-      "      referencedTable: 'payout_installments'\n"
+      "      referencedTable: 'order_lines'\n"
       "    }\n";
 
   const auto model = BuildCompareModel(left, right);
@@ -439,29 +439,29 @@ void TestCompareImportExpansionKeepsFollowingImportsUnchanged() {
 
   for (const auto& row : model.rows) {
     if (row.kind == CompareRowKind::Unchanged &&
-        row.left_text == "import { QueryKeys } from '@dolfin/hooks/queryKeys'") {
+        row.left_text == "import { QueryKeys } from '@example/hooks/queryKeys'") {
       saw_query_keys_unchanged = true;
     }
     if (row.kind == CompareRowKind::Unchanged &&
-        row.left_text == "import { useSupabaseTable } from '@dolfin/hooks/supabase-table'") {
+        row.left_text == "import { useSupabaseTable } from '@example/hooks/supabase-table'") {
       saw_supabase_table_unchanged = true;
     }
     if (row.kind == CompareRowKind::Deleted &&
-        row.left_text == "import { payoutsQuery } from '@dolfin/business/shared_queries'") {
+        row.left_text == "import { ordersQuery } from '@example/business/shared_queries'") {
       saw_shared_query_deleted = true;
     }
     if (row.kind == CompareRowKind::Added &&
-        row.right_text == "  payoutsQueryWithoutInstallments") {
+        row.right_text == "  ordersQueryWithoutLines") {
       saw_shared_query_added = true;
     }
     if (row.kind == CompareRowKind::Modified &&
-        row.left_text == "      referencedTable: 'payout_installments.payouts.payout_installments'" &&
-        row.right_text == "      referencedTable: 'payout_installments'") {
+        row.left_text == "      referencedTable: 'order_lines.orders.order_lines'" &&
+        row.right_text == "      referencedTable: 'order_lines'") {
       saw_late_reference_modified = true;
     }
 
-    Expect(!(row.left_text == "import { QueryKeys } from '@dolfin/hooks/queryKeys'" &&
-             row.right_text == "} from '@dolfin/business/shared_queries'"),
+    Expect(!(row.left_text == "import { QueryKeys } from '@example/hooks/queryKeys'" &&
+             row.right_text == "} from '@example/business/shared_queries'"),
            "import expansion diff should not pair the following unchanged import with the split import tail");
   }
 
@@ -633,9 +633,9 @@ void TestCompareLargePaddedAssignmentPrefixStaysUnchanged() {
   }
 
   left +=
-      "const groupedPayouts = (statement?.payouts ?? []).concat(...(statement?.payout_installments.map(cp) => {\n";
+      "const groupedOrders = (invoice?.orders ?? []).concat(...(invoice?.order_lines.map(cp) => {\n";
   right +=
-      "const groupedPayouts = getExpandedStatementPayouts(statement).reduce((acc: GroupedPayouts[], item: ExpandedStatementPayout) => {\n";
+      "const groupedOrders = getExpandedInvoiceOrders(invoice).reduce((acc: GroupedOrders[], item: ExpandedInvoiceOrder) => {\n";
 
   for (int i = 1200; i < 2600; ++i) {
     const std::string filler =
@@ -648,15 +648,15 @@ void TestCompareLargePaddedAssignmentPrefixStaysUnchanged() {
 
   const auto it = std::find_if(model.rows.begin(), model.rows.end(), [](const auto& row) {
     return row.kind == CompareRowKind::Modified &&
-           row.left_text.find("const groupedPayouts = ") != std::string::npos;
+           row.left_text.find("const groupedOrders = ") != std::string::npos;
   });
   Expect(it != model.rows.end(),
          "large padded assignment fixture should keep the modified assignment row paired");
   Expect(!it->left_changed_spans.empty() && !it->right_changed_spans.empty(),
          "large padded assignment fixture should still report detailed changed spans");
-  Expect(RangeIsUnchanged(it->left_text, it->left_changed_spans, "const groupedPayouts = "),
+  Expect(RangeIsUnchanged(it->left_text, it->left_changed_spans, "const groupedOrders = "),
          "large padded assignment fixture should keep the left assignment prefix unchanged");
-  Expect(RangeIsUnchanged(it->right_text, it->right_changed_spans, "const groupedPayouts = "),
+  Expect(RangeIsUnchanged(it->right_text, it->right_changed_spans, "const groupedOrders = "),
          "large padded assignment fixture should keep the right assignment prefix unchanged");
 }
 

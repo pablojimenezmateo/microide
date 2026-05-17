@@ -342,7 +342,7 @@ void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
   };
 
   expect_label_matches("bash", "");
-  expect_label_matches("dolfin-", "app");
+  expect_label_matches("example-", "app");
   expect_label_matches("resolve", "InputPath");
   expect_label_matches("return ", "inputPath");
   expect_label_matches("if (path.", "isAbsolute(inputPath))");

@@ -335,7 +335,7 @@ void TestWorkspaceShellTerminalAsciiPromptMatchesDirectStringRendering() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::SetCursorVisible(session, false);
 
-  const std::string prompt = "pablo@victus ~/Documents/projects/dolfin-app";
+  const std::string prompt = "user@host ~/projects/example-app";
   TerminalSessionTestAccess::AppendOutput(session, prompt);
 
   SoftwareCanvas shell_canvas(1280, 720);
@@ -421,7 +421,7 @@ void TestWorkspaceShellTerminalCaretBlinkRetainedRedrawPreservesGlyphEdges() {
 
   static constexpr int kCanvasWidth = 1280;
   static constexpr int kCanvasHeight = 720;
-  const std::string prompt = "pablo@victus";
+  const std::string prompt = "user@host";
   const std::size_t cursor_column = prompt.find('@');
   Expect(cursor_column != std::string::npos,
          "caret redraw regression test should target a visible prompt glyph");
