@@ -17,6 +17,13 @@ namespace microide::workspace {
 namespace {
 
 constexpr Uint64 kCaretBlinkIntervalMs = 530;
+// After this many ms with no caret-blink-resetting input (typing, navigation,
+// focus changes, etc.) the caret freezes in its visible phase and we stop
+// scheduling blink-only wake-ups. This cuts the idle wake/partial-redraw
+// rate to ~0 during long inactivity, matching the dominant terminal
+// convention and many editors' "stop-blink" timeout. The next input event
+// resets `caret_blink_epoch_ms_` via `ResetCaretBlink()` and resumes blink.
+constexpr Uint64 kCaretBlinkIdleStopMs = 8000;
 constexpr std::size_t kBlameNeighborhoodRadius = 1;
 
 bool TraceProjectEventsEnabled() {
@@ -697,8 +704,12 @@ std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
   }
 
   const Uint64 elapsed = SDL_GetTicks() - caret_blink_epoch_ms_;
+  if (elapsed >= kCaretBlinkIdleStopMs) {
+    return std::nullopt;
+  }
   const Uint64 remaining = kCaretBlinkIntervalMs - (elapsed % kCaretBlinkIntervalMs);
-  return static_cast<Uint32>(std::max<Uint64>(1, remaining));
+  const Uint64 until_freeze = kCaretBlinkIdleStopMs - elapsed;
+  return static_cast<Uint32>(std::max<Uint64>(1, std::min(remaining, until_freeze)));
 }
 
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
@@ -816,6 +827,13 @@ void WorkspaceShell::ResetCaretBlink() {
   caret_blink_epoch_ms_ = SDL_GetTicks();
 }
 
+bool WorkspaceShell::CaretBlinkAnimating() const {
+  if (!ShouldBlinkCaret()) {
+    return false;
+  }
+  return (SDL_GetTicks() - caret_blink_epoch_ms_) < kCaretBlinkIdleStopMs;
+}
+
 bool WorkspaceShell::ShouldBlinkCaret() const {
   if (context_.prompts.dirty_visible || context_.menu_state.menu_bar_open ||
       context_.menu_state.tree_context_menu.open) {
@@ -858,6 +876,9 @@ bool WorkspaceShell::CaretVisibleNow() const {
   }
 
   const Uint64 elapsed = SDL_GetTicks() - caret_blink_epoch_ms_;
+  if (elapsed >= kCaretBlinkIdleStopMs) {
+    return true;
+  }
   return ((elapsed / kCaretBlinkIntervalMs) % 2) == 0;
 }
 

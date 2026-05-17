@@ -1291,6 +1291,10 @@
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
+  // True when ShouldBlinkCaret() AND the caret hasn't been idle past
+  // kCaretBlinkIdleStopMs since the last ResetCaretBlink(). After that
+  // window the caret freezes visible and no further blink wakes fire.
+  bool CaretBlinkAnimating() const;
   bool CaretVisibleNow() const;
   std::optional<SDL_FRect> ActiveEditorCaretRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> ActiveTerminalCaretRect(const WorkspaceLayout& layout) const;

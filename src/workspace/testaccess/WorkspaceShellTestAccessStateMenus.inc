@@ -414,6 +414,12 @@
     shell.caret_blink_epoch_ms_ = epoch_ms;
   }
   static bool CaretVisibleNow(const WorkspaceShell& shell) { return shell.CaretVisibleNow(); }
+  static bool CaretBlinkAnimating(const WorkspaceShell& shell) {
+    return shell.CaretBlinkAnimating();
+  }
+  static std::optional<Uint32> NextCaretBlinkDelayMs(const WorkspaceShell& shell) {
+    return shell.NextCaretBlinkDelayMs();
+  }
   static std::optional<std::chrono::milliseconds> ProjectFileMonitorNextPollDelay(
       const WorkspaceShell& shell) {
     return shell.project_file_monitor_.NextPollDelay();

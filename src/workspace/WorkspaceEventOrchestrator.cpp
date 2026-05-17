@@ -188,7 +188,7 @@ EventResult WorkspaceWakeController::HandleScheduledWake() const {
     };
   }
 
-  if (!operations_.should_blink_caret()) {
+  if (!operations_.caret_blink_animating()) {
     return {};
   }
 

@@ -550,8 +550,11 @@ BuildOutput BuildRegistry(const std::vector<RuntimeSyntaxDefinitionData>& runtim
   return output;
 }
 
+// Empty by default. Populated only when plugins reload syntax definitions
+// via ReloadDefinitions(). When empty, GetRegistry() aliases BuiltInRegistry()
+// directly, avoiding a multi-MB copy of the generated rule/definition tables.
 Registry& MutableRegistry() {
-  static Registry registry = BuildRegistry({}, nullptr).registry;
+  static Registry registry;
   return registry;
 }
 
@@ -561,7 +564,8 @@ std::size_t& MutableRegistryRevision() {
 }
 
 const Registry& GetRegistry() {
-  return MutableRegistry();
+  const Registry& mutable_registry = MutableRegistry();
+  return mutable_registry.definitions.empty() ? BuiltInRegistry() : mutable_registry;
 }
 
 const Definition* DefinitionById(const Registry& registry, std::uint32_t definition_id) {
@@ -1044,7 +1048,9 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
 
 void EnsureInitialized() {
   util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::EnsureInitialized");
-  (void)GetRegistry();
+  // Touch BuiltInRegistry() directly so the static magic-init runs here
+  // even when MutableRegistry() is empty (the lazy-alias case).
+  (void)BuiltInRegistry();
 }
 
 std::size_t RegistryRevision() {

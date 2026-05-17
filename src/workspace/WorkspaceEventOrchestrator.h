@@ -66,7 +66,7 @@ class WorkspaceWakeController {
  public:
   struct Operations {
     std::function<bool(bool)> reload_plugins_if_assets_changed;
-    std::function<bool()> should_blink_caret;
+    std::function<bool()> caret_blink_animating;
     std::function<std::optional<SDL_FRect>()> current_caret_dirty_rect;
   };
 

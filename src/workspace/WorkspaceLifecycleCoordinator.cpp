@@ -24,9 +24,19 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   operations_.reset_startup_state();
   operations_.set_project_watcher_deferred_arming(true);
 
-  operations_.initialize_project_search_runtime();
-  operations_.register_wake_events();
-  editor::runtime_syntax::EnsureInitialized();
+  {
+    util::StartupTrace::Scope project_search_scope(
+        "WorkspaceShell::InitializeProjectSearchRuntime");
+    operations_.initialize_project_search_runtime();
+  }
+  {
+    util::StartupTrace::Scope register_wake_scope("WorkspaceShell::RegisterWakeEvents");
+    operations_.register_wake_events();
+  }
+  {
+    util::StartupTrace::Scope syntax_scope("RuntimeSyntaxRegistry::EnsureInitialized");
+    editor::runtime_syntax::EnsureInitialized();
+  }
 
   {
     util::StartupTrace::Scope restore_config_scope("WorkspaceShell::RestoreUserConfig");

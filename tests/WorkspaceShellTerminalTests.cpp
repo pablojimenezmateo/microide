@@ -287,6 +287,55 @@ void TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking() {
          "focused terminal panels should show the caret immediately after a blink reset");
 }
 
+void TestWorkspaceShellCaretBlinkFreezesAfterIdleStop() {
+  // Power-saving contract: after ~8s of caret-blink-resetting inactivity, the
+  // shell stops emitting blink wake-ups and freezes the caret visible. The
+  // next ResetCaretBlink() resumes animation.
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+
+  WorkspaceShellTestAccess::ResetCaretBlink(shell);
+  Expect(WorkspaceShellTestAccess::CaretBlinkAnimating(shell),
+         "blink should be animating right after a reset");
+  Expect(WorkspaceShellTestAccess::NextCaretBlinkDelayMs(shell).has_value(),
+         "blink wakes should be scheduled right after a reset");
+
+  // Simulate the idle-stop threshold elapsing.
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - 8000);
+  Expect(!WorkspaceShellTestAccess::CaretBlinkAnimating(shell),
+         "blink should freeze after the idle-stop threshold");
+  Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell),
+         "caret should freeze in its visible phase after idle-stop");
+  Expect(!WorkspaceShellTestAccess::NextCaretBlinkDelayMs(shell).has_value(),
+         "no blink wakes should be scheduled while frozen");
+
+  // Resume: a fresh reset should re-arm blink wakes immediately.
+  WorkspaceShellTestAccess::ResetCaretBlink(shell);
+  Expect(WorkspaceShellTestAccess::CaretBlinkAnimating(shell),
+         "blink should resume after reset");
+  Expect(WorkspaceShellTestAccess::NextCaretBlinkDelayMs(shell).has_value(),
+         "blink wakes should resume after reset");
+}
+
+void TestWorkspaceShellScheduledWakeSkipsCaretAfterIdleStop() {
+  // The wake controller must not emit a caret-rect partial-redraw after the
+  // blink has frozen. Before idle-stop it should still emit one; after, it
+  // should be a no-op.
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  WorkspaceShellTestAccess::ResetCaretBlink(shell);
+  const auto active = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  Expect(active.handled && !active.redraw.full && active.redraw.SingleRectIfOnlyOne().has_value(),
+         "scheduled wake during active blink should emit a caret-rect partial redraw");
+
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - 8000);
+  const auto frozen = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  Expect(!frozen.handled,
+         "scheduled wake after blink freeze should not request any redraw");
+}
+
 void TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -900,6 +949,10 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalFocusModeTracksWindowFocus);
   AddTest(tests, "WorkspaceShell/FocusedTerminalParticipatesInCaretBlinking",
           TestWorkspaceShellFocusedTerminalParticipatesInCaretBlinking);
+  AddTest(tests, "WorkspaceShell/CaretBlinkFreezesAfterIdleStop",
+          TestWorkspaceShellCaretBlinkFreezesAfterIdleStop);
+  AddTest(tests, "WorkspaceShell/ScheduledWakeSkipsCaretAfterIdleStop",
+          TestWorkspaceShellScheduledWakeSkipsCaretAfterIdleStop);
   AddTest(tests, "WorkspaceShell/TerminalCaretDirtyRectTracksVisibleCursor",
           TestWorkspaceShellTerminalCaretDirtyRectTracksVisibleCursor);
   AddTest(tests, "WorkspaceShell/TerminalKeysReturnPartialPanelInvalidation",

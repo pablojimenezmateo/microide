@@ -9,8 +9,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "app/DirtyRegionPolicy.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
 #include "util/WindowPresentation.h"
@@ -96,6 +98,11 @@ void SyncWindowState(SDL_Window* window) {
 
 Application::~Application() {
   Shutdown();
+  // Safety net: join the warmup thread even if Shutdown() early-returned
+  // because Initialize() failed mid-startup.
+  if (syntax_registry_warmup_.joinable()) {
+    syntax_registry_warmup_.join();
+  }
 }
 
 int Application::Run() {
@@ -159,6 +166,22 @@ int Application::Run() {
     }
 
     do {
+      // Coalesce consecutive mouse-motion events to the latest position.
+      // High-poll-rate mice can fire many motion events per frame; processing
+      // each one runs the full hover/cursor/selection pipeline only to be
+      // obsoleted by the next motion. We only collapse when the next event in
+      // the queue is also a motion (same window) to preserve ordering relative
+      // to keyboard/button events. No handler reads motion.xrel/yrel.
+      if (event.type == SDL_EVENT_MOUSE_MOTION) {
+        SDL_Event next;
+        while (SDL_PeepEvents(&next, 1, SDL_PEEKEVENT, SDL_EVENT_FIRST,
+                              SDL_EVENT_LAST) > 0 &&
+               next.type == SDL_EVENT_MOUSE_MOTION &&
+               next.motion.windowID == event.motion.windowID) {
+          SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_EVENT_MOUSE_MOTION,
+                         SDL_EVENT_MOUSE_MOTION);
+        }
+      }
       const auto result = HandleEvent(event);
       if (result.handled) {
         if (result.redraw.full) {
@@ -218,6 +241,15 @@ bool Application::Initialize() {
 
   SDL_SetRenderVSync(renderer_, 1);
 
+  // Warm up the syntax-highlight registry on a background thread so its
+  // ~30ms parse cost overlaps with the vsync-blocked blank present and the
+  // WorkspaceShell construction below. Magic-static init in MutableRegistry()
+  // synchronizes against the first foreground access, so the worker can race
+  // safely; whichever thread arrives second blocks on the same init barrier.
+  syntax_registry_warmup_ = std::thread([]() {
+    editor::runtime_syntax::EnsureInitialized();
+  });
+
   // Present a blank frame before the (potentially slow) workspace initialization
   // so the compositor gets a committed frame immediately. This satisfies the
   // desktop startup-notification protocol (xdg-activation / _NET_STARTUP_INFO)
@@ -268,6 +300,10 @@ bool Application::Initialize() {
 void Application::Shutdown() {
   if (!initialized_) {
     return;
+  }
+
+  if (syntax_registry_warmup_.joinable()) {
+    syntax_registry_warmup_.join();
   }
 
   workspace_shell_.SetDialogWindow(nullptr);

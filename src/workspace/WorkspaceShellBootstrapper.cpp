@@ -132,7 +132,7 @@ WorkspaceWakeController WorkspaceShell::Bootstrapper::BuildWakeController() cons
               [shell](bool force_check) {
                 return shell->ReloadPluginsIfPluginAssetsChanged(force_check);
               },
-          .should_blink_caret = [shell]() { return shell->ShouldBlinkCaret(); },
+          .caret_blink_animating = [shell]() { return shell->CaretBlinkAnimating(); },
           .current_caret_dirty_rect = [shell]() { return shell->CurrentCaretDirtyRect(); },
       });
 }
