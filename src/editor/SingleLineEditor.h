@@ -45,6 +45,10 @@ class SingleLineEditor {
   bool MoveHome(bool extend_selection = false);
   bool MoveEnd(bool extend_selection = false);
   bool SelectAll();
+  // Word boundaries are alphanumeric plus '_', matching TextViewport::SelectWordAtCursor.
+  // Selects the word straddling byte_offset (or the word ending at byte_offset). Returns
+  // false and leaves state untouched if no word character is adjacent.
+  bool SelectWordAt(std::size_t byte_offset);
   bool DeleteSelection();
   std::string CopySelection() const;
   std::optional<std::string> CutSelection();

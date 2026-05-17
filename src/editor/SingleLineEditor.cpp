@@ -1,6 +1,7 @@
 #include "editor/SingleLineEditor.h"
 
 #include <algorithm>
+#include <cctype>
 
 #include "util/StringUtil.h"
 
@@ -164,6 +165,36 @@ bool SingleLineEditor::MoveEnd(bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
   caret_ = text_.size();
   Normalize();
+  return true;
+}
+
+bool SingleLineEditor::SelectWordAt(std::size_t byte_offset) {
+  Normalize();
+  const std::size_t clamped = std::min(byte_offset, text_.size());
+  auto is_word_char = [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+  };
+  std::size_t anchor = clamped;
+  if (clamped < text_.size() && is_word_char(text_[clamped])) {
+    // primary position straddles a word character
+  } else if (clamped > 0 && is_word_char(text_[clamped - 1])) {
+    anchor = clamped - 1;
+  } else {
+    return false;
+  }
+  std::size_t start = anchor;
+  std::size_t end = anchor;
+  while (start > 0 && is_word_char(text_[start - 1])) {
+    --start;
+  }
+  while (end < text_.size() && is_word_char(text_[end])) {
+    ++end;
+  }
+  if (start >= end) {
+    return false;
+  }
+  selection_anchor_ = start;
+  caret_ = end;
   return true;
 }
 

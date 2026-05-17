@@ -519,11 +519,12 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
   }
 
-  const std::string hovered_git_sidebar_tooltip = HoveredGitSidebarTooltipLabel(layout.sidebar);
-  if (!hovered_git_sidebar_tooltip.empty()) {
-    const auto tooltip =
-        BuildTooltipLayout(text_renderer_, hovered_git_sidebar_tooltip,
-                           std::max(160.0f, layout.full.w - 24.0f));
+  const auto draw_sidebar_tooltip = [&](const std::string& label) {
+    if (label.empty()) {
+      return;
+    }
+    const auto tooltip = BuildTooltipLayout(text_renderer_, label,
+                                            std::max(160.0f, layout.full.w - 24.0f));
     const float tooltip_x =
         std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
                    layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
@@ -534,7 +535,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                          layout.full.y + layout.full.h - tooltip.rect.h - 8.0f);
     DrawTooltip(text_renderer_, renderer, theme_,
                 MakeRect(tooltip_x, tooltip_y, tooltip.rect.w, tooltip.rect.h), tooltip.text);
-  }
+  };
+
+  draw_sidebar_tooltip(HoveredGitSidebarTooltipLabel(layout.sidebar));
+  draw_sidebar_tooltip(HoveredSidebarSearchTooltipLabel(layout.sidebar));
 }
 
 }  // namespace microide::workspace

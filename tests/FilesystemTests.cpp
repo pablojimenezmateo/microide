@@ -168,6 +168,7 @@ void TestFileWatcherNativeWakeDoesNotForceZeroDelayPoll() {
   watcher.Clear();
 }
 
+#if defined(_WIN32)
 void TestFileWatcherDeferredInitialSnapshotArmsWithoutReportingIgnoredWake() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -219,7 +220,8 @@ void TestFileWatcherDeferredInitialSnapshotArmsWithoutReportingIgnoredWake() {
   watcher.SetWakeCallback({});
   watcher.Clear();
 }
-#endif
+#endif  // _WIN32
+#endif  // __linux__ || __APPLE__ || _WIN32
 
 }  // namespace
 

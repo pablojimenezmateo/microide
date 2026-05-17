@@ -37,6 +37,17 @@
   static const std::string& PromptSurfaceInput(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface.input.text();
   }
+  static std::size_t PromptSurfaceInputCaret(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.input.caret();
+  }
+  static std::optional<std::pair<std::size_t, std::size_t>> PromptSurfaceInputSelection(
+      const WorkspaceShell& shell) {
+    const auto selection = shell.context_.prompts.surface.input.Selection();
+    if (!selection.has_value()) {
+      return std::nullopt;
+    }
+    return std::make_pair(selection->start, selection->end);
+  }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
     return shell.PromptSurfaceTitle();
   }

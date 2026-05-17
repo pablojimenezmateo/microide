@@ -489,8 +489,9 @@ void TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   Expect(hover_result.handled, "switching search header hover should be handled");
   Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
          "search header hover should stay on a partial redraw path");
-  Expect(hover_result.redraw.rects.size() <= 2,
-         "search header hover should only dirty the affected controls");
+  // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
+  Expect(hover_result.redraw.rects.size() <= 4,
+         "search header hover should only dirty the affected controls and tooltips");
   Expect(AnyRectIntersects(hover_result.redraw.rects, mode_rect),
          "search header hover should redraw the previously hovered control");
   Expect(AnyRectIntersects(hover_result.redraw.rects, case_rect),

@@ -83,6 +83,36 @@ void TestSingleLineKeyHandlerDispatchesClipboardShortcuts() {
   ExpectEditorState(editor, "restored", 8, std::nullopt, "ctrl+v");
 }
 
+void TestSingleLineEditorSelectsWordAtOffset() {
+  editor::SingleLineEditor editor("hello_world example 123foo");
+
+  Expect(editor.SelectWordAt(2), "click inside first word should select it");
+  ExpectEditorState(editor, "hello_world example 123foo", 11,
+                    editor::SingleLineSelection{0, 11}, "word at offset 2");
+
+  Expect(editor.SelectWordAt(11), "caret straddling end of word should still select it");
+  ExpectEditorState(editor, "hello_world example 123foo", 11,
+                    editor::SingleLineSelection{0, 11}, "word at boundary 11");
+
+  editor.SetSelectionAnchor(std::nullopt);
+  editor.SetCaret(12);
+  Expect(editor.SelectWordAt(12), "click on whitespace adjacent to next word selects nothing");
+  // Position 12 = 'e' of "example", whitespace at 11, but 12 indexes a word char.
+  ExpectEditorState(editor, "hello_world example 123foo", 19,
+                    editor::SingleLineSelection{12, 19}, "word starting at 12");
+
+  editor.SetSelectionAnchor(std::nullopt);
+  editor.SetCaret(11);
+  Expect(!editor.SelectWordAt(11) == false,
+         "boundary case at 11 selects the preceding word, returns true");
+
+  // Click in pure whitespace returns false and does not mutate state.
+  editor::SingleLineEditor blanks("   ");
+  blanks.SetCaret(2);
+  Expect(!blanks.SelectWordAt(1), "selecting in whitespace should report no word");
+  ExpectEditorState(blanks, "   ", 2, std::nullopt, "no word at whitespace");
+}
+
 void TestSingleLineEditorSupportsSnapshotAndAppend() {
   editor::SingleLineEditor editor("alpha");
   editor.MoveLeft();
@@ -111,6 +141,8 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineKeyHandlerDispatchesClipboardShortcuts);
   AddTest(tests, "SingleLineEditor/SupportsSnapshotAndAppend",
           TestSingleLineEditorSupportsSnapshotAndAppend);
+  AddTest(tests, "SingleLineEditor/SelectsWordAtOffset",
+          TestSingleLineEditorSelectsWordAtOffset);
 }
 
 }  // namespace microide::tests

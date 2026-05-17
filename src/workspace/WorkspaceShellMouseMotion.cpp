@@ -26,16 +26,39 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
-  if (context_.prompts.surface_visible) {
-    ensure_redraw([this]() { RequestPromptRedraw(); });
-    return true;
-  }
-
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
     return false;
   }
   const WorkspaceLayout layout = *layout_state;
+
+  // Single-line input drag-select runs even when the modal prompt swallows other
+  // motion handling, so the user can finish a selection started inside the prompt.
+  if (context_.interaction_state.drag_target == DragTarget::SingleLineSelection) {
+    if (HandleSingleLineInputDrag(event, layout)) {
+      switch (context_.interaction_state.single_line_drag_surface) {
+        case TextInputSurface::PromptInput:
+          ensure_redraw([this]() { RequestPromptRedraw(); });
+          break;
+        case TextInputSurface::Command:
+          ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+          break;
+        case TextInputSurface::SidebarSearchQuery:
+        case TextInputSurface::SidebarSearchReplace:
+          ensure_redraw([this]() { RequestSidebarRedraw(); });
+          break;
+        default:
+          ensure_redraw([this]() { RequestOverlayRedraw(); });
+          break;
+      }
+      return true;
+    }
+  }
+
+  if (context_.prompts.surface_visible) {
+    ensure_redraw([this]() { RequestPromptRedraw(); });
+    return true;
+  }
   const bool previous_mouse_position_valid = last_mouse_position_valid_;
   const float previous_mouse_x = last_mouse_x_;
   const float previous_mouse_y = last_mouse_y_;
@@ -302,9 +325,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   std::optional<SDL_FRect> previous_project_tab_tooltip_rect;
   std::optional<SDL_FRect> previous_tab_tooltip_rect;
   std::optional<SDL_FRect> previous_status_tooltip_rect;
+  std::optional<SDL_FRect> previous_sidebar_search_tooltip_rect;
   std::string previous_project_tab_tooltip_label;
   std::string previous_tab_tooltip_label;
   std::string previous_status_tooltip_label;
+  std::string previous_sidebar_search_tooltip_label;
   if (CurrentWindowRect().has_value()) {
     const auto layout_before_state = CurrentWorkspaceLayout();
     if (layout_before_state.has_value()) {
@@ -316,6 +341,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       previous_tab_tooltip_rect = HoveredTabTooltipRect(*layout_before_state);
       previous_status_tooltip_label = HoveredStatusTooltip(layout_before_state->breadcrumb);
       previous_status_tooltip_rect = HoveredStatusTooltipRect(*layout_before_state);
+      previous_sidebar_search_tooltip_label =
+          HoveredSidebarSearchTooltipLabel(layout_before_state->sidebar);
+      previous_sidebar_search_tooltip_rect =
+          HoveredSidebarSearchTooltipRect(*layout_before_state);
     }
     const std::optional<EditorHoverTarget> previous_hover_target = active_editor_hover_target_;
     const bool previous_action_hovered =
@@ -381,7 +410,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       request_tooltip_redraw_if_changed(previous_status_tooltip_label,
                                         previous_status_tooltip_rect,
                                         HoveredStatusTooltip(layout.breadcrumb),
-                                        HoveredStatusTooltipRect(layout));
+                                        HoveredStatusTooltipRect(layout)) ||
+      request_tooltip_redraw_if_changed(previous_sidebar_search_tooltip_label,
+                                        previous_sidebar_search_tooltip_rect,
+                                        HoveredSidebarSearchTooltipLabel(layout.sidebar),
+                                        HoveredSidebarSearchTooltipRect(layout));
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
     ensure_redraw([this]() { RequestChromeRedraw(); });
     return true;

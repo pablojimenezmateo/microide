@@ -51,6 +51,7 @@ class ScopedPluginConfigHomeEnv {
   ScopedEnvVar appdata_;
 };
 
+#if defined(_WIN32)
 void WriteWindowsCmdWrapper(const std::filesystem::path& root_script_path,
                             std::string_view powershell_file_name) {
   WriteFile(root_script_path,
@@ -58,6 +59,7 @@ void WriteWindowsCmdWrapper(const std::filesystem::path& root_script_path,
             "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0" +
                 std::string(powershell_file_name) + "\" %*\r\n");
 }
+#endif
 
 void WriteFakeEslint(const std::filesystem::path& project_root) {
   const std::filesystem::path eslint_path = project_root / "node_modules" / ".bin" / "eslint";

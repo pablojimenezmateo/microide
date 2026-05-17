@@ -801,11 +801,69 @@ void TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures() {
          "editor breadcrumbs should no longer append a large-file mode marker");
 }
 
+void TestWorkspaceShellRenamePromptMouseClickPositionsCaret() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "base\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "renamed-long-name.txt");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "rename prompt should be visible after setup");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "renamed-long-name.txt",
+         "rename prompt should hold the proposed name");
+  const std::size_t initial_caret = WorkspaceShellTestAccess::PromptSurfaceInputCaret(shell);
+  Expect(initial_caret == std::string_view("renamed-long-name.txt").size(),
+         "caret should default to end of text after PrepareRenamePrompt");
+
+  const SDL_FRect input_rect = WorkspaceShellTestAccess::PromptSurfaceInputRect(shell);
+  // Click near the left edge of the input — caret should move to the start area.
+  const float left_x = input_rect.x + 8.0f;
+  const float mid_y = input_rect.y + input_rect.h * 0.5f;
+  Expect(SendMouseDown(shell, left_x, mid_y, SDL_BUTTON_LEFT, 1),
+         "mouse-down in prompt input should be handled");
+  const std::size_t after_click_caret =
+      WorkspaceShellTestAccess::PromptSurfaceInputCaret(shell);
+  Expect(after_click_caret < initial_caret,
+         "click near left edge should move caret toward start");
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceInputSelection(shell).has_value(),
+         "single click should not create a selection");
+  Expect(SendMouseUp(shell, left_x, mid_y, SDL_BUTTON_LEFT),
+         "mouse-up after click in prompt input should be handled");
+
+  // Double-click selects a word.
+  const float double_click_x = input_rect.x + 20.0f;
+  Expect(SendMouseDown(shell, double_click_x, mid_y, SDL_BUTTON_LEFT, 2),
+         "double-click in prompt input should be handled");
+  const auto selection = WorkspaceShellTestAccess::PromptSurfaceInputSelection(shell);
+  Expect(selection.has_value(), "double-click should create a word selection");
+  Expect(SendMouseUp(shell, double_click_x, mid_y, SDL_BUTTON_LEFT),
+         "mouse-up after double-click should be handled");
+
+  // Triple-click selects everything.
+  Expect(SendMouseDown(shell, double_click_x, mid_y, SDL_BUTTON_LEFT, 3),
+         "triple-click in prompt input should be handled");
+  const auto triple_selection = WorkspaceShellTestAccess::PromptSurfaceInputSelection(shell);
+  Expect(triple_selection.has_value() && triple_selection->first == 0 &&
+             triple_selection->second == WorkspaceShellTestAccess::PromptSurfaceInput(shell).size(),
+         "triple-click should select the entire input");
+  Expect(SendMouseUp(shell, double_click_x, mid_y, SDL_BUTTON_LEFT),
+         "mouse-up after triple-click should be handled");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
+  AddTest(tests, "WorkspaceShell/RenamePromptMouseClickPositionsCaret",
+          TestWorkspaceShellRenamePromptMouseClickPositionsCaret);
   AddTest(tests, "WorkspaceShell/RenamePromptOnlySavesAffectedSplitEditor",
           TestWorkspaceShellRenamePromptOnlySavesAffectedSplitEditor);
   AddTest(tests, "WorkspaceShell/RenamePromptRetargetsDiagnostics",

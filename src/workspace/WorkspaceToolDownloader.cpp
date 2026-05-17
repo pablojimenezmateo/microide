@@ -32,6 +32,7 @@ std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& pa
     }
     return stdout_text.substr(0, split);
   };
+#ifdef _WIN32
   auto parse_certutil_digest = [](const std::string& stdout_text) -> std::optional<std::string> {
     for (std::size_t offset = 0; offset < stdout_text.size();) {
       const std::size_t next = stdout_text.find('\n', offset);
@@ -65,7 +66,6 @@ std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& pa
     }
     return std::nullopt;
   };
-#ifdef _WIN32
   auto certutil_path = []() {
     const char* system_root = std::getenv("SystemRoot");
     if (system_root == nullptr || system_root[0] == '\0') {

@@ -333,6 +333,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
   src/workspace/WorkspaceShellSidebarMouse.cpp
+  src/workspace/WorkspaceShellSingleLineInputMouse.cpp
   src/workspace/WorkspaceShellTerminal.cpp
   src/workspace/WorkspaceShellTerminalService.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp

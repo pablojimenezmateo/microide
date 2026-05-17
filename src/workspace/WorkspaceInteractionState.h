@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <vector>
 
+#include "workspace/WorkspaceTextInputState.h"
+
 namespace microide::workspace {
 
 enum class DragTarget {
@@ -23,6 +25,7 @@ enum class DragTarget {
   EditorSplitDivider,
   CompareVerticalScrollbar,
   CompareHorizontalScrollbar,
+  SingleLineSelection,
 };
 
 enum class TabDragKind {
@@ -59,6 +62,9 @@ struct InteractionState {
   // whole-tick scrolls when |accumulator| >= 1.
   float wheel_accumulator_y = 0.0f;
   float wheel_accumulator_x = 0.0f;
+  // Identifies which single-line input owns the in-flight drag-select gesture so the drag
+  // handler can keep updating the right editor without a second hit-test.
+  TextInputSurface single_line_drag_surface = TextInputSurface::None;
 };
 
 struct WheelTicks {

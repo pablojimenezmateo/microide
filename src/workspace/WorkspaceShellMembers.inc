@@ -1155,6 +1155,35 @@
   SingleLineViewMetrics ComputeSingleLineViewMetrics(const editor::SingleLineEditor& state,
                                                      std::string_view prefix,
                                                      float available_width) const;
+  // Maps a pointer x-offset (relative to the input's text_x) to a byte position within
+  // state.text(). Uses the same view-start computation as the renderer so the caret lands
+  // under the glyph the user clicked even when the text is horizontally scrolled.
+  std::size_t HitTestSingleLineByteOffset(const editor::SingleLineEditor& state,
+                                          std::string_view prefix,
+                                          float available_width,
+                                          float relative_x) const;
+  // Returns the active single-line input's hit-test rect (text rect) and surface tag, or
+  // nullopt when no single-line input is currently editable. Used by mouse handlers to
+  // decide whether a click landed inside an input.
+ public:
+  struct SingleLineInputHit {
+    TextInputSurface surface = TextInputSurface::None;
+    SDL_FRect text_rect{};
+    float available_width = 0.0f;
+    std::string prefix;
+    const editor::SingleLineEditor* state = nullptr;
+    editor::SingleLineEditor* mutable_state = nullptr;
+  };
+
+ private:
+  std::optional<SingleLineInputHit> FindSingleLineInputHit(const WorkspaceLayout& layout,
+                                                            float x,
+                                                            float y);
+  // Handles a single-line input mouse press by placing the caret, extending the selection
+  // when shift is held, selecting the word at the caret for double-click, and selecting
+  // all for triple-click. Begins drag-select tracking when the press was a plain click.
+  bool HandleSingleLineInputMouseDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleSingleLineInputDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   float MeasureSingleLineTextTail(std::string_view text, float available_width) const;
   void DrawSingleLineTextTail(SDL_Renderer* renderer,
                               float x,
@@ -1190,6 +1219,10 @@
   std::optional<SDL_FRect> HoveredTabTooltipRect(const WorkspaceLayout& layout) const;
   std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
   std::optional<SDL_FRect> HoveredGitSidebarTooltipRect(const WorkspaceLayout& layout) const;
+  // Tooltip text for the cryptic project-search option toggles in the sidebar
+  // (pattern mode / case mode / hidden-file toggle). Returns "" when none is hovered.
+  std::string HoveredSidebarSearchTooltipLabel(const SDL_FRect& sidebar_rect) const;
+  std::optional<SDL_FRect> HoveredSidebarSearchTooltipRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
   std::vector<VisibleStripTab> ComputeVisibleBottomPanelTabs(
       const SDL_FRect& panel_header) const;

@@ -110,7 +110,35 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return true;
       }
     }
+    if (HandleSingleLineInputMouseDown(event, layout)) {
+      ensure_redraw([this]() { RequestPromptRedraw(); });
+      return true;
+    }
     ensure_redraw([this]() { RequestPromptRedraw(); });
+    return true;
+  }
+
+  if (HandleSingleLineInputMouseDown(event, layout)) {
+    switch (context_.interaction_state.single_line_drag_surface) {
+      case TextInputSurface::Command:
+        ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+        break;
+      case TextInputSurface::SidebarSearchQuery:
+      case TextInputSurface::SidebarSearchReplace:
+        ensure_redraw([this]() { RequestSidebarRedraw(); });
+        break;
+      case TextInputSurface::FileFinder:
+      case TextInputSurface::BufferSearch:
+      case TextInputSurface::BufferReplaceSearch:
+      case TextInputSurface::BufferReplaceReplace:
+      case TextInputSurface::ProjectSearchOverlay:
+      case TextInputSurface::CommitPicker:
+        ensure_redraw([this]() { RequestOverlayRedraw(); });
+        break;
+      default:
+        ensure_redraw([this]() { RequestWindowRedraw(); });
+        break;
+    }
     return true;
   }
 
@@ -336,6 +364,28 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
 
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
+  }
+  if (context_.interaction_state.drag_target == DragTarget::SingleLineSelection) {
+    const TextInputSurface surface = context_.interaction_state.single_line_drag_surface;
+    context_.interaction_state.drag_target = DragTarget::None;
+    context_.interaction_state.single_line_drag_surface = TextInputSurface::None;
+    UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
+    switch (surface) {
+      case TextInputSurface::PromptInput:
+        ensure_redraw([this]() { RequestPromptRedraw(); });
+        break;
+      case TextInputSurface::Command:
+        ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+        break;
+      case TextInputSurface::SidebarSearchQuery:
+      case TextInputSurface::SidebarSearchReplace:
+        ensure_redraw([this]() { RequestSidebarRedraw(); });
+        break;
+      default:
+        ensure_redraw([this]() { RequestOverlayRedraw(); });
+        break;
+    }
+    return true;
   }
   if (context_.interaction_state.drag_target != DragTarget::None) {
     ClearDragState();

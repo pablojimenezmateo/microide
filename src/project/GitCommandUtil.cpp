@@ -6,6 +6,7 @@
 
 namespace microide::project::internal {
 
+#if defined(_WIN32)
 namespace {
 
 std::string LowerAscii(std::string text) {
@@ -16,6 +17,7 @@ std::string LowerAscii(std::string text) {
 }
 
 }  // namespace
+#endif
 
 bool HasGitMarker(const std::filesystem::path& root) {
   return !root.empty() && std::filesystem::exists(root / ".git");

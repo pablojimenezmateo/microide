@@ -119,6 +119,7 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
   return true;
 }
 
+#if defined(_WIN32)
 bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& relative_path,
                                      const project::IgnoreMatcher* matcher) {
   if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
@@ -140,6 +141,7 @@ bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& relative_path,
   }
   return false;
 }
+#endif
 
 // Build an initial IndexUpdateBatch by scanning root recursively.
 IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
