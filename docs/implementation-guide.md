@@ -34,6 +34,9 @@ The shell is intentionally compact:
 This is an editor-first product. Built-in tools should support editing rather than compete with
 the editor for space.
 
+The strongest validated workflow today is still the native diff/merge/git path:
+open repo -> inspect changes -> diff files -> resolve merge conflict -> stage/commit.
+
 ## Current Capability Baseline
 
 The current SDL shell already includes:
@@ -150,6 +153,8 @@ subsystems and services rather than accrete more logic on the shell or in one fi
 Within `src/editor`, `TextViewport` still owns the byte-oriented text model and viewport behavior,
 but file I/O now routes through the shared text-file helper and undo or redo now stores changed
 line ranges plus view state instead of whole-buffer snapshots.
+The next `TextViewport` refactor should reduce ownership (document buffer, edit engine, undo
+history, layout cache seams), not just split more `TextViewport*.cpp` files.
 
 ## External Tool Boundary
 

@@ -23,6 +23,9 @@ What they do **not** tell you:
   that comparison
 - behavior under a GPU-accelerated renderer; the reference harness pins the software renderer
 - behavior on other hardware than `perf-runner-v1`; cross-machine numbers are advisory
+- whether LTO "proves" cross-translation-unit extractions are free. LTO can recover some inlining
+  loss, but residual sticky-scroll/render-path regressions still need direct profiling and explicit
+  fix-or-accept decisions
 
 Treat the perf harness as a regression alarm, not a marketing instrument. If you write commit
 messages, PR descriptions, or release notes, use phrasing like "no regression on

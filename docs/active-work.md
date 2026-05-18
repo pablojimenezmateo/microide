@@ -8,6 +8,9 @@ This is the single source of truth for:
 - the current priority stack
 - accepted scope cuts and deferred work
 
+Current validation emphasis is still the native diff/merge/git workstation flow:
+open repo -> inspect changes -> diff files -> resolve merge conflict -> stage/commit.
+
 Use subsystem design docs for deep dives. Use this file to decide what is active, what is already
 good enough, and what is deliberately not being built.
 
