@@ -134,6 +134,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewport.cpp
   src/editor/TextViewportFileIO.cpp
   src/editor/TextViewportLanguageBehavior.cpp
+  src/editor/TextViewportMultiCaret.cpp
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
@@ -664,6 +665,7 @@ add_executable(microide_diff_bench
   src/editor/TextViewport.cpp
   src/editor/TextViewportFileIO.cpp
   src/editor/TextViewportLanguageBehavior.cpp
+  src/editor/TextViewportMultiCaret.cpp
   src/compare/CompareModel.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp

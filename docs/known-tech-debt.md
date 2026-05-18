@@ -213,30 +213,34 @@ Status:
     `LineEndingLabel`, `EncodingLabel`, `RefreshEncoding`, both `DetectEncoding` overloads,
     plus the `TrimTrailingWhitespaceInPlace` / `EnsureSingleFinalNewlineInPlace` anon-namespace
     helpers) moved to `src/editor/TextViewportFileIO.cpp`.
-  - Header / API unchanged across both moves. `TextViewport.cpp` is now ~2,695 lines
+  - Multi-caret apply pipeline (`ApplyMultiCaretInsert`, `ApplyMultiCaretBackspace`,
+    `ApplyMultiCaretDeleteForward`) moved to `src/editor/TextViewportMultiCaret.cpp`. The
+    history-machinery helpers it depends on (`BuildRangeHistoryEntry`, `ApplyHistoryEntry`,
+    `BuildHistoryEntryForDocumentChange`, `BuildAppliedEditForHistoryEntry`, `PushHistoryEntry`)
+    stay in `TextViewport.cpp`; reachable from the sibling TU because all three Apply* methods
+    are still members of the same class.
+  - Header / API unchanged across all three moves. `TextViewport.cpp` is now ~2,437 lines
     (down from ~3,553).
 
 Remaining:
 - Medium. Not a correctness or perf bug; a single-file ownership concentration that still
-  makes the editor core harder to reason about and harder to extend safely. Five broad
+  makes the editor core harder to reason about and harder to extend safely. Four broad
   responsibilities still co-located in `TextViewport.cpp`: cursor + scrolling + view state,
-  selection + multi-caret backspace / delete, history / undo machinery, highlight + wrap-row
-  layout cache, and the rest of the multi-caret edit pipeline.
+  selection + single-caret edit (`Backspace`, `DeleteForward`, `InsertCharacter`, etc.),
+  history / undo machinery, and the highlight + wrap-row layout cache.
 
 Why not bigger refactors yet:
 - Cursor + scrolling + history + selection are tangled by design (undo records visual columns,
   selection, multi-caret, and view state together). Splitting them is doable but should follow
-  more proven seams; the 2026-05-18 split is the smallest such seam and is now in place.
+  more proven seams; the three extractions completed on 2026-05-18 are the smallest such seams.
 
-Recommended next extractions, in priority order:
-1. **Multi-caret apply pipeline** (`ApplyMultiCaretBackspace`, `ApplyMultiCaretDeleteForward`,
-   `ApplyMultiCaretInsert`) — depends on history/edit helpers but the surface is contained.
-2. **Highlight cache** (`EnsureInitialHighlightState`, `EnsureHighlightCaches`,
+Recommended next extraction:
+1. **Highlight cache** (`EnsureInitialHighlightState`, `EnsureHighlightCaches`,
    `EnsureHighlightCheckpoint`, `HighlightStateBeforeLine`, the `highlight_cache_*` /
    `line_highlight_states_*` / `highlight_checkpoints_*` machinery) — already has a clean tier
    contract via the `split-layout-revision-tiers` change.
 
-Each should land as its own change with tests green.
+Should land as its own change with tests green.
 
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
