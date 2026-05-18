@@ -200,6 +200,70 @@ Relevant code:
 
 See also `docs/performance-findings.md` — Second Performance Pass, New finding 4.
 
+## 15. `TextViewport.cpp` Is The Largest Unowned-By-Name Surface In The Editor Core
+
+Status:
+- Open. Identified during 2026-05-18 review.
+
+Impact:
+- Medium. Not a correctness or perf bug; a single-file ownership concentration that makes the
+  editor core harder to reason about and harder to extend safely.
+
+Current state:
+- `src/editor/TextViewport.cpp` is ~3,553 lines spanning ~119 methods across roughly six
+  responsibilities that could be separated: open / save (document I/O), cursor + scrolling + view
+  state, selection + multi-caret, history / undo machinery, highlight + wrap-row layout cache,
+  and language-pair behavior (auto-close, surround, dedent-on-close, smart-indent split). The
+  `TextViewport::DocumentState` four-tier revision split (item 14) already proves the cache layer
+  can be decomposed; the same is true for the language-behavior helpers.
+
+Lowest-risk extraction candidate:
+- The auto-close / surround / skip-over-close / dedent-on-close / brace-split helpers (currently
+  `TryAutoCloseInsert`, `TrySurroundInsert`, `TrySkipOverClose`, `MaybeDedentOnClose`,
+  `TryInsertNewlineSplitBraces`, `InInsertionSuppressedScope`, `TryMultiCaretPairInsert` — see
+  lines ~2304–2790) read mostly from `LanguageContractView`, the cursor, and the line buffer.
+  They could move into `editor/EditorLanguageBehavior.{h,cpp}` with `TextViewport` exposing a
+  small mutation interface (insert/replace/range + cursor query). Coverage exists in
+  `tests/EditorEssentials*` and `tests/EditorLanguagePair*` fixtures.
+
+Why not bigger refactors:
+- Cursor + scrolling + history + selection are tangled by design (undo records visual columns,
+  selection, multi-caret, and view state together). Splitting them is doable but should follow
+  the language-behavior extraction so the seam is proven small first.
+
+Recommended follow-up:
+- Land the language-behavior extraction as one openspec change. Hold tests green. Do not split
+  the cache/history machinery in the same change.
+
+## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
+
+Status:
+- Open. Identified during 2026-05-18 review; partially anticipated by 2026-04-29 follow-up #2.
+
+Impact:
+- Medium. The architectural-lint cap on `WorkspaceShell.h` (≤ 400 lines) and `WorkspaceShell.cpp`
+  (≤ 600 lines) is satisfied, but behavior is still owned by the `WorkspaceShell` namespace
+  through 51 `WorkspaceShell*.cpp` translation units totaling ~18.8k lines, all defined against
+  `WorkspaceShellMembers.inc` (~1,516 lines of inline class body). File decomposition without
+  ownership decomposition keeps the shell symbol blast radius wide.
+
+Current state:
+- The 2026-04-29 cleanup correctly moved coordinator constructors off `WorkspaceShell&`, but the
+  shell-companion TUs that remain still register methods on `WorkspaceShell` itself. The lint
+  rule prevents *direct* shell-friend access from coordinators; it does not prevent the shell
+  from continuing to absorb new behavior as new `WorkspaceShell*.cpp` files.
+
+Recommended follow-up:
+- Pick three to five `WorkspaceShell*.cpp` units whose contents could become standalone
+  services. Strongest candidates from a name/size scan: `WorkspaceShellAssist.cpp` (~776 lines),
+  `WorkspaceShellChrome.cpp` (~839 lines — distinct from `LayoutModeService`/`StatusBarService`
+  surfaces; verify), `WorkspaceShellBlame.cpp`, `WorkspaceShellOutput.cpp`. Audit each before
+  migrating; some may already be thin glue with the real owner in a service.
+- After migration, add a lint that caps the number of `WorkspaceShell*.cpp` translation units or
+  caps `WorkspaceShellMembers.inc` length.
+- Do not add new `WorkspaceShell*.cpp` files for new behavior. The 2026-04-29 follow-up rule
+  already says this; surface it more prominently in `AGENTS.md` / `CLAUDE.md` if drift recurs.
+
 ## Open Follow-Ups After The 2026-04-29 Cleanup
 
 The cleanup change closed items 1–4 and 7 above and shipped the durable contracts in

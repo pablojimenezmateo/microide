@@ -2,9 +2,14 @@
 
 ## Mission
 
-Build `microide` as the fastest, lowest-footprint desktop IDE — a compact C++/SDL3
-single-window application with no GPU acceleration requirement, keyboard-first workflows,
-and best-in-class diff and merge.
+Build `microide` as a native, low-footprint, single-window C++/SDL3 desktop IDE. The target shape
+is: no GPU acceleration requirement, keyboard-first workflows, and a well-validated diff / merge /
+git workstation around a competent editor, search, and terminal core.
+
+Avoid marketing claims in code, commits, or docs. The project has internal regression baselines
+but no comparative benchmarks against other editors; do not write "fastest" / "lower CPU than X"
+phrasing — say "native, low-footprint, responsive" and let measurements speak. See the
+"Performance & Benchmark Methodology" section of `README.md` for what is actually measured.
 
 Do not optimize for keeping old boundaries alive. If the correct fix breaks compatibility, touches
 many files, or requires a broader refactor, prefer the better design.

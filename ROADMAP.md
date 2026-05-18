@@ -24,8 +24,15 @@ provider surfaces are already in the tree.
 That changes what the roadmap should optimize for. The next work is not "add another foundation."
 It is:
 
-- validate the shipped foundations against real workflows
-- harden the remaining host boundaries, especially around `WorkspaceShell`
+- **prove the diff / merge / git workstation as the validated product wedge.** This is the
+  capability set where microide is most clearly differentiated today: shared decorated-text-grid
+  pipeline across editor / compare / merge, three-way merge with whole-side apply, `[`/`]` hunk
+  navigation, outgoing-base-branch compare, working-tree-aware merge result reopen, and a
+  standalone `microide_diff_bench`. Cohere docs, regression coverage, and remaining polish around
+  this wedge before broadening scope again.
+- validate the shipped foundations (LSP / DAP / tasks / tests / SCM) against real workflows
+- harden the remaining host boundaries, especially around `WorkspaceShell` (file decomposition
+  is satisfied; ownership decomposition is partial — see `docs/known-tech-debt.md` items 15–16)
 - keep UI latency stable while the new runtime surfaces are exercised under load
 
 ## Immediate Slice

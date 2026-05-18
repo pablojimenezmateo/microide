@@ -4,6 +4,31 @@ The perf harness is the primary regression oracle for startup and interactive-pe
 It runs scenario workloads through `microide_perf` and compares measured aggregates against committed
 baselines.
 
+## What These Numbers Are And Are Not
+
+The harness exists to detect microide-vs-itself regressions. It is not a tool for comparing
+microide against other editors.
+
+What committed baselines under `tests/perf/baselines/` reliably tell you:
+
+- whether a change regressed a specific scenario versus the previously committed baseline on the
+  same runner class (`perf-runner-v1`) with the same SDL driver hints, seed, and fixtures
+- whether idle behavior holds the zero-wake invariant over the soak window
+- whether a hard-coded gate threshold (e.g. `file_finder_cold` ≤ 50 ms) still holds
+
+What they do **not** tell you:
+
+- how microide compares to VSCode, Zed, Helix, Sublime, or any other editor — no comparative
+  measurement is performed, none is published, and the existing numbers are not meaningful in
+  that comparison
+- behavior under a GPU-accelerated renderer; the reference harness pins the software renderer
+- behavior on other hardware than `perf-runner-v1`; cross-machine numbers are advisory
+
+Treat the perf harness as a regression alarm, not a marketing instrument. If you write commit
+messages, PR descriptions, or release notes, use phrasing like "no regression on
+`<scenario>`" or "improves `<scenario>` p50 from X to Y on `perf-runner-v1`," not "fastest" or
+"X% faster than $other_editor."
+
 ## Configure
 
 ```bash
