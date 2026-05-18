@@ -289,6 +289,37 @@ The gate run is measured on a dedicated self-hosted runner class tagged `perf-ru
 must be updated from this class (or a machine with equivalent characteristics) before tightening or
 replacing gate numbers.
 
+## Ad-hoc Branch-vs-Commit Comparison
+
+For a one-shot "current working tree vs some other commit" comparison (including
+uncommitted changes on the current side), use `tools/perf-compare.py`:
+
+```bash
+tools/perf-compare.py                  # current tree vs main HEAD
+tools/perf-compare.py <commit-sha>     # current tree vs explicit SHA
+ITERATIONS=5 tools/perf-compare.py     # fewer iterations per scenario
+SCENARIOS=typing_small_file,scroll_large_file tools/perf-compare.py
+```
+
+The script builds `microide_perf` in-place for the current tree (so uncommitted
+changes are included), spins up a detached `git worktree` at the comparison SHA,
+mirrors gitignored fixtures into it, runs every registered scenario one at a
+time on both sides, and prints a coloured ASCII table comparing p50/p95/max
+wall-time and allocation metrics, plus regression and improvement summaries.
+
+Each scenario runs in its own `microide_perf` invocation, so a scenario that
+throws (e.g. an RSS-budget overrun) is skipped without affecting the others.
+Set `NO_COLOR=1` to disable colour, `KEEP=1` to keep the temporary worktree and
+JSON reports for triage, and `REGRESS_PCT=<n>` to adjust the regression
+highlighting threshold (default 5%). These ad-hoc numbers are local-advisory
+and must not be used to update `tests/perf/baselines/*.json`.
+
+A small per-scenario iteration cap is hard-coded in the script for
+`idle_soak_30s` and `long_soak_8h`: both are deterministic-sleep scenarios
+whose value is a single binary wake-budget assertion, so running them more
+than once adds no signal. They always run at 1 iteration regardless of
+`ITERATIONS`, saving roughly 10 minutes on a default 10-iter run.
+
 ## Smoke vs Gate Split
 
 - local/PR smoke: small subset for quick signal (`microide_perf_tests` / `--smoke`)
