@@ -256,7 +256,7 @@ Why this item stays open at "low":
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
 Status:
-- Open at "low" after 2026-05-18 audit + ratchet-only caps.
+- Open at "low" after the 2026-05-18 audit, ratchet-only caps, and the first assist extraction.
 
 Impact:
 - Low to medium. The architectural-lint cap on `WorkspaceShell.h` (≤ 400 lines) and
@@ -274,10 +274,10 @@ Audit of the four originally-named candidates (2026-05-18):
   This follow-up has now landed: `EditorBlameOverlayService` owns blame-overlay state, line lookup,
   hit-testing, and overlay construction for editor / compare surfaces. The shell keeps
   `GitBlameService` ownership and narrow invalidation / clear entry points.
-- `WorkspaceShellAssist.cpp` (~776 lines, 15 methods): real coordination of completion,
-  snippets, code-actions, go-to-definition, find-references. Touches editor state, LSP state,
-  snippet sessions. Migration needs a new `AssistService` with proper ownership of these
-  cross-cutting interactions. Medium work.
+- `WorkspaceShellAssist.cpp` was the third real service candidate. This follow-up has now landed:
+  `AssistService` owns completion, snippet-session edits, code-action overlays, go-to-definition,
+  and find-references coordination. `WorkspaceShellAssist.cpp` remains as a thin forwarding layer
+  so shell-shaped action/test call sites do not have to migrate in the same change.
 - `WorkspaceShellChrome.cpp` was the second real service candidate. This follow-up is now partly
   landed: `TabStripService` owns editor/project/bottom-panel tab-strip layout state, overflow
   controls, and bottom-panel tab models; `StatusBarModelService` owns status-bar caches and
@@ -292,9 +292,10 @@ What was actually done in the low pass (2026-05-18):
   Both are hard-fail. Lower the cap when a migration shrinks either number; never raise.
 
 Recommended follow-ups (deferred, each a separate medium-sized change):
-- Stand up `AssistService` and migrate the 15 methods in `WorkspaceShellAssist.cpp`.
 - Finish collapsing the remaining `WorkspaceShellChrome.cpp` wrappers once the surrounding
   coordinator/test-access call sites no longer need the shell-shaped API.
+- Consider migrating assist-oriented action/test callers off the shell wrappers so
+  `WorkspaceShellAssist.cpp` can eventually disappear instead of staying as a permanent facade.
 - Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now hard-fails this.
 
 ## Open Follow-Ups After The 2026-04-29 Cleanup

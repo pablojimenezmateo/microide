@@ -297,6 +297,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchPresentation.cpp
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
+  src/workspace/AssistService.cpp
   src/workspace/CompareMergeService.cpp
   src/workspace/ProjectCatalogService.cpp
   src/workspace/WorkspacePathMutationCoordinatorDirty.cpp

@@ -1371,6 +1371,7 @@
   StatusBarService status_bar_service_;
   StatusBarModelService status_bar_model_service_;
   SettingsOverlayService settings_overlay_service_;
+  AssistService assist_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {
     std::filesystem::path project_root;

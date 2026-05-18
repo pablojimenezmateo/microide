@@ -51,6 +51,7 @@
 #include "workspace/WorkspaceVirtualDocument.h"
 #include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceEventResult.h"
+#include "workspace/AssistService.h"
 #include "workspace/EditorBlameOverlayService.h"
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"

@@ -53,6 +53,65 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
 WorkspaceShell::WorkspaceShell() {
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
+  assist_service_.Configure(
+      context_, plugin_runtime_, output_channels_, language_contract_,
+      AssistService::Operations{
+          .get_setting_value =
+              [this](std::string_view id) { return GetSettingValue(id); },
+          .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
+          .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
+          .active_editor_tab = [this]() { return ActiveEditorTab(); },
+          .active_compare_tab = [this]() { return ActiveCompareTab(); },
+          .active_merge_tab = [this]() { return ActiveMergeTab(); },
+          .lsp_client_for_viewport =
+              [this](const editor::TextViewport& viewport, std::string* language_id) {
+                return LspClientForViewport(viewport, language_id);
+              },
+          .current_lsp_manager = [this]() -> LspManager& { return CurrentLspManager(); },
+          .ensure_lsp_document_open =
+              [this](const editor::TextViewport& viewport,
+                     LspClient& client,
+                     std::string_view language_id) {
+                EnsureLspDocumentOpen(viewport, client, language_id);
+              },
+          .begin_tracked_lsp_request = [this]() { BeginTrackedLspRequest(); },
+          .finish_tracked_lsp_request = [this]() { FinishTrackedLspRequest(); },
+          .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
+          .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
+          .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
+          .execute_command_name =
+              [this](std::string_view command_name,
+                     const std::vector<std::string>& args,
+                     std::string* error_message) {
+                return ExecuteCommandName(command_name, args, ActionSource::Menu,
+                                          error_message);
+              },
+          .open_file_in_new_tab =
+              [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
+          .reset_caret_blink = [this]() { ResetCaretBlink(); },
+          .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .request_active_editable_last_change_redraw =
+              [this]() { RequestActiveEditableLastChangeRedraw(); },
+          .request_active_editable_blame_neighborhood_redraw =
+              [this](std::size_t before_line, std::size_t after_line) {
+                RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
+              },
+          .request_tab_strip_redraw = [this]() { RequestChromeRedraw(); },
+          .refresh_compare_tab_derived_state =
+              [this](CompareTabState& tab) { RefreshCompareTabDerivedState(tab); },
+          .sync_compare_selection_from_viewport =
+              [this](CompareTabState& tab, bool keep_top_line) {
+                SyncCompareSelectionFromViewport(tab, keep_top_line);
+              },
+          .update_merge_tracking_after_viewport_edit =
+              [this](MergeTabState& tab,
+                     const std::vector<std::string>& before_lines,
+                     const std::optional<editor::SelectionRange>& selection_before,
+                     const editor::TextPosition& cursor_before) {
+                UpdateMergeTrackingAfterViewportEdit(tab, before_lines, selection_before,
+                                                     cursor_before);
+              },
+      });
   plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{
       .is_command_name_available =
           [](std::string_view name) { return FindWorkspaceActionByCommand(name) == nullptr; },
