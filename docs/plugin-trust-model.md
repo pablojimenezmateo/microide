@@ -163,6 +163,8 @@ For users:
 
 Explicit scope decision:
 
+- Plugin security-system hardening is out of current product scope. This includes safe-mode
+  startup paths, plugin sandboxing / process isolation, and first-run capability prompts.
 - A safe-mode or project-plugin-disable startup path is not planned in the current scope.
 - If you need to inspect untrusted repositories, use external isolation (VM/container) before
   opening them in microide.

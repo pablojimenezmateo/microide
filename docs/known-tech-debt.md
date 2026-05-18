@@ -1,6 +1,7 @@
 # MicroIDE Known Tech Debt
 
 Reviewed on 2026-04-23. Updated 2026-04-29 after comprehensive tech-debt cleanup slices.
+Updated 2026-05-18 with rejected refactor experiment notes.
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -282,6 +283,52 @@ Recommended ownership seams for the next pass:
   - visible-line cache
   - fold-aware mapping
   - layout invalidation
+
+### Rejected experiment: `TextDocumentModel` ownership extraction
+
+Status:
+- Rejected on 2026-05-18 after benchmark-gate comparison against `main`.
+
+What was attempted:
+- The branch `refactor/text-document-model` extracted document-owned state from `TextViewport`
+  into a `TextDocumentModel`.
+- The model API encapsulated line storage, dirty state, revision counters, newline metadata, and
+  mutation helpers.
+- The goal was cleaner ownership boundaries and easier future extraction of edit/history concerns.
+
+Outcome:
+- Behavior tests passed in the focused editor suite.
+- The performance gate failed with regressions in hot editor/render scenarios:
+  - `editor_fold_viewport_refresh`: around +28–30% wall time
+  - `editor_sticky_scroll_scroll`: around +21–23% wall time
+  - `editor_indent_guides_paint`: around +20–21% wall time
+  - `editor_render_whitespace_paint`: around +15–16% wall time
+  - `editor_shaping_multi_caret`: up to around +15–22% wall time
+  - `editor_auto_close_typing`: around +5–6% wall time
+  - `typing_large_file`: around +5–7% p95/max wall time
+- Broad allocation increases also appeared across typing, scrolling, idle, startup, terminal, and
+  menu scenarios.
+- The branch was abandoned rather than merged.
+
+Lesson:
+- `TextViewport` still needs decomposition, but not through an abstraction that degrades hot-path
+  locality, increases hidden allocation/copy risk, or broadens cache invalidation.
+- In this codebase, architectural cleanup is not acceptable if it materially hurts latency or
+  render-path throughput.
+- This was a successful benchmark gate: perf harness checks prevented a bad abstraction from
+  landing on `main`.
+
+Future attempts should prefer:
+- tiny cold-path extractions first
+- pure helpers operating on existing data without ownership changes
+- no shared ownership for hot editor state unless proven free
+- no full-buffer copies in render/layout/scroll/typing paths
+- benchmark checks after each small change
+- profiling before introducing API boundaries inside hot loops
+
+Do not reintroduce `TextDocumentModel` in the same shape without first proving that line access,
+mutation, revision updates, and cache invalidation are allocation-free and performance-neutral in
+the editor benchmarks.
 
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
