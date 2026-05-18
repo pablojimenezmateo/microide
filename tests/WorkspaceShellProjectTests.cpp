@@ -2,6 +2,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "workspace/WorkspaceShellTestAccess.h"
+#include "platform/FileIndexWatcher.h"
 
 #include <algorithm>
 #include <array>
@@ -65,6 +66,52 @@ bool WaitForFileIndexPath(WorkspaceShell& shell,
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   return WorkspaceShellTestAccess::FileIndexContainsPath(shell, relative_path) == expected_present;
+}
+
+bool WaitForProjectSearchCompletion(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
+    if (!WorkspaceShellTestAccess::ProjectSearchRunning(shell)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return !WorkspaceShellTestAccess::ProjectSearchRunning(shell);
+}
+
+platform::IndexUpdateBatch BuildInjectedCreateBatch(const std::filesystem::path& root,
+                                                    const std::filesystem::path& relative_path) {
+  const std::filesystem::path absolute_path = root / relative_path;
+  std::error_code mtime_error;
+  const auto mtime = std::filesystem::last_write_time(absolute_path, mtime_error);
+  std::error_code size_error;
+  const auto size = std::filesystem::file_size(absolute_path, size_error);
+  platform::IndexUpdateBatch batch;
+  batch.is_initial = false;
+  batch.changes.push_back(platform::IndexUpdateBatch::Change{
+      .kind = platform::IndexUpdateBatch::Kind::CreatedOrModified,
+      .entry = platform::IndexFileEntry{
+          .relative_path = relative_path,
+          .mtime = mtime_error ? std::filesystem::file_time_type{} : mtime,
+          .size = size_error ? 0 : size,
+      },
+  });
+  return batch;
+}
+
+platform::IndexUpdateBatch BuildInjectedDeleteBatch(const std::filesystem::path& relative_path) {
+  platform::IndexUpdateBatch batch;
+  batch.is_initial = false;
+  batch.changes.push_back(platform::IndexUpdateBatch::Change{
+      .kind = platform::IndexUpdateBatch::Kind::Deleted,
+      .entry = platform::IndexFileEntry{
+          .relative_path = relative_path,
+          .mtime = {},
+          .size = 0,
+      },
+  });
+  return batch;
 }
 
 void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
@@ -2374,6 +2421,129 @@ void TestWorkspaceShellFileFinderReflectsFileIndexUpdates() {
          "file finder should no longer list the deleted file");
 }
 
+void TestWorkspaceShellFileFinderUsesMaintainedIndexWithoutProjectScan() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  WriteFile(root / "src" / "finder_target.cpp", "int target() { return 1; }\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "file finder no-scan fixture should open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("src/finder_target.cpp"), true,
+                              std::chrono::milliseconds(1000)),
+         "file finder no-scan fixture should wait for file index initialization");
+
+  util::ResetPerformanceCounters();
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "file finder no-scan fixture should open file finder");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "finder_target"),
+         "file finder no-scan fixture should accept query input");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) >= 1,
+         "file finder no-scan fixture should resolve indexed matches");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "file finder no-scan fixture should close the overlay");
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "file finder no-scan fixture should reopen file finder");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "README"),
+         "file finder no-scan fixture should accept a second query");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) >= 1,
+         "file finder no-scan fixture should resolve indexed matches on query refresh");
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::ProjectFileScannerCollectProjectFilesCalls) == 0,
+         "opening and querying file finder after index readiness should not trigger project scans");
+}
+
+void TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  WriteFile(root / "src" / "search_target.cpp", "needle search_target\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project search no-scan fixture should open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("src/search_target.cpp"), true,
+                              std::chrono::milliseconds(1000)),
+         "project search no-scan fixture should wait for file index initialization");
+
+  util::ResetPerformanceCounters();
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "project search no-scan fixture should complete search");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "project search no-scan fixture should find indexed matches");
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "search_target", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "project search no-scan fixture should complete search query refresh");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "project search no-scan fixture should keep matches on query refresh");
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "project search no-scan fixture should restart search before replace-all");
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "project search no-scan fixture should refresh after replace-all");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "replace-all should update project search results after indexed replacements");
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::ProjectFileScannerCollectProjectFilesCalls) == 0,
+         "project search start/query refresh/replace-all after index readiness should not trigger project scans");
+}
+
+void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "injected file-index batch fixture should open the project");
+
+  const std::filesystem::path relative_injected = std::filesystem::path("src/injected.cpp");
+  const std::filesystem::path absolute_injected = root / relative_injected;
+  WriteFile(absolute_injected, "needle\n");
+  const platform::IndexUpdateBatch create_batch =
+      BuildInjectedCreateBatch(root, relative_injected);
+  Expect(WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, create_batch),
+         "injected create batch should mutate the file index");
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
+         "injected create batch should flow through project reload plumbing");
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "injected create batch fixture should open file finder");
+  WorkspaceShellTestAccess::SetFileFinderQuery(shell, "injected");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) >= 1,
+         "injected create batch should surface new entries in file finder");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "injected create batch fixture should complete project search");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "injected create batch should surface new entries in project search");
+
+  std::error_code remove_error;
+  std::filesystem::remove(absolute_injected, remove_error);
+  Expect(!remove_error, "injected delete batch fixture should remove injected file from disk");
+  const platform::IndexUpdateBatch delete_batch = BuildInjectedDeleteBatch(relative_injected);
+  Expect(WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, delete_batch),
+         "injected delete batch should mutate the file index");
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
+         "injected delete batch should flow through project reload plumbing");
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
+         "injected delete batch fixture should reopen file finder");
+  WorkspaceShellTestAccess::SetFileFinderQuery(shell, "injected");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) == 0,
+         "injected delete batch should remove entries from file finder");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "injected delete batch fixture should complete project search");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "injected delete batch should remove entries from project search");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
@@ -2401,6 +2571,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFileIndexUpdatesDoNotReloadCleanBuffers);
   AddTest(tests, "WorkspaceShell/FileFinderReflectsFileIndexUpdates",
           TestWorkspaceShellFileFinderReflectsFileIndexUpdates);
+  AddTest(tests, "WorkspaceShell/FileFinderUsesMaintainedIndexWithoutProjectScan",
+          TestWorkspaceShellFileFinderUsesMaintainedIndexWithoutProjectScan);
+  AddTest(tests, "WorkspaceShell/ProjectSearchUsesMaintainedIndexWithoutProjectScan",
+          TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan);
+  AddTest(tests, "WorkspaceShell/InjectedFileIndexBatchUpdatesFinderAndSearch",
+          TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
   AddTest(tests, "WorkspaceShell/LeftCtrlShortcutOpensCommandPrompt",

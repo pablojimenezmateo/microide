@@ -33,8 +33,10 @@ enum class PerfCounterId : std::size_t {
   SearchProjectSnapshotResultsCount,
   SearchProjectLowerLineCalls,
   SearchProjectLowerLineBytes,
+  SearchProjectCandidateFilesFromIndex,
   FileFinderCacheBuildCalls,
   FileFinderCacheEntriesBuilt,
+  ProjectFileScannerCollectProjectFilesCalls,
   RenderTextWidthCacheQueries,
   RenderTextWidthCacheHits,
   RenderTextTextureCacheHits,
@@ -64,4 +66,3 @@ std::vector<std::pair<std::string_view, std::uint64_t>> NonZeroCounterDelta(
 std::string_view PerformanceCounterName(PerfCounterId id);
 
 }  // namespace microide::util
-

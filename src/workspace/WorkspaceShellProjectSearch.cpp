@@ -6,10 +6,10 @@
 #include <sstream>
 #include <vector>
 
-#include "project/ProjectFileScanner.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "util/PerformanceCounters.h"
 
 namespace microide::workspace {
 
@@ -39,10 +39,14 @@ void WorkspaceShell::RefreshProjectSearch() {
   const project::ProjectFileScanMode scan_mode =
       context_.current_project_state.overlay.workflow.project_search.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
                                                            : project::ProjectFileScanMode::ExcludeHidden;
+  const project::FilePathSnapshot file_snapshot =
+      context_.current_project_state.file_index.SnapshotPathsWithVersion(scan_mode);
+  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectCandidateFilesFromIndex,
+                              file_snapshot.files.size());
   project_search_runtime_.Start(context_.current_project_state.root,
                                 context_.current_project_state.overlay.workflow.project_search.query.text(),
                                 context_.current_project_state.overlay.workflow.project_search.options,
-                                context_.current_project_state.file_index.files(scan_mode));
+                                std::move(file_snapshot.files));
   ResetOverlayScroll();
   RequestSidebarRedraw();
 }
@@ -311,10 +315,10 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
   std::vector<PendingProjectReplace> pending;
 
-  const std::vector<std::filesystem::path> files = project::CollectProjectFiles(
-      context_.current_project_state.root, context_.current_project_state.overlay.workflow.project_search.options.show_hidden
-                         ? project::ProjectFileScanMode::IncludeHidden
-                         : project::ProjectFileScanMode::ExcludeHidden);
+  const std::vector<std::filesystem::path> files = context_.current_project_state.file_index.SnapshotPaths(
+      context_.current_project_state.overlay.workflow.project_search.options.show_hidden
+          ? project::ProjectFileScanMode::IncludeHidden
+          : project::ProjectFileScanMode::ExcludeHidden);
   for (const auto& relative_path : files) {
     const std::filesystem::path absolute_path = context_.current_project_state.root / relative_path;
     const std::filesystem::path normalized_absolute = absolute_path.lexically_normal();
@@ -409,7 +413,39 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     }
   }
 
-  RefreshProjectFiles();
+  platform::IndexUpdateBatch metadata_updates;
+  metadata_updates.is_initial = false;
+  metadata_updates.changes.reserve(pending.size());
+  for (const auto& change : pending) {
+    std::error_code status_error;
+    const auto status = std::filesystem::status(change.absolute_path, status_error);
+    if (status_error || !std::filesystem::is_regular_file(status)) {
+      continue;
+    }
+    std::error_code mtime_error;
+    const auto mtime = std::filesystem::last_write_time(change.absolute_path, mtime_error);
+    std::error_code size_error;
+    const auto size = std::filesystem::file_size(change.absolute_path, size_error);
+    metadata_updates.changes.push_back(platform::IndexUpdateBatch::Change{
+        .kind = platform::IndexUpdateBatch::Kind::CreatedOrModified,
+        .entry = platform::IndexFileEntry{
+            .relative_path = change.relative_path,
+            .mtime = mtime_error ? std::filesystem::file_time_type{} : mtime,
+            .size = size_error ? 0 : size,
+        },
+    });
+  }
+  if (!metadata_updates.changes.empty() &&
+      context_.current_project_state.file_index.ApplyBatch(metadata_updates)) {
+    file_index_has_pending_changes_.store(true, std::memory_order_release);
+  }
+  context_.current_project_state.directory_tree.Refresh();
+  context_.current_project_state.file_finder.InvalidateIndexCache();
+  if (context_.current_project_state.overlay.visible &&
+      context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
+    context_.current_project_state.file_finder.Refresh();
+  }
+  RequestAutomaticGitSidebarRefresh();
   RefreshProjectSearch();
 }
 

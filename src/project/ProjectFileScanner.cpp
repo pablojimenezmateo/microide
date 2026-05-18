@@ -4,6 +4,7 @@
 #include <system_error>
 
 #include "project/IgnoreMatcher.h"
+#include "util/PerformanceCounters.h"
 
 namespace microide::project {
 
@@ -73,6 +74,7 @@ void CollectFiles(const std::filesystem::path& root,
 
 std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::path& root,
                                                        ProjectFileScanMode mode) {
+  util::AddPerformanceCounter(util::PerfCounterId::ProjectFileScannerCollectProjectFilesCalls);
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
   if (error || absolute_root.empty() || !std::filesystem::exists(absolute_root, error) || error ||

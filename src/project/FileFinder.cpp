@@ -12,13 +12,18 @@ namespace microide::project {
 void FileFinder::SetIndex(const FileIndex* index) {
   util::PerformanceTrace::Scope perf_scope("FileFinder::SetIndex");
   index_ = index;
-  cached_entries_.clear();
-  cache_ready_ = false;
+  InvalidateIndexCache();
   results_.clear();
   selected_index_ = 0;
   if (index_ != nullptr && !query_.text().empty()) {
     Refresh();
   }
+}
+
+void FileFinder::InvalidateIndexCache() {
+  cached_entries_.clear();
+  cache_ready_ = false;
+  cached_index_version_ = 0;
 }
 
 void FileFinder::SetQuery(std::string query) {
@@ -143,12 +148,17 @@ std::string FileFinder::ToLower(std::string value) {
 
 void FileFinder::EnsureCacheBuilt() {
   util::PerformanceTrace::Scope perf_scope("FileFinder::EnsureCacheBuilt");
-  util::AddPerformanceCounter(util::PerfCounterId::FileFinderCacheBuildCalls);
-  if (cache_ready_ || index_ == nullptr) {
+  if (index_ == nullptr) {
     return;
   }
 
-  const auto files = index_->Snapshot();
+  const auto snapshot = index_->SnapshotWithVersion();
+  if (cache_ready_ && cached_index_version_ == snapshot.version) {
+    return;
+  }
+
+  util::AddPerformanceCounter(util::PerfCounterId::FileFinderCacheBuildCalls);
+  const auto& files = snapshot.files;
   util::AddPerformanceCounter(util::PerfCounterId::FileFinderCacheEntriesBuilt, files.size());
   cached_entries_.clear();
   cached_entries_.reserve(files.size());
@@ -161,6 +171,7 @@ void FileFinder::EnsureCacheBuilt() {
         .lower_filename = ToLower(std::filesystem::path(path_string).filename().string()),
     });
   }
+  cached_index_version_ = snapshot.version;
   cache_ready_ = true;
 }
 

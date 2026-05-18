@@ -40,6 +40,7 @@ FileIndex::FileIndex(FileIndex&& other) noexcept {
   std::unique_lock other_lock(other.files_mutex_);
   root_ = std::move(other.root_);
   files_ = std::move(other.files_);
+  version_ = other.version_;
   exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
   include_hidden_cache_ = std::move(other.include_hidden_cache_);
 }
@@ -52,6 +53,7 @@ FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
   std::scoped_lock lock(files_mutex_, other.files_mutex_);
   root_ = std::move(other.root_);
   files_ = std::move(other.files_);
+  version_ = other.version_;
   exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
   include_hidden_cache_ = std::move(other.include_hidden_cache_);
   return *this;
@@ -67,13 +69,14 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
     return false;
   }
 
-  root_ = absolute_root;
   {
     std::unique_lock lock(files_mutex_);
+    root_ = absolute_root;
     files_.clear();
+    ++version_;
+    exclude_hidden_cache_ = {};
+    include_hidden_cache_ = {};
   }
-  exclude_hidden_cache_ = {};
-  include_hidden_cache_ = {};
   if (population_mode == RootPopulationMode::ScanNow) {
     Refresh();
   }
@@ -81,29 +84,38 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
 }
 
 void FileIndex::Reset() {
-  root_.clear();
-  {
-    std::unique_lock lock(files_mutex_);
-    files_.clear();
+  std::unique_lock lock(files_mutex_);
+  if (root_.empty() && files_.empty()) {
+    return;
   }
+  root_.clear();
+  files_.clear();
+  ++version_;
   exclude_hidden_cache_ = {};
   include_hidden_cache_ = {};
 }
 
 void FileIndex::Refresh() {
+  std::filesystem::path root;
+  {
+    std::shared_lock lock(files_mutex_);
+    root = root_;
+  }
+
   std::vector<ProjectFile> rebuilt;
-  if (!root_.empty()) {
-    const auto scanned = CollectProjectFiles(root_, ProjectFileScanMode::IncludeHidden);
+  if (!root.empty()) {
+    const auto scanned = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden);
     rebuilt.reserve(scanned.size());
     for (const auto& relative_path : scanned) {
-      rebuilt.push_back(BuildProjectFile(root_, relative_path));
+      rebuilt.push_back(BuildProjectFile(root, relative_path));
     }
   }
+  std::sort(rebuilt.begin(), rebuilt.end(), LessProjectFile);
 
   {
     std::unique_lock lock(files_mutex_);
     files_ = std::move(rebuilt);
-    std::sort(files_.begin(), files_.end(), LessProjectFile);
+    ++version_;
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
   }
@@ -137,10 +149,8 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch) {
                   rebuilt.end());
 
     std::unique_lock lock(files_mutex_);
-    if (files_ == rebuilt) {
-      return false;
-    }
     files_ = std::move(rebuilt);
+    ++version_;
     exclude_hidden_cache_.needs_refresh = true;
     include_hidden_cache_.needs_refresh = true;
     return true;
@@ -164,6 +174,7 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch) {
   if (!changed) {
     return false;
   }
+  ++version_;
   exclude_hidden_cache_.needs_refresh = true;
   include_hidden_cache_.needs_refresh = true;
   return true;
@@ -174,9 +185,38 @@ std::vector<ProjectFile> FileIndex::Snapshot() const {
   return files_;
 }
 
+FileIndexSnapshot FileIndex::SnapshotWithVersion() const {
+  std::shared_lock lock(files_mutex_);
+  return FileIndexSnapshot{
+      .version = version_,
+      .files = files_,
+  };
+}
+
+FilePathSnapshot FileIndex::SnapshotPathsWithVersion(ProjectFileScanMode mode) const {
+  std::unique_lock lock(files_mutex_);
+  CacheBucket& cache = CacheIndex(mode) == 0 ? exclude_hidden_cache_ : include_hidden_cache_;
+  if (cache.needs_refresh) {
+    RebuildCacheLocked(mode, cache);
+  }
+  return FilePathSnapshot{
+      .version = version_,
+      .files = cache.files,
+  };
+}
+
+std::vector<std::filesystem::path> FileIndex::SnapshotPaths(ProjectFileScanMode mode) const {
+  return SnapshotPathsWithVersion(mode).files;
+}
+
 const std::vector<std::filesystem::path>& FileIndex::files(ProjectFileScanMode mode) const {
   EnsureFresh(mode);
   return CacheIndex(mode) == 0 ? exclude_hidden_cache_.files : include_hidden_cache_.files;
+}
+
+std::uint64_t FileIndex::version() const {
+  std::shared_lock lock(files_mutex_);
+  return version_;
 }
 
 std::size_t FileIndex::CacheIndex(ProjectFileScanMode mode) {

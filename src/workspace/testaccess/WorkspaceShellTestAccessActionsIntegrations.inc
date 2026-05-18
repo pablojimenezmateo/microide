@@ -150,6 +150,9 @@
   static void ToggleProjectSearchHiddenFiles(WorkspaceShell& shell) {
     shell.ToggleProjectSearchHiddenFiles();
   }
+  static void ReplaceAllProjectSearchMatches(WorkspaceShell& shell) {
+    shell.ReplaceAllProjectSearchMatches();
+  }
   static void EnsureTerminalTab(WorkspaceShell& shell) {
     if (shell.context_.current_project_state.terminal_tabs.empty()) {
       shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());

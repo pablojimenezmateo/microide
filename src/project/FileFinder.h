@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -20,6 +21,7 @@ struct FileFinderResult {
 class FileFinder {
  public:
   void SetIndex(const FileIndex* index);
+  void InvalidateIndexCache();
   void SetQuery(std::string query);
   void Refresh();
   void MoveSelection(int delta);
@@ -49,6 +51,7 @@ class FileFinder {
   std::vector<FileFinderResult> results_;
   std::vector<CachedFileEntry> cached_entries_;
   bool cache_ready_ = false;
+  std::uint64_t cached_index_version_ = 0;
   std::size_t selected_index_ = 0;
 };
 

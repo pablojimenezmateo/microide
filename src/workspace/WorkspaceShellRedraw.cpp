@@ -781,7 +781,11 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::ReloadProjectIfFilesChanged::RefreshFileFinder");
-    context_.current_project_state.file_finder.SetIndex(&context_.current_project_state.file_index);
+    context_.current_project_state.file_finder.InvalidateIndexCache();
+    if (context_.current_project_state.overlay.visible &&
+        context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
+      context_.current_project_state.file_finder.Refresh();
+    }
   }
   if (changed) {
     util::PerformanceTrace::Scope scope(

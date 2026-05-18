@@ -38,8 +38,10 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "search.project_snapshot_results_count",
     "search.project_lower_line_calls",
     "search.project_lower_line_bytes",
+    "search.project_candidate_files_from_index",
     "search.file_finder_cache_build_calls",
     "search.file_finder_cache_entries_built",
+    "project.collect_project_files_calls",
     "render.text_width_cache_queries",
     "render.text_width_cache_hits",
     "render.text_texture_cache_hits",
@@ -107,4 +109,3 @@ std::string_view PerformanceCounterName(PerfCounterId id) {
 }
 
 }  // namespace microide::util
-

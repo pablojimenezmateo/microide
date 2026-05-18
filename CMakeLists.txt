@@ -480,6 +480,8 @@ add_executable(microide_tests
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
+  tests/FileFinderTests.cpp
+  tests/FileIndexTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/WorkspaceLspClientTests.cpp
@@ -692,6 +694,7 @@ add_executable(microide_diff_bench
   src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/editor/TextViewportMultiCaret.cpp
+  src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp

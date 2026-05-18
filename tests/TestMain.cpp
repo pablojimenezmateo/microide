@@ -19,6 +19,8 @@ void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests);
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
 void RegisterFilesystemTests(std::vector<TestCase>& tests);
+void RegisterFileFinderTests(std::vector<TestCase>& tests);
+void RegisterFileIndexTests(std::vector<TestCase>& tests);
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
@@ -252,6 +254,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterDirectoryTreeTests(tests);
   microide::tests::RegisterDirtyRegionPolicyTests(tests);
   microide::tests::RegisterFilesystemTests(tests);
+  microide::tests::RegisterFileFinderTests(tests);
+  microide::tests::RegisterFileIndexTests(tests);
   microide::tests::RegisterWorkspaceShellSharedCoreTests(tests);
   microide::tests::RegisterWorkspaceShellSharedLayoutTests(tests);
   microide::tests::RegisterWorkspaceShellSharedSearchTests(tests);

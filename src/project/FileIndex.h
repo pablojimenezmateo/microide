@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <shared_mutex>
@@ -16,6 +17,16 @@ struct ProjectFile {
   std::uintmax_t size = 0;
 
   bool operator==(const ProjectFile&) const = default;
+};
+
+struct FileIndexSnapshot {
+  std::uint64_t version = 0;
+  std::vector<ProjectFile> files;
+};
+
+struct FilePathSnapshot {
+  std::uint64_t version = 0;
+  std::vector<std::filesystem::path> files;
 };
 
 class FileIndex {
@@ -38,8 +49,14 @@ class FileIndex {
   void Refresh();
   bool ApplyBatch(const platform::IndexUpdateBatch& batch);
   std::vector<ProjectFile> Snapshot() const;
+  FileIndexSnapshot SnapshotWithVersion() const;
+  FilePathSnapshot SnapshotPathsWithVersion(
+      ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
+  std::vector<std::filesystem::path> SnapshotPaths(
+      ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
   const std::vector<std::filesystem::path>& files(
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
+  std::uint64_t version() const;
 
   const std::filesystem::path& root() const { return root_; }
 
@@ -63,6 +80,7 @@ class FileIndex {
   std::filesystem::path root_;
   mutable std::shared_mutex files_mutex_;
   std::vector<ProjectFile> files_;
+  std::uint64_t version_ = 0;
   mutable CacheBucket exclude_hidden_cache_;
   mutable CacheBucket include_hidden_cache_;
 };

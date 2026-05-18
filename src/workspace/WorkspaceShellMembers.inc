@@ -1303,6 +1303,7 @@
   std::optional<GitSidebarState::RefreshSnapshot> git_sidebar_refresh_snapshot_;
   std::uint64_t git_sidebar_refresh_generation_ = 0;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
+  std::atomic<std::uint64_t> file_index_watcher_generation_{0};
   std::atomic<bool> file_index_has_pending_changes_{false};
   std::atomic<bool> file_index_initial_build_in_flight_{false};
   std::atomic<bool> project_file_event_pending_{false};

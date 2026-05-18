@@ -255,7 +255,10 @@ void SidebarCoordinator::RefreshProjectFiles() {
   state_.directory_tree.Refresh();
   RevealSelectedTreeLine();
   state_.file_index.Refresh();
-  state_.file_finder.SetIndex(&state_.file_index);
+  state_.file_finder.InvalidateIndexCache();
+  if (state_.overlay.visible && state_.overlay.mode == OverlayMode::FileFinder) {
+    state_.file_finder.Refresh();
+  }
   RefreshGit();
   RefreshProblems();
   RefreshTests();

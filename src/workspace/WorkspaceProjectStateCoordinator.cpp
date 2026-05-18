@@ -53,9 +53,14 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     return false;
   }
   StopFileIndexWatcher();
+  const std::uint64_t watcher_generation =
+      file_index_watcher_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
 
   file_index_watcher_ = std::make_unique<platform::FileIndexWatcher>();
-  file_index_watcher_->SetCallback([this](platform::IndexUpdateBatch batch) {
+  file_index_watcher_->SetCallback([this, watcher_generation](platform::IndexUpdateBatch batch) {
+    if (file_index_watcher_generation_.load(std::memory_order_acquire) != watcher_generation) {
+      return;
+    }
     bool applied_to_index = false;
     {
       util::PerformanceTrace::Scope scope(
@@ -102,6 +107,7 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
 }
 
 void WorkspaceShell::StopFileIndexWatcher() {
+  file_index_watcher_generation_.fetch_add(1, std::memory_order_acq_rel);
   if (file_index_watcher_ != nullptr) {
     file_index_watcher_->Unwatch();
     file_index_watcher_.reset();

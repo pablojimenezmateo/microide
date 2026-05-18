@@ -226,9 +226,6 @@ void WorkspaceActionContext::OpenTerminal(std::string command) {
 }
 
 void WorkspaceActionContext::ShowFileFinderWithQuery(std::string query) {
-  if (!state_.file_index.root().empty() && state_.file_index.Snapshot().empty()) {
-    state_.file_index.Refresh();
-  }
   state_.file_finder.SetIndex(&state_.file_index);
   state_.file_finder.SetQuery(std::move(query));
   operations_.show_overlay(OverlayMode::FileFinder);
@@ -236,9 +233,6 @@ void WorkspaceActionContext::ShowFileFinderWithQuery(std::string query) {
 
 void WorkspaceActionContext::ShowFileFinder() {
   operations_.show_overlay(OverlayMode::FileFinder);
-  if (!state_.file_index.root().empty() && state_.file_index.Snapshot().empty()) {
-    state_.file_index.Refresh();
-  }
   state_.file_finder.SetIndex(&state_.file_index);
   state_.file_finder.SetQuery("");
 }

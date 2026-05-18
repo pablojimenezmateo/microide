@@ -267,6 +267,9 @@
     return ActionCoordinator(shell.MakeActionContext()).Execute(WorkspaceShell::ActionId::Files, {},
                                             WorkspaceShell::ActionSource::Shortcut);
   }
+  static void SetFileFinderQuery(WorkspaceShell& shell, std::string query) {
+    shell.context_.current_project_state.file_finder.SetQuery(std::move(query));
+  }
   static void SetClipboardTextReader(
       WorkspaceShell& shell,
       std::function<std::optional<std::string>()> reader) {
@@ -393,6 +396,14 @@
   }
   static void SetFileIndexHasPendingChanges(WorkspaceShell& shell, bool pending) {
     shell.file_index_has_pending_changes_.store(pending, std::memory_order_release);
+  }
+  static bool ApplyFileIndexBatchForTesting(WorkspaceShell& shell,
+                                            const platform::IndexUpdateBatch& batch) {
+    const bool changed = shell.context_.current_project_state.file_index.ApplyBatch(batch);
+    if (changed) {
+      shell.file_index_has_pending_changes_.store(true, std::memory_order_release);
+    }
+    return changed;
   }
   static std::size_t ReloadPluginsInvocationCount(const WorkspaceShell& shell) {
     return shell.reload_plugins_invocation_count_;
