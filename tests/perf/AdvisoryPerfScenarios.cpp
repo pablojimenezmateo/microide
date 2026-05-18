@@ -12,8 +12,12 @@
 #include <unistd.h>
 #endif
 
+#include "platform/Subprocess.h"
+
 namespace microide::tests::perf {
 namespace {
+
+constexpr std::uint64_t kRepoOpenIdleRssBudgetBytes = 64ULL * 1024ULL * 1024ULL;
 
 struct ProcessSample {
   std::uint64_t rss_bytes = 0;
@@ -75,8 +79,40 @@ class ScopedTempTree {
   const std::filesystem::path& root() const { return root_; }
 
  private:
-  std::filesystem::path root_;
+ std::filesystem::path root_;
 };
+
+void RequireGitCommandSuccess(const std::filesystem::path& repo_path,
+                              const std::vector<std::string>& args,
+                              std::string_view context) {
+  platform::SubprocessOptions options;
+  options.cwd = repo_path;
+  options.capture_stdout = true;
+  options.capture_stderr = true;
+
+  std::vector<std::string> command;
+  command.reserve(args.size() + 1);
+  command.emplace_back("git");
+  command.insert(command.end(), args.begin(), args.end());
+  const platform::SubprocessResult result = platform::RunSubprocess(command, options);
+  if (result.exit_code == 0) {
+    return;
+  }
+  throw std::runtime_error(std::string(context) + ": git command failed");
+}
+
+void InitializeGitRepo(const std::filesystem::path& repo_path) {
+  RequireGitCommandSuccess(repo_path, {"-c", "init.defaultBranch=main", "init", "."}, "git init");
+  RequireGitCommandSuccess(repo_path, {"config", "user.name", "Microide Perf"},
+                           "git config user.name");
+  RequireGitCommandSuccess(repo_path, {"config", "user.email", "microide-perf@example.com"},
+                           "git config user.email");
+}
+
+void CommitAll(const std::filesystem::path& repo_path, std::string_view message) {
+  RequireGitCommandSuccess(repo_path, {"add", "."}, "git add");
+  RequireGitCommandSuccess(repo_path, {"commit", "-m", std::string(message)}, "git commit");
+}
 
 void RunRepoOpenRssIdle(ScenarioContext& context) {
   const std::filesystem::path project = "tests/perf/fixtures/large_project";
@@ -96,6 +132,9 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
   if (rss_after_open.rss_bytes > 0 || rss_after_idle.rss_bytes > 0) {
     std::cerr << "repo_open_rss_idle: rss_after_open=" << rss_after_open.rss_bytes
               << " rss_after_idle=" << rss_after_idle.rss_bytes << "\n";
+  }
+  if (rss_after_idle.rss_bytes > kRepoOpenIdleRssBudgetBytes) {
+    throw std::runtime_error("repo_open_rss_idle: steady-state RSS exceeded 64 MiB budget");
   }
 }
 
@@ -147,11 +186,44 @@ void RunMergeScrollLargeFixture(ScenarioContext& context) {
   });
 }
 
+void RunCompareScrollLargeFixture(ScenarioContext& context) {
+  const std::filesystem::path seed = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
+  if (!std::filesystem::exists(seed)) {
+    std::cerr << "compare_scroll_large_fixture: missing fixture " << seed << "\n";
+    return;
+  }
+
+  const std::string source = ReadFileTextOrThrow(seed);
+  const std::filesystem::path temp_root =
+      std::filesystem::temp_directory_path() / "microide-perf-compare-scroll";
+  ScopedTempTree repo_dir(temp_root);
+  InitializeGitRepo(repo_dir.root());
+  WriteFileTextOrThrow(repo_dir.root() / "large.txt", source);
+  CommitAll(repo_dir.root(), "add large compare fixture");
+  WriteFileTextOrThrow(repo_dir.root() / "large.txt", source + "\nWORKTREE_PERF_TAIL\n");
+
+  if (!context.Open(repo_dir.root())) {
+    throw std::runtime_error("compare_scroll_large_fixture: failed to open temp git repo");
+  }
+  context.Measure("compare_large.open_to_first_paint", [&] {
+    if (!context.ExecuteCommand("compare large.txt HEAD")) {
+      throw std::runtime_error("compare_scroll_large_fixture: compare command failed");
+    }
+    context.PumpFrames(3);
+  });
+  context.Measure("compare_large.scroll_burst", [&] {
+    for (int i = 0; i < 80; ++i) {
+      context.Scroll((i & 1) == 0 ? -2 : 2);
+      context.PumpFrames(1);
+    }
+  });
+}
+
 const ScenarioRegistration g_perf_repo_open_rss_idle({Scenario{
     .name = "repo_open_rss_idle",
     .smoke = false,
-    .baseline_gated = false,
-    .run_by_default = false,
+    .baseline_gated = true,
+    .run_by_default = true,
     .run = RunRepoOpenRssIdle,
 }});
 const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{
@@ -164,9 +236,16 @@ const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{
 const ScenarioRegistration g_perf_merge_scroll_large_fixture({Scenario{
     .name = "merge_scroll_large_fixture",
     .smoke = false,
-    .baseline_gated = false,
-    .run_by_default = false,
+    .baseline_gated = true,
+    .run_by_default = true,
     .run = RunMergeScrollLargeFixture,
+}});
+const ScenarioRegistration g_perf_compare_scroll_large_fixture({Scenario{
+    .name = "compare_scroll_large_fixture",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .run = RunCompareScrollLargeFixture,
 }});
 
 }  // namespace

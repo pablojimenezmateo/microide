@@ -86,14 +86,11 @@ What is still open:
   checkpoint design.
 - Search, merge, blame, and redraw changes should continue to be validated with the startup and
   runtime profiling docs rather than by intuition.
-- The current perf harness still lacks a committed resident-memory gate for "open repo, then
-  measure steady-state RSS"; advisory scenario `repo_open_rss_idle` now logs that data for
-  explicit local runs, but it is not baseline-gated.
 - The harness also still lacks a dedicated large-file open-to-first-paint gate; advisory scenario
   `large_file_open_first_paint` exists for explicit local runs only.
-- Diff / merge coverage is better on tab-open and standalone diff-model timing than on sustained
-  interaction; advisory scenario `merge_scroll_large_fixture` exists for explicit local runs, but
-  there is still no baseline-gated large-fixture compare / merge scroll scenario.
+- Diff / merge coverage is now better on sustained interaction because the gated suite includes
+  `compare_scroll_large_fixture` and `merge_scroll_large_fixture`, but it is still narrower than a
+  full interaction matrix. Large-fixture hunk navigation and mixed edit/scroll traces remain open.
 
 References:
 - `docs/startup-tracing.md`
@@ -102,10 +99,9 @@ References:
 
 Recommended follow-up:
 - Add or extend focused benchmarks where repeated regressions are likely:
-  - repo-open steady-state RSS budget
   - large-file open to first paint / first interactive frame
   - large-file cursor jump and initial paint
-  - compare / merge scroll or hunk-navigation interaction on large fixtures
+  - compare / merge hunk-navigation or mixed edit/scroll interaction on large fixtures
   - merge-model build for large, partially similar inputs
   - project search across large trees with smart-case and regex modes
   - syntax cache invalidation after plugin reload
@@ -276,8 +272,7 @@ Audit of the four originally-named candidates (2026-05-18):
   `GitBlameService` ownership and narrow invalidation / clear entry points.
 - `WorkspaceShellAssist.cpp` was the third real service candidate. This follow-up has now landed:
   `AssistService` owns completion, snippet-session edits, code-action overlays, go-to-definition,
-  and find-references coordination. `WorkspaceShellAssist.cpp` remains as a thin forwarding layer
-  so shell-shaped action/test call sites do not have to migrate in the same change.
+  and find-references coordination, and the old shell-specific assist facade has been removed.
 - `WorkspaceShellChrome.cpp` was the second real service candidate. This follow-up is now partly
   landed: `TabStripService` owns editor/project/bottom-panel tab-strip layout state, overflow
   controls, and bottom-panel tab models; `StatusBarModelService` owns status-bar caches and
@@ -294,8 +289,6 @@ What was actually done in the low pass (2026-05-18):
 Recommended follow-ups (deferred, each a separate medium-sized change):
 - Finish collapsing the remaining `WorkspaceShellChrome.cpp` wrappers once the surrounding
   coordinator/test-access call sites no longer need the shell-shaped API.
-- Consider migrating assist-oriented action/test callers off the shell wrappers so
-  `WorkspaceShellAssist.cpp` can eventually disappear instead of staying as a permanent facade.
 - Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now hard-fails this.
 
 ## Open Follow-Ups After The 2026-04-29 Cleanup

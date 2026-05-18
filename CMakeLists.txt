@@ -287,7 +287,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
   src/workspace/WorkspaceShellLsp.cpp
-  src/workspace/WorkspaceShellAssist.cpp
   src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp
   src/workspace/WorkspaceShellSettingsOverlay.cpp

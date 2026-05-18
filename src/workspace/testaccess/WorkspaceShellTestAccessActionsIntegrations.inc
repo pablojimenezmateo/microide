@@ -133,10 +133,10 @@
     return shell.context_.current_project_state.sidebar.git.entries;
   }
   static bool ApplySelectedCompletion(WorkspaceShell& shell) {
-    return shell.ApplySelectedCompletion();
+    return shell.assist_service_.ApplySelectedCompletion();
   }
   static bool ExecuteSelectedCodeAction(WorkspaceShell& shell) {
-    return shell.ExecuteSelectedCodeAction();
+    return shell.assist_service_.ExecuteSelectedCodeAction();
   }
   static void ConsumeProjectSearchUpdates(WorkspaceShell& shell) {
     shell.ConsumeProjectSearchUpdates();

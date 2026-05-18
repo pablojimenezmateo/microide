@@ -65,7 +65,8 @@ coverage and a clear owner.
 | Startup (no project, small, large) | `cold_startup_no_project`, `cold_startup_small_project`, `cold_startup_large_project` | p50/p95/max wall time, allocation counts | app bootstrap, session restore, workspace init |
 | Editing and render throughput | `typing_small_file`, `typing_large_file`, `scroll_large_file`, `multi_tab_cycle` | p50/p95/max wall time, allocation counts | editor, text viewport, render view-model pipeline |
 | Search and indexing | `project_search_literal`, `project_search_regex`, `search_first_result`, `file_finder_cold` | p50/p95/max wall time | project search, file finder, background executor |
-| Shell surfaces | `compare_tab_open`, `merge_tab_open`, `git_sidebar_activate` | p50/p95/max wall time, allocation counts | compare/merge services, sidebar services |
+| Shell surfaces | `compare_tab_open`, `merge_tab_open`, `compare_scroll_large_fixture`, `merge_scroll_large_fixture`, `git_sidebar_activate` | p50/p95/max wall time, allocation counts | compare/merge services, sidebar services |
+| Repo-open memory | `repo_open_rss_idle` | open-to-idle wall time, allocation counts, enforced steady-state RSS budget | workspace init, project catalog, tree/index startup |
 | Terminal and output | `terminal_scroll_long_output` | p50/p95/max wall time, allocation counts | terminal panel, scroll and redraw integration |
 | Idle and long soak | `idle_soak_30s`, `long_soak_8h`, `switch_and_idle` | wake-up count, wall time, allocation counts | event loop, scheduled wake handling, watchers |
 
@@ -77,21 +78,20 @@ before closing the performance pass.
 The current harness is useful, but it is not complete. These gaps are still open and should be
 described honestly in README / roadmap text until they are closed:
 
-- no committed resident-memory gate for "open a large repo and sit idle" yet. Advisory scenario
-  `repo_open_rss_idle` now exists for explicit local runs and logs RSS, but it is not baseline-gated.
 - no dedicated large-file open-to-first-paint gate yet. Advisory scenario
   `large_file_open_first_paint` now exists for explicit local runs; the gated suite is still
   stronger on typing, scrolling, save normalization, indent detection, and syntax / fold behavior
   after open.
-- no dedicated compare-surface scroll gate on large fixtures yet. Advisory scenario
-  `merge_scroll_large_fixture` now exists for explicit local runs; the gated suite is still
-  stronger on open-time paths and standalone diff-model timing than on sustained large-surface interaction.
+- the large-surface interaction gates now cover compare and merge scroll bursts, but they still do
+  not cover every compare/merge interaction pattern. Hunk-navigation and mixed edit/scroll traces
+  on large fixtures remain worth adding if those regressions recur.
 
 Do not paper over these gaps with broad wording like "memory is benchmarked" or "diff/merge is
 fully covered." Say exactly which scenarios exist.
 
 Advisory scenarios are explicit-only: they do not run in `--smoke`, they do not participate in
-baseline comparison, and `--update-baseline` refuses them by design.
+baseline comparison, and `--update-baseline` refuses them by design. At the moment that only
+applies to `large_file_open_first_paint`.
 
 ## Isolated Run Contract
 
@@ -186,6 +186,30 @@ Current notable scenarios:
   - baseline:
     - `tests/perf/baselines/git_sidebar_activate.json`
   - skips gracefully when fixture directory is absent
+
+- `repo_open_rss_idle` (gate): opens the large-project fixture, pumps the first frames, waits
+  500 ms at idle, and asserts steady-state RSS ≤ 64 MiB on Linux while also tracking wall time and
+  allocations through the normal baseline machinery
+  - fixture root:
+    - `tests/perf/fixtures/large_project/`
+  - baseline:
+    - `tests/perf/baselines/repo_open_rss_idle.json`
+
+- `compare_scroll_large_fixture` (gate): creates a temporary git repo around the 1 MiB mixed-content
+  fixture, opens a working-tree-vs-HEAD compare tab, then drives an 80-step scroll burst to catch
+  sustained large-surface regressions
+  - fixture root:
+    - `tests/perf/fixtures/editor_essentials_1mb/`
+  - baseline:
+    - `tests/perf/baselines/compare_scroll_large_fixture.json`
+
+- `merge_scroll_large_fixture` (gate): builds a temporary large merge fixture from the 1 MiB
+  mixed-content seed, opens the merge tab, then drives an 80-step scroll burst to catch sustained
+  merge-surface regressions
+  - fixture root:
+    - `tests/perf/fixtures/editor_essentials_1mb/`
+  - baseline:
+    - `tests/perf/baselines/merge_scroll_large_fixture.json`
 
 - `search_first_result` (gate): initiates a search on the 10 000-file fixture with a pattern that
   matches one file near the end of the corpus, measures time to first result batch; asserts ≤ 100 ms

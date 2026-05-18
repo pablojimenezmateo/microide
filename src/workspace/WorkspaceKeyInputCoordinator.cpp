@@ -515,15 +515,15 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .show_completion_overlay =
               [this](std::string* error_message) {
-                return ShowCompletionOverlay(error_message);
+                return assist_service_.ShowCompletionOverlay(error_message);
               },
-          .apply_selected_completion = [this]() { return ApplySelectedCompletion(); },
+          .apply_selected_completion = [this]() { return assist_service_.ApplySelectedCompletion(); },
           .show_code_actions_overlay =
               [this](std::string* error_message) {
-                return ShowCodeActionsOverlay(error_message);
+                return assist_service_.ShowCodeActionsOverlay(error_message);
               },
           .execute_selected_code_action =
-              [this]() { return ExecuteSelectedCodeAction(); },
+              [this]() { return assist_service_.ExecuteSelectedCodeAction(); },
           .request_inline_completion =
               [this](std::string* error_message) {
                 if (error_message != nullptr) {
@@ -534,16 +534,18 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .accept_inline_completion = [this]() { return false; },
           .dismiss_inline_completion = [this]() {},
           .try_snippet_tab_in_editor =
-              [this](bool shift_tab) { return TrySnippetTabInEditor(shift_tab); },
-          .try_snippet_escape_in_editor = [this]() { return TrySnippetEscapeInEditor(); },
+              [this](bool shift_tab) { return assist_service_.TrySnippetTabInEditor(shift_tab); },
+          .try_snippet_escape_in_editor = [this]() { return assist_service_.TrySnippetEscapeInEditor(); },
           .try_snippet_backspace_in_editor =
-              [this](editor::TextViewport* viewport) { return TrySnippetBackspaceInEditor(viewport); },
+              [this](editor::TextViewport* viewport) {
+                return assist_service_.TrySnippetBackspaceInEditor(viewport);
+              },
           .try_snippet_delete_forward_in_editor =
               [this](editor::TextViewport* viewport) {
-                return TrySnippetDeleteForwardInEditor(viewport);
+                return assist_service_.TrySnippetDeleteForwardInEditor(viewport);
               },
           .notify_snippet_session_caret_moved =
-              [this]() { NotifySnippetSessionCaretMoved(); },
+              [this]() { assist_service_.NotifySnippetSessionCaretMoved(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },

@@ -251,7 +251,7 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
               },
           .try_editor_snippet_insert_text =
               [this](editor::TextViewport* viewport, std::string_view text) {
-                return TrySnippetInsertTextInEditor(viewport, text);
+                return assist_service_.TrySnippetInsertTextInEditor(viewport, text);
               },
       });
 }

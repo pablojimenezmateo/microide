@@ -208,7 +208,9 @@ What is measured:
   `multi_tab_cycle`
 - **Search / index** — `project_search_literal`, `project_search_regex`, `search_first_result`,
   `file_finder_cold`
-- **Shell surfaces** — `compare_tab_open`, `merge_tab_open`, `git_sidebar_activate`
+- **Shell surfaces** — `compare_tab_open`, `merge_tab_open`, `compare_scroll_large_fixture`,
+  `merge_scroll_large_fixture`, `git_sidebar_activate`
+- **Repo-open memory** — `repo_open_rss_idle` (asserts a steady-state RSS budget after open)
 - **Terminal** — `terminal_scroll_long_output`
 - **Idle behavior** — `idle_soak_30s` (asserts near-zero wake events at rest), `long_soak_8h`,
   `switch_and_idle`
@@ -232,14 +234,10 @@ What is **not** measured:
 
 - microide's startup / memory / CPU vs VSCode, Zed, Helix, Sublime, or any other editor. The
   project has no third-party comparative numbers and does not publish any.
-- resident memory after opening a real repository is not yet a committed gate metric. The harness
-  records allocation counts broadly and logs RSS during `long_soak_8h`; advisory scenario
-  `repo_open_rss_idle` also exists for explicit local runs, but there is still no committed
-  "open repo, assert memory budget" gate.
-- large-file open-to-first-paint and steady-state compare / merge scroll on large fixtures are not
-  yet dedicated gate scenarios. Advisory scenarios `large_file_open_first_paint` and
-  `merge_scroll_large_fixture` exist for explicit local runs, but existing gated coverage is still
-  stronger on typing, scrolling, tab open, and standalone diff-model timing than on those cases.
+- large-file open-to-first-paint is not yet a dedicated gate scenario. Advisory scenario
+  `large_file_open_first_paint` exists for explicit local runs, but the gated suite is still
+  stronger on typing, scrolling, save normalization, and compare/merge interaction than on the
+  initial-paint path for very large files.
 - behavior on GPU-accelerated paths. The reference harness uses the software renderer.
 - multi-host comparison. `perf-runner-v1` is one self-hosted runner class; results from other
   machines are advisory only.

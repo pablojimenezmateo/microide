@@ -133,23 +133,23 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .open_buffer_replace = [this]() { OpenBufferReplace(); },
           .show_completion_overlay =
               [this](std::string* error_message) {
-                return ShowCompletionOverlay(error_message);
+                return assist_service_.ShowCompletionOverlay(error_message);
               },
           .show_insert_snippet_overlay =
               [this](std::string* error_message) {
-                return ShowInsertSnippetOverlay(error_message);
+                return assist_service_.ShowInsertSnippetOverlay(error_message);
               },
           .show_code_actions_overlay =
               [this](std::string* error_message) {
-                return ShowCodeActionsOverlay(error_message);
+                return assist_service_.ShowCodeActionsOverlay(error_message);
               },
           .go_to_lsp_definition =
               [this](std::string* error_message) {
-                return GoToLspDefinition(error_message);
+                return assist_service_.GoToLspDefinition(error_message);
               },
           .find_lsp_references =
               [this](std::string* error_message) {
-                return FindLspReferences(error_message);
+                return assist_service_.FindLspReferences(error_message);
               },
           .discover_tests_for_active_buffer =
               [this](std::string* error_message) {
@@ -203,9 +203,9 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .save_tab = [this](std::size_t index) { return SaveTab(index); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .notify_snippet_session_caret_moved =
-              [this]() { NotifySnippetSessionCaretMoved(); },
+              [this]() { assist_service_.NotifySnippetSessionCaretMoved(); },
           .clear_active_snippet_session_after_undo =
-              [this]() { ClearActiveSnippetSessionAfterUndo(); },
+              [this]() { assist_service_.ClearActiveSnippetSessionAfterUndo(); },
           .split_active_editor =
               [this](EditorSplitOrientation orientation) { return SplitActiveEditor(orientation); },
           .unsplit_active_editor = [this]() { return UnsplitActiveEditor(); },

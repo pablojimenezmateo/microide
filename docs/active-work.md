@@ -238,8 +238,8 @@ Current state:
   shell callbacks for project activation, persistence saves, plugin-host shutdown, redraw, and
   welcome-state fallback instead of reaching into shell-private fields directly
 - completion, snippet-session, code-action, go-to-definition, and find-references coordination now
-  route through `AssistService`; `WorkspaceShellAssist.cpp` remains only as a thin shell-shaped
-  forwarding layer for existing call sites and tests
+  route through `AssistService`; shell action, key-input, overlay, text-input, and test-access
+  call sites now bind that service directly instead of keeping a shell-specific assist facade
 - lifecycle init, shutdown, quit-request handling, wake-event registration, and cursor teardown now
   run through a `WorkspaceLifecycleCoordinator` that depends on `WorkspaceContext`, a quit flag,
   and explicit lifecycle callbacks instead of `WorkspaceShell&`

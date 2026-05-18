@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":137292,"p50_allocations":17404,"p95_allocations":83342.399999999878,"p95_wall_ms":519.38298324999994,"max_wall_ms":522.50248899999997,"p50_wall_ms":511.6980835},"scenario":"repo_open_rss_idle"}
