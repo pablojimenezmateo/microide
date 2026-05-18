@@ -203,44 +203,44 @@ See also `docs/performance-findings.md` — Second Performance Pass, New finding
 ## 15. `TextViewport.cpp` Ownership Concentration
 
 Status:
-- Partially addressed on 2026-05-18:
-  - language-pair behavior (auto-close, surround, skip-over-close, dedent-on-close, brace-split,
-    smart-indent newline, multi-caret pair-insert, plus `AutoIndentForNewline` / `IndentUnit` /
-    `InInsertionSuppressedScope`) moved to `src/editor/TextViewportLanguageBehavior.cpp` with
-    shared file-scope helpers promoted to `src/editor/TextViewportInternal.h` (detail namespace,
-    internal header).
-  - Save normalization + file I/O (`OpenFile`, `Save`, `LoadContent`, `SetPath`, `SetDirty`,
+- Substantially addressed on 2026-05-18 across four extractions, all keeping methods as members
+  of the same `TextViewport` class (no header / API change, no friending):
+  - **Language-pair behavior** (auto-close, surround, skip-over-close, dedent-on-close,
+    brace-split, smart-indent newline, multi-caret pair-insert, plus `AutoIndentForNewline` /
+    `IndentUnit` / `InInsertionSuppressedScope`) →
+    `src/editor/TextViewportLanguageBehavior.cpp`. Shared file-scope helpers promoted to
+    `src/editor/TextViewportInternal.h` (detail namespace, internal header).
+  - **Save normalization + file I/O** (`OpenFile`, `Save`, `LoadContent`, `SetPath`, `SetDirty`,
     `LineEndingLabel`, `EncodingLabel`, `RefreshEncoding`, both `DetectEncoding` overloads,
-    plus the `TrimTrailingWhitespaceInPlace` / `EnsureSingleFinalNewlineInPlace` anon-namespace
-    helpers) moved to `src/editor/TextViewportFileIO.cpp`.
-  - Multi-caret apply pipeline (`ApplyMultiCaretInsert`, `ApplyMultiCaretBackspace`,
-    `ApplyMultiCaretDeleteForward`) moved to `src/editor/TextViewportMultiCaret.cpp`. The
-    history-machinery helpers it depends on (`BuildRangeHistoryEntry`, `ApplyHistoryEntry`,
-    `BuildHistoryEntryForDocumentChange`, `BuildAppliedEditForHistoryEntry`, `PushHistoryEntry`)
-    stay in `TextViewport.cpp`; reachable from the sibling TU because all three Apply* methods
-    are still members of the same class.
-  - Header / API unchanged across all three moves. `TextViewport.cpp` is now ~2,437 lines
-    (down from ~3,553).
+    plus `TrimTrailingWhitespaceInPlace` / `EnsureSingleFinalNewlineInPlace`) →
+    `src/editor/TextViewportFileIO.cpp`.
+  - **Multi-caret apply pipeline** (`ApplyMultiCaretInsert`, `ApplyMultiCaretBackspace`,
+    `ApplyMultiCaretDeleteForward`) → `src/editor/TextViewportMultiCaret.cpp`. Calls into
+    history helpers (`BuildRangeHistoryEntry`, `ApplyHistoryEntry`,
+    `BuildHistoryEntryForDocumentChange`, `BuildAppliedEditForHistoryEntry`,
+    `PushHistoryEntry`) that remain in `TextViewport.cpp`.
+  - **Highlight cache** (`HighlightedLineTokens`, `HighlightedLineTokensIfCached`,
+    `EnsureInitialHighlightState`, `EnsureHighlightCaches`, `EnsureHighlightCheckpoint`,
+    `HighlightStateBeforeLine`, plus `IsCachedHighlightState` and `kHighlightCacheLimit`)
+    → `src/editor/TextViewportHighlightCache.cpp`. `kHighlightCheckpointInterval` was
+    promoted to `TextViewportInternal.h` because the invalidation policy in
+    `InvalidateDerivedCaches` (still in `TextViewport.cpp`) needs to stay in lockstep with
+    the checkpoint chain.
+- Result: `TextViewport.cpp` is now ~2,229 lines, down from ~3,553 — a ~37 % reduction
+  with no public API change.
 
 Remaining:
-- Medium. Not a correctness or perf bug; a single-file ownership concentration that still
-  makes the editor core harder to reason about and harder to extend safely. Four broad
-  responsibilities still co-located in `TextViewport.cpp`: cursor + scrolling + view state,
-  selection + single-caret edit (`Backspace`, `DeleteForward`, `InsertCharacter`, etc.),
-  history / undo machinery, and the highlight + wrap-row layout cache.
+- Low. The host TU still owns cursor + scrolling + view-state, selection + single-caret
+  edits (`Backspace`, `DeleteForward`, `InsertCharacter`, etc.), the history / undo machinery,
+  invalidation policy, and the visible-line / wrapped-row layout caches. These are tangled by
+  design (undo records visual columns, selection, multi-caret, and view state together; the
+  invalidation policy is the contract between every cache). Further splitting is possible but
+  the marginal benefit is much smaller and the seams are not obvious.
 
-Why not bigger refactors yet:
-- Cursor + scrolling + history + selection are tangled by design (undo records visual columns,
-  selection, multi-caret, and view state together). Splitting them is doable but should follow
-  more proven seams; the three extractions completed on 2026-05-18 are the smallest such seams.
-
-Recommended next extraction:
-1. **Highlight cache** (`EnsureInitialHighlightState`, `EnsureHighlightCaches`,
-   `EnsureHighlightCheckpoint`, `HighlightStateBeforeLine`, the `highlight_cache_*` /
-   `line_highlight_states_*` / `highlight_checkpoints_*` machinery) — already has a clean tier
-   contract via the `split-layout-revision-tiers` change.
-
-Should land as its own change with tests green.
+Why this item stays open at "low":
+- File decomposition has done what it can without an ownership refactor (extracting a
+  CursorModel, an UndoModel, etc. — a different and larger change). The remaining
+  `TextViewport.cpp` is now a coherent core, not a catch-all.
 
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 

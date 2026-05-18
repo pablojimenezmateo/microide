@@ -133,6 +133,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportFileIO.cpp
+  src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/editor/TextViewportMultiCaret.cpp
   src/compare/CompareModel.cpp
@@ -664,6 +665,7 @@ add_executable(microide_diff_bench
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportFileIO.cpp
+  src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/editor/TextViewportMultiCaret.cpp
   src/compare/CompareModel.cpp

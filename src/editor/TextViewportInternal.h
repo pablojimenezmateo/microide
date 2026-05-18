@@ -13,6 +13,13 @@
 
 namespace microide::editor::detail {
 
+// Highlight checkpoint spacing. One SyntaxState is snapshotted every
+// `kHighlightCheckpointInterval` lines so resuming highlighting after a jump
+// is O(checkpoint-interval) rather than O(line-index). Shared between
+// TextViewport.cpp (InvalidateDerivedCaches checkpoint-bookkeeping) and
+// TextViewportHighlightCache.cpp (the cache itself).
+inline constexpr std::size_t kHighlightCheckpointInterval = 128;
+
 inline bool PositionLess(const TextPosition& lhs, const TextPosition& rhs) {
   if (lhs.line != rhs.line) {
     return lhs.line < rhs.line;
