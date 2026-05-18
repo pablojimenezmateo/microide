@@ -506,6 +506,39 @@ RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_ro
   return result;
 }
 
+// Ratchet-only cap on the number of `WorkspaceShell*.cpp` translation units.
+// File decomposition has reached a plateau (see docs/known-tech-debt.md
+// item #16); new shell-adjacent behavior should land on a service, not on
+// a new `WorkspaceShell*.cpp` companion. If a migration removes one of
+// these files, lower the cap; do not raise it.
+RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "WorkspaceShell*.cpp translation-unit count";
+  result.hard_fail = true;
+  constexpr std::size_t kCap = 51;
+  std::size_t count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (name.starts_with("WorkspaceShell")) {
+      ++count;
+    }
+  }
+  if (count > kCap) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "WorkspaceShell*.cpp companion count " + std::to_string(count) +
+                   " exceeds cap " + std::to_string(kCap) +
+                   "; land new shell-adjacent behavior on a service instead of a new "
+                   "WorkspaceShell*.cpp file (see docs/known-tech-debt.md item #16)",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "workspace coordinator translation unit size";
@@ -1782,6 +1815,12 @@ void TestArchitectureInvariants() {
            [&](const std::filesystem::path& root) {
              return CheckShellFileSize(root, "src/workspace/WorkspaceShellTestAccess.h", 600);
            });
+  // Ratchet-only cap; lower if a migration shrinks the inc, never raise.
+  run_rule("CheckShellFileSize(WorkspaceShellMembers.inc)",
+           [&](const std::filesystem::path& root) {
+             return CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc", 1516);
+           });
+  run_rule("CheckWorkspaceShellCompanionTuCount", CheckWorkspaceShellCompanionTuCount);
   run_rule("CheckRenderSurfaceStateAccess", CheckRenderSurfaceStateAccess);
   run_rule("CheckRenderSurfaceGeometryAccess", CheckRenderSurfaceGeometryAccess);
   run_rule("CheckNoSynchronousSubprocessWaitInWorkspace", CheckNoSynchronousSubprocessWaitInWorkspace);

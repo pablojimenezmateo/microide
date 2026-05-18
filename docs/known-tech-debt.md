@@ -245,31 +245,45 @@ Why this item stays open at "low":
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
 Status:
-- Open. Identified during 2026-05-18 review; partially anticipated by 2026-04-29 follow-up #2.
+- Open at "low" after 2026-05-18 audit + ratchet-only caps.
 
 Impact:
-- Medium. The architectural-lint cap on `WorkspaceShell.h` (≤ 400 lines) and `WorkspaceShell.cpp`
-  (≤ 600 lines) is satisfied, but behavior is still owned by the `WorkspaceShell` namespace
-  through 51 `WorkspaceShell*.cpp` translation units totaling ~18.8k lines, all defined against
+- Low to medium. The architectural-lint cap on `WorkspaceShell.h` (≤ 400 lines) and
+  `WorkspaceShell.cpp` (≤ 600 lines) is satisfied, but behavior is still owned by the
+  `WorkspaceShell` namespace through 51 `WorkspaceShell*.cpp` translation units defined against
   `WorkspaceShellMembers.inc` (~1,516 lines of inline class body). File decomposition without
   ownership decomposition keeps the shell symbol blast radius wide.
 
-Current state:
-- The 2026-04-29 cleanup correctly moved coordinator constructors off `WorkspaceShell&`, but the
-  shell-companion TUs that remain still register methods on `WorkspaceShell` itself. The lint
-  rule prevents *direct* shell-friend access from coordinators; it does not prevent the shell
-  from continuing to absorb new behavior as new `WorkspaceShell*.cpp` files.
+Audit of the four originally-named candidates (2026-05-18):
+- `WorkspaceShellOutput.cpp` (~56 lines, 4 methods): too small to migrate productively. Two
+  methods are pure delegations to `output_channels_`; the other two mutate
+  `current_project_state.panel.output.*` — inherent shell-state changes, not service-extractable
+  behavior.
+- `WorkspaceShellBlame.cpp` (~284 lines, 7 methods): real overlay logic (geometry, formatting,
+  per-line lookup). Migrating would require an `EditorBlameOverlayService` with its own state
+  owner. Medium-small work, not low.
+- `WorkspaceShellAssist.cpp` (~776 lines, 15 methods): real coordination of completion,
+  snippets, code-actions, go-to-definition, find-references. Touches editor state, LSP state,
+  snippet sessions. Migration needs a new `AssistService` with proper ownership of these
+  cross-cutting interactions. Medium work.
+- `WorkspaceShellChrome.cpp` (~839 lines, 21 methods): tab-strip visibility / overflow / drag
+  math, heavily entangled with `current_project_state.surface.tabs`. Migration needs a
+  `TabStripService` (or split into project-tab and editor-tab services) with its own state.
+  Medium work.
 
-Recommended follow-up:
-- Pick three to five `WorkspaceShell*.cpp` units whose contents could become standalone
-  services. Strongest candidates from a name/size scan: `WorkspaceShellAssist.cpp` (~776 lines),
-  `WorkspaceShellChrome.cpp` (~839 lines — distinct from `LayoutModeService`/`StatusBarService`
-  surfaces; verify), `WorkspaceShellBlame.cpp`, `WorkspaceShellOutput.cpp`. Audit each before
-  migrating; some may already be thin glue with the real owner in a service.
-- After migration, add a lint that caps the number of `WorkspaceShell*.cpp` translation units or
-  caps `WorkspaceShellMembers.inc` length.
-- Do not add new `WorkspaceShell*.cpp` files for new behavior. The 2026-04-29 follow-up rule
-  already says this; surface it more prominently in `AGENTS.md` / `CLAUDE.md` if drift recurs.
+What was actually done in the low pass (2026-05-18):
+- Ratchet-only architectural lints added at `tests/ArchitectureInvariantsTests.cpp`:
+  - `CheckShellFileSize(WorkspaceShellMembers.inc)` caps the file at 1,516 lines (current).
+  - `CheckWorkspaceShellCompanionTuCount` caps the count of `WorkspaceShell*.cpp` translation
+    units at 51 (current).
+  Both are hard-fail. Lower the cap when a migration shrinks either number; never raise.
+
+Recommended follow-ups (deferred, each a separate medium-sized change):
+- Stand up `AssistService` and migrate the 15 methods in `WorkspaceShellAssist.cpp`.
+- Stand up `TabStripService` (or split it) and migrate the 21 methods in
+  `WorkspaceShellChrome.cpp`.
+- Stand up `EditorBlameOverlayService` and migrate the 7 methods in `WorkspaceShellBlame.cpp`.
+- Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now hard-fails this.
 
 ## Open Follow-Ups After The 2026-04-29 Cleanup
 
