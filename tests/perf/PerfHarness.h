@@ -124,6 +124,8 @@ class ScenarioContext {
 struct Scenario {
   std::string name;
   bool smoke = false;
+  bool baseline_gated = true;
+  bool run_by_default = true;
   std::function<void(ScenarioContext&)> run;
 };
 
@@ -175,6 +177,8 @@ class ScenarioRegistration {
       g_perf_scenario_registration_##FN({                                            \
           .name = NAME_LITERAL,                                                      \
           .smoke = SMOKE,                                                            \
+          .baseline_gated = true,                                                    \
+          .run_by_default = true,                                                    \
           .run = FN,                                                                 \
       });                                                                             \
   }  // namespace

@@ -610,6 +610,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/PerfHarness.cpp
     tests/perf/PerfHarnessIsolation.cpp
     tests/perf/Baseline.cpp
+    tests/perf/AdvisoryPerfScenarios.cpp
     tests/perf/EditorEssentialsPerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )

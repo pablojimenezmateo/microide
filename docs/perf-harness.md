@@ -77,14 +77,21 @@ before closing the performance pass.
 The current harness is useful, but it is not complete. These gaps are still open and should be
 described honestly in README / roadmap text until they are closed:
 
-- no committed resident-memory gate for "open a large repo and sit idle"
-- no dedicated large-file open-to-first-paint scenario; current large-file coverage is stronger on
-  typing, scrolling, save normalization, indent detection, and syntax / fold behavior after open
-- no dedicated compare-surface or merge-surface scroll / interaction scenario on large fixtures;
-  current coverage is stronger on open-time paths and standalone diff-model timing
+- no committed resident-memory gate for "open a large repo and sit idle" yet. Advisory scenario
+  `repo_open_rss_idle` now exists for explicit local runs and logs RSS, but it is not baseline-gated.
+- no dedicated large-file open-to-first-paint gate yet. Advisory scenario
+  `large_file_open_first_paint` now exists for explicit local runs; the gated suite is still
+  stronger on typing, scrolling, save normalization, indent detection, and syntax / fold behavior
+  after open.
+- no dedicated compare-surface scroll gate on large fixtures yet. Advisory scenario
+  `merge_scroll_large_fixture` now exists for explicit local runs; the gated suite is still
+  stronger on open-time paths and standalone diff-model timing than on sustained large-surface interaction.
 
 Do not paper over these gaps with broad wording like "memory is benchmarked" or "diff/merge is
 fully covered." Say exactly which scenarios exist.
+
+Advisory scenarios are explicit-only: they do not run in `--smoke`, they do not participate in
+baseline comparison, and `--update-baseline` refuses them by design.
 
 ## Isolated Run Contract
 

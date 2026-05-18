@@ -233,11 +233,13 @@ What is **not** measured:
 - microide's startup / memory / CPU vs VSCode, Zed, Helix, Sublime, or any other editor. The
   project has no third-party comparative numbers and does not publish any.
 - resident memory after opening a real repository is not yet a committed gate metric. The harness
-  records allocation counts broadly and logs RSS during `long_soak_8h`, but there is no
-  first-class "open repo, assert memory budget" scenario yet.
+  records allocation counts broadly and logs RSS during `long_soak_8h`; advisory scenario
+  `repo_open_rss_idle` also exists for explicit local runs, but there is still no committed
+  "open repo, assert memory budget" gate.
 - large-file open-to-first-paint and steady-state compare / merge scroll on large fixtures are not
-  yet dedicated gate scenarios. Existing coverage is stronger on typing, scrolling, tab open, and
-  standalone diff-model timing than on those remaining cases.
+  yet dedicated gate scenarios. Advisory scenarios `large_file_open_first_paint` and
+  `merge_scroll_large_fixture` exist for explicit local runs, but existing gated coverage is still
+  stronger on typing, scrolling, tab open, and standalone diff-model timing than on those cases.
 - behavior on GPU-accelerated paths. The reference harness uses the software renderer.
 - multi-host comparison. `perf-runner-v1` is one self-hosted runner class; results from other
   machines are advisory only.

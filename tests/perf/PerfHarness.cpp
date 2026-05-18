@@ -71,7 +71,7 @@ bool ShouldRunScenario(const Scenario& scenario, const PerfHarness::RunOptions& 
     return false;
   }
   if (options.scenario_names.empty()) {
-    return true;
+    return scenario.run_by_default;
   }
   return std::find(options.scenario_names.begin(), options.scenario_names.end(), scenario.name) !=
          options.scenario_names.end();

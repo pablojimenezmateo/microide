@@ -87,9 +87,13 @@ What is still open:
 - Search, merge, blame, and redraw changes should continue to be validated with the startup and
   runtime profiling docs rather than by intuition.
 - The current perf harness still lacks a committed resident-memory gate for "open repo, then
-  measure steady-state RSS" and lacks a dedicated large-file open-to-first-paint scenario.
+  measure steady-state RSS"; advisory scenario `repo_open_rss_idle` now logs that data for
+  explicit local runs, but it is not baseline-gated.
+- The harness also still lacks a dedicated large-file open-to-first-paint gate; advisory scenario
+  `large_file_open_first_paint` exists for explicit local runs only.
 - Diff / merge coverage is better on tab-open and standalone diff-model timing than on sustained
-  interaction; there is still no deterministic large-fixture compare / merge scroll scenario.
+  interaction; advisory scenario `merge_scroll_large_fixture` exists for explicit local runs, but
+  there is still no baseline-gated large-fixture compare / merge scroll scenario.
 
 References:
 - `docs/startup-tracing.md`

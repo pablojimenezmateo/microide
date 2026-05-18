@@ -275,7 +275,9 @@ double SamplePercentile(std::vector<double>& values, double p) {
 std::vector<std::string> FindStaleBaselineScenarios(const std::vector<Scenario>& scenarios) {
   std::unordered_set<std::string> registered;
   for (const Scenario& scenario : scenarios) {
-    registered.insert(scenario.name);
+    if (scenario.baseline_gated) {
+      registered.insert(scenario.name);
+    }
   }
 
   std::vector<std::string> stale;
@@ -1237,6 +1239,11 @@ int main(int argc, char** argv) {
     const std::filesystem::path baseline_path =
         std::filesystem::path("tests/perf/baselines") / (scenario.name + ".json");
     if (options->update_baseline) {
+      if (!scenario.baseline_gated) {
+        std::cerr << "refusing to update baseline for advisory-only scenario: " << scenario.name
+                  << '\n';
+        return 1;
+      }
       BaselineRecord record{
           .scenario_name = scenario.name,
           .metrics = aggregate->metrics,
@@ -1246,6 +1253,12 @@ int main(int argc, char** argv) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
         return 1;
       }
+      continue;
+    }
+
+    if (!scenario.baseline_gated) {
+      std::cerr << "[perf] advisory-only scenario completed without baseline enforcement: "
+                << scenario.name << '\n';
       continue;
     }
 

@@ -117,7 +117,8 @@ Goals:
 - keep background worker behavior bounded and cheap under overlap between git, search, blame,
   and language tooling
 - close the remaining measurement gaps before making broader perf claims, especially repo-open
-  steady-state memory, large-file open-to-first-paint, and sustained compare / merge interaction
+  steady-state memory, large-file open-to-first-paint, and sustained compare / merge interaction;
+  advisory scenarios may lead, but release/readme claims should wait for baseline-gated coverage
 
 Exit criteria:
 - typing, scrolling, drag, resize, and startup traces show no regression
