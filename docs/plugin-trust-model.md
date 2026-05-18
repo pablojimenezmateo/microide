@@ -182,7 +182,6 @@ The following would be reasonable to add only if microide ever pursues plugin di
 
 - per-plugin capability declarations and prompts on first run
 - restricted `package.path` / `package.cpath` pinned to plugin install dir
-- a "no project plugins" startup mode for opening untrusted repos
 - a signed-manifest format
 - isolating each plugin in its own Lua state with explicit message-passing seams
 
