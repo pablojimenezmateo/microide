@@ -307,26 +307,8 @@
     ScrollSurfaceLayout scroll;
   };
 
-  struct VisibleStripTab {
-    std::size_t index = 0;
-    SDL_FRect rect{};
-    SDL_FRect close_rect{};
-    bool active = false;
-    std::string display_title;
-    std::string tooltip_label;
-    std::string badge_text;
-    SDL_Color badge_color{};
-    bool show_badge = false;
-  };
-
-  // Click-to-scroll overflow chevrons painted at each end of a tab strip.
-  // Either rect is zero-width when there is no hidden tab on that side.
-  struct TabStripOverflowControls {
-    SDL_FRect left_button{};
-    SDL_FRect right_button{};
-    std::size_t hidden_left = 0;
-    std::size_t hidden_right = 0;
-  };
+  using VisibleStripTab = workspace::VisibleStripTab;
+  using TabStripOverflowControls = workspace::TabStripOverflowControls;
 
   struct VisibleMenuBarItem {
     MenuId id = MenuId::None;
@@ -358,18 +340,8 @@
     SDL_FRect rect{};
   };
 
-  enum class BottomPanelTabKind {
-    Terminal,
-    Output,
-  };
-
-  struct BottomPanelTabModel {
-    BottomPanelTabKind kind = BottomPanelTabKind::Terminal;
-    std::size_t terminal_index = 0;
-    std::string output_channel_id;
-    std::string label;
-    std::string tooltip_label;
-  };
+  using BottomPanelTabKind = workspace::BottomPanelTabKind;
+  using BottomPanelTabModel = workspace::BottomPanelTabModel;
 
  private:
   struct EditorSplitSlot {
@@ -1233,15 +1205,6 @@
   SDL_FRect BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const;
   std::vector<BottomPanelTabModel> BuildBottomPanelTabs() const;
 
-  struct TabStripGeometryCache {
-    std::size_t tab_count = 0;
-    float window_width = 0.0f;
-    std::size_t active_tab_index = 0;
-    std::vector<float> widths;
-    std::vector<std::string> display_titles;
-    std::vector<std::string> tooltip_labels;
-    bool valid = false;
-  };
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
@@ -1367,7 +1330,7 @@
   std::size_t reload_clean_open_buffers_from_disk_invocation_count_ = 0;
   std::size_t render_compare_surface_invocation_count_ = 0;
   std::optional<WorkspaceLayout> prepared_frame_layout_;
-  mutable TabStripGeometryCache tab_strip_geometry_cache_;
+  mutable TabStripService tab_strip_service_;
   bool layout_dirty_ = true;
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
@@ -1402,43 +1365,7 @@
   PersistenceService persistence_service_;
   LayoutModeService layout_mode_service_;
   StatusBarService status_bar_service_;
-  struct StatusBarLanguageCache {
-    const editor::TextViewport* viewport = nullptr;
-    // Language detection inspects file path + first line bytes; only content
-    // mutations can change the result.
-    std::uint64_t content_revision = 0;
-    std::filesystem::path path;
-    std::string filetype;
-  };
-  StatusBarLanguageCache status_bar_language_cache_;
-  struct StatusBarRepoCache {
-    std::filesystem::path project_root;
-    bool valid = false;
-  };
-  std::optional<StatusBarRepoCache> status_bar_repo_cache_;
-  // Caches the rendered "branch [cleanliness]" project segment so RefreshStatusBar does not rebuild
-  // these strings every frame. Keyed by the inputs that participate in the segment text/tooltip.
-  struct StatusBarProjectSegmentCache {
-    std::string branch_label;
-    std::string cleanliness;
-    std::string text;
-    std::string tooltip;
-    bool valid = false;
-  };
-  StatusBarProjectSegmentCache status_bar_project_segment_cache_;
-  struct StatusBarEditorSegmentsCache {
-    const editor::TextViewport* viewport = nullptr;
-    std::size_t cursor_line = 0;
-    std::size_t cursor_column = 0;
-    bool soft_tabs = false;
-    std::size_t tab_size = 0;
-    std::size_t errors = 0;
-    std::size_t warnings = 0;
-    std::string line_column_text;
-    std::string indent_text;
-    std::string problems_text;
-  };
-  StatusBarEditorSegmentsCache status_bar_editor_segments_cache_;
+  StatusBarModelService status_bar_model_service_;
   SettingsOverlayService settings_overlay_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {

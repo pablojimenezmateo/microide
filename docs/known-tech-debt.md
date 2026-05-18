@@ -278,10 +278,11 @@ Audit of the four originally-named candidates (2026-05-18):
   snippets, code-actions, go-to-definition, find-references. Touches editor state, LSP state,
   snippet sessions. Migration needs a new `AssistService` with proper ownership of these
   cross-cutting interactions. Medium work.
-- `WorkspaceShellChrome.cpp` (~839 lines, 21 methods): tab-strip visibility / overflow / drag
-  math, heavily entangled with `current_project_state.surface.tabs`. Migration needs a
-  `TabStripService` (or split into project-tab and editor-tab services) with its own state.
-  Medium work.
+- `WorkspaceShellChrome.cpp` was the second real service candidate. This follow-up is now partly
+  landed: `TabStripService` owns editor/project/bottom-panel tab-strip layout state, overflow
+  controls, and bottom-panel tab models; `StatusBarModelService` owns status-bar caches and
+  segment assembly. The shell keeps narrow wrappers plus the bottom-panel activation/close side
+  effects that still mutate project state and terminal/output ownership.
 
 What was actually done in the low pass (2026-05-18):
 - Ratchet-only architectural lints added at `tests/ArchitectureInvariantsTests.cpp`:
@@ -292,8 +293,8 @@ What was actually done in the low pass (2026-05-18):
 
 Recommended follow-ups (deferred, each a separate medium-sized change):
 - Stand up `AssistService` and migrate the 15 methods in `WorkspaceShellAssist.cpp`.
-- Stand up `TabStripService` (or split it) and migrate the 21 methods in
-  `WorkspaceShellChrome.cpp`.
+- Finish collapsing the remaining `WorkspaceShellChrome.cpp` wrappers once the surrounding
+  coordinator/test-access call sites no longer need the shell-shaped API.
 - Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now hard-fails this.
 
 ## Open Follow-Ups After The 2026-04-29 Cleanup

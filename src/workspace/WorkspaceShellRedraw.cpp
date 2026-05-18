@@ -86,7 +86,7 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
     if (window_presentation_.logical_width != previous_width) {
       EnsureActiveProjectVisible();
       EnsureActiveTabVisible();
-      tab_strip_geometry_cache_.valid = false;
+      tab_strip_service_.InvalidateEditorTabGeometry();
     }
   }
 }

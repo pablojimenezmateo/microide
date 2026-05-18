@@ -218,6 +218,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareMerge.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
+  src/workspace/StatusBarModelService.cpp
+  src/workspace/TabStripService.cpp
   src/workspace/WorkspaceChromeMouseCoordinator.cpp
   src/workspace/WorkspaceCompareInteractionCoordinator.cpp
   src/workspace/WorkspaceCompareMouseCoordinator.cpp
