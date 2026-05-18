@@ -85,10 +85,10 @@ class EditorViewRenderer {
   // on (viewport, content_revision, primary_caret_line, primary_caret_column)
   // and reused across consecutive frames when nothing actionable changes.
   const std::optional<BracketMatchPair>& last_bracket_match_pair() const {
-    return bracket_match_cache_.pair;
+    return last_bracket_match_pair_;
   }
-  std::size_t bracket_match_cache_hits() const { return bracket_match_cache_.hits; }
-  std::size_t bracket_match_cache_misses() const { return bracket_match_cache_.misses; }
+  std::size_t bracket_match_cache_hits() const { return bracket_match_cache_hits_; }
+  std::size_t bracket_match_cache_misses() const { return bracket_match_cache_misses_; }
 
   // Test/diagnostic accessors for the indent-guides cache. Cache is keyed on
   // (viewport, content_revision, layout_shape_revision, scroll_line,
@@ -96,10 +96,11 @@ class EditorViewRenderer {
   //  folding_model revision for active emphasis) and reused across
   // consecutive frames when nothing changes.
   const std::vector<IndentGuideRun>& last_indent_guide_runs() const {
-    return indent_guides_cache_.runs;
+    return indent_guides_cache_last_runs_ != nullptr ? *indent_guides_cache_last_runs_
+                                                     : indent_guides_cache_empty_runs_;
   }
-  std::size_t indent_guides_cache_hits() const { return indent_guides_cache_.hits; }
-  std::size_t indent_guides_cache_misses() const { return indent_guides_cache_.misses; }
+  std::size_t indent_guides_cache_hits() const { return indent_guides_cache_hits_; }
+  std::size_t indent_guides_cache_misses() const { return indent_guides_cache_misses_; }
   const std::vector<FoldGutterMark>& last_fold_gutter_marks() const { return last_fold_gutter_marks_; }
 
  private:
@@ -133,21 +134,22 @@ class EditorViewRenderer {
       search_match_cache_;
   mutable std::deque<SearchMatchCacheKey> search_match_cache_order_;
 
-  struct BracketMatchCache {
+  struct BracketMatchCacheEntry {
     const TextViewport* viewport = nullptr;
     // Bracket positions depend on bytes only, not on theme, layout shape, or
     // overlay state — keyed on content_revision exclusively.
     std::uint64_t content_revision = 0;
     std::size_t caret_line = 0;
     std::size_t caret_column = 0;
-    bool valid = false;
     std::optional<BracketMatchPair> pair;
-    std::size_t hits = 0;
-    std::size_t misses = 0;
   };
-  mutable BracketMatchCache bracket_match_cache_;
+  static constexpr std::size_t kBracketMatchCacheLimit = 12;
+  mutable std::vector<BracketMatchCacheEntry> bracket_match_cache_entries_;
+  mutable std::optional<BracketMatchPair> last_bracket_match_pair_;
+  mutable std::size_t bracket_match_cache_hits_ = 0;
+  mutable std::size_t bracket_match_cache_misses_ = 0;
 
-  struct IndentGuidesCache {
+  struct IndentGuidesCacheEntry {
     const TextViewport* viewport = nullptr;
     // Indent guides depend on the bytes of each line (content) and on
     // indent-width / tab-size geometry (layout shape).
@@ -159,12 +161,14 @@ class EditorViewRenderer {
     std::size_t visible_rows_count = 0;
     std::size_t indent_width = 0;
     std::size_t caret_line = 0;
-    bool valid = false;
     std::vector<IndentGuideRun> runs;
-    std::size_t hits = 0;
-    std::size_t misses = 0;
   };
-  mutable IndentGuidesCache indent_guides_cache_;
+  static constexpr std::size_t kIndentGuidesCacheLimit = 12;
+  mutable std::vector<IndentGuidesCacheEntry> indent_guides_cache_entries_;
+  mutable const std::vector<IndentGuideRun>* indent_guides_cache_last_runs_ = nullptr;
+  mutable std::vector<IndentGuideRun> indent_guides_cache_empty_runs_;
+  mutable std::size_t indent_guides_cache_hits_ = 0;
+  mutable std::size_t indent_guides_cache_misses_ = 0;
 
   mutable std::vector<FoldGutterMark> last_fold_gutter_marks_;
 

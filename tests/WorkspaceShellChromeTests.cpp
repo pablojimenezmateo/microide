@@ -2,6 +2,7 @@
 
 #include "TerminalSessionTestAccess.h"
 #include "render/Theme.h"
+#include "util/PerformanceCounters.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -1765,6 +1766,29 @@ void TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize() {
   Expect(WorkspaceShellTestAccess::PrepareFrameLayoutComputeCount(shell) == 1,
          "PrepareFrameOnce should recompute layout once on the frame after a resize");
 }
+
+void TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(1280, 720);
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "main.txt";
+  WriteFile(file, "alpha\nbeta\ngamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "workspace render perf regression test should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  shell.Render(canvas.renderer(), 1280, 720);
+  util::ResetPerformanceCounters();
+  shell.Render(canvas.renderer(), 1280, 720);
+
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls) == 1,
+         "simple single-pane editor frame should build the editor view model exactly once");
+}
 #endif
 
 void TestViewMenuToggleReflectsBackingSetting() {
@@ -2007,6 +2031,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPrepareFrameSkipsLayoutWhenNotDirty);
   AddTest(tests, "WorkspaceShell/PrepareFrameRecomputesLayoutAfterResize",
           TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize);
+  AddTest(tests, "WorkspaceShell/RenderBuildsEditorViewModelOncePerSimplePaneFrame",
+          TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame);
 #endif
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);

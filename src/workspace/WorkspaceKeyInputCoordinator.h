@@ -48,7 +48,7 @@ class KeyInputCoordinator {
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
     std::function<bool(std::string_view, const std::vector<std::string>&, ActionSource)>
         execute_command_name;
-    std::function<std::vector<ResolvedKeybinding>()> resolved_keybindings;
+    std::function<const std::vector<ResolvedKeybinding>&()> resolved_keybindings;
     std::function<bool()> open_untitled_tab;
     std::function<bool()> active_tab_is_compare;
     std::function<bool()> active_tab_is_merge;

@@ -379,6 +379,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         ParseStickyScrollMaxDepthSetting(GetSettingValue("editor.fold.sticky_scroll.max_depth"));
     thread_local editor::EditorViewModel tls_editor_surface_vm;
     const std::vector<EditorPaneLayout>& panes = editor_panes;
+    thread_local std::vector<editor::EditorViewMetrics> tls_pane_scroll_metrics;
+    thread_local std::vector<unsigned char> tls_pane_scroll_metrics_valid;
+    tls_pane_scroll_metrics.resize(panes.size());
+    tls_pane_scroll_metrics_valid.assign(panes.size(), 0);
     editor::TextViewport* active_viewport = ActiveEditorViewport();
     if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
       if (active_editor_pane_rect != nullptr) {
@@ -413,7 +417,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    active_folding_model);
     }
     auto* editor_tab = ActiveEditorTab();
-    for (const EditorPaneLayout& pane : panes) {
+    for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
+      const EditorPaneLayout& pane = panes[pane_index];
       editor::TextViewport* viewport =
           pane.active ? ActiveEditorViewport()
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
@@ -449,6 +454,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
             render_whitespace_enabled);
       }
+      tls_pane_scroll_metrics[pane_index] = metrics;
+      tls_pane_scroll_metrics_valid[pane_index] = 1;
       const auto blame_overlay =
           pane.active
               ? editor_blame_overlay_service_.BuildEditorOverlay(
@@ -474,39 +481,18 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       draw_review_comment_markers(*viewport, pane.rect, metrics);
 
     }
-    for (const EditorPaneLayout& pane : panes) {
+    for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
+      const EditorPaneLayout& pane = panes[pane_index];
       editor::TextViewport* viewport =
           pane.active ? ActiveEditorViewport()
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
                                                : nullptr);
-      if (viewport == nullptr || viewport->is_placeholder()) {
+      if (viewport == nullptr || viewport->is_placeholder() ||
+          pane_index >= tls_pane_scroll_metrics_valid.size() ||
+          tls_pane_scroll_metrics_valid[pane_index] == 0) {
         continue;
       }
-
-      editor::EditorViewMetrics metrics =
-          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
-      viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      const editor::FoldingModel* folding_for_scroll =
-          fold_enabled
-              ? (pane.active ? EnsureActiveFoldingModelFresh() : active_folding_model)
-              : nullptr;
-      const bool sticky_active =
-          fold_enabled && sticky_scroll_setting_enabled && folding_for_scroll != nullptr;
-      editor_render_builder.BuildEditorViewModelInto(
-          tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_scroll,
-          /*occurrences_highlight_enabled=*/false, occurrences_case_sensitive, sticky_active,
-          sticky_scroll_max_depth,
-          /*render_whitespace_enabled=*/false);
-      if (!tls_editor_surface_vm.sticky_lines.empty()) {
-        metrics = editor::EditorViewRenderer::ComputeMetrics(
-            text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
-        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-        editor_render_builder.BuildEditorViewModelInto(
-            tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_scroll,
-            /*occurrences_highlight_enabled=*/false, occurrences_case_sensitive, sticky_active,
-            sticky_scroll_max_depth,
-            /*render_whitespace_enabled=*/false);
-      }
+      const editor::EditorViewMetrics& metrics = tls_pane_scroll_metrics[pane_index];
       const auto scroll_layout = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
       if (scroll_layout.vertical_scrollbar.has_value()) {
         DrawScrollbar(renderer, theme_, scroll_layout.vertical_scrollbar->track,

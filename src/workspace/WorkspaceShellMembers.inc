@@ -434,6 +434,7 @@
                           ActionSource source,
                           std::string* error_message = nullptr);
   std::optional<std::string> GetSettingValue(std::string_view id) const;
+  const std::vector<ResolvedKeybinding>& ResolvedKeybindings() const;
   std::vector<std::string> OrderedSidebarViewIds() const;
   void NormalizeSidebarViewSelection();
   void RebuildPhase3Registries();
@@ -1314,6 +1315,9 @@
       static_cast<std::size_t>(MenuId::TerminalTabContext) + 1;
   mutable std::array<std::vector<DynamicMenuEntryStorage>, kMenuSlotCount> dynamic_menu_entries_;
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
+  mutable std::vector<ResolvedKeybinding> resolved_keybindings_cache_;
+  mutable std::vector<std::string> resolved_keybindings_disabled_ids_snapshot_;
+  mutable std::size_t resolved_keybindings_reload_generation_ = std::numeric_limits<std::size_t>::max();
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
   project::ProjectBackgroundExecutor project_background_executor_;

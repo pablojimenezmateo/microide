@@ -71,6 +71,17 @@ std::vector<std::string> WorkspaceShell::DocumentedCommandUsages() {
   return WorkspaceDocumentedCommandUsages();
 }
 
+const std::vector<ResolvedKeybinding>& WorkspaceShell::ResolvedKeybindings() const {
+  if (resolved_keybindings_reload_generation_ != reload_plugins_invocation_count_ ||
+      resolved_keybindings_disabled_ids_snapshot_ != context_.disabled_keybinding_ids) {
+    resolved_keybindings_cache_ =
+        ResolveKeybindings(plugin_runtime_.Host(), context_.disabled_keybinding_ids);
+    resolved_keybindings_disabled_ids_snapshot_ = context_.disabled_keybinding_ids;
+    resolved_keybindings_reload_generation_ = reload_plugins_invocation_count_;
+  }
+  return resolved_keybindings_cache_;
+}
+
 ActionAvailability WorkspaceShell::MakeActionAvailability() const {
   return Bootstrapper(*const_cast<WorkspaceShell*>(this)).BuildActionAvailability();
 }

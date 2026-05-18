@@ -381,6 +381,57 @@ void TestPerFrameCacheInvalidationKeysRenderPaths() {
            "fold model revision change should invalidate indent-guides cache");
   }
 }
+
+void TestRendererCachesReuseWarmEntriesAcrossViewportSwitches() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(240, 140);
+  microide::render::TextRenderer text_renderer;
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  const SDL_FRect rect{0.0f, 0.0f, 240.0f, 140.0f};
+  microide::editor::EditorViewRenderer renderer;
+
+  auto configure_viewport = [](microide::editor::TextViewport& viewport,
+                               const std::filesystem::path& path,
+                               const std::string& body,
+                               microide::editor::FoldingModel& model) {
+    viewport.LoadContent(body, path);
+    viewport.SetTabSize(4);
+    viewport.SetIndentWidth(4);
+    viewport.MoveCursorTo(0, 7);
+    Expect(model.Compute(viewport.lines(), DefaultFoldOptions()),
+           "alternating-cache fixture should compute a fold model");
+    viewport.SetFoldingModel(&model);
+  };
+
+  microide::editor::TextViewport viewport_a;
+  microide::editor::FoldingModel model_a;
+  configure_viewport(viewport_a, "/tmp/cache-a.cpp",
+                     "if (a) {\n    one();\n        two();\n    }\n}\n", model_a);
+
+  microide::editor::TextViewport viewport_b;
+  microide::editor::FoldingModel model_b;
+  configure_viewport(viewport_b, "/tmp/cache-b.cpp",
+                     "if (b) {\n    three();\n        four();\n    }\n}\n", model_b);
+
+  const auto render_with_features = [&](microide::editor::TextViewport& viewport,
+                                        microide::editor::FoldingModel& model) {
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false, "",
+                    std::nullopt, std::nullopt, {}, nullptr,
+                    /*bracket_match_highlight_enabled=*/true,
+                    /*indent_guides_enabled=*/true,
+                    /*render_whitespace_enabled=*/false, &model);
+  };
+
+  render_with_features(viewport_a, model_a);
+  render_with_features(viewport_b, model_b);
+  render_with_features(viewport_a, model_a);
+  render_with_features(viewport_b, model_b);
+
+  Expect(renderer.bracket_match_cache_hits() >= 2,
+         "alternating warmed viewports should hit the bracket-match cache after warm-up");
+  Expect(renderer.indent_guides_cache_hits() >= 2,
+         "alternating warmed viewports should hit the indent-guides cache after warm-up");
+}
 #endif  // MICROIDE_HAS_SDL3_TTF
 
 }  // namespace
@@ -397,6 +448,8 @@ void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests) 
           TestIndentGuideRunsPreserveCapacityAcrossStableRenders);
   AddTest(tests, "EditorRenderViewModel/PerFrameCacheInvalidationKeysRenderPaths",
           TestPerFrameCacheInvalidationKeysRenderPaths);
+  AddTest(tests, "EditorRenderViewModel/RendererCachesReuseWarmEntriesAcrossViewportSwitches",
+          TestRendererCachesReuseWarmEntriesAcrossViewportSwitches);
 #endif
 }
 

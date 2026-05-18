@@ -455,13 +455,15 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     const plugin::PluginHost& plugin_host,
     const std::vector<std::string>& disabled_ids) {
   std::vector<ResolvedKeybinding> result;
+  const auto builtin_specs = BuiltinKeybindingSpecs();
+  result.reserve(builtin_specs.size() + plugin_host.ContributedKeybindings().size());
 
-  const auto is_disabled = [&](const std::string& id) {
+  const auto is_disabled = [&](std::string_view id) {
     return std::find(disabled_ids.begin(), disabled_ids.end(), id) != disabled_ids.end();
   };
 
-  for (const KeybindingSpec& spec : BuiltinKeybindingSpecs()) {
-    if (is_disabled(std::string(spec.id))) {
+  for (const KeybindingSpec& spec : builtin_specs) {
+    if (is_disabled(spec.id)) {
       continue;
     }
     ResolvedKeybinding rb;

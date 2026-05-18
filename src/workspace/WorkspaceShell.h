@@ -36,6 +36,7 @@
 #include "workspace/WorkspaceActionAvailability.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceContext.h"
+#include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceFormatterRegistry.h"
 #include "workspace/WorkspaceSaveParticipants.h"
 #include "workspace/WorkspaceCompletionRegistry.h"

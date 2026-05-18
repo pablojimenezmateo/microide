@@ -178,7 +178,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  const auto bindings = operations_.resolved_keybindings();
+  const auto& bindings = operations_.resolved_keybindings();
   const KeybindingContext key_ctx = ActiveKeybindingContext();
   const bool editor_chord_allowed =
       state_.surface.focus == FocusTarget::Editor && !state_.overlay.visible &&
@@ -405,10 +405,9 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
                      ActionSource source) {
                 return ExecuteCommandName(command_name, args, source);
               },
-          .resolved_keybindings =
-              [this]() {
-                return ResolveKeybindings(plugin_runtime_.Host(), context_.disabled_keybinding_ids);
-              },
+          .resolved_keybindings = [this]() -> const std::vector<ResolvedKeybinding>& {
+            return ResolvedKeybindings();
+          },
           .open_untitled_tab = [this]() { return OpenUntitledTab(); },
           .active_tab_is_compare = [this]() { return ActiveTabIsCompare(); },
           .active_tab_is_merge = [this]() { return ActiveTabIsMerge(); },

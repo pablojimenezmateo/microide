@@ -973,6 +973,40 @@ void TestWorkspaceShellProjectOpenFromWelcomeInvalidatesCachedLayout() {
          "opening a project from welcome should invalidate cached layout and request redraw");
 }
 
+void TestWorkspaceShellResolvedKeybindingsAreCachedUntilInputsChange() {
+  WorkspaceShell shell;
+
+  const auto& first = WorkspaceShellTestAccess::ResolvedKeybindings(shell);
+  Expect(!first.empty(), "resolved keybindings should include built-ins");
+  const microide::workspace::ResolvedKeybinding* first_data = first.data();
+
+  const auto& second = WorkspaceShellTestAccess::ResolvedKeybindings(shell);
+  Expect(second.data() == first_data,
+         "resolved keybindings should reuse the cached vector when inputs are unchanged");
+
+  const bool has_save_before =
+      std::any_of(first.begin(), first.end(),
+                  [](const microide::workspace::ResolvedKeybinding& binding) {
+        return binding.id == "save";
+      });
+  Expect(has_save_before, "resolved keybindings should include save before disabling it");
+
+  WorkspaceShellTestAccess::SetDisabledKeybindingIds(shell, {"save"});
+  const auto& disabled = WorkspaceShellTestAccess::ResolvedKeybindings(shell);
+  const bool has_save_after =
+      std::any_of(disabled.begin(), disabled.end(),
+                  [](const microide::workspace::ResolvedKeybinding& binding) {
+        return binding.id == "save";
+      });
+  Expect(!has_save_after,
+         "resolved keybindings should rebuild when disabled keybinding ids change");
+
+  const microide::workspace::ResolvedKeybinding* disabled_data = disabled.data();
+  const auto& disabled_again = WorkspaceShellTestAccess::ResolvedKeybindings(shell);
+  Expect(disabled_again.data() == disabled_data,
+         "rebuilt resolved keybindings should be reused on subsequent stable calls");
+}
+
 void TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2391,6 +2425,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild);
   AddTest(tests, "WorkspaceShell/ProjectOpenFromWelcomeInvalidatesCachedLayout",
           TestWorkspaceShellProjectOpenFromWelcomeInvalidatesCachedLayout);
+  AddTest(tests, "WorkspaceShell/ResolvedKeybindingsAreCachedUntilInputsChange",
+          TestWorkspaceShellResolvedKeybindingsAreCachedUntilInputsChange);
   AddTest(tests, "WorkspaceShell/OverlayOutsideClickRestoresPrimaryFocus",
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",

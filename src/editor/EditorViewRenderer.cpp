@@ -320,29 +320,52 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     const std::size_t caret_line = viewport.cursor_line();
     const std::size_t caret_column = viewport.cursor_column();
     const std::uint64_t content_revision = viewport.content_revision();
-    if (bracket_match_cache_.valid && bracket_match_cache_.viewport == &viewport &&
-        bracket_match_cache_.content_revision == content_revision &&
-        bracket_match_cache_.caret_line == caret_line &&
-        bracket_match_cache_.caret_column == caret_column) {
-      bracket_match_pair = bracket_match_cache_.pair;
-      ++bracket_match_cache_.hits;
+    auto cache_it = std::find_if(
+        bracket_match_cache_entries_.begin(), bracket_match_cache_entries_.end(),
+        [&](const BracketMatchCacheEntry& entry) {
+          return entry.viewport == &viewport && entry.content_revision == content_revision &&
+                 entry.caret_line == caret_line && entry.caret_column == caret_column;
+        });
+    if (cache_it != bracket_match_cache_entries_.end()) {
+      bracket_match_pair = cache_it->pair;
+      last_bracket_match_pair_ = bracket_match_pair;
+      ++bracket_match_cache_hits_;
+      if (cache_it != bracket_match_cache_entries_.begin()) {
+        std::iter_swap(bracket_match_cache_entries_.begin(), cache_it);
+      }
     } else {
       bracket_match_pair = FindBracketMatch(viewport, caret_line, caret_column);
-      bracket_match_cache_.viewport = &viewport;
-      bracket_match_cache_.content_revision = content_revision;
-      bracket_match_cache_.caret_line = caret_line;
-      bracket_match_cache_.caret_column = caret_column;
-      bracket_match_cache_.pair = bracket_match_pair;
-      bracket_match_cache_.valid = true;
-      ++bracket_match_cache_.misses;
+      last_bracket_match_pair_ = bracket_match_pair;
+      auto same_viewport_it = std::find_if(
+          bracket_match_cache_entries_.begin(), bracket_match_cache_entries_.end(),
+          [&](const BracketMatchCacheEntry& entry) { return entry.viewport == &viewport; });
+      BracketMatchCacheEntry updated_entry{
+          .viewport = &viewport,
+          .content_revision = content_revision,
+          .caret_line = caret_line,
+          .caret_column = caret_column,
+          .pair = bracket_match_pair,
+      };
+      if (same_viewport_it != bracket_match_cache_entries_.end()) {
+        *same_viewport_it = std::move(updated_entry);
+        if (same_viewport_it != bracket_match_cache_entries_.begin()) {
+          std::iter_swap(bracket_match_cache_entries_.begin(), same_viewport_it);
+        }
+      } else if (bracket_match_cache_entries_.size() < kBracketMatchCacheLimit) {
+        bracket_match_cache_entries_.push_back(std::move(updated_entry));
+        if (bracket_match_cache_entries_.size() > 1) {
+          std::iter_swap(bracket_match_cache_entries_.begin(),
+                         bracket_match_cache_entries_.end() - 1);
+        }
+      } else {
+        bracket_match_cache_entries_.back() = std::move(updated_entry);
+        std::iter_swap(bracket_match_cache_entries_.begin(),
+                       bracket_match_cache_entries_.end() - 1);
+      }
+      ++bracket_match_cache_misses_;
     }
-  } else if (bracket_match_cache_.valid) {
-    bracket_match_cache_.viewport = nullptr;
-    bracket_match_cache_.content_revision = 0;
-    bracket_match_cache_.caret_line = 0;
-    bracket_match_cache_.caret_column = 0;
-    bracket_match_cache_.pair.reset();
-    bracket_match_cache_.valid = false;
+  } else {
+    last_bracket_match_pair_.reset();
   }
 
   const std::size_t sticky_row_count =
@@ -416,41 +439,70 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         viewport.indent_width() == 0 ? 1 : viewport.indent_width();
     const std::size_t fold_emphasis_revision =
         folding_model != nullptr ? folding_model->revision() : std::size_t{0};
-    if (indent_guides_cache_.valid && indent_guides_cache_.viewport == &viewport &&
-        indent_guides_cache_.content_revision == viewport.content_revision() &&
-        indent_guides_cache_.layout_shape_revision == viewport.layout_shape_revision() &&
-        indent_guides_cache_.fold_revision == viewport.folding_revision() &&
-        indent_guides_cache_.fold_emphasis_revision == fold_emphasis_revision &&
-        indent_guides_cache_.scroll_line == scroll_line &&
-        indent_guides_cache_.visible_rows_count == visible_rows_for_guides.size() &&
-        indent_guides_cache_.indent_width == indent_width &&
-        indent_guides_cache_.caret_line == cursor_line) {
-      ++indent_guides_cache_.hits;
+    auto cache_it = std::find_if(
+        indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),
+        [&](const IndentGuidesCacheEntry& entry) {
+          return entry.viewport == &viewport &&
+                 entry.content_revision == viewport.content_revision() &&
+                 entry.layout_shape_revision == viewport.layout_shape_revision() &&
+                 entry.fold_revision == viewport.folding_revision() &&
+                 entry.fold_emphasis_revision == fold_emphasis_revision &&
+                 entry.scroll_line == scroll_line &&
+                 entry.visible_rows_count == visible_rows_for_guides.size() &&
+                 entry.indent_width == indent_width && entry.caret_line == cursor_line;
+        });
+    if (cache_it != indent_guides_cache_entries_.end()) {
+      indent_guides_to_paint = &cache_it->runs;
+      indent_guides_cache_last_runs_ = indent_guides_to_paint;
+      ++indent_guides_cache_hits_;
+      if (cache_it != indent_guides_cache_entries_.begin()) {
+        std::iter_swap(indent_guides_cache_entries_.begin(), cache_it);
+        indent_guides_to_paint = &indent_guides_cache_entries_.front().runs;
+        indent_guides_cache_last_runs_ = indent_guides_to_paint;
+      }
     } else {
       const std::size_t caret_indent =
           cursor_line < lines.size()
               ? LeadingVisualIndent(lines[cursor_line], viewport.tab_size())
               : 0;
+      auto same_viewport_it = std::find_if(
+          indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),
+          [&](const IndentGuidesCacheEntry& entry) { return entry.viewport == &viewport; });
+      IndentGuidesCacheEntry* target_entry = nullptr;
+      if (same_viewport_it != indent_guides_cache_entries_.end()) {
+        target_entry = &*same_viewport_it;
+      } else if (indent_guides_cache_entries_.size() < kIndentGuidesCacheLimit) {
+        indent_guides_cache_entries_.push_back(IndentGuidesCacheEntry{});
+        target_entry = &indent_guides_cache_entries_.back();
+      } else {
+        target_entry = &indent_guides_cache_entries_.back();
+      }
+      target_entry->viewport = &viewport;
+      target_entry->content_revision = viewport.content_revision();
+      target_entry->layout_shape_revision = viewport.layout_shape_revision();
+      target_entry->fold_revision = viewport.folding_revision();
+      target_entry->fold_emphasis_revision = fold_emphasis_revision;
+      target_entry->scroll_line = scroll_line;
+      target_entry->visible_rows_count = visible_rows_for_guides.size();
+      target_entry->indent_width = indent_width;
+      target_entry->caret_line = cursor_line;
       ComputeIndentGuides(lines, visible_rows_for_guides, viewport.tab_size(),
-                          indent_width, cursor_line, caret_indent,
-                          &indent_guides_cache_.runs, folding_model);
-      indent_guides_cache_.viewport = &viewport;
-      indent_guides_cache_.content_revision = viewport.content_revision();
-      indent_guides_cache_.layout_shape_revision = viewport.layout_shape_revision();
-      indent_guides_cache_.fold_revision = viewport.folding_revision();
-      indent_guides_cache_.fold_emphasis_revision = fold_emphasis_revision;
-      indent_guides_cache_.scroll_line = scroll_line;
-      indent_guides_cache_.visible_rows_count = visible_rows_for_guides.size();
-      indent_guides_cache_.indent_width = indent_width;
-      indent_guides_cache_.caret_line = cursor_line;
-      indent_guides_cache_.valid = true;
-      ++indent_guides_cache_.misses;
+                          indent_width, cursor_line, caret_indent, &target_entry->runs,
+                          folding_model);
+      indent_guides_to_paint = &target_entry->runs;
+      indent_guides_cache_last_runs_ = indent_guides_to_paint;
+      if (target_entry != &indent_guides_cache_entries_.front()) {
+        std::iter_swap(indent_guides_cache_entries_.begin(),
+                       indent_guides_cache_entries_.begin() +
+                           static_cast<std::ptrdiff_t>(target_entry -
+                                                       indent_guides_cache_entries_.data()));
+        indent_guides_to_paint = &indent_guides_cache_entries_.front().runs;
+        indent_guides_cache_last_runs_ = indent_guides_to_paint;
+      }
+      ++indent_guides_cache_misses_;
     }
-    indent_guides_to_paint = &indent_guides_cache_.runs;
-  } else if (indent_guides_cache_.valid) {
-    indent_guides_cache_.viewport = nullptr;
-    indent_guides_cache_.runs.clear();
-    indent_guides_cache_.valid = false;
+  } else {
+    indent_guides_cache_last_runs_ = nullptr;
   }
 
   if (metrics.sticky_scroll_rows > 0 && view_model != nullptr &&
