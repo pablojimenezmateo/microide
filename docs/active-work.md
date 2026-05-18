@@ -240,6 +240,8 @@ Current state:
 - completion, snippet-session, code-action, go-to-definition, and find-references coordination now
   route through `AssistService`; shell action, key-input, overlay, text-input, and test-access
   call sites now bind that service directly instead of keeping a shell-specific assist facade
+  (`AssistService::Operations` remains a transitional seam and should shrink into smaller explicit
+  assist ports over time, not grow into a shell callback bag)
 - bottom-panel tab-strip geometry queries now bind `TabStripService` directly from render,
   cursor, tab-mouse, and test-access paths instead of routing through shell-owned
   `ComputeVisibleBottomPanelTabs` / `ComputeVisibleTerminalTabs` wrappers
@@ -607,6 +609,9 @@ Open work:
 - keep retained redraw comparison tests serial under SDL dummy video because they share global SDL state
 - keep profiling startup, redraw, typing, scrolling, and idle behavior with the tracing docs in
   this directory
+- LTO in perf/release builds is acceptable and currently useful, but it is not a substitute for
+  profiling render hot paths; if `editor_sticky_scroll_scroll` still regresses, profile the
+  residual cost directly and either fix it or explicitly accept it with data
 - preserve the current redraw architecture unless profiling shows a new hotspot; the remaining
   work is policy tuning and regression coverage, not a wholesale redraw rewrite
 - prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
@@ -626,6 +631,7 @@ These are not current project work unless deliberately promoted into their own p
 
 - full debugger UI beyond first-pass start or stop and output-channel plumbing
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
+- plugin safe-mode / project-plugin-disable startup paths
 - cloud or collaboration features
 - recent-project and recent-file affordances
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started

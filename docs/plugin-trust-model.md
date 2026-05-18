@@ -161,6 +161,12 @@ For users:
 - `plugins-reload` picks up plugin file changes between sessions; there is no
   "all-plugins-disabled" run mode in the UI today.
 
+Explicit scope decision:
+
+- A safe-mode or project-plugin-disable startup path is not planned in the current scope.
+- If you need to inspect untrusted repositories, use external isolation (VM/container) before
+  opening them in microide.
+
 For plugin authors:
 
 - Do not silently mutate files outside the project root.

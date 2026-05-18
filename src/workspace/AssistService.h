@@ -20,6 +20,11 @@ namespace microide::workspace {
 
 class AssistService {
  public:
+  // Transitional callback seam for shell integration.
+  // Keep this narrow: do not grow it into a generic shell callback bag.
+  // Future assist refactors should split this into smaller ports
+  // (ActiveEditor, LspAssist, Overlay, CommandExecution, FileOpen,
+  // MergeTracking, CompareSync) as ownership moves out.
   struct Operations {
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<editor::TextViewport*()> active_editable_viewport;

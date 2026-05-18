@@ -9,6 +9,18 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 > source. Expect rough edges. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
 
+## Start Here
+
+- [What microide is](#about)
+- [Status: experimental](#experimental-release-status)
+- [Current UI preview](#current-ui-preview)
+- [What works today](#what-works-today)
+- [Build from source](#build)
+- [Known limitations](#known-limitations)
+- [Plugin trust warning](#security--trust-model)
+- [Performance methodology summary](#performance--benchmark-methodology)
+- [Deeper docs](#companion-docs)
+
 ## About
 
 microide is **100% vibecoded**: every source file, test, and document in this repository
@@ -83,6 +95,9 @@ merge with whole-side apply, shared decorated-text-grid rendering across editor 
 hunk navigation, and a standalone `microide_diff_bench` for repeatable timing. Other surfaces work
 but are less proven outside the developer's own machine.
 
+Current validation flow is still intentionally narrow and practical:
+`open repo -> inspect changes -> diff files -> resolve merge conflict -> stage/commit`.
+
 ## Experimental Release Status
 
 - No tagged releases and no signed binaries. The supported path today is: build from source.
@@ -91,6 +106,12 @@ but are less proven outside the developer's own machine.
 - No screenshot or demo gallery is committed yet. That is deliberate for now: the UI is still
   changing quickly enough that stale marketing images would be less honest than current workflow
   docs.
+
+## Current UI Preview
+
+- Screenshot/demos are intentionally pending while the UI is still unstable.
+- When the shell visuals and layout settle, this section will include a captioned screenshot:
+  "Current experimental UI; layout and visuals are not stable."
 
 ## What Works Today
 
@@ -135,6 +156,9 @@ serious work.
   `editor-essential-capabilities` change `tasks.md`. Use single-caret surround when in doubt.
 - **No sandbox for plugins.** Plugins are trusted local code. See
   [Security & Trust Model](#security--trust-model).
+- **No safe-mode / project-plugin-disable startup path.** There is no `--safe-mode` or
+  `--disable-project-plugins` path, and adding one is currently out of scope. Opening an
+  untrusted repo can execute project plugins.
 - **Single-window only.** No detached OS windows. This is deliberate (see
   `openspec/specs/product-vision/spec.md`), not a bug.
 - **No native OS menu bar.** The menu bar is rendered by the app.
@@ -188,6 +212,8 @@ that ships a `.microide/plugins/` directory and open it in microide, that plugin
   a VM / container.
 - The `plugins-reload` command picks up changes; there is no per-plugin disable in the UI yet
   beyond editing the user / project config.
+- This project is not planning a safe-mode or project-plugin-disable startup path in the current
+  scope. For untrusted repositories, use VM/container isolation or do not open them in microide.
 
 **Out of scope.** A meaningful plugin sandbox (capability-scoped APIs, restricted Lua standard
 library, per-plugin allowlists) is not planned for the immediate roadmap. If a plugin marketplace
@@ -241,6 +267,10 @@ What is **not** measured:
 - behavior on GPU-accelerated paths. The reference harness uses the software renderer.
 - multi-host comparison. `perf-runner-v1` is one self-hosted runner class; results from other
   machines are advisory only.
+- LTO as a proof that extraction costs are gone. LTO currently helps recover some
+  cross-translation-unit optimization loss from editor extractions, but any remaining
+  sticky-scroll/render-path regression should be profiled directly. Do not treat LTO as proof
+  the extraction is free.
 
 Quick local run:
 
@@ -253,6 +283,17 @@ xvfb-run -a ./build/microide-perf-make/microide/microide_perf --smoke
 Full docs: [`docs/perf-harness.md`](docs/perf-harness.md),
 [`docs/runtime-profiling.md`](docs/runtime-profiling.md),
 [`docs/startup-tracing.md`](docs/startup-tracing.md).
+
+## Companion Docs
+
+- `docs/active-work.md`
+- `docs/implementation-guide.md`
+- `docs/known-tech-debt.md`
+- `docs/plugin-trust-model.md`
+- `docs/perf-harness.md`
+- `docs/runtime-profiling.md`
+- `docs/startup-tracing.md`
+- `openspec/specs/product-vision/spec.md`
 
 ## Build
 

@@ -510,7 +510,8 @@ RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_ro
 // File decomposition has reached a plateau (see docs/known-tech-debt.md
 // item #16); new shell-adjacent behavior should land on a service, not on
 // a new `WorkspaceShell*.cpp` companion. If a migration removes one of
-// these files, lower the cap; do not raise it.
+// these files, lower the cap; do not raise it. This guardrail blocks
+// regressions; it is not the desired end state.
 RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "WorkspaceShell*.cpp translation-unit count";
@@ -533,7 +534,8 @@ RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo
         .message = "WorkspaceShell*.cpp companion count " + std::to_string(count) +
                    " exceeds cap " + std::to_string(kCap) +
                    "; land new shell-adjacent behavior on a service instead of a new "
-                   "WorkspaceShell*.cpp file (see docs/known-tech-debt.md item #16)",
+                   "WorkspaceShell*.cpp file, then lower the cap when migrations succeed "
+                   "(see docs/known-tech-debt.md item #16)",
     });
   }
   return result;

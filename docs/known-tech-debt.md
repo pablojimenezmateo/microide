@@ -86,6 +86,10 @@ What is still open:
   checkpoint design.
 - Search, merge, blame, and redraw changes should continue to be validated with the startup and
   runtime profiling docs rather than by intuition.
+- LTO is enabled for perf/release builds and currently helps recover some cross-translation-unit
+  optimization loss from editor extractions, but that is not evidence the extraction is free.
+  Any residual sticky-scroll/render-path regression should be profiled directly, then either fixed
+  or explicitly accepted with data.
 - The harness also still lacks a dedicated large-file open-to-first-paint gate; advisory scenario
   `large_file_open_first_paint` exists for explicit local runs only.
 - Diff / merge coverage is now better on sustained interaction because the gated suite includes
@@ -251,6 +255,33 @@ Why this item stays open at "low":
   meaningful seams are no longer “move obvious helper clusters”; they are larger design moves
   such as extracting undo/history ownership or separating edit application from layout/cache
   invalidation. The remaining `TextViewport.cpp` is now a coherent core, not a catch-all.
+- The next `TextViewport` work should reduce ownership, not merely line count. Avoid adding more
+  sibling `TextViewport*.cpp` files unless they are a stepping stone toward moving state and
+  behavior into smaller tested objects.
+
+Recommended ownership seams for the next pass:
+- `TextDocumentModel` / `DocumentBuffer`
+  - line storage
+  - line endings
+  - dirty state
+  - revision number
+  - file-path or save metadata where appropriate
+- `EditEngine`
+  - range edits
+  - multi-caret edit normalization
+  - auto-pair edit transforms
+  - edit grouping boundaries
+  - range validation
+- `UndoHistory`
+  - undo/redo stacks
+  - grouping
+  - caret/selection restore
+  - revision integration
+- `TextLayoutCache`
+  - soft-wrap rows
+  - visible-line cache
+  - fold-aware mapping
+  - layout invalidation
 
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
@@ -276,6 +307,10 @@ Audit of the four originally-named candidates (2026-05-18):
 - `WorkspaceShellAssist.cpp` was the third real service candidate. This follow-up has now landed:
   `AssistService` owns completion, snippet-session edits, code-action overlays, go-to-definition,
   and find-references coordination, and the old shell-specific assist facade has been removed.
+  Follow-up remains: `AssistService::Operations` is a transitional seam. Avoid growing it into a
+  general shell callback bag; prefer smaller explicit ports (`ActiveEditorPort`, `LspAssistPort`,
+  `OverlayPort`, `CommandExecutionPort`, `FileOpenPort`, `MergeTrackingPort`, `CompareSyncPort`)
+  when the next assist refactor is scoped.
 - `WorkspaceShellChrome.cpp` was the second real service candidate. This follow-up is now further
   along: `TabStripService` owns editor/project/bottom-panel tab-strip layout state, overflow
   controls, bottom-panel tab models, and the geometry queries now used directly by render,
@@ -288,7 +323,8 @@ What was actually done in the low pass (2026-05-18):
   - `CheckShellFileSize(WorkspaceShellMembers.inc)` caps the file at 1,516 lines (current).
   - `CheckWorkspaceShellCompanionTuCount` caps the count of `WorkspaceShell*.cpp` translation
     units at 51 (current).
-  Both are hard-fail. Lower the cap when a migration shrinks either number; never raise.
+  Both are hard-fail. These caps are regression guardrails, not the desired end state. Lower the
+  cap when a migration shrinks either number; never raise.
 
 Recommended follow-ups (deferred, each a separate medium-sized change):
 - Finish collapsing the remaining project/editor-tab convenience wrappers in
