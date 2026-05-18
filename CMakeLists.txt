@@ -132,6 +132,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp
+  src/editor/TextViewportFileIO.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
@@ -661,6 +662,7 @@ add_executable(microide_diff_bench
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
   src/editor/TextViewport.cpp
+  src/editor/TextViewportFileIO.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/compare/CompareModel.cpp
   src/platform/RuntimePaths.cpp

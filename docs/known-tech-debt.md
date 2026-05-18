@@ -203,19 +203,25 @@ See also `docs/performance-findings.md` — Second Performance Pass, New finding
 ## 15. `TextViewport.cpp` Ownership Concentration
 
 Status:
-- Partially addressed on 2026-05-18: language-pair behavior (auto-close, surround,
-  skip-over-close, dedent-on-close, brace-split, smart-indent newline, multi-caret pair-insert,
-  plus `AutoIndentForNewline` / `IndentUnit` / `InInsertionSuppressedScope`) moved to a
-  companion translation unit `src/editor/TextViewportLanguageBehavior.cpp` with shared
-  file-scope helpers promoted to `src/editor/TextViewportInternal.h` (detail namespace, internal
-  header). Header / API unchanged. `TextViewport.cpp` dropped from ~3,553 → ~2,869 lines.
+- Partially addressed on 2026-05-18:
+  - language-pair behavior (auto-close, surround, skip-over-close, dedent-on-close, brace-split,
+    smart-indent newline, multi-caret pair-insert, plus `AutoIndentForNewline` / `IndentUnit` /
+    `InInsertionSuppressedScope`) moved to `src/editor/TextViewportLanguageBehavior.cpp` with
+    shared file-scope helpers promoted to `src/editor/TextViewportInternal.h` (detail namespace,
+    internal header).
+  - Save normalization + file I/O (`OpenFile`, `Save`, `LoadContent`, `SetPath`, `SetDirty`,
+    `LineEndingLabel`, `EncodingLabel`, `RefreshEncoding`, both `DetectEncoding` overloads,
+    plus the `TrimTrailingWhitespaceInPlace` / `EnsureSingleFinalNewlineInPlace` anon-namespace
+    helpers) moved to `src/editor/TextViewportFileIO.cpp`.
+  - Header / API unchanged across both moves. `TextViewport.cpp` is now ~2,695 lines
+    (down from ~3,553).
 
 Remaining:
 - Medium. Not a correctness or perf bug; a single-file ownership concentration that still
-  makes the editor core harder to reason about and harder to extend safely. Six broad
-  responsibilities still co-located: open / save (document I/O), cursor + scrolling + view
-  state, selection + multi-caret backspace / delete, history / undo machinery, highlight +
-  wrap-row layout cache, and the rest of the multi-caret edit pipeline.
+  makes the editor core harder to reason about and harder to extend safely. Five broad
+  responsibilities still co-located in `TextViewport.cpp`: cursor + scrolling + view state,
+  selection + multi-caret backspace / delete, history / undo machinery, highlight + wrap-row
+  layout cache, and the rest of the multi-caret edit pipeline.
 
 Why not bigger refactors yet:
 - Cursor + scrolling + history + selection are tangled by design (undo records visual columns,
@@ -223,13 +229,9 @@ Why not bigger refactors yet:
   more proven seams; the 2026-05-18 split is the smallest such seam and is now in place.
 
 Recommended next extractions, in priority order:
-1. **Save normalization + I/O** — `OpenFile`, `Save`, `LoadContent`,
-   `TrimTrailingWhitespaceInPlace`, `EnsureSingleFinalNewlineInPlace`, plus `DetectEncoding`
-   variants. Self-contained; tests in `tests/EditorEssentialsTests.cpp` already cover save
-   normalization.
-2. **Multi-caret apply pipeline** (`ApplyMultiCaretBackspace`, `ApplyMultiCaretDeleteForward`,
+1. **Multi-caret apply pipeline** (`ApplyMultiCaretBackspace`, `ApplyMultiCaretDeleteForward`,
    `ApplyMultiCaretInsert`) — depends on history/edit helpers but the surface is contained.
-3. **Highlight cache** (`EnsureInitialHighlightState`, `EnsureHighlightCaches`,
+2. **Highlight cache** (`EnsureInitialHighlightState`, `EnsureHighlightCaches`,
    `EnsureHighlightCheckpoint`, `HighlightStateBeforeLine`, the `highlight_cache_*` /
    `line_highlight_states_*` / `highlight_checkpoints_*` machinery) — already has a clean tier
    contract via the `split-layout-revision-tiers` change.
