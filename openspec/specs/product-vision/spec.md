@@ -4,7 +4,10 @@ Define the durable product thesis, priority order, ownership boundaries, and non
 ## Requirements
 ### Requirement: Product Thesis
 
-MicroIDE SHALL be a native desktop IDE built in C++20 with SDL3, distributed as a single-window application with no GPU acceleration, positioned as a compact combination of a VSCode-shaped surface area and Zed-class responsiveness.
+MicroIDE SHALL be a native desktop IDE built in C++20 with SDL3, distributed as a single-window
+application with no GPU acceleration, and positioned as a compact, responsive editor-plus-workflow
+shell validated through internal methodology-first performance baselines rather than comparative
+marketing claims.
 
 #### Scenario: Rendering backend does not require a GPU
 - **WHEN** MicroIDE is launched on a host without hardware-accelerated OpenGL, Vulkan, or Metal available to the user session
@@ -30,6 +33,9 @@ When MicroIDE engineering tradeoffs conflict, the project SHALL resolve them in 
 
 Editor, compare, merge, search, git, terminal, and diagnostics flows SHALL remain built-in, host-owned product features. Plugins MAY contribute data, commands, registries, and structured requests through narrow host APIs, but SHALL NOT replace or reimplement these workflows.
 
+The most validated end-to-end workflow SHALL remain the native diff/merge/git path:
+open repository, inspect changes, diff files, resolve merge conflicts, then stage/commit.
+
 #### Scenario: Plugin attempts to replace diff rendering
 - **WHEN** a plugin is installed that declares itself as a replacement compare or merge renderer
 - **THEN** the host SHALL ignore that replacement and continue to render compare and merge through the built-in pipeline, surfacing plugin contributions only through the existing contribution registries
@@ -41,4 +47,3 @@ MicroIDE SHALL treat the following as out of scope unless deliberately promoted 
 #### Scenario: Feature request falls inside a non-goal
 - **WHEN** a proposal requests a feature whose primary capability falls inside the non-goal list
 - **THEN** the proposal SHALL be rejected or SHALL explicitly declare itself as promoting a non-goal into its own phase, with an updated product-vision delta in the same change
-
