@@ -15,7 +15,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "MICROIDE_WARNINGS_AS_ERRORS": "OFF",
-        "MICROIDE_PERF_HARNESS_BUILD": "ON"
+        "MICROIDE_PERF_HARNESS_BUILD": "ON",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON"
       }
     },
     {

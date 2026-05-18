@@ -14,6 +14,25 @@ option(MICROIDE_ENABLE_LUA_PLUGINS "Enable Lua-based manual plugins" ON)
 option(MICROIDE_PERF_HARNESS_BUILD "Enable perf harness instrumentation and targets" OFF)
 option(MICROIDE_FUZZ "Enable libFuzzer targets" OFF)
 
+# When CMAKE_INTERPROCEDURAL_OPTIMIZATION is requested (e.g. via the
+# microide-perf preset or a release build), verify the toolchain actually
+# supports it. Without LTO, cross-translation-unit calls in hot paths
+# (notably TextViewport ↔ EditorViewRenderer ↔ ViewState/HighlightCache)
+# cannot be inlined and per-frame regressions show up on render-heavy
+# scenarios like editor_sticky_scroll_scroll.
+if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT _microide_ipo_supported OUTPUT _microide_ipo_output)
+  if(NOT _microide_ipo_supported)
+    message(WARNING
+      "CMAKE_INTERPROCEDURAL_OPTIMIZATION was requested but is not supported "
+      "by this toolchain; disabling. Diagnostic:\n${_microide_ipo_output}")
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+  else()
+    message(STATUS "Interprocedural optimization (LTO) enabled.")
+  endif()
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/microide")
 
 find_package(PkgConfig QUIET)
