@@ -29,8 +29,8 @@ version, and no per-plugin disable in the UI today; disabling a plugin means rem
 editing the project / user config.
 
 `syntax/*.lua` files inside plugin directories are also loaded into the host tokenizer at startup
-and on `plugins-reload`. These are interpreted as syntax rules, not as host code, but they go
-through the same Lua state.
+and on `plugins-reload`. These are interpreted as syntax rules, not as host code, but they still
+come from the same trusted plugin directory and should be treated accordingly.
 
 ## Lua runtime configuration
 
@@ -44,7 +44,7 @@ set is intentionally narrow:
 - `string`
 - `math`
 - `utf8`
-- `package` — `require`, `package.path`, `package.cpath`, `package.loadlib`
+- `package` — `require`, `package.path`, `package.cpath`
 
 Not exposed:
 
@@ -55,8 +55,9 @@ Not exposed:
 This means a plugin **cannot read or write arbitrary files using plain Lua**. It also cannot
 shell out using plain Lua.
 
-`package` is enabled, which means `require` works for pure-Lua modules. `package.loadlib` exists
-and can in principle load a native shared object. There is no allowlist on `package.cpath`.
+`package` is enabled, which means `require` works for pure-Lua modules and Lua-module path
+resolution is available through `package.path` / `package.cpath`. There is no allowlist on those
+paths.
 
 ## Host API surface
 
@@ -126,9 +127,11 @@ These are real boundaries, not aspirational ones:
   modify your repo.
 - **They cannot directly access `WorkspaceShell`.** This is policy + lint-enforced. They go
   through narrow registries.
-- **The Lua state is per-host, not per-plugin.** Plugins share a single `lua_State`, so they can
-  in principle observe each other's globals. They run sequentially (no plugin background
-  threading except via `ctx.process.run_async`'s host-managed wake).
+- **The Lua state is per-plugin, not shared.** Each loaded plugin gets its own `lua_State`, so
+  plain Lua globals do not leak between plugins. This is a small correctness boundary, not a
+  sandbox: every plugin still runs in-process and still receives host APIs that can read files,
+  launch subprocesses, and affect the active project. Plugins also still run sequentially (no
+  plugin background threading except via `ctx.process.run_async`'s host-managed wake).
 
 ## What microide does not do
 

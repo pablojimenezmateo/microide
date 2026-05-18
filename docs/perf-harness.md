@@ -72,6 +72,20 @@ coverage and a clear owner.
 When a hotspot class has no deterministic coverage, add a scenario + baseline in the same change
 before closing the performance pass.
 
+## Known Coverage Gaps
+
+The current harness is useful, but it is not complete. These gaps are still open and should be
+described honestly in README / roadmap text until they are closed:
+
+- no committed resident-memory gate for "open a large repo and sit idle"
+- no dedicated large-file open-to-first-paint scenario; current large-file coverage is stronger on
+  typing, scrolling, save normalization, indent detection, and syntax / fold behavior after open
+- no dedicated compare-surface or merge-surface scroll / interaction scenario on large fixtures;
+  current coverage is stronger on open-time paths and standalone diff-model timing
+
+Do not paper over these gaps with broad wording like "memory is benchmarked" or "diff/merge is
+fully covered." Say exactly which scenarios exist.
+
 ## Isolated Run Contract
 
 `microide_perf` runs every scenario inside an isolated app-root so local state on

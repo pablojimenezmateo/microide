@@ -83,6 +83,15 @@ merge with whole-side apply, shared decorated-text-grid rendering across editor 
 hunk navigation, and a standalone `microide_diff_bench` for repeatable timing. Other surfaces work
 but are less proven outside the developer's own machine.
 
+## Experimental Release Status
+
+- No tagged releases and no signed binaries. The supported path today is: build from source.
+- CI workflows under `.github/workflows/` produce artifacts for branch validation, but those are
+  not positioned as stable releases.
+- No screenshot or demo gallery is committed yet. That is deliberate for now: the UI is still
+  changing quickly enough that stale marketing images would be less honest than current workflow
+  docs.
+
 ## What Works Today
 
 Mature enough to use day-to-day on the maintainer's own work:
@@ -167,7 +176,7 @@ namespacing of filesystem access**. The embedded Lua runtime is configured with 
 stdlib subset (`base`, `table`, `string`, `math`, `utf8`, `package`) — it does not expose
 `io` or `os`, so plain Lua cannot directly open arbitrary files or shell out. The host API,
 however, gives plugins exactly those capabilities through `ctx.files.*` and `ctx.process.run`,
-and `package` still permits `require` and C-library loading. If you `git clone` a repository
+and `package` still permits `require` plus Lua-module path resolution. If you `git clone` a repository
 that ships a `.microide/plugins/` directory and open it in microide, that plugin runs.
 
 **Recommendations until that changes:**
@@ -223,6 +232,12 @@ What is **not** measured:
 
 - microide's startup / memory / CPU vs VSCode, Zed, Helix, Sublime, or any other editor. The
   project has no third-party comparative numbers and does not publish any.
+- resident memory after opening a real repository is not yet a committed gate metric. The harness
+  records allocation counts broadly and logs RSS during `long_soak_8h`, but there is no
+  first-class "open repo, assert memory budget" scenario yet.
+- large-file open-to-first-paint and steady-state compare / merge scroll on large fixtures are not
+  yet dedicated gate scenarios. Existing coverage is stronger on typing, scrolling, tab open, and
+  standalone diff-model timing than on those remaining cases.
 - behavior on GPU-accelerated paths. The reference harness uses the software renderer.
 - multi-host comparison. `perf-runner-v1` is one self-hosted runner class; results from other
   machines are advisory only.

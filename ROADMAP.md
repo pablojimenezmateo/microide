@@ -116,10 +116,14 @@ Goals:
 - profile before choosing larger rewrites, especially in text rendering and invalidation behavior
 - keep background worker behavior bounded and cheap under overlap between git, search, blame,
   and language tooling
+- close the remaining measurement gaps before making broader perf claims, especially repo-open
+  steady-state memory, large-file open-to-first-paint, and sustained compare / merge interaction
 
 Exit criteria:
 - typing, scrolling, drag, resize, and startup traces show no regression
 - slow git, blame, search, tooling, or agent work does not starve unrelated background activity
+- README / release positioning does not imply benchmark coverage for scenarios that still lack a
+  deterministic harness entry
 - larger render or text-backend rewrites are only started if profiling shows the current path is a
   stable bottleneck
 

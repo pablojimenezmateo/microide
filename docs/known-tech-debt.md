@@ -86,6 +86,10 @@ What is still open:
   checkpoint design.
 - Search, merge, blame, and redraw changes should continue to be validated with the startup and
   runtime profiling docs rather than by intuition.
+- The current perf harness still lacks a committed resident-memory gate for "open repo, then
+  measure steady-state RSS" and lacks a dedicated large-file open-to-first-paint scenario.
+- Diff / merge coverage is better on tab-open and standalone diff-model timing than on sustained
+  interaction; there is still no deterministic large-fixture compare / merge scroll scenario.
 
 References:
 - `docs/startup-tracing.md`
@@ -94,7 +98,10 @@ References:
 
 Recommended follow-up:
 - Add or extend focused benchmarks where repeated regressions are likely:
+  - repo-open steady-state RSS budget
+  - large-file open to first paint / first interactive frame
   - large-file cursor jump and initial paint
+  - compare / merge scroll or hunk-navigation interaction on large fixtures
   - merge-model build for large, partially similar inputs
   - project search across large trees with smart-case and regex modes
   - syntax cache invalidation after plugin reload

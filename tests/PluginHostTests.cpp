@@ -285,6 +285,105 @@ return ide.plugin({
          "backup plugin directories should not register commands");
 }
 
+void TestPluginHostLuaRuntimeMatchesDocumentedStdlib() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+
+  WriteFile(project_root / "README.md", "plugin stdlib fixture\n");
+  WritePluginInit(
+      global_plugins, "stdlib-probe",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "stdlib.probe",
+  setup = function(ctx)
+    ctx.log("base:" .. tostring(type(assert) == "function"))
+    ctx.log("table:" .. tostring(type(table.insert) == "function"))
+    ctx.log("string:" .. tostring(type(string.gsub) == "function"))
+    ctx.log("math:" .. tostring(type(math.max) == "function"))
+    ctx.log("utf8:" .. tostring(type(utf8.len) == "function"))
+    ctx.log("package:" .. tostring(type(package) == "table"))
+    ctx.log("package_path:" .. tostring(type(package.path) == "string"))
+    ctx.log("io_nil:" .. tostring(io == nil))
+    ctx.log("os_nil:" .. tostring(os == nil))
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "plugin reload should succeed for stdlib probe");
+  const std::vector<std::string>& messages = host.Messages();
+  Expect(messages.size() == 9, "stdlib probe should emit one log per documented capability check");
+  Expect(messages[0] == "stdlib.probe: base:true", "base stdlib should be exposed");
+  Expect(messages[1] == "stdlib.probe: table:true", "table stdlib should be exposed");
+  Expect(messages[2] == "stdlib.probe: string:true", "string stdlib should be exposed");
+  Expect(messages[3] == "stdlib.probe: math:true", "math stdlib should be exposed");
+  Expect(messages[4] == "stdlib.probe: utf8:true", "utf8 stdlib should be exposed");
+  Expect(messages[5] == "stdlib.probe: package:true", "package stdlib should remain exposed");
+  Expect(messages[6] == "stdlib.probe: package_path:true",
+         "package.path should remain available for Lua module resolution");
+  Expect(messages[7] == "stdlib.probe: io_nil:true", "io stdlib should stay unavailable");
+  Expect(messages[8] == "stdlib.probe: os_nil:true", "os stdlib should stay unavailable");
+  Expect(host.Errors().empty(), "stdlib probe should not report host errors");
+}
+
+void TestPluginHostPluginsUseIsolatedLuaStates() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
+
+  WriteFile(project_root / "README.md", "plugin shared-state fixture\n");
+  WritePluginInit(
+      global_plugins, "writer",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "isolated.writer",
+  setup = function(ctx)
+    _G.__microide_shared_probe = "writer-visible"
+    ctx.log("writer:set")
+  end
+})
+)");
+  WritePluginInit(
+      project_plugins, "reader",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "isolated.reader",
+  setup = function(ctx)
+    ctx.log("reader:" .. tostring(_G.__microide_shared_probe))
+    _G.__microide_shared_probe = nil
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "plugin reload should succeed for isolated-state probe");
+  const std::vector<std::string>& messages = host.Messages();
+  Expect(messages.size() == 2, "isolated-state probe should emit exactly two setup logs");
+  Expect(messages[0] == "isolated.writer: writer:set",
+         "global writer plugin should run before the reader");
+  Expect(messages[1] == "isolated.reader: reader:nil",
+         "each plugin should receive its own Lua state rather than shared globals");
+  Expect(host.Errors().empty(), "isolated-state probe should not report host errors");
+}
+
 void TestPluginHostPhase2Apis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1191,6 +1290,10 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRejectsDuplicatePluginIds);
   AddTest(tests, "PluginHost/SkipsBackupPluginDirectories",
           TestPluginHostSkipsBackupPluginDirectories);
+  AddTest(tests, "PluginHost/LuaRuntimeMatchesDocumentedStdlib",
+          TestPluginHostLuaRuntimeMatchesDocumentedStdlib);
+  AddTest(tests, "PluginHost/PluginsUseIsolatedLuaStates",
+          TestPluginHostPluginsUseIsolatedLuaStates);
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
   AddTest(tests, "PluginHost/Phase2StatusApis", TestPluginHostPhase2StatusApis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
