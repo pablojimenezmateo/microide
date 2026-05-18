@@ -240,6 +240,13 @@ Current state:
 - completion, snippet-session, code-action, go-to-definition, and find-references coordination now
   route through `AssistService`; shell action, key-input, overlay, text-input, and test-access
   call sites now bind that service directly instead of keeping a shell-specific assist facade
+- bottom-panel tab-strip geometry queries now bind `TabStripService` directly from render,
+  cursor, tab-mouse, and test-access paths instead of routing through shell-owned
+  `ComputeVisibleBottomPanelTabs` / `ComputeVisibleTerminalTabs` wrappers
+- `TextViewport` now has a dedicated `TextViewportViewState.cpp` translation unit for viewport
+  sizing, scroll clamping, wrap/fold toggles, cursor movement, wrapped-row cursor mapping, and
+  caret-advance helpers; the next meaningful refactor seam is undo/history ownership, not more
+  helper sharding
 - lifecycle init, shutdown, quit-request handling, wake-event registration, and cursor teardown now
   run through a `WorkspaceLifecycleCoordinator` that depends on `WorkspaceContext`, a quit flag,
   and explicit lifecycle callbacks instead of `WorkspaceShell&`

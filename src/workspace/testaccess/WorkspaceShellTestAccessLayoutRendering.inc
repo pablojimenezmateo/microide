@@ -336,7 +336,12 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
-    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
+    const std::vector<WorkspaceShell::VisibleStripTab> visible_tabs =
+        shell.tab_strip_service_.ComputeVisibleTerminalTabs(
+            shell.context_.current_project_state, panel_header,
+            shell.layout_mode_service_.CurrentMode(),
+            [&shell](std::string_view text) { return shell.text_renderer_.MeasureWidth(text); });
+    for (const WorkspaceShell::VisibleStripTab& tab : visible_tabs) {
       if (tab.index == shell.context_.current_project_state.active_terminal_tab_index) {
         return tab.rect;
       }
@@ -348,8 +353,13 @@
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
     std::vector<std::string> labels;
-    for (const WorkspaceShell::VisibleStripTab& tab :
-         shell.ComputeVisibleBottomPanelTabs(panel_header)) {
+    const std::vector<WorkspaceShell::VisibleStripTab> visible_tabs =
+        shell.tab_strip_service_.ComputeVisibleBottomPanelTabs(
+            shell.context_.current_project_state, panel_header,
+            shell.layout_mode_service_.CurrentMode(),
+            [&shell](std::string_view text) { return shell.text_renderer_.MeasureWidth(text); },
+            shell.output_channels_.Channels());
+    for (const WorkspaceShell::VisibleStripTab& tab : visible_tabs) {
       labels.push_back(tab.display_title);
     }
     return labels;
@@ -359,8 +369,13 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
-    for (const WorkspaceShell::VisibleStripTab& tab :
-         shell.ComputeVisibleBottomPanelTabs(panel_header)) {
+    const std::vector<WorkspaceShell::VisibleStripTab> visible_tabs =
+        shell.tab_strip_service_.ComputeVisibleBottomPanelTabs(
+            shell.context_.current_project_state, panel_header,
+            shell.layout_mode_service_.CurrentMode(),
+            [&shell](std::string_view text) { return shell.text_renderer_.MeasureWidth(text); },
+            shell.output_channels_.Channels());
+    for (const WorkspaceShell::VisibleStripTab& tab : visible_tabs) {
       if (tab.display_title == title) {
         return tab.rect;
       }
@@ -371,7 +386,12 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w, 28.0f);
-    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTerminalTabs(panel_header)) {
+    const std::vector<WorkspaceShell::VisibleStripTab> visible_tabs =
+        shell.tab_strip_service_.ComputeVisibleTerminalTabs(
+            shell.context_.current_project_state, panel_header,
+            shell.layout_mode_service_.CurrentMode(),
+            [&shell](std::string_view text) { return shell.text_renderer_.MeasureWidth(text); });
+    for (const WorkspaceShell::VisibleStripTab& tab : visible_tabs) {
       if (tab.index == index) {
         return tab.rect;
       }

@@ -1168,13 +1168,8 @@
   std::string HoveredSidebarSearchTooltipLabel(const SDL_FRect& sidebar_rect) const;
   std::optional<SDL_FRect> HoveredSidebarSearchTooltipRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
-  std::vector<VisibleStripTab> ComputeVisibleBottomPanelTabs(
-      const SDL_FRect& panel_header) const;
-  std::vector<VisibleStripTab> ComputeVisibleTerminalTabs(
-      const SDL_FRect& panel_header) const;
   bool ActivateBottomPanelTab(std::size_t model_index);
   bool CloseBottomPanelTab(std::size_t model_index);
-  bool BottomPanelTabIsTerminal(std::size_t model_index) const;
   static std::vector<VisibleStripTab> BuildVisibleStripTabs(
       const std::vector<float>& widths,
       float start_x,
@@ -1188,9 +1183,6 @@
       const std::vector<std::string>& display_titles,
       const std::vector<std::string>& tooltip_labels);
   void ClearTabDrag();
-  SDL_FRect BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const;
-  std::vector<BottomPanelTabModel> BuildBottomPanelTabs() const;
-
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;

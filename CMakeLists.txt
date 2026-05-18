@@ -136,6 +136,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/editor/TextViewportMultiCaret.cpp
+  src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp

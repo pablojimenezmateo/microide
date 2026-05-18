@@ -210,7 +210,7 @@ See also `docs/performance-findings.md` — Second Performance Pass, New finding
 ## 15. `TextViewport.cpp` Ownership Concentration
 
 Status:
-- Substantially addressed on 2026-05-18 across four extractions, all keeping methods as members
+- Substantially addressed on 2026-05-18 across five extractions, all keeping methods as members
   of the same `TextViewport` class (no header / API change, no friending):
   - **Language-pair behavior** (auto-close, surround, skip-over-close, dedent-on-close,
     brace-split, smart-indent newline, multi-caret pair-insert, plus `AutoIndentForNewline` /
@@ -233,21 +233,24 @@ Status:
     promoted to `TextViewportInternal.h` because the invalidation policy in
     `InvalidateDerivedCaches` (still in `TextViewport.cpp`) needs to stay in lockstep with
     the checkpoint chain.
-- Result: `TextViewport.cpp` is now ~2,229 lines, down from ~3,553 — a ~37 % reduction
-  with no public API change.
+  - **Viewport view-state + cursor / scroll movement** (`SetViewportSize`, scroll setters,
+    wrap / fold toggles, cursor movement, `EnsureCursorVisible`, wrapped-row cursor mapping,
+    caret advance helpers, and `EnsureDocument`) → `src/editor/TextViewportViewState.cpp`.
+- Result: `TextViewport.cpp` is now ~1,788 lines, down from ~3,553 — roughly a 50 % reduction
+  with no public API change. The extracted `TextViewportViewState.cpp` is ~448 lines.
 
 Remaining:
-- Low. The host TU still owns cursor + scrolling + view-state, selection + single-caret
-  edits (`Backspace`, `DeleteForward`, `InsertCharacter`, etc.), the history / undo machinery,
-  invalidation policy, and the visible-line / wrapped-row layout caches. These are tangled by
-  design (undo records visual columns, selection, multi-caret, and view state together; the
-  invalidation policy is the contract between every cache). Further splitting is possible but
-  the marginal benefit is much smaller and the seams are not obvious.
+- Low to medium. The host TU no longer owns cursor + scrolling + view-state, but it still owns
+  selection + single-caret edits (`Backspace`, `DeleteForward`, `InsertCharacter`, etc.),
+  the history / undo machinery, invalidation policy, and the visible-line / wrapped-row layout
+  caches. These are still tangled by design (undo records visual columns, selection, multi-caret,
+  and view state together; the invalidation policy is the contract between every cache).
 
 Why this item stays open at "low":
-- File decomposition has done what it can without an ownership refactor (extracting a
-  CursorModel, an UndoModel, etc. — a different and larger change). The remaining
-  `TextViewport.cpp` is now a coherent core, not a catch-all.
+- File decomposition has done most of what it can without an ownership refactor. The next
+  meaningful seams are no longer “move obvious helper clusters”; they are larger design moves
+  such as extracting undo/history ownership or separating edit application from layout/cache
+  invalidation. The remaining `TextViewport.cpp` is now a coherent core, not a catch-all.
 
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
@@ -273,11 +276,12 @@ Audit of the four originally-named candidates (2026-05-18):
 - `WorkspaceShellAssist.cpp` was the third real service candidate. This follow-up has now landed:
   `AssistService` owns completion, snippet-session edits, code-action overlays, go-to-definition,
   and find-references coordination, and the old shell-specific assist facade has been removed.
-- `WorkspaceShellChrome.cpp` was the second real service candidate. This follow-up is now partly
-  landed: `TabStripService` owns editor/project/bottom-panel tab-strip layout state, overflow
-  controls, and bottom-panel tab models; `StatusBarModelService` owns status-bar caches and
-  segment assembly. The shell keeps narrow wrappers plus the bottom-panel activation/close side
-  effects that still mutate project state and terminal/output ownership.
+- `WorkspaceShellChrome.cpp` was the second real service candidate. This follow-up is now further
+  along: `TabStripService` owns editor/project/bottom-panel tab-strip layout state, overflow
+  controls, bottom-panel tab models, and the geometry queries now used directly by render,
+  cursor, mouse-coordinator, and test-access paths. The shell keeps only the bottom-panel
+  activation/close side effects that still mutate project state and terminal/output ownership,
+  plus a smaller set of project/editor-tab wrappers.
 
 What was actually done in the low pass (2026-05-18):
 - Ratchet-only architectural lints added at `tests/ArchitectureInvariantsTests.cpp`:
@@ -287,8 +291,9 @@ What was actually done in the low pass (2026-05-18):
   Both are hard-fail. Lower the cap when a migration shrinks either number; never raise.
 
 Recommended follow-ups (deferred, each a separate medium-sized change):
-- Finish collapsing the remaining `WorkspaceShellChrome.cpp` wrappers once the surrounding
-  coordinator/test-access call sites no longer need the shell-shaped API.
+- Finish collapsing the remaining project/editor-tab convenience wrappers in
+  `WorkspaceShellChrome.cpp` once the surrounding coordinator/test-access call sites can depend on
+  the underlying services directly.
 - Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now hard-fails this.
 
 ## Open Follow-Ups After The 2026-04-29 Cleanup

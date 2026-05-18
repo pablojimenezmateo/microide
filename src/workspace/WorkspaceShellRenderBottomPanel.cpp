@@ -43,7 +43,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
   const std::vector<VisibleStripTab> visible_panel_tabs =
-      ComputeVisibleBottomPanelTabs(panel_header);
+      tab_strip_service_.ComputeVisibleBottomPanelTabs(
+          context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
+          [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+          output_channels_.Channels());
 
   const auto draw_tab_close_button = [&](const SDL_FRect& rect,
                                          SDL_Color color,
@@ -188,7 +191,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                        : panel_tab_palette.inactive_glyph,
                             panel_tab_palette.active_text);
     }
-    const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(panel_header);
+    const SDL_FRect new_tab_rect = tab_strip_service_.BottomPanelTerminalNewTabRect(
+        layout_mode_service_.CurrentMode(), panel_header);
     DrawButtonCentered(
         text_renderer_, renderer, theme_, new_tab_rect, "", ButtonTone::Neutral,
         ButtonVisualState{
@@ -224,7 +228,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const float status_width = text_renderer_.MeasureWidth(lsp_status_text);
     const float status_right = visible_panel_tabs.empty()
                                    ? panel_header.x + panel_header.w - 12.0f
-                                   : BottomPanelTerminalNewTabRect(panel_header).x - 12.0f;
+                                   : tab_strip_service_.BottomPanelTerminalNewTabRect(
+                                         layout_mode_service_.CurrentMode(), panel_header)
+                                         .x -
+                                         12.0f;
     const float status_x = status_right - status_width;
     if (status_x > panel_header.x + std::min(panel_header.w * 0.5f, 220.0f)) {
       DrawVCenteredTextOn(text_renderer_, renderer,

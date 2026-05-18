@@ -384,21 +384,36 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
               },
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
           .bottom_panel_terminal_new_tab_rect =
-              [this](const SDL_FRect& rect) { return BottomPanelTerminalNewTabRect(rect); },
+              [this](const SDL_FRect& rect) {
+                return tab_strip_service_.BottomPanelTerminalNewTabRect(
+                    layout_mode_service_.CurrentMode(), rect);
+              },
           .open_terminal =
               [terminal_panel](std::string command) mutable {
                 terminal_panel.OpenTerminal(std::move(command));
               },
           .compute_visible_bottom_panel_tabs =
-              [this](const SDL_FRect& rect) { return ComputeVisibleBottomPanelTabs(rect); },
+              [this](const SDL_FRect& rect) {
+                return tab_strip_service_.ComputeVisibleBottomPanelTabs(
+                    context_.current_project_state, rect, layout_mode_service_.CurrentMode(),
+                    [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+                    output_channels_.Channels());
+              },
           .compute_visible_terminal_tabs =
-              [this](const SDL_FRect& rect) { return ComputeVisibleTerminalTabs(rect); },
+              [this](const SDL_FRect& rect) {
+                return tab_strip_service_.ComputeVisibleTerminalTabs(
+                    context_.current_project_state, rect, layout_mode_service_.CurrentMode(),
+                    [this](std::string_view text) { return text_renderer_.MeasureWidth(text); });
+              },
           .activate_bottom_panel_tab =
               [this](std::size_t index) { return ActivateBottomPanelTab(index); },
           .close_bottom_panel_tab =
               [this](std::size_t index) { return CloseBottomPanelTab(index); },
           .bottom_panel_tab_is_terminal =
-              [this](std::size_t index) { return BottomPanelTabIsTerminal(index); },
+              [this](std::size_t index) {
+                return tab_strip_service_.BottomPanelTabIsTerminal(
+                    context_.current_project_state, index, output_channels_.Channels());
+              },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
           .close_terminal_tab =
               [terminal_panel](std::size_t index) mutable {

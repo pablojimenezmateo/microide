@@ -116,21 +116,10 @@ bool WorkspaceShell::ScrollEditorTabStrip(int direction) {
   return tab_strip_service_.ScrollEditorTabStrip(context_.current_project_state, direction);
 }
 
-std::vector<WorkspaceShell::BottomPanelTabModel> WorkspaceShell::BuildBottomPanelTabs() const {
-  return tab_strip_service_.BuildBottomPanelTabs(context_.current_project_state,
-                                                 output_channels_.Channels());
-}
-
-std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleBottomPanelTabs(
-    const SDL_FRect& panel_header) const {
-  return tab_strip_service_.ComputeVisibleBottomPanelTabs(
-      context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
-      [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
-      output_channels_.Channels());
-}
-
 bool WorkspaceShell::ActivateBottomPanelTab(std::size_t model_index) {
-  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs();
+  const std::vector<BottomPanelTabModel> tabs =
+      tab_strip_service_.BuildBottomPanelTabs(context_.current_project_state,
+                                              output_channels_.Channels());
   if (model_index >= tabs.size()) {
     return false;
   }
@@ -157,7 +146,9 @@ bool WorkspaceShell::ActivateBottomPanelTab(std::size_t model_index) {
 }
 
 bool WorkspaceShell::CloseBottomPanelTab(std::size_t model_index) {
-  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs();
+  const std::vector<BottomPanelTabModel> tabs =
+      tab_strip_service_.BuildBottomPanelTabs(context_.current_project_state,
+                                              output_channels_.Channels());
   if (model_index >= tabs.size()) {
     return false;
   }
@@ -176,25 +167,8 @@ bool WorkspaceShell::CloseBottomPanelTab(std::size_t model_index) {
   return true;
 }
 
-bool WorkspaceShell::BottomPanelTabIsTerminal(std::size_t model_index) const {
-  return tab_strip_service_.BottomPanelTabIsTerminal(context_.current_project_state, model_index,
-                                                     output_channels_.Channels());
-}
-
-std::vector<WorkspaceShell::VisibleStripTab> WorkspaceShell::ComputeVisibleTerminalTabs(
-    const SDL_FRect& panel_header) const {
-  return tab_strip_service_.ComputeVisibleTerminalTabs(
-      context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
-      [this](std::string_view text) { return text_renderer_.MeasureWidth(text); });
-}
-
 void WorkspaceShell::ClearTabDrag() {
   context_.interaction_state.tab_drag = TabDragState{};
-}
-
-SDL_FRect WorkspaceShell::BottomPanelTerminalNewTabRect(const SDL_FRect& panel_header) const {
-  return tab_strip_service_.BottomPanelTerminalNewTabRect(layout_mode_service_.CurrentMode(),
-                                                          panel_header);
 }
 
 SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const {

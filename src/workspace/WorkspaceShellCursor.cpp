@@ -488,10 +488,17 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
                  kWorkspaceBottomPanelHeaderHeight);
     if (Contains(panel_header, x, y)) {
-      if (Contains(BottomPanelTerminalNewTabRect(panel_header), x, y)) {
+      if (Contains(tab_strip_service_.BottomPanelTerminalNewTabRect(
+                       layout_mode_service_.CurrentMode(), panel_header),
+                   x, y)) {
         return CursorKind::Pointer;
       }
-      for (const VisibleStripTab& tab : ComputeVisibleBottomPanelTabs(panel_header)) {
+      const std::vector<VisibleStripTab> visible_panel_tabs =
+          tab_strip_service_.ComputeVisibleBottomPanelTabs(
+              context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
+              [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+              output_channels_.Channels());
+      for (const VisibleStripTab& tab : visible_panel_tabs) {
         if (Contains(tab.rect, x, y)) {
           return CursorKind::Pointer;
         }
