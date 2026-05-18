@@ -200,40 +200,41 @@ Relevant code:
 
 See also `docs/performance-findings.md` — Second Performance Pass, New finding 4.
 
-## 15. `TextViewport.cpp` Is The Largest Unowned-By-Name Surface In The Editor Core
+## 15. `TextViewport.cpp` Ownership Concentration
 
 Status:
-- Open. Identified during 2026-05-18 review.
+- Partially addressed on 2026-05-18: language-pair behavior (auto-close, surround,
+  skip-over-close, dedent-on-close, brace-split, smart-indent newline, multi-caret pair-insert,
+  plus `AutoIndentForNewline` / `IndentUnit` / `InInsertionSuppressedScope`) moved to a
+  companion translation unit `src/editor/TextViewportLanguageBehavior.cpp` with shared
+  file-scope helpers promoted to `src/editor/TextViewportInternal.h` (detail namespace, internal
+  header). Header / API unchanged. `TextViewport.cpp` dropped from ~3,553 → ~2,869 lines.
 
-Impact:
-- Medium. Not a correctness or perf bug; a single-file ownership concentration that makes the
-  editor core harder to reason about and harder to extend safely.
+Remaining:
+- Medium. Not a correctness or perf bug; a single-file ownership concentration that still
+  makes the editor core harder to reason about and harder to extend safely. Six broad
+  responsibilities still co-located: open / save (document I/O), cursor + scrolling + view
+  state, selection + multi-caret backspace / delete, history / undo machinery, highlight +
+  wrap-row layout cache, and the rest of the multi-caret edit pipeline.
 
-Current state:
-- `src/editor/TextViewport.cpp` is ~3,553 lines spanning ~119 methods across roughly six
-  responsibilities that could be separated: open / save (document I/O), cursor + scrolling + view
-  state, selection + multi-caret, history / undo machinery, highlight + wrap-row layout cache,
-  and language-pair behavior (auto-close, surround, dedent-on-close, smart-indent split). The
-  `TextViewport::DocumentState` four-tier revision split (item 14) already proves the cache layer
-  can be decomposed; the same is true for the language-behavior helpers.
-
-Lowest-risk extraction candidate:
-- The auto-close / surround / skip-over-close / dedent-on-close / brace-split helpers (currently
-  `TryAutoCloseInsert`, `TrySurroundInsert`, `TrySkipOverClose`, `MaybeDedentOnClose`,
-  `TryInsertNewlineSplitBraces`, `InInsertionSuppressedScope`, `TryMultiCaretPairInsert` — see
-  lines ~2304–2790) read mostly from `LanguageContractView`, the cursor, and the line buffer.
-  They could move into `editor/EditorLanguageBehavior.{h,cpp}` with `TextViewport` exposing a
-  small mutation interface (insert/replace/range + cursor query). Coverage exists in
-  `tests/EditorEssentials*` and `tests/EditorLanguagePair*` fixtures.
-
-Why not bigger refactors:
+Why not bigger refactors yet:
 - Cursor + scrolling + history + selection are tangled by design (undo records visual columns,
   selection, multi-caret, and view state together). Splitting them is doable but should follow
-  the language-behavior extraction so the seam is proven small first.
+  more proven seams; the 2026-05-18 split is the smallest such seam and is now in place.
 
-Recommended follow-up:
-- Land the language-behavior extraction as one openspec change. Hold tests green. Do not split
-  the cache/history machinery in the same change.
+Recommended next extractions, in priority order:
+1. **Save normalization + I/O** — `OpenFile`, `Save`, `LoadContent`,
+   `TrimTrailingWhitespaceInPlace`, `EnsureSingleFinalNewlineInPlace`, plus `DetectEncoding`
+   variants. Self-contained; tests in `tests/EditorEssentialsTests.cpp` already cover save
+   normalization.
+2. **Multi-caret apply pipeline** (`ApplyMultiCaretBackspace`, `ApplyMultiCaretDeleteForward`,
+   `ApplyMultiCaretInsert`) — depends on history/edit helpers but the surface is contained.
+3. **Highlight cache** (`EnsureInitialHighlightState`, `EnsureHighlightCaches`,
+   `EnsureHighlightCheckpoint`, `HighlightStateBeforeLine`, the `highlight_cache_*` /
+   `line_highlight_states_*` / `highlight_checkpoints_*` machinery) — already has a clean tier
+   contract via the `split-layout-revision-tiers` change.
+
+Each should land as its own change with tests green.
 
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
