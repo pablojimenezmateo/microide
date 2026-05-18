@@ -197,6 +197,63 @@ def detect_runner() -> list[str]:
 BUILD_DIR = Path("build/microide-perf-make")
 
 
+def prepare_current_worktree(root: Path, out_dir: Path) -> Path:
+    """Create a worktree at HEAD with the working tree's dirty diff applied.
+
+    Running the current side from a worktree (rather than the user's main
+    tree) ensures cwd-dependent startup work — `Application::Initialize`
+    treats cwd as the project root, walking .git and .gitignore from there —
+    is symmetric with the target side. Without this, a dirty main tree
+    allocates far more during startup-only scenarios than a fresh worktree,
+    producing apparent regressions that are pure measurement artifacts.
+    """
+    head_sha = git("rev-parse", "HEAD")
+    wt = out_dir / "wt-current"
+    log("current", dim(f"preparing worktree at {wt}"))
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(wt), head_sha],
+        check=True, capture_output=True,
+    )
+
+    if not is_dirty(root):
+        return wt
+
+    log("current", dim("applying dirty diff to worktree"))
+    patch_path = out_dir / "current.dirty.patch"
+    with open(patch_path, "wb") as patch_file:
+        rc = subprocess.run(
+            ["git", "diff", "HEAD", "--binary"],
+            cwd=str(root), stdout=patch_file,
+        ).returncode
+    if rc != 0:
+        die("failed to capture dirty diff for current side")
+    if patch_path.stat().st_size > 0:
+        applied = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", str(patch_path)],
+            cwd=str(wt), capture_output=True,
+        )
+        if applied.returncode != 0:
+            sys.stderr.write(applied.stderr.decode(errors="replace"))
+            die("failed to apply dirty diff to current worktree")
+
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=str(root), check=True, capture_output=True,
+    ).stdout.split(b"\x00")
+    for raw in untracked:
+        if not raw:
+            continue
+        rel = raw.decode()
+        src = root / rel
+        if not src.is_file():
+            continue
+        dst = wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    return wt
+
+
 def build_side(where: Path, label: str, log_path: Path) -> Path:
     log(label, f"building microide_perf (log: {log_path})")
     last_pct = [-10]
@@ -519,31 +576,34 @@ def main() -> int:
     current_label = current_short + ("+dirty" if is_dirty(root) else "")
 
     out_dir = Path(tempfile.mkdtemp(prefix="microide-perf-compare-"))
-    worktree_dir: Optional[Path] = None
+    target_worktree_dir: Optional[Path] = None
+    current_worktree_dir: Optional[Path] = None
 
     try:
         log(None, f"current = {bold(current_label)}")
         log(None, f"target  = {bold(target_short)} ({target_sha})")
         runner = detect_runner()
 
-        build_side(root, "current", out_dir / "current.build.log")
+        current_worktree_dir = prepare_current_worktree(root, out_dir)
+        mirror_fixtures(root, current_worktree_dir, "current")
+        build_side(current_worktree_dir, "current", out_dir / "current.build.log")
 
-        worktree_dir = out_dir / "wt-target"
-        log("target", dim(f"preparing worktree at {worktree_dir}"))
+        target_worktree_dir = out_dir / "wt-target"
+        log("target", dim(f"preparing worktree at {target_worktree_dir}"))
         subprocess.run(
-            ["git", "worktree", "add", "--detach", str(worktree_dir), target_sha],
+            ["git", "worktree", "add", "--detach", str(target_worktree_dir), target_sha],
             check=True, capture_output=True,
         )
-        mirror_fixtures(root, worktree_dir, "target")
-        build_side(worktree_dir, "target", out_dir / "target.build.log")
+        mirror_fixtures(root, target_worktree_dir, "target")
+        build_side(target_worktree_dir, "target", out_dir / "target.build.log")
 
         if scenarios_filter:
             scenarios = [s for s in scenarios_filter.split(",") if s]
             log(None, f"scenario set: user filter "
                       f"({bold(str(len(scenarios)))} scenarios)")
         else:
-            cur_set = discover_scenarios(root)
-            tgt_set = discover_scenarios(worktree_dir)
+            cur_set = discover_scenarios(current_worktree_dir)
+            tgt_set = discover_scenarios(target_worktree_dir)
             seen: set[str] = set()
             scenarios = []
             for s in cur_set + tgt_set:
@@ -558,8 +618,8 @@ def main() -> int:
 
         current_json = out_dir / "current.json"
         target_json = out_dir / "target.json"
-        current_side = SideRun(root, "current", out_dir)
-        target_side = SideRun(worktree_dir, "target", out_dir)
+        current_side = SideRun(current_worktree_dir, "current", out_dir)
+        target_side = SideRun(target_worktree_dir, "target", out_dir)
         total = len(scenarios)
         for idx, scenario in enumerate(scenarios, start=1):
             # Alternate side order per scenario to avoid consistent thermal bias.
@@ -583,11 +643,12 @@ def main() -> int:
         )
         return 0
     finally:
-        if worktree_dir and worktree_dir.exists():
-            subprocess.run(
-                ["git", "worktree", "remove", "--force", str(worktree_dir)],
-                check=False, capture_output=True,
-            )
+        for wt in (current_worktree_dir, target_worktree_dir):
+            if wt and wt.exists():
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", str(wt)],
+                    check=False, capture_output=True,
+                )
         if keep:
             log(None, dim(f"keeping artifacts under {out_dir}"))
         else:
