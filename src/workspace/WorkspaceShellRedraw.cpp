@@ -970,8 +970,14 @@ ScrollSurfaceLayout WorkspaceShell::ComputeEditorScrollLayout(
     const SDL_FRect& rect,
     const editor::TextViewport& viewport,
     const editor::EditorViewMetrics& metrics) const {
+  // Soft-wrap reflows content into the visible window, so horizontal scrolling
+  // is meaningless; collapse `total_columns` to `visible_columns` so the
+  // scrollbar geometry computes `max_horizontal_scroll == 0` and the bar is
+  // hidden entirely.
   const std::size_t total_columns =
-      std::max<std::size_t>(metrics.visible_columns, MaxVisualColumns(viewport));
+      viewport.soft_wrap()
+          ? metrics.visible_columns
+          : std::max<std::size_t>(metrics.visible_columns, MaxVisualColumns(viewport));
   return ComputeScrollSurfaceLayout(rect, viewport.line_count(),
                                     static_cast<int>(metrics.visible_rows),
                                     static_cast<int>(viewport.scroll_line()), total_columns,

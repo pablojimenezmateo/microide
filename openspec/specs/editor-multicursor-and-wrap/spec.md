@@ -51,6 +51,12 @@ When code folding is active and one or more fold ranges are collapsed, every car
 
 MicroIDE SHALL support soft wrap as a project-scoped editor presentation mode that wraps long logical lines to the visible viewport width without modifying file contents. When soft wrap is enabled, the wrapped-row layout produced by the editor viewport SHALL be the single source of truth for: (a) editor text painting, (b) gutter line-number painting, (c) Up/Down/PageUp/PageDown caret motion for the primary caret and every secondary caret, (d) mouse hit-testing, and (e) vertical scroll position. The wrapped-row layout SHALL be cached and SHALL only be recomputed when the document layout revision, the active tab size, or the viewport's visible-column width changes; it SHALL NOT be recomputed per frame or per keystroke.
 
+Wrap break selection SHALL prefer the most recent ASCII whitespace (space or tab) boundary that lies inside the current row's window; when no such boundary exists inside the window (a single token longer than the wrap width), the layout SHALL hard-break at the column boundary so the unbreakable token still wraps.
+
+When soft wrap is enabled, horizontal scrolling SHALL be suppressed: the horizontal scroll offset SHALL clamp to zero and the editor SHALL NOT render a horizontal scrollbar.
+
+Toggling soft wrap from any user-invoked path (View menu action, keybinding, command palette, settings overlay) SHALL invalidate the active editor surface so previously-painted rows do not persist beyond the toggle.
+
 #### Scenario: Wrapped caret motion tracks visible rows
 - **WHEN** soft wrap is enabled and one logical line spans multiple visible rows
 - **THEN** Up/Down navigation and mouse hit-testing SHALL target the visible wrapped rows rather than jumping by whole logical lines
@@ -83,6 +89,22 @@ MicroIDE SHALL support soft wrap as a project-scoped editor presentation mode th
 - **WHEN** soft wrap is enabled, the document layout revision is unchanged, the tab size is unchanged, and the viewport visible-column width is unchanged between two consecutive frames
 - **THEN** the second frame SHALL reuse the cached wrapped-row layout without recomputing wrap segments
 
+#### Scenario: Wrap breaks at whitespace boundaries when one is available
+- **WHEN** soft wrap is enabled and a long line contains whitespace between words inside the current row's window
+- **THEN** the wrap layout SHALL end the row at the most recent whitespace and start the next row at the following non-whitespace character, so words are not split mid-token
+
+#### Scenario: Wrap hard-breaks inside an unbreakable long token
+- **WHEN** soft wrap is enabled and a single token without internal whitespace is wider than the wrap window
+- **THEN** the wrap layout SHALL hard-break the token at the column boundary so wrapping still occurs
+
+#### Scenario: Horizontal scrollbar is hidden under soft wrap
+- **WHEN** soft wrap is enabled in the active editor
+- **THEN** the editor surface SHALL NOT render a horizontal scrollbar and the horizontal scroll offset SHALL be zero
+
+#### Scenario: Toggling wrap refreshes the editor surface
+- **WHEN** the user toggles soft wrap from any user-invoked path while editor rows are visible
+- **THEN** the editor surface SHALL be redrawn so no rows from the previous wrap mode remain on screen
+
 ### Requirement: Code Surfaces Render Without Character Ligatures
 
 Editor, compare, and merge text surfaces SHALL render code without discretionary character ligatures or glyph substitution that merges multiple codepoints into one joined glyph.
@@ -90,3 +112,4 @@ Editor, compare, and merge text surfaces SHALL render code without discretionary
 #### Scenario: Ligature-forming sequence stays literal
 - **WHEN** a file contains a sequence such as `!=`, `->`, or `=>`
 - **THEN** each character in the sequence SHALL remain individually visible and cursor-addressable in editor-family surfaces
+

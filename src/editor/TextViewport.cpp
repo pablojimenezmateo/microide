@@ -920,8 +920,11 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) c
   }
 
   const WrappedRowLayout row = WrappedRowAt(visual_row_index);
-  LayoutLine layout = TextLayout::BuildVisibleLine(document_->lines[row.line_index], row.visual_start,
-                                                   visible_columns_, tab_size_);
+  const std::size_t row_columns =
+      row.visual_end > row.visual_start ? row.visual_end - row.visual_start : 0;
+  LayoutLine layout = TextLayout::BuildVisibleLine(
+      document_->lines[row.line_index], row.visual_start,
+      std::min(visible_columns_, row_columns), tab_size_);
   if (row.line_index == cursor_line_ && visual_row_index == CursorVisualRow()) {
     const std::size_t caret_visual = cursor_visual_column();
     layout.caret_visible = true;
@@ -3249,6 +3252,7 @@ void TextViewport::EnsureWrappedRowLayouts() const {
       wrapped_row_layouts_.push_back(row);
     }
   } else {
+    const std::size_t safe_tab_size = std::max<std::size_t>(1, tab_size_);
     for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
       if (has_any_collapsed_fold && folding_model_->IsLineHidden(line_index)) {
         wrapped_line_row_offsets_.push_back(last_visible_row);
@@ -3256,17 +3260,68 @@ void TextViewport::EnsureWrappedRowLayouts() const {
       }
       wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
       last_visible_row = wrapped_row_layouts_.size();
-      const std::size_t line_visual_width =
-          TextLayout::VisualColumnForTextColumn(document_->lines[line_index],
-                                                document_->lines[line_index].size(), tab_size_);
-      if (line_visual_width == 0) {
+
+      const std::string& line_text = document_->lines[line_index];
+      if (line_text.empty()) {
         wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, 0, 0});
-      } else {
-        for (std::size_t start = 0; start < line_visual_width; start += wrap_columns) {
-          const std::size_t end = std::min(line_visual_width, start + wrap_columns);
-          wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, start, end});
+        continue;
+      }
+
+      // Single pass: walk the line tracking the visual column, the last whitespace
+      // break opportunity, and the current row's text start. Break before any
+      // character that would push the row past `wrap_columns`; prefer breaking
+      // after the most recent whitespace if one is available inside the current
+      // row. Hard-break inside a long word only when no whitespace fits.
+      std::size_t row_start_visual = 0;
+      std::size_t row_start_text = 0;
+      std::size_t last_break_visual = 0;
+      std::size_t last_break_text = 0;
+      std::size_t visual = 0;
+      std::size_t i = 0;
+      const std::size_t line_size = line_text.size();
+      while (i < line_size) {
+        const unsigned char ch = static_cast<unsigned char>(line_text[i]);
+        const std::size_t seq_len = util::Utf8SequenceLength(line_text, i);
+        std::size_t next_visual;
+        if (ch == '\t') {
+          const std::size_t remainder = visual % safe_tab_size;
+          next_visual =
+              visual + (remainder == 0 ? safe_tab_size : safe_tab_size - remainder);
+        } else {
+          next_visual = visual + 1;
+        }
+
+        // Would this character overflow the current row?
+        if (next_visual - row_start_visual > wrap_columns && i > row_start_text) {
+          std::size_t break_visual;
+          std::size_t break_text;
+          if (last_break_text > row_start_text) {
+            break_visual = last_break_visual;
+            break_text = last_break_text;
+          } else {
+            // No whitespace boundary in this row — hard break before this char.
+            break_visual = visual;
+            break_text = i;
+          }
+          wrapped_row_layouts_.push_back(
+              WrappedRowLayout{line_index, row_start_visual, break_visual});
+          row_start_visual = break_visual;
+          row_start_text = break_text;
+          last_break_visual = row_start_visual;
+          last_break_text = row_start_text;
+          visual = break_visual;
+          i = break_text;
+          continue;
+        }
+
+        visual = next_visual;
+        i += seq_len;
+        if (ch == ' ' || ch == '\t') {
+          last_break_visual = visual;
+          last_break_text = i;
         }
       }
+      wrapped_row_layouts_.push_back(WrappedRowLayout{line_index, row_start_visual, visual});
     }
   }
   if (wrapped_row_layouts_.empty()) {

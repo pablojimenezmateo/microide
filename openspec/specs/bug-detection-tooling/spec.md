@@ -35,9 +35,9 @@ The repository SHALL ship libFuzzer entry points for the typed persistence reade
 - **WHEN** a fuzzer finds a reproducible crash
 - **THEN** the minimized input SHALL be added to `tests/fuzz/corpora/<target>/`, the underlying bug SHALL be fixed in the same change, and the corpus entry SHALL remain as a regression seed
 
-#### Scenario: Long-running fuzz runs nightly
-- **WHEN** the nightly CI job executes
-- **THEN** each fuzz target SHALL run for an extended documented duration against the same corpus, and SHALL surface findings into a triage queue tracked in `docs/known-tech-debt.md`
+#### Scenario: Extended fuzz runs are manually triggerable
+- **WHEN** maintainers need deeper fuzz coverage beyond merge-candidate budgets
+- **THEN** extended fuzz runs SHALL execute through an explicit manual workflow trigger and SHALL NOT rely on periodic `schedule` execution
 
 ### Requirement: Allocation-Counter Test Support
 
@@ -50,18 +50,6 @@ The repository SHALL provide an instrumented allocator that test fixtures can us
 #### Scenario: Production builds are unaffected
 - **WHEN** the production binary is built without `MICROIDE_PERF_HARNESS_BUILD`
 - **THEN** the allocator SHALL NOT be instrumented and SHALL NOT introduce overhead
-
-### Requirement: Long-Soak Idle Run
-
-A nightly CI job SHALL run a headless 8-hour idle scenario and SHALL fail if average CPU exceeds a documented threshold or RSS grows beyond a documented bound.
-
-#### Scenario: Long-soak runs nightly
-- **WHEN** the nightly CI job executes
-- **THEN** the harness SHALL run the `long_soak_8h` scenario, SHALL parse RSS at the start, midpoint, and end of the run, SHALL parse CPU usage continuously, and SHALL fail the run on threshold breach
-
-#### Scenario: Idle wake-ups are bounded
-- **WHEN** the long-soak scenario reports SDL wake-ups
-- **THEN** the count SHALL fit within a documented per-hour budget, and the run SHALL fail otherwise; this catches idle-CPU and accidental-poll regressions that shorter scenarios miss
 
 ### Requirement: Bug Triage Queue
 

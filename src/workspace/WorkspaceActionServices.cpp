@@ -828,6 +828,10 @@ void WorkspaceActionContext::SetSoftWrap(bool enabled) {
   state_.editor_preferences.soft_wrap = enabled;
   operations_.apply_editor_preferences_to_all_tabs();
   operations_.save_config_state();
+  // Wrap toggling reflows every visual row in the active editor; the partial
+  // redraw scope from a menu/shortcut close otherwise leaves stale pixels for
+  // rows that did not change geometry. Force a full editor-surface redraw.
+  operations_.request_active_tab_redraw(false);
 }
 
 editor::TextViewport* WorkspaceActionContext::ActiveEditableViewport() {

@@ -365,6 +365,10 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  // Final summary so callers (and agents) get an unambiguous pass signal
+  // without having to inspect the exit code or scrape verbose output.
+  std::cerr << "microide_tests: OK (" << selected_count
+            << (selected_count == 1 ? " test passed)\n" : " tests passed)\n");
   shutdown_sdl();
   return 0;
 }

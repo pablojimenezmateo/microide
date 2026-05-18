@@ -1,11 +1,12 @@
 ## MODIFIED Requirements
 
-### Requirement: Fuzzing Harnesses For Parsers And Importers
-The repository SHALL ship libFuzzer entry points for the typed persistence reader, the legacy persistence importer, the search regex compiler, and the git-blame parser, and CI SHALL run each fuzzer for a bounded time on every merge candidate.
+### Requirement: Fuzzing Harnesses For Parsers
+
+The repository SHALL ship libFuzzer entry points for the typed persistence reader, the search regex compiler, and the git-blame parser, and CI SHALL run each fuzzer for a bounded time on every merge candidate. (The legacy persistence importer was removed in the 2026-04-29 cleanup; its fuzz target was retired along with the importer.)
 
 #### Scenario: Fuzz targets exist
 - **WHEN** the build is configured with `MICROIDE_FUZZ=ON`
-- **THEN** the binaries `PersistedRecordReaderFuzz`, `LegacyImporterFuzz`, `SearchRegexFuzz`, and `GitBlameParserFuzz` SHALL build and SHALL accept libFuzzer input on standard input
+- **THEN** the binaries `PersistedRecordReaderFuzz`, `SearchRegexFuzz`, and `GitBlameParserFuzz` SHALL build and SHALL accept libFuzzer input on standard input
 
 #### Scenario: Fuzz CI runs on every merge candidate
 - **WHEN** a CI build executes

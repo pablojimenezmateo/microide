@@ -56,7 +56,6 @@ Every scenario SHALL capture a documented metric set per iteration and SHALL run
 - **THEN** the harness SHALL compare the median value per metric against the baseline; mean values SHALL NOT be used because tail-latency regressions can hide behind a stable mean
 
 ### Requirement: Committed Baselines And CI Regression Gate
-
 Performance baselines SHALL be committed JSON files under `tests/perf/baselines/<scenario>.json`, one file per scenario, and a CI runner labeled `perf-runner-v1` SHALL run the harness on every merge candidate and fail the merge on any regression beyond the per-metric tolerance.
 
 #### Scenario: Baselines are visible in the PR diff
@@ -74,6 +73,10 @@ Performance baselines SHALL be committed JSON files under `tests/perf/baselines/
 #### Scenario: Smoke subset for fork PRs
 - **WHEN** a CI run executes on a runner not labeled `perf-runner-v1`
 - **THEN** the harness SHALL run a smoke-only subset of scenarios, SHALL emit advisory output only, and SHALL NOT gate the merge
+
+#### Scenario: Harness workflow trigger policy is non-periodic
+- **WHEN** the performance harness workflow is configured in CI
+- **THEN** it SHALL run on merge-candidate and manual event-driven triggers, and SHALL NOT define a periodic `schedule` trigger
 
 ### Requirement: Per-Metric Tolerance Configuration
 

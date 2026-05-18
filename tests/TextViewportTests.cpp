@@ -768,6 +768,53 @@ void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheLazily() {
 }
 #endif
 
+void TestTextViewportSoftWrapPrefersWhitespaceBoundaries() {
+  TextViewport viewport;
+  viewport.LoadContent("hello brave new wonderful world here\n",
+                       "/tmp/soft-wrap-words.txt");
+  viewport.SetViewportSize(10, 12);
+  viewport.SetSoftWrap(true);
+
+  // Four content rows from the long sentence plus the trailing empty-line row.
+  Expect(viewport.VisualRowCount() == 5,
+         "soft wrap should split a long sentence into multiple word-aligned rows");
+
+  const auto row0 = viewport.VisibleWrappedRowLayout(0);
+  const auto row1 = viewport.VisibleWrappedRowLayout(1);
+  const auto row2 = viewport.VisibleWrappedRowLayout(2);
+  const auto row3 = viewport.VisibleWrappedRowLayout(3);
+  Expect(row0.text == "hello brave ",
+         "first wrapped row should consume words until adding the next would overflow");
+  Expect(row1.text == "new ",
+         "second wrapped row should start with the next word, not split 'wonderful'");
+  Expect(row2.text == "wonderful ",
+         "third wrapped row should hold the long word that filled the previous row");
+  Expect(row3.text == "world here",
+         "trailing wrapped row should pack remaining short words together");
+}
+
+void TestTextViewportSoftWrapHardBreaksInsideLongWords() {
+  TextViewport viewport;
+  // No whitespace within wrap_columns of the row start → must hard break.
+  viewport.LoadContent("abcdefghijklmnopqrst\n",
+                       "/tmp/soft-wrap-hard.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  // Three content rows plus the trailing empty-line row.
+  Expect(viewport.VisualRowCount() == 4,
+         "long word with no whitespace should still wrap at the column boundary");
+  const auto row0 = viewport.VisibleWrappedRowLayout(0);
+  const auto row1 = viewport.VisibleWrappedRowLayout(1);
+  const auto row2 = viewport.VisibleWrappedRowLayout(2);
+  Expect(row0.text == "abcdefgh",
+         "first row should hard-break at wrap_columns when no whitespace fits");
+  Expect(row1.text == "ijklmnop",
+         "continuation row should keep packing characters of the unbreakable word");
+  Expect(row2.text == "qrst",
+         "trailing slice of an unbreakable word should still render");
+}
+
 void TestTextViewportSoftWrapForcesHorizontalScrollToZero() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-scroll.txt");
@@ -1415,6 +1462,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
 #endif
   AddTest(tests, "TextViewport/SoftWrapForcesHorizontalScrollToZero",
           TestTextViewportSoftWrapForcesHorizontalScrollToZero);
+  AddTest(tests, "TextViewport/SoftWrapPrefersWhitespaceBoundaries",
+          TestTextViewportSoftWrapPrefersWhitespaceBoundaries);
+  AddTest(tests, "TextViewport/SoftWrapHardBreaksInsideLongWords",
+          TestTextViewportSoftWrapHardBreaksInsideLongWords);
   AddTest(tests, "TextViewport/CollapsedFoldHidesBodyRows",
           TestTextViewportCollapsedFoldHidesBodyRows);
   AddTest(tests, "TextViewport/CollapsedFoldVerticalMotionSkipsHiddenLines",
