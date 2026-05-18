@@ -276,52 +276,57 @@ def discover_scenarios(root: Path) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Run a side scenario-by-scenario
+# Interleaved run (scenario-by-scenario across sides)
 # ---------------------------------------------------------------------------
 
-def run_side(where: Path, label: str, scenarios: list[str], runner: list[str],
-             iterations: int, out_dir: Path, json_out: Path) -> list[str]:
-    merged_dir = out_dir / f"{label}.scenarios"
-    merged_dir.mkdir(parents=True, exist_ok=True)
-    binary = where / BUILD_DIR / "microide" / "microide_perf"
-    total = len(scenarios)
-    failed: list[str] = []
+class SideRun:
+    def __init__(self, where: Path, label: str, out_dir: Path) -> None:
+        self.where = where
+        self.label = label
+        self.merged_dir = out_dir / f"{label}.scenarios"
+        self.merged_dir.mkdir(parents=True, exist_ok=True)
+        self.binary = where / BUILD_DIR / "microide" / "microide_perf"
+        self.failed: list[str] = []
 
-    for idx, scenario in enumerate(scenarios, start=1):
-        single_json = merged_dir / f"{scenario}.json"
-        log_path = merged_dir / f"{scenario}.log"
-        effective_iters = min(iterations, SLOW_SCENARIO_ITERS.get(scenario, iterations))
-        tag = f"[{idx}/{total}] {bold(scenario)}"
-        starting = dim("starting")
-        if effective_iters != iterations:
-            starting += dim(f" ({effective_iters} iter)")
-        log(label, f"{tag} {starting}")
-        argv = [
-            *runner, str(binary),
-            f"--iterations={effective_iters}",
-            f"--scenarios={scenario}",
-            f"--report-json={single_json}",
-        ]
 
-        def progress(line: str, _tag: str = tag, _label: str = label) -> Optional[str]:
-            if line.startswith("[perf] scenario=") and "iteration=" in line:
-                i = line.find("iteration=") + len("iteration=")
-                return f"{_PREFIX} ({_label}) {_tag} {dim('iter ' + line[i:])}"
-            if line.startswith("scenario failed to run:"):
-                return f"{_PREFIX} ({_label}) {_tag} {red(line)}"
-            return None
+def run_scenario(side: SideRun, scenario: str, idx: int, total: int,
+                 iterations: int, runner: list[str]) -> None:
+    single_json = side.merged_dir / f"{scenario}.json"
+    log_path = side.merged_dir / f"{scenario}.log"
+    effective_iters = min(iterations, SLOW_SCENARIO_ITERS.get(scenario, iterations))
+    tag = f"[{idx}/{total}] {bold(scenario)}"
+    starting = dim("starting")
+    if effective_iters != iterations:
+        starting += dim(f" ({effective_iters} iter)")
+    log(side.label, f"{tag} {starting}")
+    argv = [
+        *runner, str(side.binary),
+        f"--iterations={effective_iters}",
+        f"--scenarios={scenario}",
+        f"--report-json={single_json}",
+    ]
 
-        with open(log_path, "w") as log_file:
-            rc = run_streaming(argv, cwd=where, log_file=log_file, line_filter=progress)
+    def progress(line: str, _tag: str = tag, _label: str = side.label) -> Optional[str]:
+        if line.startswith("[perf] scenario=") and "iteration=" in line:
+            i = line.find("iteration=") + len("iteration=")
+            return f"{_PREFIX} ({_label}) {_tag} {dim('iter ' + line[i:])}"
+        if line.startswith("scenario failed to run:"):
+            return f"{_PREFIX} ({_label}) {_tag} {red(line)}"
+        return None
 
-        if single_json.is_file() and single_json.stat().st_size > 0:
-            log(label, f"{tag} {green('ok')}")
-        else:
-            log(label, f"{tag} {red(f'FAILED (rc={rc}; log: {log_path})')}")
-            failed.append(scenario)
+    with open(log_path, "w") as log_file:
+        rc = run_streaming(argv, cwd=side.where, log_file=log_file, line_filter=progress)
 
+    if single_json.is_file() and single_json.stat().st_size > 0:
+        log(side.label, f"{tag} {green('ok')}")
+    else:
+        log(side.label, f"{tag} {red(f'FAILED (rc={rc}; log: {log_path})')}")
+        side.failed.append(scenario)
+
+
+def merge_side_reports(side: SideRun, json_out: Path) -> None:
     merged: dict = {"scenarios": []}
-    for json_path in sorted(merged_dir.glob("*.json")):
+    for json_path in sorted(side.merged_dir.glob("*.json")):
         try:
             data = json.loads(json_path.read_text())
         except (OSError, json.JSONDecodeError):
@@ -330,7 +335,6 @@ def run_side(where: Path, label: str, scenarios: list[str], runner: list[str],
             merged["metadata"] = data["metadata"]
         merged["scenarios"].extend(data.get("scenarios", []))
     json_out.write_text(json.dumps(merged))
-    return failed
 
 
 # ---------------------------------------------------------------------------
@@ -554,10 +558,19 @@ def main() -> int:
 
         current_json = out_dir / "current.json"
         target_json = out_dir / "target.json"
-        current_failed = run_side(root, "current", scenarios, runner,
-                                  iterations, out_dir, current_json)
-        target_failed = run_side(worktree_dir, "target", scenarios, runner,
-                                 iterations, out_dir, target_json)
+        current_side = SideRun(root, "current", out_dir)
+        target_side = SideRun(worktree_dir, "target", out_dir)
+        total = len(scenarios)
+        for idx, scenario in enumerate(scenarios, start=1):
+            # Alternate side order per scenario to avoid consistent thermal bias.
+            run_order = [current_side, target_side] if idx % 2 == 1 else [target_side, current_side]
+            for side in run_order:
+                run_scenario(side, scenario, idx, total, iterations, runner)
+
+        merge_side_reports(current_side, current_json)
+        merge_side_reports(target_side, target_json)
+        current_failed = current_side.failed
+        target_failed = target_side.failed
 
         current_report = json.loads(current_json.read_text())
         target_report = json.loads(target_json.read_text())
