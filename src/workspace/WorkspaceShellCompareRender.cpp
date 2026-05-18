@@ -202,14 +202,30 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       compare_tab->right_view_active ? compare_tab->right_viewport.selection_range() : std::nullopt;
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
       compare_tab->right_editable && compare_tab->right_view_active
-          ? BuildCompareBlameOverlay(*compare_tab, surface, rect)
+          ? editor_blame_overlay_service_.BuildCompareOverlay(
+                context_.current_project_state.root, text_renderer_, git_blame_service_, *compare_tab,
+                EditorBlameOverlayService::CompareOverlayLayout{
+                    .pane_rect = MakeRect(
+                        surface.right_x, rect.y, surface.gutter_width + surface.right_width,
+                        std::max(0.0f, rect.h - (surface.show_horizontal ? 12.0f : 0.0f))),
+                    .right_x = surface.right_x,
+                    .gutter_width = surface.gutter_width,
+                    .right_width = surface.right_width,
+                    .rows_y = surface.rows_y,
+                    .line_height = surface.line_height,
+                    .visible_rows = surface.visible_rows,
+                    .visible_columns = surface.visible_columns,
+                },
+                [this, compare_tab](std::size_t line_index) {
+                  return CompareRowIndexForRightLine(*compare_tab, line_index);
+                })
           : std::nullopt;
   const auto* right_diagnostics =
       compare_tab->right_editable && !compare_tab->right_viewport.path().empty() &&
               !compare_tab->right_viewport.dirty()
           ? diagnostics_store.FindByPath(compare_tab->right_viewport.path())
           : nullptr;
-  visible_editor_blame_overlay_ = blame_overlay;
+  editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay);
   const float bottom_reserved =
       surface.show_horizontal ? kWorkspaceDiffScrollbarReserve : 0.0f;
   const float right_reserved =

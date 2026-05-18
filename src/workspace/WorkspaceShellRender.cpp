@@ -57,7 +57,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   util::AddPerformanceCounter(util::PerfCounterId::RenderClipInvocations);
   const WorkspaceLayout& layout = *prepared_frame_layout_;
   std::optional<SDL_FRect> active_editor_pane_rect;
-  visible_editor_blame_overlay_.reset();
+  editor_blame_overlay_service_.ClearVisibleOverlay();
 
   EnsureClipFrameAndOverlayViewModels(layout);
   // Heavy subsystems (editor surface, sidebar, bottom panel, settings overlay)

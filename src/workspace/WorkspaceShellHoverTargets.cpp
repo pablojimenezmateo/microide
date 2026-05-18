@@ -398,7 +398,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTarg
     return std::nullopt;
   }
 
-  if (const editor::EditorBlameLine* blame_line = EditorBlameLineAtPosition(x, y);
+  if (const editor::EditorBlameLine* blame_line = editor_blame_overlay_service_.LineAtPosition(x, y);
       blame_line != nullptr && blame_line->interactive) {
     return EditorHoverTarget{
         .kind = EditorHoverTarget::Kind::Blame,

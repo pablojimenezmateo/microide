@@ -255,12 +255,15 @@
     const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
     for (const auto& pane : panes) {
       if (pane.active) {
-        return shell.BuildEditorBlameOverlay(*viewport, pane.rect, 520.0f,
-                                             ActiveEditorStickyScrollRows(shell, *viewport, pane.rect));
+        return shell.editor_blame_overlay_service_.BuildEditorOverlay(
+            shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+            *viewport, pane.rect, 520.0f, ActiveEditorStickyScrollRows(shell, *viewport, pane.rect));
       }
     }
     return viewport->is_placeholder()
-               ? shell.BuildEditorBlameOverlay(*viewport, layout.editor_surface)
+               ? shell.editor_blame_overlay_service_.BuildEditorOverlay(
+                     shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+                     *viewport, layout.editor_surface, 520.0f, 0)
                : std::nullopt;
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveCompareBlameOverlay(
@@ -270,8 +273,25 @@
       return std::nullopt;
     }
     auto& compare = ActiveCompare(shell);
-    return shell.BuildCompareBlameOverlay(compare, shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare),
-                                          layout.editor_surface);
+    const auto surface = shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare);
+    return shell.editor_blame_overlay_service_.BuildCompareOverlay(
+        shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+        compare,
+        EditorBlameOverlayService::CompareOverlayLayout{
+            .pane_rect = MakeRect(surface.right_x, layout.editor_surface.y,
+                                  surface.gutter_width + surface.right_width,
+                                  std::max(0.0f, layout.editor_surface.h - (surface.show_horizontal ? 12.0f : 0.0f))),
+            .right_x = surface.right_x,
+            .gutter_width = surface.gutter_width,
+            .right_width = surface.right_width,
+            .rows_y = surface.rows_y,
+            .line_height = surface.line_height,
+            .visible_rows = surface.visible_rows,
+            .visible_columns = surface.visible_columns,
+        },
+        [&shell, &compare](std::size_t line_index) {
+          return shell.CompareRowIndexForRightLine(compare, line_index);
+        });
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveMergeBlameOverlay(
       WorkspaceShell& shell) {
@@ -279,12 +299,14 @@
       return std::nullopt;
     }
     auto& merge = ActiveMerge(shell);
-    return shell.BuildEditorBlameOverlay(merge.result_viewport, ActiveMergeResultRect(shell), 280.0f);
+    return shell.editor_blame_overlay_service_.BuildEditorOverlay(
+        shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+        merge.result_viewport, ActiveMergeResultRect(shell), 280.0f, 0);
   }
   static void SetVisibleEditorBlameOverlay(
       WorkspaceShell& shell,
       std::optional<microide::editor::EditorBlameOverlay> overlay) {
-    shell.visible_editor_blame_overlay_ = std::move(overlay);
+    shell.editor_blame_overlay_service_.SetVisibleOverlay(std::move(overlay));
   }
   static std::optional<SDL_FRect> ActiveEditorHoverPopupRect(WorkspaceShell& shell) {
     const auto popup = shell.ActiveEditorHoverPopupLayout();

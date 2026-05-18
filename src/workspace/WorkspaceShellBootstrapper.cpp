@@ -156,7 +156,7 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
                                      shell->layout_mode_service_.StatusBarVisible());
               },
           .reset_visible_editor_blame_overlay =
-              [shell]() { shell->visible_editor_blame_overlay_.reset(); },
+              [shell]() { shell->editor_blame_overlay_service_.ClearVisibleOverlay(); },
           .should_draw_editor_caret =
               [shell]() {
                 return shell->CaretVisibleNow() &&

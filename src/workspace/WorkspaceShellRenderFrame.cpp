@@ -450,11 +450,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             render_whitespace_enabled);
       }
       const auto blame_overlay =
-          pane.active ? BuildEditorBlameOverlay(*viewport, pane.rect, 520.0f,
-                                                tls_editor_surface_vm.sticky_lines.size())
+          pane.active
+              ? editor_blame_overlay_service_.BuildEditorOverlay(
+                    context_.current_project_state.root, text_renderer_, git_blame_service_, *viewport,
+                    pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size())
                       : std::nullopt;
       if (pane.active) {
-        visible_editor_blame_overlay_ = blame_overlay;
+        editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay);
       }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,

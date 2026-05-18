@@ -411,8 +411,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   }
 
   const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
-      BuildEditorBlameOverlay(merge_tab->result_viewport, interaction.result.rect, 280.0f);
-  visible_editor_blame_overlay_ = merge_blame_overlay;
+      editor_blame_overlay_service_.BuildEditorOverlay(context_.current_project_state.root,
+                                                       text_renderer_, git_blame_service_,
+                                                       merge_tab->result_viewport,
+                                                       interaction.result.rect, 280.0f, 0);
+  editor_blame_overlay_service_.SetVisibleOverlay(merge_blame_overlay);
   const auto* merge_diagnostics =
       !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
           ? context_.current_project_state.diagnostics_store.FindByPath(merge_tab->result_viewport.path())

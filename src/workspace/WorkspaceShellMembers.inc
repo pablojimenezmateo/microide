@@ -856,20 +856,6 @@
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
   void OpenGitOutgoingBasePrompt();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
-  bool EditorBlameFitsPane(const editor::TextViewport& viewport,
-                           const SDL_FRect& rect,
-                           float minimum_pane_width = 520.0f) const;
-  std::optional<editor::EditorBlameOverlay> BuildEditorBlameOverlay(
-      editor::TextViewport& viewport,
-      const SDL_FRect& rect,
-      float minimum_pane_width = 520.0f,
-      std::size_t sticky_scroll_rows = 0);
-  std::optional<editor::EditorBlameOverlay> BuildCompareBlameOverlay(
-      CompareTabState& compare_tab,
-      const CompareSurfaceLayout& surface,
-      const SDL_FRect& rect);
-  const editor::EditorBlameLine* VisibleEditorBlameLine(std::size_t line_index) const;
-  const editor::EditorBlameLine* EditorBlameLineAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> EditorHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> DiagnosticHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> DiagnosticHoverTargetForViewport(
@@ -1477,7 +1463,7 @@
   Uint32 plugin_async_process_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;
   project::GitBlameService git_blame_service_;
-  std::optional<editor::EditorBlameOverlay> visible_editor_blame_overlay_;
+  EditorBlameOverlayService editor_blame_overlay_service_;
   std::optional<EditorHoverTarget> active_editor_hover_target_;
   bool editor_hover_refresh_pending_ = false;
   std::function<std::optional<std::string>()> clipboard_text_reader_;

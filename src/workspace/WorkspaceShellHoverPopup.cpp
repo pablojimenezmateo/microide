@@ -133,7 +133,7 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
 
   if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::Blame) {
     const editor::EditorBlameLine* blame_line =
-        VisibleEditorBlameLine(active_editor_hover_target_->blame_line_index);
+        editor_blame_overlay_service_.VisibleLine(active_editor_hover_target_->blame_line_index);
     if (blame_line == nullptr || !blame_line->interactive) {
       return std::nullopt;
     }
@@ -369,7 +369,8 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
   float text_y = popup->rect.y + kEditorHoverPopupPadding;
 
   if (popup->kind == EditorHoverTarget::Kind::Blame) {
-    const editor::EditorBlameLine* blame_line = VisibleEditorBlameLine(popup->blame_line_index);
+    const editor::EditorBlameLine* blame_line =
+        editor_blame_overlay_service_.VisibleLine(popup->blame_line_index);
     if (blame_line != nullptr) {
       const auto summary_lines =
           WrapEditorHoverPopupText(blame_line->summary, text_width, kEditorHoverPopupMaxSummaryLines);

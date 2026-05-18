@@ -67,10 +67,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       Contains(visible_hover_popup->rect, event.button.x, event.button.y)) {
     if (visible_hover_popup->kind == EditorHoverTarget::Kind::Blame &&
         visible_hover_popup->primary_action_rect.has_value() &&
-        Contains(EditorHoverPopupPrimaryActionHitRect(*visible_hover_popup), event.button.x,
+      Contains(EditorHoverPopupPrimaryActionHitRect(*visible_hover_popup), event.button.x,
                  event.button.y)) {
       if (const editor::EditorBlameLine* blame_line =
-              VisibleEditorBlameLine(visible_hover_popup->blame_line_index);
+              editor_blame_overlay_service_.VisibleLine(visible_hover_popup->blame_line_index);
           blame_line != nullptr && !blame_line->commit_id.empty() &&
           WriteClipboardText(blame_line->commit_id)) {
       }
@@ -197,8 +197,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT) {
-    if (EditorBlameLineAtPosition(static_cast<float>(event.button.x),
-                                  static_cast<float>(event.button.y)) != nullptr) {
+    if (editor_blame_overlay_service_.LineAtPosition(static_cast<float>(event.button.x),
+                                                     static_cast<float>(event.button.y)) != nullptr) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;

@@ -251,6 +251,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTabActionExecutor.cpp
   src/workspace/WorkspaceShellChrome.cpp
   src/workspace/WorkspaceShellBlame.cpp
+  src/workspace/EditorBlameOverlayService.cpp
   src/workspace/WorkspaceShellCursor.cpp
   src/workspace/WorkspaceDiffTabCoordinator.cpp
   src/workspace/WorkspaceDirtyPromptCoordinator.cpp

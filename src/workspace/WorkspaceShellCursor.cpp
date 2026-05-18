@@ -698,7 +698,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
     return CursorKind::Default;
   }
-  if (const editor::EditorBlameLine* blame_line = EditorBlameLineAtPosition(x, y);
+  if (const editor::EditorBlameLine* blame_line = editor_blame_overlay_service_.LineAtPosition(x, y);
       blame_line != nullptr) {
     return blame_line->interactive ? CursorKind::Pointer : CursorKind::Default;
   }

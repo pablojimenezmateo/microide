@@ -270,9 +270,10 @@ Audit of the four originally-named candidates (2026-05-18):
   methods are pure delegations to `output_channels_`; the other two mutate
   `current_project_state.panel.output.*` — inherent shell-state changes, not service-extractable
   behavior.
-- `WorkspaceShellBlame.cpp` (~284 lines, 7 methods): real overlay logic (geometry, formatting,
-  per-line lookup). Migrating would require an `EditorBlameOverlayService` with its own state
-  owner. Medium-small work, not low.
+- `WorkspaceShellBlame.cpp` was a real service candidate (geometry, formatting, per-line lookup).
+  This follow-up has now landed: `EditorBlameOverlayService` owns blame-overlay state, line lookup,
+  hit-testing, and overlay construction for editor / compare surfaces. The shell keeps
+  `GitBlameService` ownership and narrow invalidation / clear entry points.
 - `WorkspaceShellAssist.cpp` (~776 lines, 15 methods): real coordination of completion,
   snippets, code-actions, go-to-definition, find-references. Touches editor state, LSP state,
   snippet sessions. Migration needs a new `AssistService` with proper ownership of these
@@ -293,7 +294,6 @@ Recommended follow-ups (deferred, each a separate medium-sized change):
 - Stand up `AssistService` and migrate the 15 methods in `WorkspaceShellAssist.cpp`.
 - Stand up `TabStripService` (or split it) and migrate the 21 methods in
   `WorkspaceShellChrome.cpp`.
-- Stand up `EditorBlameOverlayService` and migrate the 7 methods in `WorkspaceShellBlame.cpp`.
 - Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now hard-fails this.
 
 ## Open Follow-Ups After The 2026-04-29 Cleanup
