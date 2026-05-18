@@ -437,24 +437,42 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
 }
 
 void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
-  operations_.invalidate_editor_blame_path(path);
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  operations_.invalidate_editor_blame_path(normalized_path);
+
+  std::vector<std::size_t> matching_clean_tab_indices;
+  matching_clean_tab_indices.reserve(state_.open_tabs.size());
   for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
     auto& tab = state_.open_tabs[i];
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || IsDirty(i)) {
       continue;
     }
-
-    editor::TextViewport reopened_view;
-    if (!reopened_view.OpenFile(path)) {
-      continue;
+    const bool has_matching_view = std::any_of(
+        tab.editor_state->views.begin(), tab.editor_state->views.end(), [&](const auto& view) {
+          return operations_.editor_view_path(view) == normalized_path;
+        });
+    if (has_matching_view) {
+      matching_clean_tab_indices.push_back(i);
     }
-    operations_.apply_editor_preferences(reopened_view);
-    operations_.apply_detected_indent_on_open(reopened_view);
+  }
+  if (matching_clean_tab_indices.empty()) {
+    return;
+  }
+
+  editor::TextViewport reopened_view;
+  if (!reopened_view.OpenFile(normalized_path)) {
+    return;
+  }
+  operations_.apply_editor_preferences(reopened_view);
+  operations_.apply_detected_indent_on_open(reopened_view);
+
+  for (std::size_t i : matching_clean_tab_indices) {
+    auto& tab = state_.open_tabs[i];
 
     bool reloaded_any = false;
     for (auto& view : tab.editor_state->views) {
       const std::filesystem::path current_path = operations_.editor_view_path(view);
-      if (current_path != path.lexically_normal()) {
+      if (current_path != normalized_path) {
         continue;
       }
       const editor::TextViewport* current_view = &view.viewport;
@@ -464,7 +482,7 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
       restored_view.SetScrollLine(current_view->scroll_line());
       restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
       view.viewport = restored_view;
-      view.restored_path = path.lexically_normal();
+      view.restored_path = normalized_path;
       view.restored_cursor_line = restored_view.cursor_line();
       view.restored_cursor_column = restored_view.cursor_column();
       view.restored_scroll_line = restored_view.scroll_line();

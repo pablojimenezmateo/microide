@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "util/PerformanceCounters.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -1005,6 +1006,29 @@ void TestWorkspaceShellResolvedKeybindingsAreCachedUntilInputsChange() {
   const auto& disabled_again = WorkspaceShellTestAccess::ResolvedKeybindings(shell);
   Expect(disabled_again.data() == disabled_data,
          "rebuilt resolved keybindings should be reused on subsequent stable calls");
+}
+
+void TestWorkspaceShellReopeningCleanTabDoesNotReloadUnrelatedTabs() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  const std::filesystem::path beta = root / "beta.txt";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project should open for clean-tab reload regression");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha),
+         "alpha should open for clean-tab reload regression");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta),
+         "beta should open for clean-tab reload regression");
+
+  util::ResetPerformanceCounters();
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorContentRevisionBumps) == 2,
+         "reopening an already-open clean tab should avoid reloading unrelated clean tabs");
 }
 
 void TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus() {
@@ -2427,6 +2451,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenFromWelcomeInvalidatesCachedLayout);
   AddTest(tests, "WorkspaceShell/ResolvedKeybindingsAreCachedUntilInputsChange",
           TestWorkspaceShellResolvedKeybindingsAreCachedUntilInputsChange);
+  AddTest(tests, "WorkspaceShell/ReopeningCleanTabDoesNotReloadUnrelatedTabs",
+          TestWorkspaceShellReopeningCleanTabDoesNotReloadUnrelatedTabs);
   AddTest(tests, "WorkspaceShell/OverlayOutsideClickRestoresPrimaryFocus",
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",
