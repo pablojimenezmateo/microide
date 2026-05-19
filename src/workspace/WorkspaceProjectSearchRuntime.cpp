@@ -42,7 +42,8 @@ std::optional<project::ProjectSearchUpdate> WorkspaceProjectSearchRuntime::Consu
       update.search_id != active_search_id_) {
     return std::nullopt;
   }
-  update.results = service_.SnapshotResults(active_search_id_);
+  // `update.results` carries the delta produced since the previous consume; the
+  // shell appends it to its cumulative view instead of replacing on every batch.
   if (update.finished) {
     active_run_id_ = 0;
     active_search_id_ = 0;

@@ -122,10 +122,20 @@ class PreparedLiteralQuery {
 
   bool case_sensitive() const { return case_sensitive_; }
 
-  std::string LowerLine(std::string_view line) const {
+  // Lowercases `line` into `out` while reusing `out`'s existing capacity so the
+  // per-line search loop does not allocate/free a fresh string on every line in
+  // case-insensitive mode.
+  void LowerLine(std::string_view line, std::string& out) const {
     util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
     util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
-    return case_sensitive_ ? std::string{} : ToLowerAscii(line);
+    if (case_sensitive_) {
+      out.clear();
+      return;
+    }
+    out.resize(line.size());
+    std::transform(line.begin(), line.end(), out.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
   }
 
   bool FindNext(std::string_view line,
@@ -191,11 +201,7 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
     active_search_id_ = ++next_search_id_;
     last_progress_searched_files_ = 0;
     last_progress_total_files_ = 0;
-    {
-      std::unique_lock buffer_lock(result_buffer_.mutex);
-      result_buffer_.search_id = active_search_id_;
-      result_buffer_.results.clear();
-    }
+    pending_update_ = {};
   }
   cancel_requested_.store(false, std::memory_order_relaxed);
 
@@ -215,11 +221,6 @@ void ProjectSearchService::Stop() {
     std::lock_guard lock(mutex_);
     active_run_id_ = 0;
     active_search_id_ = ++next_search_id_;
-    {
-      std::unique_lock buffer_lock(result_buffer_.mutex);
-      result_buffer_.search_id = active_search_id_;
-      result_buffer_.results.clear();
-    }
     pending_update_ = {};
   }
 
@@ -231,18 +232,6 @@ ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
   ProjectSearchUpdate update = std::move(pending_update_);
   pending_update_ = {};
   return update;
-}
-
-std::vector<ProjectSearchResult> ProjectSearchService::SnapshotResults(
-    std::uint64_t search_id) const {
-  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectSnapshotResultsCalls);
-  std::shared_lock buffer_lock(result_buffer_.mutex);
-  if (search_id == 0 || result_buffer_.search_id != search_id) {
-    return {};
-  }
-  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectSnapshotResultsCount,
-                              result_buffer_.results.size());
-  return result_buffer_.results;
 }
 
 std::uint64_t ProjectSearchService::active_search_id() const {
@@ -372,7 +361,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       }
 
       if (literal_query != nullptr) {
-        lowered_line = literal_query->LowerLine(line);
+        literal_query->LowerLine(line, lowered_line);
       }
 
       std::size_t search_from = 0;
@@ -432,21 +421,6 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
     if (active_run_id_ != run_id) {
       return;
     }
-    {
-      std::shared_lock buffer_lock(result_buffer_.mutex);
-      if (active_search_id_ != result_buffer_.search_id) {
-        return;
-      }
-    }
-    {
-      std::unique_lock buffer_lock(result_buffer_.mutex);
-      for (const auto& result : batch) {
-        if (result_buffer_.results.size() >= kMaxResults) {
-          break;
-        }
-        result_buffer_.results.push_back(result);
-      }
-    }
     if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
       pending_update_ = {};
     }
@@ -454,12 +428,12 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
     pending_update_.search_id = active_search_id_;
     pending_update_.searched_files = last_progress_searched_files_;
     pending_update_.total_files = last_progress_total_files_;
-    for (auto& result : batch) {
-      if (pending_update_.results.size() >= kMaxResults) {
-        break;
-      }
-      pending_update_.results.push_back(std::move(result));
-    }
+    // The worker stops emitting matches at `kMaxResults` (see `RunSearch`), so
+    // we never need to cap here — push the whole batch and let the consumer
+    // apply its own display cap.
+    pending_update_.results.insert(pending_update_.results.end(),
+                                   std::make_move_iterator(batch.begin()),
+                                   std::make_move_iterator(batch.end()));
   }
   PushWakeEvent();
 }
@@ -469,12 +443,6 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletio
     std::lock_guard lock(mutex_);
     if (active_run_id_ != run_id) {
       return;
-    }
-    {
-      std::shared_lock buffer_lock(result_buffer_.mutex);
-      if (active_search_id_ != result_buffer_.search_id) {
-        return;
-      }
     }
     if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
       pending_update_ = {};

@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -63,8 +62,13 @@ class ProjectSearchService {
                       ProjectSearchOptions options = {},
                       std::vector<std::filesystem::path> indexed_files = {});
   void Stop();
+  // Returns and clears the accumulated delta since the previous call: results
+  // produced by the worker since the last `TakePendingUpdate`, plus current
+  // progress/finished/error/truncated state. Consumers should append the
+  // returned results to their own cumulative view (the service no longer
+  // exposes a snapshot of all results because every call copied the full
+  // accumulator under a shared lock).
   ProjectSearchUpdate TakePendingUpdate();
-  std::vector<ProjectSearchResult> SnapshotResults(std::uint64_t search_id) const;
   std::uint64_t active_search_id() const;
 
  private:
@@ -90,12 +94,6 @@ class ProjectSearchService {
   void PublishProgress(std::uint64_t run_id, std::size_t searched_files, std::size_t total_files);
   void PushWakeEvent() const;
 
-  struct SearchResultBuffer {
-    mutable std::shared_mutex mutex;
-    std::vector<ProjectSearchResult> results;
-    std::uint64_t search_id = 0;
-  };
-
   mutable std::mutex mutex_;
   util::TaskExecutor task_executor_;
   std::uint64_t next_run_id_ = 0;
@@ -109,7 +107,6 @@ class ProjectSearchService {
   // each pending update carries the denominator even when only results changed.
   std::size_t last_progress_searched_files_ = 0;
   std::size_t last_progress_total_files_ = 0;
-  SearchResultBuffer result_buffer_;
 };
 
 }  // namespace microide::project

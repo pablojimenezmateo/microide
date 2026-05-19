@@ -64,11 +64,12 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   }
   auto update = *maybe_update;
 
-  context_.current_project_state.overlay.workflow.project_search.results = std::move(update.results);
-  if (context_.current_project_state.overlay.workflow.project_search.results.size() >
-      kMaxProjectSearchResults) {
-    context_.current_project_state.overlay.workflow.project_search.results.resize(
-        kMaxProjectSearchResults);
+  auto& shell_results = context_.current_project_state.overlay.workflow.project_search.results;
+  for (auto& result : update.results) {
+    if (shell_results.size() >= kMaxProjectSearchResults) {
+      break;
+    }
+    shell_results.push_back(std::move(result));
   }
 
   context_.current_project_state.overlay.workflow.project_search.truncated =
