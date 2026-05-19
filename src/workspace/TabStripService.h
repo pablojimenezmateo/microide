@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
@@ -124,6 +125,20 @@ class TabStripService {
     std::vector<float> widths;
     std::vector<std::string> display_titles;
     std::vector<std::string> tooltip_labels;
+    std::uint64_t version = 0;
+    bool valid = false;
+  };
+
+  // Memoizes ComputeVisibleEditorTabs output. The geometry cache version above
+  // bumps each time RefreshEditorGeometryCache rebuilds the source widths /
+  // titles; this cache hits when (version, strip, active, scroll) match the
+  // previous call, skipping BuildVisibleStripTabs + ChromeTabRenderItem churn.
+  struct VisibleEditorTabsCache {
+    std::uint64_t geometry_version = 0;
+    SDL_FRect strip{};
+    std::size_t active_tab_index = 0;
+    int tab_scroll_index = 0;
+    std::vector<VisibleStripTab> tabs;
     bool valid = false;
   };
 
@@ -151,6 +166,7 @@ class TabStripService {
   bool ScrollTabIndex(int& scroll_index, int direction, std::size_t total) const;
 
   mutable TabStripGeometryCache editor_tab_geometry_cache_;
+  mutable VisibleEditorTabsCache visible_editor_tabs_cache_;
 };
 
 }  // namespace microide::workspace

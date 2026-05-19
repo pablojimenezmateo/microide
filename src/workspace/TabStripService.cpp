@@ -165,7 +165,9 @@ void TabStripService::RefreshEditorGeometryCache(const ProjectWorkspaceState& st
     editor_tab_geometry_cache_.widths.push_back(
         MeasureEditorTabWidth(editor_tab_geometry_cache_.display_titles.back(), measure_width));
   }
+  ++editor_tab_geometry_cache_.version;
   editor_tab_geometry_cache_.valid = true;
+  visible_editor_tabs_cache_.valid = false;
 }
 
 void TabStripService::EnsureActiveEditorTabVisible(ProjectWorkspaceState& state,
@@ -228,10 +230,30 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
     const TitleProvider& tooltip_label) const {
   if (state.open_tabs.empty()) {
     editor_tab_geometry_cache_.valid = false;
+    visible_editor_tabs_cache_.valid = false;
     return {};
   }
 
   RefreshEditorGeometryCache(state, tab_strip.w, measure_width, display_title, tooltip_label);
+
+  // Memoize the built VisibleStripTab vector keyed by geometry-cache version
+  // plus the inputs the BuildVisibleStripTabs loop varies on. The geometry
+  // cache itself only refreshes on (tab_count, window_width) changes, so the
+  // version bumps capture genuine source-data turnover; this avoids rebuilding
+  // ChromeTabRenderItem / VisibleStripTab vectors per mouse-motion frame when
+  // nothing has actually changed.
+  const auto strip_matches = [&] {
+    return visible_editor_tabs_cache_.strip.x == tab_strip.x &&
+           visible_editor_tabs_cache_.strip.y == tab_strip.y &&
+           visible_editor_tabs_cache_.strip.w == tab_strip.w &&
+           visible_editor_tabs_cache_.strip.h == tab_strip.h;
+  };
+  if (visible_editor_tabs_cache_.valid &&
+      visible_editor_tabs_cache_.geometry_version == editor_tab_geometry_cache_.version &&
+      visible_editor_tabs_cache_.active_tab_index == state.active_tab_index &&
+      visible_editor_tabs_cache_.tab_scroll_index == state.tab_scroll_index && strip_matches()) {
+    return visible_editor_tabs_cache_.tabs;
+  }
 
   const float tab_y = tab_strip.y + 2.0f;
   const float tab_height = std::max(22.0f, tab_strip.h - 2.0f);
@@ -270,11 +292,19 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
   if (all_tabs_visible) {
     tabs = build_tabs(tab_strip.x, 0.0f);
   }
+
+  visible_editor_tabs_cache_.geometry_version = editor_tab_geometry_cache_.version;
+  visible_editor_tabs_cache_.strip = tab_strip;
+  visible_editor_tabs_cache_.active_tab_index = state.active_tab_index;
+  visible_editor_tabs_cache_.tab_scroll_index = state.tab_scroll_index;
+  visible_editor_tabs_cache_.tabs = tabs;
+  visible_editor_tabs_cache_.valid = true;
   return tabs;
 }
 
 void TabStripService::InvalidateEditorTabGeometry() {
   editor_tab_geometry_cache_.valid = false;
+  visible_editor_tabs_cache_.valid = false;
 }
 
 TabStripOverflowControls TabStripService::BuildOverflowControls(
