@@ -601,6 +601,7 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       .project_root = context_.current_project_state.root,
       .focus = context_.current_project_state.surface.focus,
       .command_state = &context_.current_project_state.panel.command,
+      .project_state = &context_.current_project_state,
   };
 }
 

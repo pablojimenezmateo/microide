@@ -55,17 +55,29 @@ SDL_Color MergeMarkerColor(const render::Theme& theme,
   }
 }
 
+bool MergeMarkerTrackMatches(const SDL_FRect& a, const SDL_FRect& b) {
+  return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
 void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
                                const render::Theme& theme,
                                const SDL_FRect& track,
                                std::size_t total_rows,
-                               const std::vector<MergeScrollbarMarkerInput>& inputs) {
+                               const std::vector<MergeScrollbarMarkerInput>& inputs,
+                               MergeTabState& merge_tab) {
   if (renderer == nullptr) {
     return;
   }
 
-  const auto markers = BuildMergeScrollbarMarkers(track, total_rows, inputs);
-  for (const MergeScrollbarMarker& marker : markers) {
+  if (!merge_tab.scrollbar_marker_cache_valid ||
+      merge_tab.scrollbar_marker_cache_revision != merge_tab.model_revision ||
+      !MergeMarkerTrackMatches(merge_tab.scrollbar_marker_cache_track, track)) {
+    merge_tab.scrollbar_marker_cache = BuildMergeScrollbarMarkers(track, total_rows, inputs);
+    merge_tab.scrollbar_marker_cache_track = track;
+    merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;
+    merge_tab.scrollbar_marker_cache_valid = true;
+  }
+  for (const MergeScrollbarMarker& marker : merge_tab.scrollbar_marker_cache) {
     const SDL_Color color = MergeMarkerColor(theme, marker.choice, marker.valid);
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRect(renderer, &marker.rect);
@@ -210,7 +222,8 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
     }
     DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
     DrawRect(renderer, marker_lane, theme_.border);
-    DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs);
+    DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs,
+                              *merge_tab);
     DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
     DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                        context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);

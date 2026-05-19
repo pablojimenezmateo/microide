@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <shared_mutex>
 #include <vector>
@@ -24,9 +25,15 @@ struct FileIndexSnapshot {
   std::vector<ProjectFile> files;
 };
 
+// Immutable, shared list of relative paths produced by FileIndex.
+using SharedPathList = std::shared_ptr<const std::vector<std::filesystem::path>>;
+
 struct FilePathSnapshot {
   std::uint64_t version = 0;
-  std::vector<std::filesystem::path> files;
+  // Shared with the FileIndex cache: consumers can iterate without copying. The
+  // pointer stays valid for as long as the consumer holds the snapshot, even if
+  // the cache is rebuilt under them (a rebuild swaps in a new shared_ptr).
+  SharedPathList files;
 };
 
 class FileIndex {
@@ -62,7 +69,7 @@ class FileIndex {
 
  private:
   struct CacheBucket {
-    std::vector<std::filesystem::path> files;
+    SharedPathList files;
     bool needs_refresh = true;
   };
 

@@ -754,6 +754,7 @@
   void RenderCompareSurface(SDL_Renderer* renderer,
                             const SDL_FRect& rect,
                             CompareTabState& compare_tab,
+                            const std::filesystem::path& project_root,
                             bool draw_compare_caret,
                             const editor::DiagnosticsStore& diagnostics_store);
   void RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
@@ -1393,6 +1394,20 @@
   RenderInvalidation pending_render_invalidation_;
   int post_render_full_redraws_remaining_ = 0;
   CursorKind cursor_kind_ = CursorKind::Default;
+  // Cached fingerprint of state CursorKindForPosition depends on, so the per-frame
+  // UpdateMouseCursor call can short-circuit when nothing relevant changed.
+  struct CursorKindFingerprint {
+    float x = 0.0f;
+    float y = 0.0f;
+    int drag_target = 0;
+    bool valid = false;
+    bool dirty_prompt = false;
+    bool prompt_surface = false;
+    bool menu_bar_open = false;
+    bool overflow_popup_open = false;
+    bool tree_context_menu_open = false;
+  };
+  CursorKindFingerprint cursor_kind_fingerprint_{};
   SDL_Cursor* text_cursor_ = nullptr;
   SDL_Cursor* pointer_cursor_ = nullptr;
   SDL_Cursor* ew_resize_cursor_ = nullptr;

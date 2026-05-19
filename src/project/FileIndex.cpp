@@ -206,12 +206,15 @@ FilePathSnapshot FileIndex::SnapshotPathsWithVersion(ProjectFileScanMode mode) c
 }
 
 std::vector<std::filesystem::path> FileIndex::SnapshotPaths(ProjectFileScanMode mode) const {
-  return SnapshotPathsWithVersion(mode).files;
+  const FilePathSnapshot snapshot = SnapshotPathsWithVersion(mode);
+  return snapshot.files ? *snapshot.files : std::vector<std::filesystem::path>{};
 }
 
 const std::vector<std::filesystem::path>& FileIndex::files(ProjectFileScanMode mode) const {
+  static const std::vector<std::filesystem::path> kEmpty;
   EnsureFresh(mode);
-  return CacheIndex(mode) == 0 ? exclude_hidden_cache_.files : include_hidden_cache_.files;
+  const auto& bucket = CacheIndex(mode) == 0 ? exclude_hidden_cache_ : include_hidden_cache_;
+  return bucket.files ? *bucket.files : kEmpty;
 }
 
 std::uint64_t FileIndex::version() const {
@@ -289,19 +292,21 @@ bool FileIndex::RemoveProjectFileLocked(const std::filesystem::path& relative_pa
 
 void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const {
   util::PerformanceTrace::Scope perf_scope("FileIndex::RebuildCacheLocked");
-  cache.files.clear();
+  auto rebuilt = std::make_shared<std::vector<std::filesystem::path>>();
   if (root_.empty()) {
+    cache.files = std::shared_ptr<const std::vector<std::filesystem::path>>(std::move(rebuilt));
     cache.needs_refresh = false;
     return;
   }
 
-  cache.files.reserve(files_.size());
+  rebuilt->reserve(files_.size());
   for (const auto& file : files_) {
     if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(file.relative_path)) {
       continue;
     }
-    cache.files.push_back(file.relative_path);
+    rebuilt->push_back(file.relative_path);
   }
+  cache.files = std::shared_ptr<const std::vector<std::filesystem::path>>(std::move(rebuilt));
   cache.needs_refresh = false;
 }
 

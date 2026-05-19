@@ -53,6 +53,9 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "editor.highlight_cache_evictions",
     "render.clip_invocations",
     "workspace.scheduled_wakes",
+    "workspace.wake_reason_plugin_reload",
+    "workspace.wake_reason_caret_blink",
+    "workspace.wake_reason_none",
     "terminal.scrollback_lines_allocated",
 };
 

@@ -42,11 +42,11 @@ void WorkspaceShell::RefreshProjectSearch() {
   const project::FilePathSnapshot file_snapshot =
       context_.current_project_state.file_index.SnapshotPathsWithVersion(scan_mode);
   util::AddPerformanceCounter(util::PerfCounterId::SearchProjectCandidateFilesFromIndex,
-                              file_snapshot.files.size());
+                              file_snapshot.files ? file_snapshot.files->size() : 0);
   project_search_runtime_.Start(context_.current_project_state.root,
                                 context_.current_project_state.overlay.workflow.project_search.query.text(),
                                 context_.current_project_state.overlay.workflow.project_search.options,
-                                std::move(file_snapshot.files));
+                                file_snapshot.files);
   ResetOverlayScroll();
   RequestSidebarRedraw();
 }

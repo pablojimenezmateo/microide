@@ -809,6 +809,34 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
     editor_hover_refresh_pending_ = false;
   }
 
+  // Fast-path: if the inputs CursorKindForPosition reads haven't changed since the
+  // last call (typical PrepareFrameOnce frame where the mouse is still and no menu
+  // / prompt / drag state changed), skip the hit-testing work entirely.
+  CursorKindFingerprint next_fp{
+      .x = x,
+      .y = y,
+      .drag_target = static_cast<int>(context_.interaction_state.drag_target),
+      .valid = true,
+      .dirty_prompt = context_.prompts.dirty_visible,
+      .prompt_surface = context_.prompts.surface_visible,
+      .menu_bar_open = context_.menu_state.menu_bar_open,
+      .overflow_popup_open = context_.menu_state.overflow_popup_open,
+      .tree_context_menu_open = context_.menu_state.tree_context_menu.open,
+  };
+  if (cursor_kind_fingerprint_.valid &&
+      cursor_kind_fingerprint_.x == next_fp.x &&
+      cursor_kind_fingerprint_.y == next_fp.y &&
+      cursor_kind_fingerprint_.drag_target == next_fp.drag_target &&
+      cursor_kind_fingerprint_.dirty_prompt == next_fp.dirty_prompt &&
+      cursor_kind_fingerprint_.prompt_surface == next_fp.prompt_surface &&
+      cursor_kind_fingerprint_.menu_bar_open == next_fp.menu_bar_open &&
+      cursor_kind_fingerprint_.overflow_popup_open == next_fp.overflow_popup_open &&
+      cursor_kind_fingerprint_.tree_context_menu_open == next_fp.tree_context_menu_open &&
+      !workspace_layout_recomputed) {
+    return;
+  }
+  cursor_kind_fingerprint_ = next_fp;
+
   const CursorKind next_kind = CursorKindForPosition(x, y);
   if (next_kind == cursor_kind_) {
     return;

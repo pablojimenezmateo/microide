@@ -426,6 +426,9 @@ void WorkspaceShell::UpdateMergeMaxVisualColumns(
 }
 
 void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const {
+  ++merge_tab.model_revision;
+  merge_tab.scrollbar_marker_cache_valid = false;
+  merge_tab.scrollbar_marker_cache.clear();
   const std::string result_text = compare::MergeResultText(merge_tab.model);
   merge_tab.result_viewport.LoadContent(result_text, merge_tab.output_path, merge_tab.result_line_ending);
   merge_tab.result_viewport.SetPath(merge_tab.output_path);

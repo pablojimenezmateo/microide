@@ -186,6 +186,7 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
 void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           const SDL_FRect& rect,
                                           CompareTabState& compare_tab_state,
+                                          const std::filesystem::path& project_root,
                                           bool draw_compare_caret,
                                           const editor::DiagnosticsStore& diagnostics_store) {
   CompareTabState* compare_tab = &compare_tab_state;
@@ -214,7 +215,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
       compare_tab->right_editable && compare_tab->right_view_active
           ? editor_blame_overlay_service_.BuildCompareOverlay(
-                context_.current_project_state.root, text_renderer_, git_blame_service_, *compare_tab,
+                project_root, text_renderer_, git_blame_service_, *compare_tab,
                 EditorBlameOverlayService::CompareOverlayLayout{
                     .pane_rect = MakeRect(
                         surface.right_x, rect.y, surface.gutter_width + surface.right_width,

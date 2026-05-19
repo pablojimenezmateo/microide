@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "project/FileIndex.h"
 #include "util/TaskExecutor.h"
 
 namespace microide::project {
@@ -60,7 +61,7 @@ class ProjectSearchService {
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
                       ProjectSearchOptions options = {},
-                      std::vector<std::filesystem::path> indexed_files = {});
+                      SharedPathList indexed_files = nullptr);
   void Stop();
   // Returns and clears the accumulated delta since the previous call: results
   // produced by the worker since the last `TakePendingUpdate`, plus current
@@ -80,13 +81,13 @@ class ProjectSearchService {
   void WorkerMain(std::filesystem::path root,
                   std::string query,
                   ProjectSearchOptions options,
-                  std::vector<std::filesystem::path> indexed_files,
+                  SharedPathList indexed_files,
                   std::uint64_t run_id,
                   const util::CancellationToken& token);
   SearchCompletion RunSearch(const std::filesystem::path& root,
                              const std::string& query,
                              const ProjectSearchOptions& options,
-                             const std::vector<std::filesystem::path>& indexed_files,
+                             const SharedPathList& indexed_files,
                              std::uint64_t run_id,
                              const util::CancellationToken& token);
   void PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch);

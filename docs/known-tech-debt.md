@@ -3,6 +3,8 @@
 Reviewed on 2026-04-23. Updated 2026-04-29 after comprehensive tech-debt cleanup slices.
 Updated 2026-05-18 with rejected refactor experiment notes.
 Updated 2026-05-19 with project-search throughput and perf-compare measurement fixes.
+Updated 2026-05-19 with post-`e9a4764` perf-compare null-result investigation and the
+two follow-up items it surfaced (merge scrollbar marker cache, hover visual-column map).
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -24,6 +26,29 @@ This list intentionally does not repeat issues that were already closed in
 
 - merge using its own quadratic line-diff matrix
 - merge conflict grouping staying quadratic in conflict count after the line-diff pass
+- `ComputePopupMenuRect` recomputing popup item widths on every per-frame call (render,
+  redraw planner, mouse hit-test, cursor manager, and submenu paths each used to walk
+  every item × `MeasureWidth(label) + MeasureWidth(accel)` independently; now memoized
+  by `(items.data(), items.size(), LSP readiness)` in a thread-local 6-entry LRU)
+- `WorkspaceShellHoverTargets.cpp` walking `VisualColumnForTextColumn` three times per
+  hovered row instead of building one `LineVisualColumnMap` (item 17.2)
+- merge render rebuilding `BuildMergeScrollbarMarkers` every frame with no cache
+  (`MergeTabState` now carries `model_revision` + cached marker list keyed on the
+  track rect, mirroring the compare-side cache; item 17.1)
+- per-mouse-motion plugin hover re-issuing identical `QueryHover` calls for every
+  pixel that maps to the same `(path, line, text_column)` (now position-memoized via a
+  thread-local last-query cache)
+- per-frame `UpdateMouseCursor` re-running `CursorKindForPosition` when the inputs it
+  reads (mouse position, drag target, prompt/menu visibility, workspace layout
+  revision) are unchanged
+- `FileIndex` snapshot copy on every search start (`FilePathSnapshot` and the search
+  service now share `SharedPathList` = `std::shared_ptr<const vector<path>>`; the cache
+  rebuilds into a new shared_ptr so consumers iterate the cache directly with zero
+  copies)
+- per-scope wake reason invisibility in `WorkspaceWakeController::HandleScheduledWake`
+  (counters `workspace.wake_reason_plugin_reload`, `workspace.wake_reason_caret_blink`,
+  and `workspace.wake_reason_none` now identify which path each scheduled wake took,
+  so `idle_soak_30s` can attribute the residual ~50 prepares/iter to a specific source)
 - merge result text always serializing with `\n`
 - project search rescanning disk on every run instead of consuming an indexed snapshot
 - project search allocating a lowercase copy of every candidate line in case-insensitive mode
@@ -53,6 +78,99 @@ The following previously tracked debts were closed on 2026-04-29 by
 - `WorkspaceLspClient` TSAN race (reported during sanitizer bring-up): closed
   - request/callback ownership synchronization was fixed and verified with TSAN runs in the sanitizer matrix
 
+## 17. Post-`e9a4764` Throughput-Pass Follow-Ups
+
+Status:
+- Closed on 2026-05-19 except for the fixture work in 17.3. The two symmetric seams
+  (merge scrollbar marker cache, hover-targets `LineVisualColumnMap`) landed in the
+  same pass that closed item 5 and the menu / git-dispatch / wake-reason items above.
+  Originally open after `e9a4764` ("perf: land throughput fixes and stabilize perf
+  compare"). The three landed changes (merge-conflict grouping →
+  linear pass, compare-surface `LineVisualColumnMap`, compare scrollbar-marker cache keyed
+  by `model_revision` + track rect) are correct and unit-tested but the current perf
+  fixtures don't exercise their worst cases, so the wall-time delta on `perf-runner-v1`
+  is inside the 2σ stdev band the new perf-compare classifier dims. The follow-ups below
+  finish the remaining symmetric work; new fixtures to actually surface the existing
+  wins are tracked under item 6.
+
+What was bench-invisible and why (recorded so we don't repeat the investigation):
+- Merge grouping: the `merge_scroll_large_fixture` is a tail-only 1 MB diff producing
+  ~2 `SideChange`s, so `O(N²)` vs `O(N)` on N=2 is identical at frame scale.
+- `LineVisualColumnMap` in `WorkspaceShellCompareRender.cpp`: only fires inside the
+  selection / caret branches; the burst scenarios scroll without holding a multi-row
+  selection, so the per-row deduplication has nothing to deduplicate.
+- Compare scrollbar marker cache: real but small — `BuildCompareScrollbarMarkers` is a
+  cheap comparison + pointer bump per model row, so eliminating ~30 k iterations × 80
+  frames × 10 iters saves single-digit µs/frame; the win sits in the noise band.
+
+### 17.1 Merge Render Has The Same Per-Frame Scrollbar Marker Rebuild
+
+Status:
+- Closed on 2026-05-19. `MergeTabState` now carries `model_revision`,
+  `scrollbar_marker_cache_valid`, `scrollbar_marker_cache_revision`,
+  `scrollbar_marker_cache_track`, and `scrollbar_marker_cache`; `RefreshMergeTabDerivedState`
+  bumps the revision and invalidates the cache; `DrawMergeScrollbarMarkers` consumes
+  the cache, gated on revision and track-rect equality (mirrors the compare-side
+  pattern landed in `e9a4764`).
+
+Impact (kept here for context):
+- Low to medium. Symmetric with the compare-side cache landed in `e9a4764`.
+  `WorkspaceShellMergeRender.cpp:67` calls `BuildMergeScrollbarMarkers(track, total_rows,
+  inputs)` every frame with no cache. For large fixtures the cost is small per frame but
+  scales with model row count and is rebuilt unconditionally even when nothing changed.
+
+Proposed shape:
+- Mirror the compare-side pattern on `MergeTabState`:
+  - Add `model_revision`, `scrollbar_marker_cache_valid`,
+    `scrollbar_marker_cache_revision`, `scrollbar_marker_cache_track`,
+    `scrollbar_marker_cache` fields.
+  - Bump `model_revision` and invalidate the cache from the same merge-side
+    refresh function that bumps the compare-side counterpart.
+  - Gate the `BuildMergeScrollbarMarkers` call on (revision changed || track rect changed).
+
+Relevant code:
+- `src/workspace/WorkspaceShellMergeRender.cpp` (DrawMergeScrollbarMarkers call site)
+- `src/workspace/WorkspaceTabState.h` (`CompareTabState` cache fields as the template)
+- `src/workspace/WorkspaceShellCompare.cpp` (`RefreshCompareTabDerivedState` is the
+  invalidation analog)
+
+### 17.2 Hover Targets Still Walks `VisualColumnForTextColumn` Three Times Per Hover Row
+
+Status:
+- Closed on 2026-05-19. `PluginHoverTargetForLine` constructs a single
+  `editor::TextLayout::LineVisualColumnMap` for the hovered line and resolves the
+  end-of-line width / start visual / next code-point boundary against it.
+
+Impact (kept here for context):
+- Low. `src/workspace/WorkspaceShellHoverTargets.cpp:100,122,125` still issues three
+  separate prefix walks of the same hovered line: end-of-line visual width, the
+  text-column-under-cursor, and the next code-point boundary. The `LineVisualColumnMap`
+  helper that landed in `e9a4764` is the right shape for this caller — three
+  `O(line_length)` walks collapse into one build + three `O(log n)` queries.
+
+Proposed shape:
+- Construct one `editor::TextLayout::LineVisualColumnMap` for the hovered line at the
+  top of the per-row block, and replace the three `VisualColumnForTextColumn(line_text,
+  ...)` calls with `map.LineVisualWidth()` and `map.VisualColumnFor(...)`.
+
+Relevant code:
+- `src/workspace/WorkspaceShellHoverTargets.cpp:100`
+- `src/workspace/WorkspaceShellHoverTargets.cpp:122`
+- `src/workspace/WorkspaceShellHoverTargets.cpp:125`
+- `src/editor/TextLayout.cpp` (helper already shipped)
+
+### 17.3 Fixtures That Would Surface The Existing Wins
+
+These don't change product code; they only make the gate sensitive enough to credit
+the asymptotic work already in tree. Listed so we don't quietly revert any of the
+landed changes for being "bench-invisible" before a representative fixture exists.
+
+- A merge fixture that produces dozens-to-hundreds of interleaved hunks (drives item 1
+  in `e9a4764`'s grouping rewrite).
+- A compare-scroll scenario that holds a multi-row selection across the scroll burst
+  (drives the `LineVisualColumnMap` selection branch).
+- A merge-scroll scenario after 17.1 lands, to credit the symmetric cache.
+
 ## 5. Search and Index Integration — Event-Driven File Watch
 
 Status:
@@ -75,11 +193,45 @@ What was closed:
   instead of snapshotting the entire cumulative result set back to the shell on every consume.
 
 What is still open:
-- Git dispatch (`GitOperations::Status`, `Blame`, `Log`) still runs synchronously on the tab/sidebar
-  activation path; the `ProjectBackgroundExecutor` exists but migration is deferred (tasks 3.2–3.6).
+- `DirectoryTree::RefreshGitStatuses()` still runs `CollectGitStatuses` synchronously
+  on the UI thread inside `WorkspaceSidebarCoordinator::ShowGit()` and on project
+  set-root in `WorkspaceProjectStateCoordinator`. The 2026-05-19 attempt to migrate this
+  to an async snapshot-and-apply pipeline (alongside an unconditional
+  `RefreshGitSidebar()` on every project open) was reverted after the perf-compare bake:
+  unconditionally posting the 4-subprocess async refresh on every project set-root
+  produced ~480k extra short-lived allocations per project open with no wall-time
+  benefit (see investigation note below). The async snapshot pieces (`tree_git_statuses`
+  on `RefreshSnapshot`, `DirectoryTree::ApplyGitStatuses`, async-fallback in
+  `RefreshGit()`) were rolled back along with the unconditional `RefreshGitSidebar`.
+  Re-attempting this migration requires keeping the trigger conditional on the user
+  actually wanting tree badges (e.g. tied to Git sidebar mode or an explicit user
+  preference), not running it speculatively on every project open.
+- Blame and log dispatch are already off the UI thread.
+
+Investigation note (2026-05-19 perf-compare diagnostic):
+- Clean `e9a4764` vs `27943f9` baseline: no regression beyond noise.
+- `e9a4764` + the unconditional `RefreshGitSidebar` on project set-root: +500k–1.4M
+  allocations across most scenarios that open a project, +27–30% wall on cold-startup
+  fixtures.
+- ITER=10 ablation isolating the change: reverting just that one call site dropped
+  allocations to within +0.01% of baseline across the full focused scenario set
+  (`idle_soak_30s`, `editor_auto_close_typing`, `menu_hover_switch`).
+- Root cause: each `RequestGitSidebarRefresh` posts a worker task that spawns 4 git
+  subprocesses (`CollectGitWorkingTreeEntries`, `ResolveGitOutgoingBase`,
+  `ResolveGitBranchLabel`, `CollectGitBranchOutgoingFiles`). Subprocess setup
+  (env-table copy, pipe FDs, stdio buffers, output parsing) costs ~100k+ short-lived
+  allocations per spawn. The allocations themselves are freed promptly (RSS does not
+  regress), but the churn is pure overhead when the user has not opened the Git
+  sidebar.
+- Lesson: "async" does not mean "free". A background task that allocates ~480k strings
+  on every project open still bills against the process allocator counter and the
+  cold-startup wall budget. Future async migrations should be gated on user-visible
+  demand or measured to be allocation-cheap before being made unconditional.
 
 Recommended follow-up:
-- Migrate git sidebar dispatch through `ProjectBackgroundExecutor` (tasks 3.2–3.4).
+- Make `DirectoryTree::RefreshGitStatuses()` async-snapshot-and-apply, but gated on
+  Git sidebar visibility (or an explicit setting) rather than running on every project
+  set-root. See the investigation note above for the reverted attempt.
 
 ## 6. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
 

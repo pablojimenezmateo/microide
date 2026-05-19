@@ -37,8 +37,9 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
                                   : project::ProjectFileScanMode::ExcludeHidden);
   }
   ProjectSearchService service;
-  const std::uint64_t run_id = service.Start(root, std::move(query), options,
-                                             std::move(indexed_files));
+  const std::uint64_t run_id = service.Start(
+      root, std::move(query), options,
+      std::make_shared<const std::vector<std::filesystem::path>>(std::move(indexed_files)));
 
   SearchRunResult result;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -287,8 +288,8 @@ void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
   WriteFile(root / "omega.txt", "omega\n");
 
   ProjectSearchService service;
-  const std::vector<std::filesystem::path> indexed_files =
-      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+  const auto indexed_files = std::make_shared<const std::vector<std::filesystem::path>>(
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   const std::uint64_t first_run_id = service.Start(root, "alpha", {}, indexed_files);
   const std::uint64_t second_run_id = service.Start(root, "omega", {}, indexed_files);
 
@@ -355,8 +356,8 @@ void TestProjectSearchServiceStopDiscardsLateUpdates() {
   }
 
   ProjectSearchService service;
-  const std::vector<std::filesystem::path> indexed_files =
-      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+  const auto indexed_files = std::make_shared<const std::vector<std::filesystem::path>>(
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   service.Start(root, "alpha", {}, indexed_files);
   service.Stop();
   std::this_thread::sleep_for(std::chrono::milliseconds(25));
@@ -375,8 +376,8 @@ void TestProjectSearchServiceNoMatchFinishesPromptly() {
   WriteFile(root / "b.txt", "gamma\ndelta\n");
 
   ProjectSearchService service;
-  const std::vector<std::filesystem::path> indexed_files =
-      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+  const auto indexed_files = std::make_shared<const std::vector<std::filesystem::path>>(
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   const std::uint64_t run_id = service.Start(root, "zzz-not-present", {}, indexed_files);
 
   bool saw_finished = false;
@@ -432,8 +433,8 @@ void TestProjectSearchServiceProgressPublishesBeforeFirstMatch() {
   }
   WriteFile(root / "hit.txt", "needle\n");
 
-  const auto indexed = project::CollectProjectFiles(
-      root, project::ProjectFileScanMode::ExcludeHidden);
+  const auto indexed = std::make_shared<const std::vector<std::filesystem::path>>(
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   ProjectSearchService service;
   const std::uint64_t run_id = service.Start(root, "needle", {}, indexed);
 
@@ -456,7 +457,7 @@ void TestProjectSearchServiceProgressPublishesBeforeFirstMatch() {
   service.Stop();
 
   Expect(finished, "search with progress publishing should still finish");
-  Expect(first_total_files_seen == indexed.size(),
+  Expect(first_total_files_seen == indexed->size(),
          "first progress publish should expose the full denominator");
 }
 

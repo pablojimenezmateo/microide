@@ -86,6 +86,10 @@ struct BottomPanelSurfaceViewModel {
   std::filesystem::path project_root;
   FocusTarget focus = FocusTarget::Sidebar;
   const CommandState* command_state = nullptr;
+  // Live view into the current project state, so render TUs can drive
+  // `TabStripService` queries (which take ProjectWorkspaceState by const ref)
+  // without reaching into `context_.current_project_state` directly.
+  const ProjectWorkspaceState* project_state = nullptr;
 };
 
 struct HoverPopupViewModel {

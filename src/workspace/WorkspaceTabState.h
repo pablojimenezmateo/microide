@@ -85,6 +85,11 @@ struct MergeTabState {
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;
   std::size_t max_visual_columns = 0;
+  std::uint64_t model_revision = 0;
+  bool scrollbar_marker_cache_valid = false;
+  std::uint64_t scrollbar_marker_cache_revision = 0;
+  SDL_FRect scrollbar_marker_cache_track{};
+  std::vector<MergeScrollbarMarker> scrollbar_marker_cache;
   float left_divider_fraction = 1.0f / 3.0f;
   float right_divider_fraction = 2.0f / 3.0f;
   bool persistable = true;

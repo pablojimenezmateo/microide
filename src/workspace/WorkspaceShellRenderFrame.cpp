@@ -296,8 +296,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         CaretVisibleNow() &&
         !(overlay_vm.current_surface == TextInputSurface::Editor &&
           !context_.text_input.composition.text.empty());
-    RenderCompareSurface(renderer, layout.editor_surface, *active_compare_tab, draw_compare_caret,
-                         project_state.diagnostics_store);
+    RenderCompareSurface(renderer, layout.editor_surface, *active_compare_tab, project_state.root,
+                         draw_compare_caret, project_state.diagnostics_store);
   } else if (active_merge_tab != nullptr) {
     RenderMergeSurface(renderer, layout.editor_surface);
   } else {
@@ -459,7 +459,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       const auto blame_overlay =
           pane.active
               ? editor_blame_overlay_service_.BuildEditorOverlay(
-                    context_.current_project_state.root, text_renderer_, git_blame_service_, *viewport,
+                    project_state.root, text_renderer_, git_blame_service_, *viewport,
                     pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size())
                       : std::nullopt;
       if (pane.active) {

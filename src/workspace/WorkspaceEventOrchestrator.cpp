@@ -179,6 +179,7 @@ EventResult WorkspaceWakeController::HandleScheduledWake() const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceWakeController::HandleScheduledWake");
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceScheduledWakes);
   if (operations_.reload_plugins_if_assets_changed(false)) {
+    util::AddPerformanceCounter(util::PerfCounterId::WorkspaceWakeReasonPluginReload);
     return EventResult{
         .handled = true,
         .redraw = RenderInvalidation{
@@ -189,10 +190,12 @@ EventResult WorkspaceWakeController::HandleScheduledWake() const {
   }
 
   if (!operations_.caret_blink_animating()) {
+    util::AddPerformanceCounter(util::PerfCounterId::WorkspaceWakeReasonNone);
     return {};
   }
 
   if (const auto caret_rect = operations_.current_caret_dirty_rect(); caret_rect.has_value()) {
+    util::AddPerformanceCounter(util::PerfCounterId::WorkspaceWakeReasonCaretBlink);
     return EventResult{
         .handled = true,
         .redraw = RenderInvalidation{
@@ -203,6 +206,7 @@ EventResult WorkspaceWakeController::HandleScheduledWake() const {
   }
 
   // No visible caret region means there is nothing to repaint for caret blink.
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceWakeReasonNone);
   return {};
 }
 

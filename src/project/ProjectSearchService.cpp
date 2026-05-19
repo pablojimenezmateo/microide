@@ -190,7 +190,7 @@ void ProjectSearchService::SetWakeEventType(Uint32 event_type) {
 std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
                                           std::string query,
                                           ProjectSearchOptions options,
-                                          std::vector<std::filesystem::path> indexed_files) {
+                                          SharedPathList indexed_files) {
   Stop();
 
   std::uint64_t run_id = 0;
@@ -242,7 +242,7 @@ std::uint64_t ProjectSearchService::active_search_id() const {
 void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       std::string query,
                                       ProjectSearchOptions options,
-                                      std::vector<std::filesystem::path> indexed_files,
+                                      SharedPathList indexed_files,
                                       std::uint64_t run_id,
                                       const util::CancellationToken& token) {
   if (token.IsCancellationRequested()) {
@@ -270,7 +270,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     const std::filesystem::path& root,
     const std::string& query,
     const ProjectSearchOptions& options,
-    const std::vector<std::filesystem::path>& indexed_files,
+    const SharedPathList& indexed_files,
     std::uint64_t run_id,
     const util::CancellationToken& token) {
   std::error_code error;
@@ -307,7 +307,9 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
   }
 
-  const std::vector<std::filesystem::path>& candidate_files = indexed_files;
+  static const std::vector<std::filesystem::path> kEmpty;
+  const std::vector<std::filesystem::path>& candidate_files =
+      indexed_files ? *indexed_files : kEmpty;
   std::vector<ProjectSearchResult> batch;
   std::size_t total_results = 0;
   std::size_t files_searched = 0;

@@ -126,7 +126,8 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
 
   Expect(WorkspaceShellTestAccess::StageAllGitSidebarEntries(shell),
          "staging the tooltip fixture should succeed");
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "git sidebar should re-populate after the stage-all refresh completes");
   const auto staged_action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
   SendMouseMotion(
       shell, staged_action_rects[0].x + staged_action_rects[0].w * 0.5f,

@@ -44,7 +44,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
   const std::vector<VisibleStripTab> visible_panel_tabs =
       tab_strip_service_.ComputeVisibleBottomPanelTabs(
-          context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
+          *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
           [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
           output_channels_.Channels());
 

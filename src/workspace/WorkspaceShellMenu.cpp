@@ -157,18 +157,63 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
     return std::nullopt;
   }
 
-  float width = 172.0f;
-  float height = 12.0f;
-  for (const MenuItemSpec& item : items) {
-    if (item.separator) {
-      height += kWorkspaceMenuPopupSeparatorHeight;
-      continue;
+  // Popup width is expensive (one width-cache query per label + accelerator on every
+  // item) and is recomputed many times per frame: render, redraw planner, mouse
+  // hit-test, cursor manager, and the submenu / overflow paths all call this. Cache
+  // the per-span result keyed by the items pointer + size + LSP readiness state, since
+  // only LSP-driven labels (GoToDefinition, FindReferences) depend on LSP state.
+  struct PopupWidthCacheEntry {
+    const MenuItemSpec* items_data = nullptr;
+    std::size_t items_size = 0;
+    std::uint8_t lsp_state = 0;
+    int lsp_indexed_count = 0;
+    float raw_width = 0.0f;
+    float total_height = 0.0f;
+  };
+  static thread_local std::array<PopupWidthCacheEntry, 6> popup_width_cache;
+  static thread_local std::size_t popup_width_cache_next = 0;
+
+  const auto readiness =
+      const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot();
+  const std::uint8_t lsp_state = static_cast<std::uint8_t>(readiness.state);
+
+  float raw_width = 172.0f;
+  float total_height = 12.0f;
+  bool found_cached = false;
+  for (const auto& entry : popup_width_cache) {
+    if (entry.items_data == items.data() && entry.items_size == items.size() &&
+        entry.lsp_state == lsp_state &&
+        entry.lsp_indexed_count == readiness.indexed_count) {
+      raw_width = entry.raw_width;
+      total_height = entry.total_height;
+      found_cached = true;
+      break;
     }
-    width = std::max(width, text_renderer_.MeasureWidth(MenuItemLabel(item)) +
-                                text_renderer_.MeasureWidth(MenuItemAccelerator(item)) + 68.0f);
-    height += kWorkspaceMenuPopupItemHeight;
+  }
+  if (!found_cached) {
+    for (const MenuItemSpec& item : items) {
+      if (item.separator) {
+        total_height += kWorkspaceMenuPopupSeparatorHeight;
+        continue;
+      }
+      raw_width = std::max(raw_width,
+                           text_renderer_.MeasureWidth(MenuItemLabel(item)) +
+                               text_renderer_.MeasureWidth(MenuItemAccelerator(item)) + 68.0f);
+      total_height += kWorkspaceMenuPopupItemHeight;
+    }
+    popup_width_cache[popup_width_cache_next] = PopupWidthCacheEntry{
+        .items_data = items.data(),
+        .items_size = items.size(),
+        .lsp_state = lsp_state,
+        .lsp_indexed_count = readiness.indexed_count,
+        .raw_width = raw_width,
+        .total_height = total_height,
+    };
+    popup_width_cache_next = (popup_width_cache_next + 1) % popup_width_cache.size();
   }
 
+  float width = raw_width;
+  const float height = total_height;
   const float max_width = std::max(172.0f, bounds.w - 8.0f);
   width = std::clamp(width, 172.0f, max_width);
   float x = std::clamp(anchor_rect.x, bounds.x + 4.0f,

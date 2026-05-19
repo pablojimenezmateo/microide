@@ -24,7 +24,7 @@ class WorkspaceProjectSearchRuntime {
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
                       project::ProjectSearchOptions options = {},
-                      std::vector<std::filesystem::path> indexed_files = {});
+                      project::SharedPathList indexed_files = nullptr);
   void Stop();
   std::optional<project::ProjectSearchUpdate> ConsumeActiveUpdate();
 

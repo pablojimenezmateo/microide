@@ -96,8 +96,8 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     return std::nullopt;
   }
 
-  const std::size_t line_visual_width =
-      editor::TextLayout::VisualColumnForTextColumn(line_text, line_text.size(), tab_size);
+  const editor::TextLayout::LineVisualColumnMap visual_map(line_text, tab_size);
+  const std::size_t line_visual_width = visual_map.LineVisualWidth();
   const float local_x = std::max(0.0f, x - interaction.text_x);
   const std::size_t visual_column =
       interaction.horizontal_scroll +
@@ -108,22 +108,56 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 
   const std::size_t text_column =
       editor::TextLayout::TextColumnForVisualColumn(line_text, visual_column, tab_size);
+
+  // Position-based memoization: every cell-wide mouse-move pixel that maps to the
+  // same (path, line, text_column) would otherwise re-issue an identical
+  // QueryHover into the Lua runtime. Cache the most recent result so the hot
+  // mouse-motion path short-circuits to a structural compare instead.
+  struct LastHoverQuery {
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+    bool valid = false;
+    bool query_succeeded = false;
+    plugin::PluginHost::HoverResult result;
+  };
+  static thread_local LastHoverQuery last_hover_query;
+
   plugin::PluginHost::HoverResult hover;
-  std::string hover_scope_label = "WorkspaceShell::PluginHoverTargetForLine::QueryHover";
-  if (util::PerformanceTrace::Enabled()) {
-    hover_scope_label += "(path=" + path.string() + ")";
-  }
-  util::PerformanceTrace::Scope hover_scope(hover_scope_label);
-  if (!plugin_runtime_.Host().QueryHover(path, line_index + 1, text_column + 1, &hover, nullptr)) {
-    return std::nullopt;
+  const bool reuse_cached = last_hover_query.valid &&
+                            last_hover_query.line == line_index + 1 &&
+                            last_hover_query.column == text_column + 1 &&
+                            last_hover_query.path == path;
+  if (reuse_cached) {
+    if (!last_hover_query.query_succeeded) {
+      return std::nullopt;
+    }
+    hover = last_hover_query.result;
+  } else {
+    std::string hover_scope_label = "WorkspaceShell::PluginHoverTargetForLine::QueryHover";
+    if (util::PerformanceTrace::Enabled()) {
+      hover_scope_label += "(path=" + path.string() + ")";
+    }
+    util::PerformanceTrace::Scope hover_scope(hover_scope_label);
+    const bool succeeded =
+        plugin_runtime_.Host().QueryHover(path, line_index + 1, text_column + 1, &hover, nullptr);
+    last_hover_query = LastHoverQuery{
+        .path = path,
+        .line = line_index + 1,
+        .column = text_column + 1,
+        .valid = true,
+        .query_succeeded = succeeded,
+        .result = succeeded ? hover : plugin::PluginHost::HoverResult{},
+    };
+    if (!succeeded) {
+      return std::nullopt;
+    }
   }
 
-  const std::size_t start_visual =
-      editor::TextLayout::VisualColumnForTextColumn(line_text, text_column, tab_size);
+  const std::size_t start_visual = visual_map.VisualColumnFor(text_column);
   const std::size_t end_visual =
       text_column < line_text.size()
-          ? editor::TextLayout::VisualColumnForTextColumn(
-                line_text, editor::TextLayout::NextTextColumn(line_text, text_column), tab_size)
+          ? visual_map.VisualColumnFor(editor::TextLayout::NextTextColumn(line_text, text_column))
           : start_visual + 1;
   const float line_y = TextGridLineY(interaction, line_index);
   const SDL_FRect anchor_rect =
