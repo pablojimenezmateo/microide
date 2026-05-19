@@ -32,6 +32,24 @@ class TextLayout {
                                      std::size_t visible_columns,
                                      std::size_t tab_size);
 
+  // O(N) prefix walk that captures every text-byte boundary's visual column for `line`. Once
+  // built, `VisualColumnFor(text_column)` is O(log N). Use when more than one VisualColumn query
+  // hits the same line within a frame (compare/merge row render, hover target geometry) so the
+  // per-line tab/UTF-8 walk runs once instead of once per query.
+  class LineVisualColumnMap {
+   public:
+    LineVisualColumnMap(const std::string& line, std::size_t tab_size);
+    std::size_t VisualColumnFor(std::size_t text_column) const;
+    std::size_t LineVisualWidth() const { return line_visual_width_; }
+
+   private:
+    // Parallel arrays: boundaries_[i] is a text byte offset (in monotonic order); visuals_[i] is
+    // the visual column at that boundary. Both include 0 and line.size() as endpoints.
+    std::vector<std::size_t> boundaries_;
+    std::vector<std::size_t> visuals_;
+    std::size_t line_visual_width_ = 0;
+  };
+
   // Resolve a source byte column to its visual column using an already-built `LayoutLine`. This
   // avoids the O(line_length) tab-stop walk that VisualColumnForTextColumn performs.
   //

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -52,13 +53,23 @@ SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind
 void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
                                  const render::Theme& theme,
                                  const SDL_FRect& track,
-                                 const compare::CompareModel& model) {
+                                 CompareTabState& compare_tab) {
   if (renderer == nullptr) {
     return;
   }
 
-  const auto markers = BuildCompareScrollbarMarkers(track, model);
-  for (const CompareScrollbarMarker& marker : markers) {
+  const auto same_track = [&](const SDL_FRect& lhs, const SDL_FRect& rhs) {
+    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+  };
+  if (!compare_tab.scrollbar_marker_cache_valid ||
+      compare_tab.scrollbar_marker_cache_revision != compare_tab.model_revision ||
+      !same_track(compare_tab.scrollbar_marker_cache_track, track)) {
+    compare_tab.scrollbar_marker_cache = BuildCompareScrollbarMarkers(track, compare_tab.model);
+    compare_tab.scrollbar_marker_cache_track = track;
+    compare_tab.scrollbar_marker_cache_revision = compare_tab.model_revision;
+    compare_tab.scrollbar_marker_cache_valid = true;
+  }
+  for (const CompareScrollbarMarker& marker : compare_tab.scrollbar_marker_cache) {
     const SDL_Color color = CompareMarkerColor(theme, marker.kind);
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRect(renderer, &marker.rect);
@@ -413,37 +424,45 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           .color = right_row_background,
       });
       const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
+      // The same right_text is queried for selection start/end and (potentially) the caret
+      // visual column below. Build the boundary→visual column table once and reuse it instead
+      // of re-walking the line per query.
+      std::optional<editor::TextLayout::LineVisualColumnMap> right_visual_map;
+      auto ensure_right_visual_map = [&]() -> const editor::TextLayout::LineVisualColumnMap& {
+        if (!right_visual_map.has_value()) {
+          right_visual_map.emplace(compare_row.right_text,
+                                   compare_tab->right_viewport.tab_size());
+        }
+        return *right_visual_map;
+      };
       if (right_selection.has_value()) {
         // Copy out of the optional so GCC's optimizer sees a definitely-initialized
         // SelectionRange instead of complaining about `*right_selection` storage
         // bytes through the inlined `std::optional` access path.
         const editor::SelectionRange sel = *right_selection;
         if (right_line_index >= sel.start.line && right_line_index <= sel.end.line) {
-        const std::size_t line_start =
-            right_line_index == sel.start.line ? sel.start.column : 0;
-        const std::size_t line_end =
-            right_line_index == sel.end.line ? sel.end.column
-                                             : compare_row.right_text.size();
-        const std::size_t start_visual =
-            editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text, line_start,
-                                                          compare_tab->right_viewport.tab_size());
-        const std::size_t end_visual =
-            editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text, line_end,
-                                                          compare_tab->right_viewport.tab_size());
-        const std::size_t visible_start =
-            std::max(start_visual, compare_tab->horizontal_scroll);
-        const std::size_t visible_end =
-            std::min(end_visual,
-                     compare_tab->horizontal_scroll + surface.right_visible_columns);
-        if (visible_end > visible_start) {
-          right_row.fills.push_back(editor::DecoratedTextFill{
-              .rect = MakeRect(
-                  TextGridCursorX(right_interaction, visible_start), y - 1.0f,
-                  static_cast<float>(visible_end - visible_start) * right_interaction.char_width,
-                  surface.line_height),
-              .color = theme_.selection_fill,
-          });
-        }
+          const std::size_t line_start =
+              right_line_index == sel.start.line ? sel.start.column : 0;
+          const std::size_t line_end =
+              right_line_index == sel.end.line ? sel.end.column
+                                               : compare_row.right_text.size();
+          const auto& visual_map = ensure_right_visual_map();
+          const std::size_t start_visual = visual_map.VisualColumnFor(line_start);
+          const std::size_t end_visual = visual_map.VisualColumnFor(line_end);
+          const std::size_t visible_start =
+              std::max(start_visual, compare_tab->horizontal_scroll);
+          const std::size_t visible_end =
+              std::min(end_visual,
+                       compare_tab->horizontal_scroll + surface.right_visible_columns);
+          if (visible_end > visible_start) {
+            right_row.fills.push_back(editor::DecoratedTextFill{
+                .rect = MakeRect(
+                    TextGridCursorX(right_interaction, visible_start), y - 1.0f,
+                    static_cast<float>(visible_end - visible_start) * right_interaction.char_width,
+                    surface.line_height),
+                .color = theme_.selection_fill,
+            });
+          }
         }
       }
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
@@ -481,9 +500,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                 FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
       if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
         const std::size_t caret_visual =
-            editor::TextLayout::VisualColumnForTextColumn(compare_row.right_text,
-                                                          compare_tab->right_viewport.cursor_column(),
-                                                          compare_tab->right_viewport.tab_size());
+            ensure_right_visual_map().VisualColumnFor(
+                compare_tab->right_viewport.cursor_column());
         if (caret_visual >= compare_tab->horizontal_scroll &&
             caret_visual <= compare_tab->horizontal_scroll + surface.right_visible_columns) {
           DrawFilledRect(
@@ -537,7 +555,7 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
                  std::max(0.0f, marker_lane.h - 2.0f));
     DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
     DrawRect(renderer, marker_lane, theme_.border);
-    DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, compare_tab->model);
+    DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, *compare_tab);
     DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
     DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                        context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);

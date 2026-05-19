@@ -82,6 +82,18 @@ struct ReadBuf {
 // Impl
 // ---------------------------------------------------------------------------
 struct LspClient::Impl {
+  struct QueuedMessage {
+    std::string serialized;
+    std::function<std::string()> build_serialized;
+
+    std::string TakeSerialized() && {
+      if (!serialized.empty()) {
+        return std::move(serialized);
+      }
+      return build_serialized ? build_serialized() : std::string{};
+    }
+  };
+
   platform::AsyncSubprocess proc;
   std::mutex mutex;
   std::mutex send_mutex;
@@ -120,8 +132,8 @@ struct LspClient::Impl {
   OnPublishDiagnostics diagnostics_callback;
 
   std::unordered_map<std::string, int> document_versions;
-  std::vector<std::string> deferred_messages;
-  std::deque<std::string> outbound_messages;
+  std::deque<QueuedMessage> deferred_messages;
+  std::deque<QueuedMessage> outbound_messages;
   int next_id = 1;
   std::string root_uri;
   std::string language_id;
@@ -202,7 +214,7 @@ struct LspClient::Impl {
 
   void WriterMain() {
     while (true) {
-      std::string message;
+      QueuedMessage queued;
       {
         std::unique_lock lock(send_mutex);
         send_cv.wait(lock, [this]() {
@@ -211,10 +223,11 @@ struct LspClient::Impl {
         if (stop_writer.load(std::memory_order_acquire) && outbound_messages.empty()) {
           return;
         }
-        message = std::move(outbound_messages.front());
+        queued = std::move(outbound_messages.front());
         outbound_messages.pop_front();
       }
 
+      std::string message = std::move(queued).TakeSerialized();
       if (!SendSerializedMessageUnlocked(message)) {
         SetLastError("failed to send message to language server");
         return;
@@ -232,16 +245,27 @@ struct LspClient::Impl {
   }
 
   bool SendMessageAfterInitialize(const util::JsonValue& msg) {
+    return SendSerializedMessageAfterInitialize(SerializeMessage(msg));
+  }
+
+  bool SendSerializedMessageAfterInitialize(std::string serialized) {
+    return SendMessageBuilderAfterInitialize(
+        [serialized = std::move(serialized)]() mutable { return std::move(serialized); });
+  }
+
+  bool SendMessageBuilderAfterInitialize(std::function<std::string()> build_serialized) {
     if (shutting_down.load(std::memory_order_acquire)) {
       return false;
     }
-    const std::string serialized = SerializeMessage(msg);
     std::lock_guard lock(send_mutex);
     if (shutting_down.load(std::memory_order_acquire)) {
       return false;
     }
     if (!initialized.load(std::memory_order_acquire)) {
-      deferred_messages.push_back(serialized);
+      deferred_messages.push_back(QueuedMessage{
+          .serialized = {},
+          .build_serialized = std::move(build_serialized),
+      });
       return true;
     }
     if (test_stub_mode.load(std::memory_order_acquire)) {
@@ -250,7 +274,10 @@ struct LspClient::Impl {
     if (!proc.IsRunning()) {
       return false;
     }
-    outbound_messages.push_back(serialized);
+    outbound_messages.push_back(QueuedMessage{
+        .serialized = {},
+        .build_serialized = std::move(build_serialized),
+    });
     send_cv.notify_one();
     return true;
   }
@@ -662,7 +689,7 @@ struct LspClient::Impl {
       }
       initialized.store(true, std::memory_order_release);
       StartWriterThreadLocked();
-      for (std::string& message : deferred_messages) {
+      for (QueuedMessage& message : deferred_messages) {
         outbound_messages.push_back(std::move(message));
       }
       deferred_messages.clear();

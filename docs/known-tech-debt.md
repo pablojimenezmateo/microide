@@ -2,6 +2,7 @@
 
 Reviewed on 2026-04-23. Updated 2026-04-29 after comprehensive tech-debt cleanup slices.
 Updated 2026-05-18 with rejected refactor experiment notes.
+Updated 2026-05-19 with project-search throughput and perf-compare measurement fixes.
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -22,9 +23,13 @@ This list intentionally does not repeat issues that were already closed in
 `0aa44cb`, including:
 
 - merge using its own quadratic line-diff matrix
+- merge conflict grouping staying quadratic in conflict count after the line-diff pass
 - merge result text always serializing with `\n`
 - project search rescanning disk on every run instead of consuming an indexed snapshot
 - project search allocating a lowercase copy of every candidate line in case-insensitive mode
+- project search snapshotting the full cumulative result set back to shell state on every consume
+- LSP `textDocument/didOpen` building the full JSON payload on the UI thread before queueing
+- local `tools/perf-compare.py` single-scenario comparisons being biased by fixed side order
 - `TextViewport::MaxVisualColumns()` always rescanning the entire buffer after ordinary edits
 - FIFO text-render cache eviction in `SdlTtfTextBackend`
 - split-editor actions and several open-or-navigate paths mutating the stale floating editor copy
@@ -51,7 +56,8 @@ The following previously tracked debts were closed on 2026-04-29 by
 ## 5. Search and Index Integration — Event-Driven File Watch
 
 Status:
-- Partially resolved on 2026-05-02 by `deferred-work-and-throughput-pass`.
+- Mostly resolved on 2026-05-19 by `deferred-work-and-throughput-pass` plus the
+  `perf/project-search-lower-snapshot` follow-up.
 
 What was closed:
 - `FileIndexWatcher` platform abstraction ships Linux `inotify`, macOS `FSEvents`, Windows
@@ -61,18 +67,18 @@ What was closed:
 - `BackgroundTaskCounter` tracks in-flight background work for adaptive idle rendering.
 - PCRE2 JIT is now compiled into the search engine; interpreted fallback emits a one-time log.
 - `ProjectSearchService` wires `BackgroundTaskCounter` so the event loop stays awake during search.
+- Workspace project-state wiring now starts/stops the file-index watcher with project lifecycle,
+  and file-index updates invalidate/refresh dependent file-finder and search state.
+- File finder reads from `FileIndex` snapshots instead of rescanning the tree on each refresh.
+- Project search now starts from `FileIndex::SnapshotPathsWithVersion(...)`, reuses a single
+  lowercase line buffer in case-insensitive literal mode, and publishes incremental result deltas
+  instead of snapshotting the entire cumulative result set back to the shell on every consume.
 
 What is still open:
-- The workspace coordinator does not yet wire `FileIndexWatcher` to project open/close; the
-  watcher exists but is not plumbed into the file-finder or project-search call sites (tasks 2.2–2.5).
-- File-finder and project-search still fall back to `CollectProjectFiles` directory traversal until
-  the watcher wiring lands.
 - Git dispatch (`GitOperations::Status`, `Blame`, `Log`) still runs synchronously on the tab/sidebar
   activation path; the `ProjectBackgroundExecutor` exists but migration is deferred (tasks 3.2–3.6).
 
 Recommended follow-up:
-- Wire `FileIndexWatcher` to project open in the workspace coordinator (task 2.2) and update the
-  file-finder and search call sites to consume `ProjectFileIndex::Snapshot()` (tasks 2.4–2.5).
 - Migrate git sidebar dispatch through `ProjectBackgroundExecutor` (tasks 3.2–3.4).
 
 ## 6. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
@@ -87,6 +93,10 @@ What is still open:
   checkpoint design.
 - Search, merge, blame, and redraw changes should continue to be validated with the startup and
   runtime profiling docs rather than by intuition.
+- The local comparison helper `tools/perf-compare.py` now runs each scenario in both side orders
+  and merges the raw iteration streams before recomputing p50/p95/max, which removes the
+  single-scenario fixed-order bias that previously produced false fold/whitespace signals. It is
+  still advisory only; `perf-runner-v1` remains the authoritative gate.
 - LTO is enabled for perf/release builds and currently helps recover some cross-translation-unit
   optimization loss from editor extractions, but that is not evidence the extraction is free.
   Any residual sticky-scroll/render-path regression should be profiled directly, then either fixed

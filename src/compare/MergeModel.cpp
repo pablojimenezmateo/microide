@@ -59,15 +59,6 @@ std::vector<SideChange> BuildSideChanges(const std::vector<std::string>& base_li
   return changes;
 }
 
-bool ChangesInteract(const SideChange& lhs, const SideChange& rhs) {
-  const bool lhs_insertion = lhs.base_start == lhs.base_end;
-  const bool rhs_insertion = rhs.base_start == rhs.base_end;
-  if (lhs_insertion && rhs_insertion) {
-    return lhs.base_start == rhs.base_start;
-  }
-  return lhs.base_start < rhs.base_end && rhs.base_start < lhs.base_end;
-}
-
 std::vector<std::string> SliceBaseLines(const std::vector<std::string>& base_lines,
                                         int start,
                                         int end) {
@@ -144,39 +135,20 @@ MergeModel BuildMergeModel(const std::string& base,
     return lhs.side < rhs.side;
   });
 
-  std::vector<bool> consumed(all_changes.size(), false);
-  for (std::size_t i = 0; i < all_changes.size(); ++i) {
-    if (consumed[i]) {
-      continue;
-    }
-
-    std::vector<SideChange> hunk_incoming_changes;
-    std::vector<SideChange> hunk_current_changes;
-    std::vector<std::size_t> group = {i};
-    consumed[i] = true;
-
-    bool expanded = true;
-    while (expanded) {
-      expanded = false;
-      for (std::size_t candidate = 0; candidate < all_changes.size(); ++candidate) {
-        if (consumed[candidate]) {
-          continue;
-        }
-        const auto interacts = std::any_of(
-            group.begin(), group.end(), [&](std::size_t group_index) {
-              return ChangesInteract(all_changes[group_index].change, all_changes[candidate].change);
-            });
-        if (!interacts) {
-          continue;
-        }
-        consumed[candidate] = true;
-        group.push_back(candidate);
-        expanded = true;
-      }
-    }
-
+  // Single linear pass over the sorted change list. After sort-by base_start,
+  // any change whose base_start is < group_max_end overlaps the group's union
+  // interval and therefore interacts with at least one existing member (the
+  // one contributing the running max). The lone asymmetry is two insertions
+  // at the same base column: their (start == end) means they fail the strict
+  // `<` gate, but ChangesInteract still pairs them. The sort order keeps such
+  // insertions adjacent, so a single "previous-was-an-insertion-at-same-start"
+  // check covers that case without rescanning the group.
+  auto flush_group = [&](const std::vector<std::size_t>& group) {
+    if (group.empty()) return;
     int base_start = all_changes[group.front()].change.base_start;
     int base_end = all_changes[group.front()].change.base_end;
+    std::vector<SideChange> hunk_incoming_changes;
+    std::vector<SideChange> hunk_current_changes;
     for (std::size_t group_index : group) {
       base_start = std::min(base_start, all_changes[group_index].change.base_start);
       base_end = std::max(base_end, all_changes[group_index].change.base_end);
@@ -201,7 +173,34 @@ MergeModel BuildMergeModel(const std::string& base,
                     hunk.current_lines != hunk.base_lines;
     hunk.choice = BootstrapMergeChoice(hunk);
     model.hunks.push_back(std::move(hunk));
+  };
+
+  std::vector<std::size_t> group;
+  int group_max_end = 0;
+  for (std::size_t i = 0; i < all_changes.size(); ++i) {
+    const SideChange& c = all_changes[i].change;
+    const bool c_is_insertion = c.base_start == c.base_end;
+    bool join = false;
+    if (group.empty()) {
+      join = true;
+    } else if (c.base_start < group_max_end) {
+      join = true;
+    } else if (c_is_insertion) {
+      const SideChange& prev = all_changes[group.back()].change;
+      const bool prev_is_insertion = prev.base_start == prev.base_end;
+      if (prev_is_insertion && prev.base_start == c.base_start) {
+        join = true;
+      }
+    }
+    if (!join) {
+      flush_group(group);
+      group.clear();
+      group_max_end = 0;
+    }
+    group.push_back(i);
+    group_max_end = std::max(group_max_end, c.base_end);
   }
+  flush_group(group);
 
   std::sort(model.hunks.begin(), model.hunks.end(), [](const MergeHunk& lhs, const MergeHunk& rhs) {
     if (lhs.base_start != rhs.base_start) {

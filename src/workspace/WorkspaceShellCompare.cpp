@@ -423,6 +423,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
       util::SerializeLines(compare_tab.right_viewport.lines(),
                            compare_tab.right_viewport.line_ending());
   compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content);
+  ++compare_tab.model_revision;
   const auto left_lines = SplitSyntaxLines(compare_tab.left_content);
   const auto right_lines = SplitSyntaxLines(right_content);
   compare_tab.left_initial_syntax_state =
@@ -436,6 +437,8 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   compare_tab.syntax_rows_tokenized = 0;
   compare_tab.syntax_highlighting_enabled = true;
   compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
+  compare_tab.scrollbar_marker_cache_valid = false;
+  compare_tab.scrollbar_marker_cache.clear();
   if (compare_tab.model.rows.empty()) {
     compare_tab.selected_row = 0;
     compare_tab.scroll_row = 0;

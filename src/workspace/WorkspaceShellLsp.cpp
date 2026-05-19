@@ -327,8 +327,7 @@ void WorkspaceShell::EnsureLspDocumentOpen(const editor::TextViewport& viewport,
   if (client.HasOpenDocument(uri)) {
     return;
   }
-  const std::string full_text = SerializeViewportText(viewport);
-  client.DidOpen(uri, std::string(language_id), full_text);
+  client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
 }
 
 void WorkspaceShell::PublishLspDiagnostics(ProjectWorkspaceState& state,

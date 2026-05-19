@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -42,10 +43,15 @@ struct CompareTabState {
   std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
   std::size_t syntax_rows_tokenized = 0;
   bool syntax_highlighting_enabled = true;
+  std::uint64_t model_revision = 0;
   std::size_t selected_row = 0;
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;
   std::size_t max_visual_columns = 0;
+  bool scrollbar_marker_cache_valid = false;
+  std::uint64_t scrollbar_marker_cache_revision = 0;
+  SDL_FRect scrollbar_marker_cache_track{};
+  std::vector<CompareScrollbarMarker> scrollbar_marker_cache;
   float divider_fraction = 0.5f;
   bool right_editable = false;
   bool right_view_active = false;

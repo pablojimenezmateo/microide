@@ -81,6 +81,17 @@ void TestMergeBothChoiceConcatenatesConflictInsertions() {
   Expect(lines[1] == "current", "both choice should append current lines");
 }
 
+void TestMergeInsertionAndReplacementAtSameBoundaryStaySeparateHunks() {
+  const auto model = BuildMergeModel("alpha\nbeta\ngamma\n", "alpha\ninserted\nbeta\ngamma\n",
+                                     "alpha\nbeta-current\ngamma\n");
+  Expect(model.hunks.size() == 2,
+         "insertion at a replacement boundary should not be merged into the replacement hunk");
+  Expect(model.hunks[0].base_start == 1 && model.hunks[0].base_end == 1,
+         "boundary insertion should remain a zero-width hunk");
+  Expect(model.hunks[1].base_start == 1 && model.hunks[1].base_end == 2,
+         "replacement should keep its original base span");
+}
+
 void TestMergeChoiceLabels() {
   Expect(std::string_view(microide::compare::MergeChoiceLabel(MergeChoice::Incoming)) ==
              "incoming",
@@ -137,6 +148,8 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Merge/IdenticalInsertions", TestMergeIdenticalInsertions);
   AddTest(tests, "Merge/BothChoiceConcatenatesConflictInsertions",
           TestMergeBothChoiceConcatenatesConflictInsertions);
+  AddTest(tests, "Merge/InsertionAndReplacementAtSameBoundaryStaySeparateHunks",
+          TestMergeInsertionAndReplacementAtSameBoundaryStaySeparateHunks);
   AddTest(tests, "Merge/ChoiceLabels", TestMergeChoiceLabels);
   AddTest(tests, "Merge/BootstrapMergeResultTextUsesOneTimeChoices",
           TestBootstrapMergeResultTextUsesOneTimeChoices);

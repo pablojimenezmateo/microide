@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -353,12 +354,19 @@ class SideRun:
         self.failed: list[str] = []
 
 
+def _mark_failed(side: SideRun, scenario: str) -> None:
+    if scenario not in side.failed:
+        side.failed.append(scenario)
+
+
 def run_scenario(side: SideRun, scenario: str, idx: int, total: int,
-                 iterations: int, runner: list[str]) -> None:
-    single_json = side.merged_dir / f"{scenario}.json"
-    log_path = side.merged_dir / f"{scenario}.log"
+                 iterations: int, runner: list[str], chunk_tag: str) -> None:
+    if iterations <= 0:
+        return
+    single_json = side.merged_dir / f"{scenario}.{chunk_tag}.json"
+    log_path = side.merged_dir / f"{scenario}.{chunk_tag}.log"
     effective_iters = min(iterations, SLOW_SCENARIO_ITERS.get(scenario, iterations))
-    tag = f"[{idx}/{total}] {bold(scenario)}"
+    tag = f"[{idx}/{total}] {bold(scenario)} {dim('(' + chunk_tag + ')')}"
     starting = dim("starting")
     if effective_iters != iterations:
         starting += dim(f" ({effective_iters} iter)")
@@ -385,11 +393,38 @@ def run_scenario(side: SideRun, scenario: str, idx: int, total: int,
         log(side.label, f"{tag} {green('ok')}")
     else:
         log(side.label, f"{tag} {red(f'FAILED (rc={rc}; log: {log_path})')}")
-        side.failed.append(scenario)
+        _mark_failed(side, scenario)
+
+
+def _percentile(values: list[float], p: float) -> float:
+    if not values:
+        return 0.0
+    values = sorted(values)
+    idx = p * (len(values) - 1)
+    lo = int(idx)
+    hi = math.ceil(idx)
+    if lo == hi:
+        return values[lo]
+    weight = idx - lo
+    return values[lo] * (1.0 - weight) + values[hi] * weight
+
+
+def _recompute_metrics(iterations: list[dict]) -> dict[str, float]:
+    wall_ms = [float(it["wall_ms"]) for it in iterations if "wall_ms" in it]
+    allocations = [float(it["allocations"]) for it in iterations if "allocations" in it]
+    return {
+        "p50_wall_ms": _percentile(wall_ms, 0.50),
+        "p95_wall_ms": _percentile(wall_ms, 0.95),
+        "max_wall_ms": max(wall_ms) if wall_ms else 0.0,
+        "p50_allocations": _percentile(allocations, 0.50),
+        "p95_allocations": _percentile(allocations, 0.95),
+        "max_allocations": max(allocations) if allocations else 0.0,
+    }
 
 
 def merge_side_reports(side: SideRun, json_out: Path) -> None:
     merged: dict = {"scenarios": []}
+    scenarios_by_name: dict[str, dict] = {}
     for json_path in sorted(side.merged_dir.glob("*.json")):
         try:
             data = json.loads(json_path.read_text())
@@ -397,7 +432,24 @@ def merge_side_reports(side: SideRun, json_out: Path) -> None:
             continue
         if "metadata" in data and "metadata" not in merged:
             merged["metadata"] = data["metadata"]
-        merged["scenarios"].extend(data.get("scenarios", []))
+        for scenario in data.get("scenarios", []):
+            name = scenario.get("scenario")
+            if not name:
+                continue
+            existing = scenarios_by_name.get(name)
+            if existing is None:
+                copied = dict(scenario)
+                copied["iterations"] = list(scenario.get("iterations", []))
+                scenarios_by_name[name] = copied
+                continue
+            existing["iterations"].extend(scenario.get("iterations", []))
+
+    for scenario in scenarios_by_name.values():
+        iterations = scenario.get("iterations", [])
+        for index, iteration in enumerate(iterations, start=1):
+            iteration["index"] = index
+        scenario["metrics"] = _recompute_metrics(iterations)
+        merged["scenarios"].append(scenario)
     json_out.write_text(json.dumps(merged))
 
 
@@ -689,10 +741,27 @@ def main() -> int:
         target_side = SideRun(target_worktree_dir, "target", out_dir)
         total = len(scenarios)
         for idx, scenario in enumerate(scenarios, start=1):
-            # Alternate side order per scenario to avoid consistent thermal bias.
-            run_order = [current_side, target_side] if idx % 2 == 1 else [target_side, current_side]
-            for side in run_order:
-                run_scenario(side, scenario, idx, total, iterations, runner)
+            # Measure each scenario in both side orders and merge the per-iteration
+            # streams. This avoids the "single-scenario current always runs first"
+            # bias that per-scenario alternation could not address.
+            first_half = iterations // 2
+            second_half = iterations - first_half
+            if idx % 2 == 1:
+                chunks = [
+                    (current_side, first_half, "a"),
+                    (target_side, first_half, "a"),
+                    (target_side, second_half, "b"),
+                    (current_side, second_half, "b"),
+                ]
+            else:
+                chunks = [
+                    (target_side, first_half, "a"),
+                    (current_side, first_half, "a"),
+                    (current_side, second_half, "b"),
+                    (target_side, second_half, "b"),
+                ]
+            for side, chunk_iters, chunk_tag in chunks:
+                run_scenario(side, scenario, idx, total, chunk_iters, runner, chunk_tag)
 
         merge_side_reports(current_side, current_json)
         merge_side_reports(target_side, target_json)

@@ -142,8 +142,7 @@ class LspClient {
   void DrainCallbacks();
 
   // Send textDocument/didOpen.
-  bool DidOpen(const std::string& uri, const std::string& language_id,
-               const std::string& text);
+  bool DidOpen(std::string uri, std::string language_id, std::string text);
 
   // Send textDocument/didChange (incremental or full depending on server capability).
   bool DidChange(const std::string& uri, const std::string& text);

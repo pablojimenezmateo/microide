@@ -1198,6 +1198,29 @@ void TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk() {
   }
 }
 
+void TestTextLayoutLineVisualColumnMapMatchesWalk() {
+  // 2026-05-19 perf deep-dive round 3 Finding 11: the per-line precomputed visual-column map
+  // (LineVisualColumnMap) must agree with the legacy walk for every text column on a line that
+  // mixes tabs and multi-byte UTF-8.
+  using microide::editor::TextLayout;
+  const std::string ascii_only = "hello world";
+  const std::string with_tabs = "ab\tcd\tef";
+  const std::string with_utf8 = "α\tβγ\tδε";  // 2-byte code points
+  const std::size_t tab_size = 4;
+  for (const auto* line_ptr : {&ascii_only, &with_tabs, &with_utf8}) {
+    const std::string& line = *line_ptr;
+    TextLayout::LineVisualColumnMap map(line, tab_size);
+    Expect(map.LineVisualWidth() == TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size),
+           "LineVisualColumnMap line width must match the walked width");
+    for (std::size_t c = 0; c <= line.size() + 3; ++c) {
+      const std::size_t walked = TextLayout::VisualColumnForTextColumn(line, c, tab_size);
+      const std::size_t mapped = map.VisualColumnFor(c);
+      Expect(mapped == walked,
+             "LineVisualColumnMap must match VisualColumnForTextColumn at every text column");
+    }
+  }
+}
+
 void TestTextViewportSecondaryCaretPositionsCacheStability() {
   // 2026-05-15 perf deep-dive round 2 Finding 10: secondary_caret_positions() must reuse the
   // same underlying storage across calls when the carets are unchanged, so the render path does
@@ -1490,6 +1513,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportOccurrenceSeedSpanNoWordInWhitespace);
   AddTest(tests, "TextLayout/VisualColumnFromLayoutClippedMatchesWalk",
           TestTextLayoutVisualColumnFromLayoutClippedMatchesWalk);
+  AddTest(tests, "TextLayout/LineVisualColumnMapMatchesWalk",
+          TestTextLayoutLineVisualColumnMapMatchesWalk);
   AddTest(tests, "TextViewport/SecondaryCaretPositionsCacheStability",
           TestTextViewportSecondaryCaretPositionsCacheStability);
   AddTest(tests, "TextViewport/TrivialWrappedLayoutFastPath",

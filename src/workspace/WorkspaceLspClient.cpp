@@ -148,22 +148,25 @@ void LspClient::DrainCallbacks() {
   }
 }
 
-bool LspClient::DidOpen(const std::string& uri, const std::string& language_id,
-                        const std::string& text) {
-  using namespace util;
+bool LspClient::DidOpen(std::string uri, std::string language_id, std::string text) {
   {
     std::lock_guard lock(impl_->mutex);
     impl_->document_versions[uri] = 1;
   }
-  JsonObject text_doc;
-  text_doc["uri"] = JsonValue(uri);
-  text_doc["languageId"] = JsonValue(language_id);
-  text_doc["version"] = JsonValue(static_cast<std::int64_t>(1));
-  text_doc["text"] = JsonValue(text);
-  JsonObject params;
-  params["textDocument"] = JsonValue(std::move(text_doc));
-  return impl_->SendMessageAfterInitialize(
-      impl_->MakeNotification("textDocument/didOpen", JsonValue(std::move(params))));
+  return impl_->SendMessageBuilderAfterInitialize(
+      [impl = impl_, uri = std::move(uri), language_id = std::move(language_id),
+       text = std::move(text)]() mutable {
+        using namespace util;
+        JsonObject text_doc;
+        text_doc["uri"] = JsonValue(uri);
+        text_doc["languageId"] = JsonValue(language_id);
+        text_doc["version"] = JsonValue(static_cast<std::int64_t>(1));
+        text_doc["text"] = JsonValue(text);
+        JsonObject params;
+        params["textDocument"] = JsonValue(std::move(text_doc));
+        return impl->SerializeMessage(
+            impl->MakeNotification("textDocument/didOpen", JsonValue(std::move(params))));
+      });
 }
 
 bool LspClient::DidChange(const std::string& uri, const std::string& text) {

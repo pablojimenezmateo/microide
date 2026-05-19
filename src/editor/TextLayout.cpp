@@ -6,6 +6,42 @@
 
 namespace microide::editor {
 
+TextLayout::LineVisualColumnMap::LineVisualColumnMap(const std::string& line,
+                                                     std::size_t tab_size) {
+  boundaries_.reserve(line.size() + 1);
+  visuals_.reserve(line.size() + 1);
+  boundaries_.push_back(0);
+  visuals_.push_back(0);
+  std::size_t visual = 0;
+  for (std::size_t i = 0; i < line.size();) {
+    visual = AdvanceVisualColumn(visual, line[i], tab_size);
+    i += util::Utf8SequenceLength(line, i);
+    boundaries_.push_back(i);
+    visuals_.push_back(visual);
+  }
+  line_visual_width_ = visual;
+}
+
+std::size_t TextLayout::LineVisualColumnMap::VisualColumnFor(std::size_t text_column) const {
+  if (boundaries_.empty() || text_column <= 0) {
+    return 0;
+  }
+  if (text_column >= boundaries_.back()) {
+    return line_visual_width_;
+  }
+  // First boundary >= text_column; round-down to its predecessor in the same code-point so
+  // mid-codepoint queries map to the start of the code point (matching ClampTextColumn).
+  auto it = std::lower_bound(boundaries_.begin(), boundaries_.end(), text_column);
+  std::size_t index = static_cast<std::size_t>(it - boundaries_.begin());
+  if (it == boundaries_.end() || *it > text_column) {
+    if (index == 0) {
+      return 0;
+    }
+    --index;
+  }
+  return visuals_[index];
+}
+
 std::size_t TextLayout::VisualColumnForTextColumn(const std::string& line,
                                                   std::size_t text_column,
                                                   std::size_t tab_size) {

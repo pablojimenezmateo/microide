@@ -396,6 +396,91 @@ while True:
   client.Shutdown();
 }
 
+void TestWorkspaceLspClientDidOpenQueuedBeforeInitializeStillDeliversFullText() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+
+  TemporaryDirectory temp_dir;
+  const auto marker_path = temp_dir.path() / "did-open.txt";
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import pathlib
+import sys
+import time
+
+marker_path = pathlib.Path(sys.argv[1])
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        time.sleep(0.2)
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "textDocument/didOpen":
+        text = msg["params"]["textDocument"]["text"]
+        marker_path.write_text(str(len(text)) + "\n" + text[:32], encoding="utf-8")
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  std::string full_text;
+  for (int i = 0; i < 4000; ++i) {
+    full_text += "line " + std::to_string(i) + " abcdefghijklmnopqrstuvwxyz\n";
+  }
+
+  LspClient client;
+  const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
+                                    "file:///tmp", "python");
+  Expect(started, "didOpen queue fixture should start");
+  Expect(client.DidOpen("file:///tmp/sample.py", "python", full_text),
+         "didOpen should enqueue even before initialize finishes");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (std::chrono::steady_clock::now() < deadline && !std::filesystem::exists(marker_path)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(std::filesystem::exists(marker_path),
+         "queued didOpen should reach the server after initialize completes");
+  const std::string written = ReadFile(marker_path);
+  const std::string prefix = std::to_string(full_text.size()) + "\n" + full_text.substr(0, 32);
+  Expect(written == prefix, "queued didOpen should preserve the full text payload");
+  client.Shutdown();
+}
+
 }  // namespace
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
@@ -411,6 +496,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientBeginShutdownCancelsPreInitServerImmediately);
   AddTest(tests, "WorkspaceLspClient/ReadinessSnapshotTracksProgress",
           TestWorkspaceLspClientReadinessSnapshotTracksProgress);
+  AddTest(tests, "WorkspaceLspClient/DidOpenQueuedBeforeInitializeStillDeliversFullText",
+          TestWorkspaceLspClientDidOpenQueuedBeforeInitializeStillDeliversFullText);
 }
 
 }  // namespace microide::tests
