@@ -12,7 +12,13 @@ COMMIT_SHA defaults to the local `main` branch's HEAD (falling back to
 Environment overrides:
   ITERATIONS    perf iterations per scenario (default: 10)
   SCENARIOS     comma-separated scenario filter (default: all registered)
-  REGRESS_PCT   percentage threshold for highlighting/summary (default: 5)
+  NOISE_SIGMA   k for the k-sigma noise band (default: 2.0). A delta whose
+                absolute size is within k * max(stdev_cur, stdev_tgt) of the
+                per-iteration samples is treated as noise (dimmed, excluded
+                from the regressions/improvements summary).
+  REGRESS_PCT   secondary percentage floor for the summary lists only — a
+                statistically-real delta whose magnitude is below this pct is
+                kept dim and not summarised. Set to 0 to disable. Default: 5.
   KEEP          if "1", keep the temporary worktree and JSON reports
   NO_COLOR      if set, disable ANSI colour output
 """
@@ -24,6 +30,7 @@ import json
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -422,30 +429,74 @@ def delta_pct(cur, tgt) -> Optional[float]:
     return (cur - tgt) / tgt * 100.0
 
 
-def color_delta(pct: Optional[float], threshold: float) -> str:
+def _samples_for_metric(scenario_report: Optional[dict], metric: str) -> list[float]:
+    """Per-iteration raw values that underlie the given aggregate metric.
+
+    All wall_ms aggregates (p50/p95/max) draw from the same per-iteration
+    `wall_ms` sample stream; same for allocations. We use that stream as the
+    spread proxy when judging whether a delta is statistically real.
+    """
+    if not scenario_report:
+        return []
+    iters = scenario_report.get("iterations", [])
+    if metric.endswith("_wall_ms"):
+        key = "wall_ms"
+    elif metric.endswith("_allocations"):
+        key = "allocations"
+    else:
+        return []
+    return [float(it[key]) for it in iters if key in it]
+
+
+def _noise_band(cur_samples: list[float], tgt_samples: list[float],
+                k: float) -> float:
+    """k-sigma absolute noise band from per-iteration spread.
+
+    Uses the larger of the two per-side sample stdevs (conservative). Returns
+    0.0 when neither side has enough samples to estimate stdev — in that
+    deterministic case any non-zero delta is taken as a real change.
+    """
+    sd_cur = statistics.stdev(cur_samples) if len(cur_samples) >= 2 else 0.0
+    sd_tgt = statistics.stdev(tgt_samples) if len(tgt_samples) >= 2 else 0.0
+    return k * max(sd_cur, sd_tgt)
+
+
+def classify_delta(cv, tv, noise_band: float) -> str:
+    """Returns 'noise', 'regression', 'improvement', or 'flat'."""
+    if cv is None or tv is None:
+        return 'flat'
+    abs_delta = abs(cv - tv)
+    if abs_delta <= noise_band:
+        return 'noise'
+    if cv > tv:
+        return 'regression'
+    if cv < tv:
+        return 'improvement'
+    return 'flat'
+
+
+def color_delta(pct: Optional[float], classification: str) -> str:
     if pct is None:
         return dim("-")
     sign = "+" if pct >= 0 else ""
     text = f"{sign}{pct:.2f}%"
-    if pct > threshold:
+    if classification == 'regression':
         return red(text)
-    if pct < -threshold:
+    if classification == 'improvement':
         return green(text)
-    if abs(pct) > threshold / 2:
-        return yellow(text)
     return dim(text)
 
 
 def render_comparison(current_report: dict, target_report: dict,
                       current_label: str, target_label: str,
                       current_failed: list[str], target_failed: list[str],
-                      threshold: float) -> None:
-    cur = {s["scenario"]: s["metrics"] for s in current_report.get("scenarios", [])}
-    tgt = {s["scenario"]: s["metrics"] for s in target_report.get("scenarios", [])}
-    scenarios = sorted(set(cur) | set(tgt))
+                      summary_pct_floor: float, noise_sigma: float) -> None:
+    cur_scen = {s["scenario"]: s for s in current_report.get("scenarios", [])}
+    tgt_scen = {s["scenario"]: s for s in target_report.get("scenarios", [])}
+    scenarios = sorted(set(cur_scen) | set(tgt_scen))
 
-    only_current = [s for s in scenarios if s in cur and s not in tgt]
-    only_target = [s for s in scenarios if s in tgt and s not in cur]
+    only_current = [s for s in scenarios if s in cur_scen and s not in tgt_scen]
+    only_target = [s for s in scenarios if s in tgt_scen and s not in cur_scen]
 
     header = [
         bold("scenario"),
@@ -460,23 +511,32 @@ def render_comparison(current_report: dict, target_report: dict,
     improvements: list[tuple[str, str, float]] = []
 
     for scenario in scenarios:
+        cur_s = cur_scen.get(scenario)
+        tgt_s = tgt_scen.get(scenario)
         for metric, unit in METRICS:
-            cv = cur.get(scenario, {}).get(metric)
-            tv = tgt.get(scenario, {}).get(metric)
+            cv = (cur_s or {}).get("metrics", {}).get(metric)
+            tv = (tgt_s or {}).get("metrics", {}).get(metric)
             pct = delta_pct(cv, tv)
+            band = _noise_band(
+                _samples_for_metric(cur_s, metric),
+                _samples_for_metric(tgt_s, metric),
+                noise_sigma,
+            )
+            cls = classify_delta(cv, tv, band)
             rows.append([
                 scenario,
                 metric,
                 fmt_value(cv, unit),
                 fmt_value(tv, unit),
-                color_delta(pct, threshold),
+                color_delta(pct, cls),
             ])
             row_groups.append(scenario)
-            if pct is not None:
-                if pct > threshold:
-                    regressions.append((scenario, metric, pct))
-                elif pct < -threshold:
-                    improvements.append((scenario, metric, pct))
+            if pct is None:
+                continue
+            if cls == 'regression' and abs(pct) >= summary_pct_floor:
+                regressions.append((scenario, metric, pct))
+            elif cls == 'improvement' and abs(pct) >= summary_pct_floor:
+                improvements.append((scenario, metric, pct))
 
     widths = [max(visible_len(str(r[i])) for r in rows) for i in range(len(header))]
 
@@ -527,16 +587,22 @@ def render_comparison(current_report: dict, target_report: dict,
             print(f"  {red('x')} {name}")
 
     print()
+    print(dim(f"deltas dimmed when within {noise_sigma:g}σ of per-iteration "
+              f"sample spread (max(stdev_cur, stdev_tgt))"))
+    if summary_pct_floor > 0:
+        print(dim(f"summary lists below also require |delta| ≥ "
+                  f"{summary_pct_floor:g}%"))
+    print()
     if regressions:
-        print(bold(red(f"Regressions > {threshold:g}%:")))
+        print(bold(red(f"Regressions (outside {noise_sigma:g}σ noise band):")))
         for scenario, metric, pct in sorted(regressions, key=lambda x: -x[2]):
             print(f"  {red(f'+{pct:>8.2f}%')}  {scenario}  {dim(metric)}")
     else:
-        print(green(f"No metric regressed by more than {threshold:g}%."))
+        print(green(f"No metric regressed beyond the {noise_sigma:g}σ noise band."))
 
     if improvements:
         print()
-        print(bold(green(f"Improvements > {threshold:g}%:")))
+        print(bold(green(f"Improvements (outside {noise_sigma:g}σ noise band):")))
         for scenario, metric, pct in sorted(improvements, key=lambda x: x[2]):
             print(f"  {green(f'{pct:>9.2f}%')}  {scenario}  {dim(metric)}")
 
@@ -558,7 +624,8 @@ def main() -> int:
 
     iterations = int(os.environ.get("ITERATIONS", "10"))
     scenarios_filter = os.environ.get("SCENARIOS", "").strip()
-    threshold = float(os.environ.get("REGRESS_PCT", "5"))
+    summary_pct_floor = float(os.environ.get("REGRESS_PCT", "5"))
+    noise_sigma = float(os.environ.get("NOISE_SIGMA", "2"))
     keep = os.environ.get("KEEP", "0") == "1"
 
     root = repo_root()
@@ -639,7 +706,7 @@ def main() -> int:
             current_report, target_report,
             current_label, target_short,
             current_failed, target_failed,
-            threshold,
+            summary_pct_floor, noise_sigma,
         )
         return 0
     finally:
