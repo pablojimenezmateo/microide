@@ -271,7 +271,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTextInputCoordinator.cpp
   src/workspace/WorkspaceTextInputCoordinatorTerminal.cpp
   src/workspace/WorkspaceTabActionExecutor.cpp
-  src/workspace/WorkspaceShellChrome.cpp
   src/workspace/EditorBlameOverlayService.cpp
   src/workspace/WorkspaceShellCursor.cpp
   src/workspace/WorkspaceDiffTabCoordinator.cpp

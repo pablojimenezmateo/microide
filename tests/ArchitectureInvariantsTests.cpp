@@ -516,7 +516,7 @@ RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo
   RuleResult result;
   result.label = "WorkspaceShell*.cpp translation-unit count";
   result.hard_fail = true;
-  constexpr std::size_t kCap = 46;
+  constexpr std::size_t kCap = 45;
   std::size_t count = 0;
   for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
