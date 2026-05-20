@@ -43,10 +43,6 @@ SDL_Color MergeMarkerColor(const render::Theme& theme,
   }
 }
 
-bool MergeMarkerTrackMatches(const SDL_FRect& a, const SDL_FRect& b) {
-  return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
-}
-
 void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
                                const render::Theme& theme,
                                const SDL_FRect& track,
@@ -59,7 +55,7 @@ void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
 
   if (!merge_tab.scrollbar_marker_cache_valid ||
       merge_tab.scrollbar_marker_cache_revision != merge_tab.model_revision ||
-      !MergeMarkerTrackMatches(merge_tab.scrollbar_marker_cache_track, track)) {
+      !SdlFRectEqual(merge_tab.scrollbar_marker_cache_track, track)) {
     merge_tab.scrollbar_marker_cache = BuildMergeScrollbarMarkers(track, total_rows, inputs);
     merge_tab.scrollbar_marker_cache_track = track;
     merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;

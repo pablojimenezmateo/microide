@@ -46,12 +46,9 @@ void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
     return;
   }
 
-  const auto same_track = [&](const SDL_FRect& lhs, const SDL_FRect& rhs) {
-    return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
-  };
   if (!compare_tab.scrollbar_marker_cache_valid ||
       compare_tab.scrollbar_marker_cache_revision != compare_tab.model_revision ||
-      !same_track(compare_tab.scrollbar_marker_cache_track, track)) {
+      !SdlFRectEqual(compare_tab.scrollbar_marker_cache_track, track)) {
     compare_tab.scrollbar_marker_cache = BuildCompareScrollbarMarkers(track, compare_tab.model);
     compare_tab.scrollbar_marker_cache_track = track;
     compare_tab.scrollbar_marker_cache_revision = compare_tab.model_revision;

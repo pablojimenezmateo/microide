@@ -16,6 +16,12 @@ namespace microide::workspace {
 // view into the populated bytes. Returns an empty view if std::to_chars fails.
 std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch);
 
+// Exact-equality check for two SDL_FRect values. Used by the compare/merge
+// scrollbar-marker caches to detect track moves.
+inline bool SdlFRectEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+}
+
 // Fill the scrollbar track rect with the theme's raised-surface color.
 void DrawScrollbarTrack(SDL_Renderer* renderer,
                         const render::Theme& theme,
