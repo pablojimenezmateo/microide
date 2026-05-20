@@ -25,10 +25,6 @@ bool IsHexCommitPrefix(std::string_view line) {
   return line.size() == 40 || line[40] == ' ';
 }
 
-bool StartsWith(std::string_view text, std::string_view prefix) {
-  return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
-}
-
 struct CommitMetadata {
   std::string author;
   std::string summary;
@@ -108,17 +104,17 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
       continue;
     }
 
-    if (StartsWith(line, "author ")) {
+    if (line.starts_with("author ")) {
       current_metadata.author = std::string(line.substr(7));
       continue;
     }
-    if (StartsWith(line, "author-time ")) {
+    if (line.starts_with("author-time ")) {
       if (const auto parsed = util::ParseInt64(line.substr(12)); parsed.has_value()) {
         current_metadata.author_time = *parsed;
       }
       continue;
     }
-    if (StartsWith(line, "summary ")) {
+    if (line.starts_with("summary ")) {
       current_metadata.summary = std::string(line.substr(8));
       continue;
     }
@@ -126,7 +122,7 @@ std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view
       current_metadata.boundary = true;
       continue;
     }
-    if (StartsWith(line, "filename ")) {
+    if (line.starts_with("filename ")) {
       commit_metadata[current_commit] = current_metadata;
       attributions.push_back(GitBlameAttribution{
           .commit_id = current_commit,

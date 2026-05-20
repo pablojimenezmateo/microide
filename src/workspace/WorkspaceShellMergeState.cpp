@@ -48,10 +48,6 @@ std::vector<compare::MergeChoice> PreferredMergeChoices(const compare::MergeHunk
   return choices;
 }
 
-bool LineStartsWith(std::string_view text, std::string_view prefix) {
-  return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
-}
-
 bool ContainsGitConflictMarkers(std::string_view text) {
   return text.find("<<<<<<<") != std::string_view::npos &&
          text.find("=======") != std::string_view::npos &&
@@ -180,11 +176,11 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   std::vector<ParsedGitConflictSegment> segments;
   std::size_t line_index = 0;
   while (line_index < lines.size()) {
-    if (!LineStartsWith(lines[line_index], "<<<<<<<")) {
+    if (!lines[line_index].starts_with("<<<<<<<")) {
       ParsedGitConflictSegment segment;
       segment.plain_lines.push_back(lines[line_index]);
       ++line_index;
-      while (line_index < lines.size() && !LineStartsWith(lines[line_index], "<<<<<<<")) {
+      while (line_index < lines.size() && !lines[line_index].starts_with("<<<<<<<")) {
         segment.plain_lines.push_back(lines[line_index]);
         ++line_index;
       }
@@ -198,12 +194,12 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
 
     ParsedGitConflictBlock block;
     ++line_index;
-    while (line_index < lines.size() && !LineStartsWith(lines[line_index], "|||||||") &&
+    while (line_index < lines.size() && !lines[line_index].starts_with("|||||||") &&
            lines[line_index] != "=======") {
       block.current_lines.push_back(lines[line_index]);
       ++line_index;
     }
-    if (line_index < lines.size() && LineStartsWith(lines[line_index], "|||||||")) {
+    if (line_index < lines.size() && lines[line_index].starts_with("|||||||")) {
       block.has_base = true;
       ++line_index;
       while (line_index < lines.size() && lines[line_index] != "=======") {
@@ -215,11 +211,11 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
       return std::nullopt;
     }
     ++line_index;
-    while (line_index < lines.size() && !LineStartsWith(lines[line_index], ">>>>>>>")) {
+    while (line_index < lines.size() && !lines[line_index].starts_with(">>>>>>>")) {
       block.incoming_lines.push_back(lines[line_index]);
       ++line_index;
     }
-    if (line_index >= lines.size() || !LineStartsWith(lines[line_index], ">>>>>>>")) {
+    if (line_index >= lines.size() || !lines[line_index].starts_with(">>>>>>>")) {
       return std::nullopt;
     }
     ++line_index;
