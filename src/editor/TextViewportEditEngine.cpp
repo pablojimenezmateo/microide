@@ -13,17 +13,6 @@
 
 namespace microide::editor {
 
-namespace {
-
-std::string ToLower(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return lowered;
-}
-
-}  // namespace
 
 void TextViewport::InsertCharacter(char character) {
   if (has_multiple_carets()) {
@@ -242,8 +231,8 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   }
 
   const ViewState before_state = CaptureViewState();
-  const std::string lowered_needle = ToLower(needle);
-  const std::string lowered_replacement = ToLower(replacement);
+  const std::string lowered_needle = util::ToLowerAscii(needle);
+  const std::string lowered_replacement = util::ToLowerAscii(replacement);
   std::size_t replacements = 0;
   std::size_t first_changed_line = document_->lines.size();
   std::size_t last_changed_line = 0;
@@ -255,7 +244,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   std::string new_line;
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
     std::string& current_line = document_->lines[line_index];
-    std::string lowered_line = ToLower(current_line);
+    std::string lowered_line = util::ToLowerAscii(current_line);
     std::size_t offset = lowered_line.find(lowered_needle);
     if (offset == std::string::npos) {
       continue;
