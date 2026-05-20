@@ -55,7 +55,7 @@ void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
 
   if (!merge_tab.scrollbar_marker_cache_valid ||
       merge_tab.scrollbar_marker_cache_revision != merge_tab.model_revision ||
-      !SdlFRectEqual(merge_tab.scrollbar_marker_cache_track, track)) {
+      !RectsEqual(merge_tab.scrollbar_marker_cache_track, track)) {
     merge_tab.scrollbar_marker_cache = BuildMergeScrollbarMarkers(track, total_rows, inputs);
     merge_tab.scrollbar_marker_cache_track = track;
     merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;

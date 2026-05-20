@@ -255,6 +255,10 @@ std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
     bool vertical,
     std::span<const float> size_fractions);
 bool Contains(const SDL_FRect& rect, float x, float y);
+// Exact four-float equality for SDL_FRect.
+inline bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
+  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
+}
 float ClampSidebarWidth(float width, float window_width);
 float ClampBottomPanelHeight(float height, float window_height);
 int BottomPanelVisibleRowsForHeight(float panel_height, float line_height, bool command_mode);

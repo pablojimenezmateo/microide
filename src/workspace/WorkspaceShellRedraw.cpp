@@ -40,10 +40,6 @@ std::optional<SDL_FRect> UnionRects(std::optional<SDL_FRect> lhs, const SDL_FRec
   return MakeRect(x0, y0, x1 - x0, y1 - y0);
 }
 
-bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
-}
-
 }  // namespace
 
 void WorkspaceShell::MarkLayoutDirty() {

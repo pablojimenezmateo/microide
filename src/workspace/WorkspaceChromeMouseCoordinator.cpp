@@ -22,10 +22,6 @@ void RequestMenuHoverRowRedraw(
       MakeRect(rect->x - 1.0f, rect->y - 1.0f, rect->w + 2.0f, rect->h + 2.0f));
 }
 
-bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
-  return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
-}
-
 bool OptionalRectsEqual(const std::optional<SDL_FRect>& lhs,
                         const std::optional<SDL_FRect>& rhs) {
   if (!lhs.has_value() || !rhs.has_value()) {
