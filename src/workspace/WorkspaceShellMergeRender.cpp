@@ -13,6 +13,7 @@
 #include "editor/TextLayout.h"
 #include "render/Theme.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/RenderScrollbar.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -69,40 +70,6 @@ void DrawMergeScrollbarMarkers(SDL_Renderer* renderer,
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRect(renderer, &marker.rect);
   }
-}
-
-void DrawScrollbarTrack(SDL_Renderer* renderer,
-                        const render::Theme& theme,
-                        const SDL_FRect& track) {
-  if (renderer == nullptr || track.w <= 0.0f || track.h <= 0.0f) {
-    return;
-  }
-
-  SDL_SetRenderDrawColor(renderer, theme.surface_raised.r, theme.surface_raised.g,
-                         theme.surface_raised.b, theme.surface_raised.a);
-  SDL_RenderFillRect(renderer, &track);
-}
-
-void DrawScrollbarThumb(SDL_Renderer* renderer,
-                        const render::Theme& theme,
-                        const SDL_FRect& thumb,
-                        bool active = false) {
-  if (renderer == nullptr || thumb.w <= 0.0f || thumb.h <= 0.0f) {
-    return;
-  }
-
-  const SDL_Color thumb_color = active ? theme.accent : theme.text_disabled;
-  SDL_SetRenderDrawColor(renderer, thumb_color.r, thumb_color.g, thumb_color.b, thumb_color.a);
-  SDL_RenderFillRect(renderer, &thumb);
-}
-
-void DrawScrollbar(SDL_Renderer* renderer,
-                   const render::Theme& theme,
-                   const SDL_FRect& track,
-                   const SDL_FRect& thumb,
-                   bool active = false) {
-  DrawScrollbarTrack(renderer, theme, track);
-  DrawScrollbarThumb(renderer, theme, thumb, active);
 }
 
 std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch) {
