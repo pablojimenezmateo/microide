@@ -14,7 +14,7 @@
 #include "editor/TextLayout.h"
 #include "render/Theme.h"
 #include "util/PerformanceTrace.h"
-#include "workspace/RenderScrollbar.h"
+#include "workspace/CompareMergeRender.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -62,16 +62,6 @@ void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
     SDL_RenderFillRect(renderer, &marker.rect);
   }
-}
-
-std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch) {
-  const auto [end, ec] =
-      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
-  if (ec != std::errc{}) {
-    return {};
-  }
-  return std::string_view(scratch.data(),
-                          static_cast<std::size_t>(end - scratch.data()));
 }
 
 }  // namespace

@@ -1,8 +1,19 @@
-#include "workspace/RenderScrollbar.h"
+#include "workspace/CompareMergeRender.h"
+
+#include <charconv>
+#include <system_error>
 
 #include "render/Theme.h"
 
 namespace microide::workspace {
+
+std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch) {
+  const auto [end, ec] = std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
+  if (ec != std::errc{}) {
+    return {};
+  }
+  return std::string_view(scratch.data(), static_cast<std::size_t>(end - scratch.data()));
+}
 
 void DrawScrollbarTrack(SDL_Renderer* renderer,
                         const render::Theme& theme,
