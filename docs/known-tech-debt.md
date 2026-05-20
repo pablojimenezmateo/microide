@@ -5,6 +5,10 @@ Updated 2026-05-18 with rejected refactor experiment notes.
 Updated 2026-05-19 with project-search throughput and perf-compare measurement fixes.
 Updated 2026-05-19 with post-`e9a4764` perf-compare null-result investigation and the
 two follow-up items it surfaced (merge scrollbar marker cache, hover visual-column map).
+Updated 2026-05-20 with item #16 phase-1-through-3 progress (companion cap 51→45,
+`WorkspaceTabStripChrome` adapter) and item #15 phase-1 progress
+(`TextViewportUndoHistory` extraction, the first real ownership reduction since the
+2026-05-18 file decomposition pass).
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -377,8 +381,28 @@ See also `docs/performance-findings.md` — Second Performance Pass, New finding
 ## 15. `TextViewport.cpp` Ownership Concentration
 
 Status:
-- Substantially addressed on 2026-05-18 across five extractions, all keeping methods as members
-  of the same `TextViewport` class (no header / API change, no friending):
+- **UndoHistory seam landed on 2026-05-20** (commit `715b66b`,
+  `refactor: extract TextViewportUndoHistory off TextViewport`). The first real
+  ownership reduction since the 2026-05-18 file decomposition pass.
+  `src/editor/TextViewportUndoHistory.{h,cpp}` now owns `undo_stack_` /
+  `redo_stack_` (moved out of `DocumentState`), the per-viewport `group_stack_`
+  (was `undo_group_stack_` on the viewport), the `HistoryEntry` / `ViewState` /
+  `SecondaryCaret` type definitions, and the static helpers `ApplyEntryToLines`,
+  `BuildAppliedEdit`, `BuildEntryForDocumentChange`, plus the private
+  `TryMergeGroupEntry` / `ReconstructFallbackLines` merge math. `TextViewport`
+  keeps `ApplyHistoryEntry` / `BuildRangeHistoryEntry` / `BuildLineHistoryEntry`
+  (they touch viewport-private caches and CaptureViewState) and now forwards
+  `Push*` / `Begin*` / `Finish*` through `undo_history_`. `TextViewport.cpp`
+  shrank 1,788 → ~1,500 lines; `TextViewport.h` dropped the four nested struct
+  bodies plus five private / static method declarations. New trivial value
+  header `editor/EditTypes.h` carries `TextPosition` / `SelectionRange` /
+  `AppliedEdit` so the new TU can depend on them without a circular include of
+  `TextViewport.h`. Perf gate (`tools/perf-compare.py main`, the seven scenarios
+  cited in the rejected `TextDocumentModel` section below): no metric regressed
+  beyond the 2σ band; most scenarios moved slightly negative or improved.
+- Substantially addressed on 2026-05-18 across five earlier extractions, all
+  keeping methods as members of the same `TextViewport` class (no header / API
+  change, no friending):
   - **Language-pair behavior** (auto-close, surround, skip-over-close, dedent-on-close,
     brace-split, smart-indent newline, multi-caret pair-insert, plus `AutoIndentForNewline` /
     `IndentUnit` / `InInsertionSuppressedScope`) →
@@ -429,22 +453,27 @@ Recommended ownership seams for the next pass:
   - dirty state
   - revision number
   - file-path or save metadata where appropriate
+  - **Rejected — see "Rejected experiment" section below. Do not retry in
+    the same shape.**
 - `EditEngine`
   - range edits
   - multi-caret edit normalization
   - auto-pair edit transforms
   - edit grouping boundaries
   - range validation
+  - Open. Hot path; benchmark-gate every micro-step.
 - `UndoHistory`
   - undo/redo stacks
   - grouping
   - caret/selection restore
   - revision integration
+  - **Done on 2026-05-20 (commit `715b66b`). See Status above.**
 - `TextLayoutCache`
   - soft-wrap rows
   - visible-line cache
   - fold-aware mapping
   - layout invalidation
+  - Open. Hot render path; benchmark-gate every micro-step.
 
 ### Rejected experiment: `TextDocumentModel` ownership extraction
 
@@ -495,14 +524,42 @@ the editor benchmarks.
 ## 16. `WorkspaceShell*.cpp` Companion Sprawl Keeps Behavior In The Shell Namespace
 
 Status:
-- Open at "low" after the 2026-05-18 audit, ratchet-only caps, and the first assist extraction.
+- Three slices landed on 2026-05-20 that took the companion cap 51 → 45 and
+  actually moved tab-strip / panel-tab behavior off `WorkspaceShell`:
+  - Commit `e07e073` — collapsed four single-delegation companions
+    (`WorkspaceShellInput.cpp`, `WorkspaceShellBlame.cpp`,
+    `WorkspaceShellTerminalService.cpp`, `WorkspaceShellCommandPrompt.cpp`)
+    into the bootstrapper / shell core. Cap 51 → 46.
+  - Commit `06ef475` — folded `WorkspaceShellChrome.cpp` (the 15 tab-strip /
+    overlay-rect / status-bar wrappers) into `WorkspaceShellPresentation.cpp`
+    since they share the same `ProjectLabelForRoot` / `ProjectTabDisplayTitle`
+    / `DefaultProjectBaseColor` presentation helpers. Cap 46 → 45.
+  - Commit `b31b026` — extracted `WorkspaceTabStripChrome` (non-shell-named
+    TU, doesn't count against the cap) holding refs to `WorkspaceContext`,
+    `TabStripService`, `LayoutModeService`, `WorkspaceOutputChannels` plus an
+    `Operations` struct for the shell-defined presentation / lifecycle hooks.
+    The 12 tab-strip + bottom-panel-tab method bodies + the `ClearTabDrag`
+    one-liner + the dead `static BuildVisibleStripTabs` declaration all left
+    `WorkspaceShell`'s symbol surface; coordinator factories
+    (`WorkspaceTabMouseCoordinator`), intra-shell call sites
+    (`WorkspaceShellRenderChrome`, `WorkspaceShellCursor`,
+    `WorkspaceShellRedraw`, `WorkspaceShellProjects`, `WorkspaceShellCompareMerge`,
+    `WorkspaceShellPresentation`), the persistence and tab coordinators, and the
+    test access inc files all now bind `tab_strip_chrome_` directly.
+
+What is still open: `ComputeOverlayRect` and `RefreshStatusBar` remain on
+`WorkspaceShell`. `ComputeOverlayRect` is a one-line wrapper around
+`ComputeOverlaySurfaceRect` with 14 call sites — replaceable with a mechanical
+rename pass. `RefreshStatusBar` is blocked from inlining at its single render-TU
+call site by `CheckRenderSurfaceStateAccess` (no direct
+`context_.current_project_state` access in render units); it would have to land
+on a non-render service before the shell can drop it.
 
 Impact:
-- Low to medium. The architectural-lint cap on `WorkspaceShell.h` (≤ 400 lines) and
-  `WorkspaceShell.cpp` (≤ 600 lines) is satisfied, but behavior is still owned by the
-  `WorkspaceShell` namespace through 51 `WorkspaceShell*.cpp` translation units defined against
-  `WorkspaceShellMembers.inc` (~1,516 lines of inline class body). File decomposition without
-  ownership decomposition keeps the shell symbol blast radius wide.
+- Low. The architectural-lint cap on `WorkspaceShell.h` (≤ 400 lines) and
+  `WorkspaceShell.cpp` (≤ 600 lines) is satisfied; the companion cap is now 45
+  (down from 51) and `CheckWorkspaceShellCompanionTuCount` enforces the new
+  ratchet. `WorkspaceShellMembers.inc` is meaningfully smaller after phase 3.
 
 Audit of the four originally-named candidates (2026-05-18):
 - `WorkspaceShellOutput.cpp` (~56 lines, 4 methods): too small to migrate productively. Two
@@ -536,10 +593,13 @@ What was actually done in the low pass (2026-05-18):
   cap when a migration shrinks either number; never raise.
 
 Recommended follow-ups (deferred, each a separate medium-sized change):
-- Finish collapsing the remaining project/editor-tab convenience wrappers in
-  `WorkspaceShellChrome.cpp` once the surrounding coordinator/test-access call sites can depend on
-  the underlying services directly.
-- Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now hard-fails this.
+- Replace `ComputeOverlayRect(x)` with `ComputeOverlaySurfaceRect(x)` at the
+  ~14 call sites and drop the shell wrapper. Mechanical.
+- Move `RefreshStatusBar` body onto a non-render service so the shell can drop
+  it (the current blocker is `CheckRenderSurfaceStateAccess`, not the wrapper
+  itself).
+- Do not add new `WorkspaceShell*.cpp` files for new behavior — the cap now
+  hard-fails this.
 
 ## Open Follow-Ups After The 2026-04-29 Cleanup
 
