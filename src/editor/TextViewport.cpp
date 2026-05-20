@@ -469,16 +469,13 @@ void TextViewport::SelectWordAtCursor() {
   }
   const std::string& line = document_->lines[cursor_line_];
   const std::size_t col = std::min(cursor_column_, line.size());
-  auto is_word_char = [](char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
-  };
   std::size_t start = col;
   std::size_t end = col;
-  if (col < line.size() && is_word_char(line[col])) {
-    while (start > 0 && is_word_char(line[start - 1])) {
+  if (col < line.size() && IsIdentifierByte(line[col])) {
+    while (start > 0 && IsIdentifierByte(line[start - 1])) {
       --start;
     }
-    while (end < line.size() && is_word_char(line[end])) {
+    while (end < line.size() && IsIdentifierByte(line[end])) {
       ++end;
     }
   }
@@ -496,9 +493,6 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
     return std::nullopt;
   }
 
-  auto is_word_char = [](char c) {
-    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
-  };
 
   if (const auto selected = selection_range()) {
     if (selected->start.line != selected->end.line) {
@@ -519,9 +513,9 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
   const std::string& line = document_->lines[line_index];
   const std::size_t col = std::min(cursor_column_, line.size());
   std::size_t anchor_col = col;
-  if (col < line.size() && is_word_char(line[col])) {
+  if (col < line.size() && IsIdentifierByte(line[col])) {
     // Primary caret indexes a word character.
-  } else if (col > 0 && is_word_char(line[col - 1])) {
+  } else if (col > 0 && IsIdentifierByte(line[col - 1])) {
     anchor_col = col - 1;
   } else {
     return std::nullopt;
@@ -529,10 +523,10 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
 
   std::size_t start = anchor_col;
   std::size_t end = anchor_col;
-  while (start > 0 && is_word_char(line[start - 1])) {
+  while (start > 0 && IsIdentifierByte(line[start - 1])) {
     --start;
   }
-  while (end < line.size() && is_word_char(line[end])) {
+  while (end < line.size() && IsIdentifierByte(line[end])) {
     ++end;
   }
   if (start >= end) {

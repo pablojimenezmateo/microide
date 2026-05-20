@@ -1,9 +1,18 @@
 #pragma once
 
+#include <cctype>
 #include <cstddef>
 #include <string>
 
 namespace microide::editor {
+
+// Identifier byte for word-boundary scanning: ASCII alphanumeric plus
+// underscore. Matches the convention used by selection-by-word and
+// occurrence-highlight seeding.
+inline bool IsIdentifierByte(char c) {
+  return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+
 
 struct TextPosition {
   std::size_t line = 0;
