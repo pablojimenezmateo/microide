@@ -14,6 +14,7 @@
 #include "editor/RuntimeSyntaxData.h"
 #include "util/PerformanceTrace.h"
 #include "util/RegexUtil.h"
+#include "util/StringUtil.h"
 
 namespace microide::editor::runtime_syntax {
 
@@ -200,64 +201,52 @@ struct BuildOutput {
   std::size_t loaded_runtime_definition_count = 0;
 };
 
-bool StartsWith(std::string_view text, std::string_view prefix) {
-  return text.substr(0, prefix.size()) == prefix;
-}
-
 bool Contains(std::string_view text, std::string_view needle) {
   return text.find(needle) != std::string_view::npos;
 }
 
-std::string ToLower(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
-    return static_cast<char>(std::tolower(ch));
-  });
-  return lowered;
-}
-
 SyntaxTokenKind TokenKindForGroupName(std::string_view group_name) {
   if (group_name.empty() || group_name == "default" || group_name == "identifier" ||
-      StartsWith(group_name, "identifier.var") || StartsWith(group_name, "identifier.builtin")) {
+      group_name.starts_with("identifier.var") || group_name.starts_with("identifier.builtin")) {
     return SyntaxTokenKind::Plain;
   }
 
-  if (group_name == "todo" || StartsWith(group_name, "todo") || group_name == "error" ||
-      StartsWith(group_name, "error") || group_name == "underlined" ||
-      StartsWith(group_name, "underlined")) {
+  if (group_name == "todo" || group_name.starts_with("todo") || group_name == "error" ||
+      group_name.starts_with("error") || group_name == "underlined" ||
+      group_name.starts_with("underlined")) {
     return SyntaxTokenKind::Constant;
   }
 
-  if (StartsWith(group_name, "comment")) {
+  if (group_name.starts_with("comment")) {
     return SyntaxTokenKind::Comment;
   }
-  if (group_name == "string" || StartsWith(group_name, "string") ||
+  if (group_name == "string" || group_name.starts_with("string") ||
       Contains(group_name, ".string")) {
     return SyntaxTokenKind::String;
   }
   if (Contains(group_name, "number")) {
     return SyntaxTokenKind::Number;
   }
-  if (group_name == "preproc" || StartsWith(group_name, "preproc") ||
+  if (group_name == "preproc" || group_name.starts_with("preproc") ||
       Contains(group_name, "macro")) {
     return SyntaxTokenKind::Preprocessor;
   }
-  if (group_name == "symbol.tag" || StartsWith(group_name, "symbol.tag") ||
-      group_name == "statement" || StartsWith(group_name, "statement") ||
-      group_name == "special" || StartsWith(group_name, "special") ||
+  if (group_name == "symbol.tag" || group_name.starts_with("symbol.tag") ||
+      group_name == "statement" || group_name.starts_with("statement") ||
+      group_name == "special" || group_name.starts_with("special") ||
       Contains(group_name, "keyword")) {
     return SyntaxTokenKind::Keyword;
   }
-  if (group_name == "symbol.operator" || StartsWith(group_name, "symbol.operator") ||
-      group_name == "symbol.brackets" || StartsWith(group_name, "symbol.brackets") ||
+  if (group_name == "symbol.operator" || group_name.starts_with("symbol.operator") ||
+      group_name == "symbol.brackets" || group_name.starts_with("symbol.brackets") ||
       Contains(group_name, "operator")) {
     return SyntaxTokenKind::Operator;
   }
-  if (group_name == "type" || StartsWith(group_name, "type") ||
+  if (group_name == "type" || group_name.starts_with("type") ||
       Contains(group_name, ".class") || Contains(group_name, ".struct")) {
     return SyntaxTokenKind::Type;
   }
-  if (group_name == "constant" || StartsWith(group_name, "constant")) {
+  if (group_name == "constant" || group_name.starts_with("constant")) {
     return SyntaxTokenKind::Constant;
   }
 
@@ -890,8 +879,8 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
   };
   const auto fast_candidate_set_for_path =
       [&](const std::filesystem::path& candidate_path) -> std::optional<FiletypeCandidateSet> {
-    const std::string lower_name = ToLower(candidate_path.filename().string());
-    const std::string lower_extension = ToLower(candidate_path.extension().string());
+    const std::string lower_name = util::ToLowerAscii(candidate_path.filename().string());
+    const std::string lower_extension = util::ToLowerAscii(candidate_path.extension().string());
 
     if (lower_name == "cmakelists.txt") {
       return MakeCandidateSet(kCMakeCandidates);
