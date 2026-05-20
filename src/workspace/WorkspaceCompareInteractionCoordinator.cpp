@@ -12,6 +12,20 @@
 
 namespace microide::workspace {
 
+namespace {
+
+bool MoveSelectionIndex(std::size_t item_count, std::size_t* selected_index, int delta) {
+  if (item_count == 0 || selected_index == nullptr || delta == 0) {
+    return false;
+  }
+  const int current = static_cast<int>(*selected_index);
+  const int max_index = static_cast<int>(item_count) - 1;
+  *selected_index = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  return true;
+}
+
+}  // namespace
+
 CompareInteractionCoordinator::CompareInteractionCoordinator(ProjectWorkspaceState& state,
                                                              Operations operations)
     : state_(state), operations_(std::move(operations)) {}
@@ -95,15 +109,11 @@ void CompareInteractionCoordinator::RefreshPicker() {
 }
 
 void CompareInteractionCoordinator::MovePickerSelection(int delta) {
-  if (state_.overlay.workflow.compare_picker.matches.empty() || delta == 0) {
+  if (!MoveSelectionIndex(state_.overlay.workflow.compare_picker.matches.size(),
+                          &state_.overlay.workflow.compare_picker.selected_index, delta)) {
     return;
   }
 
-  const int current = static_cast<int>(state_.overlay.workflow.compare_picker.selected_index);
-  const int max_index =
-      static_cast<int>(state_.overlay.workflow.compare_picker.matches.size()) - 1;
-  state_.overlay.workflow.compare_picker.selected_index =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
   if (state_.overlay.visible) {
     operations_.reveal_compare_picker_selection();
   }
@@ -164,15 +174,14 @@ void CompareInteractionCoordinator::OpenMergeResultFile() {
 
 void CompareInteractionCoordinator::MoveCompareSelection(int delta) {
   CompareTabState* compare_tab = operations_.active_compare_tab();
-  if (compare_tab == nullptr || compare_tab->model.rows.empty() || delta == 0) {
+  if (compare_tab == nullptr) {
     return;
   }
 
   const std::size_t previous_selected_row = compare_tab->selected_row;
-  const int current = static_cast<int>(compare_tab->selected_row);
-  const int max_index = static_cast<int>(compare_tab->model.rows.size()) - 1;
-  compare_tab->selected_row =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  if (!MoveSelectionIndex(compare_tab->model.rows.size(), &compare_tab->selected_row, delta)) {
+    return;
+  }
   operations_.reveal_active_compare_selection();
   operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
   operations_.request_compare_row_range_redraw(compare_tab->selected_row, compare_tab->selected_row + 1);
@@ -221,15 +230,14 @@ void CompareInteractionCoordinator::ScrollCompareColumns(int delta) {
 
 void CompareInteractionCoordinator::MoveMergeSelection(int delta) {
   MergeTabState* merge_tab = operations_.active_merge_tab();
-  if (merge_tab == nullptr || merge_tab->conflicts.empty() || delta == 0) {
+  if (merge_tab == nullptr) {
     return;
   }
 
   const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
-  const int current = static_cast<int>(merge_tab->selected_hunk);
-  const int max_index = static_cast<int>(merge_tab->conflicts.size()) - 1;
-  merge_tab->selected_hunk =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  if (!MoveSelectionIndex(merge_tab->conflicts.size(), &merge_tab->selected_hunk, delta)) {
+    return;
+  }
   operations_.reveal_active_merge_selection();
   operations_.request_merge_conflict_redraw(previous_selected_hunk);
   operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
