@@ -57,6 +57,8 @@ struct Theme {
 Theme MakeDefaultTheme();
 float RelativeLuminance(SDL_Color color);
 float Contrast(SDL_Color c1, SDL_Color c2);
+// Linear interpolation between two RGBA colors. `amount` is clamped to [0, 1].
+SDL_Color BlendColors(SDL_Color base, SDL_Color tint, float amount);
 std::filesystem::path FindThemeDirectory();
 std::vector<std::string> ListAvailableThemeNames(
     const std::filesystem::path& theme_directory = {});

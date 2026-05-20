@@ -11,6 +11,7 @@
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
+#include "render/Theme.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -20,20 +21,6 @@ namespace {
 
 constexpr float kMergeDiffRowTint = 0.14f;
 constexpr float kMergeDiffRowTintSelected = 0.22f;
-
-SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
-  const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
-  const auto blend = [&](Uint8 base_component, Uint8 tint_component) {
-    return static_cast<Uint8>(std::lround(static_cast<float>(base_component) * (1.0f - clamped_amount) +
-                                          static_cast<float>(tint_component) * clamped_amount));
-  };
-  return SDL_Color{
-      blend(base.r, tint.r),
-      blend(base.g, tint.g),
-      blend(base.b, tint.b),
-      0xff,
-  };
-}
 
 SDL_Color MergeMarkerColor(const render::Theme& theme,
                            compare::MergeChoice choice,
@@ -368,7 +355,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       std::array<char, 20> line_number_buf;
       const SDL_Color background =
           incoming_conflict != nullptr
-              ? BlendColor(selected_incoming ? theme_.row_highlight : theme_.editor_background,
+              ? render::BlendColors(selected_incoming ? theme_.row_highlight : theme_.editor_background,
                            incoming_conflict->valid ? theme_.diff_added : theme_.diff_deleted,
                            selected_incoming ? kMergeDiffRowTintSelected : kMergeDiffRowTint)
               : (selected_incoming ? theme_.row_highlight : theme_.editor_background);
@@ -397,7 +384,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       std::array<char, 20> line_number_buf;
       const SDL_Color background =
           current_conflict != nullptr
-              ? BlendColor(selected_current ? theme_.row_highlight : theme_.editor_background,
+              ? render::BlendColors(selected_current ? theme_.row_highlight : theme_.editor_background,
                            current_conflict->valid ? theme_.diff_modified : theme_.diff_deleted,
                            selected_current ? kMergeDiffRowTintSelected : kMergeDiffRowTint)
               : (selected_current ? theme_.row_highlight : theme_.editor_background);
@@ -488,7 +475,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
           conflict.start_line + preview_height_lines);
       if (preview_rect.has_value()) {
         DrawFilledRect(renderer, *preview_rect,
-                       BlendColor(theme_.editor_background, theme_.diff_modified, 0.18f));
+                       render::BlendColors(theme_.editor_background, theme_.diff_modified, 0.18f));
         for (std::size_t line = 0; line < preview_lines.size(); ++line) {
           std::array<char, 20> line_number_buf;
           const float y =

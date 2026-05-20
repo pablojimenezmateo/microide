@@ -12,6 +12,7 @@
 #include "editor/DiagnosticsRender.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
+#include "render/Theme.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -21,20 +22,6 @@ namespace {
 
 constexpr float kDiffRowTint = 0.16f;
 constexpr float kDiffRowTintSelected = 0.24f;
-
-SDL_Color BlendColor(SDL_Color base, SDL_Color tint, float amount) {
-  const float clamped_amount = std::clamp(amount, 0.0f, 1.0f);
-  const auto blend = [&](Uint8 base_component, Uint8 tint_component) {
-    return static_cast<Uint8>(std::lround(static_cast<float>(base_component) * (1.0f - clamped_amount) +
-                                          static_cast<float>(tint_component) * clamped_amount));
-  };
-  return SDL_Color{
-      blend(base.r, tint.r),
-      blend(base.g, tint.g),
-      blend(base.b, tint.b),
-      0xff,
-  };
-}
 
 SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
   switch (kind) {
@@ -363,10 +350,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
       switch (compare_row.kind) {
         case compare::CompareRowKind::Deleted:
-          return BlendColor(base, theme_.diff_deleted,
+          return render::BlendColors(base, theme_.diff_deleted,
                             selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Modified:
-          return BlendColor(base, theme_.diff_modified,
+          return render::BlendColors(base, theme_.diff_modified,
                             selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Added:
         case compare::CompareRowKind::Unchanged:
@@ -378,10 +365,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       const SDL_Color base = selected ? theme_.row_highlight : theme_.editor_background;
       switch (compare_row.kind) {
         case compare::CompareRowKind::Added:
-          return BlendColor(base, theme_.diff_added,
+          return render::BlendColors(base, theme_.diff_added,
                             selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Modified:
-          return BlendColor(base, theme_.diff_modified,
+          return render::BlendColors(base, theme_.diff_modified,
                             selected ? kDiffRowTintSelected : kDiffRowTint);
         case compare::CompareRowKind::Deleted:
         case compare::CompareRowKind::Unchanged:

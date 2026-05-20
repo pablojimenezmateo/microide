@@ -47,6 +47,20 @@ float Contrast(SDL_Color c1, SDL_Color c2) {
   return (l1 + 0.05f) / (l2 + 0.05f);
 }
 
+SDL_Color BlendColors(SDL_Color base, SDL_Color tint, float amount) {
+  const float clamped = std::clamp(amount, 0.0f, 1.0f);
+  const auto blend = [&](Uint8 a, Uint8 b) -> Uint8 {
+    return static_cast<Uint8>(std::lround(static_cast<float>(a) * (1.0f - clamped) +
+                                          static_cast<float>(b) * clamped));
+  };
+  return SDL_Color{
+      blend(base.r, tint.r),
+      blend(base.g, tint.g),
+      blend(base.b, tint.b),
+      blend(base.a, tint.a),
+  };
+}
+
 namespace {
 
 struct ThemeStyle {
@@ -66,22 +80,12 @@ SDL_Color WithAlpha(SDL_Color color, Uint8 alpha) {
   return color;
 }
 
-SDL_Color Mix(SDL_Color left, SDL_Color right, float t) {
-  const float clamped = std::clamp(t, 0.0f, 1.0f);
-  const auto mix_channel = [&](Uint8 a, Uint8 b) -> Uint8 {
-    return static_cast<Uint8>(std::lround(static_cast<float>(a) * (1.0f - clamped) +
-                                          static_cast<float>(b) * clamped));
-  };
-  return MakeColor(mix_channel(left.r, right.r), mix_channel(left.g, right.g),
-                   mix_channel(left.b, right.b), mix_channel(left.a, right.a));
-}
-
 SDL_Color Lighten(SDL_Color color, float amount) {
-  return Mix(color, MakeColor(0xff, 0xff, 0xff, color.a), amount);
+  return BlendColors(color, MakeColor(0xff, 0xff, 0xff, color.a), amount);
 }
 
 SDL_Color Darken(SDL_Color color, float amount) {
-  return Mix(color, MakeColor(0x00, 0x00, 0x00, color.a), amount);
+  return BlendColors(color, MakeColor(0x00, 0x00, 0x00, color.a), amount);
 }
 
 bool IsLight(SDL_Color color) {
@@ -104,7 +108,7 @@ SDL_Color EnsureContrast(SDL_Color foreground, SDL_Color background, float minim
   float best_contrast = Contrast(foreground, background);
   for (int step = 1; step <= 24; ++step) {
     const float t = static_cast<float>(step) / 24.0f;
-    SDL_Color candidate = Mix(foreground, target, t);
+    SDL_Color candidate = BlendColors(foreground, target, t);
     candidate.a = foreground.a;
     const float candidate_contrast = Contrast(candidate, background);
     if (candidate_contrast > best_contrast) {
@@ -521,24 +525,24 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
                                                                               theme.accent))));
   const SDL_Color line_number_background =
       ResolveUiBackground(styles, "line-number", default_background,
-                          Mix(default_background, tabbar_background, 0.45f));
+                          BlendColors(default_background, tabbar_background, 0.45f));
   const SDL_Color line_number_foreground =
       ResolveForeground(styles, "line-number",
-                        Mix(default_foreground, default_background, 0.55f));
+                        BlendColors(default_foreground, default_background, 0.55f));
   const SDL_Color current_line_number =
       ResolveForeground(styles, "current-line-number",
                         ResolveForeground(styles, "line-number", default_foreground));
   const SDL_Color row_highlight =
       ResolveBackground(styles, "cursor-line",
-                        Mix(default_background, accent,
+                        BlendColors(default_background, accent,
                             IsLight(default_background) ? 0.08f : 0.14f));
   const SDL_Color search_match =
       ResolveBackground(styles, "hlsearch",
-                        Mix(accent, default_background, IsLight(default_background) ? 0.35f : 0.55f));
+                        BlendColors(accent, default_background, IsLight(default_background) ? 0.35f : 0.55f));
   const SDL_Color selection =
       ResolveBackground(styles, "selection",
                         ResolveBackground(styles, "match-brace",
-                                          Mix(accent, default_background,
+                                          BlendColors(accent, default_background,
                                               IsLight(default_background) ? 0.3f : 0.5f)));
 
   theme.window_background = Darken(default_background, IsLight(default_background) ? 0.05f : 0.18f);
@@ -550,12 +554,12 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   theme.chrome_active_text =
       EnsureContrast(chrome_active_foreground, theme.chrome_active, 4.5f);
   theme.chrome_text_secondary =
-      EnsureContrast(Mix(theme.chrome_text, theme.chrome_background, 0.25f),
+      EnsureContrast(BlendColors(theme.chrome_text, theme.chrome_background, 0.25f),
                      theme.chrome_background, 3.0f);
   theme.surface_background = EnsureBackgroundSeparation(
-      Mix(default_background, theme.chrome_background, 0.18f), default_background, 1.04f);
+      BlendColors(default_background, theme.chrome_background, 0.18f), default_background, 1.04f);
   theme.surface_raised = EnsureBackgroundSeparation(
-      Mix(theme.surface_background, theme.chrome_active, 0.55f), theme.surface_background, 1.08f);
+      BlendColors(theme.surface_background, theme.chrome_active, 0.55f), theme.surface_background, 1.08f);
   theme.surface_text = EnsureContrast(
       ResolveForegroundOverride(styles, "tabbar").value_or(default_foreground),
       theme.surface_background, 4.5f);
@@ -564,25 +568,25 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   theme.overlay_background = WithAlpha(theme.surface_raised, 0xf6);
   theme.overlay_backdrop =
       WithAlpha(Darken(default_background, IsLight(default_background) ? 0.28f : 0.36f), 0x94);
-  theme.border = EnsureContrast(Mix(default_foreground, default_background, 0.72f),
+  theme.border = EnsureContrast(BlendColors(default_foreground, default_background, 0.72f),
                                 theme.surface_background, 1.5f);
   theme.accent = accent;
   theme.text_primary = EnsureContrast(default_foreground, theme.editor_background, 4.5f);
   theme.text_secondary =
-      EnsureContrast(Mix(default_foreground, default_background, 0.22f), theme.editor_background,
+      EnsureContrast(BlendColors(default_foreground, default_background, 0.22f), theme.editor_background,
                      3.0f);
   theme.text_muted =
-      EnsureContrast(Mix(default_foreground, default_background, 0.4f), theme.editor_background,
+      EnsureContrast(BlendColors(default_foreground, default_background, 0.4f), theme.editor_background,
                      2.2f);
   theme.text_disabled =
-      EnsureContrast(Mix(default_foreground, default_background, 0.58f), theme.editor_background,
+      EnsureContrast(BlendColors(default_foreground, default_background, 0.58f), theme.editor_background,
                      1.7f);
   theme.row_highlight = row_highlight;
   theme.selection_fill = WithAlpha(selection, 0xb4);
   theme.search_match = WithAlpha(search_match, 0x8f);
   theme.search_match_active =
       WithAlpha(Lighten(search_match, IsLight(search_match) ? 0.04f : 0.12f), 0xc8);
-  theme.bracket_match_background = WithAlpha(Mix(selection, theme.accent, 0.35f), 0xa6);
+  theme.bracket_match_background = WithAlpha(BlendColors(selection, theme.accent, 0.35f), 0xa6);
   theme.cursor = EnsureContrast(default_foreground, theme.editor_background, 4.5f);
   theme.syntax_keyword = ResolveForeground(styles, "statement", theme.accent);
   theme.syntax_type = ResolveForeground(styles, "type", theme.text_primary);
