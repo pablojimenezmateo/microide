@@ -19,6 +19,13 @@ namespace microide::workspace {
 
 namespace {
 
+void ClampSelectionToItemCount(std::size_t item_count, std::size_t* selected_index) {
+  if (selected_index == nullptr) {
+    return;
+  }
+  *selected_index = item_count == 0 ? 0 : std::min(*selected_index, item_count - 1);
+}
+
 std::string ResolveGitBranchLabelFallback(const std::filesystem::path& project_root) {
   const project::GitRepository repo(project_root);
   if (!repo.IsValid()) {
@@ -244,12 +251,8 @@ bool SidebarCoordinator::RefreshProblems() {
 bool SidebarCoordinator::RefreshTests() {
   const bool populated =
       operations_.refresh_tests_sidebar_state ? operations_.refresh_tests_sidebar_state() : false;
-  if (!state_.sidebar.tests.entries.empty()) {
-    state_.sidebar.tests.selected_index =
-        std::min(state_.sidebar.tests.selected_index, state_.sidebar.tests.entries.size() - 1);
-  } else {
-    state_.sidebar.tests.selected_index = 0;
-  }
+  ClampSelectionToItemCount(state_.sidebar.tests.entries.size(),
+                            &state_.sidebar.tests.selected_index);
   RevealSelectedTestsLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Tests) {
     operations_.request_sidebar_redraw();
@@ -281,10 +284,8 @@ bool SidebarCoordinator::RefreshPlugin() {
     }
     return false;
   }
-  if (!state_.sidebar.plugin.items.empty()) {
-    state_.sidebar.plugin.selected_index =
-        std::min(state_.sidebar.plugin.selected_index, state_.sidebar.plugin.items.size() - 1);
-  }
+  ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
+                            &state_.sidebar.plugin.selected_index);
   RevealSelectedPluginLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
     operations_.request_sidebar_redraw();
