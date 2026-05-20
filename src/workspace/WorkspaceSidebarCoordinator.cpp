@@ -19,6 +19,15 @@ namespace microide::workspace {
 
 namespace {
 
+void TrimTrailingLineEndings(std::string* text) {
+  if (text == nullptr) {
+    return;
+  }
+  while (!text->empty() && (text->back() == '\n' || text->back() == '\r')) {
+    text->pop_back();
+  }
+}
+
 std::string ResolveGitBranchLabel(const std::filesystem::path& project_root) {
   const project::GitRepository repo(project_root);
   if (!repo.IsValid()) {
@@ -28,9 +37,7 @@ std::string ResolveGitBranchLabel(const std::filesystem::path& project_root) {
   if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
       symbolic_ref.success()) {
     std::string label = symbolic_ref.output;
-    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
-      label.pop_back();
-    }
+    TrimTrailingLineEndings(&label);
     if (!label.empty()) {
       return label;
     }
@@ -39,9 +46,7 @@ std::string ResolveGitBranchLabel(const std::filesystem::path& project_root) {
   if (const auto short_head = repo.Execute({"rev-parse", "--short", "HEAD"});
       short_head.success()) {
     std::string label = short_head.output;
-    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
-      label.pop_back();
-    }
+    TrimTrailingLineEndings(&label);
     if (!label.empty()) {
       return label;
     }
