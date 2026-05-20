@@ -320,6 +320,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/AssistService.cpp
   src/workspace/CompareMergeService.cpp
+  src/workspace/FileUri.cpp
   src/workspace/ProjectCatalogService.cpp
   src/workspace/WorkspacePathMutationCoordinatorDirty.cpp
   src/workspace/WorkspacePathMutationCoordinatorTabs.cpp
