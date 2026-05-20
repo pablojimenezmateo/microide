@@ -3,6 +3,7 @@
 #include <cctype>
 
 #include "platform/Subprocess.h"
+#include "util/StringUtil.h"
 
 namespace microide::project::internal {
 
@@ -63,9 +64,7 @@ std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
   }
 
   std::string head_id = result.output;
-  while (!head_id.empty() && (head_id.back() == '\n' || head_id.back() == '\r')) {
-    head_id.pop_back();
-  }
+  util::TrimTrailingLineEndings(&head_id);
   return head_id.empty() ? std::nullopt : std::make_optional(std::move(head_id));
 }
 
