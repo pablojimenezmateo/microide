@@ -1,10 +1,77 @@
 #include "workspace/WorkspaceShellBootstrapper.h"
 
+#include <utility>
+
+#include "workspace/TerminalPanelService.h"
+#include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
+
+WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
+  return Bootstrapper(*this).BuildEventDispatcher().Handle(event);
+}
+
+TerminalPanelService WorkspaceShell::MakeTerminalPanelService() {
+  return TerminalPanelService(TerminalPanelService::Operations{
+      .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
+      .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
+      .append_terminal_pending_input =
+          [this](std::string_view input) { AppendTerminalPendingInput(input); },
+      .terminal_url_at_point = [this](float x, float y) { return TerminalUrlAtPoint(x, y); },
+      .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
+      .sync_primary_selection_with_terminal_selection =
+          [this]() { SyncPrimarySelectionWithTerminalSelection(); },
+      .open_terminal =
+          [this](std::string command, bool focus_terminal, bool log_feedback) {
+            OpenTerminal(std::move(command), focus_terminal, log_feedback);
+          },
+      .close_terminal_tab = [this](std::size_t index) { CloseTerminalTab(index); },
+      .move_active_terminal_tab_to =
+          [this](std::size_t index) { return MoveActiveTerminalTabTo(index); },
+  });
+}
+
+CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
+  return CommandPromptCoordinator(
+      context_.current_project_state,
+      available_colorscheme_names_,
+      CommandPromptCoordinator::Operations{
+          .execute_action =
+              [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
+                return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
+              },
+          .plugin_command_names =
+              [this]() {
+                const auto& names = plugin_runtime_.Host().CommandNames();
+                return std::vector<std::string>(names.begin(), names.end());
+              },
+          .sidebar_view_ids = [this]() { return OrderedSidebarViewIds(); },
+          .execute_plugin_command =
+              [this](const std::string& command, const std::vector<std::string>& args) {
+                CommandPromptCoordinator::PluginCommandResult result;
+                const std::size_t message_count_before = plugin_runtime_.Host().Messages().size();
+                std::string plugin_error;
+                result.handled = plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error);
+                if (result.handled) {
+                  if (plugin_runtime_.Host().Messages().size() > message_count_before) {
+                    result.feedback = plugin_runtime_.Host().Messages().back();
+                  }
+                  return result;
+                }
+                result.error = std::move(plugin_error);
+                return result;
+              },
+          .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
+          .request_command_mode_transition_redraw =
+              [this](bool bottom_panel_was_visible) {
+                RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
+              },
+      });
+}
 
 WorkspaceShell::Bootstrapper::Bootstrapper(WorkspaceShell& shell) : shell_(shell) {}
 

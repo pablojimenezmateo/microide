@@ -272,7 +272,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTextInputCoordinatorTerminal.cpp
   src/workspace/WorkspaceTabActionExecutor.cpp
   src/workspace/WorkspaceShellChrome.cpp
-  src/workspace/WorkspaceShellBlame.cpp
   src/workspace/EditorBlameOverlayService.cpp
   src/workspace/WorkspaceShellCursor.cpp
   src/workspace/WorkspaceDiffTabCoordinator.cpp
@@ -280,10 +279,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/PromptSurfaceService.cpp
   src/workspace/WorkspaceShellEditor.cpp
   src/workspace/WorkspaceShellEditorSplits.cpp
-  src/workspace/WorkspaceShellInput.cpp
   src/workspace/WorkspaceShellInteraction.cpp
   src/workspace/WorkspaceShellMenu.cpp
-  src/workspace/WorkspaceShellCommandPrompt.cpp
   src/workspace/WorkspaceShellMouse.cpp
   src/workspace/WorkspaceShellMouseMotion.cpp
   src/workspace/WorkspaceShellOverlay.cpp
@@ -362,7 +359,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellSidebarMouse.cpp
   src/workspace/WorkspaceShellSingleLineInputMouse.cpp
   src/workspace/WorkspaceShellTerminal.cpp
-  src/workspace/WorkspaceShellTerminalService.cpp
   src/workspace/WorkspaceShellTerminalTabs.cpp
   src/workspace/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceLanguageContract.cpp
