@@ -7,21 +7,13 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "plugin/PluginPathInterop.h"
 #include "util/StringUtil.h"
 
 namespace microide::plugin::diagnostics_interop {
 namespace {
 
-std::filesystem::path ResolveRuntimePath(const std::filesystem::path& project_root,
-                                         const std::filesystem::path& path) {
-  if (path.empty()) {
-    return {};
-  }
-  if (path.is_absolute() || project_root.empty()) {
-    return path.lexically_normal();
-  }
-  return (project_root / path).lexically_normal();
-}
+using path_interop::ResolveRuntimePath;
 
 bool ParseDiagnosticSeverity(std::string_view raw_value, editor::DiagnosticSeverity* severity) {
   if (severity == nullptr) {

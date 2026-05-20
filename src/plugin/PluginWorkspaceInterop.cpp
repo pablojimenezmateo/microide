@@ -5,21 +5,13 @@
 #include <optional>
 #include <system_error>
 
+#include "plugin/PluginPathInterop.h"
 #include "util/TextFileIO.h"
 
 namespace microide::plugin::workspace_interop {
 namespace {
 
-std::filesystem::path ResolveRuntimePath(const std::filesystem::path& project_root,
-                                         const std::filesystem::path& path) {
-  if (path.empty()) {
-    return {};
-  }
-  if (path.is_absolute() || project_root.empty()) {
-    return path.lexically_normal();
-  }
-  return (project_root / path).lexically_normal();
-}
+using path_interop::ResolveRuntimePath;
 
 void PushBufferTable(lua_State* state,
                      const std::filesystem::path& current_project_root,
