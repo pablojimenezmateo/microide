@@ -1,7 +1,10 @@
 # non-ai-product-scope Specification
 
 ## Purpose
-TBD - created by archiving change remove-ai-llm-capabilities. Update Purpose after archive.
+Define the non-AI product boundary for the host application. MicroIDE must not ship built-in AI or
+LLM workflows, provider bridges, ghost-text completion, chat surfaces, or required AI transport
+dependencies; extension points may remain only as general plugin infrastructure.
+
 ## Requirements
 ### Requirement: Built-In AI And LLM Features Are Not Shipped
 The system SHALL not ship host-owned AI/LLM capabilities, including chat assistants, ghost-text inline completion, provider runtime bridges, or AI-provider configuration UX.
@@ -16,4 +19,3 @@ The system SHALL build and run without AI/LLM transport dependencies and bridge 
 #### Scenario: Build configuration is evaluated
 - **WHEN** required third-party dependencies are resolved for standard builds
 - **THEN** AI/LLM-specific HTTP bridge dependencies are not required
-

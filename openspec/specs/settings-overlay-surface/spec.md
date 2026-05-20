@@ -1,7 +1,10 @@
 # settings-overlay-surface Specification
 
 ## Purpose
-TBD - created by archiving change responsive-layout-and-options-polish. Update Purpose after archive.
+Define the host-owned Settings overlay surface and the settings catalog behavior behind it. The
+overlay must expose built-in and plugin settings through typed editors, searchable groups, accurate
+helper copy, immediate persistence, and allocation-bounded rendering.
+
 ## Requirements
 ### Requirement: Host-Owned Modal Settings Overlay
 
@@ -73,4 +76,3 @@ Settings overlay helper text SHALL use copy labels that match message intent. Te
 #### Scenario: Optional advice remains a tip
 - **WHEN** helper text recommends an optional workflow optimization
 - **THEN** the overlay SHALL label that text as `Tip`
-

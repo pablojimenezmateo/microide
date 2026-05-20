@@ -1,7 +1,10 @@
 # ci-workflow-reliability Specification
 
 ## Purpose
-TBD - created by archiving change stabilize-ci-and-remove-periodic-workflows. Update Purpose after archive.
+Define the CI workflow reliability contract for actionable, event-driven validation. Workflows must
+avoid periodic schedules, fail with enough command context to reproduce issues, and require reruns
+of affected workflow families when CI reliability patches land.
+
 ## Requirements
 ### Requirement: CI Trigger Policy Is Event-Driven
 Repository CI workflows SHALL run from event-driven triggers (`push`, `pull_request`, or `workflow_dispatch`) and SHALL NOT use periodic `schedule` triggers.
@@ -23,4 +26,3 @@ Any change that patches CI workflow reliability SHALL re-run the affected workfl
 #### Scenario: Workflow reliability patch submitted
 - **WHEN** a pull request includes CI workflow or CI-script fixes
 - **THEN** the affected workflows SHALL be rerun on that pull request branch and SHALL show deterministic successful completion or a documented remaining blocker before merge
-

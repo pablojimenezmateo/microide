@@ -1,7 +1,11 @@
 # performance-hotspot-audit Specification
 
 ## Purpose
-TBD - created by syncing change performance-hotspot-throughput-pass. Update Purpose after archive.
+Define the repeatable hotspot-audit loop used to turn performance suspicions into ranked,
+evidence-backed work. Audits must pair measurements with implementation tasks, identify harness
+coverage gaps, separate measurement defects from product bottlenecks, and record reproducible
+commands for before/after validation.
+
 ## Requirements
 ### Requirement: Repository-Wide Hotspot Audit Loop
 MicroIDE SHALL define and execute a repeatable hotspot-audit loop that inspects startup, typing, scrolling, search, terminal output, plugin-triggered updates, and idle behavior, and SHALL produce evidence-backed findings rather than intuition-only claims.
@@ -59,4 +63,3 @@ The audit record SHALL include exact commands for the local before run, the loca
 #### Scenario: Manual tracing is needed
 - **WHEN** a bottleneck requires live resize, typing, terminal, or startup trace confirmation
 - **THEN** the audit SHALL list the exact `MICROIDE_STARTUP_TRACE`, `MICROIDE_PERF_TRACE`, `MICROIDE_PERF_TRACE_MIN_MS`, `MICROIDE_TRACE_REDRAW`, and `MICROIDE_TRACE_PROJECT_EVENTS` environment variables to use
-

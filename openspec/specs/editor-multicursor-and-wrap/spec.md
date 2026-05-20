@@ -1,7 +1,11 @@
 # editor-multicursor-and-wrap Specification
 
 ## Purpose
-TBD - created by archiving change editor-project-scope-polish. Update Purpose after archive.
+Define editor behavior for multi-caret editing, add-at-match caret promotion, folded-region motion,
+and project-scoped soft wrap. These features must share one selection/caret model, produce atomic
+undoable edits, and use wrapped or folded visual rows consistently for rendering, hit-testing, and
+navigation.
+
 ## Requirements
 ### Requirement: Multiple Carets Operate As One Editor Command
 
@@ -112,4 +116,3 @@ Editor, compare, and merge text surfaces SHALL render code without discretionary
 #### Scenario: Ligature-forming sequence stays literal
 - **WHEN** a file contains a sequence such as `!=`, `->`, or `=>`
 - **THEN** each character in the sequence SHALL remain individually visible and cursor-addressable in editor-family surfaces
-

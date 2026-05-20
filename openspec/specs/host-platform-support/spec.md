@@ -1,7 +1,10 @@
 # host-platform-support Specification
 
 ## Purpose
-TBD - created by archiving change add-cross-platform-host-support. Update Purpose after archive.
+Define MicroIDE's supported-host contract for Linux, macOS, and Windows. Host-specific behavior
+must stay behind explicit platform services for directories, processes, terminals, watchers,
+trash/recycle-bin operations, packaging, launch, and host integrations.
+
 ## Requirements
 ### Requirement: Supported Hosts
 
@@ -54,4 +57,3 @@ Supported-host claims SHALL be backed by targeted automated validation and docum
 #### Scenario: CI review for supported hosts
 - **WHEN** Linux, macOS, or Windows is listed as a supported host in durable docs or specs
 - **THEN** the repository SHALL include a corresponding validation path in CI or a documented temporary gap with a defined follow-up plan
-

@@ -1,7 +1,11 @@
 # bug-detection-tooling Specification
 
 ## Purpose
-TBD - created by archiving change comprehensive-tech-debt-and-perf-harness. Update Purpose after archive.
+Define the regression-detection tooling contract for defects that ordinary unit tests often miss:
+sanitizer builds, parser fuzzers, allocation assertions, and triage rules for findings that surface
+outside the immediate merge path. This spec keeps those tools mandatory, bounded, and connected to
+the documented debt queue instead of relying on ad hoc local runs.
+
 ## Requirements
 ### Requirement: Sanitizer Build Variants And CI Coverage
 
@@ -62,4 +66,3 @@ Findings from sanitizers, fuzzers, and the long-soak SHALL be tracked in `docs/k
 #### Scenario: Blocking finding
 - **WHEN** a finding is reachable from real input, indicates memory unsafety, or affects a hot path under measurement
 - **THEN** the merge SHALL block until the finding is fixed, and the corpus entry or sanitizer reproduction SHALL be committed alongside the fix
-

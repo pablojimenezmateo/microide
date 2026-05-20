@@ -1,7 +1,11 @@
 # persisted-state-format Specification
 
 ## Purpose
-TBD - created by archiving change comprehensive-tech-debt-cleanup. Update Purpose after archive.
+Define the structured persistence contract for workspace state, project state, user configuration,
+and session restore data. Persisted artifacts must use one typed record format, atomic writes,
+explicit compatibility rules, non-throwing parsing, debug inspection, and bounded behavior under
+corrupt or adversarial input.
+
 ## Requirements
 ### Requirement: Single Structured Format For Workspace State
 
@@ -130,4 +134,3 @@ The reader SHALL apply the existing forward-compatibility rule (skip unknown rec
 #### Scenario: Older build reads newer config
 - **WHEN** a user-config artifact written by a build that supports the new setting keys is opened by an older build
 - **THEN** the older build SHALL skip the unknown keys per the existing `Forward And Backward Compatibility Rules` requirement and SHALL load the rest of the artifact normally
-

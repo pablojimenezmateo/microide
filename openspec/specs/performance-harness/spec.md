@@ -1,7 +1,11 @@
 # performance-harness Specification
 
 ## Purpose
-TBD - created by archiving change comprehensive-tech-debt-and-perf-harness. Update Purpose after archive.
+Define the performance-harness contract for MicroIDE's internal regression oracle. The harness must
+exercise real editor, render, project, terminal, and startup paths under controlled state, capture
+reviewable metrics and baselines, and distinguish authoritative reference-runner evidence from
+local advisory runs.
+
 ## Requirements
 ### Requirement: Headless-But-Real Performance Harness Binary
 
@@ -167,4 +171,3 @@ The harness SHALL include `editor.content_revision_bumps`, `editor.syntax_revisi
 #### Scenario: Tier counter regression is gateable
 - **WHEN** the `editor_scroll_only_no_content_bump` scenario reports a non-zero `editor.content_revision_bumps`, `editor.syntax_revision_bumps`, or `editor.layout_shape_revision_bumps`
 - **THEN** the harness CI gate SHALL fail the merge, treating this as a regression beyond tolerance independent of wall-time movement
-

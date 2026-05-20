@@ -1,7 +1,10 @@
 # tiered-document-revisions Specification
 
 ## Purpose
-TBD - created by archiving change split-layout-revision-tiers. Update Purpose after archive.
+Define the document revision tiers that let editor caches invalidate only for the changes they
+depend on. Content, syntax, layout-shape, and presentation mutations must be tracked separately so
+typing, scrolling, theme changes, folding, and soft-wrap updates do not force unrelated cache work.
+
 ## Requirements
 ### Requirement: Four Tiered Document Revisions
 
@@ -140,4 +143,3 @@ matching tier bump.
 - **WHEN** the source tree is searched after this change lands
 - **THEN** `FoldingModel::Snapshot::layout_revision` SHALL still exist on
   the fold model, and no `TextViewport` code SHALL alias to it
-

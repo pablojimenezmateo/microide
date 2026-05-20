@@ -1,7 +1,11 @@
 # lazy-gitignore-catalog Specification
 
 ## Purpose
-TBD - created by archiving change editor-project-scope-polish. Update Purpose after archive.
+Define how ignored project-tree content remains visible without joining expensive background work.
+Ignored files and directories must stay reachable in the tree, materialize lazily on expansion, and
+remain excluded from indexing, search, diagnostics discovery, git refresh, and watcher-driven scans
+unless a separate opt-in path includes them.
+
 ## Requirements
 ### Requirement: Ignored Nodes Stay Visible In The Project Tree
 
@@ -34,4 +38,3 @@ Background indexing, search, diagnostics discovery, git/project refresh, and fil
 #### Scenario: Expanded ignored directory does not join project search
 - **WHEN** the user expands an ignored directory and then runs project search
 - **THEN** the search corpus SHALL still exclude files under that ignored directory by default
-

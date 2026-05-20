@@ -1,7 +1,10 @@
 # ui-command-labeling-and-discoverability Specification
 
 ## Purpose
-TBD - created by archiving change full-ui-ux-revision. Update Purpose after archive.
+Define the shell copy and discoverability rules for host-owned commands and status surfaces. Labels
+must communicate persistent state, click intent, and message semantics accurately, while comparable
+sidebar headers use cohesive structure so commands remain predictable across panels.
+
 ## Requirements
 ### Requirement: Persistent Shell Controls Use State-Oriented Labels
 Host-owned persistent controls in menus, status surfaces, and settings entry points SHALL use state-oriented labels that communicate current mode or condition, not only an action verb.
@@ -46,4 +49,3 @@ Host-owned sidebars that share the same interaction model (primary selector/titl
 #### Scenario: Actions remain discoverable after row split
 - **WHEN** Project panel actions are moved from a single row to the second actions row
 - **THEN** all existing actions SHALL remain visible and reachable without additional clicks, and button ordering SHALL remain stable
-

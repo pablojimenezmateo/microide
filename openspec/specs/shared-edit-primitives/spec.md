@@ -1,7 +1,11 @@
 # shared-edit-primitives Specification
 
 ## Purpose
-TBD - created by archiving change comprehensive-tech-debt-cleanup. Update Purpose after archive.
+Define the shared editing primitives that prevent each text-entry surface from reimplementing
+standard editing behavior. Single-line inputs must route insertion, deletion, movement, selection,
+and clipboard operations through the canonical editor model, while render surfaces consume typed
+view models instead of reaching into workspace state.
+
 ## Requirements
 ### Requirement: Single Shared Single-Line Editor Model
 
@@ -54,5 +58,4 @@ The repository SHALL hold exactly one canonical single-line edit representation,
 #### Scenario: View models reference the canonical model
 - **WHEN** a render view-model struct exposes a single-line input pointer
 - **THEN** the pointer SHALL have type `const editor::SingleLineEditor*`, and SHALL NOT reference the legacy type
-
 

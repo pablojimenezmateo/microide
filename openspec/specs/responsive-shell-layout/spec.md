@@ -1,7 +1,10 @@
 # responsive-shell-layout Specification
 
 ## Purpose
-TBD - created by archiving change responsive-layout-and-options-polish. Update Purpose after archive.
+Define the responsive shell layout contract for predictable desktop and compact-mode behavior.
+Layout mode selection, menu overflow, pointer target sizing, and compact chrome must preserve
+keyboard-first functionality while keeping layout recomputation discrete and measurable.
+
 ## Requirements
 ### Requirement: Discrete Layout Modes Replace Fluid Reflow
 
@@ -85,4 +88,3 @@ The user's last `ui.layout_mode` value SHALL be persisted through `PersistenceSe
 #### Scenario: View menu reflects compact mode as state
 - **WHEN** the View menu is opened
 - **THEN** the compact-mode control SHALL render as a state-oriented label with checkmark semantics that reflect whether compact mode is active, rather than only a verb-style toggle label
-

@@ -1,7 +1,11 @@
 # workspace-architecture Specification
 
 ## Purpose
-TBD - created by archiving change comprehensive-tech-debt-cleanup. Update Purpose after archive.
+Define the workspace architecture boundaries that keep the shell small, service-owned, and
+render-safe. The spec captures the durable invariants for coordinator dependencies, service
+ownership, view-model-driven rendering, plugin/runtime seams, persistence boundaries, and
+architectural lint checks that prevent previously removed coupling from returning.
+
 ## Requirements
 ### Requirement: Workspace Shell Is A Thin Orchestrator
 
@@ -204,4 +208,3 @@ Performance-motivated workspace refactors SHALL preserve service ownership and c
 #### Scenario: Optimization proposes shell reach-through shortcut
 - **WHEN** an optimization change attempts to bypass a service boundary by mutating state directly through shell internals
 - **THEN** the change SHALL be rejected in favor of a service-level API that keeps the path measurable and testable
-
