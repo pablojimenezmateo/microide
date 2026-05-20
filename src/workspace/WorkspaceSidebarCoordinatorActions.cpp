@@ -7,23 +7,9 @@
 #include <vector>
 
 #include "project/GitStatusService.h"
+#include "workspace/SelectionMovement.h"
 
 namespace microide::workspace {
-
-namespace {
-
-template <typename Entries>
-bool MoveSelectionIndex(const Entries& entries, std::size_t* selected_index, int delta) {
-  if (entries.empty() || delta == 0 || selected_index == nullptr) {
-    return false;
-  }
-  const int current = static_cast<int>(*selected_index);
-  const int max_index = static_cast<int>(entries.size()) - 1;
-  *selected_index = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  return true;
-}
-
-}  // namespace
 
 void SidebarCoordinator::MoveGitSelection(int delta) {
   if (MoveSelectionIndex(state_.sidebar.git.entries, &state_.sidebar.git.selected_index, delta)) {

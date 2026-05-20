@@ -8,23 +8,10 @@
 #include <vector>
 
 #include "project/GitCompareService.h"
+#include "workspace/SelectionMovement.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
-
-namespace {
-
-bool MoveSelectionIndex(std::size_t item_count, std::size_t* selected_index, int delta) {
-  if (item_count == 0 || selected_index == nullptr || delta == 0) {
-    return false;
-  }
-  const int current = static_cast<int>(*selected_index);
-  const int max_index = static_cast<int>(item_count) - 1;
-  *selected_index = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  return true;
-}
-
-}  // namespace
 
 CompareInteractionCoordinator::CompareInteractionCoordinator(ProjectWorkspaceState& state,
                                                              Operations operations)
