@@ -336,6 +336,9 @@ void OpenEditorEssentials50kCppOrThrow(ScenarioContext& context) {
   if (!std::filesystem::exists(path)) {
     throw std::runtime_error(std::string("missing fixture: ") + kEditorEssentials50kCppPath);
   }
+  if (!context.Open(path.parent_path())) {
+    throw std::runtime_error("failed to open editor essentials fixture project");
+  }
   context.OpenTab(path);
   context.PumpFrames(2);
 }
@@ -407,6 +410,7 @@ void RegisterBuiltInScenarios() {
       .smoke = true,
       .run =
           [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
             context.OpenTab("tests/perf/fixtures/small_project/dir0/file_1.cpp");
             context.Type(" // perf typing small");
             std::string error;
@@ -419,6 +423,7 @@ void RegisterBuiltInScenarios() {
       .smoke = true,
       .run =
           [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/large_project");
             context.OpenTab("tests/perf/fixtures/large_project/pkg0/file_1.txt");
             context.Type(" // perf typing large");
             std::string error;
@@ -431,6 +436,7 @@ void RegisterBuiltInScenarios() {
       .smoke = true,
       .run =
           [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/large_project");
             context.OpenTab("tests/perf/fixtures/large_project/pkg0/file_1.txt");
             for (int i = 0; i < 40; ++i) {
               context.Scroll(-1);
@@ -528,6 +534,8 @@ void RegisterBuiltInScenarios() {
       .smoke = true,
       .run =
           [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.PumpFrames(2);
             context.Measure("terminal.open", [&]() { context.OpenTerminal("yes perf-output-line"); });
             context.Measure("terminal.initial_wait", [&]() { context.Wait(std::chrono::milliseconds(80)); });
             context.Measure("terminal.scroll_burst", [&]() {

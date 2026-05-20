@@ -9,7 +9,8 @@ Updated 2026-05-20 with item #16 phase-1-through-3 progress (companion cap 51→
 `WorkspaceTabStripChrome` adapter) and item #15 phase-1 progress
 (`TextViewportUndoHistory` extraction, the first real ownership reduction since the
 2026-05-18 file decomposition pass).
-Updated 2026-05-20 with the demand-gated async tree git-status refresh and the new
+Updated 2026-05-20 with scoped async tree git-status refresh (status-only automatic
+refreshes, first-paint tree badges, full refresh on Git sidebar open) and the new
 large-file / compare / merge perf gates that close items 5 and 17.3.
 
 This document records the meaningful debt that remains after commit `0aa44cb`
@@ -211,9 +212,10 @@ What was closed on 2026-05-20:
 - `DirectoryTree::RefreshGitStatuses()` no longer runs during project set-root, and
   `WorkspaceSidebarCoordinator::ShowGit()` no longer calls it synchronously. The tree
   status map is now built from the existing async Git sidebar working-tree snapshot and
-  applied through `DirectoryTree::ApplyGitStatuses()` only when Git sidebar data is
-  requested. Project-open coverage asserts the tree stays clean until the Git sidebar
-  is shown, then receives the async modified-state badge.
+  applied through `DirectoryTree::ApplyGitStatuses()`. After the first paint on project
+  open, a scoped async refresh materializes tree badges without blocking startup or
+  collecting outgoing-branch files. Automatic status-only refreshes still skip tree
+  badge materialization until that first-paint hook runs.
 
 Investigation note (2026-05-19 perf-compare diagnostic):
 - Clean `e9a4764` vs `27943f9` baseline: no regression beyond noise.
@@ -236,9 +238,9 @@ Investigation note (2026-05-19 perf-compare diagnostic):
   demand or measured to be allocation-cheap before being made unconditional.
 
 Recommended follow-up:
-- Keep future tree-badge work demand-gated. If tree badges become visible outside the
-  Git sidebar, add an explicit user-visible trigger or setting before starting the
-  async Git snapshot work.
+- Keep future tree-badge work scoped to user-visible demand or first-paint hooks. If
+  tree badges become visible outside the Git sidebar, measure the async snapshot cost
+  before making it unconditional on project open.
 
 ## 6. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
 

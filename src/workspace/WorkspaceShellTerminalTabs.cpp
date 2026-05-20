@@ -159,7 +159,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   ReapExitedTerminalTabs();
   SyncTerminalFocusState();
   if (had_terminal_tabs) {
-    RequestAutomaticGitSidebarRefresh();
+    (void)ReloadProjectIfFilesChanged(true);
   }
   if (BottomPanelVisible() != panel_visible_before || context_.current_project_state.terminal_tabs.size() != tab_count_before) {
     RequestWindowRedraw();

@@ -422,7 +422,9 @@ bool PerfHarness::InitializeDriver(Driver* driver,
   }
   SDL_SetRenderVSync(driver->renderer, 0);
 
-  if (!driver->shell.Initialize(std::filesystem::current_path())) {
+  // Do not pass current_path(): the harness cwd is usually the microide repo itself,
+  // and treating it as the active project pulls async git refresh into unrelated scenarios.
+  if (!driver->shell.Initialize({})) {
     HarnessError() = "WorkspaceShell initialize failed";
     ShutdownDriver(driver);
     return false;

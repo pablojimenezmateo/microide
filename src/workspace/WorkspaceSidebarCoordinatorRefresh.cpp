@@ -34,7 +34,9 @@ void SidebarCoordinator::RefreshGit() {
       }
       return;
     }
-    state_.directory_tree.ApplyGitStatuses(std::move(pending_snapshot.tree_git_statuses));
+    if (!pending_snapshot.tree_git_statuses.empty()) {
+      state_.directory_tree.ApplyGitStatuses(std::move(pending_snapshot.tree_git_statuses));
+    }
 
     const std::filesystem::path previous_path =
         state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
@@ -124,7 +126,9 @@ void SidebarCoordinator::RefreshGit() {
     operations_.request_sidebar_redraw();
     return;
   }
-  state_.directory_tree.ApplyGitStatuses(std::move(snapshot.tree_git_statuses));
+  if (!snapshot.tree_git_statuses.empty()) {
+    state_.directory_tree.ApplyGitStatuses(std::move(snapshot.tree_git_statuses));
+  }
 
   for (const auto& entry : snapshot.entries) {
     state_.sidebar.git.entries.push_back(GitSidebarEntry{

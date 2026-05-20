@@ -110,10 +110,17 @@
     shell.ShowSearchSidebar(std::move(query), temporary);
   }
   static void ShowProblemsSidebar(WorkspaceShell& shell) { shell.ShowProblemsSidebar(); }
-  static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }  static bool RefreshProblemsSidebar(WorkspaceShell& shell) {
+  static void ShowGitSidebar(WorkspaceShell& shell) { shell.ShowGitSidebar(); }
+  static void MaybeRequestTreeGitBadgesAfterFirstPaint(WorkspaceShell& shell) {
+    shell.MaybeRequestTreeGitBadgesAfterFirstPaint();
+  }
+  static bool RefreshProblemsSidebar(WorkspaceShell& shell) {
     return shell.RefreshProblemsSidebar();
   }
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
+  static void RequestAutomaticGitSidebarRefresh(WorkspaceShell& shell) {
+    shell.RequestAutomaticGitSidebarRefresh();
+  }
   static void ConsumeGitSidebarRefresh(WorkspaceShell& shell) {
     shell.ConsumeGitSidebarRefresh();
   }

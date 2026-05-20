@@ -413,7 +413,7 @@ const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry()
 void WorkspaceShell::SetGitOutgoingBaseChoice(OutgoingBaseChoice choice) {
   context_.current_project_state.sidebar.git.outgoing_base_choice = std::move(choice);
   MakePersistenceCoordinator().SaveSessionState();
-  RequestGitSidebarRefresh();
+  RequestGitSidebarRefresh(GitSidebarRefreshScope::Full);
   ConsumeGitSidebarRefresh();
 }
 

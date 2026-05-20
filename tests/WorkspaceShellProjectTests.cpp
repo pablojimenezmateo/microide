@@ -201,7 +201,7 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu fallback should prefill the typed open-project command");
 }
 
-void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
+void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "src" / "main.cpp";
@@ -224,11 +224,30 @@ void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
              initial_src_entry->git_status == project::GitFileStatus::Clean,
          "opening a project should not synchronously collect tree git badges");
 
+  WorkspaceShellTestAccess::MaybeRequestTreeGitBadgesAfterFirstPaint(shell);
+  Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "first paint should dispatch async tree git badge refresh");
+  const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (std::chrono::steady_clock::now() < git_deadline &&
+         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "tree git badge refresh should complete after first paint");
+  const auto refreshed_src_entry = std::find_if(
+      WorkspaceShellTestAccess::TreeEntries(shell).begin(),
+      WorkspaceShellTestAccess::TreeEntries(shell).end(),
+      [&](const project::TreeEntry& entry) { return entry.path == (root / "src").lexically_normal(); });
+  Expect(refreshed_src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
+             refreshed_src_entry->git_status == project::GitFileStatus::Modified,
+         "first-paint tree git badge refresh should apply modified badges without opening git sidebar");
+
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "showing git sidebar should enter the refreshing state immediately");
-  const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  while (std::chrono::steady_clock::now() < git_deadline &&
+  const auto sidebar_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (std::chrono::steady_clock::now() < sidebar_deadline &&
          WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
     WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -245,13 +264,39 @@ void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
       });
   Expect(found_modified_source,
          "on-demand git sidebar refresh should include the modified file");
-  const auto refreshed_src_entry = std::find_if(
+}
+
+void TestWorkspaceShellAutomaticGitRefreshKeepsTreeBadgesClean() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int value() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add automatic git refresh fixture", "automatic git refresh fixture");
+  WriteFile(source, "int value() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "automatic git refresh fixture should open");
+  WorkspaceShellTestAccess::RequestAutomaticGitSidebarRefresh(shell);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (std::chrono::steady_clock::now() < deadline &&
+         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "automatic git refresh should complete");
+  Expect(!WorkspaceShellTestAccess::GitSidebarEntries(shell).empty(),
+         "automatic git refresh should still publish working-tree entries");
+  const auto src_entry = std::find_if(
       WorkspaceShellTestAccess::TreeEntries(shell).begin(),
       WorkspaceShellTestAccess::TreeEntries(shell).end(),
       [&](const project::TreeEntry& entry) { return entry.path == (root / "src").lexically_normal(); });
-  Expect(refreshed_src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
-             refreshed_src_entry->git_status == project::GitFileStatus::Modified,
-         "on-demand git sidebar refresh should apply tree git badges from the async snapshot");
+  Expect(src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
+             src_entry->git_status == project::GitFileStatus::Clean,
+         "automatic git refresh should not materialize tree badges before git sidebar is shown");
 }
 
 void TestWorkspaceShellStatusBarShowsSourceControlState() {
@@ -2567,8 +2612,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails",
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
-  AddTest(tests, "WorkspaceShell/ProjectOpenDefersGitSidebarRefreshUntilShown",
-          TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown);
+  AddTest(tests, "WorkspaceShell/ProjectOpenMaterializesTreeGitBadgesAfterFirstPaint",
+          TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint);
+  AddTest(tests, "WorkspaceShell/AutomaticGitRefreshKeepsTreeBadgesClean",
+          TestWorkspaceShellAutomaticGitRefreshKeepsTreeBadgesClean);
   AddTest(tests, "WorkspaceShell/StatusBarShowsSourceControlState",
           TestWorkspaceShellStatusBarShowsSourceControlState);
   AddTest(tests, "WorkspaceShell/TerminalWakeRefreshesStatusBarAfterCommit",

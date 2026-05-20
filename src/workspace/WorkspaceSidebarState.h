@@ -37,6 +37,12 @@ enum class SidebarMode {
   Plugin,
 };
 
+enum class GitSidebarRefreshScope {
+  StatusOnly,
+  TreeBadges,
+  Full,
+};
+
 struct GitSidebarEntry {
   enum class Section {
     Modified,
@@ -108,6 +114,7 @@ struct GitSidebarState {
   OutgoingBaseChoice outgoing_base_choice;
   bool repo_available = false;
   bool refreshing = false;
+  bool tree_git_badges_materialized = false;
   bool provider_backed = false;
   bool supports_mutations = true;
   std::string provider_id;

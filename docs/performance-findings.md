@@ -107,23 +107,30 @@ Problem:
 
 Implemented:
 
-- `WorkspaceShell::SetProjectRoot` and plugin-reload startup paths now refresh Git sidebar data
-  only when the active sidebar mode is Git
-- directory-tree git badges now reuse the async Git sidebar working-tree snapshot instead of
-  running `CollectGitStatuses` synchronously on project open or Git-sidebar activation
-- `FileFinder` now defers index-cache materialization until a real file-finder query refresh is
+- `WorkspaceShell::SetProjectRoot` no longer runs synchronous git status collection or
+  unconditional full Git sidebar refresh on project open
+- directory-tree git badges reuse the async Git working-tree snapshot through
+  `DirectoryTree::ApplyGitStatuses()` instead of `CollectGitStatuses` on set-root
+- after the first paint on project open, a scoped async `TreeBadges` refresh materializes
+  tree markers without collecting outgoing-branch files or blocking startup
+- automatic background refreshes use `StatusOnly` scope (branch/dirty metadata for the
+  status bar) and skip tree-badge materialization
+- opening Source Control still triggers a full async refresh, including outgoing entries
+- `FileFinder` defers index-cache materialization until a real file-finder query refresh is
   requested
-- project-shell coverage now includes deferred Git sidebar refresh at project open
-- project-shell coverage now asserts tree git badges stay clean until the demand-gated async Git
-  snapshot is consumed
-- project-shell coverage now includes file-finder open-and-select behavior with deferred index
+- project-shell coverage asserts tree badges stay clean synchronously at open, then
+  materialize after the first-paint hook without opening Source Control
+- project-shell coverage includes file-finder open-and-select behavior with deferred index
   cache build
+- perf harness initializes without an implicit project root; editor scenarios open fixtures
+  explicitly so unrelated git refresh work does not contaminate allocation measurements
 
 Impact:
 
-- startup traces now avoid the eager file-index scan on project open
+- startup traces avoid the eager file-index scan on project open
 - on the same local startup-trace command, `WorkspaceShell::SetProjectRoot` dropped from the
   previous `~370 ms` hotspot range to `~17-20 ms`
+- tree git markers appear shortly after first paint instead of only after opening Source Control
 - Git sidebar behavior remains correct when users switch into the Git view
 
 ### Text measurement hot path
@@ -337,6 +344,13 @@ Implemented:
 - SetProjectRoot calls RefreshGitStatuses when Git sidebar mode is active
 - SidebarCoordinator::ShowGit() calls RefreshGitStatuses before rendering git sidebar
 - Git statuses are now collected only when the Git sidebar is displayed or explicitly refreshed
+
+Follow-up (2026-05-20):
+
+- set-root still avoids synchronous git status collection; tree badges now materialize from a
+  scoped async refresh dispatched after the first paint on project open
+- `ShowGit()` and explicit refresh paths request full async Git sidebar snapshots; automatic
+  background refreshes stay status-only until tree badges are materialized
 
 Impact:
 

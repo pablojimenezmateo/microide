@@ -202,6 +202,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
     git_sidebar_refresh_snapshot_.reset();
   }
   context_.current_project_state.sidebar.git.refreshing = false;
+  pending_tree_git_badge_refresh_after_paint_ = false;
   StopFileIndexWatcher();
   context_.current_project_state.file_index.Reset();
   project_file_monitor_.Reset();
@@ -430,6 +431,7 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
       !context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
     RefreshProjectSearch();
   }
+  pending_tree_git_badge_refresh_after_paint_ = true;
   return true;
 }
 

@@ -504,7 +504,8 @@
   void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
-  void RequestGitSidebarRefresh();
+  void RequestGitSidebarRefresh(GitSidebarRefreshScope scope = GitSidebarRefreshScope::Full);
+  void MaybeRequestTreeGitBadgesAfterFirstPaint();
   void RequestAutomaticGitSidebarRefresh();
   bool ConsumePendingGitSidebarRefreshSnapshot(GitSidebarState::RefreshSnapshot* snapshot);
   void InvalidateRuntimeSyntaxStateCaches(std::span<const std::string_view> changed_languages);
@@ -1345,6 +1346,7 @@
   Uint32 lsp_event_type_ = 0;
   Uint32 plugin_async_process_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;
+  bool pending_tree_git_badge_refresh_after_paint_ = false;
   project::GitBlameService git_blame_service_;
   EditorBlameOverlayService editor_blame_overlay_service_;
   std::optional<EditorHoverTarget> active_editor_hover_target_;

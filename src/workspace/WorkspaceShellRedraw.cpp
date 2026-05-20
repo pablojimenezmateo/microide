@@ -753,8 +753,8 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::ReloadProjectIfFilesChanged::ReloadCleanOpenBuffersFromDisk");
     ReloadCleanOpenBuffersFromDisk();
+    RequestAutomaticGitSidebarRefresh();
   }
-  RequestAutomaticGitSidebarRefresh();
   return true;
 }
 

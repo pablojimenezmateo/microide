@@ -139,6 +139,7 @@ void SidebarCoordinator::ShowProblems() {
 }
 
 void SidebarCoordinator::ShowGit() {
+  state_.sidebar.git.tree_git_badges_materialized = true;
   if (operations_.request_git_refresh != nullptr) {
     operations_.request_git_refresh();
   }
@@ -402,7 +403,7 @@ void WorkspaceShell::RefreshProjectFiles() {
   MakeSidebarService().RefreshProjectFiles();
 }
 
-void WorkspaceShell::RequestGitSidebarRefresh() {
+void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
   if (context_.current_project_state.root.empty()) {
     context_.current_project_state.sidebar.git.refreshing = false;
     return;
@@ -411,6 +412,11 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
   const std::filesystem::path project_root = context_.current_project_state.root;
   const OutgoingBaseChoice outgoing_base_choice =
       context_.current_project_state.sidebar.git.outgoing_base_choice;
+  const bool materialize_tree_git_badges =
+      scope == GitSidebarRefreshScope::TreeBadges ||
+      (scope == GitSidebarRefreshScope::Full &&
+       context_.current_project_state.sidebar.git.tree_git_badges_materialized);
+  const bool include_outgoing_entries = scope == GitSidebarRefreshScope::Full;
   std::uint64_t generation = 0;
   {
     std::lock_guard lock(git_sidebar_refresh_mutex_);
@@ -421,12 +427,19 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
   context_.current_project_state.sidebar.git.refreshing = true;
   RequestSidebarRedraw();
   app::IncrementBackgroundTaskCount();
-  project_background_executor_.Post([this, project_root, outgoing_base_choice, generation]() {
+  project_background_executor_.Post([this,
+                                       project_root,
+                                       outgoing_base_choice,
+                                       generation,
+                                       materialize_tree_git_badges,
+                                       include_outgoing_entries]() {
     GitSidebarState::RefreshSnapshot snapshot;
     snapshot.generation = generation;
 
     const auto working_entries = project::CollectGitWorkingTreeEntries(project_root);
-    snapshot.tree_git_statuses = project::BuildGitStatusMap(working_entries);
+    if (materialize_tree_git_badges) {
+      snapshot.tree_git_statuses = project::BuildGitStatusMap(working_entries);
+    }
     for (const auto& entry : working_entries) {
       snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
           .section = GitSidebarEntry::Section::Modified,
@@ -443,7 +456,7 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
     snapshot.branch_label = ResolveGitBranchLabel(project_root);
     snapshot.base_ref = resolved_base.base_ref;
     snapshot.base_label = resolved_base.base_label;
-    if (!snapshot.base_ref.empty()) {
+    if (include_outgoing_entries && !snapshot.base_ref.empty()) {
       const auto outgoing_entries =
           project::CollectGitBranchOutgoingFiles(project_root, snapshot.base_ref);
       for (const auto& entry : outgoing_entries) {
@@ -478,6 +491,19 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
   });
 }
 
+void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
+  if (!pending_tree_git_badge_refresh_after_paint_ ||
+      context_.current_project_state.root.empty()) {
+    return;
+  }
+  pending_tree_git_badge_refresh_after_paint_ = false;
+  if (!project::GitRepository(context_.current_project_state.root).IsValid()) {
+    return;
+  }
+  context_.current_project_state.sidebar.git.tree_git_badges_materialized = true;
+  RequestGitSidebarRefresh(GitSidebarRefreshScope::TreeBadges);
+}
+
 void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
   if (context_.current_project_state.root.empty() ||
       context_.current_project_state.sidebar.git.refreshing) {
@@ -490,7 +516,7 @@ void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
     return;
   }
   next_automatic_git_sidebar_refresh_ms_ = now_ms + kAutomaticGitRefreshThrottleMs;
-  RequestGitSidebarRefresh();
+  RequestGitSidebarRefresh(GitSidebarRefreshScope::StatusOnly);
 }
 
 bool WorkspaceShell::ConsumePendingGitSidebarRefreshSnapshot(

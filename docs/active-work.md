@@ -46,7 +46,8 @@ These are implemented and should not be treated as open migration work:
   shared `util/StringUtil.*` layer across viewport, renderer, terminal, and workspace helpers
 - single-line shell text inputs now share one insertion, caret, composition, and tail-truncation path across prompts, command input, overlays, and sidebar search fields, while read-only viewport-backed text surfaces still participate in shared selection and copy actions
 - editor undo and redo now store changed line ranges plus view state instead of full-buffer snapshots, and editor file open/save now reuses the shared text-file helper instead of inline stream assembly
-- filesystem tree with `.gitignore` handling, git markers, refresh, and trash-backed create/rename/delete flows
+- filesystem tree with `.gitignore` handling, git markers (async after first paint on project
+  open), refresh, and trash-backed create/rename/delete flows
 - host-owned app-directory, trash or recycle-bin, open-URL, reveal-path, and bundled-asset
   services for Linux, macOS, and Windows policy, with runtime assets copied into desktop-build
   and macOS-bundle layouts
