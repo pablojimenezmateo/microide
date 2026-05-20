@@ -8,6 +8,7 @@
 
 #include "project/GitRepository.h"
 #include "project/GitStatusService.h"
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceGitOutgoingBase.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -26,9 +27,7 @@ std::string ResolveGitBranchLabelFallback(const std::filesystem::path& project_r
   if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
       symbolic_ref.success()) {
     std::string label = symbolic_ref.output;
-    while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) {
-      label.pop_back();
-    }
+    util::TrimTrailingLineEndings(&label);
     if (!label.empty()) {
       return label;
     }

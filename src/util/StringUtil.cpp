@@ -168,6 +168,15 @@ std::string NormalizeLineEndings(std::string_view text) {
   return normalized;
 }
 
+void TrimTrailingLineEndings(std::string* text) {
+  if (text == nullptr) {
+    return;
+  }
+  while (!text->empty() && (text->back() == '\n' || text->back() == '\r')) {
+    text->pop_back();
+  }
+}
+
 LineEnding DetectLineEnding(std::string_view text) {
   std::size_t crlf_count = 0;
   std::size_t lf_count = 0;
