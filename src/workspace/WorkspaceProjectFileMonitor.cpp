@@ -8,6 +8,7 @@
 
 #include "project/IgnoreMatcher.h"
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -59,14 +60,8 @@ class WorkspaceProjectFileMonitor::ProjectTraversalFilter {
     if (path_text.size() <= root_text.size()) {
       return {};
     }
-    auto lower_copy = [](std::string text) {
-      std::transform(text.begin(), text.end(), text.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-      });
-      return text;
-    };
-    const std::string lower_path = lower_copy(path_text);
-    const std::string lower_root = lower_copy(root_text);
+    const std::string lower_path = util::ToLowerAscii(path_text);
+    const std::string lower_root = util::ToLowerAscii(root_text);
     if (lower_path.rfind(lower_root, 0) != 0 || path_text[root_text.size()] != '/') {
       return {};
     }

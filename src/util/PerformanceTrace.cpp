@@ -9,6 +9,8 @@
 #include <mutex>
 #include <string>
 
+#include "util/StringUtil.h"
+
 namespace microide::util {
 
 namespace {
@@ -32,9 +34,7 @@ bool ParseEnabledValue(const char* value) {
     return false;
   }
 
-  std::string normalized(value);
-  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  const std::string normalized = ToLowerAscii(value);
   return normalized != "0" && normalized != "false" && normalized != "no" &&
          normalized != "off";
 }
