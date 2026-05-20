@@ -10,48 +10,46 @@
 
 namespace microide::workspace {
 
-void SidebarCoordinator::MoveGitSelection(int delta) {
-  if (state_.sidebar.git.entries.empty() || delta == 0) {
-    return;
+namespace {
+
+template <typename Entries>
+bool MoveSelectionIndex(const Entries& entries, std::size_t* selected_index, int delta) {
+  if (entries.empty() || delta == 0 || selected_index == nullptr) {
+    return false;
   }
-  const int current = static_cast<int>(state_.sidebar.git.selected_index);
-  const int max_index = static_cast<int>(state_.sidebar.git.entries.size()) - 1;
-  state_.sidebar.git.selected_index =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  RevealSelectedGitLine();
+  const int current = static_cast<int>(*selected_index);
+  const int max_index = static_cast<int>(entries.size()) - 1;
+  *selected_index = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+  return true;
+}
+
+}  // namespace
+
+void SidebarCoordinator::MoveGitSelection(int delta) {
+  if (MoveSelectionIndex(state_.sidebar.git.entries, &state_.sidebar.git.selected_index, delta)) {
+    RevealSelectedGitLine();
+  }
 }
 
 void SidebarCoordinator::MoveProblemsSelection(int delta) {
-  if (state_.sidebar.problems.entries.empty() || delta == 0) {
-    return;
+  if (MoveSelectionIndex(state_.sidebar.problems.entries, &state_.sidebar.problems.selected_index,
+                         delta)) {
+    RevealSelectedProblemsLine();
   }
-  const int current = static_cast<int>(state_.sidebar.problems.selected_index);
-  const int max_index = static_cast<int>(state_.sidebar.problems.entries.size()) - 1;
-  state_.sidebar.problems.selected_index =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  RevealSelectedProblemsLine();
 }
 
 void SidebarCoordinator::MoveTestsSelection(int delta) {
-  if (state_.sidebar.tests.entries.empty() || delta == 0) {
-    return;
+  if (MoveSelectionIndex(state_.sidebar.tests.entries, &state_.sidebar.tests.selected_index,
+                         delta)) {
+    RevealSelectedTestsLine();
   }
-  const int current = static_cast<int>(state_.sidebar.tests.selected_index);
-  const int max_index = static_cast<int>(state_.sidebar.tests.entries.size()) - 1;
-  state_.sidebar.tests.selected_index =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  RevealSelectedTestsLine();
 }
 
 void SidebarCoordinator::MovePluginSelection(int delta) {
-  if (state_.sidebar.plugin.items.empty() || delta == 0) {
-    return;
+  if (MoveSelectionIndex(state_.sidebar.plugin.items, &state_.sidebar.plugin.selected_index,
+                         delta)) {
+    RevealSelectedPluginLine();
   }
-  const int current = static_cast<int>(state_.sidebar.plugin.selected_index);
-  const int max_index = static_cast<int>(state_.sidebar.plugin.items.size()) - 1;
-  state_.sidebar.plugin.selected_index =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  RevealSelectedPluginLine();
 }
 
 bool SidebarCoordinator::OpenGitEntry(std::size_t entry_index) {
