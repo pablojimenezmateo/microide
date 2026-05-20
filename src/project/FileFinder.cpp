@@ -6,6 +6,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 
@@ -42,7 +43,7 @@ void FileFinder::Refresh() {
   }
   EnsureCacheBuilt();
 
-  const std::string lower_query = ToLower(query_.text());
+  const std::string lower_query = util::ToLowerAscii(query_.text());
   for (const auto& entry : cached_entries_) {
     const int score = RankMatchCached(entry, lower_query);
     if (score == std::numeric_limits<int>::max()) {
@@ -139,13 +140,6 @@ int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string&
   return score;
 }
 
-std::string FileFinder::ToLower(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return value;
-}
-
 void FileFinder::EnsureCacheBuilt() {
   util::PerformanceTrace::Scope perf_scope("FileFinder::EnsureCacheBuilt");
   if (index_ == nullptr) {
@@ -167,8 +161,8 @@ void FileFinder::EnsureCacheBuilt() {
     cached_entries_.push_back(CachedFileEntry{
         .relative_path = path.relative_path,
         .path_string = path_string,
-        .lower_path = ToLower(path_string),
-        .lower_filename = ToLower(std::filesystem::path(path_string).filename().string()),
+        .lower_path = util::ToLowerAscii(path_string),
+        .lower_filename = util::ToLowerAscii(std::filesystem::path(path_string).filename().string()),
     });
   }
   cached_index_version_ = snapshot.version;

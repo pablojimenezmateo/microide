@@ -127,14 +127,6 @@ SDL_Color EnsureBackgroundSeparation(SDL_Color background,
   return IsLight(reference) ? Darken(background, 0.12f) : Lighten(background, 0.12f);
 }
 
-std::string ToLower(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return lowered;
-}
-
 bool IsDigits(std::string_view text) {
   return !text.empty() &&
          std::all_of(text.begin(), text.end(), [](unsigned char c) { return std::isdigit(c); });
@@ -199,7 +191,7 @@ SDL_Color Ansi256Color(int index) {
 }
 
 std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
-  const std::string token = ToLower(util::TrimAsciiWhitespace(text));
+  const std::string token = util::ToLowerAscii(util::TrimAsciiWhitespace(text));
   if (token.empty() || token == "default") {
     return std::nullopt;
   }
@@ -287,7 +279,7 @@ ThemeStyle ParseThemeStyle(std::string_view text) {
   }
 
   for (std::size_t i = 0; i + 1 < parts.size(); ++i) {
-    if (ToLower(parts[i]) == "reverse") {
+    if (util::ToLowerAscii(parts[i]) == "reverse") {
       style.reverse = true;
     }
   }
@@ -345,7 +337,7 @@ bool ParseColorLink(std::string_view line, std::string& group, ThemeStyle& style
     return false;
   }
 
-  group = ToLower(trimmed.substr(group_start, group_end - group_start));
+  group = util::ToLowerAscii(trimmed.substr(group_start, group_end - group_start));
   style = ParseThemeStyle(trimmed.substr(first_quote + 1, second_quote - first_quote - 1));
   return !group.empty();
 }
@@ -376,7 +368,7 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
     if (candidate.extension() != ".microide") {
       continue;
     }
-    if (ToLower(candidate.stem().string()) == ToLower(name)) {
+    if (util::ToLowerAscii(candidate.stem().string()) == util::ToLowerAscii(name)) {
       return candidate.lexically_normal();
     }
   }
@@ -384,7 +376,7 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
 }
 
 const ThemeStyle* LookupThemeStyle(const ThemeStyleMap& styles, std::string_view key) {
-  std::string current = ToLower(key);
+  std::string current = util::ToLowerAscii(key);
   while (!current.empty()) {
     if (auto it = styles.find(current); it != styles.end()) {
       return &it->second;
@@ -458,7 +450,7 @@ bool LoadThemeStyles(const std::filesystem::path& theme_directory,
     return false;
   }
 
-  const std::string normalized_name = ToLower(theme_path.stem().string());
+  const std::string normalized_name = util::ToLowerAscii(theme_path.stem().string());
   if (std::find(include_stack.begin(), include_stack.end(), normalized_name) != include_stack.end()) {
     return true;
   }
@@ -721,7 +713,7 @@ bool LoadThemeByName(std::string_view name,
                      std::string* error,
                      const std::filesystem::path& theme_directory) {
   const std::string requested_name = name.empty() ? "default" : std::string(name);
-  if (ToLower(requested_name) == "default") {
+  if (util::ToLowerAscii(requested_name) == "default") {
     out_theme = MakeDefaultTheme();
     if (resolved_name != nullptr) {
       *resolved_name = "default";

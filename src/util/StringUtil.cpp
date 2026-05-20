@@ -178,6 +178,16 @@ void TrimTrailingLineEndings(std::string* text) {
   }
 }
 
+std::string ToLowerAscii(std::string_view text) {
+  std::string lowered(text);
+  for (char& c : lowered) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c + ('a' - 'A'));
+    }
+  }
+  return lowered;
+}
+
 std::string TrimAsciiWhitespace(std::string_view text) {
   std::size_t start = 0;
   while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {

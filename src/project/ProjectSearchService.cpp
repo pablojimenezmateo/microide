@@ -13,6 +13,7 @@
 #include "app/BackgroundTaskCounter.h"
 #include "util/PerformanceCounters.h"
 #include "util/RegexUtil.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 
@@ -39,14 +40,6 @@ bool UsesCaseSensitiveSearch(std::string_view query, ProjectSearchCaseMode case_
     default:
       return QueryHasUppercase(query);
   }
-}
-
-std::string ToLowerAscii(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return lowered;
 }
 
 std::string CollapseAsciiWhitespace(std::string_view text) {
@@ -111,7 +104,7 @@ class PreparedLiteralQuery {
   PreparedLiteralQuery(std::string_view query, ProjectSearchCaseMode case_mode)
       : query_(query),
         case_sensitive_(UsesCaseSensitiveSearch(query, case_mode)),
-        lowered_query_(case_sensitive_ ? std::string{} : ToLowerAscii(query)) {
+        lowered_query_(case_sensitive_ ? std::string{} : util::ToLowerAscii(query)) {
     if (query_.empty()) {
       error_ = "Project search query is empty";
     }

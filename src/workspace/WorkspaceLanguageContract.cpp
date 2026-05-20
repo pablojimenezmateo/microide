@@ -5,6 +5,7 @@
 #include <unordered_map>
 
 #include "plugin/PluginHost.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -169,14 +170,6 @@ std::unordered_map<std::string, LanguageContract> BuildDefaults() {
   return map;
 }
 
-std::string LowerAscii(std::string_view s) {
-  std::string out(s);
-  for (char& c : out) {
-    if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
-  }
-  return out;
-}
-
 }  // namespace
 
 struct WorkspaceLanguageContract::Impl {
@@ -194,7 +187,7 @@ namespace {
 
 LanguageContract& EnsureContract(std::unordered_map<std::string, LanguageContract>& table,
                                  std::string_view language_id) {
-  std::string key = LowerAscii(language_id);
+  std::string key = util::ToLowerAscii(language_id);
   auto it = table.find(key);
   if (it == table.end()) {
     LanguageContract empty;
@@ -406,7 +399,7 @@ std::string_view CanonicalContractKey(std::string_view key) {
 
 const LanguageContract* WorkspaceLanguageContract::Find(std::string_view language_id) const {
   if (language_id.empty()) return nullptr;
-  std::string key = LowerAscii(language_id);
+  std::string key = util::ToLowerAscii(language_id);
   if (const std::string_view canonical = CanonicalContractKey(key); canonical != key) {
     key.assign(canonical);
   }

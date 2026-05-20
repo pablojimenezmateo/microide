@@ -17,18 +17,6 @@
 
 namespace microide::workspace {
 
-namespace {
-
-std::string ToLower(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return lowered;
-}
-
-}  // namespace
-
 std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode> TabCoordinator::MakeEditorLeafNode(
     std::size_t leaf_id,
     float size_fraction) {
@@ -338,7 +326,7 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
     return std::nullopt;
   }
 
-  const std::string lowered_specifier = ToLower(specifier);
+  const std::string lowered_specifier = util::ToLowerAscii(specifier);
   if (const auto tab_number = util::ParseInt(specifier); tab_number.has_value()) {
     if (*tab_number >= 1 && static_cast<std::size_t>(*tab_number) <= state_.open_tabs.size()) {
       return static_cast<std::size_t>(*tab_number - 1);
@@ -353,9 +341,9 @@ std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view
   std::vector<std::size_t> partial_matches;
   for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
     const TabEntry& tab = state_.open_tabs[i];
-    const std::string lowered_title = ToLower(tab.title);
-    const std::string lowered_path = ToLower(RelativePathLabel(state_.root, tab.path));
-    const std::string lowered_absolute_path = ToLower(tab.path.lexically_normal().string());
+    const std::string lowered_title = util::ToLowerAscii(tab.title);
+    const std::string lowered_path = util::ToLowerAscii(RelativePathLabel(state_.root, tab.path));
+    const std::string lowered_absolute_path = util::ToLowerAscii(tab.path.lexically_normal().string());
     const bool exact_match = lowered_title == lowered_specifier ||
                              (!lowered_path.empty() && lowered_path == lowered_specifier) ||
                              (!lowered_absolute_path.empty() &&

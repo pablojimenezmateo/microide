@@ -18,11 +18,7 @@ bool EndsWith(std::string_view text, std::string_view suffix) {
 }
 
 std::string ToLower(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  return lowered;
+  return util::ToLowerAscii(text);
 }
 
 std::vector<std::string> SplitSyntaxLines(std::string_view text) {

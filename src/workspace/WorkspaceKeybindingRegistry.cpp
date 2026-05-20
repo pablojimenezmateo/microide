@@ -6,20 +6,10 @@
 #include <sstream>
 
 #include "plugin/PluginHost.h"
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
 namespace microide::workspace {
-
-namespace {
-
-std::string ToLowerAscii(std::string_view text) {
-  std::string lower(text);
-  std::transform(lower.begin(), lower.end(), lower.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return lower;
-}
-
-}  // namespace
 
 SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers) {
   SDL_Keymod normalized = SDL_KMOD_NONE;
@@ -545,7 +535,7 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
 
   // Strip modifier prefixes.
   while (true) {
-    std::string lower = ToLowerAscii(remaining);
+    std::string lower = util::ToLowerAscii(remaining);
     if (lower.starts_with("ctrl+")) {
       mods = static_cast<SDL_Keymod>(mods | SDL_KMOD_CTRL);
       remaining = remaining.substr(5);
@@ -566,7 +556,7 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
   }
 
   // Map remaining string to SDL_Keycode.
-  const std::string lower_key = ToLowerAscii(remaining);
+  const std::string lower_key = util::ToLowerAscii(remaining);
 
   if (lower_key.size() == 1 && std::isalpha(static_cast<unsigned char>(lower_key[0]))) {
     // Single letter: map to SDL keycode via scancode.

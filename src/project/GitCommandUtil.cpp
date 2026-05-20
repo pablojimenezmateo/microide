@@ -7,18 +7,6 @@
 
 namespace microide::project::internal {
 
-#if defined(_WIN32)
-namespace {
-
-std::string LowerAscii(std::string text) {
-  for (char& ch : text) {
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  }
-  return text;
-}
-
-}  // namespace
-#endif
 
 bool HasGitMarker(const std::filesystem::path& root) {
   return !root.empty() && std::filesystem::exists(root / ".git");
@@ -39,8 +27,8 @@ std::optional<std::filesystem::path> AbsoluteToRelativePath(
 #if defined(_WIN32)
     const std::string root_text = root.lexically_normal().generic_string();
     const std::string path_text = absolute_path.lexically_normal().generic_string();
-    std::string lowered_root = LowerAscii(root_text);
-    std::string lowered_path = LowerAscii(path_text);
+    std::string lowered_root = util::ToLowerAscii(root_text);
+    std::string lowered_path = util::ToLowerAscii(path_text);
     const std::string lowered_root_prefix =
         lowered_root.ends_with('/') ? lowered_root : lowered_root + "/";
     const std::string root_prefix = root_text.ends_with('/') ? root_text : root_text + "/";

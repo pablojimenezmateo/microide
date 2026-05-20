@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 
+#include "util/StringUtil.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -12,13 +14,6 @@ const std::string* FindStoredValue(const std::vector<std::pair<std::string, std:
   const auto it = std::find_if(values.begin(), values.end(),
                                [id](const auto& entry) { return entry.first == id; });
   return it == values.end() ? nullptr : &it->second;
-}
-
-std::string LowerAscii(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return lowered;
 }
 
 }  // namespace
@@ -101,9 +96,9 @@ bool SettingsOverlayService::RowMatchesQuery(std::string_view label, std::string
   if (query_.empty()) {
     return true;
   }
-  const std::string needle = LowerAscii(query_);
-  return LowerAscii(label).find(needle) != std::string::npos ||
-         LowerAscii(detail).find(needle) != std::string::npos;
+  const std::string needle = util::ToLowerAscii(query_);
+  return util::ToLowerAscii(label).find(needle) != std::string::npos ||
+         util::ToLowerAscii(detail).find(needle) != std::string::npos;
 }
 
 }  // namespace microide::workspace

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "util/StringUtil.h"
 
 namespace microide::plugin::diagnostics_interop {
 namespace {
@@ -22,19 +23,11 @@ std::filesystem::path ResolveRuntimePath(const std::filesystem::path& project_ro
   return (project_root / path).lexically_normal();
 }
 
-std::string ToLowerAscii(std::string_view text) {
-  std::string lowered(text);
-  std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char ch) {
-    return static_cast<char>(std::tolower(ch));
-  });
-  return lowered;
-}
-
 bool ParseDiagnosticSeverity(std::string_view raw_value, editor::DiagnosticSeverity* severity) {
   if (severity == nullptr) {
     return false;
   }
-  const std::string value = ToLowerAscii(raw_value);
+  const std::string value = util::ToLowerAscii(raw_value);
   if (value == "error") {
     *severity = editor::DiagnosticSeverity::Error;
     return true;
