@@ -37,21 +37,7 @@ std::vector<std::string> SplitSyntaxLines(std::string_view text) {
 }
 
 std::string CollapseWhitespace(std::string_view text) {
-  std::string collapsed;
-  collapsed.reserve(text.size());
-  bool space = false;
-  for (char c : text) {
-    if (std::isspace(static_cast<unsigned char>(c))) {
-      space = !collapsed.empty();
-      continue;
-    }
-    if (space) {
-      collapsed.push_back(' ');
-      space = false;
-    }
-    collapsed.push_back(c);
-  }
-  return collapsed;
+  return util::CollapseAsciiWhitespace(text);
 }
 
 bool QuerySupportsLiteralReplace(std::string_view query) {

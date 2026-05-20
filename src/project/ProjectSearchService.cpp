@@ -42,25 +42,6 @@ bool UsesCaseSensitiveSearch(std::string_view query, ProjectSearchCaseMode case_
   }
 }
 
-std::string CollapseAsciiWhitespace(std::string_view text) {
-  std::string collapsed;
-  collapsed.reserve(text.size());
-  bool saw_whitespace = false;
-  for (unsigned char c : text) {
-    if (std::isspace(c)) {
-      saw_whitespace = !collapsed.empty();
-      continue;
-    }
-    if (saw_whitespace) {
-      collapsed.push_back(' ');
-      saw_whitespace = false;
-    }
-    collapsed.push_back(static_cast<char>(c));
-  }
-  return collapsed;
-}
-
-
 bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         std::string_view line,
                         std::size_t* search_from,
@@ -370,7 +351,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
              (literal_query != nullptr &&
               literal_query->FindNext(line, lowered_line, &search_from, &match_start, &match_end))) {
         if (!preview_ready) {
-          preview = CollapseAsciiWhitespace(line);
+          preview = util::CollapseAsciiWhitespace(line);
           preview_ready = true;
         }
         batch.push_back(ProjectSearchResult{

@@ -188,6 +188,24 @@ std::string ToLowerAscii(std::string_view text) {
   return lowered;
 }
 
+std::string CollapseAsciiWhitespace(std::string_view text) {
+  std::string collapsed;
+  collapsed.reserve(text.size());
+  bool saw_whitespace = false;
+  for (unsigned char c : text) {
+    if (std::isspace(c)) {
+      saw_whitespace = !collapsed.empty();
+      continue;
+    }
+    if (saw_whitespace) {
+      collapsed.push_back(' ');
+      saw_whitespace = false;
+    }
+    collapsed.push_back(static_cast<char>(c));
+  }
+  return collapsed;
+}
+
 std::string TrimAsciiWhitespace(std::string_view text) {
   std::size_t start = 0;
   while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {

@@ -38,6 +38,9 @@ std::string TrimAsciiWhitespace(std::string_view text);
 // Lowercase the ASCII A-Z range, leaving every other byte untouched. Safe for
 // UTF-8 input because the multi-byte sequences never include 'A'..'Z'.
 std::string ToLowerAscii(std::string_view text);
+// Replace each run of ASCII whitespace with a single space. Leading whitespace
+// is dropped; trailing whitespace, if any, is also dropped.
+std::string CollapseAsciiWhitespace(std::string_view text);
 LineEnding DetectLineEnding(std::string_view text);
 DecodedText DecodeLines(std::string_view content);
 std::string_view LineEndingSeparator(LineEnding line_ending);
