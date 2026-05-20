@@ -8,6 +8,7 @@
 #include "project/IgnoreMatcher.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
+#include "util/StringUtil.h"
 
 namespace microide::project {
 
@@ -442,9 +443,7 @@ std::string DirectoryTree::NormalizePathKey(const std::filesystem::path& path) {
   std::string key =
       error ? path.lexically_normal().generic_string() : absolute.lexically_normal().generic_string();
 #ifdef _WIN32
-  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
-    return static_cast<char>(std::tolower(ch));
-  });
+  key = util::ToLowerAscii(key);
 #endif
   return key;
 }
