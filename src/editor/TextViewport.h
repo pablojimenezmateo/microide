@@ -11,10 +11,12 @@
 #include <span>
 #include <vector>
 
+#include "editor/EditTypes.h"
 #include "editor/LanguageContractView.h"
 #include "editor/FoldingModel.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
+#include "editor/TextViewportUndoHistory.h"
 #include "util/StringUtil.h"
 
 namespace microide::editor {
@@ -26,26 +28,6 @@ struct TextViewportCacheStats {
   std::size_t highlight_hits = 0;
   std::size_t highlight_state_advances = 0;
   std::size_t highlight_checkpoint_advances = 0;
-};
-
-struct TextPosition {
-  std::size_t line = 0;
-  std::size_t column = 0;
-};
-using LogicalPosition = TextPosition;
-
-inline bool operator==(const TextPosition& lhs, const TextPosition& rhs) {
-  return lhs.line == rhs.line && lhs.column == rhs.column;
-}
-
-struct SelectionRange {
-  TextPosition start;
-  TextPosition end;
-};
-
-struct AppliedEdit {
-  SelectionRange range_before;
-  std::string replacement_text;
 };
 
 class TextViewport {
@@ -136,7 +118,7 @@ class TextViewport {
   // While a group is active, individual `PushHistoryEntry` calls are suppressed.
   void BeginUndoGroup();
   void EndUndoGroup();
-  bool UndoGroupActive() const { return !undo_group_stack_.empty(); }
+  bool UndoGroupActive() const { return undo_history_.IsGroupActive(); }
   bool ReplaceRange(const SelectionRange& range,
                     std::string_view replacement,
                     bool record_undo = true);
@@ -239,40 +221,15 @@ class TextViewport {
   static SelectionRange NormalizeRange(const SelectionRange& range);
 
  private:
-  struct SecondaryCaret {
-    TextPosition position;
-    std::size_t preferred_column = 0;
-    // When set and distinct from `position`, this caret has a non-empty
-    // selection between anchor and position (same convention as the primary
-    // caret’s `selection_anchor_` + cursor).
-    std::optional<TextPosition> selection_anchor;
-  };
-
-  struct ViewState {
-    std::size_t cursor_line = 0;
-    std::size_t cursor_column = 0;
-    std::size_t preferred_column = 0;
-    std::size_t scroll_line = 0;
-    std::size_t horizontal_scroll = 0;
-    std::optional<TextPosition> selection_anchor;
-    std::vector<SecondaryCaret> secondary_carets;
-    bool placeholder = false;
-    bool dirty = false;
-  };
-
-  struct HistoryEntry {
-    std::size_t start_line = 0;
-    std::vector<std::string> before_lines;
-    std::vector<std::string> after_lines;
-    ViewState before_state;
-    ViewState after_state;
-  };
+  // SecondaryCaret, ViewState, HistoryEntry now live on TextViewportUndoHistory.
+  // Type-alias them here so the historical call sites compile unchanged.
+  using SecondaryCaret = TextViewportUndoHistory::SecondaryCaret;
+  using ViewState = TextViewportUndoHistory::ViewState;
+  using HistoryEntry = TextViewportUndoHistory::Entry;
 
   struct DocumentState {
     std::filesystem::path path;
     std::vector<std::string> lines;
-    std::deque<HistoryEntry> undo_stack;
-    std::deque<HistoryEntry> redo_stack;
     LineEnding line_ending = LineEnding::LF;
     bool mixed_line_endings = false;
     TextEncoding encoding = TextEncoding::ASCII;
@@ -342,14 +299,6 @@ class TextViewport {
   void PushHistoryEntry(HistoryEntry entry);
   void PushHistoryEntryDirect(HistoryEntry entry);
   void FlushActiveUndoGroup();
-  static void ApplyHistoryEntryToLines(std::vector<std::string>& lines,
-                                       const HistoryEntry& entry,
-                                       bool forward);
-  static std::optional<HistoryEntry> TryMergeUndoGroupEntry(const HistoryEntry& aggregate,
-                                                            const HistoryEntry& next);
-  static std::vector<std::string> ReconstructUndoGroupFallbackLines(
-      const std::vector<std::string>& current_lines,
-      const std::vector<HistoryEntry>& child_entries);
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,
                                                      std::string_view replacement) const;
@@ -359,12 +308,6 @@ class TextViewport {
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
-  static HistoryEntry BuildHistoryEntryForDocumentChange(const std::vector<std::string>& before_lines,
-                                                         const ViewState& before_state,
-                                                         const std::vector<std::string>& after_lines,
-                                                         const ViewState& after_state);
-  static std::optional<AppliedEdit> BuildAppliedEditForHistoryEntry(const HistoryEntry& entry,
-                                                                    bool forward);
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo);
   bool ApplyLineEdit(std::size_t start_line,
                      std::size_t end_line,
@@ -484,20 +427,7 @@ class TextViewport {
   std::optional<TextPosition> selection_anchor_;
   std::optional<AppliedEdit> last_applied_edit_;
   const FoldingModel* folding_model_ = nullptr;
-
-  struct UndoGroupFrame {
-    // `before_state` is always captured at BeginUndoGroup.
-    ViewState state;
-    // Known-range child edits are merged incrementally into `aggregate_entry`
-    // so grouped completions/snippets do not snapshot the whole buffer.
-    std::optional<HistoryEntry> aggregate_entry;
-    std::vector<HistoryEntry> child_entries;
-    // Conservative fallback for groups whose child deltas are disjoint or
-    // otherwise cannot be normalized into one contiguous aggregate entry.
-    bool using_fallback = false;
-    std::vector<std::string> fallback_lines;
-  };
-  std::vector<UndoGroupFrame> undo_group_stack_;
+  TextViewportUndoHistory undo_history_;
 
 #ifndef NDEBUG
  public:

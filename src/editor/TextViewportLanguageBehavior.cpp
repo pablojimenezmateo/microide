@@ -644,14 +644,14 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
       after_lines_slice.push_back(document_->lines[i]);
     }
     aggregate_entry =
-        BuildHistoryEntryForDocumentChange(before_lines, before_state,
+        TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state,
                                            after_lines_slice, CaptureViewState());
     aggregate_entry.start_line += before_lines_start;
   } else {
-    aggregate_entry = BuildHistoryEntryForDocumentChange(before_lines, before_state,
+    aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state,
                                                          document_->lines, CaptureViewState());
   }
-  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
+  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   PushHistoryEntry(aggregate_entry);
   return true;
 }

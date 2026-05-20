@@ -155,6 +155,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/editor/TextViewportMultiCaret.cpp
+  src/editor/TextViewportUndoHistory.cpp
   src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
   src/compare/MergeModel.cpp
@@ -690,6 +691,7 @@ add_executable(microide_diff_bench
   src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp
   src/editor/TextViewportMultiCaret.cpp
+  src/editor/TextViewportUndoHistory.cpp
   src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
   src/platform/RuntimePaths.cpp

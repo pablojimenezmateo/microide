@@ -209,15 +209,14 @@ void TextViewport::DeleteForward() {
 
 bool TextViewport::Undo() {
   util::PerformanceTrace::Scope perf_scope("TextViewport::Undo");
-  if (!undo_group_stack_.empty()) {
+  if (undo_history_.IsGroupActive()) {
     FlushActiveUndoGroup();
   }
-  if (document_->undo_stack.empty()) {
+  if (!undo_history_.CanUndo()) {
     return false;
   }
 
-  HistoryEntry entry = std::move(document_->undo_stack.back());
-  document_->undo_stack.pop_back();
+  HistoryEntry entry = undo_history_.PopUndo();
   entry.after_state = CaptureViewState();
   {
     util::PerformanceTrace::Scope scope("TextViewport::Undo::ApplyHistoryEntry");
@@ -225,23 +224,22 @@ bool TextViewport::Undo() {
   }
   {
     util::PerformanceTrace::Scope scope("TextViewport::Undo::BuildAppliedEdit");
-    last_applied_edit_ = BuildAppliedEditForHistoryEntry(entry, false);
+    last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, false);
   }
-  document_->redo_stack.push_back(std::move(entry));
+  undo_history_.PushRedo(std::move(entry));
   return true;
 }
 
 bool TextViewport::Redo() {
   util::PerformanceTrace::Scope perf_scope("TextViewport::Redo");
-  if (!undo_group_stack_.empty()) {
+  if (undo_history_.IsGroupActive()) {
     FlushActiveUndoGroup();
   }
-  if (document_->redo_stack.empty()) {
+  if (!undo_history_.CanRedo()) {
     return false;
   }
 
-  HistoryEntry entry = std::move(document_->redo_stack.back());
-  document_->redo_stack.pop_back();
+  HistoryEntry entry = undo_history_.PopRedo();
   entry.before_state = CaptureViewState();
   {
     util::PerformanceTrace::Scope scope("TextViewport::Redo::ApplyHistoryEntry");
@@ -249,9 +247,9 @@ bool TextViewport::Redo() {
   }
   {
     util::PerformanceTrace::Scope scope("TextViewport::Redo::BuildAppliedEdit");
-    last_applied_edit_ = BuildAppliedEditForHistoryEntry(entry, true);
+    last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, true);
   }
-  document_->undo_stack.push_back(std::move(entry));
+  undo_history_.PushUndo(std::move(entry));
   return true;
 }
 
@@ -319,7 +317,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
 
   if (replacements > 0) {
     document_->dirty = true;
-    document_->redo_stack.clear();
+    undo_history_.ClearRedo();
     RefreshEncoding();
     InvalidateLayoutCaches();
     EnsureCursorVisible();
@@ -735,7 +733,7 @@ bool TextViewport::DeleteCurrentLine() {
     InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
     InvalidateVisualColumnCache();
     EnsureCursorVisible();
-    PushHistoryEntry(BuildHistoryEntryForDocumentChange(before_lines, before_state,
+    PushHistoryEntry(TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state,
                                                         document_->lines, CaptureViewState()));
     return true;
   }
@@ -891,8 +889,7 @@ void TextViewport::ResetState(std::vector<std::string> lines,
   horizontal_scroll_ = 0;
   selection_anchor_.reset();
   secondary_carets_.clear();
-  document_->undo_stack.clear();
-  document_->redo_stack.clear();
+  undo_history_.Clear();
   document_->placeholder = placeholder;
   document_->dirty = dirty;
   InvalidateVisualColumnCache();
@@ -1115,89 +1112,31 @@ void TextViewport::RestoreViewState(const ViewState& state) {
 }
 
 void TextViewport::PushHistoryEntry(HistoryEntry entry) {
-  document_->redo_stack.clear();
-  if (!undo_group_stack_.empty()) {
-    for (UndoGroupFrame& frame : undo_group_stack_) {
-      if (frame.using_fallback) {
-        continue;
-      }
-      frame.child_entries.push_back(entry);
-      if (!frame.aggregate_entry.has_value()) {
-        frame.aggregate_entry = entry;
-        continue;
-      }
-      std::optional<HistoryEntry> merged =
-          TryMergeUndoGroupEntry(*frame.aggregate_entry, entry);
-      if (merged.has_value()) {
-        frame.aggregate_entry = std::move(merged);
-        continue;
-      }
-      frame.fallback_lines =
-          ReconstructUndoGroupFallbackLines(document_->lines, frame.child_entries);
-      frame.aggregate_entry.reset();
-      frame.child_entries.clear();
-      frame.using_fallback = true;
-    }
-    return;
-  }
-  document_->undo_stack.push_back(std::move(entry));
-  if (document_->undo_stack.size() > kMaxHistoryEntries) {
-    document_->undo_stack.pop_front();
-  }
+  undo_history_.RecordEntry(std::move(entry), document_->lines);
 }
 
 void TextViewport::PushHistoryEntryDirect(HistoryEntry entry) {
-  document_->redo_stack.clear();
-  document_->undo_stack.push_back(std::move(entry));
-  if (document_->undo_stack.size() > kMaxHistoryEntries) {
-    document_->undo_stack.pop_front();
-  }
+  undo_history_.RecordEntryDirect(std::move(entry));
 }
 
-void TextViewport::BeginUndoGroup() {
-  UndoGroupFrame frame;
-  frame.state = CaptureViewState();
-  undo_group_stack_.push_back(std::move(frame));
-}
+void TextViewport::BeginUndoGroup() { undo_history_.BeginGroup(CaptureViewState()); }
 
-void TextViewport::EndUndoGroup() {
-  FlushActiveUndoGroup();
-}
+void TextViewport::EndUndoGroup() { FlushActiveUndoGroup(); }
 
 void TextViewport::FlushActiveUndoGroup() {
-  if (undo_group_stack_.empty()) {
+  std::optional<HistoryEntry> aggregate =
+      undo_history_.FinishActiveGroup(document_->lines, CaptureViewState());
+  if (!aggregate.has_value()) {
     return;
   }
-  UndoGroupFrame frame = std::move(undo_group_stack_.back());
-  undo_group_stack_.pop_back();
-
-  HistoryEntry agg;
-  if (frame.using_fallback) {
-    // Conservative fallback for grouped edits whose child deltas cannot be
-    // merged into one contiguous history entry.
-    agg = BuildHistoryEntryForDocumentChange(frame.fallback_lines, frame.state,
-                                             document_->lines, CaptureViewState());
-  } else if (frame.aggregate_entry.has_value()) {
-    agg = *frame.aggregate_entry;
-    agg.before_state = frame.state;
-    agg.after_state = CaptureViewState();
-  } else {
-    // No edits happened. Build an empty aggregate so the no-op check below
-    // can discard it uniformly.
-    agg = BuildHistoryEntryForDocumentChange({}, frame.state, {}, CaptureViewState());
-  }
-
-  if (agg.before_lines.empty() && agg.after_lines.empty()) {
-    return;
-  }
-  PushHistoryEntry(std::move(agg));
+  PushHistoryEntry(std::move(*aggregate));
 }
 
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
-  ApplyHistoryEntryToLines(document_->lines, entry, forward);
+  TextViewportUndoHistory::ApplyEntryToLines(document_->lines, entry, forward);
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   RefreshEncoding();
@@ -1297,177 +1236,6 @@ TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
   };
 }
 
-TextViewport::HistoryEntry TextViewport::BuildHistoryEntryForDocumentChange(
-    const std::vector<std::string>& before_lines,
-    const ViewState& before_state,
-    const std::vector<std::string>& after_lines,
-    const ViewState& after_state) {
-  std::size_t prefix = 0;
-  while (prefix < before_lines.size() && prefix < after_lines.size() &&
-         before_lines[prefix] == after_lines[prefix]) {
-    ++prefix;
-  }
-
-  std::size_t before_end = before_lines.size();
-  std::size_t after_end = after_lines.size();
-  while (before_end > prefix && after_end > prefix &&
-         before_lines[before_end - 1] == after_lines[after_end - 1]) {
-    --before_end;
-    --after_end;
-  }
-
-  return HistoryEntry{
-      .start_line = prefix,
-      .before_lines = SliceLines(before_lines, prefix, before_end),
-      .after_lines = SliceLines(after_lines, prefix, after_end),
-      .before_state = before_state,
-      .after_state = after_state,
-  };
-}
-
-std::optional<AppliedEdit> TextViewport::BuildAppliedEditForHistoryEntry(
-    const TextViewport::HistoryEntry& entry,
-    bool forward) {
-  const std::vector<std::string>& before_lines = forward ? entry.before_lines : entry.after_lines;
-  const std::vector<std::string>& after_lines = forward ? entry.after_lines : entry.before_lines;
-  if (before_lines.empty() || after_lines.empty()) {
-    return std::nullopt;
-  }
-
-  const std::string& before_first = before_lines.front();
-  const std::string& after_first = after_lines.front();
-  std::size_t common_prefix = 0;
-  const std::size_t max_prefix = std::min(before_first.size(), after_first.size());
-  while (common_prefix < max_prefix && before_first[common_prefix] == after_first[common_prefix]) {
-    ++common_prefix;
-  }
-
-  const std::string& before_last = before_lines.back();
-  const std::string& after_last = after_lines.back();
-  std::size_t common_suffix = 0;
-  const std::size_t max_suffix = std::min(before_last.size(), after_last.size());
-  while (common_suffix < max_suffix &&
-         before_last[before_last.size() - 1 - common_suffix] ==
-             after_last[after_last.size() - 1 - common_suffix]) {
-    if ((before_lines.size() == 1 && common_prefix + common_suffix >= before_first.size()) ||
-        (after_lines.size() == 1 && common_prefix + common_suffix >= after_first.size())) {
-      break;
-    }
-    ++common_suffix;
-  }
-
-  std::vector<std::string> replacement_lines = after_lines;
-  replacement_lines.front().erase(0, common_prefix);
-  if (common_suffix > 0) {
-    replacement_lines.back().erase(replacement_lines.back().size() - common_suffix);
-  }
-
-  return AppliedEdit{
-      .range_before =
-          SelectionRange{
-              .start =
-                  TextPosition{
-                      .line = entry.start_line,
-                      .column = common_prefix,
-                  },
-              .end =
-                  TextPosition{
-                      .line = entry.start_line + before_lines.size() - 1,
-                      .column = before_last.size() - common_suffix,
-                  },
-          },
-      .replacement_text = util::SerializeLines(replacement_lines, util::LineEnding::LF),
-  };
-}
-
-void TextViewport::ApplyHistoryEntryToLines(std::vector<std::string>& lines,
-                                            const HistoryEntry& entry,
-                                            bool forward) {
-  const std::size_t start_line = std::min(entry.start_line, lines.size());
-  const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
-  const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
-
-  const bool same_count_replacement =
-      removed_count > 0 && removed_count == inserted_lines.size() &&
-      start_line + removed_count <= lines.size();
-  if (same_count_replacement) {
-    for (std::size_t i = 0; i < removed_count; ++i) {
-      lines[start_line + i] = inserted_lines[i];
-    }
-  } else {
-    const auto erase_begin = lines.begin() + static_cast<std::ptrdiff_t>(start_line);
-    const auto erase_end = erase_begin +
-                           static_cast<std::ptrdiff_t>(std::min(removed_count, lines.size() - start_line));
-    lines.erase(erase_begin, erase_end);
-    lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(start_line),
-                 inserted_lines.begin(), inserted_lines.end());
-  }
-  if (lines.empty()) {
-    lines.push_back("");
-  }
-}
-
-std::optional<TextViewport::HistoryEntry> TextViewport::TryMergeUndoGroupEntry(
-    const HistoryEntry& aggregate,
-    const HistoryEntry& next) {
-  const std::size_t aggregate_after_start = aggregate.start_line;
-  const std::size_t aggregate_after_end = aggregate.start_line + aggregate.after_lines.size();
-  const std::size_t next_start = next.start_line;
-  const std::size_t next_end = next.start_line + next.before_lines.size();
-
-  HistoryEntry merged = aggregate;
-  merged.after_state = next.after_state;
-
-  if (next_end == aggregate_after_start) {
-    merged.start_line = next.start_line;
-    merged.before_lines = next.before_lines;
-    merged.before_lines.insert(merged.before_lines.end(), aggregate.before_lines.begin(),
-                               aggregate.before_lines.end());
-    merged.after_lines = next.after_lines;
-    merged.after_lines.insert(merged.after_lines.end(), aggregate.after_lines.begin(),
-                              aggregate.after_lines.end());
-    return merged;
-  }
-
-  if (next_start == aggregate_after_end) {
-    merged.before_lines.insert(merged.before_lines.end(), next.before_lines.begin(),
-                               next.before_lines.end());
-    merged.after_lines.insert(merged.after_lines.end(), next.after_lines.begin(),
-                              next.after_lines.end());
-    return merged;
-  }
-
-  if (next_start < aggregate_after_start || next_end > aggregate_after_end) {
-    return std::nullopt;
-  }
-
-  const std::size_t relative_start = next_start - aggregate_after_start;
-  const std::size_t relative_end = relative_start + next.before_lines.size();
-  if (!std::equal(next.before_lines.begin(), next.before_lines.end(),
-                  aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
-                  aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end))) {
-    return std::nullopt;
-  }
-
-  merged.after_lines.erase(
-      merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
-      merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end));
-  merged.after_lines.insert(
-      merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
-      next.after_lines.begin(), next.after_lines.end());
-  return merged;
-}
-
-std::vector<std::string> TextViewport::ReconstructUndoGroupFallbackLines(
-    const std::vector<std::string>& current_lines,
-    const std::vector<HistoryEntry>& child_entries) {
-  std::vector<std::string> reconstructed = current_lines;
-  for (auto it = child_entries.rbegin(); it != child_entries.rend(); ++it) {
-    ApplyHistoryEntryToLines(reconstructed, *it, false);
-  }
-  return reconstructed;
-}
-
 bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
                                   std::string_view replacement,
                                   bool record_undo) {
@@ -1483,13 +1251,13 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
   }
 
   ApplyHistoryEntry(*entry, true);
-  last_applied_edit_ = BuildAppliedEditForHistoryEntry(*entry, true);
+  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(*entry, true);
   if (record_undo) {
     HistoryEntry saved_entry = *entry;
     saved_entry.after_state = CaptureViewState();
     PushHistoryEntry(std::move(saved_entry));
   } else {
-    document_->redo_stack.clear();
+    undo_history_.ClearRedo();
   }
   return true;
 }
@@ -1505,13 +1273,13 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
 
   const HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
   ApplyHistoryEntry(entry, true);
-  last_applied_edit_ = BuildAppliedEditForHistoryEntry(entry, true);
+  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, true);
   if (record_undo) {
     HistoryEntry saved_entry = entry;
     saved_entry.after_state = CaptureViewState();
     PushHistoryEntry(std::move(saved_entry));
   } else {
-    document_->redo_stack.clear();
+    undo_history_.ClearRedo();
   }
   return true;
 }

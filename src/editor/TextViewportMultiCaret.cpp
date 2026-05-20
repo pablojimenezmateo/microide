@@ -83,12 +83,12 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   EnsureCursorVisible();
 
   const HistoryEntry aggregate_entry =
-      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
-  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
+      TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
   } else {
-    document_->redo_stack.clear();
+    undo_history_.ClearRedo();
   }
   return true;
 }
@@ -175,12 +175,12 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   EnsureCursorVisible();
 
   const HistoryEntry aggregate_entry =
-      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
-  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
+      TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
   } else {
-    document_->redo_stack.clear();
+    undo_history_.ClearRedo();
   }
   return true;
 }
@@ -264,12 +264,12 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   EnsureCursorVisible();
 
   const HistoryEntry aggregate_entry =
-      BuildHistoryEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
-  last_applied_edit_ = BuildAppliedEditForHistoryEntry(aggregate_entry, true);
+      TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
   } else {
-    document_->redo_stack.clear();
+    undo_history_.ClearRedo();
   }
   return true;
 }
