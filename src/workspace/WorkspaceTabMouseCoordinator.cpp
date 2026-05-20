@@ -335,18 +335,20 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
 bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
                                       const WorkspaceLayout& layout,
                                       int vertical_ticks) {
+  const auto scroll_strip = [vertical_ticks](std::size_t entry_count, int& scroll_index) {
+    const int max_scroll = std::max(0, static_cast<int>(entry_count) - 1);
+    scroll_index = std::clamp(scroll_index - vertical_ticks, 0, max_scroll);
+  };
+
   if (Contains(layout.project_tab_strip, event.wheel.mouse_x, event.wheel.mouse_y) &&
       !project_catalog_.entries.empty()) {
-    const int max_scroll = std::max(0, static_cast<int>(project_catalog_.entries.size()) - 1);
-    project_catalog_.tab_scroll_index =
-        std::clamp(project_catalog_.tab_scroll_index - vertical_ticks, 0, max_scroll);
+    scroll_strip(project_catalog_.entries.size(), project_catalog_.tab_scroll_index);
     return true;
   }
 
   if (Contains(layout.tab_strip, event.wheel.mouse_x, event.wheel.mouse_y) &&
       !state_.open_tabs.empty()) {
-    const int max_scroll = std::max(0, static_cast<int>(state_.open_tabs.size()) - 1);
-    state_.tab_scroll_index = std::clamp(state_.tab_scroll_index - vertical_ticks, 0, max_scroll);
+    scroll_strip(state_.open_tabs.size(), state_.tab_scroll_index);
     return true;
   }
 
