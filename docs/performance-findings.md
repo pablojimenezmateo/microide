@@ -109,9 +109,13 @@ Implemented:
 
 - `WorkspaceShell::SetProjectRoot` and plugin-reload startup paths now refresh Git sidebar data
   only when the active sidebar mode is Git
+- directory-tree git badges now reuse the async Git sidebar working-tree snapshot instead of
+  running `CollectGitStatuses` synchronously on project open or Git-sidebar activation
 - `FileFinder` now defers index-cache materialization until a real file-finder query refresh is
   requested
 - project-shell coverage now includes deferred Git sidebar refresh at project open
+- project-shell coverage now asserts tree git badges stay clean until the demand-gated async Git
+  snapshot is consumed
 - project-shell coverage now includes file-finder open-and-select behavior with deferred index
   cache build
 

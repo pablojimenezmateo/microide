@@ -413,7 +413,6 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   }
   context_.current_project_state.file_finder.SetIndex(&context_.current_project_state.file_index);
   context_.current_project_state.sidebar.scroll_row = 0;
-  context_.current_project_state.directory_tree.RefreshGitStatuses();
   if (ActiveSidebarMode() == SidebarMode::Git) {
     RefreshGitSidebar();
   } else {

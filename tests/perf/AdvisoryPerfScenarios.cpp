@@ -13,6 +13,7 @@
 #endif
 
 #include "platform/Subprocess.h"
+#include "workspace/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
 namespace {
@@ -119,6 +120,34 @@ void InitializeGitRepo(const std::filesystem::path& repo_path) {
 void CommitAll(const std::filesystem::path& repo_path, std::string_view message) {
   RequireGitCommandSuccess(repo_path, {"add", "."}, "git add");
   RequireGitCommandSuccess(repo_path, {"commit", "-m", std::string(message)}, "git commit");
+}
+
+std::string BuildInterleavedBaseText(int block_count) {
+  std::string text;
+  text.reserve(static_cast<std::size_t>(block_count) * 96);
+  for (int i = 0; i < block_count; ++i) {
+    text += "void unit_" + std::to_string(i) + "() {\n";
+    text += "  int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    text += "  sink(value_" + std::to_string(i) + ");\n";
+    text += "}\n\n";
+  }
+  return text;
+}
+
+std::string BuildInterleavedVariantText(int block_count, int side) {
+  std::string text;
+  text.reserve(static_cast<std::size_t>(block_count) * 104);
+  for (int i = 0; i < block_count; ++i) {
+    text += "void unit_" + std::to_string(i) + "() {\n";
+    if (i % 3 == side) {
+      text += "  int value_" + std::to_string(i) + " = " + std::to_string(i + 1000 + side) + ";\n";
+    } else {
+      text += "  int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    }
+    text += "  sink(value_" + std::to_string(i) + ");\n";
+    text += "}\n\n";
+  }
+  return text;
 }
 
 void RunRepoOpenRssIdle(ScenarioContext& context) {
@@ -236,6 +265,72 @@ void RunCompareScrollLargeFixture(ScenarioContext& context) {
   });
 }
 
+void RunMergeScrollInterleavedHunks(ScenarioContext& context) {
+  constexpr int kBlocks = 420;
+  const std::filesystem::path temp_root =
+      std::filesystem::temp_directory_path() / "microide-perf-merge-interleaved";
+  ScopedTempTree temp_tree(temp_root);
+  WriteFileTextOrThrow(temp_tree.root() / "base.cpp", BuildInterleavedBaseText(kBlocks));
+  WriteFileTextOrThrow(temp_tree.root() / "incoming.cpp", BuildInterleavedVariantText(kBlocks, 0));
+  WriteFileTextOrThrow(temp_tree.root() / "current.cpp", BuildInterleavedVariantText(kBlocks, 1));
+
+  if (!context.Open(temp_tree.root())) {
+    throw std::runtime_error("merge_scroll_interleaved_hunks: failed to open temp project root");
+  }
+  context.Measure("merge_interleaved.open_to_first_paint", [&] {
+    if (!context.ExecuteCommand("merge base.cpp incoming.cpp current.cpp result.cpp")) {
+      throw std::runtime_error("merge_scroll_interleaved_hunks: merge command failed");
+    }
+    context.PumpFrames(3);
+  });
+  const auto& merge = workspace::WorkspaceShell::TestAccess::ActiveMerge(context.Shell());
+  if (merge.model.hunks.size() < 200) {
+    throw std::runtime_error("merge_scroll_interleaved_hunks: expected hundreds of hunks");
+  }
+  context.Measure("merge_interleaved.scroll_burst", [&] {
+    for (int i = 0; i < 96; ++i) {
+      context.Scroll((i & 1) == 0 ? -3 : 3);
+      context.PumpFrames(1);
+    }
+  });
+}
+
+void RunCompareScrollSelectionFixture(ScenarioContext& context) {
+  constexpr int kBlocks = 420;
+  const std::filesystem::path temp_root =
+      std::filesystem::temp_directory_path() / "microide-perf-compare-selection";
+  ScopedTempTree repo_dir(temp_root);
+  InitializeGitRepo(repo_dir.root());
+  WriteFileTextOrThrow(repo_dir.root() / "large.cpp", BuildInterleavedBaseText(kBlocks));
+  CommitAll(repo_dir.root(), "add interleaved compare fixture");
+  WriteFileTextOrThrow(repo_dir.root() / "large.cpp", BuildInterleavedVariantText(kBlocks, 0));
+
+  if (!context.Open(repo_dir.root())) {
+    throw std::runtime_error("compare_scroll_selection_fixture: failed to open temp git repo");
+  }
+  const std::filesystem::path source = repo_dir.root() / "large.cpp";
+  context.Measure("compare_selection.open_to_first_paint", [&] {
+    if (!workspace::WorkspaceShell::TestAccess::OpenWorkingTreeComparison(
+            context.Shell(), source, "HEAD", "HEAD")) {
+      throw std::runtime_error("compare_scroll_selection_fixture: compare command failed");
+    }
+    context.PumpFrames(3);
+  });
+  auto& compare = workspace::WorkspaceShell::TestAccess::ActiveCompare(context.Shell());
+  if (compare.model.hunks.size() < 120) {
+    throw std::runtime_error("compare_scroll_selection_fixture: expected many compare hunks");
+  }
+  compare.right_view_active = true;
+  compare.right_viewport.MoveCursorTo(8, 2, false);
+  compare.right_viewport.MoveCursorTo(260, 24, true);
+  context.Measure("compare_selection.scroll_burst", [&] {
+    for (int i = 0; i < 96; ++i) {
+      context.Scroll((i & 1) == 0 ? -3 : 3);
+      context.PumpFrames(1);
+    }
+  });
+}
+
 const ScenarioRegistration g_perf_repo_open_rss_idle({Scenario{
     .name = "repo_open_rss_idle",
     .smoke = false,
@@ -246,8 +341,8 @@ const ScenarioRegistration g_perf_repo_open_rss_idle({Scenario{
 const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{
     .name = "large_file_open_first_paint",
     .smoke = false,
-    .baseline_gated = false,
-    .run_by_default = false,
+    .baseline_gated = true,
+    .run_by_default = true,
     .run = RunLargeFileOpenFirstPaint,
 }});
 const ScenarioRegistration g_perf_merge_scroll_large_fixture({Scenario{
@@ -263,6 +358,20 @@ const ScenarioRegistration g_perf_compare_scroll_large_fixture({Scenario{
     .baseline_gated = true,
     .run_by_default = true,
     .run = RunCompareScrollLargeFixture,
+}});
+const ScenarioRegistration g_perf_merge_scroll_interleaved_hunks({Scenario{
+    .name = "merge_scroll_interleaved_hunks",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .run = RunMergeScrollInterleavedHunks,
+}});
+const ScenarioRegistration g_perf_compare_scroll_selection({Scenario{
+    .name = "compare_scroll_selection",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .run = RunCompareScrollSelectionFixture,
 }});
 
 }  // namespace

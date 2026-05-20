@@ -36,6 +36,7 @@ class DirectoryTree {
   bool SetRoot(const std::filesystem::path& root);
   void Refresh();
   void RefreshGitStatuses();
+  void ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses);
   void MoveSelection(int delta);
   void SetSelectedIndex(std::size_t index);
   bool SelectPath(const std::filesystem::path& path);
@@ -52,9 +53,9 @@ class DirectoryTree {
   std::size_t selected_index() const { return selected_index_; }
 
   // Whether any file in the repo (not just the currently visible tree rows)
-  // is non-Clean per the last RefreshGitStatuses. Iterating entries() alone
-  // misses dirty files inside collapsed folders, so callers that want a
-  // repo-wide signal (status bar cleanliness, etc.) should consult this.
+  // is non-Clean per the last RefreshGitStatuses/ApplyGitStatuses update.
+  // Iterating entries() alone misses dirty files inside collapsed folders, so
+  // callers that want a repo-wide signal should consult this.
   bool has_dirty_files() const;
 
  private:

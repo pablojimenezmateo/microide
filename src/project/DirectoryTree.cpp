@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <system_error>
+#include <utility>
 
 #include "project/GitStatusService.h"
 #include "project/IgnoreMatcher.h"
@@ -62,7 +63,11 @@ void DirectoryTree::RefreshGitStatuses() {
     return;
   }
   util::StartupTrace::Scope trace_scope("DirectoryTree::RefreshGitStatuses");
-  git_statuses_ = CollectGitStatuses(root_);
+  ApplyGitStatuses(CollectGitStatuses(root_));
+}
+
+void DirectoryTree::ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses) {
+  git_statuses_ = std::move(statuses);
   for (auto& entry : entries_) {
     entry.git_status = EntryGitStatus(entry.path);
   }

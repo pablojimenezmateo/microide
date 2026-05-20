@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +21,8 @@ struct GitWorkingTreeEntry {
 std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
     const std::filesystem::path& root);
 std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root);
+std::unordered_map<std::string, GitFileStatus> BuildGitStatusMap(
+    std::span<const GitWorkingTreeEntry> entries);
 bool GitStageAll(const std::filesystem::path& root);
 bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
 bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);

@@ -9,6 +9,8 @@ Updated 2026-05-20 with item #16 phase-1-through-3 progress (companion cap 51→
 `WorkspaceTabStripChrome` adapter) and item #15 phase-1 progress
 (`TextViewportUndoHistory` extraction, the first real ownership reduction since the
 2026-05-18 file decomposition pass).
+Updated 2026-05-20 with the demand-gated async tree git-status refresh and the new
+large-file / compare / merge perf gates that close items 5 and 17.3.
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -165,6 +167,12 @@ Relevant code:
 
 ### 17.3 Fixtures That Would Surface The Existing Wins
 
+Status:
+- Closed on 2026-05-20. `large_file_open_first_paint`,
+  `merge_scroll_interleaved_hunks`, and `compare_scroll_selection` now run by default
+  with committed local baselines, covering first paint, interleaved merge hunks, and
+  multi-row compare selection during sustained scroll.
+
 These don't change product code; they only make the gate sensitive enough to credit
 the asymptotic work already in tree. Listed so we don't quietly revert any of the
 landed changes for being "bench-invisible" before a representative fixture exists.
@@ -197,20 +205,15 @@ What was closed:
   instead of snapshotting the entire cumulative result set back to the shell on every consume.
 
 What is still open:
-- `DirectoryTree::RefreshGitStatuses()` still runs `CollectGitStatuses` synchronously
-  on the UI thread inside `WorkspaceSidebarCoordinator::ShowGit()` and on project
-  set-root in `WorkspaceProjectStateCoordinator`. The 2026-05-19 attempt to migrate this
-  to an async snapshot-and-apply pipeline (alongside an unconditional
-  `RefreshGitSidebar()` on every project open) was reverted after the perf-compare bake:
-  unconditionally posting the 4-subprocess async refresh on every project set-root
-  produced ~480k extra short-lived allocations per project open with no wall-time
-  benefit (see investigation note below). The async snapshot pieces (`tree_git_statuses`
-  on `RefreshSnapshot`, `DirectoryTree::ApplyGitStatuses`, async-fallback in
-  `RefreshGit()`) were rolled back along with the unconditional `RefreshGitSidebar`.
-  Re-attempting this migration requires keeping the trigger conditional on the user
-  actually wanting tree badges (e.g. tied to Git sidebar mode or an explicit user
-  preference), not running it speculatively on every project open.
 - Blame and log dispatch are already off the UI thread.
+
+What was closed on 2026-05-20:
+- `DirectoryTree::RefreshGitStatuses()` no longer runs during project set-root, and
+  `WorkspaceSidebarCoordinator::ShowGit()` no longer calls it synchronously. The tree
+  status map is now built from the existing async Git sidebar working-tree snapshot and
+  applied through `DirectoryTree::ApplyGitStatuses()` only when Git sidebar data is
+  requested. Project-open coverage asserts the tree stays clean until the Git sidebar
+  is shown, then receives the async modified-state badge.
 
 Investigation note (2026-05-19 perf-compare diagnostic):
 - Clean `e9a4764` vs `27943f9` baseline: no regression beyond noise.
@@ -233,9 +236,9 @@ Investigation note (2026-05-19 perf-compare diagnostic):
   demand or measured to be allocation-cheap before being made unconditional.
 
 Recommended follow-up:
-- Make `DirectoryTree::RefreshGitStatuses()` async-snapshot-and-apply, but gated on
-  Git sidebar visibility (or an explicit setting) rather than running on every project
-  set-root. See the investigation note above for the reverted attempt.
+- Keep future tree-badge work demand-gated. If tree badges become visible outside the
+  Git sidebar, add an explicit user-visible trigger or setting before starting the
+  async Git snapshot work.
 
 ## 6. Large-File and Performance Validation Still Needs Measurement, Not Assumptions
 
@@ -244,7 +247,8 @@ Impact:
 - This is process debt with real product consequences
 
 What is still open:
-- The recent fixes remove known hotspots, but large-file behavior still needs empirical validation.
+- The recent fixes remove known hotspots, but new large-file behaviors still need empirical
+  validation before they are treated as safe.
 - The syntax-highlight jump problem in particular should be measured before and after any future
   checkpoint design.
 - Search, merge, blame, and redraw changes should continue to be validated with the startup and
@@ -257,11 +261,10 @@ What is still open:
   optimization loss from editor extractions, but that is not evidence the extraction is free.
   Any residual sticky-scroll/render-path regression should be profiled directly, then either fixed
   or explicitly accepted with data.
-- The harness also still lacks a dedicated large-file open-to-first-paint gate; advisory scenario
-  `large_file_open_first_paint` exists for explicit local runs only.
-- Diff / merge coverage is now better on sustained interaction because the gated suite includes
-  `compare_scroll_large_fixture` and `merge_scroll_large_fixture`, but it is still narrower than a
-  full interaction matrix. Large-fixture hunk navigation and mixed edit/scroll traces remain open.
+- The harness now includes a dedicated large-file open-to-first-paint gate and representative
+  compare / merge sustained-scroll gates for interleaved hunks and multi-row compare selection,
+  but it is still narrower than a full interaction matrix. Large-fixture hunk navigation and
+  mixed edit/scroll traces remain open.
 
 References:
 - `docs/startup-tracing.md`
@@ -270,7 +273,6 @@ References:
 
 Recommended follow-up:
 - Add or extend focused benchmarks where repeated regressions are likely:
-  - large-file open to first paint / first interactive frame
   - large-file cursor jump and initial paint
   - compare / merge hunk-navigation or mixed edit/scroll interaction on large fixtures
   - merge-model build for large, partially similar inputs

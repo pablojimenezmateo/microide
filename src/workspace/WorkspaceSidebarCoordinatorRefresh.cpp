@@ -6,10 +6,6 @@
 #include <string>
 #include <utility>
 
-#include "project/GitRepository.h"
-#include "project/GitStatusService.h"
-#include "util/StringUtil.h"
-#include "workspace/WorkspaceGitOutgoingBase.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -26,22 +22,6 @@ void ClampSelectionToItemCount(std::size_t item_count, std::size_t* selected_ind
   *selected_index = item_count == 0 ? 0 : std::min(*selected_index, item_count - 1);
 }
 
-std::string ResolveGitBranchLabelFallback(const std::filesystem::path& project_root) {
-  const project::GitRepository repo(project_root);
-  if (!repo.IsValid()) {
-    return {};
-  }
-  if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
-      symbolic_ref.success()) {
-    std::string label = symbolic_ref.output;
-    util::TrimTrailingLineEndings(&label);
-    if (!label.empty()) {
-      return label;
-    }
-  }
-  return {};
-}
-
 }  // namespace
 
 void SidebarCoordinator::RefreshGit() {
@@ -54,6 +34,7 @@ void SidebarCoordinator::RefreshGit() {
       }
       return;
     }
+    state_.directory_tree.ApplyGitStatuses(std::move(pending_snapshot.tree_git_statuses));
 
     const std::filesystem::path previous_path =
         state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
@@ -135,36 +116,15 @@ void SidebarCoordinator::RefreshGit() {
       operations_.consume_git_refresh_snapshot != nullptr &&
       operations_.consume_git_refresh_snapshot(&snapshot);
   if (!has_snapshot) {
-    const auto working_entries = project::CollectGitWorkingTreeEntries(project_root_);
-    for (const auto& entry : working_entries) {
-      snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-          .section = GitSidebarEntry::Section::Modified,
-          .relative_path = entry.relative_path,
-          .status = entry.status,
-          .conflicted = entry.conflicted,
-          .staged = entry.staged,
-      });
+    if (!state_.sidebar.git.refreshing && state_.sidebar.visible &&
+        ActiveSidebarMode() == SidebarMode::Git &&
+        operations_.request_git_refresh != nullptr) {
+      operations_.request_git_refresh();
     }
-    const ResolvedGitOutgoingBase resolved_base = ResolveGitOutgoingBase(
-        project_root_, state_.sidebar.git.outgoing_base_choice);
-    snapshot.repo_available = resolved_base.repo_available;
-    snapshot.branch_label = ResolveGitBranchLabelFallback(project_root_);
-    snapshot.base_ref = resolved_base.base_ref;
-    snapshot.base_label = resolved_base.base_label;
-    if (!snapshot.base_ref.empty()) {
-      const auto outgoing_entries =
-          project::CollectGitBranchOutgoingFiles(project_root_, snapshot.base_ref);
-      for (const auto& entry : outgoing_entries) {
-        snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-            .section = GitSidebarEntry::Section::Outgoing,
-            .relative_path = entry.relative_path,
-            .status = entry.status,
-            .conflicted = false,
-            .staged = false,
-        });
-      }
-    }
+    operations_.request_sidebar_redraw();
+    return;
   }
+  state_.directory_tree.ApplyGitStatuses(std::move(snapshot.tree_git_statuses));
 
   for (const auto& entry : snapshot.entries) {
     state_.sidebar.git.entries.push_back(GitSidebarEntry{

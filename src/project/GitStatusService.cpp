@@ -1,6 +1,7 @@
 #include "project/GitStatusService.h"
 
 #include <filesystem>
+#include <span>
 
 #include "project/GitRepository.h"
 #include "util/StartupTrace.h"
@@ -23,6 +24,53 @@ std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesys
     return {};
   }
   return repo.GetWorkingTreeEntries();
+}
+
+std::unordered_map<std::string, GitFileStatus> BuildGitStatusMap(
+    std::span<const GitWorkingTreeEntry> entries) {
+  std::unordered_map<std::string, GitFileStatus> statuses;
+  const auto priority = [](GitFileStatus status) {
+    switch (status) {
+      case GitFileStatus::Conflicted:
+        return 5;
+      case GitFileStatus::Deleted:
+        return 4;
+      case GitFileStatus::Modified:
+        return 3;
+      case GitFileStatus::Added:
+      case GitFileStatus::Untracked:
+        return 2;
+      case GitFileStatus::Clean:
+      default:
+        return 0;
+    }
+  };
+  const auto combine = [priority](GitFileStatus current, GitFileStatus next) {
+    return priority(next) > priority(current) ? next : current;
+  };
+  const auto record = [&](std::filesystem::path relative_path, GitFileStatus status) {
+    relative_path = relative_path.lexically_normal();
+    const std::string normalized = relative_path.generic_string();
+    if (!normalized.empty() && normalized != ".") {
+      statuses[normalized] = combine(statuses[normalized], status);
+    }
+
+    std::filesystem::path dir = relative_path.parent_path();
+    while (!dir.empty() && dir != ".") {
+      const std::string key = dir.lexically_normal().generic_string();
+      statuses[key] = combine(statuses[key], status);
+      const auto next = dir.parent_path();
+      if (next == dir) {
+        break;
+      }
+      dir = next;
+    }
+  };
+
+  for (const GitWorkingTreeEntry& entry : entries) {
+    record(entry.relative_path, entry.conflicted ? GitFileStatus::Conflicted : entry.status);
+  }
+  return statuses;
 }
 
 bool GitStageAll(const std::filesystem::path& root) {

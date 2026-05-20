@@ -139,12 +139,9 @@ void SidebarCoordinator::ShowProblems() {
 }
 
 void SidebarCoordinator::ShowGit() {
-  state_.directory_tree.RefreshGitStatuses();
   if (operations_.request_git_refresh != nullptr) {
     operations_.request_git_refresh();
   }
-  // Ensure the first open has concrete entries immediately (tooltip/actions),
-  // while async refresh still updates with the latest snapshot when available.
   RefreshGit();
   ShowMode(SidebarMode::Git, false);
   RevealSelectedGitLine();
@@ -429,6 +426,7 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
     snapshot.generation = generation;
 
     const auto working_entries = project::CollectGitWorkingTreeEntries(project_root);
+    snapshot.tree_git_statuses = project::BuildGitStatusMap(working_entries);
     for (const auto& entry : working_entries) {
       snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
           .section = GitSidebarEntry::Section::Modified,
@@ -472,6 +470,9 @@ void WorkspaceShell::RequestGitSidebarRefresh() {
       SDL_Event event{};
       event.type = git_sidebar_event_type_;
       pushed = SDL_PushEvent(&event);
+    }
+    if (!stored) {
+      app::DecrementBackgroundTaskCountAndWake();
     }
     (void)pushed;
   });

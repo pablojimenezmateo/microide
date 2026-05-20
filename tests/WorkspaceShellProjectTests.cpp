@@ -216,6 +216,13 @@ void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
          "project fixture should open");
   Expect(WorkspaceShellTestAccess::GitSidebarEntries(shell).empty(),
          "opening a project should not eagerly collect git sidebar entries");
+  const auto initial_src_entry = std::find_if(
+      WorkspaceShellTestAccess::TreeEntries(shell).begin(),
+      WorkspaceShellTestAccess::TreeEntries(shell).end(),
+      [&](const project::TreeEntry& entry) { return entry.path == (root / "src").lexically_normal(); });
+  Expect(initial_src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
+             initial_src_entry->git_status == project::GitFileStatus::Clean,
+         "opening a project should not synchronously collect tree git badges");
 
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
@@ -238,6 +245,13 @@ void TestWorkspaceShellProjectOpenDefersGitSidebarRefreshUntilShown() {
       });
   Expect(found_modified_source,
          "on-demand git sidebar refresh should include the modified file");
+  const auto refreshed_src_entry = std::find_if(
+      WorkspaceShellTestAccess::TreeEntries(shell).begin(),
+      WorkspaceShellTestAccess::TreeEntries(shell).end(),
+      [&](const project::TreeEntry& entry) { return entry.path == (root / "src").lexically_normal(); });
+  Expect(refreshed_src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
+             refreshed_src_entry->git_status == project::GitFileStatus::Modified,
+         "on-demand git sidebar refresh should apply tree git badges from the async snapshot");
 }
 
 void TestWorkspaceShellStatusBarShowsSourceControlState() {
