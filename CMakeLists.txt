@@ -290,6 +290,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellProjectSearch.cpp
   src/workspace/WorkspaceShellBufferSearch.cpp
   src/workspace/WorkspaceShellPresentation.cpp
+  src/workspace/CaretRedraw.cpp
   src/workspace/WorkspaceShellRedraw.cpp
   src/workspace/WorkspaceShellRenderFrame.cpp
   src/workspace/WorkspaceShellRenderSidebar.cpp
