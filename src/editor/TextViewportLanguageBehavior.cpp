@@ -486,10 +486,9 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
         continue;
       }
 
-      const bool sel_multi = (norm.start.line != norm.end.line);
       const auto* sur_pair =
           lc_view_.surround_enabled ? FindSurroundOpener(lc_view_, ch) : nullptr;
-      if (sur_pair != nullptr && !sur_pair->open.empty() && !sur_pair->close.empty() && !sel_multi &&
+      if (sur_pair != nullptr && !sur_pair->open.empty() && !sur_pair->close.empty() &&
           !InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
         const std::string inner = detail::TextBetweenLines(document_->lines, norm);
         const std::string replacement = sur_pair->open + inner + sur_pair->close;

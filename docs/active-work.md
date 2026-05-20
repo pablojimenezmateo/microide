@@ -100,11 +100,9 @@ occurrence highlights, snippet engine + Insert Snippet overlay, symbol outline s
 regex fallback), save normalization, and auto-detect indent on open (see
 `docs/editor-essentials.md`). Committed perf baselines for the new scenarios live under
 `tests/perf/baselines/editor_*.json`. Remaining **partial** items in the archived
-`tasks.md`: multi-caret per-caret-selection surround (3.3 / 3.6 follow-up — blocked on
-extending the multi-caret model with per-caret selection ranges), dedicated
-viewport-integrated `tests/EditorFoldingTests.cpp` matrix and multi-caret fold-paging
-coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel that maps cleanly (16.3 —
-environmental; ASAN/UBSAN focused runs clean).
+`tasks.md`: dedicated viewport-integrated `tests/EditorFoldingTests.cpp` matrix and
+multi-caret fold-paging coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel
+that maps cleanly (16.3 — environmental; ASAN/UBSAN focused runs clean).
 
 ### 1. Plugin Platform Expansion
 

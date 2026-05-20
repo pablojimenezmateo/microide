@@ -152,8 +152,10 @@ serious work.
 - **Byte-oriented text model.** The editor handles UTF-8 at codepoint boundaries for cursor
   movement and IME, but the underlying storage is `std::vector<std::string>` line-by-line. Very
   large files past a few MB will get slower; large-file thresholds are still under measurement.
-- **Multi-caret has a known gap.** Per-caret selection-range surround is partial; see the archived
-  `editor-essential-capabilities` change `tasks.md`. Use single-caret surround when in doubt.
+- **Multi-caret has a known gap.** Per-caret selection-range surround now works for
+  single- and multi-line ranges when carets are set up with `AddSecondaryCaretWithRange`
+  or add-at-match promotion; mouse-driven multi-line block selections on secondary
+  carets are not yet exposed.
 - **No sandbox for plugins.** Plugins are trusted local code. See
   [Security & Trust Model](#security--trust-model).
 - **No safe-mode / project-plugin-disable startup path.** There is no `--safe-mode` or

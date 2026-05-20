@@ -132,9 +132,9 @@ Project-scoped keys override user-scoped keys for the same id.
 - **Behavior:** `TextViewport::InsertCharacter` / `InsertText` consult
   `LanguageContractView` (including inhibit-in-string / inhibit-in-comment
   flags), skip-over-close, split-braces on newline between pairs, etc.
-- **Surround:** Single caret with a non-empty selection is implemented; multi-line
-  and multi-caret surround depend on a richer per-caret selection model
-  (`tasks.md` task 3.3).
+- **Surround:** Single- and multi-line selections are supported for the primary caret
+  and for every secondary caret that carries a per-caret selection range via
+  `AddSecondaryCaretWithRange`.
 
 ### Smart indent and dedent-on-close
 
@@ -192,6 +192,15 @@ Default **Edit** menu shortcuts (editor context):
 - Add cursor all matches — **`Ctrl+Alt+L`** by default (see comment in
   `WorkspaceKeybindingRegistry.cpp`; VS Code-style `Ctrl+Shift+L` is available
   via user/plugin keybindings if desired)
+
+### Multi-cursor mouse gestures
+
+- **Alt+click** — add a secondary caret at the previous primary position and move
+  the primary caret to the click target.
+- **Shift+Alt+click** on the same column as the primary caret — add zero-width
+  carets on every line between the primary line and the clicked line (inclusive),
+  all at that column. Shift+Alt+click on a different column falls back to
+  Alt+click behavior.
 
 **Note:** `WorkspaceEditActionExecutor` currently invokes
 `ToggleLineComment` / `ToggleBlockComment` with fixed `//` and `/*` `*/`

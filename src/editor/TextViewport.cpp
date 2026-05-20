@@ -295,6 +295,28 @@ void TextViewport::ClearSecondaryCarets() {
   secondary_carets_.clear();
 }
 
+void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
+                                                 std::size_t target_line,
+                                                 std::size_t column) {
+  if (document_->lines.empty()) {
+    return;
+  }
+
+  const std::size_t lo = std::min(anchor_line, target_line);
+  const std::size_t hi = std::max(anchor_line, target_line);
+
+  ClearSecondaryCarets();
+  ClearSelection();
+  MoveCursorTo(target_line, column, false);
+
+  for (std::size_t line = lo; line <= hi; ++line) {
+    if (line == cursor_line_) {
+      continue;
+    }
+    AddSecondaryCaret(line, column);
+  }
+}
+
 bool TextViewport::has_selection() const {
   return selection_range().has_value();
 }

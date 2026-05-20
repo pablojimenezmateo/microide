@@ -680,6 +680,46 @@ void TestSurroundSelection() {
          "caret should sit at the end of the inner text");
 }
 
+void TestSurroundMultiLineSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("aa\nbb\ncc\n", "/tmp/multi-line-surround.cpp");
+  viewport.SetLanguageContractView(MakeCStyleContractView());
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(1, 2, /*extend_selection=*/true);
+  viewport.InsertCharacter('(');
+  Expect(viewport.lines()[0] == "(aa",
+         "multi-line surround should insert the opener on the first selected line");
+  Expect(viewport.lines()[1] == "bb)",
+         "multi-line surround should insert the closer on the last selected line");
+  Expect(viewport.lines()[2] == "cc",
+         "multi-line surround should leave lines outside the selection unchanged");
+  Expect(viewport.has_selection(),
+         "multi-line surround should preserve the inner selection");
+}
+
+void TestMultiCaretSurroundMultiLineSelections() {
+  TextViewport viewport;
+  viewport.LoadContent("aa\nbb\ncc\ndd\n", "/tmp/multi-caret-multi-line-surround.cpp");
+  viewport.SetLanguageContractView(MakeCStyleContractView());
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(1, 2, /*extend_selection=*/true);
+  viewport.AddSecondaryCaretWithRange(
+      microide::editor::SelectionRange{{2, 0}, {3, 2}});
+  viewport.InsertCharacter('(');
+  Expect(viewport.lines()[0] == "(aa" && viewport.lines()[1] == "bb)" &&
+             viewport.lines()[2] == "(cc" && viewport.lines()[3] == "dd)",
+         "multi-caret surround should wrap every selected range, including multi-line spans");
+  Expect(viewport.has_multiple_carets(),
+         "multi-caret multi-line surround should keep the caret set active");
+  Expect(viewport.has_selection(),
+         "multi-caret multi-line surround should preserve the primary inner selection");
+  Expect(viewport.Undo(),
+         "multi-caret multi-line surround should record one undo step");
+  Expect(viewport.lines()[0] == "aa" && viewport.lines()[1] == "bb" &&
+             viewport.lines()[2] == "cc" && viewport.lines()[3] == "dd",
+         "undo should restore every multi-line surround atomically");
+}
+
 void TestSurroundDisabledFallsBackToLiteralInsert() {
   TextViewport viewport;
   auto view = MakeCStyleContractView();
@@ -1024,6 +1064,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestAutoCloseMultiCaretSkipOverClose);
   AddTest(tests, "EditorEssentials/Surround/SingleLineSelection",
           TestSurroundSelection);
+  AddTest(tests, "EditorEssentials/Surround/MultiLineSelection",
+          TestSurroundMultiLineSelection);
+  AddTest(tests, "EditorEssentials/Surround/MultiCaretMultiLineSelections",
+          TestMultiCaretSurroundMultiLineSelections);
   AddTest(tests, "EditorEssentials/Surround/DisabledFallsBackLiteral",
           TestSurroundDisabledFallsBackToLiteralInsert);
   AddTest(tests, "EditorEssentials/SmartIndent/AfterOpenBrace",

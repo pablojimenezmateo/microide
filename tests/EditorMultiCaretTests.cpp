@@ -100,6 +100,22 @@ void TestMultiCaretPageUpAcrossCollapsedFoldUsesVisibleRows() {
 
 }  // namespace
 
+void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa\nbb\nccc\n", "/tmp/mc-column-carets.txt");
+  viewport.MoveCursorTo(0, 1);
+
+  viewport.PlaceColumnCaretsBetweenLines(0, 2, 1);
+
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
+         "column caret placement should move the primary caret to the target line");
+  Expect(viewport.secondary_carets().size() == 2,
+         "column caret placement should add secondaries on the other lines in range");
+  Expect(viewport.secondary_carets()[0] == TextPosition{0, 1} &&
+             viewport.secondary_carets()[1] == TextPosition{1, 1},
+         "column caret placement should clamp each line to the shared column");
+}
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorMultiCaret/PromotedCaretToggleLineCommentAtomicUndo",
           TestPromotedCaretToggleLineCommentAtomicUndo);
@@ -107,6 +123,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestFoldAwareMultiCaretVerticalMotionSkipsHiddenLines);
   AddTest(tests, "EditorMultiCaret/PageUpAcrossCollapsedFoldUsesVisibleRows",
           TestMultiCaretPageUpAcrossCollapsedFoldUsesVisibleRows);
+  AddTest(tests, "EditorMultiCaret/PlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine",
+          TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine);
 }
 
 }  // namespace microide::tests

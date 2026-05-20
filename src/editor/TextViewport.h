@@ -203,6 +203,11 @@ class TextViewport {
   void AddSecondaryCaretWithRange(SelectionRange range);
   void SetSecondaryCarets(std::vector<TextPosition> carets);
   void ClearSecondaryCarets();
+  // Places zero-width carets on every line between anchor_line and target_line
+  // (inclusive) at column. Primary caret moves to target_line; other lines become
+  // secondary carets. Clears any existing secondary carets and selection.
+  void PlaceColumnCaretsBetweenLines(std::size_t anchor_line, std::size_t target_line,
+                                     std::size_t column);
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }

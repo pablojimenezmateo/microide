@@ -1911,6 +1911,84 @@ void TestWorkspaceShellAltClickAddsSecondaryCaret() {
          "Alt+left click should move the primary caret to the clicked column");
 }
 
+void TestWorkspaceShellShiftAltClickAddsColumnCarets() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "line0\nline1\nline2\nline3\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float click_y = metrics.first_line_y + metrics.line_height * 2.5f;
+  const float click_x = metrics.text_x;
+
+  const SDL_Keymod previous_mods = SDL_GetModState();
+  SDL_SetModState(static_cast<SDL_Keymod>(previous_mods | SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  const bool handled = SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT);
+  SDL_SetModState(previous_mods);
+
+  Expect(handled, "Shift+Alt+left click inside the editor should be handled");
+  Expect(viewport.has_multiple_carets(),
+         "Shift+Alt+vertical click should add column carets");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+         "Shift+Alt+vertical click should move the primary caret to the clicked line");
+  Expect(viewport.secondary_carets().size() == 2,
+         "Shift+Alt+vertical click should add one secondary caret per other line");
+  for (const microide::editor::TextPosition& caret : viewport.secondary_carets()) {
+    Expect(caret.column == 0,
+           "Shift+Alt+vertical click should place every caret in the anchor column");
+  }
+  const bool has_line0 = std::any_of(
+      viewport.secondary_carets().begin(), viewport.secondary_carets().end(),
+      [](const microide::editor::TextPosition& caret) { return caret.line == 0; });
+  const bool has_line1 = std::any_of(
+      viewport.secondary_carets().begin(), viewport.secondary_carets().end(),
+      [](const microide::editor::TextPosition& caret) { return caret.line == 1; });
+  Expect(has_line0 && has_line1,
+         "Shift+Alt+vertical click should cover every line between anchor and target");
+}
+
+void TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha beta\nsecond line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  const float y = metrics.first_line_y + metrics.line_height * 1.5f;
+  const float click_x = metrics.text_x + char_width * 5.0f;
+
+  const SDL_Keymod previous_mods = SDL_GetModState();
+  SDL_SetModState(static_cast<SDL_Keymod>(previous_mods | SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  const bool handled = SendMouseDown(shell, click_x, y, SDL_BUTTON_LEFT);
+  SDL_SetModState(previous_mods);
+
+  Expect(handled, "Shift+Alt+off-column click should still be handled");
+  Expect(viewport.has_multiple_carets(),
+         "Shift+Alt+off-column click should fall back to Alt+click multi-caret behavior");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == microide::editor::TextPosition{0, 0},
+         "Shift+Alt+off-column click should preserve the anchor caret as a secondary");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 5,
+         "Shift+Alt+off-column click should move the primary caret to the clicked position");
+}
+
 void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2740,6 +2818,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorDragSelectionTracksPointer);
   AddTest(tests, "WorkspaceShell/AltClickAddsSecondaryCaret",
           TestWorkspaceShellAltClickAddsSecondaryCaret);
+  AddTest(tests, "WorkspaceShell/ShiftAltClickAddsColumnCarets",
+          TestWorkspaceShellShiftAltClickAddsColumnCarets);
+  AddTest(tests, "WorkspaceShell/ShiftAltClickOffColumnFallsBackToAltClick",
+          TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick);
   AddTest(tests, "WorkspaceShell/HoveredTabShowsRelativePathTooltip",
           TestWorkspaceShellHoveredTabShowsRelativePathTooltip);
   AddTest(tests, "WorkspaceShell/WindowMouseLeaveClearsTabTooltip",

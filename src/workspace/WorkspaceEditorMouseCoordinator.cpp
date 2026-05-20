@@ -221,22 +221,28 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const SDL_Keymod modifiers = SDL_GetModState();
   const bool alt_left_click =
       event.button.button == SDL_BUTTON_LEFT && (modifiers & SDL_KMOD_ALT) != 0;
+  const editor::TextPosition anchor{viewport->cursor_line(), viewport->cursor_column()};
+  const bool shift_alt_column_click =
+      alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0 && hit.column == anchor.column;
   const bool plain_left_click =
       event.button.button == SDL_BUTTON_LEFT &&
       (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0;
   if (plain_left_click && viewport->has_multiple_carets()) {
     viewport->ClearSecondaryCarets();
   }
-  const editor::TextPosition previous_primary{viewport->cursor_line(), viewport->cursor_column()};
-  {
-    util::PerformanceTrace::Scope move_scope(
-        "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
-    viewport->MoveCursorTo(hit.line, hit.column,
-                           !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
-  }
-  if (alt_left_click) {
-    viewport->AddSecondaryCaret(previous_primary.line, previous_primary.column);
-    viewport->ClearSelection();
+  if (shift_alt_column_click) {
+    viewport->PlaceColumnCaretsBetweenLines(anchor.line, hit.line, anchor.column);
+  } else {
+    {
+      util::PerformanceTrace::Scope move_scope(
+          "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
+      viewport->MoveCursorTo(hit.line, hit.column,
+                             !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
+    }
+    if (alt_left_click) {
+      viewport->AddSecondaryCaret(anchor.line, anchor.column);
+      viewport->ClearSelection();
+    }
   }
   if (event.button.clicks == 2) {
     viewport->SelectWordAtCursor();

@@ -19,9 +19,21 @@ MicroIDE SHALL allow one primary selection/caret and zero or more secondary sele
 - **WHEN** the user performs a multi-caret paste and then triggers undo
 - **THEN** every insertion from that multi-caret command SHALL be removed together and the pre-command caret set SHALL be restored
 
+#### Scenario: Shift+Alt+click adds column carets on a vertical line
+- **WHEN** the primary caret is on line 0 column 0 and the user Shift+Alt+clicks line 3 column 0 in the editor
+- **THEN** the editor SHALL place zero-width carets on lines 0 through 3 at column 0, with the primary caret on the clicked line and secondary carets on the other lines in the range
+
+#### Scenario: Shift+Alt+click off-column falls back to Alt+click
+- **WHEN** the primary caret is on line 0 column 0 and the user Shift+Alt+clicks a different column on another line
+- **THEN** the editor SHALL preserve the anchor caret as a secondary caret and move the primary caret to the clicked position, matching Alt+click behavior
+
 #### Scenario: Promoted caret behaves like a manually-placed caret
 - **WHEN** a caret was added by `Add Cursor At Next Match` and the user invokes any multi-caret-aware command (insert, backspace, indent, paste, line-wise edit)
 - **THEN** the promoted caret SHALL participate in the command identically to a manually-placed caret, and undo SHALL revert the command including the promoted caret's contribution as one atomic step
+
+#### Scenario: Multi-caret surround preserves multi-line selections
+- **WHEN** the primary caret and one or more secondary carets each have a non-empty selection range spanning multiple lines and the user types a configured surround opener
+- **THEN** every selected range SHALL be wrapped with the matching open/close pair, each caret SHALL retain its inner selection, and undo SHALL restore the pre-command buffer and caret set atomically
 
 ### Requirement: Multi-Caret Set Is Extended Through Add-At-Match Commands
 
