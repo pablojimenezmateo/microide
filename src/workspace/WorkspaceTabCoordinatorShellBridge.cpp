@@ -87,7 +87,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
-          .ensure_active_tab_visible = [this]() { EnsureActiveTabVisible(); },
+          .ensure_active_tab_visible = [this]() { tab_strip_chrome_.EnsureActiveTabVisible(); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .request_active_tab_redraw =
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },

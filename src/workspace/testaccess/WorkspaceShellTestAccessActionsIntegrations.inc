@@ -246,7 +246,7 @@
   static SDL_FRect ProjectTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab :
-         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+         shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (tab.index == index) {
         return tab.rect;
       }

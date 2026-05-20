@@ -1,7 +1,7 @@
   static std::string ProjectTabBadgeText(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab :
-         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+         shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (tab.index == index) {
         return tab.badge_text;
       }
@@ -11,7 +11,7 @@
   static bool ProjectTabShowsBadge(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab :
-         shell.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+         shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
       if (tab.index == index) {
         return tab.show_badge;
       }
@@ -20,7 +20,7 @@
   }
   static SDL_FRect EditorTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {
+    for (const WorkspaceShell::VisibleStripTab& tab : shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip)) {
       if (tab.index == index) {
         return tab.rect;
       }
@@ -30,7 +30,7 @@
   static std::vector<std::string> EditorTabDisplayTitles(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     std::vector<std::string> titles;
-    for (const WorkspaceShell::VisibleStripTab& tab : shell.ComputeVisibleTabs(layout.tab_strip)) {
+    for (const WorkspaceShell::VisibleStripTab& tab : shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip)) {
       titles.push_back(tab.display_title);
     }
     return titles;
@@ -38,20 +38,20 @@
   static WorkspaceShell::TabStripOverflowControls EditorTabOverflowControls(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto visible = shell.ComputeVisibleTabs(layout.tab_strip);
-    return shell.ComputeTabOverflowControls(layout.tab_strip, visible);
+    const auto visible = shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
+    return shell.tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, visible);
   }
   static WorkspaceShell::TabStripOverflowControls ProjectTabOverflowControls(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto visible = shell.ComputeVisibleProjectTabs(layout.project_tab_strip);
-    return shell.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible);
+    const auto visible = shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+    return shell.tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible);
   }
   static bool ScrollEditorTabStrip(WorkspaceShell& shell, int direction) {
-    return shell.ScrollEditorTabStrip(direction);
+    return shell.tab_strip_chrome_.ScrollEditorTabStrip(direction);
   }
   static bool ScrollProjectTabStrip(WorkspaceShell& shell, int direction) {
-    return shell.ScrollProjectTabStrip(direction);
+    return shell.tab_strip_chrome_.ScrollProjectTabStrip(direction);
   }
   static std::string TabDisplayTitle(WorkspaceShell& shell, std::size_t index) {
     return shell.TabDisplayTitle(index);

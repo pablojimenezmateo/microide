@@ -84,8 +84,8 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
     // visibility passes on every size change so the active chips stay
     // anchored in view.
     if (window_presentation_.logical_width != previous_width) {
-      EnsureActiveProjectVisible();
-      EnsureActiveTabVisible();
+      tab_strip_chrome_.EnsureActiveProjectVisible();
+      tab_strip_chrome_.EnsureActiveTabVisible();
       tab_strip_service_.InvalidateEditorTabGeometry();
     }
   }

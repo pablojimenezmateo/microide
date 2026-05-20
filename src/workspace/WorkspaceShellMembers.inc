@@ -1143,23 +1143,8 @@
   void RenderEditorHoverPopup(SDL_Renderer* renderer) const;
   void RenderTextComposition(SDL_Renderer* renderer,
                              const std::optional<TextInputVisual>& visual) const;
-  float ProjectTabWidthForIndex(std::size_t index) const;
-  void EnsureActiveProjectVisible();
-  std::vector<VisibleStripTab> ComputeVisibleProjectTabs(
-      const SDL_FRect& project_tab_strip) const;
   std::string HoveredProjectTabTooltipLabel(const SDL_FRect& project_tab_strip) const;
   std::optional<SDL_FRect> HoveredProjectTabTooltipRect(const WorkspaceLayout& layout) const;
-  float TabWidthForIndex(std::size_t index) const;
-  void EnsureActiveTabVisible();
-  std::vector<VisibleStripTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
-  TabStripOverflowControls ComputeProjectTabOverflowControls(
-      const SDL_FRect& project_tab_strip,
-      const std::vector<VisibleStripTab>& visible_tabs) const;
-  TabStripOverflowControls ComputeTabOverflowControls(
-      const SDL_FRect& tab_strip,
-      const std::vector<VisibleStripTab>& visible_tabs) const;
-  bool ScrollProjectTabStrip(int direction);
-  bool ScrollEditorTabStrip(int direction);
   std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
   std::optional<SDL_FRect> HoveredTabTooltipRect(const WorkspaceLayout& layout) const;
   std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
@@ -1169,21 +1154,6 @@
   std::string HoveredSidebarSearchTooltipLabel(const SDL_FRect& sidebar_rect) const;
   std::optional<SDL_FRect> HoveredSidebarSearchTooltipRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
-  bool ActivateBottomPanelTab(std::size_t model_index);
-  bool CloseBottomPanelTab(std::size_t model_index);
-  static std::vector<VisibleStripTab> BuildVisibleStripTabs(
-      const std::vector<float>& widths,
-      float start_x,
-      float gap,
-      float max_tab_x,
-      std::size_t scroll_index,
-      float tab_y,
-      float tab_height,
-      const std::vector<std::size_t>& model_indices,
-      std::size_t active_index,
-      const std::vector<std::string>& display_titles,
-      const std::vector<std::string>& tooltip_labels);
-  void ClearTabDrag();
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
@@ -1347,6 +1317,7 @@
   ReviewCommentsRegistry review_comments_registry_;
   PersistenceService persistence_service_;
   LayoutModeService layout_mode_service_;
+  WorkspaceTabStripChrome tab_strip_chrome_;
   StatusBarService status_bar_service_;
   StatusBarModelService status_bar_model_service_;
   SettingsOverlayService settings_overlay_service_;

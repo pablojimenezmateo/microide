@@ -91,7 +91,7 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
                 return MakeProjectCatalogService().RestoreAfterRemoval(preferred_index,
                                                                        activate_restored_tab);
               },
-          .ensure_active_project_visible = [this]() { EnsureActiveProjectVisible(); },
+          .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
       });
 }
 

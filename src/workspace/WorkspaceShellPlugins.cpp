@@ -53,6 +53,33 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
 WorkspaceShell::WorkspaceShell() {
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
+  tab_strip_chrome_.Configure(
+      context_, tab_strip_service_, layout_mode_service_, output_channels_,
+      WorkspaceTabStripChrome::Operations{
+          .project_tab_display_title =
+              [this](std::size_t index) { return ProjectTabDisplayTitle(index); },
+          .project_tab_tooltip_label =
+              [this](std::size_t index) { return ProjectTabTooltipLabel(index); },
+          .project_catalog_entry =
+              [this](std::size_t index) -> const ProjectWorkspaceState* {
+                return ProjectCatalogEntry(index);
+              },
+          .project_catalog_root =
+              [this](std::size_t index) { return ProjectCatalogRoot(index); },
+          .editor_tab_display_title =
+              [this](std::size_t index) { return TabDisplayTitle(index); },
+          .editor_tab_tooltip_label =
+              [this](std::size_t index) { return TabTooltipLabel(index); },
+          .current_window_rect = [this]() { return CurrentWindowRect(); },
+          .measure_width =
+              [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+          .ensure_output_channel_tab_open =
+              [this](std::string_view id) { EnsureOutputChannelTabOpen(id); },
+          .close_output_channel_tab =
+              [this](std::string_view id) { CloseOutputChannelTab(id); },
+          .close_terminal_tab = [this](std::size_t index) { CloseTerminalTab(index); },
+          .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+      });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
       AssistService::Operations{

@@ -369,13 +369,13 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
       context_.interaction_state.tab_drag,
       TabMouseCoordinator::Operations{
           .compute_visible_project_tabs =
-              [this](const SDL_FRect& rect) { return ComputeVisibleProjectTabs(rect); },
+              [this](const SDL_FRect& rect) { return tab_strip_chrome_.ComputeVisibleProjectTabs(rect); },
           .request_close_project = [this](std::size_t index) { RequestCloseProject(index); },
           .switch_project =
               [this](std::size_t index, bool log_feedback) {
                 return SwitchProject(index, log_feedback);
               },
-          .compute_visible_tabs = [this](const SDL_FRect& rect) { return ComputeVisibleTabs(rect); },
+          .compute_visible_tabs = [this](const SDL_FRect& rect) { return tab_strip_chrome_.ComputeVisibleTabs(rect); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .open_anchored_menu =
@@ -406,9 +406,9 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
                     [this](std::string_view text) { return text_renderer_.MeasureWidth(text); });
               },
           .activate_bottom_panel_tab =
-              [this](std::size_t index) { return ActivateBottomPanelTab(index); },
+              [this](std::size_t index) { return tab_strip_chrome_.ActivateBottomPanelTab(index); },
           .close_bottom_panel_tab =
-              [this](std::size_t index) { return CloseBottomPanelTab(index); },
+              [this](std::size_t index) { return tab_strip_chrome_.CloseBottomPanelTab(index); },
           .bottom_panel_tab_is_terminal =
               [this](std::size_t index) {
                 return tab_strip_service_.BottomPanelTabIsTerminal(
@@ -419,7 +419,7 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
               [terminal_panel](std::size_t index) mutable {
                 terminal_panel.CloseTerminalTab(index);
               },
-          .clear_tab_drag = [this]() { ClearTabDrag(); },
+          .clear_tab_drag = [this]() { context_.interaction_state.tab_drag = TabDragState{}; },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .move_active_project_to = [this](std::size_t index) { return MoveActiveProjectTo(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
@@ -432,16 +432,16 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
           .save_session_state = [this]() { MakePersistenceCoordinator().SaveSessionState(); },
           .compute_project_tab_overflow_controls =
               [this](const SDL_FRect& strip, const std::vector<VisibleStripTab>& tabs) {
-                return ComputeProjectTabOverflowControls(strip, tabs);
+                return tab_strip_chrome_.ComputeProjectTabOverflowControls(strip, tabs);
               },
           .compute_tab_overflow_controls =
               [this](const SDL_FRect& strip, const std::vector<VisibleStripTab>& tabs) {
-                return ComputeTabOverflowControls(strip, tabs);
+                return tab_strip_chrome_.ComputeTabOverflowControls(strip, tabs);
               },
           .scroll_project_tab_strip =
-              [this](int direction) { return ScrollProjectTabStrip(direction); },
+              [this](int direction) { return tab_strip_chrome_.ScrollProjectTabStrip(direction); },
           .scroll_editor_tab_strip =
-              [this](int direction) { return ScrollEditorTabStrip(direction); },
+              [this](int direction) { return tab_strip_chrome_.ScrollEditorTabStrip(direction); },
       });
 }
 

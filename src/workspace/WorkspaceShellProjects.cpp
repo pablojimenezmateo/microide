@@ -83,7 +83,7 @@ ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
           .shutdown_plugin_host = [this]() { plugin_runtime_.ShutdownHost(); },
           .reset_project_catalog_to_welcome_state =
               [this]() { ResetProjectCatalogToWelcomeState(); },
-          .ensure_active_project_visible = [this]() { EnsureActiveProjectVisible(); },
+          .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
       });
 }
@@ -122,7 +122,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
   }
 
   if (!context_.current_project_state.root.empty() && normalized_root == context_.current_project_state.root) {
-    EnsureActiveProjectVisible();
+    tab_strip_chrome_.EnsureActiveProjectVisible();
     return true;
   }
 
@@ -151,7 +151,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   }
   MakeMenuCoordinator().CloseTreeContextMenu();
   if (HasActiveProjectCatalogEntry() && index == context_.project_catalog.active_index) {
-    EnsureActiveProjectVisible();
+    tab_strip_chrome_.EnsureActiveProjectVisible();
     return true;
   }
   const bool switched = MakeProjectCatalogService().Switch(index);
@@ -174,7 +174,7 @@ bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
   context_.project_catalog.entries.erase(context_.project_catalog.entries.begin() + static_cast<std::ptrdiff_t>(context_.project_catalog.active_index));
   context_.project_catalog.entries.insert(context_.project_catalog.entries.begin() + static_cast<std::ptrdiff_t>(index), std::move(moved_project));
   context_.project_catalog.active_index = index;
-  EnsureActiveProjectVisible();
+  tab_strip_chrome_.EnsureActiveProjectVisible();
   return true;
 }
 

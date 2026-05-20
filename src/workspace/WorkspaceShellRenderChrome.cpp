@@ -69,7 +69,7 @@ std::string WorkspaceShell::HoveredProjectTabTooltipLabel(const SDL_FRect& proje
     return {};
   }
 
-  const auto visible_project_tabs = ComputeVisibleProjectTabs(project_tab_strip);
+  const auto visible_project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(project_tab_strip);
   const auto hovered_project_tab = std::find_if(
       visible_project_tabs.begin(), visible_project_tabs.end(),
       [this](const VisibleStripTab& tab) { return Contains(tab.rect, last_mouse_x_, last_mouse_y_); });
@@ -162,7 +162,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                            CurrentWindowChromeState().Expanded());
   }
 
-  const auto visible_project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
+  const auto visible_project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
   for (const VisibleStripTab& tab : visible_project_tabs) {
     DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
                  tab.badge_color, tab.show_badge, tab.active,
@@ -182,7 +182,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
   {
     const auto project_overflow =
-        ComputeProjectTabOverflowControls(layout.project_tab_strip, visible_project_tabs);
+        tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible_project_tabs);
     DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.left_button,
                                /*point_right=*/false, project_overflow.hidden_left,
                                last_mouse_position_valid_ &&
@@ -197,7 +197,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
 
   std::vector<VisibleStripTab> visible_tabs;
   if (HasActiveProjectCatalogEntry()) {
-    visible_tabs = ComputeVisibleTabs(layout.tab_strip);
+    visible_tabs = tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
   }
   if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
     const SDL_FRect placeholder_tab =
@@ -226,7 +226,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                             tab.active ? chrome_tab_palette.active_text
                                        : chrome_tab_palette.inactive_text);
     }
-    const auto tab_overflow = ComputeTabOverflowControls(layout.tab_strip, visible_tabs);
+    const auto tab_overflow = tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, visible_tabs);
     DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.left_button,
                                /*point_right=*/false, tab_overflow.hidden_left,
                                last_mouse_position_valid_ &&
@@ -271,7 +271,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredProjectTabTooltipRect(
     return std::nullopt;
   }
 
-  const auto visible_project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
+  const auto visible_project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
   const auto hovered_project_tab = std::find_if(
       visible_project_tabs.begin(), visible_project_tabs.end(),
       [this](const VisibleStripTab& tab) { return Contains(tab.rect, last_mouse_x_, last_mouse_y_); });
@@ -297,7 +297,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredTabTooltipRect(const WorkspaceLa
     return std::nullopt;
   }
 
-  const auto visible_tabs = ComputeVisibleTabs(layout.tab_strip);
+  const auto visible_tabs = tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
   const auto hovered_tab = std::find_if(
       visible_tabs.begin(), visible_tabs.end(),
       [this](const VisibleStripTab& tab) {

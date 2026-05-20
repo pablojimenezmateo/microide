@@ -313,9 +313,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (Contains(layout.project_tab_strip, x, y)) {
-    const auto project_tabs = ComputeVisibleProjectTabs(layout.project_tab_strip);
+    const auto project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     const auto project_overflow =
-        ComputeProjectTabOverflowControls(layout.project_tab_strip, project_tabs);
+        tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, project_tabs);
     if ((project_overflow.hidden_left > 0 &&
          Contains(project_overflow.left_button, x, y)) ||
         (project_overflow.hidden_right > 0 &&
@@ -341,8 +341,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                  ? CursorKind::Pointer
                  : CursorKind::Default;
     }
-    const auto tabs = ComputeVisibleTabs(layout.tab_strip);
-    const auto tab_overflow = ComputeTabOverflowControls(layout.tab_strip, tabs);
+    const auto tabs = tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
+    const auto tab_overflow = tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, tabs);
     if ((tab_overflow.hidden_left > 0 && Contains(tab_overflow.left_button, x, y)) ||
         (tab_overflow.hidden_right > 0 && Contains(tab_overflow.right_button, x, y))) {
       return CursorKind::Pointer;
