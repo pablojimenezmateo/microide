@@ -762,7 +762,7 @@ SelectionRange TextViewport::NormalizeRange(const SelectionRange& range) {
 }
 
 bool TextViewport::IsBefore(const TextPosition& lhs, const TextPosition& rhs) {
-  return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
+  return detail::PositionLess(lhs, rhs);
 }
 
 }  // namespace microide::editor
