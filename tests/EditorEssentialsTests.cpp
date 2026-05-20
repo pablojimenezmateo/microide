@@ -5,13 +5,13 @@
 #include "editor/IndentDetect.h"
 #include "editor/IndentGuides.h"
 #include "editor/LanguageContractView.h"
+#include "editor/SaveNormalization.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
 #include "plugin/PluginHost.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
 #include "workspace/WorkspaceIndentDetectApply.h"
 #include "workspace/WorkspaceLanguageContract.h"
-#include "workspace/WorkspaceSaveNormalization.h"
 #include "workspace/WorkspaceTabState.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceContext.h"
@@ -263,7 +263,7 @@ void TestTextViewportSaveAppliesNormalization() {
 
 void TestSaveNormalizationTrim() {
   std::vector<std::string> lines = {"foo  ", "bar\t", "baz"};
-  Expect(microide::workspace::TrimTrailingWhitespace(lines),
+  Expect(microide::editor::TrimTrailingWhitespace(lines),
          "trim should report change");
   Expect(lines[0] == "foo" && lines[1] == "bar" && lines[2] == "baz",
          "all trailing whitespace removed");
@@ -271,21 +271,21 @@ void TestSaveNormalizationTrim() {
 
 void TestSaveNormalizationEnsureFinalNewline() {
   std::vector<std::string> lines = {"foo"};
-  Expect(microide::workspace::EnsureSingleFinalNewline(lines),
+  Expect(microide::editor::EnsureSingleFinalNewline(lines),
          "single content line without final newline should be normalized");
   Expect(lines.size() == 2 && lines[1].empty(),
          "buffer should end with one empty trailing line");
 
   // Multiple trailing newlines collapse to one.
   lines = {"foo", "", "", ""};
-  Expect(microide::workspace::EnsureSingleFinalNewline(lines),
+  Expect(microide::editor::EnsureSingleFinalNewline(lines),
          "multiple trailing newlines should be collapsed");
   Expect(lines.size() == 2 && lines[0] == "foo" && lines[1].empty(),
          "trailing newlines should reduce to a single one");
 
   // Already correct: no change.
   lines = {"foo", ""};
-  Expect(!microide::workspace::EnsureSingleFinalNewline(lines),
+  Expect(!microide::editor::EnsureSingleFinalNewline(lines),
          "already-normalized buffer should be a no-op");
 }
 

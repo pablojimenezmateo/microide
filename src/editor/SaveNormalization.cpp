@@ -1,6 +1,6 @@
-#include "workspace/WorkspaceSaveNormalization.h"
+#include "editor/SaveNormalization.h"
 
-namespace microide::workspace {
+namespace microide::editor {
 
 bool TrimTrailingWhitespace(std::vector<std::string>& lines) {
   bool any = false;
@@ -36,4 +36,4 @@ bool EnsureSingleFinalNewline(std::vector<std::string>& lines) {
   return changed;
 }
 
-}  // namespace microide::workspace
+}  // namespace microide::editor

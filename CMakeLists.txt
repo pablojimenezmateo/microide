@@ -150,6 +150,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
+  src/editor/SaveNormalization.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp
@@ -367,7 +368,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceLanguageContract.cpp
   src/workspace/WorkspaceFoldingRefresh.cpp
-  src/workspace/WorkspaceSaveNormalization.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
   src/workspace/SettingsOverlayService.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
@@ -689,6 +689,7 @@ add_executable(microide_diff_bench
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
+  src/editor/SaveNormalization.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp

@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace microide::workspace {
+namespace microide::editor {
 
 // Strip trailing spaces and tabs from every line in `lines`. Returns true when
 // any line was modified.
@@ -15,4 +15,4 @@ bool TrimTrailingWhitespace(std::vector<std::string>& lines);
 // true when the buffer was modified.
 bool EnsureSingleFinalNewline(std::vector<std::string>& lines);
 
-}  // namespace microide::workspace
+}  // namespace microide::editor
