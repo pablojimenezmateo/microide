@@ -32,6 +32,9 @@ std::size_t Utf8CodepointCount(std::string_view text);
 bool IsValidUtf8(std::string_view content);
 std::string NormalizeLineEndings(std::string_view text);
 void TrimTrailingLineEndings(std::string* text);
+// Trim leading and trailing ASCII whitespace (`std::isspace` semantics on the
+// unsigned char value: space, tab, CR, LF, VT, FF).
+std::string TrimAsciiWhitespace(std::string_view text);
 LineEnding DetectLineEnding(std::string_view text);
 DecodedText DecodeLines(std::string_view content);
 std::string_view LineEndingSeparator(LineEnding line_ending);

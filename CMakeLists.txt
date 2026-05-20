@@ -738,6 +738,7 @@ endif()
 add_executable(microide_search_bench
   src/app/BackgroundTaskCounter.cpp
   src/util/PerformanceCounters.cpp
+  src/util/StringUtil.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp

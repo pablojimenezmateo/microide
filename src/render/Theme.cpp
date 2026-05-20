@@ -19,6 +19,7 @@
 
 #include "platform/Filesystem.h"
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 
 namespace microide::render {
 
@@ -126,19 +127,6 @@ SDL_Color EnsureBackgroundSeparation(SDL_Color background,
   return IsLight(reference) ? Darken(background, 0.12f) : Lighten(background, 0.12f);
 }
 
-std::string Trim(std::string_view text) {
-  std::size_t start = 0;
-  while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
-    ++start;
-  }
-
-  std::size_t end = text.size();
-  while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
-    --end;
-  }
-  return std::string(text.substr(start, end - start));
-}
-
 std::string ToLower(std::string_view text) {
   std::string lowered(text);
   std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
@@ -211,7 +199,7 @@ SDL_Color Ansi256Color(int index) {
 }
 
 std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
-  const std::string token = ToLower(Trim(text));
+  const std::string token = ToLower(util::TrimAsciiWhitespace(text));
   if (token.empty() || token == "default") {
     return std::nullopt;
   }
@@ -319,7 +307,7 @@ ThemeStyle ParseThemeStyle(std::string_view text) {
 
 std::optional<std::string> ParseQuotedDirectiveValue(std::string_view line,
                                                      std::string_view prefix) {
-  const std::string trimmed = Trim(line);
+  const std::string trimmed = util::TrimAsciiWhitespace(line);
   if (trimmed.size() <= prefix.size() || trimmed.substr(0, prefix.size()) != prefix) {
     return std::nullopt;
   }
@@ -336,7 +324,7 @@ std::optional<std::string> ParseQuotedDirectiveValue(std::string_view line,
 }
 
 bool ParseColorLink(std::string_view line, std::string& group, ThemeStyle& style) {
-  const std::string trimmed = Trim(line);
+  const std::string trimmed = util::TrimAsciiWhitespace(line);
   static constexpr std::string_view kPrefix = "color-link ";
   if (trimmed.size() <= kPrefix.size() || trimmed.substr(0, kPrefix.size()) != kPrefix) {
     return false;
@@ -484,7 +472,7 @@ bool LoadThemeStyles(const std::filesystem::path& theme_directory,
   include_stack.push_back(normalized_name);
   std::string line;
   while (std::getline(file, line)) {
-    const std::string trimmed = Trim(line);
+    const std::string trimmed = util::TrimAsciiWhitespace(line);
     if (trimmed.empty() || trimmed[0] == '#') {
       continue;
     }

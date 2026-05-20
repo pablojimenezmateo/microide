@@ -4,19 +4,11 @@
 #include <fstream>
 #include <system_error>
 
+#include "util/StringUtil.h"
+
 namespace microide::project {
 
 namespace {
-
-std::string Trim(std::string value) {
-  while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) {
-    value.erase(value.begin());
-  }
-  while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
-    value.pop_back();
-  }
-  return value;
-}
 
 std::string ToSlash(const std::filesystem::path& path) {
   return path.lexically_normal().generic_string();
@@ -230,7 +222,7 @@ bool IgnoreMatcher::Rule::Matches(std::string relative_path, bool is_directory) 
 }
 
 bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule& out_rule) {
-  line = Trim(std::move(line));
+  line = util::TrimAsciiWhitespace(line);
   if (line.empty() || line.starts_with('#')) {
     return false;
   }

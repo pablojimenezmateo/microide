@@ -1,6 +1,7 @@
 #include "util/StringUtil.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace microide::util {
 
@@ -175,6 +176,18 @@ void TrimTrailingLineEndings(std::string* text) {
   while (!text->empty() && (text->back() == '\n' || text->back() == '\r')) {
     text->pop_back();
   }
+}
+
+std::string TrimAsciiWhitespace(std::string_view text) {
+  std::size_t start = 0;
+  while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
+    ++start;
+  }
+  std::size_t end = text.size();
+  while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+    --end;
+  }
+  return std::string(text.substr(start, end - start));
 }
 
 LineEnding DetectLineEnding(std::string_view text) {
