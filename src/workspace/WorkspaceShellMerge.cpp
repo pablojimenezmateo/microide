@@ -17,18 +17,6 @@ namespace {
 constexpr float kMergeToolbarHeight = 36.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
-std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs, const SDL_FRect& rhs) {
-  if (!lhs.has_value()) {
-    return rhs;
-  }
-
-  const float x = std::min(lhs->x, rhs.x);
-  const float y = std::min(lhs->y, rhs.y);
-  const float right = std::max(lhs->x + lhs->w, rhs.x + rhs.w);
-  const float bottom = std::max(lhs->y + lhs->h, rhs.y + rhs.h);
-  return MakeRect(x, y, right - x, bottom - y);
-}
-
 }  // namespace
 
 bool WorkspaceShell::ActiveTabIsMerge() const {

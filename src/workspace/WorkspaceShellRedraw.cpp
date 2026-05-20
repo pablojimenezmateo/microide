@@ -28,18 +28,6 @@ std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
   return viewport.max_visual_columns();
 }
 
-std::optional<SDL_FRect> UnionRects(std::optional<SDL_FRect> lhs, const SDL_FRect& rhs) {
-  if (!lhs.has_value()) {
-    return rhs;
-  }
-
-  const float x0 = std::min(lhs->x, rhs.x);
-  const float y0 = std::min(lhs->y, rhs.y);
-  const float x1 = std::max(lhs->x + lhs->w, rhs.x + rhs.w);
-  const float y1 = std::max(lhs->y + lhs->h, rhs.y + rhs.h);
-  return MakeRect(x0, y0, x1 - x0, y1 - y0);
-}
-
 }  // namespace
 
 void WorkspaceShell::MarkLayoutDirty() {
@@ -499,22 +487,22 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
   if (context_.menu_state.menu_bar_open) {
     if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, context_.menu_state.active_menu_id);
         popup_rect.has_value()) {
-      rect = UnionRects(rect, *popup_rect);
+      rect = UnionOptionalRects(rect, *popup_rect);
     }
     if (const auto submenu_rect = ActiveSubmenuRect(layout->menu_bar);
         submenu_rect.has_value()) {
-      rect = UnionRects(rect, *submenu_rect);
+      rect = UnionOptionalRects(rect, *submenu_rect);
     }
   }
   if (context_.menu_state.overflow_popup_open &&
       context_.menu_state.overflow_popup_anchor_rect.has_value()) {
     const auto overflow = ComputeOverflowMenuBarItems(layout->menu_bar);
-    rect = UnionRects(rect, ComputeMenuOverflowPopupRect(
+    rect = UnionOptionalRects(rect, ComputeMenuOverflowPopupRect(
                                 *context_.menu_state.overflow_popup_anchor_rect, overflow.size()));
   }
   if (context_.menu_state.tree_context_menu.open) {
     if (const auto tree_menu_rect = ComputeTreeContextMenuRect(); tree_menu_rect.has_value()) {
-      rect = UnionRects(rect, *tree_menu_rect);
+      rect = UnionOptionalRects(rect, *tree_menu_rect);
     }
   }
   return rect;
@@ -655,7 +643,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
     rect = ComputeDirtyPromptRect(*window_rect);
   }
   if (context_.prompts.surface_visible) {
-    rect = UnionRects(rect, ComputePromptSurfaceRect(*window_rect));
+    rect = UnionOptionalRects(rect, ComputePromptSurfaceRect(*window_rect));
   }
   return rect;
 }

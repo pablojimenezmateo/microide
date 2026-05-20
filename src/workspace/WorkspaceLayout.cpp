@@ -167,6 +167,18 @@ bool Contains(const SDL_FRect& rect, float x, float y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
 
+std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,
+                                            const SDL_FRect& rhs) {
+  if (!lhs.has_value()) {
+    return rhs;
+  }
+  const float x = std::min(lhs->x, rhs.x);
+  const float y = std::min(lhs->y, rhs.y);
+  const float right = std::max(lhs->x + lhs->w, rhs.x + rhs.w);
+  const float bottom = std::max(lhs->y + lhs->h, rhs.y + rhs.h);
+  return MakeRect(x, y, right - x, bottom - y);
+}
+
 float ClampSidebarWidth(float width, float window_width) {
   const float viable_min_width =
       kWorkspaceSidebarHorizontalInset * 2.0f + kWorkspaceSidebarRowHeight + 1.0f;
