@@ -1,10 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
-#include <cctype>
-#include <iomanip>
 #include <optional>
-#include <sstream>
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceTrace.h"
