@@ -427,21 +427,22 @@ Status:
   - **Viewport view-state + cursor / scroll movement** (`SetViewportSize`, scroll setters,
     wrap / fold toggles, cursor movement, `EnsureCursorVisible`, wrapped-row cursor mapping,
     caret advance helpers, and `EnsureDocument`) → `src/editor/TextViewportViewState.cpp`.
-- Result: `TextViewport.cpp` is now ~1,788 lines, down from ~3,553 — roughly a 50 % reduction
-  with no public API change. The extracted `TextViewportViewState.cpp` is ~448 lines.
+- Result: `TextViewport.cpp` is now ~763 lines, down from ~3,553, with no public API change.
+  The extracted editor TUs are focused by ownership: `TextViewportViewState.cpp` owns movement /
+  scrolling state, `TextViewportEditEngine.cpp` owns insert/delete/range/undo application,
+  `TextViewportMultiCaret.cpp` owns aggregate multi-caret application, and `TextLayoutCache.cpp`
+  owns wrapped rows, visible-line cache, and max-column caching.
 
 Remaining:
-- Low to medium. The host TU no longer owns cursor + scrolling + view-state, but it still owns
-  selection + single-caret edits (`Backspace`, `DeleteForward`, `InsertCharacter`, etc.),
-  the history / undo machinery, invalidation policy, and the visible-line / wrapped-row layout
-  caches. These are still tangled by design (undo records visual columns, selection, multi-caret,
-  and view state together; the invalidation policy is the contract between every cache).
+- Low. The host TU no longer owns cursor/scrolling state, edit application, undo grouping, or
+  visible-line / wrapped-row layout caches. It still owns the shared `TextViewport` state and the
+  invalidation contract between editing, highlighting, folding, and layout. That remaining coupling
+  is intentional until a deeper document-buffer boundary is justified by measurements.
 
 Why this item stays open at "low":
-- File decomposition has done most of what it can without an ownership refactor. The next
-  meaningful seams are no longer “move obvious helper clusters”; they are larger design moves
-  such as extracting undo/history ownership or separating edit application from layout/cache
-  invalidation. The remaining `TextViewport.cpp` is now a coherent core, not a catch-all.
+- File decomposition has done most of what it can without changing the public viewport API. The
+  remaining `TextViewport.cpp` is now a coherent coordinator for selection, cache invalidation, and
+  document metadata, not a catch-all.
 - The next `TextViewport` work should reduce ownership, not merely line count. Avoid adding more
   sibling `TextViewport*.cpp` files unless they are a stepping stone toward moving state and
   behavior into smaller tested objects.
@@ -461,7 +462,8 @@ Recommended ownership seams for the next pass:
   - auto-pair edit transforms
   - edit grouping boundaries
   - range validation
-  - Open. Hot path; benchmark-gate every micro-step.
+  - Done as a focused TU split on 2026-05-20. The edit engine remains `TextViewport` member
+    functions to avoid back-pointers or shared ownership in the per-keystroke path.
 - `UndoHistory`
   - undo/redo stacks
   - grouping
@@ -473,7 +475,7 @@ Recommended ownership seams for the next pass:
   - visible-line cache
   - fold-aware mapping
   - layout invalidation
-  - Open. Hot render path; benchmark-gate every micro-step.
+  - Done on 2026-05-20 as `src/editor/TextLayoutCache.{h,cpp}`.
 
 ### Rejected experiment: `TextDocumentModel` ownership extraction
 

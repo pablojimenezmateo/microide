@@ -430,54 +430,37 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
               return detail::PositionLess(slot_sort_end(a), slot_sort_end(b));
             });
 
-  // Common multi-caret pair-insert paths (surround, auto-close, plain char
-  // insert) preserve line count when no selection spans multiple lines and the
-  // inserted glyph is not a newline. Capture only the touched line range
-  // instead of snapshotting the entire document; the aggregate undo entry is
-  // built from this slice and offset back into document coordinates.
-  bool slice_safe = (ch != '\n');
   std::size_t slice_min_line = std::numeric_limits<std::size_t>::max();
   std::size_t slice_max_line = 0;
-  if (slice_safe) {
-    for (const Slot& slot : slots) {
-      std::size_t lo = 0;
-      std::size_t hi = 0;
-      if (slot.selection.has_value()) {
-        const SelectionRange norm = NormalizeRange(*slot.selection);
-        if (norm.start.line != norm.end.line) {
-          slice_safe = false;
-          break;
-        }
-        lo = std::min(norm.start.line, norm.end.line);
-        hi = std::max(norm.start.line, norm.end.line);
-      } else {
-        if (document_->lines.empty()) {
-          slice_safe = false;
-          break;
-        }
-        lo = std::min(slot.reference.line, document_->lines.size() - 1);
-        hi = lo;
+  for (const Slot& slot : slots) {
+    std::size_t lo = 0;
+    std::size_t hi = 0;
+    if (slot.selection.has_value()) {
+      const SelectionRange norm = NormalizeRange(*slot.selection);
+      lo = std::min(norm.start.line, norm.end.line);
+      hi = std::max(norm.start.line, norm.end.line);
+    } else {
+      if (document_->lines.empty()) {
+        continue;
       }
-      slice_min_line = std::min(slice_min_line, lo);
-      slice_max_line = std::max(slice_max_line, hi);
+      lo = std::min(slot.reference.line, document_->lines.size() - 1);
+      hi = lo;
     }
-    if (slice_min_line == std::numeric_limits<std::size_t>::max()) {
-      slice_safe = false;
-    }
+    slice_min_line = std::min(slice_min_line, lo);
+    slice_max_line = std::max(slice_max_line, hi);
   }
 
   std::vector<std::string> before_lines;
   std::size_t before_lines_start = 0;
-  if (slice_safe) {
+  if (slice_min_line != std::numeric_limits<std::size_t>::max()) {
     slice_max_line = std::min(slice_max_line, document_->lines.size() - 1);
     before_lines_start = slice_min_line;
     before_lines.reserve(slice_max_line - slice_min_line + 1);
     for (std::size_t i = slice_min_line; i <= slice_max_line; ++i) {
       before_lines.push_back(document_->lines[i]);
     }
-  } else {
-    before_lines = document_->lines;
   }
+  const std::size_t before_document_line_count = document_->lines.size();
   const ViewState before_state = CaptureViewState();
 
   std::vector<SecondaryCaret> new_secondaries = secondary_carets_;
@@ -634,23 +617,23 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
 
   document_->placeholder = false;
   document_->dirty = true;
-  HistoryEntry aggregate_entry;
-  if (slice_safe) {
-    std::vector<std::string> after_lines_slice;
-    after_lines_slice.reserve(before_lines.size());
-    const std::size_t slice_end =
-        std::min(before_lines_start + before_lines.size(), document_->lines.size());
-    for (std::size_t i = before_lines_start; i < slice_end; ++i) {
-      after_lines_slice.push_back(document_->lines[i]);
-    }
-    aggregate_entry =
-        TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state,
-                                           after_lines_slice, CaptureViewState());
-    aggregate_entry.start_line += before_lines_start;
-  } else {
-    aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state,
-                                                         document_->lines, CaptureViewState());
+  const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(document_->lines.size()) -
+                                    static_cast<std::ptrdiff_t>(before_document_line_count);
+  const std::size_t after_slice_size =
+      static_cast<std::size_t>(std::max<std::ptrdiff_t>(
+          0, static_cast<std::ptrdiff_t>(before_lines.size()) + line_delta));
+  const std::size_t after_slice_start = std::min(before_lines_start, document_->lines.size());
+  const std::size_t after_slice_end =
+      std::min(document_->lines.size(), before_lines_start + after_slice_size);
+  std::vector<std::string> after_lines_slice;
+  if (after_slice_start < after_slice_end) {
+    after_lines_slice.assign(
+        document_->lines.begin() + static_cast<std::ptrdiff_t>(after_slice_start),
+        document_->lines.begin() + static_cast<std::ptrdiff_t>(after_slice_end));
   }
+  HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
+      before_lines, before_state, after_lines_slice, CaptureViewState());
+  aggregate_entry.start_line += before_lines_start;
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   PushHistoryEntry(aggregate_entry);
   return true;

@@ -1128,7 +1128,7 @@ RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root
   RuleResult result;
   result.label = "TextViewport ReplaceAll full document copy";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/editor/TextViewport.cpp";
+  const std::filesystem::path path = repo_root / "src/editor/TextViewportEditEngine.cpp";
   const std::string text = ReadText(path);
   const std::size_t replace_all_pos = text.find("std::size_t TextViewport::ReplaceAll(");
   if (replace_all_pos == std::string::npos) {
@@ -1264,7 +1264,7 @@ RuleResult CheckTextViewportApplyPipelineNoFullDocumentLineSnapshot(
   RuleResult result;
   result.label = "TextViewport edit pipeline avoids full document_->lines snapshots";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/editor/TextViewport.cpp";
+  const std::filesystem::path path = repo_root / "src/editor/TextViewportEditEngine.cpp";
   const std::string text = ReadText(path);
   const std::array<std::string_view, 2> signatures = {
       "bool TextViewport::ApplyLineEdit(",

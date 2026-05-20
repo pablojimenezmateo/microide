@@ -16,6 +16,7 @@
 #include "editor/FoldingModel.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
+#include "editor/TextLayoutCache.h"
 #include "editor/TextViewportUndoHistory.h"
 #include "util/StringUtil.h"
 
@@ -247,33 +248,9 @@ class TextViewport {
     std::uint64_t presentation_revision = 0;
   };
 
-  struct VisibleLineCacheKey {
-    std::size_t line_index = 0;
-    std::size_t horizontal_scroll = 0;
-    std::size_t visible_columns = 0;
-    std::size_t tab_size = 0;
-
-    bool operator==(const VisibleLineCacheKey& o) const noexcept {
-      return line_index == o.line_index && horizontal_scroll == o.horizontal_scroll &&
-             visible_columns == o.visible_columns && tab_size == o.tab_size;
-    }
-  };
-
-  struct WrappedRowLayout {
-    std::size_t line_index = 0;
-    std::size_t visual_start = 0;
-    std::size_t visual_end = 0;
-  };
-
-  struct VisibleLineCacheKeyHash {
-    std::size_t operator()(const VisibleLineCacheKey& k) const noexcept {
-      std::size_t h = k.line_index;
-      h ^= k.horizontal_scroll * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
-      h ^= k.visible_columns * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
-      h ^= k.tab_size * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
-      return h;
-    }
-  };
+  // WrappedRowLayout is now owned by TextLayoutCache; keep the alias so the
+  // small WrappedVisualRow / VisualHit helpers below still compile.
+  using WrappedRowLayout = TextLayoutCache::WrappedRow;
 
   void ResetState(std::vector<std::string> lines,
                   const std::filesystem::path& path,
@@ -378,32 +355,7 @@ class TextViewport {
   // Cache for secondary_caret_positions(): mirrors `secondary_carets_.position` and is rebuilt
   // lazily when sizes differ or any element changed. Capacity persists across rebuilds.
   mutable std::vector<TextPosition> secondary_caret_positions_cache_;
-  mutable std::vector<WrappedRowLayout> wrapped_row_layouts_;
-  mutable std::vector<std::size_t> wrapped_line_row_offsets_;
-  mutable std::size_t wrapped_row_layouts_tab_size_ = 0;
-  mutable std::size_t wrapped_row_layouts_visible_columns_ = 0;
-  mutable std::uint64_t wrapped_row_layouts_layout_shape_revision_ = 0;
-  mutable bool wrapped_row_layouts_soft_wrap_ = false;
-  mutable const FoldingModel* wrapped_row_layouts_folding_model_ = nullptr;
-  mutable std::size_t wrapped_row_layouts_fold_revision_ = 0;
-  // Trivial-layout fast path: when soft-wrap is off AND no fold is collapsed,
-  // the visual row ↔ document line mapping is identity. In that case
-  // `wrapped_row_layouts_` / `wrapped_line_row_offsets_` are left empty and
-  // the readers synthesize the row data on the fly. This avoids the
-  // O(line_count) vector rebuild that the previous implementation paid for
-  // on every edit of a large file.
-  mutable bool wrapped_row_layouts_trivial_ = false;
-#ifndef NDEBUG
-  mutable std::size_t wrapped_row_layout_build_count_ = 0;
-#endif
-  mutable std::optional<std::size_t> cached_max_visual_columns_;
-  mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
-  mutable std::deque<std::size_t> cached_visual_line_columns_;
-  mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
-  mutable std::uint64_t cached_max_visual_columns_content_revision_ = 0;
-  mutable std::unordered_map<VisibleLineCacheKey, LayoutLine, VisibleLineCacheKeyHash>
-      visible_line_cache_;
-  mutable std::deque<VisibleLineCacheKey> visible_line_cache_order_;
+  mutable TextLayoutCache layout_cache_;
   mutable std::unordered_map<std::size_t, std::vector<SyntaxTokenKind>> highlight_cache_;
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
@@ -418,8 +370,6 @@ class TextViewport {
   mutable std::size_t highlight_checkpoints_valid_through_ = 0;
   mutable std::uint64_t highlight_state_content_revision_ = 0;
   mutable std::uint64_t highlight_state_syntax_revision_ = 0;
-  mutable std::size_t visible_line_queries_ = 0;
-  mutable std::size_t visible_line_hits_ = 0;
   mutable std::size_t highlight_queries_ = 0;
   mutable std::size_t highlight_hits_ = 0;
   mutable std::size_t highlight_state_advances_ = 0;
@@ -431,7 +381,9 @@ class TextViewport {
 
 #ifndef NDEBUG
  public:
-  std::size_t WrappedRowLayoutBuildCountForDebug() const { return wrapped_row_layout_build_count_; }
+  std::size_t WrappedRowLayoutBuildCountForDebug() const {
+    return layout_cache_.wrapped_row_layout_build_count_for_debug();
+  }
 #endif
 };
 

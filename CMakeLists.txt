@@ -150,7 +150,9 @@ set(MICROIDE_CORE_SOURCES
   src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
+  src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
+  src/editor/TextViewportEditEngine.cpp
   src/editor/TextViewportFileIO.cpp
   src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp
@@ -686,7 +688,9 @@ add_executable(microide_diff_bench
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
+  src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
+  src/editor/TextViewportEditEngine.cpp
   src/editor/TextViewportFileIO.cpp
   src/editor/TextViewportHighlightCache.cpp
   src/editor/TextViewportLanguageBehavior.cpp

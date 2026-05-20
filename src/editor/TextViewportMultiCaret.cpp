@@ -11,10 +11,57 @@
 #include "editor/TextViewportInternal.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "editor/TextLayout.h"
 
 namespace microide::editor {
+
+namespace {
+
+struct LineSlice {
+  std::size_t start = 0;
+  std::vector<std::string> before_lines;
+};
+
+LineSlice CaptureLineSlice(const std::vector<std::string>& lines,
+                           std::size_t start,
+                           std::size_t end_exclusive) {
+  const std::size_t clamped_start = std::min(start, lines.size());
+  const std::size_t clamped_end = std::clamp(end_exclusive, clamped_start, lines.size());
+  return LineSlice{
+      .start = clamped_start,
+      .before_lines =
+          std::vector<std::string>(lines.begin() + static_cast<std::ptrdiff_t>(clamped_start),
+                                   lines.begin() + static_cast<std::ptrdiff_t>(clamped_end)),
+  };
+}
+
+TextViewportUndoHistory::Entry BuildAggregateFromLineSlice(
+    const LineSlice& slice,
+    std::size_t before_document_line_count,
+    const TextViewportUndoHistory::ViewState& before_state,
+    const std::vector<std::string>& after_lines,
+    const TextViewportUndoHistory::ViewState& after_state) {
+  const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(after_lines.size()) -
+                                    static_cast<std::ptrdiff_t>(before_document_line_count);
+  const std::size_t after_slice_size =
+      static_cast<std::size_t>(std::max<std::ptrdiff_t>(
+          0, static_cast<std::ptrdiff_t>(slice.before_lines.size()) + line_delta));
+  const std::size_t after_end =
+      std::min(after_lines.size(), slice.start + after_slice_size);
+  std::vector<std::string> after_slice(
+      after_lines.begin() + static_cast<std::ptrdiff_t>(std::min(slice.start, after_lines.size())),
+      after_lines.begin() + static_cast<std::ptrdiff_t>(after_end));
+
+  TextViewportUndoHistory::Entry aggregate =
+      TextViewportUndoHistory::BuildEntryForDocumentChange(slice.before_lines, before_state,
+                                                           after_slice, after_state);
+  aggregate.start_line += slice.start;
+  return aggregate;
+}
+
+}  // namespace
 
 bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
   last_applied_edit_.reset();
@@ -31,7 +78,15 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
     return false;
   }
 
-  const std::vector<std::string> before_lines = document_->lines;
+  std::size_t affected_start = std::numeric_limits<std::size_t>::max();
+  std::size_t affected_end = 0;
+  for (const TextPosition& caret : carets) {
+    const std::size_t line = std::min(caret.line, document_->lines.size() - 1);
+    affected_start = std::min(affected_start, line);
+    affected_end = std::max(affected_end, line + 1);
+  }
+  const std::size_t before_document_line_count = document_->lines.size();
+  const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   TextPosition primary_after = primary_before;
@@ -82,8 +137,8 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   document_->dirty = true;
   EnsureCursorVisible();
 
-  const HistoryEntry aggregate_entry =
-      TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
+      before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
@@ -108,7 +163,27 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
     return false;
   }
 
-  const std::vector<std::string> before_lines = document_->lines;
+  std::size_t affected_start = std::numeric_limits<std::size_t>::max();
+  std::size_t affected_end = 0;
+  bool has_candidate_edit = false;
+  for (const TextPosition& caret : carets) {
+    const std::size_t line = std::min(caret.line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], caret.column);
+    if (column > 0) {
+      affected_start = std::min(affected_start, line);
+      affected_end = std::max(affected_end, line + 1);
+      has_candidate_edit = true;
+    } else if (line > 0) {
+      affected_start = std::min(affected_start, line - 1);
+      affected_end = std::max(affected_end, line + 1);
+      has_candidate_edit = true;
+    }
+  }
+  if (!has_candidate_edit) {
+    return false;
+  }
+  const std::size_t before_document_line_count = document_->lines.size();
+  const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   TextPosition primary_after = primary_before;
@@ -174,8 +249,8 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   document_->dirty = true;
   EnsureCursorVisible();
 
-  const HistoryEntry aggregate_entry =
-      TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
+      before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
@@ -200,7 +275,27 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
     return false;
   }
 
-  const std::vector<std::string> before_lines = document_->lines;
+  std::size_t affected_start = std::numeric_limits<std::size_t>::max();
+  std::size_t affected_end = 0;
+  bool has_candidate_edit = false;
+  for (const TextPosition& caret : carets) {
+    const std::size_t line = std::min(caret.line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], caret.column);
+    if (column < document_->lines[line].size()) {
+      affected_start = std::min(affected_start, line);
+      affected_end = std::max(affected_end, line + 1);
+      has_candidate_edit = true;
+    } else if (line + 1 < document_->lines.size()) {
+      affected_start = std::min(affected_start, line);
+      affected_end = std::max(affected_end, line + 2);
+      has_candidate_edit = true;
+    }
+  }
+  if (!has_candidate_edit) {
+    return false;
+  }
+  const std::size_t before_document_line_count = document_->lines.size();
+  const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   TextPosition primary_after = primary_before;
@@ -263,8 +358,8 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   document_->dirty = true;
   EnsureCursorVisible();
 
-  const HistoryEntry aggregate_entry =
-      TextViewportUndoHistory::BuildEntryForDocumentChange(before_lines, before_state, document_->lines, CaptureViewState());
+  const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
+      before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);

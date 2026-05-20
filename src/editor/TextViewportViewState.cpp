@@ -43,11 +43,7 @@ void TextViewport::SetTabSize(std::size_t tab_size) {
     return;
   }
   tab_size_ = next_tab_size;
-  cached_max_visual_columns_.reset();
-  cached_max_visual_columns_tab_size_ = 0;
-  cached_max_visual_columns_content_revision_ = 0;
-  visible_line_cache_.clear();
-  visible_line_cache_order_.clear();
+  layout_cache_.ClearVisibleLineAndMaxColumns();
   if (document_ != nullptr) {
     InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
   }
@@ -323,13 +319,13 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) con
   if (document_->lines.empty() || caret.line >= document_->lines.size()) {
     return 0;
   }
-  if (wrapped_row_layouts_trivial_) {
+  if (layout_cache_.wrapped_row_layouts_trivial()) {
     return caret.line;
   }
-  if (wrapped_line_row_offsets_.size() != document_->lines.size()) {
+  if (!layout_cache_.has_wrapped_line_row_offsets(document_->lines.size())) {
     return 0;
   }
-  const std::size_t base_row = wrapped_line_row_offsets_[caret.line];
+  const std::size_t base_row = layout_cache_.WrappedLineRowOffset(caret.line);
   if (folding_model_ != nullptr && folding_model_->IsLineHidden(caret.line)) {
     return base_row;
   }
@@ -345,8 +341,8 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) con
   const std::size_t rows_for_line =
       std::max<std::size_t>(1, (line_visual_width + wrap_columns - 1) / wrap_columns);
   const std::size_t clamped_in_line = std::min(row_in_line, rows_for_line - 1);
-  return std::min(base_row + clamped_in_line,
-                  wrapped_row_layouts_.empty() ? 0 : wrapped_row_layouts_.size() - 1);
+  const std::size_t total_rows = layout_cache_.wrapped_row_layouts_size();
+  return std::min(base_row + clamped_in_line, total_rows == 0 ? 0 : total_rows - 1);
 }
 
 std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const {
