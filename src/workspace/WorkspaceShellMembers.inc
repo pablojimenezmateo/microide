@@ -972,6 +972,7 @@
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
   std::size_t CountOpenBufferViews(const std::filesystem::path& path) const;
+  std::string ActiveLanguageIdForProvider() const;
   bool HasActiveCompletionProvider() const;
   bool HasActiveCodeActionProvider() const;
   bool HasActiveDefinitionProvider() const;

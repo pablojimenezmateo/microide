@@ -59,48 +59,35 @@ std::string LspReadinessMessage(const LspClient::ReadinessSnapshot& snapshot) {
 
 }  // namespace
 
-bool WorkspaceShell::HasActiveCompletionProvider() const {
+std::string WorkspaceShell::ActiveLanguageIdForProvider() const {
   const editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr || viewport->path().empty()) {
-    return false;
+    return {};
   }
-  const std::string language_id = DetectActiveLanguageId(*viewport);
-  if (language_id.empty()) {
-    return false;
-  }
-  return completion_registry_.FindProvider(language_id) != nullptr ||
-         CurrentLspManager().HasServer(language_id);
+  return DetectActiveLanguageId(*viewport);
+}
+
+bool WorkspaceShell::HasActiveCompletionProvider() const {
+  const std::string language_id = ActiveLanguageIdForProvider();
+  return !language_id.empty() &&
+         (completion_registry_.FindProvider(language_id) != nullptr ||
+          CurrentLspManager().HasServer(language_id));
 }
 
 bool WorkspaceShell::HasActiveCodeActionProvider() const {
-  const editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr || viewport->path().empty()) {
-    return false;
-  }
-  const std::string language_id = DetectActiveLanguageId(*viewport);
-  if (language_id.empty()) {
-    return false;
-  }
-  return code_action_registry_.FindProvider(language_id) != nullptr ||
-         CurrentLspManager().HasServer(language_id);
+  const std::string language_id = ActiveLanguageIdForProvider();
+  return !language_id.empty() &&
+         (code_action_registry_.FindProvider(language_id) != nullptr ||
+          CurrentLspManager().HasServer(language_id));
 }
 
 bool WorkspaceShell::HasActiveDefinitionProvider() const {
-  const editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr || viewport->path().empty()) {
-    return false;
-  }
-  const std::string language_id = DetectActiveLanguageId(*viewport);
+  const std::string language_id = ActiveLanguageIdForProvider();
   return !language_id.empty() && CurrentLspManager().HasServer(language_id);
 }
 
 bool WorkspaceShell::HasActiveReferencesProvider() const {
-  const editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr || viewport->path().empty()) {
-    return false;
-  }
-  const std::string language_id = DetectActiveLanguageId(*viewport);
-  return !language_id.empty() && CurrentLspManager().HasServer(language_id);
+  return HasActiveDefinitionProvider();
 }
 
 LspClient::ReadinessSnapshot WorkspaceShell::ActiveLspReadinessSnapshot(bool ensure_started) {
