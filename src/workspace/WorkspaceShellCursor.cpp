@@ -729,7 +729,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         if (visual_row < fold_viewport->visual_line_count()) {
           const std::size_t opener_line = fold_viewport->VisualRowLineIndex(visual_row);
           if (editor_tab != nullptr &&
-              editor_tab->folding_model.FoldStartingAt(opener_line).has_value()) {
+              editor_tab->folding_model->FoldStartingAt(opener_line).has_value()) {
             return CursorKind::Pointer;
           }
         }

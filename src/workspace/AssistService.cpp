@@ -311,7 +311,7 @@ bool AssistService::TrySnippetTabInEditor(bool shift_tab) {
   if (!editor::SnippetNavigateTab(*viewport, tab->snippet_session, shift_tab)) {
     return false;
   }
-  tab->folding_model.MarkDirty();
+  tab->folding_model->MarkDirty();
   operations_.reset_caret_blink();
   operations_.request_active_editable_last_change_redraw();
   operations_.request_focused_editor_redraw();
@@ -330,7 +330,7 @@ bool AssistService::TrySnippetEscapeInEditor() {
   if (!editor::SnippetHandleEscape(*viewport, tab->snippet_session)) {
     return false;
   }
-  tab->folding_model.MarkDirty();
+  tab->folding_model->MarkDirty();
   operations_.reset_caret_blink();
   operations_.request_active_editable_last_change_redraw();
   operations_.request_focused_editor_redraw();
@@ -345,7 +345,7 @@ void AssistService::NotifySnippetSessionCaretMoved() {
   }
   editor::SnippetOnCaretMoved(*viewport, tab->snippet_session);
   if (!tab->snippet_session.active) {
-    tab->folding_model.MarkDirty();
+    tab->folding_model->MarkDirty();
     operations_.reset_caret_blink();
     operations_.request_active_editable_last_change_redraw();
     operations_.request_focused_editor_redraw();
@@ -373,7 +373,7 @@ bool AssistService::TrySnippetInsertTextInEditor(editor::TextViewport* viewport,
   if (!editor::SnippetTryInsertText(*viewport, tab->snippet_session, text)) {
     return false;
   }
-  tab->folding_model.MarkDirty();
+  tab->folding_model->MarkDirty();
   ApplyEditSideEffects(*viewport, snapshot);
   return true;
 }
@@ -390,7 +390,7 @@ bool AssistService::TrySnippetBackspaceInEditor(editor::TextViewport* viewport) 
   if (!editor::SnippetTryBackspace(*viewport, tab->snippet_session)) {
     return false;
   }
-  tab->folding_model.MarkDirty();
+  tab->folding_model->MarkDirty();
   ApplyEditSideEffects(*viewport, snapshot);
   return true;
 }
@@ -407,7 +407,7 @@ bool AssistService::TrySnippetDeleteForwardInEditor(editor::TextViewport* viewpo
   if (!editor::SnippetTryDeleteForward(*viewport, tab->snippet_session)) {
     return false;
   }
-  tab->folding_model.MarkDirty();
+  tab->folding_model->MarkDirty();
   ApplyEditSideEffects(*viewport, snapshot);
   return true;
 }

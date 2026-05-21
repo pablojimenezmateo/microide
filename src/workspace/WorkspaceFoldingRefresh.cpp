@@ -22,7 +22,7 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              std::size_t tab_size,
                              bool fold_enabled,
                              std::size_t visible_rows) {
-  auto& model = tab.folding_model;
+  auto& model = *tab.folding_model;
   if (!fold_enabled) {
     if (!model.ranges().empty() || !model.collapsed_flags().empty()) {
       // Auto-expand any persisted user collapses so disabling the toggle

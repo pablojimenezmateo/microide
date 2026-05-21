@@ -131,7 +131,8 @@ struct TabEntry {
     // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
     // close; rekeyed implicitly through its `(layout_revision, tab_size,
     // language_id)` fingerprint when the buffer or language changes.
-    editor::FoldingModel folding_model;
+    std::unique_ptr<editor::FoldingModel> folding_model =
+        std::make_unique<editor::FoldingModel>();
     editor::SnippetSessionState snippet_session;
   };
 

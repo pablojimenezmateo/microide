@@ -849,7 +849,7 @@ editor::FoldingModel* WorkspaceActionContext::EnsureActiveFoldingModelFresh() {
 void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
   if (last_change) {
     if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-      editor_tab->folding_model.MarkDirty();
+      editor_tab->folding_model->MarkDirty();
     }
   }
   operations_.reset_caret_blink();

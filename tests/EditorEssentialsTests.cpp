@@ -906,11 +906,11 @@ void TestFoldingRefreshComputesBracketRanges() {
                                                /*tab_size=*/4,
                                                /*fold_enabled=*/true,
                                                /*visible_rows=*/viewport.visible_lines());
-  Expect(!tab.folding_model.ranges().empty(),
+  Expect(!tab.folding_model->ranges().empty(),
          "fold model should have at least one range after refresh");
-  Expect(tab.folding_model.ranges().front().opener_line == 0,
+  Expect(tab.folding_model->ranges().front().opener_line == 0,
          "first fold opener must be on line 0");
-  Expect(tab.folding_model.ranges().front().closer_line == 2,
+  Expect(tab.folding_model->ranges().front().closer_line == 2,
          "first fold closer must be on line 2");
 }
 
@@ -922,15 +922,15 @@ void TestFoldingRefreshFingerprintReusedAcrossCalls() {
   const auto contract = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
                                                viewport.visible_lines());
-  const auto& fp_first = tab.folding_model.fingerprint();
+  const auto& fp_first = tab.folding_model->fingerprint();
   // A subsequent call with the same fingerprint must not change the stored
   // fingerprint or the ranges; the model exposes IsFresh as the canonical
   // freshness check, so we verify that.
-  Expect(tab.folding_model.IsFresh(fp_first),
+  Expect(tab.folding_model->IsFresh(fp_first),
          "model must report itself fresh after a successful compute");
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
                                                viewport.visible_lines());
-  Expect(tab.folding_model.IsFresh(fp_first),
+  Expect(tab.folding_model->IsFresh(fp_first),
          "model must remain fresh on a repeat refresh with the same inputs");
 }
 
@@ -942,17 +942,17 @@ void TestFoldingRefreshDisabledExpandsAndClears() {
   const auto contract = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
                                                viewport.visible_lines());
-  Expect(tab.folding_model.ranges().size() >= 1,
+  Expect(tab.folding_model->ranges().size() >= 1,
          "fold model should have ranges after enable");
-  Expect(tab.folding_model.Collapse(0), "expected to collapse fold at line 0");
-  Expect(tab.folding_model.IsCollapsedAtOpener(0),
+  Expect(tab.folding_model->Collapse(0), "expected to collapse fold at line 0");
+  Expect(tab.folding_model->IsCollapsedAtOpener(0),
          "fold at line 0 should be collapsed before disable");
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4,
                                                /*fold_enabled=*/false,
                                                /*visible_rows=*/viewport.visible_lines());
-  Expect(tab.folding_model.ranges().empty(),
+  Expect(tab.folding_model->ranges().empty(),
          "disabling fold must clear stored ranges");
-  Expect(tab.folding_model.collapsed_flags().empty(),
+  Expect(tab.folding_model->collapsed_flags().empty(),
          "disabling fold must drop collapsed state so no rows are hidden");
 }
 
@@ -964,14 +964,14 @@ void TestFoldingRefreshLanguageChangeRebuilds() {
   const auto cpp = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &cpp, 4, true,
                                                viewport.visible_lines());
-  const auto cpp_fp = tab.folding_model.fingerprint();
+  const auto cpp_fp = tab.folding_model->fingerprint();
   microide::workspace::LanguageContract other = cpp;
   other.language_id = "rust";
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &other, 4, true,
                                                viewport.visible_lines());
-  Expect(!tab.folding_model.IsFresh(cpp_fp),
+  Expect(!tab.folding_model->IsFresh(cpp_fp),
          "language id change must invalidate the prior fingerprint");
-  Expect(tab.folding_model.fingerprint().language_id == "rust",
+  Expect(tab.folding_model->fingerprint().language_id == "rust",
          "post-refresh fingerprint must reflect the new language id");
 }
 

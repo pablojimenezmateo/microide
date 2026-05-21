@@ -50,7 +50,7 @@
   }
   static editor::FoldingModel* ActiveTabFoldingModelForTesting(WorkspaceShell& shell) {
     WorkspaceShell::TabEntry::EditorTabState* editor_tab = shell.ActiveEditorTab();
-    return editor_tab != nullptr ? &editor_tab->folding_model : nullptr;
+    return editor_tab != nullptr ? editor_tab->folding_model.get() : nullptr;
   }
   static workspace::LspManager& LspManagerForTesting(WorkspaceShell& shell) {
     return shell.CurrentLspManager();

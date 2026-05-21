@@ -63,6 +63,10 @@ class TextViewport {
   };
 
   TextViewport();
+  TextViewport(const TextViewport& other);
+  TextViewport& operator=(const TextViewport& other);
+  TextViewport(TextViewport&& other) noexcept;
+  TextViewport& operator=(TextViewport&& other) noexcept;
 
   bool OpenFile(const std::filesystem::path& path);
   bool Save();
