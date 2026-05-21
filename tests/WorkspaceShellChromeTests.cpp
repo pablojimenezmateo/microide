@@ -763,6 +763,44 @@ void TestWorkspaceShellProjectTabsShowBadges() {
          "project tab badges should use the project initial");
 }
 
+void TestWorkspaceShellProjectTabBadgeColorStableAcrossSwitch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  const SDL_Color color_a{0x12, 0x34, 0x56, 0xff};
+  const SDL_Color color_b{0xab, 0xcd, 0xef, 0xff};
+  const auto colors_match = [](SDL_Color lhs, SDL_Color rhs) {
+    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a;
+  };
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "project badge color fixture should open the first project");
+  WorkspaceShellTestAccess::SetProjectBaseColor(shell, color_a);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "project badge color fixture should open the second project");
+  WorkspaceShellTestAccess::SetProjectBaseColor(shell, color_b);
+
+  Expect(colors_match(WorkspaceShellTestAccess::ProjectTabBadgeColor(shell, 1), color_b),
+         "active project tab badge should use the live project color");
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "project badge color fixture should switch back to the first project");
+  Expect(colors_match(WorkspaceShellTestAccess::ProjectTabBadgeColor(shell, 0), color_a),
+         "active project tab badge should keep its color after switching");
+  Expect(colors_match(WorkspaceShellTestAccess::ProjectTabBadgeColor(shell, 1), color_b),
+         "inactive project tab badge should keep its stored color");
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
+         "project badge color fixture should switch back to the second project");
+  Expect(colors_match(WorkspaceShellTestAccess::ProjectTabBadgeColor(shell, 1), color_b),
+         "project tab badge color should remain stable when reactivated");
+  Expect(colors_match(WorkspaceShellTestAccess::ProjectTabBadgeColor(shell, 0), color_a),
+         "inactive project tab badge should remain stable after reactivation");
+}
+
 void TestWorkspaceShellSidebarDropdownOffersChatView() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1994,6 +2032,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath);
   AddTest(tests, "WorkspaceShell/ProjectTabsShowBadges",
           TestWorkspaceShellProjectTabsShowBadges);
+  AddTest(tests, "WorkspaceShell/ProjectTabBadgeColorStableAcrossSwitch",
+          TestWorkspaceShellProjectTabBadgeColorStableAcrossSwitch);
   AddTest(tests, "WorkspaceShell/SidebarDropdownOffersChatView",
           TestWorkspaceShellSidebarDropdownOffersChatView);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",

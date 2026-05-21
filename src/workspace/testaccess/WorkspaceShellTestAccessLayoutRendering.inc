@@ -18,6 +18,16 @@
     }
     return false;
   }
+  static SDL_Color ProjectTabBadgeColor(WorkspaceShell& shell, std::size_t index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (tab.index == index) {
+        return tab.badge_color;
+      }
+    }
+    return SDL_Color{};
+  }
   static SDL_FRect EditorTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     for (const WorkspaceShell::VisibleStripTab& tab : shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip)) {

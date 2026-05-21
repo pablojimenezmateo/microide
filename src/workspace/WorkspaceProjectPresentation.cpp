@@ -9,6 +9,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include "platform/AppDirectories.h"
+#include "workspace/PersistenceService.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
@@ -52,6 +54,49 @@ std::string ProjectStateDirectoryName(const std::filesystem::path& project_root)
     sanitized = "project";
   }
   return sanitized + "-" + HashToHex(StablePathHash(project_root.lexically_normal().string()));
+}
+
+std::filesystem::path ProjectStateDirectory(const std::filesystem::path& project_root) {
+  if (project_root.empty()) {
+    return {};
+  }
+  const std::string directory_name = ProjectStateDirectoryName(project_root);
+  const std::filesystem::path state_root =
+      platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
+  return state_root.empty() ? std::filesystem::path{} : state_root / "projects" / directory_name;
+}
+
+std::filesystem::path ProjectConfigStatePath(const std::filesystem::path& project_root) {
+  const std::filesystem::path state_dir = ProjectStateDirectory(project_root);
+  return state_dir.empty() ? std::filesystem::path{} : state_dir / "config";
+}
+
+SDL_Color ResolveProjectTabBadgeColor(const ProjectWorkspaceState& state,
+                                      const std::filesystem::path& project_root) {
+  if (state.project_base_color.has_value()) {
+    return *state.project_base_color;
+  }
+  return DefaultProjectBaseColor(project_root);
+}
+
+void HydrateProjectBaseColorFromConfig(ProjectWorkspaceState& state,
+                                       const PersistenceService& persistence_service) {
+  if (state.root.empty()) {
+    return;
+  }
+
+  const std::filesystem::path config_path = ProjectConfigStatePath(state.root);
+  PersistedProjectConfigState config{};
+  if (!config_path.empty() &&
+      persistence_service.LoadProjectConfig(config_path, &config) &&
+      config.project_base_color.has_value()) {
+    state.project_base_color = config.project_base_color;
+    return;
+  }
+
+  if (!state.project_base_color.has_value()) {
+    state.project_base_color = DefaultProjectBaseColor(state.root);
+  }
 }
 
 WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,

@@ -446,13 +446,7 @@ std::filesystem::path WorkspaceShell::UserConfigPath() const {
 }
 
 std::filesystem::path WorkspaceShell::ProjectStateDirectory() const {
-  if (context_.current_project_state.root.empty()) {
-    return {};
-  }
-  const std::string directory_name = ProjectStateDirectoryName(context_.current_project_state.root);
-  const std::filesystem::path state_root =
-      platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
-  return state_root.empty() ? std::filesystem::path{} : state_root / "projects" / directory_name;
+  return ::microide::workspace::ProjectStateDirectory(context_.current_project_state.root);
 }
 
 }  // namespace microide::workspace

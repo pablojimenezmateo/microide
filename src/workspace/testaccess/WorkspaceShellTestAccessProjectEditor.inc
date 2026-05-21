@@ -1,3 +1,6 @@
+  static void SetProjectBaseColor(WorkspaceShell& shell, SDL_Color color) {
+    shell.context_.current_project_state.project_base_color = color;
+  }
   static void SetProjectRoot(WorkspaceShell& shell, const std::filesystem::path& root) {
     shell.context_.current_project_state.root = root.lexically_normal();
     shell.context_.current_project_state.directory_tree.SetRoot(shell.context_.current_project_state.root);

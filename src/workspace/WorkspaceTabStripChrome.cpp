@@ -21,6 +21,11 @@ std::string ProjectLabelForRoot(const std::filesystem::path& root) {
   return filename.empty() ? root.lexically_normal().string() : filename;
 }
 
+SDL_Color ProjectTabBadgeColor(const ProjectWorkspaceState& state,
+                               const std::filesystem::path& root) {
+  return ResolveProjectTabBadgeColor(state, root);
+}
+
 }  // namespace
 
 void WorkspaceTabStripChrome::Configure(WorkspaceContext& context,
@@ -80,13 +85,16 @@ std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleProjectTabs(
     tooltip_labels.push_back(operations_.project_tab_tooltip_label(i));
     widths.push_back(
         tab_strip_service_->MeasureProjectTabWidth(display_titles.back(), operations_.measure_width));
-    const ProjectWorkspaceState* project = operations_.project_catalog_entry(i);
     const std::filesystem::path root = operations_.project_catalog_root(i);
+    const bool is_active_project =
+        !context_->current_project_state.root.empty() &&
+        i == context_->project_catalog.active_index;
+    const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
+                                                             : operations_.project_catalog_entry(i);
     badge_styles.push_back(ProjectTabBadgeStyle{
         .text = tab_strip_service_->BuildProjectBadgeText(ProjectLabelForRoot(root)),
-        .color = project != nullptr && project->project_base_color.has_value()
-                     ? *project->project_base_color
-                     : DefaultProjectBaseColor(root),
+        .color = project != nullptr ? ProjectTabBadgeColor(*project, root)
+                                    : DefaultProjectBaseColor(root),
         .show_badge = layout_mode_service_->CurrentMode() != LayoutMode::Compact,
     });
   }

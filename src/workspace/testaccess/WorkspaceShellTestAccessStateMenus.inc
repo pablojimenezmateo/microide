@@ -16,6 +16,9 @@
   static void SaveWorkspaceSession(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveWorkspaceSession();
   }
+  static void SaveConfigState(WorkspaceShell& shell) {
+    shell.MakePersistenceCoordinator().SaveConfigState();
+  }
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
     shell.context_.prompts.dirty.selected_action = selected_action;
     shell.ConfirmDirtyPrompt();

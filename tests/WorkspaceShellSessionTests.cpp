@@ -210,6 +210,54 @@ void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
          "restored first project should preserve compare horizontal scroll");
 }
 
+void TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first_root = temp_dir.path() / "alpha-project";
+  const std::filesystem::path second_root = temp_dir.path() / "beta-project";
+  WriteFile(first_root / "README.md", "alpha\n");
+  WriteFile(second_root / "README.md", "beta\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  const SDL_Color color_a{0x12, 0x34, 0x56, 0xff};
+  const SDL_Color color_b{0xab, 0xcd, 0xef, 0xff};
+  const auto colors_match = [](SDL_Color lhs, SDL_Color rhs) {
+    return lhs.r == rhs.r && lhs.g == rhs.g && lhs.b == rhs.b && lhs.a == rhs.a;
+  };
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first_root, false, false),
+         "project badge restore fixture should open the first project");
+  WorkspaceShellTestAccess::SetProjectBaseColor(shell, color_a);
+  WorkspaceShellTestAccess::SaveConfigState(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second_root, false, false),
+         "project badge restore fixture should open the second project");
+  WorkspaceShellTestAccess::SetProjectBaseColor(shell, color_b);
+  WorkspaceShellTestAccess::SaveConfigState(shell);
+  WorkspaceShellTestAccess::SaveWorkspaceSession(shell);
+
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::RestoreWorkspaceSession(restored),
+         "workspace session restore should succeed for badge color hydration");
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1280, 720);
+  Expect(WorkspaceShellTestAccess::ProjectCount(restored) == 2,
+         "restored workspace should reopen both projects");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(restored) == 1,
+         "restored workspace should preserve the active project index");
+  Expect(colors_match(WorkspaceShellTestAccess::ProjectTabBadgeColor(restored, 1), color_b),
+         "restored active project tab badge should use its persisted color");
+  Expect(colors_match(WorkspaceShellTestAccess::ProjectTabBadgeColor(restored, 0), color_a),
+         "restored inactive project tab badge should hydrate its persisted color on startup");
+}
+
 void TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path first_root = temp_dir.path() / "project-a";
@@ -1751,6 +1799,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice);
   AddTest(tests, "WorkspaceShell/RestoreWorkspaceSessionAcrossProjects",
           TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects);
+  AddTest(tests, "WorkspaceShell/RestoredProjectTabBadgeColorsHydrateOnStartup",
+          TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",
           TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots);
 }

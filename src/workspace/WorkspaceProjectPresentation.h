@@ -7,9 +7,12 @@
 #include <string>
 #include <string_view>
 
+#include "workspace/WorkspaceProjectState.h"
 #include "render/Theme.h"
 
 namespace microide::workspace {
+
+class PersistenceService;
 
 struct WorkspaceTabTextModel {
   std::string display_title;
@@ -17,6 +20,12 @@ struct WorkspaceTabTextModel {
 };
 
 std::string ProjectStateDirectoryName(const std::filesystem::path& project_root);
+std::filesystem::path ProjectStateDirectory(const std::filesystem::path& project_root);
+std::filesystem::path ProjectConfigStatePath(const std::filesystem::path& project_root);
+SDL_Color ResolveProjectTabBadgeColor(const ProjectWorkspaceState& state,
+                                      const std::filesystem::path& project_root);
+void HydrateProjectBaseColorFromConfig(ProjectWorkspaceState& state,
+                                       const PersistenceService& persistence_service);
 WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,
                                                  const std::filesystem::path& path,
                                                  std::string_view fallback_title,

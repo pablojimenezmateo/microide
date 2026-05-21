@@ -4,6 +4,7 @@
 
 #include "platform/AppDirectories.h"
 #include "util/StartupTrace.h"
+#include "workspace/WorkspaceProjectPresentation.h"
 namespace microide::workspace {
 
 std::filesystem::path PersistenceCoordinator::WorkspaceSessionStatePath() const {
@@ -43,6 +44,9 @@ bool PersistenceCoordinator::RestoreWorkspaceSession() {
     auto project_state = std::make_unique<ProjectWorkspaceState>();
     project_state->root = normalized_root;
     project_state->restore_persistence_on_activate = true;
+    if (operations_.persistence_service != nullptr) {
+      HydrateProjectBaseColorFromConfig(*project_state, *operations_.persistence_service);
+    }
     context_.project_catalog.entries.push_back(std::move(project_state));
   }
 
