@@ -25,6 +25,145 @@ TextViewport::TextViewport() {
       "F8 toggles the sidebar, F6 toggles the overlay.\n");
 }
 
+TextViewport::TextViewport(const TextViewport& other)
+    : fold_edit_anchor_line_(other.fold_edit_anchor_line_),
+      document_(other.document_),
+      cursor_line_(other.cursor_line_),
+      cursor_column_(other.cursor_column_),
+      preferred_column_(other.preferred_column_),
+      scroll_line_(other.scroll_line_),
+      horizontal_scroll_(other.horizontal_scroll_),
+      visible_lines_(other.visible_lines_),
+      visible_columns_(other.visible_columns_),
+      tab_size_(other.tab_size_),
+      indent_width_(other.indent_width_),
+      soft_tabs_(other.soft_tabs_),
+      soft_wrap_(other.soft_wrap_),
+      save_trim_trailing_whitespace_(other.save_trim_trailing_whitespace_),
+      save_ensure_final_newline_(other.save_ensure_final_newline_),
+      lc_view_(other.lc_view_),
+      secondary_carets_(other.secondary_carets_),
+      secondary_caret_positions_cache_(other.secondary_caret_positions_cache_),
+      layout_cache_(other.layout_cache_),
+      highlight_cache_(other.highlight_cache_),
+      highlight_cache_order_(other.highlight_cache_order_),
+      initial_highlight_state_(other.initial_highlight_state_),
+      line_highlight_states_(other.line_highlight_states_),
+      line_highlight_states_valid_through_(other.line_highlight_states_valid_through_),
+      highlight_checkpoints_(other.highlight_checkpoints_),
+      highlight_checkpoints_valid_through_(other.highlight_checkpoints_valid_through_),
+      highlight_state_content_revision_(other.highlight_state_content_revision_),
+      highlight_state_syntax_revision_(other.highlight_state_syntax_revision_),
+      highlight_queries_(other.highlight_queries_),
+      highlight_hits_(other.highlight_hits_),
+      highlight_state_advances_(other.highlight_state_advances_),
+      highlight_checkpoint_advances_(other.highlight_checkpoint_advances_),
+      selection_anchor_(other.selection_anchor_),
+      last_applied_edit_(other.last_applied_edit_),
+      folding_model_(nullptr),
+      undo_history_(other.undo_history_) {
+  InvalidateVisualColumnCache();
+}
+
+TextViewport& TextViewport::operator=(const TextViewport& other) {
+  if (this == &other) {
+    return *this;
+  }
+  TextViewport copy(other);
+  *this = std::move(copy);
+  return *this;
+}
+
+TextViewport::TextViewport(TextViewport&& other) noexcept
+    : fold_edit_anchor_line_(other.fold_edit_anchor_line_),
+      document_(other.document_),
+      cursor_line_(other.cursor_line_),
+      cursor_column_(other.cursor_column_),
+      preferred_column_(other.preferred_column_),
+      scroll_line_(other.scroll_line_),
+      horizontal_scroll_(other.horizontal_scroll_),
+      visible_lines_(other.visible_lines_),
+      visible_columns_(other.visible_columns_),
+      tab_size_(other.tab_size_),
+      indent_width_(other.indent_width_),
+      soft_tabs_(other.soft_tabs_),
+      soft_wrap_(other.soft_wrap_),
+      save_trim_trailing_whitespace_(other.save_trim_trailing_whitespace_),
+      save_ensure_final_newline_(other.save_ensure_final_newline_),
+      lc_view_(std::move(other.lc_view_)),
+      secondary_carets_(std::move(other.secondary_carets_)),
+      secondary_caret_positions_cache_(std::move(other.secondary_caret_positions_cache_)),
+      layout_cache_(std::move(other.layout_cache_)),
+      highlight_cache_(std::move(other.highlight_cache_)),
+      highlight_cache_order_(std::move(other.highlight_cache_order_)),
+      initial_highlight_state_(std::move(other.initial_highlight_state_)),
+      line_highlight_states_(std::move(other.line_highlight_states_)),
+      line_highlight_states_valid_through_(other.line_highlight_states_valid_through_),
+      highlight_checkpoints_(std::move(other.highlight_checkpoints_)),
+      highlight_checkpoints_valid_through_(other.highlight_checkpoints_valid_through_),
+      highlight_state_content_revision_(other.highlight_state_content_revision_),
+      highlight_state_syntax_revision_(other.highlight_state_syntax_revision_),
+      highlight_queries_(other.highlight_queries_),
+      highlight_hits_(other.highlight_hits_),
+      highlight_state_advances_(other.highlight_state_advances_),
+      highlight_checkpoint_advances_(other.highlight_checkpoint_advances_),
+      selection_anchor_(std::move(other.selection_anchor_)),
+      last_applied_edit_(std::move(other.last_applied_edit_)),
+      folding_model_(nullptr),
+      undo_history_(std::move(other.undo_history_)) {
+  other.folding_model_ = nullptr;
+  other.layout_cache_ = TextLayoutCache{};
+  other.undo_history_ = TextViewportUndoHistory{};
+  InvalidateVisualColumnCache();
+}
+
+TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
+  if (this == &other) {
+    return *this;
+  }
+  fold_edit_anchor_line_ = other.fold_edit_anchor_line_;
+  document_ = other.document_;
+  cursor_line_ = other.cursor_line_;
+  cursor_column_ = other.cursor_column_;
+  preferred_column_ = other.preferred_column_;
+  scroll_line_ = other.scroll_line_;
+  horizontal_scroll_ = other.horizontal_scroll_;
+  visible_lines_ = other.visible_lines_;
+  visible_columns_ = other.visible_columns_;
+  tab_size_ = other.tab_size_;
+  indent_width_ = other.indent_width_;
+  soft_tabs_ = other.soft_tabs_;
+  soft_wrap_ = other.soft_wrap_;
+  save_trim_trailing_whitespace_ = other.save_trim_trailing_whitespace_;
+  save_ensure_final_newline_ = other.save_ensure_final_newline_;
+  lc_view_ = std::move(other.lc_view_);
+  secondary_carets_ = std::move(other.secondary_carets_);
+  secondary_caret_positions_cache_ = std::move(other.secondary_caret_positions_cache_);
+  layout_cache_ = std::move(other.layout_cache_);
+  highlight_cache_ = std::move(other.highlight_cache_);
+  highlight_cache_order_ = std::move(other.highlight_cache_order_);
+  initial_highlight_state_ = std::move(other.initial_highlight_state_);
+  line_highlight_states_ = std::move(other.line_highlight_states_);
+  line_highlight_states_valid_through_ = other.line_highlight_states_valid_through_;
+  highlight_checkpoints_ = std::move(other.highlight_checkpoints_);
+  highlight_checkpoints_valid_through_ = other.highlight_checkpoints_valid_through_;
+  highlight_state_content_revision_ = other.highlight_state_content_revision_;
+  highlight_state_syntax_revision_ = other.highlight_state_syntax_revision_;
+  highlight_queries_ = other.highlight_queries_;
+  highlight_hits_ = other.highlight_hits_;
+  highlight_state_advances_ = other.highlight_state_advances_;
+  highlight_checkpoint_advances_ = other.highlight_checkpoint_advances_;
+  selection_anchor_ = std::move(other.selection_anchor_);
+  last_applied_edit_ = std::move(other.last_applied_edit_);
+  folding_model_ = nullptr;
+  undo_history_ = std::move(other.undo_history_);
+  other.folding_model_ = nullptr;
+  other.layout_cache_ = TextLayoutCache{};
+  other.undo_history_ = TextViewportUndoHistory{};
+  InvalidateVisualColumnCache();
+  return *this;
+}
+
 void TextViewport::SetPlaceholderText(std::string text) {
   EnsureDocument();
   ResetState(util::SplitLines(text), {}, LineEnding::LF, false, DetectEncoding(text), true, false);

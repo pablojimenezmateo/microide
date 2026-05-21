@@ -689,6 +689,91 @@ void TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection() {
          "activating the revealed match should keep the fold expanded after the overlay closes");
 }
 
+void TestWorkspaceShellEnsureActiveFoldingModelFreshBinding() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path plain = root / "plain.txt";
+  const std::filesystem::path folded = root / "folded.cpp";
+  WriteFile(plain, "hello\n");
+  WriteFile(folded, "void f() {\n  body();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, plain);
+
+  auto& plain_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(plain_editor.folding_revision() == 0,
+         "plain buffer without fold ranges should detach viewport folding model");
+
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, folded),
+         "folded editor tab should open");
+  auto* folded_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(folded_model != nullptr, "folded tab should expose a folding model");
+  Expect(!folded_model->ranges().empty(), "folded tab should compute fold ranges");
+  auto& folded_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(folded_editor.folding_revision() != 0,
+         "non-empty folding model should bind to the active viewport");
+
+  Expect(folded_model->Collapse(0), "folded tab should accept collapse");
+  WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  const int collapsed_visual_rows = folded_editor.VisualRowCount();
+  Expect(collapsed_visual_rows < static_cast<int>(folded_editor.line_count()),
+         "collapsed fold should reduce visible rows after refresh");
+
+  folded_model->ExpandAll();
+  WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(!folded_model->IsCollapsedAtOpener(0),
+         "expand-all should clear collapsed fold state");
+  Expect(folded_editor.VisualRowCount() == static_cast<int>(folded_editor.line_count()),
+         "expanded folds should restore full visible rows after refresh");
+}
+
+void TestWorkspaceShellFoldingSurvivesTabVectorReallocationAndLayout() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "fold_target.cpp";
+  WriteFile(source, "void f() {\n  hidden();\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(model != nullptr, "folding integration fixture should build a folding model");
+  const void* model_ptr_before = model;
+  Expect(model->Collapse(0), "integration fixture should collapse the top-level fold");
+  WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const int collapsed_visual_rows = editor.VisualRowCount();
+  Expect(collapsed_visual_rows < static_cast<int>(editor.line_count()),
+         "collapsed fold should hide interior rows before opening more tabs");
+
+  for (int i = 0; i < 24; ++i) {
+    const std::filesystem::path extra =
+        root / ("extra_" + std::to_string(i) + ".txt");
+    WriteFile(extra, "line\n");
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, extra),
+           "extra tabs should open to force open_tabs reallocation");
+  }
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(tabs.front().editor_state.has_value(),
+         "first editor tab should still exist after opening many tabs");
+  Expect(tabs.front().editor_state->folding_model.get() == model_ptr_before,
+         "active tab folding model heap address must survive open_tabs reallocation");
+
+  auto* model_after = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(model_after == model_ptr_before,
+         "EnsureActiveFoldingModelFresh must return the stable folding model pointer");
+  Expect(model_after->IsLineHidden(1),
+         "collapsed fold visibility must remain valid after tab churn");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).VisualRowCount() == collapsed_visual_rows,
+         "layout after tab churn must still honor collapsed fold visibility");
+}
+
 void TestWorkspaceShellFoldAllUnfoldAllCtrlKChord() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1741,6 +1826,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRefreshClearsFoldCollapseState);
   AddTest(tests, "WorkspaceShell/EditorEditInvalidatesFoldingFingerprint",
           TestWorkspaceShellEditorEditInvalidatesFoldingFingerprint);
+  AddTest(tests, "WorkspaceShell/EnsureActiveFoldingModelFreshBinding",
+          TestWorkspaceShellEnsureActiveFoldingModelFreshBinding);
+  AddTest(tests, "WorkspaceShell/FoldingSurvivesTabVectorReallocationAndLayout",
+          TestWorkspaceShellFoldingSurvivesTabVectorReallocationAndLayout);
   AddTest(tests, "WorkspaceShell/BufferSearchRevealsCollapsedMatchAndRestoresOnDismiss",
           TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndRestoresOnDismiss);
   AddTest(tests, "WorkspaceShell/BufferSearchKeepsRevealAfterActivateSelection",

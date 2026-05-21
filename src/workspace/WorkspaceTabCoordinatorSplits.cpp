@@ -421,7 +421,7 @@ bool TabCoordinator::ReopenActive() {
         view.needs_restore = false;
       }
     }
-    tab.editor_state->folding_model.Clear();
+    tab.editor_state->folding_model->Clear();
     state_.welcome_surface.viewport = reopened_view;
   } else {
     state_.welcome_surface.viewport = reopened_view;

@@ -99,7 +99,7 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
   }
   editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (active_viewport == nullptr) {
-    return &editor_tab->folding_model;
+    return editor_tab->folding_model.get();
   }
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
     const auto value = GetSettingValue(id);
@@ -116,12 +116,12 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
                           setting_enabled("editor.fold.enabled", true),
                           active_viewport->visible_lines());
   for (auto& view : editor_tab->views) {
-    view.viewport.SetFoldingModel(editor_tab->folding_model.ranges().empty() &&
-                                          editor_tab->folding_model.collapsed_flags().empty()
+    view.viewport.SetFoldingModel(editor_tab->folding_model->ranges().empty() &&
+                                          editor_tab->folding_model->collapsed_flags().empty()
                                       ? nullptr
-                                      : &editor_tab->folding_model);
+                                      : editor_tab->folding_model.get());
   }
-  return &editor_tab->folding_model;
+  return editor_tab->folding_model.get();
 }
 
 void WorkspaceShell::ActivateTab(std::size_t index) {
@@ -219,7 +219,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
       active_view != nullptr) {
     const std::filesystem::path old_path = active_view->path().lexically_normal();
     *active_view = configured_view;
-    editor_tab->folding_model.Clear();
+    editor_tab->folding_model->Clear();
     context_.current_project_state.welcome_surface.viewport = configured_view;
     const std::filesystem::path new_path = configured_view.path().lexically_normal();
     if (!old_path.empty() && old_path != new_path && CountOpenBufferViews(old_path) == 0) {
