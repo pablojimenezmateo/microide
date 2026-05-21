@@ -1,32 +1,30 @@
 # Plugin Trust Model
 
-Reviewed on 2026-05-18.
+Reviewed on 2026-05-21.
 
 This document describes what plugins can do, what they cannot do, and what microide does and does
 not enforce. It is the authoritative reference for trust-related claims about the plugin runtime.
 
 The short version: **plugins are trusted local code that runs with the same privileges as your
-microide process.** Treat opening a project as roughly equivalent to executing the code shipped in
-that repository.
+microide process.** Only install plugins you trust into your user config directory. Opening a
+project no longer auto-loads plugin code shipped inside that repository.
 
 For the broader architecture see `docs/plugin-runtime-research.md`. For the README summary see the
 "Security & Trust Model" section of `README.md`. This file should win on disagreements.
 
 ## Where plugins come from
 
-When microide loads, it scans two directories per project:
+When microide loads, it scans one directory:
 
 - `~/.config/microide/plugins/<plugin-id>/init.lua` — **user-scope plugins**, loaded for every
   project on the machine
-- `<project-root>/.microide/plugins/<plugin-id>/init.lua` — **project-scope plugins**, loaded when
-  that specific project is opened
 
-Both run with identical privileges. There is no separation between "trusted user plugin" and
-"plugin that arrived inside a repository you just cloned." The runtime treats them the same.
+Project-local plugin directories such as `<project-root>/.microide/plugins/` are **not** scanned.
+That keeps cloned or untrusted repositories from executing plugin code just because you opened them.
 
-Plugins are loaded automatically. There is no first-run confirmation, no diff against a previous
-version, and no per-plugin disable in the UI today; disabling a plugin means removing the file or
-editing the project / user config.
+Plugins are loaded automatically from the user config directory. There is no first-run
+confirmation, no diff against a previous version, and no per-plugin disable in the UI today;
+disabling a plugin means removing the file or editing user config.
 
 `syntax/*.lua` files inside plugin directories are also loaded into the host tokenizer at startup
 and on `plugins-reload`. These are interpreted as syntax rules, not as host code, but they still
@@ -136,7 +134,8 @@ These are real boundaries, not aspirational ones:
 These are absent today. None of them are on the roadmap unless a separate phase is opened.
 
 - **No code signing or signature verification.** Plugins are plain files on disk.
-- **No allowlist of permitted plugins.** Both user and project plugins load automatically.
+- **No allowlist of permitted plugins.** User-scope plugins load automatically from the config
+  directory.
 - **No capability prompt.** The host never asks "this plugin wants to run a subprocess, allow?"
 - **No per-plugin filesystem namespacing.** A plugin reading `~/.ssh/id_rsa` through
   `ctx.files.read_text` is not blocked at the API layer (it requires an absolute path; the API
@@ -144,25 +143,25 @@ These are absent today. None of them are on the roadmap unless a separate phase 
 - **No restricted-mode `require`.** `package.path` and `package.cpath` are not pinned to a
   microide-controlled directory.
 - **No process isolation.** The Lua state runs in-process with the editor.
-- **No marketplace, no remote install, no auto-update.** Plugins are placed by the user (or by
-  whoever wrote the repo you opened).
+- **No marketplace, no remote install, no auto-update.** Plugins are placed by the user in
+  `~/.config/microide/plugins/`.
 
 ## Recommendations
 
 For users:
 
-- Treat opening a microide project as equivalent to running arbitrary code from that repository.
-  This is also true of editors that run `Makefile`, `package.json` lifecycle scripts, or
-  `direnv`, but microide makes the plugin surface explicit.
-- For untrusted repositories: inspect `.microide/plugins/` and `.microide/` config before opening,
-  or open inside a VM / container.
-- `plugins-reload` picks up plugin file changes between sessions; there is no
+- Treat user-installed plugins as equivalent to running arbitrary local code with your editor
+  privileges.
+- Only copy or symlink plugins into `~/.config/microide/plugins/` when you trust their source.
+- Opening a repository no longer executes plugin code from `.microide/plugins/` inside that repo.
+- The `plugins-reload` command picks up plugin file changes between sessions; there is no
   "all-plugins-disabled" run mode in the UI today.
 
 Explicit scope decision:
 
 - Plugin security-system hardening is out of current product scope. This includes safe-mode
-  startup paths, plugin sandboxing / process isolation, and first-run capability prompts.
+  startup paths, plugin sandboxing / process isolation, first-run capability prompts, and
+  re-enabling project-local plugin directories.
 - A safe-mode or project-plugin-disable startup path is not planned in the current scope.
 - If you need to inspect untrusted repositories, use external isolation (VM/container) before
   opening them in microide.
@@ -173,7 +172,8 @@ For plugin authors:
 - Save participants should be deterministic and idempotent.
 - Subprocess argv should be plain arrays, not shell strings (`{"git", "status"}` not
   `{"sh", "-c", "git status"}`), so it is reviewable.
-- Plugins that ship in a repository should disclose what they do in their `init.lua` header.
+- Plugins that ship example sources in a repository should disclose what they do in their
+  `init.lua` header and instruct users to install them under `~/.config/microide/plugins/`.
 
 ## Out-of-scope additions
 

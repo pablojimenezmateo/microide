@@ -2,10 +2,9 @@
 
 These are repo-owned dogfood plugins for the current manual Lua plugin runtime.
 
-Install one by copying or symlinking its directory into either:
+Install one by copying or symlinking its directory into:
 
 - `~/.config/microide/plugins/<plugin-id>/`
-- `<project-root>/.microide/plugins/<plugin-id>/`
 
 Example:
 
@@ -13,6 +12,8 @@ Example:
 mkdir -p ~/.config/microide/plugins
 ln -s /path/to/microide/plugins/eslint ~/.config/microide/plugins/eslint
 ```
+
+Project-local plugin directories such as `<project-root>/.microide/plugins/` are not loaded.
 
 Current examples:
 

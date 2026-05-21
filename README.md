@@ -75,7 +75,7 @@ for what is actually measured, and what is not.
 - Tab drag reordering; right-click for "Copy Last Command + Output"
 
 ### Plugins
-- Manual Lua 5.4 plugins from `~/.config/microide/plugins/` and project-local `.microide/plugins/`
+- Manual Lua 5.4 plugins from `~/.config/microide/plugins/`
 - Lifecycle hooks, commands, sidebars, diagnostics, hover providers, syntax contributions
 - Host-owned registries: settings, keybindings, status items, menus, formatters, save participants,
   completion providers, code actions, tests, SCM, auth, annotations
@@ -179,14 +179,14 @@ If you find a bug or a limitation that is not listed, that itself is a bug — p
 microide is a local desktop application. It does not, today, implement any meaningful sandbox
 for plugins or for code it executes on your behalf. Treat it accordingly.
 
-**Plugins are trusted local code.** When you open a project, microide loads Lua plugins from
-both of these locations:
+**Plugins are trusted local code.** When you open a project, microide loads Lua plugins only from:
 
 - `~/.config/microide/plugins/<plugin-id>/init.lua` — user-scope plugins
-- `<project-root>/.microide/plugins/<plugin-id>/init.lua` — **project-scope plugins, loaded when
-  you open that project**
 
-Project-scope plugins run with the same privileges as your microide process. Through the host
+Project-local directories such as `<project-root>/.microide/plugins/` are ignored. That prevents
+cloned repositories from executing plugin code just because you opened them.
+
+User-scope plugins run with the same privileges as your microide process. Through the host
 API a plugin can:
 
 - read and write project-relative files (`ctx.files.read_text` / `write_text` / `exists`)
@@ -201,20 +201,18 @@ namespacing of filesystem access**. The embedded Lua runtime is configured with 
 stdlib subset (`base`, `table`, `string`, `math`, `utf8`, `package`) — it does not expose
 `io` or `os`, so plain Lua cannot directly open arbitrary files or shell out. The host API,
 however, gives plugins exactly those capabilities through `ctx.files.*` and `ctx.process.run`,
-and `package` still permits `require` plus Lua-module path resolution. If you `git clone` a repository
-that ships a `.microide/plugins/` directory and open it in microide, that plugin runs.
+and `package` still permits `require` plus Lua-module path resolution. Only install plugins you
+trust into `~/.config/microide/plugins/`.
 
 **Recommendations until that changes:**
 
-- Treat opening a microide project as equivalent to running arbitrary code from that repository.
-  This is also true of `Makefile`, `package.json` scripts, and `direnv` files in other editors,
-  but microide makes the surface explicit and you should know it is there.
-- For repositories you do not trust, inspect `.microide/plugins/` before opening, or open them in
-  a VM / container.
+- Treat user-installed plugins as equivalent to running arbitrary local code with your editor
+  privileges.
+- Only copy or symlink plugins into `~/.config/microide/plugins/` when you trust their source.
 - The `plugins-reload` command picks up changes; there is no per-plugin disable in the UI yet
-  beyond editing the user / project config.
-- This project is not planning a safe-mode or project-plugin-disable startup path in the current
-  scope. For untrusted repositories, use VM/container isolation or do not open them in microide.
+  beyond editing user config.
+- This project is not planning a safe-mode startup path or project-local plugin loading in the
+  current scope.
 
 **Out of scope.** A meaningful plugin sandbox (capability-scoped APIs, restricted Lua standard
 library, per-plugin allowlists) is not planned for the immediate roadmap. If a plugin marketplace
@@ -517,8 +515,7 @@ See `docs/startup-tracing.md` and `docs/runtime-profiling.md` for full workflows
 ## Plugin Runtime
 
 - User plugins: `~/.config/microide/plugins/<plugin-id>/init.lua`
-- Project plugins: `<project-root>/.microide/plugins/<plugin-id>/init.lua`
-- Repo examples: `plugins/`
+- Repo examples: `plugins/` (copy or symlink into the user plugin directory)
 - Entry point: `return require("microide").plugin({...})`
 - Lifecycle hooks: `setup`, `on_project_open`, `on_project_close`, `on_buffer_open`, `on_buffer_save`, `shutdown`
 - Host API: `ctx.log`, `ctx.commands.add`, `ctx.sidebar.add/show`, `ctx.workspace.*`,

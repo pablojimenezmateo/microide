@@ -1,6 +1,6 @@
 # Plugin Runtime Research
 
-Reviewed on 2026-05-16.
+Reviewed on 2026-05-21.
 
 Scope:
 
@@ -22,8 +22,8 @@ Phase 1 status:
 
 - implemented on 2026-04-15 in the host codebase
 - added `src/plugin/PluginHost.*` for manual Lua plugin discovery, Lua runtime ownership, lifecycle dispatch, and plugin command registration
-- plugins now load from `~/.config/microide/plugins/<plugin-id>/init.lua`
-- project-local plugins now load from `<project-root>/.microide/plugins/<plugin-id>/init.lua`
+- plugins now load from `~/.config/microide/plugins/<plugin-id>/init.lua` only
+- project-local `.microide/plugins/` directories are no longer scanned (2026-05-21 security cutover)
 - the current host API is intentionally narrow: `log`, plugin command registration, `workspace.project_root()`, and `workspace.open_file(path)`
 - the shell now exposes a built-in `plugins-reload` command and forwards project activation plus buffer open/save events into the plugin host
 
@@ -336,12 +336,14 @@ The important point is not that the bindings are hand-written for their own sake
 
 Manual install only.
 
-Recommended search paths:
+Recommended search path:
 
 ```text
 ~/.config/microide/plugins/<plugin-id>/init.lua
-<project-root>/.microide/plugins/<plugin-id>/init.lua
 ```
+
+Repo-owned examples under `plugins/` are not loaded automatically; copy or symlink them into the
+user config directory.
 
 Optional plugin subdirectories:
 
@@ -356,7 +358,8 @@ Optional plugin subdirectories:
 
 Notes:
 
-- Project-local plugins are important because IDE behavior is often repository-specific.
+- Plugins are user-installed only. Repository-local `.microide/plugins/` directories are ignored
+  so cloned projects cannot execute plugin code on open.
 - A copied folder is enough; no channel metadata or remote fetching should be required.
 - Duplicate plugin ids should be treated as an error in v1 instead of adding override rules immediately.
 
@@ -365,11 +368,8 @@ Notes:
 Recommended startup order:
 
 1. Initialize built-in host services.
-2. Load global plugins.
-3. Load project-local plugins.
-4. Activate project-scoped hooks once the project is open.
-
-That keeps the model simple and lets project-local plugins observe the active repository.
+2. Load user-scope plugins from the config directory.
+3. Activate project-scoped hooks once the project is open.
 
 ### Lifecycle
 
@@ -850,7 +850,7 @@ That remaining work is still the right seam for Phase 2 sidebar providers. Phase
 ### Phase 1: Core Plugin Infrastructure
 
 - add `src/plugin/*`
-- load manual plugins from global and project-local directories
+- load manual plugins from the user config directory only
 - support `setup`, `on_project_open`, `on_project_close`, `on_buffer_open`, `on_buffer_save`, `shutdown`
 - add `plugins-reload`
 
@@ -860,7 +860,8 @@ This pass implemented the smallest useful version of the runtime:
 
 - `src/plugin/PluginHost.*` now owns plugin discovery, one Lua state per plugin, hook dispatch, and plugin command registration
 - the build now enables Lua plugins through `MICROIDE_ENABLE_LUA_PLUGINS` when Lua 5.4 is available
-- plugins load from both the global config directory and the active project's `.microide/plugins` directory
+- plugins load from `~/.config/microide/plugins/` only; project-local and in-tree repo plugin
+  directories are not scanned automatically
 - duplicate plugin ids are rejected with an explicit error
 - the shell now reloads the active plugin set when the active project changes and forwards buffer-open and buffer-save events to the runtime
 - built-in command completion and command dispatch now include plugin-registered commands
@@ -935,7 +936,7 @@ This final diagnostics pass closed the remaining presentation gap in Phase 3:
 Implemented on 2026-04-17 in a host-owned runtime-data slice:
 
 - plugin directories may now contribute `syntax/*.lua` files that return syntax-definition tables
-- plugin syntax files now load from project-local plugins before global plugins, then fall back to built-in generated definitions
+- plugin syntax files now load from user-scope plugin directories, then fall back to built-in generated definitions
 - the host now rebuilds the runtime syntax registry on project activation and `plugins-reload`
 - editor tabs, split editor views, compare tabs, and merge tabs now invalidate cached syntax state after a syntax-registry reload so definition ids do not go stale across plugin changes
 

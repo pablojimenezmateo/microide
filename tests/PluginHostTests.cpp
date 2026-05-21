@@ -63,8 +63,6 @@ void TestPluginHostLoadsPluginsAndDispatchesLifecycle() {
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
-
   WriteFile(project_root / "README.md", "plugin host fixture\n");
 
   WritePluginInit(
@@ -97,30 +95,30 @@ return ide.plugin({
 )");
 
   WritePluginInit(
-      project_plugins, "project-sample",
+      global_plugins, "secondary-sample",
       R"(local ide = require("microide")
 return ide.plugin({
-  id = "project.sample",
+  id = "secondary.sample",
   setup = function(ctx)
-    ctx.log("setup:project")
-    ctx.commands.add("project.open-readme", function(ctx, args)
+    ctx.log("setup:secondary")
+    ctx.commands.add("secondary.open-readme", function(ctx, args)
       ctx.workspace.open_file("README.md")
     end)
   end,
   on_project_open = function(ctx, project)
-    ctx.log("project-open:project:" .. project.name)
+    ctx.log("project-open:secondary:" .. project.name)
   end,
   on_project_close = function(ctx, project)
-    ctx.log("project-close:project:" .. project.name)
+    ctx.log("project-close:secondary:" .. project.name)
   end,
   on_buffer_open = function(ctx, buffer)
-    ctx.log("buffer-open:project:" .. buffer.relative_path)
+    ctx.log("buffer-open:secondary:" .. buffer.relative_path)
   end,
   on_buffer_save = function(ctx, buffer)
-    ctx.log("buffer-save:project:" .. buffer.relative_path)
+    ctx.log("buffer-save:secondary:" .. buffer.relative_path)
   end,
   shutdown = function(ctx)
-    ctx.log("shutdown:project")
+    ctx.log("shutdown:secondary")
   end
 })
 )");
@@ -139,25 +137,25 @@ return ide.plugin({
 
   Expect(host.enabled(), "plugin host should be enabled when Lua support is compiled in");
   Expect(host.Reload(project_root), "plugin reload should succeed for valid plugins");
-  Expect(host.LoadedPluginCount() == 2, "plugin host should load global and project plugins");
+  Expect(host.LoadedPluginCount() == 2, "plugin host should load both user-scope plugins");
   Expect(host.CommandNames().size() == 2, "plugin host should expose both registered commands");
   Expect(std::find(host.CommandNames().begin(), host.CommandNames().end(), "global.echo") !=
              host.CommandNames().end(),
          "plugin host should expose global plugin commands");
-  Expect(std::find(host.CommandNames().begin(), host.CommandNames().end(), "project.open-readme") !=
+  Expect(std::find(host.CommandNames().begin(), host.CommandNames().end(), "secondary.open-readme") !=
              host.CommandNames().end(),
-         "plugin host should expose project-local plugin commands");
+         "plugin host should expose secondary user-scope plugin commands");
 
   const std::vector<std::string>& load_messages = host.Messages();
   Expect(load_messages.size() >= 4, "plugin load should record setup and project-open messages");
   Expect(load_messages[0] == "global.sample: setup:global",
-         "global plugins should set up before project-local plugins");
-  Expect(load_messages[1] == "project.sample: setup:project",
-         "project plugin setup should follow global setup");
+         "first user-scope plugin should set up before the second");
+  Expect(load_messages[1] == "secondary.sample: setup:secondary",
+         "second user-scope plugin setup should follow the first");
   Expect(load_messages[2] == "global.sample: project-open:global:project",
          "global project-open hook should run after setup");
-  Expect(load_messages[3] == "project.sample: project-open:project:project",
-         "project-local project-open hook should run after global hooks");
+  Expect(load_messages[3] == "secondary.sample: project-open:secondary:project",
+         "second user-scope project-open hook should run after the first plugin");
 
   host.ClearMessages();
   host.OnBufferOpen(project_root / "src" / "main.cpp");
@@ -166,8 +164,8 @@ return ide.plugin({
          "buffer hooks should run for both loaded plugins");
   Expect(host.Messages()[0] == "global.sample: buffer-open:global:src/main.cpp",
          "global buffer-open hook should receive project-relative paths");
-  Expect(host.Messages()[3] == "project.sample: buffer-save:project:src/main.cpp",
-         "project-local buffer-save hook should receive project-relative paths");
+  Expect(host.Messages()[3] == "secondary.sample: buffer-save:secondary:src/main.cpp",
+         "second user-scope buffer-save hook should receive project-relative paths");
 
   host.ClearMessages();
   std::string command_error;
@@ -178,7 +176,7 @@ return ide.plugin({
              host.Messages().back() == "global.sample: command:global:alpha,beta",
          "plugin commands should receive argv-style arguments");
 
-  Expect(host.ExecuteCommand("project.open-readme", {}, &command_error),
+  Expect(host.ExecuteCommand("secondary.open-readme", {}, &command_error),
          "workspace.open_file should be callable from plugin commands");
   Expect(!opened_paths.empty() && opened_paths.back() == (project_root / "README.md").lexically_normal(),
          "workspace.open_file should resolve relative paths against the active project");
@@ -189,8 +187,42 @@ return ide.plugin({
          "shutdown should emit project-close and shutdown hooks for each plugin");
   Expect(host.Messages()[0] == "global.sample: project-close:global:project",
          "shutdown should close the active project before tearing plugins down");
-  Expect(host.Messages()[3] == "project.sample: shutdown:project",
+  Expect(host.Messages()[3] == "secondary.sample: shutdown:secondary",
          "shutdown should run each plugin's shutdown hook");
+}
+
+void TestPluginHostIgnoresProjectLocalPlugins() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
+
+  WriteFile(project_root / "README.md", "project plugin ignore fixture\n");
+  WritePluginInit(
+      project_plugins, "repo-supplied",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "repo.supplied",
+  setup = function(ctx)
+    ctx.commands.add("repo.supplied.run", function() end)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "plugin reload should succeed without project-local plugins");
+  Expect(host.LoadedPluginCount() == 0,
+         "project-local .microide/plugins directories should not be loaded");
+  Expect(host.CommandNames().empty(),
+         "project-local plugins should not register commands");
 }
 
 void TestPluginHostRejectsDuplicatePluginIds() {
@@ -201,8 +233,6 @@ void TestPluginHostRejectsDuplicatePluginIds() {
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
-
   WritePluginInit(
       global_plugins, "dup-a",
       R"(local ide = require("microide")
@@ -214,7 +244,7 @@ return ide.plugin({
 })
 )");
   WritePluginInit(
-      project_plugins, "dup-b",
+      global_plugins, "dup-b",
       R"(local ide = require("microide")
 return ide.plugin({
   id = "dup",
@@ -343,11 +373,9 @@ void TestPluginHostPluginsUseIsolatedLuaStates() {
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
-
   WriteFile(project_root / "README.md", "plugin shared-state fixture\n");
   WritePluginInit(
-      global_plugins, "writer",
+      global_plugins, "a-writer",
       R"(local ide = require("microide")
 return ide.plugin({
   id = "isolated.writer",
@@ -358,7 +386,7 @@ return ide.plugin({
 })
 )");
   WritePluginInit(
-      project_plugins, "reader",
+      global_plugins, "b-reader",
       R"(local ide = require("microide")
 return ide.plugin({
   id = "isolated.reader",
@@ -1286,6 +1314,8 @@ return ide.plugin({
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/LoadsPluginsAndDispatchesLifecycle",
           TestPluginHostLoadsPluginsAndDispatchesLifecycle);
+  AddTest(tests, "PluginHost/IgnoresProjectLocalPlugins",
+          TestPluginHostIgnoresProjectLocalPlugins);
   AddTest(tests, "PluginHost/RejectsDuplicatePluginIds",
           TestPluginHostRejectsDuplicatePluginIds);
   AddTest(tests, "PluginHost/SkipsBackupPluginDirectories",

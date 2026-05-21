@@ -115,6 +115,9 @@ Do not expose `WorkspaceShell` wholesale to plugins.
 ## Lifecycle And Reload
 
 - Plugin discovery, runtime ownership, and reload behavior belong to the host.
+- Plugins load only from `~/.config/microide/plugins/<plugin-id>/init.lua`. Project-local
+  `.microide/plugins/` directories and in-tree repo `plugins/` directories are not scanned
+  automatically; copy or symlink dogfood examples into the user config directory instead.
 - The host should own asset watching and reload bookkeeping.
 - Plugin lifecycle hooks should stay simple and predictable.
 - If reload is supported, define what state is preserved, what state is rebuilt, and what side effects are replayed.
