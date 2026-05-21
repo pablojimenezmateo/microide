@@ -15,6 +15,13 @@ Compare tabs SHALL declare one of four review modes: working-tree review, commit
 - **WHEN** a user reviews outgoing changes against a base branch
 - **THEN** MicroIDE SHALL expose outgoing commits, aggregate changed files across the range, and per-file compare tabs associated with that base revision
 
+### Requirement: Branch Review Target Identity Is Stable
+Branch review mode SHALL use an explicit target identity composed of repository root, resolved base commit, resolved head commit, merge-base commit when applicable, and repository snapshot generation when worktree or index content contributes to the review.
+
+#### Scenario: Rebase changes review identity
+- **WHEN** the branch is rebased and resolved base/head commits change
+- **THEN** MicroIDE SHALL treat the branch review target as a new identity and SHALL invalidate stale review-derived state tied to the previous identity
+
 ### Requirement: Diff Model And Presentation Are Separate
 Compare behavior SHALL separate semantic diff data from visible presentation state. Semantic data SHALL include file changes, hunks, old and new line ranges, mode changes, rename/copy metadata, binary metadata, and submodule metadata. Presentation state SHALL include collapsed regions, visible rows, inline highlights, syntax tokens, selection mapping, and scroll markers.
 

@@ -48,6 +48,22 @@ Commit, amend, and commit-without-hooks operations SHALL run outside the main th
 - **WHEN** a commit operation succeeds
 - **THEN** MicroIDE SHALL refresh repository state and show the new clean/ahead state when known
 
+#### Scenario: Hook waits for stdin
+- **WHEN** a commit hook waits for interactive stdin
+- **THEN** MicroIDE SHALL keep the UI responsive, surface hook output/progress, and allow cancellation where supported by the process seam
+
+#### Scenario: Commit identity is not configured
+- **WHEN** Git commit fails because author name or email is not configured
+- **THEN** MicroIDE SHALL report a structured commit failure with actionable output details and SHALL keep the commit draft intact
+
+#### Scenario: Commit signing fails
+- **WHEN** commit creation fails due to signing configuration or signer availability
+- **THEN** MicroIDE SHALL report a structured commit failure and SHALL not clear staged state or drafts
+
+#### Scenario: Commit succeeds but refresh fails
+- **WHEN** the commit command succeeds and repository refresh fails afterward
+- **THEN** MicroIDE SHALL report commit success with a refresh warning state instead of reporting commit failure
+
 ### Requirement: Amend And No-Hook Actions Require Confirmation
 Commit amend and commit-without-hooks actions SHALL require explicit confirmation before execution.
 

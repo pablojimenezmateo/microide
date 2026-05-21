@@ -4,6 +4,12 @@ The shipped baseline already has an async Git sidebar, stage/unstage/discard act
 
 The implementation must preserve existing workspace architecture invariants: no broad `WorkspaceShell` ownership, no synchronous subprocess waits in workspace code, no render-time shell state reads, and no per-frame string work in render translation units.
 
+## Dependencies
+
+- Depends on: existing workspace architecture and background executor seams.
+- Consumed by: `polish-git-sidebar-command-center`, `expand-diff-review-workflows`, `add-hunk-line-staging`, `harden-merge-resolution-workflow`, and `improve-commit-workflow`.
+- Unblocks: canonical generation IDs and snapshot staleness checks across Git/diff/merge/commit flows.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -46,3 +52,5 @@ The implementation must preserve existing workspace architecture invariants: no 
 
 - Whether submodule detail should be fully parsed in the first slice or represented as a first-class but minimally populated status entry.
 - Whether ahead/behind should be computed only on full manual refresh or also on automatic status-only refresh.
+- Detached HEAD and unborn branch representation in the snapshot contract.
+- Worktree repository handling and repository-root identity for multiple worktrees.

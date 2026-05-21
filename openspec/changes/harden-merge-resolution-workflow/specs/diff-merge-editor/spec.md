@@ -3,6 +3,10 @@
 ### Requirement: Merge Conflicts Are Classified
 Three-way merge tabs SHALL classify each conflict using explicit conflict kinds including both-modified, add/add, delete/modify, rename/rename, rename/delete, file/directory, binary, submodule, mode, and line-ending or whitespace-heavy text conflicts when Git state exposes enough information.
 
+#### Scenario: Classification uses authoritative Git sources
+- **WHEN** MicroIDE classifies conflict kinds for a merge tab
+- **THEN** it SHALL derive classifications from authoritative Git status and index conflict sources rather than UI labels or guessed path heuristics
+
 #### Scenario: Delete modify conflict
 - **WHEN** one side deletes a file and the other side modifies it
 - **THEN** the merge resolver SHALL identify the conflict as delete/modify and SHALL require the user to choose whether the result file exists
@@ -13,6 +17,10 @@ Three-way merge tabs SHALL classify each conflict using explicit conflict kinds 
 
 ### Requirement: Merge Resolver Labels Are Unambiguous
 Merge tabs SHALL display unmistakable labels for current/ours, result, incoming/theirs, and base/common ancestor when base is available. Labels SHALL include branch or ref context where known and SHALL NOT rely on color alone.
+
+#### Scenario: Rebase semantics avoid ambiguous ours/theirs labels
+- **WHEN** a conflict originates from rebase or cherry-pick context
+- **THEN** the resolver SHALL prefer concrete ref or commit labels over bare "ours/theirs" wording when both are available
 
 #### Scenario: Merge tab opens from conflict row
 - **WHEN** a conflict file opens in the merge resolver

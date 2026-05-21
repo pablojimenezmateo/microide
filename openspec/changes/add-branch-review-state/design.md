@@ -4,6 +4,12 @@ The roadmap calls out local review state as small but powerful. The project alre
 
 This change must not revive old bespoke persistence formats or introduce plugin-owned rendering. Review marks are data used by host view models.
 
+## Dependencies
+
+- Depends on: `expand-diff-review-workflows` branch review mode identity and `persisted-state-format`.
+- Consumed by: optional preview-quality branch-review ergonomics.
+- Unblocks: local reviewed-file/hunk continuity across sessions.
+
 ## Goals / Non-Goals
 
 **Goals:**

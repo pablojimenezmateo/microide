@@ -4,6 +4,12 @@ The current Git sidebar supports staging and committing at a basic level. The ro
 
 This change should reuse existing prompt/text input primitives and background subprocess seams. It must not add synchronous Git commit waits to workspace input paths.
 
+## Dependencies
+
+- Depends on: `establish-git-repository-state-service`, `add-hunk-line-staging`, and `handle-external-repo-changes`.
+- Consumed by: `prepare-git-workstation-preview` scope validation.
+- Unblocks: end-to-end in-app path from staged changes to validated commit.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -25,6 +31,7 @@ This change should reuse existing prompt/text input primitives and background su
 - Pre-commit checks are structured. Blocking checks prevent commit; warning checks require acknowledgement.
 - Hook output is captured as operation output and shown in the bottom panel or a dedicated native output surface, not only as raw stderr in a prompt.
 - Amend and commit-without-hooks require explicit confirmation because they can rewrite history or bypass user safeguards.
+- Commit subprocess execution is noninteractive by default; if hooks wait for stdin, the UI surfaces output and cancellation rather than hanging silently.
 
 ## Risks / Trade-offs
 

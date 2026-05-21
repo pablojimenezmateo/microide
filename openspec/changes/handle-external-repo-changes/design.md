@@ -4,6 +4,12 @@ The shipped baseline includes host-owned filesystem helpers and native tree watc
 
 The implementation must use existing background execution and idle-hint rules. File-watch events cannot cause synchronous Git refreshes or zero-delay idle polling.
 
+## Dependencies
+
+- Depends on: `establish-git-repository-state-service`, `expand-diff-review-workflows`, and `harden-merge-resolution-workflow`.
+- Consumed by: `improve-commit-workflow` and `prepare-git-workstation-preview`.
+- Unblocks: trusted behavior under external edits, branch switches, and tool-driven file rewrites.
+
 ## Goals / Non-Goals
 
 **Goals:**

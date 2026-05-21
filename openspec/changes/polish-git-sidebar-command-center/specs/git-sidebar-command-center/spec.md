@@ -26,6 +26,17 @@ Each Git sidebar row SHALL expose a typed action set based on row kind. Keyboard
 - **WHEN** a staged row is selected and the user presses `u`
 - **THEN** MicroIDE SHALL dispatch an unstage operation for that file and refresh repository state after completion
 
+### Requirement: Row Action Availability Matrix Is Deterministic
+MicroIDE SHALL define and enforce a deterministic row-action availability matrix by row kind so the same shortcut always has a predictable enabled/disabled meaning.
+
+#### Scenario: Conflict row availability
+- **WHEN** a conflict row is selected
+- **THEN** `Enter` and `m` SHALL open merge resolution, `d` SHALL open conflict review when available, and stage or unstage shortcuts SHALL only be enabled when index state supports them
+
+#### Scenario: Untracked row availability
+- **WHEN** an untracked row is selected
+- **THEN** unstage SHALL be disabled, stage SHALL be enabled, and discard SHALL require confirmation that states whether the operation uses trash or permanent delete policy
+
 ### Requirement: Destructive Actions Are Previewed
 Git sidebar discard actions SHALL require an explicit preview or summary before data is removed from the worktree or index. Confirmation SHALL identify the target path, operation kind, and whether staged, unstaged, or untracked data will be affected.
 

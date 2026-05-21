@@ -4,6 +4,12 @@ The Git sidebar already exposes compare, merge, stage, unstage, discard, outgoin
 
 This change is UI and command routing work, not a Git parser rewrite. It should consume repository snapshots and publish action requests through services instead of making the sidebar a second Git owner.
 
+## Dependencies
+
+- Depends on: `establish-git-repository-state-service` snapshot contract and generation semantics.
+- Consumed by: `add-hunk-line-staging`, `improve-commit-workflow`, and preview workflow documentation.
+- Unblocks: consistent row-action dispatch and safety prompts across keyboard/mouse/context-menu input.
+
 ## Goals / Non-Goals
 
 **Goals:**

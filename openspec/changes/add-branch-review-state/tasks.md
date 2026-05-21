@@ -15,9 +15,11 @@
 - [ ] 3.1 Add reviewed/unreviewed/changed markers to branch review file-list view models.
 - [ ] 3.2 Add hunk-level reviewed markers and note indicators to compare view models.
 - [ ] 3.3 Add commands for mark file reviewed, mark hunk reviewed, clear review, and edit note.
+- [ ] 3.4 Add explicit clear-state command scoped to the active review target.
 
 ## 4. Verification
 
 - [ ] 4.1 Add tests for review state across tab close/reopen and project reload.
 - [ ] 4.2 Add tests for hunk changed-since-reviewed after edit, rebase-like base change, and rename metadata.
-- [ ] 4.3 Run persisted-state, branch compare, render view-model, and architecture-lint tests.
+- [ ] 4.3 Add pruning tests for retention limits and active-target preservation.
+- [ ] 4.4 Run persisted-state, branch compare, render view-model, and architecture-lint tests.

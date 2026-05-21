@@ -18,6 +18,10 @@ Git status snapshots SHALL be parsed from machine-oriented Git output. Path list
 - **WHEN** Git reports a changed path containing spaces, quotes, backslashes, or non-ASCII UTF-8 in NUL-delimited status output
 - **THEN** MicroIDE SHALL preserve the exact repository-relative path bytes after UTF-8 validation and SHALL NOT apply shell-style unquoting
 
+#### Scenario: Path is not valid UTF-8
+- **WHEN** Git reports a repository-relative path that is not valid UTF-8
+- **THEN** MicroIDE SHALL retain a lossless byte-path identity for operations and SHALL expose a display-safe escaped label for UI rendering
+
 #### Scenario: Rename with edits is parsed
 - **WHEN** Git reports a renamed file with content edits
 - **THEN** the snapshot entry SHALL preserve old path, new path, rename status, and staged or unstaged modification state
@@ -47,3 +51,21 @@ Git refresh failures SHALL be represented as structured snapshot errors with a s
 #### Scenario: Project is not a repository
 - **WHEN** an open project has no Git repository root
 - **THEN** the service SHALL publish a `not_a_repo` state and Git UI surfaces SHALL render an explicit non-repository state instead of an empty successful status
+
+### Requirement: Git Operation Result Taxonomy Is Shared
+The Git repository service SHALL publish operation results using a shared taxonomy compatible with patch, merge, and commit workflows, including at minimum `success`, `cancelled`, `stale_generation`, `repo_locked`, and `unknown_error`, with operation-specific categories layered on top.
+
+#### Scenario: Caller consumes shared category
+- **WHEN** a Git operation fails due to stale generation
+- **THEN** callers in sidebar, diff, merge, and commit flows SHALL receive `stale_generation` rather than incompatible per-surface error names
+
+### Requirement: Repository Identity Edge Cases Are Explicit
+The snapshot contract SHALL represent detached HEAD, unborn branch, and linked worktree repository states explicitly rather than collapsing them into generic branch labels.
+
+#### Scenario: Detached HEAD
+- **WHEN** the repository is at a detached HEAD
+- **THEN** the snapshot SHALL report detached-head state with commit identity and SHALL not report a synthetic branch name
+
+#### Scenario: Unborn branch
+- **WHEN** the repository has no commits yet
+- **THEN** the snapshot SHALL report unborn-branch state with zero commit history and SHALL keep status parsing operational

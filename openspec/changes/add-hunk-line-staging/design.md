@@ -2,6 +2,12 @@
 
 File-level stage/unstage/discard exists today. The roadmap calls for hunk and line operations that preview exactly what will change and fail safely when a file changed underneath. This work sits between diff presentation and Git operation execution, so it needs a service seam rather than embedding patch construction in the sidebar or compare tab.
 
+## Dependencies
+
+- Depends on: `establish-git-repository-state-service` and `expand-diff-review-workflows`.
+- Consumed by: `improve-commit-workflow` and preview workflow confidence criteria.
+- Unblocks: precise commit composition without terminal fallbacks.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -23,6 +29,7 @@ File-level stage/unstage/discard exists today. The roadmap calls for hunk and li
 - Selected-line staging is computed from semantic hunk ranges plus presentation selection mapping. This avoids coupling patch generation to painted rows.
 - Staging and unstaging apply to the index; discard applies to the worktree and requires confirmation. The service never auto-retries after a patch fails due to stale content.
 - Operation requests include repository snapshot generation and diff model generation. If either is stale, the service fails with `patch_did_not_apply` or `stale_diff` and offers refresh.
+- The service preflights patch applicability (for example `git apply --check` equivalent) before mutation where possible, and SHALL avoid reject-mode partial-apply behavior.
 
 ## Risks / Trade-offs
 

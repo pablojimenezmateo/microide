@@ -4,6 +4,12 @@ The current spec requires three-way merge tabs with incoming/result/current pane
 
 Correctness beats compatibility here. If current merge tab state is too flat to represent conflict classes or validation results, the model should be refactored rather than patched locally.
 
+## Dependencies
+
+- Depends on: `establish-git-repository-state-service`, `expand-diff-review-workflows`, and `handle-external-repo-changes`.
+- Consumed by: `prepare-git-workstation-preview`.
+- Unblocks: trustworthy conflict resolution and validated mark-resolved behavior.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -22,6 +28,7 @@ Correctness beats compatibility here. If current merge tab state is too flat to 
 ## Decisions
 
 - Conflict taxonomy belongs in merge model construction, not view rendering. Render/view-model code consumes conflict class and action availability.
+- Conflict classification may use combined Git data seams (`status --porcelain=v2 -z`, index stage entries, and name-status diffs) rather than one status line alone.
 - Result validation is a separate service/helper invoked before mark-resolved. It checks file content, save state, expected existence, index conflict generation, and line-ending policy.
 - Base pane is collapsible but always available. Users should not need to reopen a tab to understand why both sides changed.
 - Raw conflict markers are a diagnostic view/action, not the default model for resolution.

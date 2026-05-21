@@ -4,6 +4,12 @@ The current spec already requires working-tree, arbitrary commit, base-branch, a
 
 The design must preserve the shared decorated text-grid pipeline and avoid making render code understand Git semantics. File/hunk metadata belongs in model/build steps; paint paths consume presentation rows and decorations.
 
+## Dependencies
+
+- Depends on: `establish-git-repository-state-service` for repository snapshot identity and stale generation flow.
+- Consumed by: `add-hunk-line-staging` and `add-branch-review-state`.
+- Unblocks: selected-line staging line mapping and branch review target stability.
+
 ## Goals / Non-Goals
 
 **Goals:**

@@ -4,6 +4,12 @@ Existing docs list `compare_tab_open`, `merge_tab_open`, compare/merge large fix
 
 This change expands the harness as the regression oracle for the Git workstation wedge. It does not claim comparative performance; it adds internal budgets and evidence.
 
+## Dependencies
+
+- Depends on: `establish-git-repository-state-service`; integrates alongside diff, staging, merge, external-change, and commit changes.
+- Consumed by: `prepare-git-workstation-preview` release gating.
+- Unblocks: measurable regression protection before final preview packaging.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -25,6 +31,7 @@ This change expands the harness as the regression oracle for the Git workstation
 - Fixture repositories are generated deterministically or committed under `tests/perf/fixtures/` according to existing harness policy.
 - Stage/discard scenarios may initially drive service-level seams if UI operations land later, but they must move to real UI paths before release gating.
 - External-refresh scenarios simulate watcher events and assert the UI remains responsive while background work completes.
+- Rollout is phased: (9A) early skeletons and harness seams, (9B) feature-adjacent scenario activation and baselines, (9C) final baseline sweep and docs.
 
 ## Risks / Trade-offs
 

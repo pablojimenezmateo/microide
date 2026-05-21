@@ -25,6 +25,17 @@ MicroIDE SHALL allow optional local notes attached to reviewed files or hunks. N
 - **WHEN** the user adds a note to a hunk, closes the compare tab, and reopens the same branch review
 - **THEN** the note SHALL be restored for the matching hunk identity
 
+### Requirement: Review State Can Be Cleared And Pruned
+MicroIDE SHALL support clearing review state for the active branch-review target and pruning obsolete review records by repository and review-target identity using bounded retention policy.
+
+#### Scenario: User clears active target review state
+- **WHEN** the user requests clear-review-state for the active branch-review target
+- **THEN** reviewed markers and notes for that target SHALL be removed without affecting unrelated targets
+
+#### Scenario: Obsolete records are pruned
+- **WHEN** persisted review records exceed configured retention bounds
+- **THEN** MicroIDE SHALL prune oldest obsolete records by review-target key while preserving current target state
+
 ### Requirement: Review Markers Render From View Models
 Review marker rendering SHALL consume prebuilt view-model fields. Render translation units SHALL NOT query persistence, Git state, or review services during paint.
 

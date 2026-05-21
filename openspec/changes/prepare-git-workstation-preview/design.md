@@ -4,6 +4,12 @@ The product vision currently lists plugin security hardening, including safe-mod
 
 This change is a release-readiness proposal. It should update product scope and docs without expanding into hosted PR review, plugin marketplace, or general IDE breadth.
 
+## Dependencies
+
+- Depends on: foundational Git state, diff, staging, merge, external-change, and commit workflow changes.
+- Consumed by: release packaging and preview communication artifacts.
+- Unblocks: explicit preview scope and minimal trust-safe startup posture.
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -23,7 +29,7 @@ This change is a release-readiness proposal. It should update product scope and 
 ## Decisions
 
 - `--disable-plugins` disables user-scope plugin loading while leaving built-in workflows available. It is useful for trusted local repos when a user wants deterministic startup.
-- `--safe-mode` implies `--disable-plugins` and may also skip session restore or other nonessential startup state if needed to recover from crashes. The first implementation should be intentionally small and documented.
+- `--safe-mode` v1 implies `--disable-plugins`, disables plugin syntax loading, and skips workspace/session restore so startup can recover to an empty shell (or explicit project argument) predictably.
 - Plugins-disabled state is visible in status/help surfaces so users can verify the mode after launch.
 - Preview release docs list tested workflows and limitations rather than broad IDE claims.
 

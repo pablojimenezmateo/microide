@@ -7,6 +7,7 @@ The performance harness already covers important compare/merge/git paths, but th
 - Add deterministic performance scenarios for large repository Git refresh, many untracked files, large diff open/navigation, hunk and selected-line staging, many-conflict merge open/navigation, merge accept/edit/scroll, large staged commit workflow, and external refresh of open diff/merge tabs.
 - Extend performance budget requirements to treat Git/diff/merge workstation interactions as gated hot paths.
 - Ensure each scenario reports standard wall, frame, CPU, allocation, RSS, wake-up, redraw, and background-task metrics with committed baselines.
+- Split rollout into early scenario skeletons and harness seams, feature-adjacent scenario activation/baselines, and final baseline consolidation/documentation.
 
 ## Capabilities
 

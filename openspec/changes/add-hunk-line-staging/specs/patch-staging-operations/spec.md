@@ -44,6 +44,17 @@ Patch operation requests SHALL carry repository snapshot and diff model generati
 - **WHEN** Git rejects a generated patch
 - **THEN** MicroIDE SHALL surface `patch_did_not_apply` with Git output available as detail and SHALL NOT silently retry against a different diff
 
+### Requirement: Patch Application Is Preflighted And Atomic
+Patch operations SHALL preflight applicability before mutation when supported. Failed apply operations SHALL leave index and worktree unchanged for the requested target scope, and reject-style partial patch output SHALL not be used for these user-facing operations.
+
+#### Scenario: Preflight fails
+- **WHEN** preflight applicability check fails for a generated patch
+- **THEN** MicroIDE SHALL return a structured failure result and SHALL not run a mutating apply step
+
+#### Scenario: Mixed staged and unstaged file
+- **WHEN** a file has staged changes plus unrelated unstaged changes and the user unstages selected staged lines
+- **THEN** only the index SHALL change for the selected lines and unrelated worktree edits SHALL remain unchanged
+
 ### Requirement: Binary And Unsupported Targets Are Explicit
 MicroIDE SHALL disable hunk and selected-line patch actions for binary files, submodule pointer changes, and any diff target that lacks stable text line mapping.
 

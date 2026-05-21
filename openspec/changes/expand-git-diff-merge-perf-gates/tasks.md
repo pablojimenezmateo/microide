@@ -1,10 +1,11 @@
-## 1. Scenario Fixtures
+## 1. Phase 9A: Early Skeletons And Fixtures
 
 - [ ] 1.1 Add deterministic fixture repositories for large status, many untracked, 1000 changed files, large text diff, many conflicts, and large staged set.
 - [ ] 1.2 Add helper APIs for scripted Git sidebar refresh, diff navigation, staging, merge accept/edit/scroll, commit open, and watcher refresh.
 - [ ] 1.3 Ensure fixtures use isolated app/config/state/cache roots and fixed seeds.
+- [ ] 1.4 Add scenario skeleton entries and harness seams before feature-complete UI flows so regressions can be measured early.
 
-## 2. Scenario Implementation
+## 2. Phase 9B: Feature-Adjacent Scenario Activation
 
 - [ ] 2.1 Implement `git_sidebar_refresh_large_repo` and `git_sidebar_refresh_many_untracked`.
 - [ ] 2.2 Implement `diff_open_1000_file_changes` and `diff_next_hunk_large_file`.
@@ -13,7 +14,7 @@
 - [ ] 2.5 Implement `commit_open_with_large_staged_set`.
 - [ ] 2.6 Implement `external_change_refresh_open_diff` and `external_change_refresh_open_merge`.
 
-## 3. Baselines And Docs
+## 3. Phase 9C: Baselines And Docs Consolidation
 
 - [ ] 3.1 Capture reference baselines on `perf-runner-v1` for each new scenario.
 - [ ] 3.2 Commit baseline JSON files with tolerances and rationale where defaults are insufficient.

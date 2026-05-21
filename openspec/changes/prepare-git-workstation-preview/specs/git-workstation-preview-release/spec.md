@@ -11,6 +11,10 @@ The Git Workstation Preview SHALL document support for opening a local Git repos
 - **WHEN** preview documentation mentions branch review
 - **THEN** it SHALL state that hosted PR review, account auth, and network review sync are not part of the preview
 
+#### Scenario: Conflict-class support boundaries are explicit
+- **WHEN** preview documentation describes merge support
+- **THEN** it SHALL explicitly identify fully supported common text conflicts versus recognized summary-only conflict classes such as binary, submodule, or complex rename/file-directory conflicts
+
 ### Requirement: Plugins Can Be Disabled At Startup
 MicroIDE SHALL provide `--disable-plugins` and `--safe-mode` startup flags. `--disable-plugins` SHALL skip user-scope plugin loading. `--safe-mode` SHALL imply plugin disabling and SHALL skip nonessential startup behavior documented by the flag.
 
@@ -20,7 +24,7 @@ MicroIDE SHALL provide `--disable-plugins` and `--safe-mode` startup flags. `--d
 
 #### Scenario: Safe mode flag
 - **WHEN** MicroIDE starts with `--safe-mode`
-- **THEN** it SHALL run with plugins disabled and SHALL apply the documented recovery-safe startup behavior
+- **THEN** it SHALL run with plugins disabled, disable plugin syntax loading, skip workspace/session restore, and start in a recovery-safe empty-shell mode unless an explicit project argument is provided
 
 ### Requirement: Disabled Plugin State Is Visible
 When plugins are disabled by startup flag or safe mode, MicroIDE SHALL surface a visible status in host-owned UI such as the status bar, Help/About, or startup notice.
@@ -42,3 +46,10 @@ Preview documentation SHALL describe MicroIDE as native, low-footprint, responsi
 #### Scenario: Release notes describe performance
 - **WHEN** release notes mention performance
 - **THEN** they SHALL reference internal regression baselines or supported workflows rather than claiming superiority over another editor
+
+### Requirement: Branch Review Persistence Is Optional For Preview
+Preview scope SHALL require branch review against a base, but persistent reviewed-file or reviewed-hunk state MAY ship after preview if core Git/diff/merge/commit workflows and safety requirements are already met.
+
+#### Scenario: Preview ships without persistent reviewed markers
+- **WHEN** branch review mode is available and reviewed-state persistence is deferred
+- **THEN** preview documentation SHALL list persistent review markers as a post-preview enhancement rather than a shipped workflow guarantee
