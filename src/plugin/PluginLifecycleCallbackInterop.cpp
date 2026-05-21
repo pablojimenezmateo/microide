@@ -133,7 +133,6 @@ void TearDownPlugins(std::vector<runtime_types::PluginInstance>* plugins,
 }
 
 bool LoadPluginRoot(const std::filesystem::path& plugin_root,
-                    bool project_local,
                     std::vector<runtime_types::PluginInstance>* plugins,
                     const std::function<bool(runtime_types::PluginInstance*, std::string*)>&
                         initialize_state,
@@ -156,7 +155,6 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
   runtime_types::PluginInstance plugin{
       .id = {},
       .root = plugin_root.lexically_normal(),
-      .project_local = project_local,
       .runtime = nullptr,
       .state = nullptr,
       .setup_ref = LUA_NOREF,

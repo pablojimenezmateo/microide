@@ -207,8 +207,8 @@ struct PluginHost::Impl {
 
 #endif
 
-  std::vector<std::pair<std::filesystem::path, bool>> DiscoverPluginRoots() const {
-    return discovery_interop::DiscoverPluginRoots(current_project_root);
+  std::vector<std::filesystem::path> DiscoverPluginRoots() const {
+    return discovery_interop::DiscoverPluginRoots();
   }
 
 #include "plugin/PluginHostLuaApi.inc"

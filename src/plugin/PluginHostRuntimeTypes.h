@@ -24,7 +24,6 @@ namespace microide::plugin::runtime_types {
 struct PluginInstance {
   std::string id;
   std::filesystem::path root;
-  bool project_local = false;
 #if MICROIDE_HAS_LUA_PLUGINS
   std::unique_ptr<LuaRuntime> runtime;
   lua_State* state = nullptr;

@@ -20,9 +20,9 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
   impl_->TearDownPlugins();
   impl_->current_project_root = next_project_root;
 
-  for (const auto& entry : impl_->DiscoverPluginRoots()) {
+  for (const auto& plugin_root : impl_->DiscoverPluginRoots()) {
     std::string error_message;
-    if (!impl_->LoadPluginRoot(entry.first, entry.second, &error_message) &&
+    if (!impl_->LoadPluginRoot(plugin_root, &error_message) &&
         !error_message.empty()) {
       impl_->RecordError(std::move(error_message));
     }

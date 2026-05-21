@@ -56,7 +56,6 @@ void TearDownPlugins(std::vector<runtime_types::PluginInstance>* plugins,
                          destroy_plugin_state);
 
 bool LoadPluginRoot(const std::filesystem::path& plugin_root,
-                    bool project_local,
                     std::vector<runtime_types::PluginInstance>* plugins,
                     const std::function<bool(runtime_types::PluginInstance*, std::string*)>&
                         initialize_state,

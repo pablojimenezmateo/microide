@@ -11,6 +11,7 @@ RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& rep
 RuleResult CheckEssentialEditorCppModulesDoNotTouchLuaState(const std::filesystem::path& repo_root);
 RuleResult CheckPluginDrainBeforeTeardown(const std::filesystem::path& repo_root);
 RuleResult CheckPluginTranslationUnitSize(const std::filesystem::path& repo_root);
+RuleResult CheckNoProjectLocalPluginDiscovery(const std::filesystem::path& repo_root);
 
 std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root);
 
