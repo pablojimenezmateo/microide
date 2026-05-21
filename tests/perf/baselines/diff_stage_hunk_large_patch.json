@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":126476,"p50_allocations":120800,"p95_allocations":123928.10000000001,"p95_wall_ms":83.320182599999981,"max_wall_ms":90.937625999999995,"p50_wall_ms":68.405682500000012},"scenario":"diff_stage_hunk_large_patch"}

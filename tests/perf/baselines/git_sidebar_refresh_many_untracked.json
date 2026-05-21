@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":139353,"p50_allocations":136847,"p95_allocations":138236.54999999999,"p95_wall_ms":59.224400149999994,"max_wall_ms":59.398105999999999,"p50_wall_ms":56.360838999999999},"scenario":"git_sidebar_refresh_many_untracked"}

@@ -36,6 +36,13 @@ class GitRepositoryService {
                       bool tree_git_badges_materialized);
   bool ConsumePendingSidebarSnapshot(GitSidebarState::RefreshSnapshot* snapshot);
 
+#ifdef MICROIDE_TESTING
+  void RunRefreshSynchronouslyForTesting(const std::filesystem::path& project_root,
+                                         GitSidebarRefreshScope scope,
+                                         OutgoingBaseChoice outgoing_base_choice,
+                                         bool tree_git_badges_materialized);
+#endif
+
   static bool IsGitRepoValid(const std::filesystem::path& project_root);
 
  private:

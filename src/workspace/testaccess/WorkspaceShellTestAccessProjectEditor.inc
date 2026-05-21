@@ -10,6 +10,24 @@
     shell.context_.current_project_state.sidebar.view_id = "tree";
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Sidebar;
   }
+  static void PerfPrimeGitRepository(WorkspaceShell& shell, const std::filesystem::path& root) {
+    shell.project_background_executor_.Cancel();
+    shell.git_repository_service_.Reset();
+    shell.context_.current_project_state.root = root.lexically_normal();
+    shell.context_.current_project_state.sidebar.git.refreshing = false;
+    shell.context_.current_project_state.sidebar.git.entries.clear();
+    shell.context_.current_project_state.sidebar.visible = true;
+    shell.context_.current_project_state.sidebar.view_id = "git";
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Sidebar;
+  }
+  static void PerfRunGitSidebarRefreshSync(WorkspaceShell& shell) {
+    shell.context_.current_project_state.sidebar.git.refreshing = true;
+    shell.git_repository_service_.RunRefreshSynchronouslyForTesting(
+        shell.context_.current_project_state.root, GitSidebarRefreshScope::Full,
+        shell.context_.current_project_state.sidebar.git.outgoing_base_choice,
+        shell.context_.current_project_state.sidebar.git.tree_git_badges_materialized);
+    shell.ConsumeGitSidebarRefresh();
+  }
 
   static void OpenSingleEditorTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     editor::TextViewport opened_view;

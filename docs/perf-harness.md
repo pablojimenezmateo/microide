@@ -69,6 +69,7 @@ coverage and a clear owner.
 | Editing and render throughput | `typing_small_file`, `typing_large_file`, `scroll_large_file`, `large_file_open_first_paint`, `multi_tab_cycle` | p50/p95/max wall time, allocation counts | editor, text viewport, render view-model pipeline |
 | Search and indexing | `project_search_literal`, `project_search_regex`, `search_first_result`, `file_finder_cold` | p50/p95/max wall time | project search, file finder, background executor |
 | Shell surfaces | `compare_tab_open`, `merge_tab_open`, `compare_scroll_large_fixture`, `merge_scroll_large_fixture`, `merge_scroll_interleaved_hunks`, `compare_scroll_selection`, `git_sidebar_activate` | p50/p95/max wall time, allocation counts | compare/merge services, sidebar services |
+| Git workstation | `git_sidebar_refresh_large_repo`, `git_sidebar_refresh_many_untracked`, `diff_open_1000_file_changes`, `diff_next_hunk_large_file`, `diff_stage_hunk_large_patch`, `diff_stage_selected_lines`, `merge_open_many_conflicts`, `merge_next_conflict_large_file`, `merge_accept_hunk_interleaved`, `merge_edit_result_then_scroll`, `commit_open_with_large_staged_set`, `external_change_refresh_open_diff`, `external_change_refresh_open_merge` | p50/p95/max wall time, allocation counts, per-iteration `perf_counters` | `GitRepositoryService`, compare/merge services, staging, commit workflow, file watchers |
 | Repo-open memory | `repo_open_rss_idle` | open-to-idle wall time, allocation counts, enforced steady-state RSS budget | workspace init, project catalog, tree/index startup |
 | Terminal and output | `terminal_scroll_long_output` | p50/p95/max wall time, allocation counts | terminal panel, scroll and redraw integration |
 | Idle and long soak | `idle_soak_30s`, `long_soak_8h`, `switch_and_idle` | wake-up count, wall time, allocation counts | event loop, scheduled wake handling, watchers |
@@ -85,9 +86,10 @@ described honestly in README / roadmap text until they are closed:
   large-file interaction. Cursor jumps and edit-after-open traces remain worth adding if those
   regressions recur.
 - the large-surface interaction gates now cover compare and merge scroll bursts, interleaved merge
-  hunks, and compare scrolling with a multi-row selection, but they still do not cover every
-  compare/merge interaction pattern. Hunk-navigation and mixed edit/scroll traces on large fixtures
-  remain worth adding if those regressions recur.
+  hunks, compare scrolling with a multi-row selection, and the Git workstation scenario set below
+  (sidebar refresh, diff open/navigation/staging, merge open/navigation/accept/edit-scroll, commit
+  open, external refresh). Stage/discard and every compare/merge interaction pattern are still not
+  fully covered.
 
 Do not paper over these gaps with broad wording like "memory is benchmarked" or "diff/merge is
 fully covered." Say exactly which scenarios exist.
@@ -189,6 +191,63 @@ Current notable scenarios:
   - baseline:
     - `tests/perf/baselines/git_sidebar_activate.json`
   - skips gracefully when fixture directory is absent
+
+### Git workstation fixtures and scenarios
+
+Generate deterministic Git workstation fixtures (not checked into git; listed in
+`tests/perf/fixtures/.gitignore`):
+
+```bash
+bash tests/perf/generate_git_workstation_fixtures.sh
+```
+
+Fixture roots:
+
+| Fixture | Purpose |
+| --- | --- |
+| `tests/perf/fixtures/git_1000_changed_project/` | 1 000 modified tracked files (sidebar refresh + diff open) |
+| `tests/perf/fixtures/git_many_untracked_project/` | 1 000 tracked + 1 500 untracked |
+| `tests/perf/fixtures/git_large_diff_project/` | ~12k-line `src/large.cpp` working-tree diff |
+| `tests/perf/fixtures/git_large_staged_project/` | 800 staged modifications |
+| `tests/perf/fixtures/git_many_conflicts_project/` | 420-block three-way merge inputs (`base.cpp`, `current.cpp`, `incoming.cpp`) |
+| `tests/perf/fixtures/git_large_status_project/` | 5 000 tracked files (generator only; refresh scenarios use `git_1000_changed_project` to avoid multi-minute project open) |
+
+Scenarios live in `tests/perf/GitWorkstationPerfScenarios.cpp`. Git-only paths use
+`WorkspaceShellTestAccess::PerfPrimeGitRepository` plus
+`PerfRunGitSidebarRefreshSync` (a synchronous testing seam on `GitRepositoryService`) so refresh
+measurements settle without relying on background SDL wake pumping in `microide_perf`. Compare
+scenarios open working-tree tabs through `OpenWorkingTreeComparison` rather than shell commands.
+
+Gate scenarios (each has `tests/perf/baselines/<scenario>.json`):
+
+- `git_sidebar_refresh_large_repo`: prime `git_1000_changed_project`, sync sidebar refresh, assert ≥ 500 entries
+- `git_sidebar_refresh_many_untracked`: prime `git_many_untracked_project`, sync refresh, assert ≥ 1 000 tracked entries
+- `diff_open_1000_file_changes`: refresh sidebar, open first changed-file compare tab
+- `diff_next_hunk_large_file`: open `git_large_diff_project` compare, jump next hunk repeatedly
+- `diff_stage_hunk_large_patch`: stage current compare hunk on large patch
+- `diff_stage_selected_lines`: stage a multi-line right-pane selection
+- `merge_open_many_conflicts`: open three-way merge from `git_many_conflicts_project`, assert hunk model built
+- `merge_next_conflict_large_file`: temp interleaved merge fixture, next-conflict navigation burst
+- `merge_accept_hunk_interleaved`: accept-current on interleaved hunks
+- `merge_edit_result_then_scroll`: type in merge result pane then scroll
+- `commit_open_with_large_staged_set`: prime `git_large_staged_project`, open commit workflow
+- `external_change_refresh_open_diff`: open compare, simulate external file change, refresh
+- `external_change_refresh_open_merge`: open merge, simulate external change, refresh
+
+Capture or refresh all Git workstation baselines on the reference runner (required before merge
+when baselines move):
+
+```bash
+xvfb-run -a env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
+  ./build/microide-perf-make/microide/microide_perf \
+    --reference-runner=perf-runner-v1 \
+    --scenarios=git_sidebar_refresh_large_repo,git_sidebar_refresh_many_untracked,diff_open_1000_file_changes,diff_next_hunk_large_file,diff_stage_hunk_large_patch,diff_stage_selected_lines,merge_open_many_conflicts,merge_next_conflict_large_file,merge_accept_hunk_interleaved,merge_edit_result_then_scroll,commit_open_with_large_staged_set,external_change_refresh_open_diff,external_change_refresh_open_merge \
+    --iterations=10 \
+    --update-baseline
+```
+
+Local dummy-driver runs are advisory (`provenance=advisory`); they are useful for smoke and
+triage but SHALL NOT replace `perf-runner-v1` evidence when updating committed baselines.
 
 - `repo_open_rss_idle` (gate): opens the large-project fixture, pumps the first frames, waits
   500 ms at idle, and asserts steady-state RSS ≤ 64 MiB on Linux while also tracking wall time and

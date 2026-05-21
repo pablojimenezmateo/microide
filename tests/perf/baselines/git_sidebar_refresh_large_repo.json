@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":83204,"p50_allocations":80792,"p95_allocations":82129.850000000006,"p95_wall_ms":68.38012784999998,"max_wall_ms":77.157218999999998,"p50_wall_ms":52.340392999999999},"scenario":"git_sidebar_refresh_large_repo"}

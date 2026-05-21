@@ -307,6 +307,12 @@ FIXTURES_TO_MIRROR = [
     "tests/perf/fixtures/file_finder_large",
     "tests/perf/fixtures/file_finder_large.sha256",
     "tests/perf/fixtures/git_status_project",
+    "tests/perf/fixtures/git_large_status_project",
+    "tests/perf/fixtures/git_many_untracked_project",
+    "tests/perf/fixtures/git_1000_changed_project",
+    "tests/perf/fixtures/git_large_diff_project",
+    "tests/perf/fixtures/git_large_staged_project",
+    "tests/perf/fixtures/git_many_conflicts_project",
 ]
 
 # Scenarios where additional iterations add no signal (long deterministic

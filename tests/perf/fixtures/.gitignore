@@ -1,2 +1,8 @@
 file_finder_large/
 git_status_project/
+git_large_status_project/
+git_many_untracked_project/
+git_1000_changed_project/
+git_large_diff_project/
+git_large_staged_project/
+git_many_conflicts_project/

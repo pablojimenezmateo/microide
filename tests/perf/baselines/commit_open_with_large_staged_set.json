@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":76832,"p50_allocations":74438,"p95_allocations":75765.949999999997,"p95_wall_ms":77.43318099999999,"max_wall_ms":78.268119999999996,"p50_wall_ms":72.195514500000002},"scenario":"commit_open_with_large_staged_set"}

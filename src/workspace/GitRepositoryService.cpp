@@ -318,6 +318,44 @@ void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_r
   }
 }
 
+#ifdef MICROIDE_TESTING
+void GitRepositoryService::RunRefreshSynchronouslyForTesting(
+    const std::filesystem::path& project_root,
+    GitSidebarRefreshScope scope,
+    OutgoingBaseChoice outgoing_base_choice,
+    bool tree_git_badges_materialized) {
+  if (project_root.empty()) {
+    Reset();
+    return;
+  }
+
+  RefreshRequest request{
+      .project_root = project_root,
+      .scope = scope,
+      .outgoing_base_choice = outgoing_base_choice,
+      .tree_git_badges_materialized = tree_git_badges_materialized,
+  };
+  {
+    std::lock_guard lock(mutex_);
+    active_project_root_ = project_root;
+    refresh_in_flight_ = false;
+    follow_up_refresh_pending_ = false;
+    deferred_refresh_.reset();
+    request.generation = ++refresh_generation_;
+    current_state_.stale = true;
+    current_state_.refreshing = true;
+  }
+
+  const project::GitRepositoryState repository_state = BuildRepositoryState(request);
+  {
+    std::lock_guard lock(mutex_);
+    current_state_ = repository_state;
+  }
+  GitSidebarState::RefreshSnapshot snapshot = BuildSidebarSnapshot(repository_state, request);
+  PublishSnapshot(std::move(snapshot), request.generation);
+}
+#endif
+
 bool GitRepositoryService::ConsumePendingSidebarSnapshot(
     GitSidebarState::RefreshSnapshot* snapshot) {
   if (snapshot == nullptr) {
