@@ -37,6 +37,7 @@ class TabCoordinator {
     std::function<void(bool)> request_active_tab_redraw;
     std::function<void()> request_tab_strip_redraw;
     std::function<void()> request_editor_surface_redraw;
+    std::function<void()> request_automatic_git_sidebar_refresh;
     std::function<void(std::size_t)> activate_tab;
   };
 

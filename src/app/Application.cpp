@@ -446,6 +446,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       SDL_RenderPresent(renderer_);
       RecordRenderStats(true, true, false, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
       first_render_complete_ = true;
+      workspace_shell_.OnFramePresented();
       return;
     }
 
@@ -506,6 +507,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     RecordRenderStats(true, true, false, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
   }
   first_render_complete_ = true;
+  workspace_shell_.OnFramePresented();
 }
 
 bool Application::UpdateRendererPresentation(int* logical_width, int* logical_height) {

@@ -224,7 +224,7 @@ void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
              initial_src_entry->git_status == project::GitFileStatus::Clean,
          "opening a project should not synchronously collect tree git badges");
 
-  WorkspaceShellTestAccess::MaybeRequestTreeGitBadgesAfterFirstPaint(shell);
+  WorkspaceShellTestAccess::OnFramePresented(shell);
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "first paint should dispatch async tree git badge refresh");
   const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -376,6 +376,77 @@ void TestWorkspaceShellTerminalWakeRefreshesStatusBarAfterCommit() {
       shell, microide::workspace::StatusBarSegmentId::Project);
   Expect(project_segment.find("[clean]") != std::string::npos,
          "terminal wake refresh should update the status bar after a commit");
+}
+
+void TestWorkspaceShellProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::vector<std::filesystem::path> files;
+  files.reserve(300);
+  for (int i = 0; i < 300; ++i) {
+    const std::filesystem::path path = root / "src" / ("file_" + std::to_string(i) + ".cpp");
+    WriteFile(path, "int value() {\n  return 1;\n}\n");
+    files.push_back(path);
+  }
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add non-blocking directory refresh fixture", "non-blocking directory refresh");
+  for (int i = 0; i < 120; ++i) {
+    WriteFile(files[static_cast<std::size_t>(i)], "int value() {\n  return 2;\n}\n");
+  }
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "non-blocking directory refresh fixture should open");
+  WorkspaceShellTestAccess::OnFramePresented(shell);
+
+  const auto refresh_start = std::chrono::steady_clock::now();
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  const auto refresh_elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                            refresh_start)
+          .count();
+  Expect(refresh_elapsed < 250,
+         "refreshing project files should rebuild the tree without synchronously collecting git "
+         "statuses");
+
+  WorkspaceShellTestAccess::SetFileIndexHasPendingChanges(shell, true);
+  const auto reload_start = std::chrono::steady_clock::now();
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
+         "file-index reload should refresh the directory tree");
+  const auto reload_elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                            reload_start)
+          .count();
+  Expect(reload_elapsed < 250,
+         "file-index reload should not synchronously collect git statuses on the main thread");
+}
+
+void TestWorkspaceShellTerminalWakeDoesNotForceProjectScan() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 1500; ++i) {
+    WriteFile(root / "src" / ("file_" + std::to_string(i) + ".cpp"),
+              "int value() {\n  return 1;\n}\n");
+  }
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add terminal wake fixture", "terminal wake fixture");
+  WriteFile(root / "src" / "file_0.cpp", "int value() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "terminal wake non-blocking fixture should open");
+
+  const auto start = std::chrono::steady_clock::now();
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+          .count();
+  Expect(elapsed < 250,
+         "terminal wake should not synchronously arm the project watcher or scan the tree");
+  Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "terminal wake should request source-control refresh asynchronously");
 }
 
 void TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking() {
@@ -2692,6 +2763,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/ProjectOpenMaterializesTreeGitBadgesAfterFirstPaint",
           TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint);
+  AddTest(tests, "WorkspaceShell/ProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses",
+          TestWorkspaceShellProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses);
+  AddTest(tests, "WorkspaceShell/TerminalWakeDoesNotForceProjectScan",
+          TestWorkspaceShellTerminalWakeDoesNotForceProjectScan);
   AddTest(tests, "WorkspaceShell/AutomaticGitRefreshKeepsTreeBadgesClean",
           TestWorkspaceShellAutomaticGitRefreshKeepsTreeBadgesClean);
   AddTest(tests, "WorkspaceShell/StatusBarShowsSourceControlState",

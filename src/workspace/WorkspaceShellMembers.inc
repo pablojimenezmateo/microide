@@ -112,6 +112,7 @@
   IdleWaitState CurrentIdleWaitState() const;
   std::optional<Uint32> NextAnimationDelayMs() const;
   bool ConsumePostRenderFullRedrawRequest();
+  void OnFramePresented();
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
   RenderInvalidation ConsumePendingRenderInvalidation();
   void RequestQuit();

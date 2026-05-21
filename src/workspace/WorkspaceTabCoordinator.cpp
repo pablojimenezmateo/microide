@@ -85,6 +85,13 @@ bool TabCoordinator::Save(std::size_t index) {
     return false;
   }
 
+  const auto refresh_directory_tree = [this]() {
+    state_.directory_tree.Refresh();
+    if (operations_.request_automatic_git_sidebar_refresh) {
+      operations_.request_automatic_git_sidebar_refresh();
+    }
+  };
+
   if (state_.open_tabs[index].kind == TabEntry::Kind::Compare &&
       state_.open_tabs[index].compare.has_value()) {
     auto& compare_tab = state_.open_tabs[index].compare.value();
@@ -94,7 +101,7 @@ bool TabCoordinator::Save(std::size_t index) {
     if (!compare_tab.right_viewport.Save()) {
       return false;
     }
-    state_.directory_tree.Refresh();
+    refresh_directory_tree();
     operations_.notify_plugin_buffer_save(compare_tab.right_viewport.path());
     return true;
   }
@@ -110,7 +117,7 @@ bool TabCoordinator::Save(std::size_t index) {
     }
     merge_tab.persisted_output_baseline =
         util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
-    state_.directory_tree.Refresh();
+    refresh_directory_tree();
     operations_.notify_plugin_buffer_save(merge_tab.result_viewport.path());
     return true;
   }
@@ -154,7 +161,7 @@ bool TabCoordinator::Save(std::size_t index) {
       operations_.invalidate_editor_blame_path(path);
       operations_.notify_plugin_buffer_save(path);
     }
-    state_.directory_tree.Refresh();
+    refresh_directory_tree();
     return true;
   }
   for (const auto& path : open_paths) {
@@ -590,7 +597,6 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   operations_.request_active_tab_redraw(true);
   return true;
 }
-
 bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
                                                  std::string_view content,
                                                  std::string_view title) {

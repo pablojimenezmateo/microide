@@ -55,7 +55,7 @@ void DirectoryTree::Refresh() {
   if (root_.empty()) {
     return;
   }
-  RebuildEntries(true);
+  RebuildEntries(false);
 }
 
 void DirectoryTree::RefreshGitStatuses() {

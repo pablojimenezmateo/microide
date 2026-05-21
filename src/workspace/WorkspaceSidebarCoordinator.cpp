@@ -415,8 +415,11 @@ void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
   const bool materialize_tree_git_badges =
       scope == GitSidebarRefreshScope::TreeBadges ||
       (scope == GitSidebarRefreshScope::Full &&
+       context_.current_project_state.sidebar.git.tree_git_badges_materialized) ||
+      (scope == GitSidebarRefreshScope::StatusOnly &&
        context_.current_project_state.sidebar.git.tree_git_badges_materialized);
   const bool include_outgoing_entries = scope == GitSidebarRefreshScope::Full;
+  const bool populate_sidebar_entries = scope != GitSidebarRefreshScope::TreeBadges;
   std::uint64_t generation = 0;
   {
     std::lock_guard lock(git_sidebar_refresh_mutex_);
@@ -432,7 +435,8 @@ void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
                                        outgoing_base_choice,
                                        generation,
                                        materialize_tree_git_badges,
-                                       include_outgoing_entries]() {
+                                       include_outgoing_entries,
+                                       populate_sidebar_entries]() {
     GitSidebarState::RefreshSnapshot snapshot;
     snapshot.generation = generation;
 
@@ -440,33 +444,35 @@ void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
     if (materialize_tree_git_badges) {
       snapshot.tree_git_statuses = project::BuildGitStatusMap(working_entries);
     }
-    for (const auto& entry : working_entries) {
-      snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-          .section = GitSidebarEntry::Section::Modified,
-          .relative_path = entry.relative_path,
-          .status = entry.status,
-          .conflicted = entry.conflicted,
-          .staged = entry.staged,
-      });
-    }
-
-    const ResolvedGitOutgoingBase resolved_base =
-        ResolveGitOutgoingBase(project_root, outgoing_base_choice);
-    snapshot.repo_available = resolved_base.repo_available;
-    snapshot.branch_label = ResolveGitBranchLabel(project_root);
-    snapshot.base_ref = resolved_base.base_ref;
-    snapshot.base_label = resolved_base.base_label;
-    if (include_outgoing_entries && !snapshot.base_ref.empty()) {
-      const auto outgoing_entries =
-          project::CollectGitBranchOutgoingFiles(project_root, snapshot.base_ref);
-      for (const auto& entry : outgoing_entries) {
+    if (populate_sidebar_entries) {
+      for (const auto& entry : working_entries) {
         snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-            .section = GitSidebarEntry::Section::Outgoing,
+            .section = GitSidebarEntry::Section::Modified,
             .relative_path = entry.relative_path,
             .status = entry.status,
-            .conflicted = false,
-            .staged = false,
+            .conflicted = entry.conflicted,
+            .staged = entry.staged,
         });
+      }
+
+      const ResolvedGitOutgoingBase resolved_base =
+          ResolveGitOutgoingBase(project_root, outgoing_base_choice);
+      snapshot.repo_available = resolved_base.repo_available;
+      snapshot.branch_label = ResolveGitBranchLabel(project_root);
+      snapshot.base_ref = resolved_base.base_ref;
+      snapshot.base_label = resolved_base.base_label;
+      if (include_outgoing_entries && !snapshot.base_ref.empty()) {
+        const auto outgoing_entries =
+            project::CollectGitBranchOutgoingFiles(project_root, snapshot.base_ref);
+        for (const auto& entry : outgoing_entries) {
+          snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
+              .section = GitSidebarEntry::Section::Outgoing,
+              .relative_path = entry.relative_path,
+              .status = entry.status,
+              .conflicted = false,
+              .staged = false,
+          });
+        }
       }
     }
 
@@ -502,6 +508,10 @@ void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
   }
   context_.current_project_state.sidebar.git.tree_git_badges_materialized = true;
   RequestGitSidebarRefresh(GitSidebarRefreshScope::TreeBadges);
+}
+
+void WorkspaceShell::OnFramePresented() {
+  MaybeRequestTreeGitBadgesAfterFirstPaint();
 }
 
 void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {

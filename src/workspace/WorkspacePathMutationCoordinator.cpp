@@ -140,6 +140,8 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
           .clear_editor_blame = [this]() { ClearEditorBlame(); },
           .discard_all_git_sidebar_entries = [this]() { return DiscardAllGitSidebarEntries(); },
           .refresh_project_files = [this]() { RefreshProjectFiles(); },
+          .request_automatic_git_sidebar_refresh =
+              [this]() { RequestAutomaticGitSidebarRefresh(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .refresh_problems_sidebar = [this]() { RefreshProblemsSidebar(); },

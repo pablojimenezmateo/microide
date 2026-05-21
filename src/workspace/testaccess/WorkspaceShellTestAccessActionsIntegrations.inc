@@ -114,6 +114,8 @@
   static void MaybeRequestTreeGitBadgesAfterFirstPaint(WorkspaceShell& shell) {
     shell.MaybeRequestTreeGitBadgesAfterFirstPaint();
   }
+  static void OnFramePresented(WorkspaceShell& shell) { shell.OnFramePresented(); }
+  static void RefreshProjectFiles(WorkspaceShell& shell) { shell.RefreshProjectFiles(); }
   static bool RefreshProblemsSidebar(WorkspaceShell& shell) {
     return shell.RefreshProblemsSidebar();
   }

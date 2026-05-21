@@ -212,6 +212,9 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
     }
     if (saved_any) {
       state.directory_tree.Refresh();
+      if (operations_.request_automatic_git_sidebar_refresh) {
+        operations_.request_automatic_git_sidebar_refresh();
+      }
     }
   }
 

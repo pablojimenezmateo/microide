@@ -93,6 +93,8 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .request_automatic_git_sidebar_refresh =
+              [this]() { RequestAutomaticGitSidebarRefresh(); },
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
       });
 }

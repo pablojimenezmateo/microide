@@ -20,6 +20,7 @@ class PathMutationCoordinator {
     std::function<void()> clear_editor_blame;
     std::function<bool()> discard_all_git_sidebar_entries;
     std::function<void()> refresh_project_files;
+    std::function<void()> request_automatic_git_sidebar_refresh;
     std::function<void()> reveal_selected_tree_sidebar_line;
     std::function<void()> refresh_project_search;
     std::function<void()> refresh_problems_sidebar;

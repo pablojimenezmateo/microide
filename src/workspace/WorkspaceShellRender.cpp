@@ -163,7 +163,6 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
             skip_sidebar ? 1 : 0, skip_bottom_panel ? 1 : 0);
   }
 
-  MaybeRequestTreeGitBadgesAfterFirstPaint();
 }
 
 void WorkspaceShell::Render(SDL_Renderer* renderer, int width, int height) {
