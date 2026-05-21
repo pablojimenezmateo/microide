@@ -159,8 +159,9 @@ serious work.
 - **No sandbox for plugins.** Plugins are trusted local code. See
   [Security & Trust Model](#security--trust-model).
 - **No safe-mode / project-plugin-disable startup path.** There is no `--safe-mode` or
-  `--disable-project-plugins` path, and adding one is currently out of scope. Opening an
-  untrusted repo can execute project plugins.
+  `--disable-project-plugins` path, and adding one is currently out of scope. Opening a
+  repository does not load plugin code from that repository; only user-installed plugins under
+  `~/.config/microide/plugins/` run.
 - **Single-window only.** No detached OS windows. This is deliberate (see
   `openspec/specs/product-vision/spec.md`), not a bug.
 - **No native OS menu bar.** The menu bar is rendered by the app.
@@ -524,7 +525,7 @@ See `docs/startup-tracing.md` and `docs/runtime-profiling.md` for full workflows
   `ctx.formatters.add`, `ctx.save_participants.add`, `ctx.completion.add`,
   `ctx.code_actions.add`, `ctx.tasks.add`, `ctx.tools.add`, `ctx.tests.add`,
   `ctx.scm.add`, `ctx.annotations.add`, `ctx.auth.add`
-- Syntax: `syntax/*.lua` inside plugin directories, loaded on project open and `plugins-reload`
+- Syntax: `syntax/*.lua` inside the user plugin directory, loaded at startup and on `plugins-reload`
 
 ## License
 

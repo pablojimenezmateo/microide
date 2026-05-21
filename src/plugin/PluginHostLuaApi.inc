@@ -617,10 +617,9 @@
   }
 
   bool LoadPluginRoot(const std::filesystem::path& plugin_root,
-                      bool project_local,
                       std::string* error_message) {
     return lifecycle_callback_interop::LoadPluginRoot(
-        plugin_root, project_local, &plugins,
+        plugin_root, &plugins,
         [this](PluginInstance* plugin, std::string* init_error) {
           return InitializeState(plugin, init_error);
         },

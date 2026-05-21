@@ -4,19 +4,9 @@
 
 #include <SDL3/SDL.h>
 
-#include "platform/AppDirectories.h"
+#include "plugin/PluginInstallRoot.h"
 
 namespace microide::workspace {
-
-namespace {
-
-std::filesystem::path GlobalPluginDirectory() {
-  const std::filesystem::path app_directory =
-      platform::ResolveAppDirectory(platform::UserDirectoryKind::Config, "microide");
-  return app_directory.empty() ? std::filesystem::path{} : app_directory / "plugins";
-}
-
-}  // namespace
 
 void WorkspacePluginAssetMonitor::SetPollInterval(std::chrono::milliseconds poll_interval) {
   watcher_.SetPollInterval(poll_interval);
@@ -47,7 +37,10 @@ bool WorkspacePluginAssetMonitor::ConsumeWakeEvent(Uint32 type) {
 
 void WorkspacePluginAssetMonitor::SetProjectRoot(const std::filesystem::path& /*project_root*/) {
   std::vector<std::filesystem::path> roots;
-  roots.push_back(GlobalPluginDirectory());
+  const std::filesystem::path user_plugin_root = plugin::ResolveUserPluginInstallRoot();
+  if (!user_plugin_root.empty()) {
+    roots.push_back(user_plugin_root);
+  }
   watcher_.SetRoots(std::move(roots));
 }
 
@@ -69,6 +62,10 @@ bool WorkspacePluginAssetMonitor::PollForChanges() {
 
 bool WorkspacePluginAssetMonitor::ConsumePendingChanges() {
   return watcher_.Poll();
+}
+
+const std::vector<std::filesystem::path>& WorkspacePluginAssetMonitor::WatchedRoots() const {
+  return watcher_.roots();
 }
 
 bool WorkspacePluginAssetMonitor::ReserveWakeEvent(Uint32* event_type) const {

@@ -22,6 +22,7 @@ class WorkspacePluginAssetMonitor {
   std::optional<std::chrono::milliseconds> NextPollDelay() const;
   bool PollForChanges();
   bool ConsumePendingChanges();
+  const std::vector<std::filesystem::path>& WatchedRoots() const;
 
  private:
   bool ReserveWakeEvent(Uint32* event_type) const;

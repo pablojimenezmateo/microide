@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
 #include "plugin/PluginHost.h"
+#include "plugin/PluginInstallRoot.h"
+#include "workspace/WorkspacePluginAssetMonitor.h"
 
 #include <chrono>
 #include <algorithm>
@@ -197,18 +199,22 @@ void TestPluginHostIgnoresProjectLocalPlugins() {
 #endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
 
   WriteFile(project_root / "README.md", "project plugin ignore fixture\n");
   WritePluginInit(
-      project_plugins, "repo-supplied",
+      project_plugins, "evil",
       R"(local ide = require("microide")
 return ide.plugin({
-  id = "repo.supplied",
+  id = "repo.evil",
   setup = function(ctx)
-    ctx.commands.add("repo.supplied.run", function() end)
+    ctx.commands.add("evil.run", function() end)
+    ctx.sidebar.add({
+      id = "evil.sidebar",
+      label = "Evil",
+      snapshot = function() return {} end
+    })
   end
 })
 )");
@@ -223,6 +229,163 @@ return ide.plugin({
          "project-local .microide/plugins directories should not be loaded");
   Expect(host.CommandNames().empty(),
          "project-local plugins should not register commands");
+  Expect(host.FindSidebarProvider("evil.sidebar") == nullptr,
+         "project-local plugins should not register sidebars");
+}
+
+void TestPluginHostLoadsUserConfigPlugins() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path user_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+
+  WriteFile(project_root / "README.md", "user plugin load fixture\n");
+  WritePluginInit(
+      user_plugins, "good",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "user.good",
+  setup = function(ctx)
+    ctx.commands.add("good.echo", function() end)
+    ctx.sidebar.add({
+      id = "good.sidebar",
+      label = "Good",
+      snapshot = function() return {} end
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "plugin reload should load user config plugins");
+  Expect(host.LoadedPluginCount() == 1, "user config plugin should load");
+  Expect(host.CommandNames().size() == 1 && host.CommandNames().front() == "good.echo",
+         "user config plugin should register commands");
+  Expect(host.FindSidebarProvider("good.sidebar") != nullptr,
+         "user config plugin should register sidebars");
+}
+
+void TestPluginHostPrefersUserPluginOverProjectLocalPlugin() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path user_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
+
+  WriteFile(project_root / "README.md", "user vs project plugin fixture\n");
+  WritePluginInit(
+      user_plugins, "good",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "user.good",
+  setup = function(ctx)
+    ctx.commands.add("good.echo", function() end)
+  end
+})
+)");
+  WritePluginInit(
+      project_plugins, "evil",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "repo.evil",
+  setup = function(ctx)
+    ctx.commands.add("evil.run", function() end)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "plugin reload should succeed with both plugin directories present");
+  Expect(host.LoadedPluginCount() == 1, "only the user config plugin should load");
+  Expect(host.CommandNames().size() == 1 && host.CommandNames().front() == "good.echo",
+         "only user plugin registrations should appear");
+  Expect(std::find(host.CommandNames().begin(), host.CommandNames().end(), "evil.run") ==
+             host.CommandNames().end(),
+         "project-local plugin commands must not register");
+}
+
+void TestPluginHostReloadIgnoresLateProjectLocalPlugin() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path user_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+
+  WriteFile(project_root / "README.md", "late project plugin fixture\n");
+  WritePluginInit(
+      user_plugins, "good",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "user.good",
+  setup = function(ctx)
+    ctx.commands.add("good.echo", function() end)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "initial plugin reload should succeed");
+  Expect(host.LoadedPluginCount() == 1, "user plugin should load on first reload");
+
+  const std::filesystem::path project_plugins = project_root / ".microide" / "plugins";
+  WritePluginInit(
+      project_plugins, "evil",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "repo.evil",
+  setup = function(ctx)
+    ctx.commands.add("evil.run", function() end)
+  end
+})
+)");
+
+  Expect(host.Reload(project_root), "plugins-reload path should ignore late project-local plugins");
+  Expect(host.LoadedPluginCount() == 1,
+         "reload should keep only the user config plugin loaded");
+  Expect(host.CommandNames().size() == 1 && host.CommandNames().front() == "good.echo",
+         "reload should not pick up project-local plugin commands");
+}
+
+void TestPluginAssetMonitorWatchesUserPluginRootOnly() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path user_plugins = config_home / "microide" / "plugins";
+  WriteFile(user_plugins / ".keep", "");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  workspace::WorkspacePluginAssetMonitor monitor;
+  monitor.SetProjectRoot(project_root);
+
+  const std::vector<std::filesystem::path>& watched = monitor.WatchedRoots();
+  Expect(watched.size() == 1, "plugin asset monitor should watch exactly one root");
+  Expect(watched.front() == plugin::ResolveUserPluginInstallRoot(),
+         "plugin asset monitor should watch the user config plugin directory");
+  Expect(watched.front() != project_root,
+         "plugin asset monitor must not watch the active project root");
+  Expect(watched.front() != project_root / ".microide" / "plugins",
+         "plugin asset monitor must not watch project-local plugin directories");
 }
 
 void TestPluginHostRejectsDuplicatePluginIds() {
@@ -1316,6 +1479,13 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostLoadsPluginsAndDispatchesLifecycle);
   AddTest(tests, "PluginHost/IgnoresProjectLocalPlugins",
           TestPluginHostIgnoresProjectLocalPlugins);
+  AddTest(tests, "PluginHost/LoadsUserConfigPlugins", TestPluginHostLoadsUserConfigPlugins);
+  AddTest(tests, "PluginHost/PrefersUserPluginOverProjectLocalPlugin",
+          TestPluginHostPrefersUserPluginOverProjectLocalPlugin);
+  AddTest(tests, "PluginHost/ReloadIgnoresLateProjectLocalPlugin",
+          TestPluginHostReloadIgnoresLateProjectLocalPlugin);
+  AddTest(tests, "PluginHost/AssetMonitorWatchesUserPluginRootOnly",
+          TestPluginAssetMonitorWatchesUserPluginRootOnly);
   AddTest(tests, "PluginHost/RejectsDuplicatePluginIds",
           TestPluginHostRejectsDuplicatePluginIds);
   AddTest(tests, "PluginHost/SkipsBackupPluginDirectories",

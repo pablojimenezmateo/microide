@@ -177,9 +177,71 @@ RuleResult CheckEssentialEditorCppModulesDoNotTouchLuaState(
 }
 
 
+RuleResult CheckNoProjectLocalPluginDiscovery(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "home-only plugin discovery";
+  result.hard_fail = true;
+  const std::array<std::string_view, 4> forbidden_literals = {
+      ".microide/plugins",
+      "project_local",
+      "project-scope",
+      "project-local plugin",
+  };
+  const std::regex discover_with_project_root(
+      R"(DiscoverPluginRoots\s*\(\s*[^)]*(current_project_root|project_root|ProjectRoot))");
+
+  const auto scan_file = [&](const std::filesystem::path& path) {
+    const std::string text = ReadText(path);
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (const std::string_view literal : forbidden_literals) {
+      for (const std::size_t pos : FindCodeLiteralOccurrences(text, literal)) {
+        if (pos < is_code.size() && !is_code[pos]) {
+          continue;
+        }
+        result.violations.push_back(Violation{
+            .path = path,
+            .line = LineNumberAt(text, pos),
+            .message = "plugin discovery must stay home-only; remove project-local seam: " +
+                       std::string(literal),
+        });
+      }
+    }
+    AppendCodeMaskRegexViolations(
+        result, path, text, discover_with_project_root,
+        "plugin discovery must not accept a project root for install scanning");
+  };
+
+  const std::filesystem::path plugin_dir = repo_root / "src/plugin";
+  if (std::filesystem::exists(plugin_dir)) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      const std::string ext = entry.path().extension().string();
+      if (ext != ".h" && ext != ".hpp" && ext != ".cpp" && ext != ".inc") {
+        continue;
+      }
+      scan_file(entry.path());
+    }
+  }
+
+  const std::array<std::string_view, 2> workspace_plugin_files = {
+      "src/workspace/WorkspacePluginAssetMonitor.cpp",
+      "src/workspace/WorkspacePluginAssetMonitor.h",
+  };
+  for (const std::string_view relative : workspace_plugin_files) {
+    const std::filesystem::path path = repo_root / relative;
+    if (std::filesystem::exists(path)) {
+      scan_file(path);
+    }
+  }
+  return result;
+}
+
 std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root) {
   std::vector<RuleResult> results;
   const auto run = [&](auto&& fn) { results.push_back(fn(repo_root)); };
+  run(CheckNoProjectLocalPluginDiscovery);
   run(CheckSinglePluginReloadPerActivation);
   run(CheckEssentialEditorCppModulesDoNotTouchLuaState);
   run(CheckPluginDrainBeforeTeardown);
