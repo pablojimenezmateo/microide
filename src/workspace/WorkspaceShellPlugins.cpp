@@ -228,7 +228,6 @@ void WorkspaceShell::RebuildPhase3Registries() {
   code_action_registry_ = CodeActionRegistry{};
   tool_registry_ = ToolRegistry{};
   test_controller_.Clear();
-  dap_manager_.ShutdownAll();
   std::unordered_set<std::string> active_language_servers;
 
   const auto& host = plugin_runtime_.Host();

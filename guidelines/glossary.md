@@ -44,8 +44,6 @@ Use these terms consistently in plans, docs, code reviews, and commit messages.
   - A plugin contribution that declares an external tool the host may download or manage.
 - Test Provider:
   - A plugin contribution that discovers tests and reports test run results to the host.
-- Debugger Provider:
-  - A plugin contribution that describes a debugger integration boundary without moving debugger orchestration into plugin-owned rendering code.
 
 ## Rendering And Performance Terms
 

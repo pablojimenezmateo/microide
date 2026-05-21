@@ -230,7 +230,7 @@ Work:
 - keep building on the extracted terminal backend instead of reintroducing PTY lifecycle ownership
   into `TerminalSession`
 - implement a Darwin PTY backend with correct resize, shutdown, and child reaping behavior
-- define one explicit environment policy for shell, git, formatter, LSP, DAP, and plugin tool
+- define one explicit environment policy for shell, git, formatter, LSP, and plugin tool
   launches from an app bundle
 - add tests around subprocess launch, terminal session startup, and resize behavior
 

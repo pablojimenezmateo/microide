@@ -77,7 +77,6 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   PushAddOnlyModule(state, host_upvalue, "lsp", fns.lsp_add);
   PushAddOnlyModule(state, host_upvalue, "tasks", fns.task_add);
   PushAddOnlyModule(state, host_upvalue, "tools", fns.tool_add);
-  PushAddOnlyModule(state, host_upvalue, "debuggers", fns.debugger_add);
   PushAddOnlyModule(state, host_upvalue, "tests", fns.test_provider_add);
   PushAddOnlyModule(state, host_upvalue, "scm", fns.scm_provider_add);
   PushAddOnlyModule(state, host_upvalue, "annotations", fns.annotation_provider_add);

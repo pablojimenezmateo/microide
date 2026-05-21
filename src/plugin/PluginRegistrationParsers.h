@@ -66,10 +66,6 @@ struct ToolRegistration {
   PluginHost::ContributedTool contributed;
 };
 
-struct DebuggerRegistration {
-  PluginHost::ContributedDebugger contributed;
-};
-
 struct ScmProviderRegistration {
   PluginHost::ContributedScmProvider contributed;
   runtime_types::ScmProviderRuntime runtime;
@@ -178,11 +174,6 @@ bool ParseToolRegistration(lua_State* state,
                            const std::string& plugin_id,
                            ToolRegistration* out,
                            std::string* error_message);
-
-bool ParseDebuggerRegistration(lua_State* state,
-                               const std::string& plugin_id,
-                               DebuggerRegistration* out,
-                               std::string* error_message);
 
 bool ParseScmProviderRegistration(lua_State* state,
                                   const std::string& plugin_id,

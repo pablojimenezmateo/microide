@@ -103,25 +103,6 @@ bool ParseToolRegistration(lua_State* state,
   return true;
 }
 
-bool ParseDebuggerRegistration(lua_State* state,
-                               const std::string& plugin_id,
-                               DebuggerRegistration* out,
-                               std::string* error_message) {
-  if (out == nullptr) return false;
-  auto id_opt = ReadStringField(state, 1, "id");
-  auto type_opt = ReadStringField(state, 1, "type");
-  auto command_opt = ReadStringArrayField(state, 1, "command");
-  if (!id_opt || !type_opt || !command_opt || command_opt->empty()) return false;
-  out->contributed = PluginHost::ContributedDebugger{
-      .id = plugin_id + "." + *id_opt,
-      .type = std::move(*type_opt),
-      .command = std::move(*command_opt),
-      .plugin_id = plugin_id,
-  };
-  if (error_message) error_message->clear();
-  return true;
-}
-
 bool ParseScmProviderRegistration(lua_State* state,
                                   const std::string& plugin_id,
                                   ScmProviderRegistration* out,

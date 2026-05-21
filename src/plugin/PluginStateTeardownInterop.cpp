@@ -62,7 +62,6 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedLanguageServer>* language_servers,
     std::vector<PluginHost::ContributedTask>* tasks,
     std::vector<PluginHost::ContributedTool>* tools,
-    std::vector<PluginHost::ContributedDebugger>* debuggers,
     std::vector<PluginHost::ContributedTestProvider>* test_providers,
     std::vector<runtime_types::TestProviderRuntime>* test_provider_runtimes,
     std::vector<PluginHost::ContributedScmProvider>* scm_providers,
@@ -202,11 +201,6 @@ void UnregisterContributionsForState(
                                 return e.plugin_id == plugin_id;
                               }),
                tools->end());
-  debuggers->erase(std::remove_if(debuggers->begin(), debuggers->end(),
-                                  [&](const PluginHost::ContributedDebugger& e) {
-                                    return e.plugin_id == plugin_id;
-                                  }),
-                   debuggers->end());
   test_providers->erase(std::remove_if(test_providers->begin(), test_providers->end(),
                                        [&](const PluginHost::ContributedTestProvider& e) {
                                          return e.plugin_id == plugin_id;

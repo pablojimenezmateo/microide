@@ -101,7 +101,6 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedLanguageServer> language_servers;
   std::vector<PluginHost::ContributedTask> tasks;
   std::vector<PluginHost::ContributedTool> tools;
-  std::vector<PluginHost::ContributedDebugger> debuggers;
   std::vector<PluginHost::ContributedTestProvider> test_providers;
   std::vector<TestProviderRuntime> test_provider_runtimes;
   std::vector<PluginHost::ContributedScmProvider> scm_providers;

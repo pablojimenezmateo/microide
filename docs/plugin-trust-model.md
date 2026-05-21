@@ -82,9 +82,7 @@ this layer.
   directory, stdin payload, and environment overrides.
 - `ctx.process.run_async(argv, opts, callback)` — async variant; the host wakes the event loop
   when the process exits and dispatches the callback.
-- Contributed language servers (`ctx.providers.add(...)` registering an LSP) and contributed
-  debug adapters (`ctx.debuggers.add(...)`) cause the host to launch the argv they declare on
-  demand.
+- Contributed language servers cause the host to launch the argv they declare on demand.
 - Contributed formatters (`ctx.formatters.add(...)`) and tasks (`ctx.tasks.add(...)`) likewise
   declare an argv that the host runs.
 

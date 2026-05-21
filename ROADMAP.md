@@ -18,8 +18,8 @@ the next meaningful slices for this codebase under the repo policy:
 ## Current Position
 
 The large plugin-platform expansion is no longer hypothetical work. Manual Lua plugins, host-owned
-registries, async subprocess plumbing, LSP or DAP transport, and SCM or annotation or auth
-provider surfaces are already in the tree.
+registries, async subprocess plumbing, LSP transport, and SCM or annotation or auth provider
+surfaces are already in the tree.
 
 That changes what the roadmap should optimize for. The next work is not "add another foundation."
 It is:
@@ -30,7 +30,7 @@ It is:
   navigation, outgoing-base-branch compare, working-tree-aware merge result reopen, and a
   standalone `microide_diff_bench`. Cohere docs, regression coverage, and remaining polish around
   this wedge before broadening scope again.
-- validate the shipped foundations (LSP / DAP / tasks / tests / SCM) against real workflows
+- validate the shipped foundations (LSP / tasks / tests / SCM) against real workflows
 - harden the remaining host boundaries, especially around `WorkspaceShell` (file decomposition
   is satisfied; ownership decomposition is partial — see `docs/known-tech-debt.md` items 15–16)
 - keep UI latency stable while the new runtime surfaces are exercised under load
@@ -52,8 +52,7 @@ Priority:
 - P0
 
 Goals:
-- validate real LSP, DAP, task, test, SCM, and auth integrations before advertising broader
-  support
+- validate real LSP, task, test, SCM, and auth integrations before advertising broader support
 - confirm that callback delivery, wake routing, cancellation, shutdown, and project switching stay
   correct under repeated concurrent activity
 - keep completion, code actions, and similar UI surfaces host-owned and
@@ -142,13 +141,14 @@ host boundaries and no major latency regressions.
 
 Focus this phase on:
 
-- real LSP and DAP workflows that MicroIDE actually wants to keep, not protocol checkbox growth
+- real LSP and provider-runtime workflows that MicroIDE actually wants to keep, not protocol
+  checkbox growth
 - project, git, and file-watch correctness under active background work
 - continued shell-boundary reduction where validation exposes the wrong ownership seam
 
 Do not expand this phase into:
 
-- richer debugger UX beyond what the first-pass runtime already supports
+- debugger/DAP support
 - plugin background execution unless a real plugin is blocked on it
 - speculative renderer rewrites without profiling evidence
 
@@ -156,7 +156,7 @@ Do not expand this phase into:
 
 Land work in slices like:
 
-1. Real-server validation and bug fixes for LSP, DAP, tasks, tests, and tool execution.
+1. Real-server validation and bug fixes for LSP, tasks, tests, and tool execution.
 2. Real-world validation and bug fixes for async runtime surfaces and tooling workflows.
 3. File-watch, reload, rename, delete, diagnostics, and blame correctness under external changes.
 4. Narrower APIs for the shell-owned action, tooling, and render paths that still rely on broad
@@ -176,7 +176,7 @@ This phase is done when:
 
 ## Next Priorities
 
-### 1. Validate real LSP and DAP workflows before broadening UX
+### 1. Validate real LSP and provider-runtime workflows before broadening UX
 
 Do next:
 - add only the protocol methods or runtime features that unlock real product workflows
@@ -260,7 +260,7 @@ These are explicitly deferred or out of scope unless deliberately promoted into 
 - plugin marketplaces, remote install flows, or Micro-plugin compatibility
 - cloud, collaboration, account, or sync features
 - recent-project or recent-file surfaces
-- debugger UX beyond the already-landed first-pass runtime and command plumbing
+- debugger/DAP support
 - feature work added only because a protocol supports it rather than because MicroIDE needs it
 
 ## Deferred Follow-ups From This Change

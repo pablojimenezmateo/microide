@@ -97,7 +97,7 @@ The authoritative product thesis — including in-scope capabilities, priority o
 
 These are out of scope unless deliberately added as a separate phase:
 
-- full debugger UI beyond first-pass start/stop and output-channel plumbing
+- debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - plugin security-system hardening work, including safe-mode startup, plugin sandboxing, and per-plugin capability prompts
 - cloud or collaboration features

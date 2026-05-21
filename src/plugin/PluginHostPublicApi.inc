@@ -616,10 +616,6 @@ const std::vector<PluginHost::ContributedTool>& PluginHost::ContributedTools() c
   return impl_->tools;
 }
 
-const std::vector<PluginHost::ContributedDebugger>& PluginHost::ContributedDebuggers() const {
-  return impl_->debuggers;
-}
-
 const std::vector<PluginHost::ContributedTestProvider>& PluginHost::ContributedTestProviders()
     const {
   return impl_->test_providers;

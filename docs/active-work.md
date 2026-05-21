@@ -420,7 +420,6 @@ Open work:
     textDocument/definition, and textDocument/references requests delivered back to the host
     through SDL wake events
   - `workspace/WorkspaceLspManager.*` manages multiple LSP servers, one per language_id
-  - `workspace/WorkspaceDapManager.*` manages multiple debug adapters, one per debugger type
   - `workspace/WorkspaceFormatterRegistry.*` stores declarative formatter specs (language_id,
     command, label)
   - `workspace/WorkspaceSaveParticipants.*` stores save-participant specs for Lua callbacks
@@ -434,10 +433,9 @@ Open work:
   - `workspace/WorkspaceTestController.*` manages test discovery and execution results
   - `workspace/WorkspaceOutputChannels.*` (already shipped from Phase 2) provides named log
     channels for tool output
-  - `PluginHost` gains eight new Lua tables: `ctx.formatters` (add), `ctx.save_participants` (add),
+  - `PluginHost` gains seven new Lua tables: `ctx.formatters` (add), `ctx.save_participants` (add),
     `ctx.completion` (add), `ctx.code_actions` (add), `ctx.tasks` (add), `ctx.tools` (add),
-    `ctx.debuggers` (add), `ctx.tests` (add); corresponding C++ accessors are available to
-    workspace coordinators
+    `ctx.tests` (add); corresponding C++ accessors are available to workspace coordinators
   - `PluginHost` now exposes runtime query or execution paths for save participants, completion
     providers, code-action providers, and test providers
   - `workspace/WorkspaceLspClient.*` now supports `textDocument/formatting`
@@ -446,8 +444,7 @@ Open work:
   - `WorkspaceToolDownloader::Download(...)` is no longer a stub and now validates cached or
     local file installs
   - built-in commands, menus, and keybindings now surface completion, code actions, tasks, test
-    discovery or execution, output channels, and first-pass debug start or stop through live shell
-    state
+    discovery or execution, and output channels through live shell state
   - completion and code actions now render through dedicated host-owned editor overlays, while
     task and test flows reuse the bottom panel and Tests sidebar instead of inventing parallel UI
   - runtime and shell wiring are covered in `tests/PluginHostTests.cpp` and
@@ -458,12 +455,12 @@ Open work:
 
 Open work:
 
-- keep validating real LSP and DAP server communication beyond the shipped end-to-end fake-server
-  coverage before promising broader language-server or debugger coverage
+- keep validating real LSP server communication beyond the shipped end-to-end fake-server
+  coverage before promising broader language-server coverage
 - keep the completion and code-action overlays host-owned and minimal; do not fork the command
   prompt into a second editor interaction model
 - extend test UX only after real controller state exists for richer tree, gutter, and per-test
-  debug workflows
+  run workflows
 - add remote tool-download transports only when a real workflow needs them; the shipped path is
   cache-backed local install plus SHA validation
 
@@ -631,7 +628,7 @@ Open work:
 
 These are not current project work unless deliberately promoted into their own phase:
 
-- full debugger UI beyond first-pass start or stop and output-channel plumbing
+- debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - plugin safe-mode / project-plugin-disable startup paths
 - cloud or collaboration features

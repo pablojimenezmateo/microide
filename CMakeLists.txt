@@ -377,7 +377,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspManager.cpp
-  src/workspace/WorkspaceDapManager.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
   src/workspace/WorkspaceSaveParticipants.cpp
   src/workspace/WorkspaceCompletionRegistry.cpp

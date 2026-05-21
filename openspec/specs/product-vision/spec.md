@@ -42,7 +42,7 @@ open repository, inspect changes, diff files, resolve merge conflicts, then stag
 
 ### Requirement: Durable Non-Goals
 
-MicroIDE SHALL treat the following as out of scope unless deliberately promoted into a dedicated phase: full debugger UI beyond first-pass start/stop plus output-channel plumbing, plugin marketplaces and remote install flows, Micro-plugin compatibility, plugin security-system hardening work (including safe-mode startup, plugin sandboxing, and per-plugin capability prompts), cloud or collaboration features, account systems and sync, recent-project and recent-file surfaces, and native OS menu integration.
+MicroIDE SHALL treat the following as out of scope unless deliberately promoted into a dedicated phase: debugger/DAP support, plugin marketplaces and remote install flows, Micro-plugin compatibility, plugin security-system hardening work (including safe-mode startup, plugin sandboxing, and per-plugin capability prompts), cloud or collaboration features, account systems and sync, recent-project and recent-file surfaces, and native OS menu integration.
 
 #### Scenario: Feature request falls inside a non-goal
 - **WHEN** a proposal requests a feature whose primary capability falls inside the non-goal list

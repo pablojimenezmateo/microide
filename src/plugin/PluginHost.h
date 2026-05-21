@@ -139,13 +139,6 @@ class PluginHost {
     std::string plugin_id;
   };
 
-  struct ContributedDebugger {
-    std::string id;
-    std::string type;  // "lldb", "python", "node", etc.
-    std::vector<std::string> command;
-    std::string plugin_id;
-  };
-
   struct ContributedTestProvider {
     std::string id;
     std::string language_id;
@@ -405,7 +398,6 @@ class PluginHost {
   const std::vector<ContributedLanguageServer>& ContributedLanguageServers() const;
   const std::vector<ContributedTask>& ContributedTasks() const;
   const std::vector<ContributedTool>& ContributedTools() const;
-  const std::vector<ContributedDebugger>& ContributedDebuggers() const;
   const std::vector<ContributedTestProvider>& ContributedTestProviders() const;
   const std::vector<ContributedScmProvider>& ContributedScmProviders() const;
   const std::vector<ContributedAnnotationProvider>& ContributedAnnotationProviders() const;

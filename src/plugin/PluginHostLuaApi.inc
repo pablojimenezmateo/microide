@@ -270,16 +270,6 @@
         });
   }
 
-  static int LuaDebuggerAdd(lua_State* state) {
-    return RegisterTableContribution(
-        state, "debugger registration requires an active plugin state",
-        "failed to parse debugger registration",
-        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterDebugger(
-              state, plugin->id, &host->debuggers, error_message);
-        });
-  }
-
   static int LuaTestProviderAdd(lua_State* state) {
     return RegisterTableContribution(
         state, "test provider registration requires an active plugin state",
@@ -476,7 +466,6 @@
             .lsp_add = &LuaLspAdd,
             .task_add = &LuaTaskAdd,
             .tool_add = &LuaToolAdd,
-            .debugger_add = &LuaDebuggerAdd,
             .test_provider_add = &LuaTestProviderAdd,
             .scm_provider_add = &LuaScmProviderAdd,
             .annotation_provider_add = &LuaAnnotationProviderAdd,
@@ -555,7 +544,7 @@
         &hovers, &hover_provider_order, &menu_entries, &keybindings, &settings, &status_items,
         &status_item_order, &formatters, &save_participants, &save_participant_runtimes,
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
-        &language_servers, &tasks, &tools, &debuggers, &test_providers, &test_provider_runtimes,
+        &language_servers, &tasks, &tools, &test_providers, &test_provider_runtimes,
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
         &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,
         &bracket_sets, &comment_markers, &indent_rules, &snippets);

@@ -126,22 +126,6 @@ bool RegisterTool(lua_State* state,
   return true;
 }
 
-bool RegisterDebugger(lua_State* state,
-                      std::string_view plugin_id,
-                      std::vector<PluginHost::ContributedDebugger>* debuggers,
-                      std::string* error_message) {
-  if (debuggers == nullptr) {
-    return false;
-  }
-  registration_parsers::DebuggerRegistration registration;
-  if (!registration_parsers::ParseDebuggerRegistration(state, std::string(plugin_id), &registration,
-                                                       error_message)) {
-    return false;
-  }
-  debuggers->push_back(std::move(registration.contributed));
-  return true;
-}
-
 bool RegisterTestProvider(lua_State* state,
                           std::string_view plugin_id,
                           std::vector<PluginHost::ContributedTestProvider>* providers,

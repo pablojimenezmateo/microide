@@ -56,7 +56,7 @@ When MicroIDE is loaded with a project but has no active user input, no running 
 
 ### Requirement: Background Work Isolation
 
-Git, search, blame, LSP, DAP, formatter, and plugin background work SHALL NOT starve one another and SHALL NOT stall the render or input hot paths. Cancellation SHALL flow across project switch, tab close, and shutdown.
+Git, search, blame, LSP, formatter, and plugin background work SHALL NOT starve one another and SHALL NOT stall the render or input hot paths. Cancellation SHALL flow across project switch, tab close, and shutdown.
 
 #### Scenario: Long-running search during git refresh
 - **WHEN** the user triggers a git refresh while a project search is running
@@ -159,4 +159,3 @@ Once the `tiered-document-revisions` capability lands and the harness has record
 #### Scenario: Regression past pre-split numbers blocks merge
 - **WHEN** a later change causes any of those three scenarios' p50 wall time to exceed its pre-tier-split baseline value
 - **THEN** the harness gate SHALL fail and SHALL require either a fix or an explicit, justified `perf-baseline:` rollback
-

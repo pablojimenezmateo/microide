@@ -87,7 +87,7 @@ for what is actually measured, and what is not.
 In-scope and non-goals are declared in `openspec/specs/product-vision/spec.md`.
 
 Short version: built-in editor, diff, merge, search, git, and terminal workflows stay host-owned.
-Out of scope: full debugger UI, plugin marketplaces, cloud/collaboration/sync, recent-project surfaces.
+Out of scope: debugger/DAP support, plugin marketplaces, cloud/collaboration/sync, recent-project surfaces.
 
 The strongest, most validated workflow today is the **native diff / merge / git workstation**:
 compare tabs (working-tree vs HEAD, arbitrary commits, outgoing base-branch files), three-way
@@ -132,8 +132,8 @@ Mature enough to use day-to-day on the maintainer's own work:
 
 Shipped but with caveats (see [Known Limitations](#known-limitations)):
 
-- LSP / DAP transports: implemented and tested against fake servers; real-world server validation
-  is ongoing
+- LSP transport: implemented and tested against fake servers; real-world server validation is
+  ongoing
 - Tool downloader / SHA verification: implemented, not exercised against production tool catalogs
 - Native file-watch backends: Linux `inotify`, macOS `FSEvents`, Windows `ReadDirectoryChangesW`
   exist; the watcher is not yet wired into project-search and file-finder call sites — those still
@@ -168,8 +168,7 @@ serious work.
   uncommon DEC/xterm sequences may render incorrectly.
 - **Cross-platform is uneven.** Linux is the primary host. macOS and Windows have bring-up
   documented in `docs/host-platform-bringup.md`, but day-to-day validation happens on Linux.
-- **Debugger UI is first-pass only.** Start/stop and output-channel plumbing only. Full debug
-  surfaces are an explicit non-goal unless a dedicated phase is opened.
+- **No debugger/DAP support.** Debugging is out of scope unless a dedicated phase is opened.
 - **No recent-project / recent-file UI.** Deliberate non-goal.
 - **No plugin marketplace, remote install, or signed-plugin verification.** Deliberate non-goal.
 
@@ -193,7 +192,7 @@ API a plugin can:
 - read and write project-relative files (`ctx.files.read_text` / `write_text` / `exists`)
 - run arbitrary subprocesses with argv, cwd, stdin, and environment overrides
   (`ctx.process.run`, `ctx.process.run_async`)
-- register language servers and debug adapters whose argv is then launched by the host
+- register language servers whose argv is then launched by the host
 - contribute diagnostics, sidebars, status items, code actions, and save participants that fire
   on every save
 
@@ -526,8 +525,8 @@ See `docs/startup-tracing.md` and `docs/runtime-profiling.md` for full workflows
   `ctx.files.*`, `ctx.process.run`, `ctx.diagnostics.*`, `ctx.hover.add`,
   `ctx.settings.*`, `ctx.menus.add`, `ctx.keybindings.add`, `ctx.status.*`,
   `ctx.formatters.add`, `ctx.save_participants.add`, `ctx.completion.add`,
-  `ctx.code_actions.add`, `ctx.tasks.add`, `ctx.tools.add`, `ctx.debuggers.add`,
-  `ctx.tests.add`, `ctx.scm.add`, `ctx.annotations.add`, `ctx.auth.add`
+  `ctx.code_actions.add`, `ctx.tasks.add`, `ctx.tools.add`, `ctx.tests.add`,
+  `ctx.scm.add`, `ctx.annotations.add`, `ctx.auth.add`
 - Syntax: `syntax/*.lua` inside plugin directories, loaded on project open and `plugins-reload`
 
 ## License

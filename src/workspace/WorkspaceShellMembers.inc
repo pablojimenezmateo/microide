@@ -1313,7 +1313,6 @@
   ToolRegistry tool_registry_;
   ToolDownloader tool_downloader_;
   TestController test_controller_;
-  DapManager dap_manager_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;
   VirtualDocumentRegistry virtual_document_registry_;

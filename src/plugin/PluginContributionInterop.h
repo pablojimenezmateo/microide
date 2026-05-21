@@ -52,11 +52,6 @@ bool RegisterTool(lua_State* state,
                   std::vector<PluginHost::ContributedTool>* tools,
                   std::string* error_message);
 
-bool RegisterDebugger(lua_State* state,
-                      std::string_view plugin_id,
-                      std::vector<PluginHost::ContributedDebugger>* debuggers,
-                      std::string* error_message);
-
 bool RegisterTestProvider(lua_State* state,
                           std::string_view plugin_id,
                           std::vector<PluginHost::ContributedTestProvider>* providers,

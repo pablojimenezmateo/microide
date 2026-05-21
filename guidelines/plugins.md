@@ -27,7 +27,6 @@ Plugins may contribute capabilities such as:
 - language servers
 - tasks
 - tools
-- debuggers
 - test providers
 - SCM providers
 - annotation providers

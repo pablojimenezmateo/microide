@@ -36,7 +36,6 @@ struct ApiFns {
   lua_CFunction lsp_add;
   lua_CFunction task_add;
   lua_CFunction tool_add;
-  lua_CFunction debugger_add;
   lua_CFunction test_provider_add;
   lua_CFunction scm_provider_add;
   lua_CFunction annotation_provider_add;

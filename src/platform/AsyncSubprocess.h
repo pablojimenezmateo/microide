@@ -9,7 +9,7 @@
 namespace microide::platform {
 
 // A long-running subprocess with bidirectional stdin/stdout communication.
-// Designed for LSP, DAP, and similar protocol-backed servers.
+// Designed for LSP and similar protocol-backed servers.
 // POSIX-only; returns "not implemented" results elsewhere.
 class AsyncSubprocess {
  public:
