@@ -25,6 +25,7 @@ RuleResult CheckNoLegacyPersistenceSymbols(const std::filesystem::path& repo_roo
 RuleResult CheckNoDebuggerDapSurface(const std::filesystem::path& repo_root);
 RuleResult CheckNoExecutorPostThenFutureGetInWorkspace(const std::filesystem::path& repo_root);
 RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& repo_root);
+RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& repo_root);
 RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& repo_root);
 RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path& repo_root);
 RuleResult CheckTextViewportNoFullDocCopy(const std::filesystem::path& repo_root);

@@ -243,7 +243,7 @@ void TestGitOutgoingBaseChoiceResolution() {
   CommitAll(repo_path, "feature beta", "feature beta");
 
   const auto auto_base = ResolveGitOutgoingBase(
-      repo_path, OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::Auto, .custom_ref = {}});
+      repo_path, OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::Auto, .custom_ref = {}}, true);
   Expect(auto_base.repo_available && auto_base.base_ref == "main" &&
              auto_base.base_label == "main",
          "auto outgoing base should resolve the repository base branch");
@@ -253,7 +253,7 @@ void TestGitOutgoingBaseChoiceResolution() {
 
   const auto previous_commit = ResolveGitOutgoingBase(
       repo_path,
-      OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::PreviousCommit, .custom_ref = {}});
+      OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::PreviousCommit, .custom_ref = {}}, true);
   Expect(previous_commit.repo_available && previous_commit.base_ref == "HEAD~1" &&
              previous_commit.base_label == "HEAD~1",
          "previous-commit outgoing base should map to HEAD~1");
@@ -265,7 +265,8 @@ void TestGitOutgoingBaseChoiceResolution() {
 
   const auto specific_ref = ResolveGitOutgoingBase(
       repo_path,
-      OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::SpecificRef, .custom_ref = "HEAD~2"});
+      OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::SpecificRef, .custom_ref = "HEAD~2"},
+      true);
   Expect(specific_ref.repo_available && specific_ref.base_ref == "HEAD~2" &&
              specific_ref.base_label == "HEAD~2",
          "specific-ref outgoing base should preserve the exact ref string");

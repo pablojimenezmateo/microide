@@ -19,13 +19,14 @@ class GitPorcelainParser {
   static std::vector<GitWorkingTreeEntry> ParseWorkingTreeEntries(std::string_view output);
   static std::vector<GitCommitEntry> ParseLog(std::string_view output);
 
+  static void RecordGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
+                              std::filesystem::path relative_path,
+                              GitFileStatus status);
+
  private:
   static bool StatusUsesTargetPath(std::string_view code);
   static int GitStatusPriority(GitFileStatus status);
   static GitFileStatus CombineGitStatus(GitFileStatus current, GitFileStatus next);
-  static void RecordGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
-                              std::filesystem::path relative_path,
-                              GitFileStatus status);
 };
 
 }  // namespace microide::project

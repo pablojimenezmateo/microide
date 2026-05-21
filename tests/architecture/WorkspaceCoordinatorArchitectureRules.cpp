@@ -2,6 +2,7 @@
 
 #include "architecture/ArchitectureFileScanner.h"
 
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -256,5 +257,30 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
   return result;
 }
 
+
+RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "direct GitRepository construction in workspace";
+  result.hard_fail = true;
+  const std::regex pattern(R"(\bproject::GitRepository\s*\(|\bGitRepository\s*\()");
+  const std::array<std::string_view, 1> allowed_files = {
+      "GitRepositoryService.cpp",
+  };
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string filename = entry.path().filename().string();
+    if (std::find(allowed_files.begin(), allowed_files.end(), filename) != allowed_files.end()) {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, pattern,
+        "workspace code must use GitRepositoryService instead of constructing GitRepository");
+  }
+  return result;
+}
 
 }  // namespace microide::tests::architecture

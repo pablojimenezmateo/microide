@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <utility>
 
+#include "app/BackgroundTaskCounter.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
@@ -126,6 +127,19 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (git_sidebar_event_type_ == static_cast<Uint32>(-1)) {
     git_sidebar_event_type_ = 0;
   }
+  git_repository_service_.SetWakeCallbacks(GitRepositoryService::WakeCallbacks{
+      .increment_background_task_count = []() { app::IncrementBackgroundTaskCount(); },
+      .decrement_background_task_count_and_wake = []() { app::DecrementBackgroundTaskCountAndWake(); },
+      .push_refresh_ready_event =
+          [this]() {
+            if (git_sidebar_event_type_ == 0) {
+              return false;
+            }
+            SDL_Event event{};
+            event.type = git_sidebar_event_type_;
+            return SDL_PushEvent(&event);
+          },
+  });
 
   terminal_event_type_ = SDL_RegisterEvents(1);
   if (terminal_event_type_ == static_cast<Uint32>(-1)) {

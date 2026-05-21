@@ -10,44 +10,10 @@
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceGitOutgoingBase.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
-#include "app/BackgroundTaskCounter.h"
 #include "project/GitCompareService.h"
-#include "project/GitRepository.h"
-#include "project/GitStatusService.h"
-#include "util/StringUtil.h"
+#include "workspace/GitRepositoryService.h"
 
 namespace microide::workspace {
-
-namespace {
-
-std::string ResolveGitBranchLabel(const std::filesystem::path& project_root) {
-  const project::GitRepository repo(project_root);
-  if (!repo.IsValid()) {
-    return {};
-  }
-
-  if (const auto symbolic_ref = repo.Execute({"symbolic-ref", "--short", "HEAD"});
-      symbolic_ref.success()) {
-    std::string label = symbolic_ref.output;
-    util::TrimTrailingLineEndings(&label);
-    if (!label.empty()) {
-      return label;
-    }
-  }
-
-  if (const auto short_head = repo.Execute({"rev-parse", "--short", "HEAD"});
-      short_head.success()) {
-    std::string label = short_head.output;
-    util::TrimTrailingLineEndings(&label);
-    if (!label.empty()) {
-      return label;
-    }
-  }
-
-  return "HEAD";
-}
-
-}  // namespace
 
 SidebarCoordinator::SidebarCoordinator(ProjectWorkspaceState& state,
                                        PromptState& prompts,
@@ -406,96 +372,22 @@ void WorkspaceShell::RefreshProjectFiles() {
 void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
   if (context_.current_project_state.root.empty()) {
     context_.current_project_state.sidebar.git.refreshing = false;
+    git_repository_service_.Reset();
     return;
   }
 
-  const std::filesystem::path project_root = context_.current_project_state.root;
-  const OutgoingBaseChoice outgoing_base_choice =
-      context_.current_project_state.sidebar.git.outgoing_base_choice;
-  const bool materialize_tree_git_badges =
-      scope == GitSidebarRefreshScope::TreeBadges ||
-      (scope == GitSidebarRefreshScope::Full &&
-       context_.current_project_state.sidebar.git.tree_git_badges_materialized) ||
-      (scope == GitSidebarRefreshScope::StatusOnly &&
-       context_.current_project_state.sidebar.git.tree_git_badges_materialized);
-  const bool include_outgoing_entries = scope == GitSidebarRefreshScope::Full;
-  const bool populate_sidebar_entries = scope != GitSidebarRefreshScope::TreeBadges;
-  std::uint64_t generation = 0;
-  {
-    std::lock_guard lock(git_sidebar_refresh_mutex_);
-    generation = ++git_sidebar_refresh_generation_;
-    git_sidebar_refresh_snapshot_.reset();
+  if (scope == GitSidebarRefreshScope::TreeBadges) {
+    context_.current_project_state.sidebar.git.tree_git_badges_materialized = true;
+  } else if (scope == GitSidebarRefreshScope::Full) {
+    context_.current_project_state.sidebar.git.tree_git_badges_materialized = true;
   }
 
   context_.current_project_state.sidebar.git.refreshing = true;
+  git_repository_service_.RequestRefresh(
+      context_.current_project_state.root, scope,
+      context_.current_project_state.sidebar.git.outgoing_base_choice,
+      context_.current_project_state.sidebar.git.tree_git_badges_materialized);
   RequestSidebarRedraw();
-  app::IncrementBackgroundTaskCount();
-  project_background_executor_.Post([this,
-                                       project_root,
-                                       outgoing_base_choice,
-                                       generation,
-                                       materialize_tree_git_badges,
-                                       include_outgoing_entries,
-                                       populate_sidebar_entries]() {
-    GitSidebarState::RefreshSnapshot snapshot;
-    snapshot.generation = generation;
-
-    const auto working_entries = project::CollectGitWorkingTreeEntries(project_root);
-    if (materialize_tree_git_badges) {
-      snapshot.includes_tree_git_statuses = true;
-      snapshot.tree_git_statuses = project::BuildGitStatusMap(working_entries);
-    }
-    if (populate_sidebar_entries) {
-      for (const auto& entry : working_entries) {
-        snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-            .section = GitSidebarEntry::Section::Modified,
-            .relative_path = entry.relative_path,
-            .status = entry.status,
-            .conflicted = entry.conflicted,
-            .staged = entry.staged,
-        });
-      }
-
-      const ResolvedGitOutgoingBase resolved_base =
-          ResolveGitOutgoingBase(project_root, outgoing_base_choice);
-      snapshot.repo_available = resolved_base.repo_available;
-      snapshot.branch_label = ResolveGitBranchLabel(project_root);
-      snapshot.base_ref = resolved_base.base_ref;
-      snapshot.base_label = resolved_base.base_label;
-      if (include_outgoing_entries && !snapshot.base_ref.empty()) {
-        const auto outgoing_entries =
-            project::CollectGitBranchOutgoingFiles(project_root, snapshot.base_ref);
-        for (const auto& entry : outgoing_entries) {
-          snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-              .section = GitSidebarEntry::Section::Outgoing,
-              .relative_path = entry.relative_path,
-              .status = entry.status,
-              .conflicted = false,
-              .staged = false,
-          });
-        }
-      }
-    }
-
-    bool stored = false;
-    bool pushed = false;
-    {
-      std::lock_guard lock(git_sidebar_refresh_mutex_);
-      if (generation == git_sidebar_refresh_generation_) {
-        git_sidebar_refresh_snapshot_ = std::move(snapshot);
-        stored = true;
-      }
-    }
-    if (stored && git_sidebar_event_type_ != 0) {
-      SDL_Event event{};
-      event.type = git_sidebar_event_type_;
-      pushed = SDL_PushEvent(&event);
-    }
-    if (!stored) {
-      app::DecrementBackgroundTaskCountAndWake();
-    }
-    (void)pushed;
-  });
 }
 
 void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
@@ -504,7 +396,7 @@ void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
     return;
   }
   pending_tree_git_badge_refresh_after_paint_ = false;
-  if (!project::GitRepository(context_.current_project_state.root).IsValid()) {
+  if (!GitRepositoryService::IsGitRepoValid(context_.current_project_state.root)) {
     return;
   }
   context_.current_project_state.sidebar.git.tree_git_badges_materialized = true;
@@ -524,6 +416,7 @@ void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
   constexpr Uint64 kAutomaticGitRefreshThrottleMs = 750;
   const Uint64 now_ms = SDL_GetTicks();
   if (now_ms < next_automatic_git_sidebar_refresh_ms_) {
+    git_repository_service_.MarkStale();
     return;
   }
   next_automatic_git_sidebar_refresh_ms_ = now_ms + kAutomaticGitRefreshThrottleMs;
@@ -532,23 +425,7 @@ void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
 
 bool WorkspaceShell::ConsumePendingGitSidebarRefreshSnapshot(
     GitSidebarState::RefreshSnapshot* snapshot) {
-  if (snapshot == nullptr) {
-    return false;
-  }
-
-  std::optional<GitSidebarState::RefreshSnapshot> pending;
-  {
-    std::lock_guard lock(git_sidebar_refresh_mutex_);
-    pending = std::move(git_sidebar_refresh_snapshot_);
-    git_sidebar_refresh_snapshot_.reset();
-  }
-  if (!pending.has_value()) {
-    return false;
-  }
-
-  *snapshot = std::move(*pending);
-  app::DecrementBackgroundTaskCountAndWake();
-  return true;
+  return git_repository_service_.ConsumePendingSidebarSnapshot(snapshot);
 }
 
 void WorkspaceShell::RefreshGitSidebar() {

@@ -1,0 +1,344 @@
+#include "workspace/GitRepositoryService.h"
+
+#include <SDL3/SDL_timer.h>
+
+#include <utility>
+
+#include "app/BackgroundTaskCounter.h"
+#include "project/GitCompareService.h"
+#include "project/GitPorcelainV2Parser.h"
+#include "project/GitRepository.h"
+#include "project/GitRepositoryState.h"
+#include "project/GitStatusService.h"
+#include "util/StringUtil.h"
+
+namespace microide::workspace {
+
+namespace {
+
+std::string BranchLabelFromState(const project::GitRepositoryState& state) {
+  if (!state.repo_available) {
+    return {};
+  }
+  switch (state.branch.head_kind) {
+    case project::GitHeadKind::Detached:
+      if (!state.branch.branch_name.empty()) {
+        return "detached @ " + state.branch.branch_name;
+      }
+      if (!state.branch.head_oid.empty()) {
+        return "detached @ " + state.branch.head_oid.substr(0, 7);
+      }
+      return "detached";
+    case project::GitHeadKind::Unborn:
+      return "(unborn)";
+    case project::GitHeadKind::Normal:
+      if (!state.branch.branch_name.empty()) {
+        return state.branch.branch_name;
+      }
+      break;
+  }
+  if (!state.branch.head_oid.empty()) {
+    return state.branch.head_oid.substr(0, 7);
+  }
+  return "HEAD";
+}
+
+}  // namespace
+
+GitRepositoryService::GitRepositoryService(project::ProjectBackgroundExecutor& background_executor)
+    : background_executor_(background_executor) {}
+
+void GitRepositoryService::SetWakeCallbacks(WakeCallbacks callbacks) {
+  wake_callbacks_ = std::move(callbacks);
+}
+
+void GitRepositoryService::Reset() {
+  background_executor_.Cancel();
+  std::lock_guard lock(mutex_);
+  current_state_ = {};
+  pending_sidebar_snapshot_.reset();
+  refresh_generation_ = 0;
+  refresh_in_flight_ = false;
+  follow_up_refresh_pending_ = false;
+  deferred_refresh_.reset();
+  active_project_root_.clear();
+}
+
+const project::GitRepositoryState& GitRepositoryService::CurrentState() const {
+  std::lock_guard lock(mutex_);
+  return current_state_;
+}
+
+bool GitRepositoryService::IsRefreshing() const {
+  std::lock_guard lock(mutex_);
+  return refresh_in_flight_ || current_state_.refreshing;
+}
+
+void GitRepositoryService::MarkStale() {
+  std::lock_guard lock(mutex_);
+  current_state_.stale = true;
+}
+
+bool GitRepositoryService::IsGitRepoValid(const std::filesystem::path& project_root) {
+  return project::GitRepository(project_root).IsValid();
+}
+
+project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
+    const RefreshRequest& request) const {
+  project::GitRepositoryState state{
+      .repository_root = request.project_root,
+      .branch = {},
+      .entries = {},
+      .tree_git_statuses = {},
+      .refresh_error = {},
+      .generation = request.generation,
+      .refreshed_at_ms = SDL_GetTicks(),
+      .refreshing = true,
+  };
+
+  const project::GitRepository repo(request.project_root);
+  if (!repo.IsValid()) {
+    state.repo_available = false;
+    state.refresh_error = {
+        .category = project::GitRefreshErrorCategory::NotARepo,
+        .detail = "not a git repository",
+    };
+    state.refreshing = false;
+    return state;
+  }
+
+  const auto result = repo.Execute(
+      {"status", "--porcelain=v2", "-z", "--branch", "--renames", "--untracked-files=all"},
+      false);
+  if (!result.success()) {
+    state.repo_available = true;
+    state.refresh_error = {
+        .category = project::ClassifyGitRefreshFailure(result.exit_code, result.output),
+        .detail = result.output,
+    };
+    state.stale = true;
+    state.refreshing = false;
+    return state;
+  }
+
+  state = project::GitPorcelainV2Parser::Parse(result.output, request.project_root,
+                                               request.generation, state.refreshed_at_ms);
+  state.repo_available = true;
+  state.refreshing = false;
+  return state;
+}
+
+GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
+    const project::GitRepositoryState& repository_state,
+    const RefreshRequest& request) const {
+  GitSidebarState::RefreshSnapshot snapshot;
+  snapshot.generation = repository_state.generation;
+
+  const bool materialize_tree_git_badges =
+      request.scope == GitSidebarRefreshScope::TreeBadges ||
+      (request.scope == GitSidebarRefreshScope::Full && request.tree_git_badges_materialized) ||
+      (request.scope == GitSidebarRefreshScope::StatusOnly &&
+       request.tree_git_badges_materialized);
+  const bool include_outgoing_entries = request.scope == GitSidebarRefreshScope::Full;
+  const bool populate_sidebar_entries = request.scope != GitSidebarRefreshScope::TreeBadges;
+
+  if (materialize_tree_git_badges) {
+    snapshot.includes_tree_git_statuses = true;
+    snapshot.tree_git_statuses = repository_state.tree_git_statuses;
+  }
+
+  if (!populate_sidebar_entries) {
+    return snapshot;
+  }
+
+  for (const project::GitRepositoryEntry& entry : repository_state.entries) {
+    if (entry.kind == project::GitRepositoryEntryKind::Ignored) {
+      continue;
+    }
+    snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
+        .section = GitSidebarEntry::Section::Modified,
+        .relative_path = entry.path.relative_path,
+        .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
+        .conflicted = entry.conflicted,
+        .staged = entry.staged,
+    });
+  }
+
+  const ResolvedGitOutgoingBase resolved_base =
+      ResolveGitOutgoingBase(request.project_root, request.outgoing_base_choice,
+                             repository_state.repo_available);
+  snapshot.repo_available = resolved_base.repo_available;
+  snapshot.branch_label = BranchLabelFromState(repository_state);
+  snapshot.base_ref = resolved_base.base_ref;
+  snapshot.base_label = resolved_base.base_label;
+
+  if (include_outgoing_entries && !snapshot.base_ref.empty()) {
+    const auto outgoing_entries =
+        project::CollectGitBranchOutgoingFiles(request.project_root, snapshot.base_ref);
+    for (const auto& entry : outgoing_entries) {
+      snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
+          .section = GitSidebarEntry::Section::Outgoing,
+          .relative_path = entry.relative_path,
+          .status = entry.status,
+          .conflicted = false,
+          .staged = false,
+      });
+    }
+  }
+
+  return snapshot;
+}
+
+void GitRepositoryService::PublishSnapshot(GitSidebarState::RefreshSnapshot snapshot,
+                                           std::uint64_t generation) {
+  bool stored = false;
+  bool needs_follow_up = false;
+  {
+    std::lock_guard lock(mutex_);
+    if (generation != refresh_generation_) {
+      return;
+    }
+    pending_sidebar_snapshot_ = std::move(snapshot);
+    current_state_.stale = false;
+    current_state_.refreshing = false;
+    refresh_in_flight_ = false;
+    stored = true;
+    if (follow_up_refresh_pending_ && deferred_refresh_.has_value()) {
+      needs_follow_up = true;
+      follow_up_refresh_pending_ = false;
+    }
+  }
+
+  if (stored) {
+    if (wake_callbacks_.push_refresh_ready_event != nullptr) {
+      (void)wake_callbacks_.push_refresh_ready_event();
+    }
+    if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
+      wake_callbacks_.decrement_background_task_count_and_wake();
+    }
+  } else if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
+    wake_callbacks_.decrement_background_task_count_and_wake();
+  }
+
+  if (needs_follow_up) {
+    RefreshRequest request;
+    {
+      std::lock_guard lock(mutex_);
+      request = *deferred_refresh_;
+      deferred_refresh_.reset();
+      request.generation = ++refresh_generation_;
+      refresh_in_flight_ = true;
+      current_state_.stale = true;
+      current_state_.refreshing = true;
+    }
+    ScheduleRefresh(std::move(request));
+  }
+}
+
+void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
+  if (wake_callbacks_.increment_background_task_count != nullptr) {
+    wake_callbacks_.increment_background_task_count();
+  }
+
+  background_executor_.PostLatest(
+      "git-repository-refresh",
+      [this, request = std::move(request)]() mutable {
+        project::GitRepositoryState repository_state = BuildRepositoryState(request);
+        std::optional<RefreshRequest> deferred_follow_up;
+        {
+          std::lock_guard lock(mutex_);
+          if (request.generation != refresh_generation_) {
+            refresh_in_flight_ = false;
+            if (follow_up_refresh_pending_ && deferred_refresh_.has_value()) {
+              deferred_follow_up = *deferred_refresh_;
+              deferred_refresh_.reset();
+              follow_up_refresh_pending_ = false;
+              refresh_in_flight_ = true;
+              current_state_.refreshing = true;
+            }
+          } else {
+            current_state_ = repository_state;
+          }
+        }
+        if (deferred_follow_up.has_value()) {
+          if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
+            wake_callbacks_.decrement_background_task_count_and_wake();
+          }
+          ScheduleRefresh(std::move(*deferred_follow_up));
+          return;
+        }
+        if (request.generation != refresh_generation_) {
+          if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
+            wake_callbacks_.decrement_background_task_count_and_wake();
+          }
+          return;
+        }
+
+        GitSidebarState::RefreshSnapshot snapshot =
+            BuildSidebarSnapshot(repository_state, request);
+        PublishSnapshot(std::move(snapshot), request.generation);
+      });
+}
+
+void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_root,
+                                          GitSidebarRefreshScope scope,
+                                          OutgoingBaseChoice outgoing_base_choice,
+                                          bool tree_git_badges_materialized) {
+  if (project_root.empty()) {
+    Reset();
+    return;
+  }
+
+  RefreshRequest request{
+      .project_root = project_root,
+      .scope = scope,
+      .outgoing_base_choice = outgoing_base_choice,
+      .tree_git_badges_materialized = tree_git_badges_materialized,
+  };
+
+  bool schedule_now = true;
+  {
+    std::lock_guard lock(mutex_);
+    active_project_root_ = project_root;
+    if (refresh_in_flight_) {
+      follow_up_refresh_pending_ = true;
+      deferred_refresh_ = request;
+      current_state_.stale = true;
+      schedule_now = false;
+    } else {
+      refresh_in_flight_ = true;
+      current_state_.stale = true;
+      current_state_.refreshing = true;
+    }
+    request.generation = ++refresh_generation_;
+  }
+
+  if (schedule_now) {
+    ScheduleRefresh(std::move(request));
+  }
+}
+
+bool GitRepositoryService::ConsumePendingSidebarSnapshot(
+    GitSidebarState::RefreshSnapshot* snapshot) {
+  if (snapshot == nullptr) {
+    return false;
+  }
+
+  std::optional<GitSidebarState::RefreshSnapshot> pending;
+  {
+    std::lock_guard lock(mutex_);
+    pending = std::move(pending_sidebar_snapshot_);
+    pending_sidebar_snapshot_.reset();
+    if (pending.has_value()) {
+      current_state_.refreshing = false;
+    }
+  }
+  if (!pending.has_value()) {
+    return false;
+  }
+
+  *snapshot = std::move(*pending);
+  return true;
+}
+
+}  // namespace microide::workspace

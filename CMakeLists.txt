@@ -217,7 +217,9 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitBlameParser.cpp
   src/project/GitBlameService.cpp
   src/project/GitPorcelainParser.cpp
+  src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
+  src/project/GitRepositoryState.cpp
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
   src/project/IgnoreMatcher.cpp
@@ -344,6 +346,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/TerminalPanelService.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
+  src/workspace/GitRepositoryService.cpp
   src/workspace/PersistenceService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
@@ -497,6 +500,7 @@ add_executable(microide_tests
   tests/FileIndexTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
+  tests/GitRepositoryStateTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
@@ -729,7 +733,9 @@ add_executable(microide_diff_bench
   src/project/GitCompareService.cpp
   src/project/GitCommandUtil.cpp
   src/project/GitPorcelainParser.cpp
+  src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
+  src/project/GitRepositoryState.cpp
   src/render/DebugTextBackend.cpp
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp

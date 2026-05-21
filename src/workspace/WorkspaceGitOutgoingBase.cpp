@@ -1,17 +1,16 @@
 #include "workspace/WorkspaceGitOutgoingBase.h"
 
 #include "project/GitCompareService.h"
-#include "project/GitRepository.h"
 
 namespace microide::workspace {
 
 ResolvedGitOutgoingBase ResolveGitOutgoingBase(const std::filesystem::path& project_root,
-                                               const OutgoingBaseChoice& choice) {
+                                               const OutgoingBaseChoice& choice,
+                                               bool repo_available) {
   ResolvedGitOutgoingBase resolved;
   if (project_root.empty()) {
     return resolved;
   }
-  const bool repo_available = project::GitRepository(project_root).IsValid();
 
   switch (choice.kind) {
     case OutgoingBaseChoice::Kind::Auto: {

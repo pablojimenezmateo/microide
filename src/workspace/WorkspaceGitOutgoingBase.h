@@ -14,6 +14,7 @@ struct ResolvedGitOutgoingBase {
 };
 
 ResolvedGitOutgoingBase ResolveGitOutgoingBase(const std::filesystem::path& project_root,
-                                               const OutgoingBaseChoice& choice);
+                                               const OutgoingBaseChoice& choice,
+                                               bool repo_available);
 
 }  // namespace microide::workspace

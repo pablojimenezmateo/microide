@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "project/GitRepository.h"
+#include "workspace/GitRepositoryService.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
 namespace microide::workspace {
@@ -82,7 +82,7 @@ void WorkspaceShell::RefreshStatusBar() {
       StatusBarModelService::Operations{
           .is_git_repo_valid =
               [](const std::filesystem::path& project_root) {
-                return project::GitRepository(project_root).IsValid();
+                return GitRepositoryService::IsGitRepoValid(project_root);
               },
           .active_lsp_status_strings =
               [this](bool ensure_started, std::string& text, std::string& tooltip) {

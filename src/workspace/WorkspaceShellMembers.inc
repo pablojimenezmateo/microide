@@ -1272,10 +1272,8 @@
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
   project::ProjectBackgroundExecutor project_background_executor_;
-  std::mutex git_sidebar_refresh_mutex_;
+  GitRepositoryService git_repository_service_{project_background_executor_};
   std::mutex save_tab_mutex_;
-  std::optional<GitSidebarState::RefreshSnapshot> git_sidebar_refresh_snapshot_;
-  std::uint64_t git_sidebar_refresh_generation_ = 0;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};
   std::atomic<bool> file_index_has_pending_changes_{false};
