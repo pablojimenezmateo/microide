@@ -28,7 +28,7 @@ Correctness beats compatibility here. If current merge tab state is too flat to 
 ## Decisions
 
 - Conflict taxonomy belongs in merge model construction, not view rendering. Render/view-model code consumes conflict class and action availability.
-- Conflict classification may use combined Git data seams (`status --porcelain=v2 -z`, index stage entries, and name-status diffs) rather than one status line alone.
+- Merge conflict classification MAY combine repository snapshot data, unmerged index entries, name-status or diff metadata, file-existence checks, and conflict-marker or content inspection rather than relying on one status line alone.
 - Result validation is a separate service/helper invoked before mark-resolved. It checks file content, save state, expected existence, index conflict generation, and line-ending policy.
 - Base pane is collapsible but always available. Users should not need to reopen a tab to understand why both sides changed.
 - Raw conflict markers are a diagnostic view/action, not the default model for resolution.

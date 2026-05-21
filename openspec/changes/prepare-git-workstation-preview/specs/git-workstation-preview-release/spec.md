@@ -26,6 +26,13 @@ MicroIDE SHALL provide `--disable-plugins` and `--safe-mode` startup flags. `--d
 - **WHEN** MicroIDE starts with `--safe-mode`
 - **THEN** it SHALL run with plugins disabled, disable plugin syntax loading, skip workspace/session restore, and start in a recovery-safe empty-shell mode unless an explicit project argument is provided
 
+### Requirement: Safe Mode V1 Behavior Is Exact
+`--safe-mode` v1 SHALL imply `--disable-plugins`, disable plugin syntax loading, skip workspace/session restore, open only an explicitly provided project argument or an empty shell, and surface visible safe-mode state.
+
+#### Scenario: Safe mode v1 with no project argument
+- **WHEN** MicroIDE starts with `--safe-mode` and no explicit project path argument
+- **THEN** it SHALL open an empty shell with visible safe-mode state and SHALL not auto-restore prior workspace/session state
+
 ### Requirement: Disabled Plugin State Is Visible
 When plugins are disabled by startup flag or safe mode, MicroIDE SHALL surface a visible status in host-owned UI such as the status bar, Help/About, or startup notice.
 

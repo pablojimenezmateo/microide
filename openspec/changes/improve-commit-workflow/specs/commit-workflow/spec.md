@@ -38,7 +38,7 @@ Before executing a commit, MicroIDE SHALL run structured checks for empty subjec
 - **THEN** MicroIDE SHALL block the commit unless an explicit override policy is added in a later change
 
 ### Requirement: Commit Operations Are Async And Report Output
-Commit, amend, and commit-without-hooks operations SHALL run outside the main thread. Results SHALL distinguish success, cancelled, hook failed, dirty worktree, conflict, auth failed, repo locked, and unknown failure. Hook output SHALL be visible in a native output panel or equivalent host-owned surface.
+Commit, amend, and commit-without-hooks operations SHALL run outside the main thread. For the preview workflow, commit subprocess stdin SHALL be noninteractive by default. Results SHALL distinguish success, cancelled, hook failed, dirty worktree, conflict, auth failed, repo locked, and unknown failure. Hook output SHALL be visible in a native output panel or equivalent host-owned surface.
 
 #### Scenario: Hook fails
 - **WHEN** a commit hook exits non-zero
@@ -49,7 +49,7 @@ Commit, amend, and commit-without-hooks operations SHALL run outside the main th
 - **THEN** MicroIDE SHALL refresh repository state and show the new clean/ahead state when known
 
 #### Scenario: Hook waits for stdin
-- **WHEN** a commit hook waits for interactive stdin
+- **WHEN** a commit hook waits for stdin while commit subprocess stdin is noninteractive
 - **THEN** MicroIDE SHALL keep the UI responsive, surface hook output/progress, and allow cancellation where supported by the process seam
 
 #### Scenario: Commit identity is not configured

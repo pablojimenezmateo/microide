@@ -1,7 +1,7 @@
 ## 1. Conflict Model
 
 - [ ] 1.1 Add explicit merge conflict kind enum and metadata to merge model construction.
-- [ ] 1.2 Classify both-modified, add/add, delete/modify, rename/delete, binary, mode, submodule, and line-ending-heavy conflicts where Git data supports it.
+- [ ] 1.2 Classify both-modified, add/add, delete/modify, rename/rename, rename/delete, binary, mode, submodule, and line-ending-heavy conflicts where Git data supports it.
 - [ ] 1.3 Add fixture helpers for creating real conflict repositories.
 
 ## 2. Resolver Presentation
@@ -24,6 +24,6 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Add merge tests for both-modified, add/add, delete/modify, rename/delete, binary, UTF-8, CRLF, and large-file conflicts.
+- [ ] 5.1 Add merge tests for both-modified, add/add, delete/modify, rename/rename, rename/delete, binary, UTF-8, CRLF, and large-file conflicts.
 - [ ] 5.2 Add interaction tests for accept both orders, reset hunk, base toggle, manual edit, validation failure, and mark-resolved success.
 - [ ] 5.3 Run focused merge, compare/merge render, Git conflict, and perf scenarios covering many conflicts.
