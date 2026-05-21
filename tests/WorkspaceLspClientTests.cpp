@@ -469,9 +469,15 @@ while True:
   Expect(client.DidOpen("file:///tmp/sample.py", "python", full_text),
          "didOpen should enqueue even before initialize finishes");
 
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
-  while (std::chrono::steady_clock::now() < deadline && !std::filesystem::exists(marker_path)) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (std::filesystem::exists(marker_path)) {
+      break;
+    }
+    if (!client.IsRunning()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   Expect(std::filesystem::exists(marker_path),
          "queued didOpen should reach the server after initialize completes");

@@ -1958,6 +1958,7 @@ void TestWorkspaceShellAltClickAddsSecondaryCaret() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
 
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.MoveCursorTo(0, 0);
@@ -1967,10 +1968,8 @@ void TestWorkspaceShellAltClickAddsSecondaryCaret() {
   const float y = metrics.first_line_y + metrics.line_height * 0.5f;
   const float click_x = metrics.text_x + char_width * 5.0f;
 
-  const SDL_Keymod previous_mods = SDL_GetModState();
-  SDL_SetModState(static_cast<SDL_Keymod>(previous_mods | SDL_KMOD_ALT));
+  ScopedSdlModState alt_mods(SDL_KMOD_ALT);
   const bool handled = SendMouseDown(shell, click_x, y, SDL_BUTTON_LEFT);
-  SDL_SetModState(previous_mods);
 
   Expect(handled, "Alt+left click inside the editor should be handled");
   Expect(viewport.has_multiple_carets(),
@@ -1983,6 +1982,9 @@ void TestWorkspaceShellAltClickAddsSecondaryCaret() {
 }
 
 void TestWorkspaceShellShiftAltClickAddsColumnCarets() {
+  EnsureDummySdlVideoInitialized();
+  ResetSdlModStateForTests();
+
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "main.txt";
@@ -1991,19 +1993,29 @@ void TestWorkspaceShellShiftAltClickAddsColumnCarets() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.enabled", "false");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.sticky_scroll.enabled", "false");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
 
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.SetScrollLine(0);
+  viewport.SetHorizontalScroll(0);
   viewport.MoveCursorTo(0, 0);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 0,
+         "Shift+Alt column caret fixture should start at the anchor column");
 
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const float click_y = metrics.first_line_y + metrics.line_height * 2.5f;
   const float click_x = metrics.text_x;
+  const int visual_row = static_cast<int>(viewport.scroll_line() + 2);
+  const auto preflight_hit = viewport.LogicalPositionForVisualHit(visual_row, 0);
+  Expect(preflight_hit.line == 2 && preflight_hit.column == 0,
+         "Shift+Alt column caret fixture should target column 0 on line 2");
 
-  const SDL_Keymod previous_mods = SDL_GetModState();
-  SDL_SetModState(static_cast<SDL_Keymod>(previous_mods | SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  ScopedSdlModState shift_alt_mods(static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
   const bool handled = SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT);
-  SDL_SetModState(previous_mods);
 
   Expect(handled, "Shift+Alt+left click inside the editor should be handled");
   Expect(viewport.has_multiple_carets(),
@@ -2016,17 +2028,21 @@ void TestWorkspaceShellShiftAltClickAddsColumnCarets() {
     Expect(caret.column == 0,
            "Shift+Alt+vertical click should place every caret in the anchor column");
   }
-  const bool has_line0 = std::any_of(
-      viewport.secondary_carets().begin(), viewport.secondary_carets().end(),
-      [](const microide::editor::TextPosition& caret) { return caret.line == 0; });
-  const bool has_line1 = std::any_of(
-      viewport.secondary_carets().begin(), viewport.secondary_carets().end(),
-      [](const microide::editor::TextPosition& caret) { return caret.line == 1; });
-  Expect(has_line0 && has_line1,
+  std::vector<microide::editor::TextPosition> secondary_lines = viewport.secondary_carets();
+  std::sort(secondary_lines.begin(), secondary_lines.end(),
+            [](const microide::editor::TextPosition& lhs,
+               const microide::editor::TextPosition& rhs) {
+              return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
+            });
+  Expect(secondary_lines.size() == 2 && secondary_lines[0].line == 0 &&
+             secondary_lines[1].line == 1,
          "Shift+Alt+vertical click should cover every line between anchor and target");
 }
 
 void TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick() {
+  EnsureDummySdlVideoInitialized();
+  ResetSdlModStateForTests();
+
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "main.txt";
@@ -2036,6 +2052,7 @@ void TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
 
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   viewport.MoveCursorTo(0, 0);
@@ -2045,10 +2062,8 @@ void TestWorkspaceShellShiftAltClickOffColumnFallsBackToAltClick() {
   const float y = metrics.first_line_y + metrics.line_height * 1.5f;
   const float click_x = metrics.text_x + char_width * 5.0f;
 
-  const SDL_Keymod previous_mods = SDL_GetModState();
-  SDL_SetModState(static_cast<SDL_Keymod>(previous_mods | SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  ScopedSdlModState shift_alt_mods(static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
   const bool handled = SendMouseDown(shell, click_x, y, SDL_BUTTON_LEFT);
-  SDL_SetModState(previous_mods);
 
   Expect(handled, "Shift+Alt+off-column click should still be handled");
   Expect(viewport.has_multiple_carets(),

@@ -64,6 +64,9 @@ Prefer the smallest harness that proves the behavior while still exercising the 
 - Tests that initialize SDL should be deterministic under the dummy video driver.
 - Redraw comparison tests that share global SDL state should not be parallelized.
 - Keep shell tests focused on observable state, action routing, dirty-region behavior, and rendered contracts that the host intends to preserve.
+- `WorkspaceShell/ShiftAltClickAddsColumnCarets` exercises Shift+Alt column caret placement in the active editor viewport. It disables sticky-scroll metrics adjustment, resets modifier state, and renders one frame before reading editor metrics so column-hit routing matches `EditorMouseCoordinator`. Avoid local names like `has_line0` / `has_line1` in tests that include SDL headers; X11 macros can shadow them and make boolean checks lie even when caret state is correct.
+- `WorkspaceLspClient/DidOpenQueuedBeforeInitializeStillDeliversFullText` starts a Python LSP stub with a delayed `initialize` response. The test polls the marker file for up to five seconds and exits early if the client stops running; slow CI hosts may still need a rerun rather than weakening the assertion.
+- `TerminalSession/StopEscalatesToKillForStubbornChild` uses `fork()` and is skipped automatically when the host blocks process creation (common in Cursor agent sandboxes). Run terminal signal tests with full permissions on a normal Linux workstation.
 
 ## Validation Loop
 

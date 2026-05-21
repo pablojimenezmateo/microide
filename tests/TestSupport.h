@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include <SDL3/SDL.h>
+
 #include "platform/HostPlatform.h"
 
 namespace microide::tests {
@@ -67,6 +69,21 @@ class ScopedHostPlatformOverride {
 
  private:
   std::optional<platform::HostPlatform> previous_;
+};
+
+void EnsureDummySdlVideoInitialized();
+void ResetSdlModStateForTests();
+
+class ScopedSdlModState {
+ public:
+  explicit ScopedSdlModState(SDL_Keymod modifiers);
+  ~ScopedSdlModState();
+
+  ScopedSdlModState(const ScopedSdlModState&) = delete;
+  ScopedSdlModState& operator=(const ScopedSdlModState&) = delete;
+
+ private:
+  SDL_Keymod previous_mods_ = SDL_KMOD_NONE;
 };
 
 }  // namespace microide::tests

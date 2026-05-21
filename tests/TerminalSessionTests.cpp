@@ -2,6 +2,10 @@
 
 #include "TerminalSessionTestAccess.h"
 
+#include "terminal/TerminalBase64.h"
+#include "terminal/TerminalCsiParser.h"
+#include "terminal/TerminalMouseEncoder.h"
+
 #include <chrono>
 #include <string_view>
 #include <vector>
@@ -11,6 +15,20 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+bool ForkAvailableForTerminalTests() {
+  errno = 0;
+  const pid_t child_pid = fork();
+  if (child_pid < 0) {
+    return false;
+  }
+  if (child_pid == 0) {
+    _exit(0);
+  }
+  int status = 0;
+  (void)waitpid(child_pid, &status, 0);
+  return true;
+}
 #endif
 
 namespace microide::tests {
@@ -494,6 +512,11 @@ void TestTerminalSessionCoalescesWakeEventsUntilConsumed() {
 
 #if defined(__unix__) || defined(__APPLE__)
 void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
+  // Cursor/agent sandboxes and some CI containers block fork(); skip instead of failing.
+  if (!ForkAvailableForTerminalTests()) {
+    return;
+  }
+
   microide::terminal::TerminalSession session;
 
   const pid_t child_pid = fork();
@@ -527,6 +550,195 @@ void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
          "terminal stop should reap the stubborn child process instead of leaving it behind");
 }
 #endif
+
+void TestTerminalCsiParameterParsingEdgeCases() {
+  using microide::terminal::CsiParamOrDefault;
+  using microide::terminal::ParseCsiParameters;
+
+  const std::vector<int> empty_default = ParseCsiParameters("");
+  Expect(empty_default.empty(), "empty CSI bodies should produce no parameters");
+
+  const std::vector<int> trailing_semicolon = ParseCsiParameters("1;2;");
+  Expect(trailing_semicolon.size() == 3 && trailing_semicolon[0] == 1 && trailing_semicolon[1] == 2 &&
+             trailing_semicolon[2] == 0,
+         "trailing semicolons should preserve omitted trailing parameters as zero");
+
+  const std::vector<int> prefixed = ParseCsiParameters("?25;1049");
+  Expect(prefixed.size() == 2 && prefixed[0] == 25 && prefixed[1] == 1049,
+         "leading non-digit prefixes should be ignored while numeric segments still parse");
+
+  Expect(CsiParamOrDefault({0, -3, 5}, 0, 9) == 9,
+         "zero CSI parameters should fall back to the default value");
+  Expect(CsiParamOrDefault({0, -3, 5}, 2, 9) == 5,
+         "positive CSI parameters should be returned as-is");
+}
+
+void TestTerminalBase64RejectsInvalidPayloads() {
+  using microide::terminal::DecodeBase64;
+
+  Expect(!DecodeBase64("@@@").has_value(), "invalid base64 characters should fail decoding");
+  Expect(!DecodeBase64("YQ").has_value(), "non-multiple-of-four payloads should fail decoding");
+  Expect(DecodeBase64("").has_value() && DecodeBase64("")->empty(),
+         "empty payloads should decode to an empty string");
+}
+
+void TestTerminalMouseEncodingUsesExactByteSequences() {
+  using microide::terminal::EncodeTerminalMouseEvent;
+  using microide::terminal::TerminalMouseButton;
+  using microide::terminal::TerminalMouseEncodeRequest;
+  using microide::terminal::TerminalMouseTrackingMode;
+
+  TerminalMouseEncodeRequest request{
+      .tracking_mode = TerminalMouseTrackingMode::Normal,
+      .mouse_sgr_ext_mode = false,
+      .rows = 24,
+      .columns = 80,
+      .button = TerminalMouseButton::Left,
+      .pressed = true,
+      .motion = false,
+      .row = 1,
+      .column = 2,
+      .modifiers = SDL_KMOD_NONE,
+  };
+  std::string bytes;
+  Expect(EncodeTerminalMouseEvent(request, bytes),
+         "normal mouse tracking should encode left-button presses");
+  Expect(bytes == std::string("\x1b[M #\"", 6),
+         "legacy mouse encoding should emit ESC [ M with 1-based coordinates");
+
+  request.button = TerminalMouseButton::Left;
+  request.pressed = false;
+  request.motion = false;
+  Expect(EncodeTerminalMouseEvent(request, bytes), "mouse release should still encode");
+  Expect(bytes == std::string("\x1b[M##\"", 6),
+         "legacy mouse release should use button code 3");
+
+  request.mouse_sgr_ext_mode = true;
+  request.button = TerminalMouseButton::Right;
+  request.pressed = true;
+  request.row = 4;
+  request.column = 6;
+  request.modifiers = SDL_KMOD_SHIFT;
+  Expect(EncodeTerminalMouseEvent(request, bytes), "SGR mouse encoding should emit CSI sequences");
+  Expect(bytes == "\x1b[<6;7;5M",
+         "SGR mouse encoding should include button code, column, row, and trailing M");
+}
+
+void TestTerminalSessionMouseEncodingUsesExactByteSequences() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1000h");
+
+  Expect(session.SendMouseButton(microide::terminal::TerminalSession::MouseButton::Left, true, 1, 2,
+                                 SDL_KMOD_NONE),
+         "terminal session should send encoded mouse button events in test mode");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == std::string("\x1b[M #\"", 6),
+         "terminal session should preserve legacy mouse button byte sequences");
+}
+
+void TestTerminalSessionAltScreenResizeClampsCursorRows() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);
+  TerminalSessionTestAccess::SetCursorPosition(session, 3, 7);
+
+  session.Resize(2, 4);
+
+  Expect(session.rows() == 2 && session.columns() == 4,
+         "alternate-screen resize should apply the requested geometry");
+  Expect(session.cursor_row() == 1 && session.cursor_column() == 3,
+         "alternate-screen resize should clamp the live cursor inside the new bounds");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 2, "alternate-screen resize should keep a fixed row count");
+}
+
+void TestTerminalSessionResizeTrimScrollbackClampsSavedCursor() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  std::string bulk;
+  bulk.reserve(2600 * 2);
+  for (int i = 0; i < 2600; ++i) {
+    bulk.append("x\n");
+  }
+  TerminalSessionTestAccess::AppendOutput(session, bulk);
+  const std::size_t line_count_before_cursor_move = session.LineCount();
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[1990;1H");
+  session.Resize(24, 80);
+
+  Expect(line_count_before_cursor_move > session.rows(),
+         "bulk output should grow scrollback beyond the live viewport height");
+  Expect(session.cursor_row() < session.LineCount(),
+         "resize after scrollback trim should keep the cursor row addressable");
+}
+
+void TestTerminalSessionIncompleteOscChunkAcrossAppendCalls() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(session, "bash");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]2;partial");
+  Expect(session.LaunchLabel() == "bash",
+         "incomplete OSC title chunks should not update the launch label yet");
+  TerminalSessionTestAccess::AppendOutput(session, " title\x07");
+  Expect(session.LaunchLabel() == "partial title",
+         "completed OSC title chunks should apply once the terminator arrives");
+}
+
+void TestTerminalSessionMalformedEscapeLeavesPlainText() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "A\x1bXBC");
+
+  ExpectLineText(session.SnapshotLines(), 0, "ABC",
+                 "unknown single-byte escapes should not swallow following plain text");
+}
+
+void TestTerminalSessionMouseRoutingRequiresTrackingMode() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+
+  Expect(!session.SendMouseButton(microide::terminal::TerminalSession::MouseButton::Left, true, 1,
+                                  2, SDL_KMOD_NONE),
+         "mouse routing should stay disabled until a tracking mode is enabled");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "disabled mouse routing should not emit bytes");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1000h");
+  Expect(session.SendMouseButton(microide::terminal::TerminalSession::MouseButton::Left, true, 1, 2,
+                                 SDL_KMOD_NONE),
+         "mouse routing should encode events once normal tracking is enabled");
+}
+
+void TestTerminalSessionResizeClampsCursorAndPreservesBuffer() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "ABCDEFGH\nIJKL");
+  TerminalSessionTestAccess::SetCursorPosition(session, 0, 7);
+
+  session.Resize(4, 4);
+
+  Expect(session.columns() == 4 && session.cursor_column() == 3,
+         "resize should clamp the cursor column to the new width");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 2, "resize should preserve existing terminal rows");
+  ExpectLineText(lines, 0, "ABCDEFGH",
+                 "resize should preserve buffered line content even after shrinking columns");
+}
+
+void TestTerminalSessionOutputParserIgnoresIncompleteEscapes() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "A\x1b[31");
+  ExpectLineText(session.SnapshotLines(), 0, "A",
+                 "incomplete CSI sequences should not consume trailing plain text yet");
+
+  TerminalSessionTestAccess::AppendOutput(session, "mB");
+  ExpectLineText(session.SnapshotLines(), 0, "AB",
+                 "completed CSI sequences should apply styling without losing buffered text");
+}
 
 void TestTerminalCellIsTriviallyCopyableAndCompact() {
   // 2026-05-15 perf deep-dive round 2 Finding 8: TerminalCell must use inline UTF-8 storage so
@@ -636,6 +848,28 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionTracksInverseVideoStyle);
   AddTest(tests, "TerminalSession/CoalescesWakeEventsUntilConsumed",
           TestTerminalSessionCoalescesWakeEventsUntilConsumed);
+  AddTest(tests, "TerminalSession/CsiParameterParsingEdgeCases",
+          TestTerminalCsiParameterParsingEdgeCases);
+  AddTest(tests, "TerminalSession/Base64RejectsInvalidPayloads",
+          TestTerminalBase64RejectsInvalidPayloads);
+  AddTest(tests, "TerminalSession/MouseEncodingExactByteSequences",
+          TestTerminalMouseEncodingUsesExactByteSequences);
+  AddTest(tests, "TerminalSession/SessionMouseEncodingExactByteSequences",
+          TestTerminalSessionMouseEncodingUsesExactByteSequences);
+  AddTest(tests, "TerminalSession/AltScreenResizeClampsCursorRows",
+          TestTerminalSessionAltScreenResizeClampsCursorRows);
+  AddTest(tests, "TerminalSession/ResizeTrimScrollbackClampsSavedCursor",
+          TestTerminalSessionResizeTrimScrollbackClampsSavedCursor);
+  AddTest(tests, "TerminalSession/IncompleteOscChunkAcrossAppendCalls",
+          TestTerminalSessionIncompleteOscChunkAcrossAppendCalls);
+  AddTest(tests, "TerminalSession/MalformedEscapeLeavesPlainText",
+          TestTerminalSessionMalformedEscapeLeavesPlainText);
+  AddTest(tests, "TerminalSession/MouseRoutingRequiresTrackingMode",
+          TestTerminalSessionMouseRoutingRequiresTrackingMode);
+  AddTest(tests, "TerminalSession/ResizeClampsCursorAndPreservesBuffer",
+          TestTerminalSessionResizeClampsCursorAndPreservesBuffer);
+  AddTest(tests, "TerminalSession/OutputParserIgnoresIncompleteEscapes",
+          TestTerminalSessionOutputParserIgnoresIncompleteEscapes);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "TerminalSession/StopEscalatesToKillForStubbornChild",
           TestTerminalSessionStopEscalatesToKillForStubbornChild);

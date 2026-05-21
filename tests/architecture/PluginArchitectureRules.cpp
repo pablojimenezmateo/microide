@@ -1,0 +1,190 @@
+#include "architecture/PluginArchitectureRules.h"
+
+#include "architecture/ArchitectureFileScanner.h"
+
+#include <array>
+#include <filesystem>
+#include <fstream>
+#include <regex>
+
+namespace microide::tests::architecture {
+
+RuleResult CheckPluginTranslationUnitSize(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "plugin translation unit size";
+  result.hard_fail = true;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/plugin")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    std::ifstream stream(entry.path());
+    std::size_t lines = 0;
+    std::string line;
+    while (std::getline(stream, line)) {
+      ++lines;
+    }
+    if (lines > 800) {
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = 1,
+          .message = "plugin translation units should stay at or below 800 lines",
+      });
+    }
+  }
+  return result;
+}
+
+RuleResult CheckPluginDrainBeforeTeardown(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "plugin drain-before-teardown";
+  result.hard_fail = true;
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/plugin")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".inc") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    // Target only the public-API teardown call sites (`impl_->TearDownPlugins(...)`),
+    // not the definition or the inner leaf helper. Those leaf calls are reached
+    // exclusively through these call sites, so guarding here is sufficient.
+    const std::regex teardown_pattern(R"(impl_->\s*TearDownPlugins\s*\()");
+    for (std::sregex_iterator it(text.begin(), text.end(), teardown_pattern), end; it != end;
+         ++it) {
+      const auto teardown_pos = static_cast<std::size_t>(it->position());
+      if (teardown_pos < is_code.size() && !is_code[teardown_pos]) {
+        continue;
+      }
+      // Drain seam call must appear within the previous 12 lines and after any
+      // earlier teardown call in the same translation unit. The window is small
+      // enough to keep the check tight without parsing function boundaries.
+      std::size_t scan_start = teardown_pos;
+      std::size_t lines_back = 0;
+      while (scan_start > 0 && lines_back < 12) {
+        --scan_start;
+        if (text[scan_start] == '\n') {
+          ++lines_back;
+        }
+      }
+      const std::string_view window(text.data() + scan_start, teardown_pos - scan_start);
+      const bool drain_seen = window.find("DrainAsyncProcessWorkers") != std::string_view::npos ||
+                              window.find("DrainAndJoinWorkers") != std::string_view::npos;
+      if (!drain_seen) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = LineNumberAt(text, teardown_pos),
+            .message = "TearDownPlugins must be preceded by a drain seam call "
+                       "(DrainAsyncProcessWorkers / DrainAndJoinWorkers) within the same path",
+        });
+      }
+    }
+  }
+  return result;
+}
+
+RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& repo_root) {
+  // The reactivation branch of ProjectCatalogService::ActivateProjectState SHALL NOT
+  // call reload_plugins_for_current_project / ReloadPluginsForCurrentProject. The
+  // first-activation branch routes through initialize_current_project, which already
+  // performs exactly one reload internally. Reintroducing a direct call here would
+  // restore the back-to-back reload regression the change was created to fix.
+  RuleResult result;
+  result.label = "single plugin reload per ActivateProjectState";
+  result.hard_fail = true;
+  const std::filesystem::path service_cpp = repo_root / "src/workspace/ProjectCatalogService.cpp";
+  if (!std::filesystem::exists(service_cpp)) {
+    return result;
+  }
+  const std::string text = ReadText(service_cpp);
+  const std::vector<bool> is_code = BuildCodeMask(text);
+  const std::regex activate_pattern(R"(ProjectCatalogService::ActivateProjectState\s*\([^)]*\)\s*\{)");
+  std::smatch match;
+  if (!std::regex_search(text, match, activate_pattern)) {
+    return result;
+  }
+  const std::size_t body_start = static_cast<std::size_t>(match.position()) + match.length() - 1;
+  // Walk braces to find the matching close.
+  std::size_t depth = 0;
+  std::size_t body_end = text.size();
+  for (std::size_t i = body_start; i < text.size(); ++i) {
+    if (i < is_code.size() && !is_code[i]) {
+      continue;
+    }
+    if (text[i] == '{') {
+      ++depth;
+    } else if (text[i] == '}') {
+      --depth;
+      if (depth == 0) {
+        body_end = i;
+        break;
+      }
+    }
+  }
+  const std::regex reload_pattern(
+      R"((reload_plugins_for_current_project|ReloadPluginsForCurrentProject)\s*\()");
+  for (std::sregex_iterator it(text.begin() + static_cast<std::ptrdiff_t>(body_start),
+                                text.begin() + static_cast<std::ptrdiff_t>(body_end),
+                                reload_pattern),
+       end;
+       it != end; ++it) {
+    const std::size_t pos = body_start + static_cast<std::size_t>(it->position());
+    if (pos < is_code.size() && !is_code[pos]) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = service_cpp,
+        .line = LineNumberAt(text, pos),
+        .message = "ActivateProjectState must not call reload_plugins_for_current_project; "
+                   "first init goes through initialize_current_project, reactivation through "
+                   "refresh_plugin_surfaces_for_reactivation",
+    });
+  }
+  return result;
+}
+
+RuleResult CheckEssentialEditorCppModulesDoNotTouchLuaState(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "Lua VM pointers stay out of language/fold/shape helpers";
+  result.hard_fail = true;
+  const std::array<std::string_view, 4> paths = {
+      "src/workspace/WorkspaceLanguageContract.cpp",
+      "src/editor/FoldingModel.cpp",
+      "src/editor/IndentGuides.cpp",
+      "src/editor/SnippetEngine.cpp",
+  };
+  const std::regex lua_pointer(R"(\blua_State\s*\*)");
+  for (const std::string_view relative : paths) {
+    const std::filesystem::path path = repo_root / relative;
+    if (!std::filesystem::exists(path)) {
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = 1,
+          .message = "expected editor essential translation unit",
+      });
+      continue;
+    }
+    const std::string file_text = ReadText(path);
+    AppendCodeMaskRegexViolations(
+        result, path, file_text, lua_pointer,
+        "WorkspaceLanguageContract/FoldingModel/IndentGuides/SnippetEngine must stay Lua-free "
+        "at the type level (lua_State* leaks implementation coupling)");
+  }
+  return result;
+}
+
+
+std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root) {
+  std::vector<RuleResult> results;
+  const auto run = [&](auto&& fn) { results.push_back(fn(repo_root)); };
+  run(CheckSinglePluginReloadPerActivation);
+  run(CheckEssentialEditorCppModulesDoNotTouchLuaState);
+  run(CheckPluginDrainBeforeTeardown);
+  run(CheckPluginTranslationUnitSize);
+  return results;
+}
+
+}  // namespace microide::tests::architecture

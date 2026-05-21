@@ -183,28 +183,11 @@ class TerminalSession {
     CharsetDesignate,
   };
 
-  enum class MouseTrackingMode {
-    Disabled,
-    Normal,
-    Drag,
-    Any,
-  };
-
   void AppendOutputLocked(std::string_view data);
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandleOscSequenceLocked(std::string_view sequence);
   void HandlePrivateModeLocked(int mode, bool enabled);
   void SendBytesLocked(std::string_view bytes);
-  MouseTrackingMode CurrentMouseTrackingModeLocked() const;
-  std::string FormatKeyBytesLocked(Key key) const;
-  std::string FormatPasteBytesLocked(std::string_view text) const;
-  bool EncodeMouseEventLocked(MouseButton button,
-                              bool pressed,
-                              bool motion,
-                              std::size_t row,
-                              std::size_t column,
-                              SDL_Keymod modifiers,
-                              std::string& out_bytes) const;
   void EnsureCursorLineExistsLocked();
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
   void MoveCursorLocked(std::size_t row, std::size_t column);

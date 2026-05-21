@@ -230,6 +230,17 @@ set(MICROIDE_CORE_SOURCES
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/terminal/TerminalSession.cpp
+  src/terminal/TerminalAnsiColors.cpp
+  src/terminal/TerminalSessionOutput.cpp
+  src/terminal/TerminalSessionEscape.cpp
+  src/terminal/TerminalSessionInput.cpp
+  src/terminal/TerminalSessionInputEncoding.cpp
+  src/terminal/TerminalSessionScreen.cpp
+  src/terminal/TerminalBase64.cpp
+  src/terminal/TerminalCsiParser.cpp
+  src/terminal/TerminalMouseEncoder.cpp
+  src/terminal/TerminalOscClipboard.cpp
+  src/terminal/TerminalProcessControl.cpp
   src/util/JsonValue.cpp
   src/util/Parse.cpp
   src/util/PerformanceCounters.cpp
@@ -503,6 +514,16 @@ add_executable(microide_tests
   tests/PluginHostTests.cpp
   tests/ParseTests.cpp
   tests/ArchitectureInvariantsTests.cpp
+  tests/architecture/ArchitectureFileScanner.cpp
+  tests/architecture/ArchitectureRuleHelpers.cpp
+  tests/architecture/WorkspaceArchitectureRules.cpp
+  tests/architecture/WorkspaceShellArchitectureRules.cpp
+  tests/architecture/WorkspaceCoordinatorArchitectureRules.cpp
+  tests/architecture/WorkspaceServiceArchitectureRules.cpp
+  tests/architecture/WorkspaceViewModelArchitectureRules.cpp
+  tests/architecture/WorkspaceFileSizeArchitectureRules.cpp
+  tests/architecture/PluginArchitectureRules.cpp
+  tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
   tests/FileIndexWatcherTests.cpp
   tests/PatternCacheTests.cpp
