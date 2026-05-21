@@ -378,6 +378,63 @@ void TestWorkspaceShellTerminalWakeRefreshesStatusBarAfterCommit() {
          "terminal wake refresh should update the status bar after a commit");
 }
 
+void TestWorkspaceShellTerminalWakeClearsTreeGitBadgesAfterCommit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int value() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add terminal wake tree badge fixture", "terminal wake tree badge fixture");
+  WriteFile(source, "int value() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "terminal wake tree badge fixture should open");
+
+  WorkspaceShellTestAccess::OnFramePresented(shell);
+  const auto dirty_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (std::chrono::steady_clock::now() < dirty_deadline &&
+         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  const auto dirty_src_entry = std::find_if(
+      WorkspaceShellTestAccess::TreeEntries(shell).begin(),
+      WorkspaceShellTestAccess::TreeEntries(shell).end(),
+      [&](const project::TreeEntry& entry) { return entry.path == (root / "src").lexically_normal(); });
+  Expect(dirty_src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
+             dirty_src_entry->git_status == project::GitFileStatus::Modified,
+         "first tree git badge refresh should materialize dirty badges before the external commit");
+
+  CommitAll(root, "Commit tracked change", "terminal wake tree badge post-open commit");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+
+  const auto clean_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < clean_deadline) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    const auto src_entry = std::find_if(
+        WorkspaceShellTestAccess::TreeEntries(shell).begin(),
+        WorkspaceShellTestAccess::TreeEntries(shell).end(),
+        [&](const project::TreeEntry& entry) { return entry.path == (root / "src").lexically_normal(); });
+    if (src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
+        src_entry->git_status == project::GitFileStatus::Clean) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  const auto clean_src_entry = std::find_if(
+      WorkspaceShellTestAccess::TreeEntries(shell).begin(),
+      WorkspaceShellTestAccess::TreeEntries(shell).end(),
+      [&](const project::TreeEntry& entry) { return entry.path == (root / "src").lexically_normal(); });
+  Expect(clean_src_entry != WorkspaceShellTestAccess::TreeEntries(shell).end() &&
+             clean_src_entry->git_status == project::GitFileStatus::Clean,
+         "terminal wake refresh should clear stale tree git badges after a commit");
+}
+
 void TestWorkspaceShellProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2788,6 +2845,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusBarShowsSourceControlState);
   AddTest(tests, "WorkspaceShell/TerminalWakeRefreshesStatusBarAfterCommit",
           TestWorkspaceShellTerminalWakeRefreshesStatusBarAfterCommit);
+  AddTest(tests, "WorkspaceShell/TerminalWakeClearsTreeGitBadgesAfterCommit",
+          TestWorkspaceShellTerminalWakeClearsTreeGitBadgesAfterCommit);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshDispatchIsNonBlocking",
           TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking);
   AddTest(tests, "WorkspaceShell/ProjectSwitchDiscardsStaleGitSidebarRefreshResult",

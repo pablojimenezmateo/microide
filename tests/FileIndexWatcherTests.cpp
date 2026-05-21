@@ -127,7 +127,12 @@ void TestFileIndexWatcherDetectsCreatedFile() {
   Expect(notified,
          "FileIndexWatcher should detect newly created file within 600ms");
   if (notified) {
-    Expect(created_rel == std::filesystem::path("new_file.txt"),
+    std::filesystem::path created_rel_snapshot;
+    {
+      std::lock_guard lock(mutex);
+      created_rel_snapshot = created_rel;
+    }
+    Expect(created_rel_snapshot == std::filesystem::path("new_file.txt"),
            "FileIndexWatcher should report correct relative path for created file");
   }
 
@@ -230,9 +235,14 @@ void TestFileIndexWatcherIgnoresGitMetadataUpdates() {
 
   const bool notified =
       WaitFor(mutex, cv, [&] { return saw_project_file; }, std::chrono::milliseconds(1200));
+  bool saw_git_metadata_snapshot = false;
+  {
+    std::lock_guard lock(mutex);
+    saw_git_metadata_snapshot = saw_git_metadata;
+  }
   Expect(notified,
          "FileIndexWatcher should still detect visible project files after git metadata changes");
-  Expect(!saw_git_metadata,
+  Expect(!saw_git_metadata_snapshot,
          "FileIndexWatcher should not report .git metadata updates such as index.lock");
 
   watcher.Unwatch();
@@ -399,8 +409,13 @@ void TestFileIndexWatcherIgnoresChangesInsideGitignoredDirectory() {
 
   const bool notified =
       WaitFor(mutex, cv, [&] { return saw_visible; }, std::chrono::milliseconds(1500));
+  bool saw_ignored_snapshot = false;
+  {
+    std::lock_guard lock(mutex);
+    saw_ignored_snapshot = saw_ignored;
+  }
   Expect(notified, "FileIndexWatcher should still notify for non-ignored files");
-  Expect(!saw_ignored,
+  Expect(!saw_ignored_snapshot,
          "FileIndexWatcher should not emit change events for files under .gitignored dirs");
 
   watcher.Unwatch();

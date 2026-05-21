@@ -442,6 +442,7 @@ void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
 
     const auto working_entries = project::CollectGitWorkingTreeEntries(project_root);
     if (materialize_tree_git_badges) {
+      snapshot.includes_tree_git_statuses = true;
       snapshot.tree_git_statuses = project::BuildGitStatusMap(working_entries);
     }
     if (populate_sidebar_entries) {

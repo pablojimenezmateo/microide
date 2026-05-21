@@ -100,6 +100,7 @@ struct GitSidebarState {
   struct RefreshSnapshot {
     std::vector<RefreshSnapshotEntry> entries;
     std::unordered_map<std::string, project::GitFileStatus> tree_git_statuses;
+    bool includes_tree_git_statuses = false;
     bool repo_available = false;
     std::string branch_label;
     std::string base_ref;

@@ -34,7 +34,7 @@ void SidebarCoordinator::RefreshGit() {
       }
       return;
     }
-    if (!pending_snapshot.tree_git_statuses.empty()) {
+    if (pending_snapshot.includes_tree_git_statuses) {
       state_.directory_tree.ApplyGitStatuses(std::move(pending_snapshot.tree_git_statuses));
     }
 
@@ -126,7 +126,7 @@ void SidebarCoordinator::RefreshGit() {
     operations_.request_sidebar_redraw();
     return;
   }
-  if (!snapshot.tree_git_statuses.empty()) {
+  if (snapshot.includes_tree_git_statuses) {
     state_.directory_tree.ApplyGitStatuses(std::move(snapshot.tree_git_statuses));
   }
 
