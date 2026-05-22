@@ -457,6 +457,10 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this](std::size_t index) { return UnstageGitSidebarEntry(index); },
           .discard_git_sidebar_entry =
               [this](std::size_t index) { return DiscardGitSidebarEntry(index); },
+          .dispatch_git_sidebar_action =
+              [this](GitSidebarActionId action, std::size_t index) {
+                return DispatchGitSidebarAction(action, index);
+              },
           .move_problems_sidebar_selection = [this](int delta) { MoveProblemsSidebarSelection(delta); },
           .reveal_selected_problems_sidebar_line =
               [this]() { RevealSelectedProblemsSidebarLine(); },

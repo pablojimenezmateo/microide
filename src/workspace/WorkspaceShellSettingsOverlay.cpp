@@ -28,6 +28,10 @@ void UpsertSetting(std::vector<std::pair<std::string, std::string>>& settings,
 std::vector<HelpAboutRow> BuildHelpRows() {
   std::vector<HelpAboutRow> rows;
   rows.push_back(HelpAboutRow{.label = "microide", .detail = "Desktop IDE"});
+  rows.push_back(HelpAboutRow{.label = "Git sidebar (focused)",
+                              .detail = "Enter default view | d diff | s stage | u unstage | "
+                                         "x discard (confirm) | m merge | c commit | r refresh | "
+                                         "o open file"});
   for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
     if (spec.command_name.empty()) {
       continue;

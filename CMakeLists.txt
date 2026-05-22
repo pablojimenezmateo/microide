@@ -373,6 +373,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceProjectStateCoordinator.cpp
   src/workspace/WorkspaceGitOutgoingBase.cpp
+  src/workspace/GitSidebarCommandCenter.cpp
   src/workspace/WorkspaceGitSidebarPresentation.cpp
   src/workspace/WorkspaceRootView.cpp
   src/workspace/WorkspaceShellBootstrapper.cpp
@@ -501,6 +502,7 @@ add_executable(microide_tests
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/GitRepositoryStateTests.cpp
+  tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp

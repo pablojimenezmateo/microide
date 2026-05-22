@@ -100,6 +100,7 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
 
   Expect(WaitForGitSidebarEntryCount(shell, 1),
          "git sidebar tooltip fixture should expose a single modified entry");
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
 
   const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
   SendMouseMotion(
@@ -108,17 +109,18 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
   Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell).empty(),
          "hovering the full-width stage-all button should not show a tooltip");
 
-  const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
-  SendMouseMotion(shell, action_rects[0].x + action_rects[0].w * 0.5f,
-                                              action_rects[0].y + action_rects[0].h * 0.5f, 0);
+  const SDL_FRect row_rect = WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, 0);
+  const float stage_button_x = row_rect.x + row_rect.w - 12.0f;
+  const float row_center_y = row_rect.y + row_rect.h * 0.5f;
+  SendMouseMotion(shell, stage_button_x, row_center_y, 0);
   Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
          "hovering the compact stage button should expose the full action name");
 
-  SendMouseMotion(shell, action_rects[0].x - 2.0f,
-                                              action_rects[0].y + action_rects[0].h * 0.5f, 0);
+  SendMouseMotion(shell, stage_button_x - 2.0f, row_center_y, 0);
   Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
          "stage button hover should tolerate a small hitbox miss");
 
+  const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
   SendMouseMotion(shell, action_rects[1].x + action_rects[1].w * 0.5f,
                                               action_rects[1].y + action_rects[1].h * 0.5f, 0);
   Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Discard",
@@ -302,6 +304,126 @@ void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
          "specific-ref outgoing base prompt should prefill the saved custom ref");
 }
 
+void TestWorkspaceShellGitSidebarGroupsWorkflowSections() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path changed = root / "changed.cpp";
+  const std::filesystem::path staged = root / "staged.cpp";
+  const std::filesystem::path untracked = root / "untracked.cpp";
+  const std::filesystem::path renamed_from = root / "old_name.cpp";
+  WriteFile(changed, "int changed() { return 1; }\n");
+  WriteFile(staged, "int staged() { return 1; }\n");
+  WriteFile(renamed_from, "int renamed() { return 1; }\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "grouping fixture", "grouping fixture");
+  WriteFile(changed, "int changed() { return 2; }\n");
+  WriteFile(staged, "int staged() { return 2; }\n");
+  RequireGitCommandSuccess(root, {"add", "staged.cpp"}, "stage fixture file");
+  RequireGitCommandSuccess(root, {"mv", "old_name.cpp", "renamed.cpp"}, "rename fixture file");
+  WriteFile(untracked, "hello\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 4),
+         "grouping fixture should expose changed, staged, rename, and untracked rows");
+
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  auto has_section = [&](WorkspaceShell::GitSidebarEntry::Section section) {
+    return std::any_of(entries.begin(), entries.end(),
+                       [&](const WorkspaceShell::GitSidebarEntry& entry) {
+                         return entry.section == section;
+                       });
+  };
+  Expect(std::any_of(entries.begin(), entries.end(),
+                     [](const WorkspaceShell::GitSidebarEntry& entry) {
+                       return entry.relative_path == std::filesystem::path("changed.cpp") &&
+                              entry.section == WorkspaceShell::GitSidebarEntry::Section::Changed;
+                     }),
+         "grouping fixture should classify modified unstaged files under Changed");
+  Expect(has_section(WorkspaceShell::GitSidebarEntry::Section::Staged),
+         "grouping fixture should include a staged section row");
+  Expect(has_section(WorkspaceShell::GitSidebarEntry::Section::Untracked),
+         "grouping fixture should include an untracked section row");
+  Expect(std::any_of(entries.begin(), entries.end(),
+                     [](const WorkspaceShell::GitSidebarEntry& entry) {
+                       return entry.relative_path == std::filesystem::path("renamed.cpp");
+                     }),
+         "rename fixture should surface the destination path in the sidebar");
+}
+
+void TestWorkspaceShellGitSidebarDiscardRequiresConfirmation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "discard.cpp";
+  WriteFile(source, "int value() { return 1; }\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "discard fixture", "discard fixture");
+  WriteFile(source, "int value() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "discard fixture should expose one changed row");
+
+  Expect(SendKeyDown(shell, SDLK_X, SDL_KMOD_NONE),
+         "discard shortcut should be handled by the git sidebar");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "discard shortcut should open a confirmation prompt");
+  Expect(ReadFile(source).find("return 2") != std::string::npos,
+         "discard shortcut alone should not revert the working tree");
+
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0),
+         "confirmed discard should clear the changed row after refresh");
+  Expect(ReadFile(source).find("return 1") != std::string::npos,
+         "confirmed discard should restore the committed file contents");
+}
+
+void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "stage.cpp";
+  WriteFile(source, "int stage() { return 1; }\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "stage shortcut fixture", "stage shortcut fixture");
+  WriteFile(source, "int stage() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "stage shortcut fixture should expose one changed row");
+
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  std::size_t changed_index = 0;
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i].section == WorkspaceShell::GitSidebarEntry::Section::Changed) {
+      changed_index = i;
+      break;
+    }
+  }
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, changed_index);
+
+  Expect(SendKeyDown(shell, SDLK_S, SDL_KMOD_NONE),
+         "stage shortcut should be handled by the git sidebar");
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "stage shortcut fixture should settle after refresh");
+  Expect(std::any_of(WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
+                     WorkspaceShellTestAccess::GitSidebarEntries(shell).end(),
+                     [](const WorkspaceShell::GitSidebarEntry& entry) {
+                       return entry.section == WorkspaceShell::GitSidebarEntry::Section::Staged;
+                     }),
+         "stage shortcut should move the row into the staged section");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -315,6 +437,12 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries);
   AddTest(tests, "WorkspaceShell/GitOutgoingBaseButtonOpensMenuAndPrompt",
           TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt);
+  AddTest(tests, "WorkspaceShell/GitSidebarGroupsWorkflowSections",
+          TestWorkspaceShellGitSidebarGroupsWorkflowSections);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardRequiresConfirmation",
+          TestWorkspaceShellGitSidebarDiscardRequiresConfirmation);
+  AddTest(tests, "WorkspaceShell/GitSidebarKeyboardStageShortcut",
+          TestWorkspaceShellGitSidebarKeyboardStageShortcut);
 }
 
 }  // namespace microide::tests

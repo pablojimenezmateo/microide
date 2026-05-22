@@ -1,5 +1,7 @@
 #include "workspace/StatusBarModelService.h"
 
+#include "workspace/GitSidebarCommandCenter.h"
+
 #include <algorithm>
 #include <string_view>
 
@@ -25,7 +27,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
                                   !git_state.entries.empty();
     const bool snapshot_has_worktree_changes = std::any_of(
         git_state.entries.begin(), git_state.entries.end(), [](const GitSidebarEntry& entry) {
-          return entry.section == GitSidebarEntry::Section::Modified;
+          return IsGitWorkflowSection(entry.section);
         });
     const bool tree_has_worktree_changes =
         !has_git_snapshot && project_state.directory_tree.has_dirty_files();

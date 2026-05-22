@@ -45,11 +45,14 @@ enum class GitSidebarRefreshScope {
 
 struct GitSidebarEntry {
   enum class Section {
-    Modified,
+    Conflicts,
+    Staged,
+    Changed,
+    Untracked,
     Outgoing,
   };
 
-  Section section = Section::Modified;
+  Section section = Section::Changed;
   std::filesystem::path path;
   std::filesystem::path relative_path;
   project::GitFileStatus status = project::GitFileStatus::Clean;
@@ -69,7 +72,7 @@ struct GitSidebarLine {
   };
 
   Kind kind = Kind::Empty;
-  GitSidebarEntry::Section section = GitSidebarEntry::Section::Modified;
+  GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string label;
   int entry_index = -1;
 };
@@ -90,7 +93,7 @@ struct ProblemsSidebarEntry {
 
 struct GitSidebarState {
   struct RefreshSnapshotEntry {
-    GitSidebarEntry::Section section = GitSidebarEntry::Section::Modified;
+    GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
     std::filesystem::path relative_path;
     project::GitFileStatus status = project::GitFileStatus::Clean;
     bool conflicted = false;
@@ -105,16 +108,26 @@ struct GitSidebarState {
     std::string branch_label;
     std::string base_ref;
     std::string base_label;
+    std::string upstream_label;
+    int ahead = 0;
+    int behind = 0;
+    bool snapshot_stale = false;
+    std::string refresh_error;
     std::uint64_t generation = 0;
   };
 
   std::vector<GitSidebarEntry> entries;
   std::string branch_label;
+  std::string upstream_label;
+  int ahead = 0;
+  int behind = 0;
   std::string base_ref;
   std::string base_label;
   OutgoingBaseChoice outgoing_base_choice;
   bool repo_available = false;
   bool refreshing = false;
+  bool snapshot_stale = false;
+  std::string refresh_error;
   bool tree_git_badges_materialized = false;
   bool provider_backed = false;
   bool supports_mutations = true;

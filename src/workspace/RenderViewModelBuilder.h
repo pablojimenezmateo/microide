@@ -5,6 +5,7 @@
 #include <string>
 
 #include "editor/EditorViewModel.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/SettingsOverlayService.h"
@@ -75,6 +76,7 @@ struct SidebarSurfaceViewModel {
   // the view model. Avoids per-frame `std::string` allocations on every BuildSidebarSurface() call.
   std::string_view query_fallback_text;
   std::string_view replace_fallback_text;
+  std::optional<GitSidebarViewModel> git_sidebar;
   ProjectWorkspaceState* project_state = nullptr;
 };
 

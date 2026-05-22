@@ -114,7 +114,8 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
       .conflict_kind = conflicted ? ConflictKindFromUnmergedCodes(xy) : GitConflictKind::None,
       .path = MakeGitRepositoryPathIdentity(std::move(path)),
       .old_path = std::nullopt,
-      .staged = !conflicted && xy.size() >= 1 && xy[0] != ' ' && xy[0] != '?' && xy[0] != '!',
+      .staged = !conflicted && xy.size() >= 1 && xy[0] != ' ' && xy[0] != '?' &&
+                 xy[0] != '!' && xy[0] != '.',
       .conflicted = conflicted,
   };
   if (old_path.has_value()) {

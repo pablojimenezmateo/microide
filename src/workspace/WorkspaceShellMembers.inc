@@ -8,6 +8,7 @@
   using MenuSpec = workspace::MenuSpec;
   using SidebarMode = workspace::SidebarMode;
   using GitSidebarEntry = workspace::GitSidebarEntry;
+  using GitSidebarActionId = workspace::GitSidebarActionId;
   using GitSidebarLine = workspace::GitSidebarLine;
   using GitSidebarEntryActionLayout = workspace::GitSidebarEntryActionLayout;
   using ProblemsSidebarEntry = workspace::ProblemsSidebarEntry;
@@ -828,6 +829,8 @@
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
+  void OpenDiscardGitSidebarEntryPrompt(std::size_t entry_index);
+  bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
   void OpenGitOutgoingBasePrompt();

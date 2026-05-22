@@ -25,6 +25,7 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests);
+void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
@@ -300,6 +301,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellTerminalTests(tests);
   microide::tests::RegisterGitServiceTests(tests);
   microide::tests::RegisterGitRepositoryStateTests(tests);
+  microide::tests::RegisterGitSidebarCommandCenterTests(tests);
   microide::tests::RegisterWorkspaceLspClientTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
   microide::tests::RegisterFileOperationServiceTests(tests);

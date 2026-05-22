@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "util/Parse.h"
 #include "workspace/EditorTabService.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
@@ -170,6 +172,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Delete";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard All Changes";
+    case PromptSurfaceState::Action::DiscardGitEntry:
+      return "Discard Git Changes";
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return "Outgoing Base Ref";
     case PromptSurfaceState::Action::OpenExternalUrl:
@@ -194,6 +198,15 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Move " + label + " to trash?";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
+    case PromptSurfaceState::Action::DiscardGitEntry: {
+      const auto entry_index = util::ParseSize(context_.prompts.surface.input.text());
+      if (!entry_index.has_value() ||
+          *entry_index >= context_.current_project_state.sidebar.git.entries.size()) {
+        return "Discard changes for the selected Git sidebar row?";
+      }
+      return BuildGitDiscardPreviewSummary(
+          context_.current_project_state.sidebar.git.entries[*entry_index], ProjectLabel());
+    }
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return "Compare outgoing files against this ref.";
     case PromptSurfaceState::Action::OpenExternalUrl:
@@ -224,6 +237,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Delete", "Cancel"};
     case PromptSurfaceState::Action::DiscardGitChanges:
       return {"Discard All", "Cancel"};
+    case PromptSurfaceState::Action::DiscardGitEntry:
+      return {"Discard", "Cancel"};
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return {"Use Ref", "Cancel"};
     case PromptSurfaceState::Action::OpenExternalUrl:

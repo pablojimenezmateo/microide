@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -13,57 +14,66 @@ namespace {
 
 using microide::workspace::BuildGitSidebarLineSpecs;
 using microide::workspace::BuildGitSidebarEntryTextModel;
+using microide::workspace::BuildGitSidebarViewModel;
 using microide::workspace::BuildProjectSearchResultLineMap;
 using microide::workspace::FindLiteralSearchMatches;
 using microide::workspace::FindProjectSearchResultLine;
 using microide::workspace::FindSelectedGitSidebarLineIndex;
+using microide::workspace::GitSidebarEntry;
 using microide::workspace::GitSidebarLineKind;
-using microide::workspace::GitSidebarSection;
+using microide::workspace::GitSidebarState;
 using microide::workspace::QuerySupportsLiteralReplace;
 using microide::workspace::ReplaceLiteralMatchesInText;
 using microide::workspace::UsesCaseSensitiveLiteralMatch;
 
 void TestWorkspaceSharedGitSidebarLineHelpers() {
-  const std::vector<GitSidebarSection> sections = {
-      GitSidebarSection::Modified,
-      GitSidebarSection::Modified,
-      GitSidebarSection::Outgoing,
+  GitSidebarState git_state;
+  git_state.repo_available = true;
+  git_state.base_ref = "origin/main";
+  git_state.base_label = "origin/main";
+  git_state.entries = {
+      GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
+                      .relative_path = "src/alpha.cpp"},
+      GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
+                      .relative_path = "src/beta.cpp"},
+      GitSidebarEntry{.section = GitSidebarEntry::Section::Outgoing,
+                      .relative_path = "src/gamma.cpp"},
   };
-  const auto lines =
-      BuildGitSidebarLineSpecs(sections, true, false, "origin/main", "origin/main");
-  Expect(lines.size() == 5, "git sidebar lines should include both section headers and entries");
-  Expect(lines[0].kind == GitSidebarLineKind::Header && lines[0].label == "Changes (2)",
-         "git sidebar lines should include the modified header with count");
+  const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(git_state));
+  Expect(lines.size() == 9,
+         "git sidebar lines should include workflow headers, rows, and empty placeholders");
+  Expect(lines[0].kind == GitSidebarLineKind::Header && lines[0].label == "Changed (2)",
+         "git sidebar lines should include the changed header with count");
   Expect(lines[1].kind == GitSidebarLineKind::Entry && lines[1].entry_index == 0,
-         "git sidebar lines should map the first modified entry index");
+         "git sidebar lines should map the first changed entry index");
   Expect(lines[2].kind == GitSidebarLineKind::Entry && lines[2].entry_index == 1,
-         "git sidebar lines should map the second modified entry index");
-  Expect(lines[3].kind == GitSidebarLineKind::Header &&
-             lines[3].label == "Outgoing files (1)  origin/main",
+         "git sidebar lines should map the second changed entry index");
+  Expect(lines[5].kind == GitSidebarLineKind::Header &&
+             lines[5].label == "Outgoing (1)  origin/main",
          "git sidebar lines should include the outgoing header with base label");
-  Expect(lines[4].kind == GitSidebarLineKind::Entry && lines[4].entry_index == 2,
+  Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 2,
          "git sidebar lines should map outgoing entries after the outgoing header");
 
   const auto selected_line = FindSelectedGitSidebarLineIndex(lines, 2);
-  Expect(selected_line.has_value() && *selected_line == 4,
+  Expect(selected_line.has_value() && *selected_line == 6,
          "git sidebar selected-line lookup should find the outgoing entry row");
   Expect(!FindSelectedGitSidebarLineIndex(lines, 9).has_value(),
          "git sidebar selected-line lookup should fail for unknown entries");
 }
 
 void TestWorkspaceSharedGitSidebarEmptyStates() {
-  const auto clean_lines = BuildGitSidebarLineSpecs({}, true, false, "", "");
-  Expect(clean_lines.size() == 4,
-         "empty git sidebar should still show both section headers and empty rows");
-  Expect(clean_lines[1].kind == GitSidebarLineKind::Empty &&
-             clean_lines[1].label == "Working tree is clean",
-         "git sidebar should describe a clean working tree when git is available");
+  GitSidebarState clean_state;
+  clean_state.repo_available = true;
+  const auto clean_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(clean_state));
+  Expect(clean_lines.size() == 10,
+         "empty git sidebar should still show all workflow section headers and empty rows");
   Expect(clean_lines[3].kind == GitSidebarLineKind::Empty &&
-             clean_lines[3].label == "Base branch unavailable",
-         "git sidebar should describe a missing base branch for outgoing files");
+             clean_lines[3].label == "No unstaged changes",
+         "git sidebar should describe a clean changed section when git is available");
 
-  const auto no_repo_lines = BuildGitSidebarLineSpecs({}, false, false, "", "");
-  Expect(no_repo_lines[1].label == "Not a git repository",
+  GitSidebarState no_repo_state;
+  const auto no_repo_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(no_repo_state));
+  Expect(no_repo_lines[3].label == "Not a git repository",
          "git sidebar should distinguish non-repositories from clean repositories");
 }
 

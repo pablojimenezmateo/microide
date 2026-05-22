@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "app/BackgroundTaskCounter.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "project/GitCompareService.h"
 #include "project/GitPorcelainV2Parser.h"
 #include "project/GitRepository.h"
@@ -156,7 +157,7 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
       continue;
     }
     snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-        .section = GitSidebarEntry::Section::Modified,
+        .section = ClassifyGitSidebarSection(entry.conflicted, entry.staged, entry.status),
         .relative_path = entry.path.relative_path,
         .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
         .conflicted = entry.conflicted,
@@ -169,6 +170,11 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
                              repository_state.repo_available);
   snapshot.repo_available = resolved_base.repo_available;
   snapshot.branch_label = BranchLabelFromState(repository_state);
+  snapshot.upstream_label = repository_state.branch.upstream;
+  snapshot.ahead = repository_state.branch.ahead;
+  snapshot.behind = repository_state.branch.behind;
+  snapshot.snapshot_stale = repository_state.stale;
+  snapshot.refresh_error = repository_state.refresh_error.detail;
   snapshot.base_ref = resolved_base.base_ref;
   snapshot.base_label = resolved_base.base_label;
 

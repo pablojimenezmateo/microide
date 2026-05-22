@@ -259,7 +259,7 @@ void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
          "showing git sidebar should render entries on wake after refresh dispatch");
   const bool found_modified_source = std::any_of(
       entries.begin(), entries.end(), [&](const WorkspaceShell::GitSidebarEntry& entry) {
-        return entry.section == WorkspaceShell::GitSidebarEntry::Section::Modified &&
+        return entry.section == WorkspaceShell::GitSidebarEntry::Section::Changed &&
                entry.path == source.lexically_normal();
       });
   Expect(found_modified_source,

@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/SidebarService.h"
@@ -318,6 +319,13 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .run_tests = [this](const std::vector<std::string>& test_ids) {
             return RunTests(test_ids, nullptr);
           },
+          .set_command_feedback = [this](std::string feedback) {
+            context_.current_project_state.panel.command.feedback_text = std::move(feedback);
+          },
+          .execute_action =
+              [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
+                return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
+              },
       });
 }
 
@@ -604,6 +612,14 @@ bool WorkspaceShell::UnstageGitSidebarEntry(std::size_t entry_index) {
 
 bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
   return MakeSidebarService().DiscardGitEntry(entry_index);
+}
+
+void WorkspaceShell::OpenDiscardGitSidebarEntryPrompt(std::size_t entry_index) {
+  MakeSidebarService().OpenDiscardGitEntryPrompt(entry_index);
+}
+
+bool WorkspaceShell::DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index) {
+  return MakeSidebarService().DispatchGitSidebarAction(action, entry_index);
 }
 
 void WorkspaceShell::ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path) {

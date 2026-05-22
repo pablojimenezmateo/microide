@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
 namespace microide::workspace {
@@ -330,14 +331,26 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
 
       const auto& entry = project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
+      const GitSidebarRowViewModel* row_vm = nullptr;
+      if (sidebar_vm.git_sidebar.has_value()) {
+        for (const GitSidebarSectionViewModel& section : sidebar_vm.git_sidebar->sections) {
+          for (const GitSidebarRowViewModel& candidate : section.rows) {
+            if (candidate.entry_index == line.entry_index) {
+              row_vm = &candidate;
+              break;
+            }
+          }
+          if (row_vm != nullptr) {
+            break;
+          }
+        }
+      }
       const bool selected =
           static_cast<std::size_t>(line.entry_index) == project_state.sidebar.git.selected_index;
       DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
                                   selected);
 
-      const char git_marker = GitMarker(entry.status);
-      // Hold the marker as a single-char string_view into the local `git_marker` storage to avoid
-      // the per-row std::string allocation.
+      const char git_marker = GitMarker(row_vm != nullptr ? row_vm->status : entry.status);
       const std::string_view marker_text =
           git_marker == ' ' ? std::string_view{} : std::string_view(&git_marker, 1);
       const float marker_width =
@@ -348,42 +361,49 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
       const auto draw_button = [&](const SDL_FRect& button_rect,
                                    std::string_view label,
-                                   ButtonTone tone) {
+                                   ButtonTone tone,
+                                   bool enabled) {
         DrawButtonCentered(
             text_renderer_, renderer, theme_, button_rect, label, tone,
             ButtonVisualState{
-                .enabled = true,
+                .enabled = enabled,
                 .hovered = false,
                 .active = selected,
             });
       };
 
+      const GitSidebarActionAvailability row_actions =
+          row_vm != nullptr ? row_vm->actions
+                            : GitSidebarActionAvailabilityForEntry(
+                                  entry, project_state.sidebar.git.repo_available,
+                                  project_state.sidebar.git.supports_mutations);
       if (actions.primary_rect.has_value()) {
-        draw_button(*actions.primary_rect, entry.staged ? "Unstage" : "Stage",
-                    ButtonTone::Accent);
+        draw_button(*actions.primary_rect, row_actions.unstage ? "Unstage" : "Stage",
+                    ButtonTone::Accent, row_actions.stage || row_actions.unstage);
       }
       if (actions.discard_rect.has_value()) {
-        draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive);
+        draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive, row_actions.discard);
       }
 
       if (!marker_text.empty()) {
         DrawVCenteredTextOn(
             text_renderer_, renderer,
             MakeRect(right_edge - marker_width, row_rect.y, marker_width, row_rect.h), 0.0f,
-            GitMarkerColor(theme_, entry.status),
+            GitMarkerColor(theme_, row_vm != nullptr ? row_vm->status : entry.status),
             selected ? theme_.row_highlight : theme_.surface_background, marker_text);
         right_edge -= marker_width + 8.0f;
       }
 
-      const GitSidebarEntryTextModel text_model =
-          BuildGitSidebarEntryTextModel(entry.relative_path, entry.staged);
+      const std::string& primary_label =
+          row_vm != nullptr ? row_vm->primary_label : entry.relative_path.filename().string();
+      const std::string& secondary_label = row_vm != nullptr ? row_vm->secondary_label : std::string{};
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
       const SDL_Color primary_color = theme_.text_primary;
       const SDL_Color secondary_color = theme_.text_muted;
       DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 6.0f, right_edge,
-                                  primary_color, secondary_color, row_background,
-                                  text_model.primary_label, text_model.secondary_label, 1.0f);
+                                  primary_color, secondary_color, row_background, primary_label,
+                                  secondary_label, 1.0f);
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),

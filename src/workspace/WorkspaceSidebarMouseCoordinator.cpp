@@ -161,16 +161,17 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
       operations_.compute_git_sidebar_entry_action_layout(row_rect, entry);
   if (actions.primary_rect.has_value() &&
       Contains(*actions.primary_rect, event.button.x, event.button.y)) {
-    return entry.staged ? operations_.unstage_git_sidebar_entry(state_.sidebar.git.selected_index)
-                        : operations_.stage_git_sidebar_entry(state_.sidebar.git.selected_index);
+    const GitSidebarActionId action =
+        entry.staged ? GitSidebarActionId::Unstage : GitSidebarActionId::Stage;
+    return operations_.dispatch_git_sidebar_action(action, state_.sidebar.git.selected_index);
   }
   if (actions.discard_rect.has_value() &&
       Contains(*actions.discard_rect, event.button.x, event.button.y)) {
-    operations_.discard_git_sidebar_entry(state_.sidebar.git.selected_index);
+    operations_.open_discard_git_entry_prompt(state_.sidebar.git.selected_index);
     return true;
   }
-  operations_.open_git_sidebar_entry(state_.sidebar.git.selected_index);
-  return true;
+  return operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
+                                                 state_.sidebar.git.selected_index);
 }
 
 bool SidebarMouseCoordinator::HandleProblemsButtonDown(const SDL_Event& event,
