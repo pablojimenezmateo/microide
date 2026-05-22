@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL_timer.h>
 
+#include <unordered_set>
 #include <utility>
 
 #include "app/BackgroundTaskCounter.h"
@@ -179,9 +180,19 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
   snapshot.base_label = resolved_base.base_label;
 
   if (include_outgoing_entries && !snapshot.base_ref.empty()) {
+    std::unordered_set<std::string> workflow_paths;
+    workflow_paths.reserve(snapshot.entries.size());
+    for (const GitSidebarState::RefreshSnapshotEntry& entry : snapshot.entries) {
+      workflow_paths.insert(entry.relative_path.generic_string());
+    }
+
     const auto outgoing_entries =
         project::CollectGitBranchOutgoingFiles(request.project_root, snapshot.base_ref);
     for (const auto& entry : outgoing_entries) {
+      const std::string path_key = entry.relative_path.generic_string();
+      if (workflow_paths.contains(path_key)) {
+        continue;
+      }
       snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
           .section = GitSidebarEntry::Section::Outgoing,
           .relative_path = entry.relative_path,

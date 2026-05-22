@@ -1,3 +1,4 @@
+#include "GitMergeConflictFixtures.h"
 #include "TestSupport.h"
 
 #include <atomic>
@@ -6,13 +7,16 @@
 
 #include "project/ProjectBackgroundExecutor.h"
 #include "workspace/GitRepositoryService.h"
+#include "workspace/GitSidebarCommandCenter.h"
 
 namespace microide::tests {
 namespace {
 
 using microide::project::ProjectBackgroundExecutor;
 using microide::workspace::GitRepositoryService;
+using microide::workspace::GitSidebarEntry;
 using microide::workspace::GitSidebarRefreshScope;
+using microide::workspace::GitSidebarState;
 using microide::workspace::OutgoingBaseChoice;
 
 void TestCurrentStateReturnsSnapshotCopy() {
@@ -80,6 +84,45 @@ void TestCurrentStateReadsRemainConsistentDuringRefresh() {
   executor.Shutdown();
 }
 
+void TestRefreshSurfacesMergeConflictsInSidebar() {
+  const GitMergeConflictFixture fixture = CreateBothModifiedConflictRepo();
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService service(executor);
+  service.RunRefreshSynchronouslyForTesting(fixture.root, GitSidebarRefreshScope::Full,
+                                            OutgoingBaseChoice{}, false);
+
+  const auto repository_state = service.CurrentState();
+  bool saw_conflicted_entry = false;
+  for (const auto& entry : repository_state.entries) {
+    if (entry.path.relative_path == std::filesystem::path("conflict.txt") && entry.conflicted) {
+      saw_conflicted_entry = true;
+      break;
+    }
+  }
+  Expect(saw_conflicted_entry,
+         "repository refresh should parse unmerged conflict.txt from porcelain v2");
+
+  GitSidebarState::RefreshSnapshot snapshot;
+  Expect(service.ConsumePendingSidebarSnapshot(&snapshot),
+         "synchronous refresh should publish a sidebar snapshot");
+  std::size_t conflict_rows = 0;
+  std::size_t outgoing_rows = 0;
+  for (const auto& entry : snapshot.entries) {
+    if (entry.relative_path == std::filesystem::path("conflict.txt")) {
+      if (entry.section == GitSidebarEntry::Section::Conflicts) {
+        ++conflict_rows;
+      } else if (entry.section == GitSidebarEntry::Section::Outgoing) {
+        ++outgoing_rows;
+      }
+    }
+  }
+  Expect(conflict_rows == 1,
+         "conflicted file should appear once in the Conflicts section");
+  Expect(outgoing_rows == 0,
+         "conflicted file should not be duplicated in Outgoing");
+}
+
 }  // namespace
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
@@ -87,6 +130,8 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
           TestCurrentStateReturnsSnapshotCopy);
   AddTest(tests, "GitRepositoryService/CurrentStateReadsDuringRefresh",
           TestCurrentStateReadsRemainConsistentDuringRefresh);
+  AddTest(tests, "GitRepositoryService/RefreshSurfacesMergeConflictsInSidebar",
+          TestRefreshSurfacesMergeConflictsInSidebar);
 }
 
 }  // namespace microide::tests

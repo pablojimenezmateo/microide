@@ -95,11 +95,20 @@ void TestPorcelainV2RenamePathWithSpaces() {
 }
 
 void TestPorcelainV2ConflictClassification() {
+  // Match real `git status --porcelain=v2 -z` unmerged output (modes + object ids).
   std::string output =
-      "u UU N... 100644 100644 100644 100644 100644 100644 100644 100644 conflict.txt";
+      "u UU N... 100644 100644 100644 100644 "
+      "89b24ecec50c07aef0d6640a2a9f6dc354a33125 "
+      "6a58bd908e84644755a5a589e5f602267f5b6bbf5 "
+      "f19b5ba9248e8c06a7c3c7d5f3127928028fe9ae "
+      "conflict.txt";
   output.push_back('\0');
   const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 3, 0);
   Expect(!state.entries.empty(), "conflict fixture should produce an entry");
+  Expect(state.entries.front().kind == GitRepositoryEntryKind::Unmerged,
+         "conflict fixture entry should be unmerged");
+  Expect(state.entries.front().path.relative_path == std::filesystem::path("conflict.txt"),
+         "conflict fixture should preserve path");
   Expect(state.entries.front().conflicted, "conflict entry should be marked conflicted");
   Expect(state.entries.front().conflict_kind == GitConflictKind::BothModified,
          "UU should classify as both modified");
