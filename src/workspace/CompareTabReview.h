@@ -35,5 +35,7 @@ const compare::ComparePresentationRow* CompareTabPresentationRowAt(const Compare
                                                                  std::size_t presentation_row);
 std::optional<std::size_t> CompareTabPresentationRowForHunk(const CompareTabState& compare_tab,
                                                             int hunk_index);
+std::size_t CompareTabModelRowForRightLine(const CompareTabState& compare_tab,
+                                           std::size_t right_line_index);
 
 }  // namespace microide::workspace

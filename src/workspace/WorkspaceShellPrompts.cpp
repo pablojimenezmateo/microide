@@ -174,6 +174,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Discard All Changes";
     case PromptSurfaceState::Action::DiscardGitEntry:
       return "Discard Git Changes";
+    case PromptSurfaceState::Action::DiscardPatchPreview:
+      return "Discard Patch";
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return "Outgoing Base Ref";
     case PromptSurfaceState::Action::OpenExternalUrl:
@@ -207,6 +209,10 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return BuildGitDiscardPreviewSummary(
           context_.current_project_state.sidebar.git.entries[*entry_index], ProjectLabel());
     }
+    case PromptSurfaceState::Action::DiscardPatchPreview:
+      return context_.prompts.surface.detail.empty()
+                 ? "Discard the selected changes from the working tree?"
+                 : context_.prompts.surface.detail;
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return "Compare outgoing files against this ref.";
     case PromptSurfaceState::Action::OpenExternalUrl:
@@ -238,6 +244,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
     case PromptSurfaceState::Action::DiscardGitChanges:
       return {"Discard All", "Cancel"};
     case PromptSurfaceState::Action::DiscardGitEntry:
+      return {"Discard", "Cancel"};
+    case PromptSurfaceState::Action::DiscardPatchPreview:
       return {"Discard", "Cancel"};
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return {"Use Ref", "Cancel"};

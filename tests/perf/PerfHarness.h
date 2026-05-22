@@ -102,6 +102,8 @@ class ScenarioContext {
   bool WaitForGitSidebarIdle(std::chrono::milliseconds timeout);
   bool WaitForGitSidebarEntries(std::size_t min_entries, std::chrono::milliseconds timeout);
   void JumpCompareHunk(int delta);
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
   void MoveMergeConflict(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
   void SimulateExternalFileChange(const std::filesystem::path& path, std::string_view appended_text);

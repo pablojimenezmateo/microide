@@ -98,6 +98,25 @@ const compare::ComparePresentationRow* CompareTabPresentationRowAt(
   return &compare_tab.presentation.rows[presentation_row];
 }
 
+std::size_t CompareTabModelRowForRightLine(const CompareTabState& compare_tab,
+                                           std::size_t right_line_index) {
+  if (compare_tab.model.rows.empty()) {
+    return 0;
+  }
+
+  const int target_line = static_cast<int>(right_line_index + 1);
+  for (std::size_t i = 0; i < compare_tab.model.rows.size(); ++i) {
+    const auto& row = compare_tab.model.rows[i];
+    if (row.right_line == target_line) {
+      return i;
+    }
+    if (row.right_line > target_line) {
+      return i;
+    }
+  }
+  return compare_tab.model.rows.size() - 1;
+}
+
 std::optional<std::size_t> CompareTabPresentationRowForHunk(const CompareTabState& compare_tab,
                                                             int hunk_index) {
   if (hunk_index < 0) {

@@ -294,6 +294,16 @@ void ScenarioContext::JumpCompareHunk(int delta) {
   PumpFrames(1);
 }
 
+void ScenarioContext::StageCompareHunk() {
+  workspace::WorkspaceShell::TestAccess::StageCompareHunk(shell_);
+  PumpFrames(4);
+}
+
+void ScenarioContext::StageCompareSelectedLines() {
+  workspace::WorkspaceShell::TestAccess::StageCompareSelectedLines(shell_);
+  PumpFrames(4);
+}
+
 void ScenarioContext::MoveMergeConflict(int delta) {
   const SDL_Keycode key = delta < 0 ? SDLK_LEFTBRACKET : SDLK_RIGHTBRACKET;
   KeyDown(key, SDL_KMOD_ALT);

@@ -721,6 +721,13 @@
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
+  void UnstageCompareHunk();
+  void UnstageCompareSelectedLines();
+  void OpenDiscardCompareHunkPrompt();
+  void OpenDiscardCompareSelectedLinesPrompt();
+  void RefreshOpenCompareTabsForPath(const std::filesystem::path& path);
   void ScrollCompareRows(int delta);
   void ScrollCompareColumns(int delta);
   bool OpenMergeEditor(const std::filesystem::path& base_path,
@@ -1276,6 +1283,7 @@
   WorkspaceProjectFileMonitor project_file_monitor_;
   project::ProjectBackgroundExecutor project_background_executor_;
   GitRepositoryService git_repository_service_{project_background_executor_};
+  PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};
   std::mutex save_tab_mutex_;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};

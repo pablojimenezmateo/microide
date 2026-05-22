@@ -110,6 +110,12 @@ class KeyInputCoordinator {
     std::function<void()> open_compare_picker;
     std::function<void(int)> move_compare_selection;
     std::function<void(int)> jump_compare_hunk;
+    std::function<void()> stage_compare_hunk;
+    std::function<void()> stage_compare_selected_lines;
+    std::function<void()> unstage_compare_hunk;
+    std::function<void()> unstage_compare_selected_lines;
+    std::function<void()> open_discard_compare_hunk_prompt;
+    std::function<void()> open_discard_compare_selected_lines_prompt;
     std::function<void()> open_working_file_from_compare;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;

@@ -395,4 +395,40 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   }
 }
 
+void CompareInteractionCoordinator::StageCompareHunk() {
+  if (operations_.stage_compare_hunk) {
+    operations_.stage_compare_hunk();
+  }
+}
+
+void CompareInteractionCoordinator::StageCompareSelectedLines() {
+  if (operations_.stage_compare_selected_lines) {
+    operations_.stage_compare_selected_lines();
+  }
+}
+
+void CompareInteractionCoordinator::UnstageCompareHunk() {
+  if (operations_.unstage_compare_hunk) {
+    operations_.unstage_compare_hunk();
+  }
+}
+
+void CompareInteractionCoordinator::UnstageCompareSelectedLines() {
+  if (operations_.unstage_compare_selected_lines) {
+    operations_.unstage_compare_selected_lines();
+  }
+}
+
+void CompareInteractionCoordinator::OpenDiscardCompareHunkPrompt() {
+  if (operations_.open_discard_compare_hunk_prompt) {
+    operations_.open_discard_compare_hunk_prompt();
+  }
+}
+
+void CompareInteractionCoordinator::OpenDiscardCompareSelectedLinesPrompt() {
+  if (operations_.open_discard_compare_selected_lines_prompt) {
+    operations_.open_discard_compare_selected_lines_prompt();
+  }
+}
+
 }  // namespace microide::workspace

@@ -483,6 +483,13 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .open_compare_picker = [this]() { OpenComparePicker(); },
           .move_compare_selection = [this](int delta) { MoveCompareSelection(delta); },
           .jump_compare_hunk = [this](int delta) { JumpCompareHunk(delta); },
+          .stage_compare_hunk = [this]() { StageCompareHunk(); },
+          .stage_compare_selected_lines = [this]() { StageCompareSelectedLines(); },
+          .unstage_compare_hunk = [this]() { UnstageCompareHunk(); },
+          .unstage_compare_selected_lines = [this]() { UnstageCompareSelectedLines(); },
+          .open_discard_compare_hunk_prompt = [this]() { OpenDiscardCompareHunkPrompt(); },
+          .open_discard_compare_selected_lines_prompt =
+              [this]() { OpenDiscardCompareSelectedLinesPrompt(); },
           .open_working_file_from_compare = [this]() { OpenWorkingFileFromCompare(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .refresh_compare_tab_derived_state =

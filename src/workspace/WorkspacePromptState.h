@@ -49,6 +49,7 @@ struct PromptSurfaceState {
     DeletePath,
     DiscardGitChanges,
     DiscardGitEntry,
+    DiscardPatchPreview,
     SetGitOutgoingBaseRef,
     OpenExternalUrl,
   };

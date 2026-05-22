@@ -100,6 +100,30 @@ void CompareMergeService::CopyCompareFilePatch() {
   interactions_.CopyCompareFilePatch();
 }
 
+void CompareMergeService::StageCompareHunk() {
+  interactions_.StageCompareHunk();
+}
+
+void CompareMergeService::StageCompareSelectedLines() {
+  interactions_.StageCompareSelectedLines();
+}
+
+void CompareMergeService::UnstageCompareHunk() {
+  interactions_.UnstageCompareHunk();
+}
+
+void CompareMergeService::UnstageCompareSelectedLines() {
+  interactions_.UnstageCompareSelectedLines();
+}
+
+void CompareMergeService::OpenDiscardCompareHunkPrompt() {
+  interactions_.OpenDiscardCompareHunkPrompt();
+}
+
+void CompareMergeService::OpenDiscardCompareSelectedLinesPrompt() {
+  interactions_.OpenDiscardCompareSelectedLinesPrompt();
+}
+
 void CompareMergeService::ToggleCompareIgnoreWhitespace() {
   interactions_.ToggleCompareIgnoreWhitespace();
 }

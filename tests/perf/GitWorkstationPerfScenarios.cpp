@@ -113,10 +113,8 @@ void RunDiffStageHunkLargePatch(ScenarioContext& context) {
     }
     context.PumpFrames(4);
   });
-  context.Measure("diff.stage_file_proxy", [&] {
-    if (!microide::project::GitStagePath(TA::ProjectRoot(context.Shell()), source)) {
-      throw std::runtime_error("diff_stage_hunk_large_patch: GitStagePath failed");
-    }
+  context.Measure("diff.stage_hunk", [&] {
+    context.StageCompareHunk();
     TA::PerfRunGitSidebarRefreshSync(context.Shell());
     context.PumpFrames(2);
   });
@@ -134,10 +132,8 @@ void RunDiffStageSelectedLines(ScenarioContext& context) {
   compare.right_view_active = true;
   compare.right_viewport.MoveCursorTo(40, 0, false);
   compare.right_viewport.MoveCursorTo(80, 0, true);
-  context.Measure("diff.stage_selection_proxy", [&] {
-    if (!microide::project::GitStagePath(TA::ProjectRoot(context.Shell()), source)) {
-      throw std::runtime_error("diff_stage_selected_lines: GitStagePath failed");
-    }
+  context.Measure("diff.stage_selected_lines", [&] {
+    context.StageCompareSelectedLines();
     TA::PerfRunGitSidebarRefreshSync(context.Shell());
     context.PumpFrames(2);
   });

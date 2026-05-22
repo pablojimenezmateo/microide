@@ -49,6 +49,12 @@ class CompareMergeService {
   void CopyComparePath();
   void CopyCompareHunkPatch();
   void CopyCompareFilePatch();
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
+  void UnstageCompareHunk();
+  void UnstageCompareSelectedLines();
+  void OpenDiscardCompareHunkPrompt();
+  void OpenDiscardCompareSelectedLinesPrompt();
   void ToggleCompareIgnoreWhitespace();
   void ToggleCompareShowWhitespace();
   void ScrollCompareRows(int delta);

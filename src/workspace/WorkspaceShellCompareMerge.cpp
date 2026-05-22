@@ -170,6 +170,13 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
+          .stage_compare_hunk = [this]() { StageCompareHunk(); },
+          .stage_compare_selected_lines = [this]() { StageCompareSelectedLines(); },
+          .unstage_compare_hunk = [this]() { UnstageCompareHunk(); },
+          .unstage_compare_selected_lines = [this]() { UnstageCompareSelectedLines(); },
+          .open_discard_compare_hunk_prompt = [this]() { OpenDiscardCompareHunkPrompt(); },
+          .open_discard_compare_selected_lines_prompt =
+              [this]() { OpenDiscardCompareSelectedLinesPrompt(); },
       });
 }
 
@@ -256,6 +263,68 @@ void WorkspaceShell::MoveCompareSelection(int delta) {
 
 void WorkspaceShell::JumpCompareHunk(int delta) {
   MakeCompareMergeService().JumpCompareHunk(delta);
+}
+
+void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  for (std::size_t index = 0; index < context_.current_project_state.open_tabs.size(); ++index) {
+    const auto& tab = context_.current_project_state.open_tabs[index];
+    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+        tab.compare->path != normalized_path) {
+      continue;
+    }
+    auto rebuilt = BuildCompareTabEntry(normalized_path, tab.compare.value());
+    if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
+      continue;
+    }
+    context_.current_project_state.open_tabs[index] = std::move(*rebuilt);
+    if (index == context_.current_project_state.active_tab_index) {
+      RevealActiveCompareSelection();
+      RequestActiveTabRedraw(false);
+    }
+  }
+}
+
+void WorkspaceShell::StageCompareHunk() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestStageHunk(*compare_tab);
+  }
+}
+
+void WorkspaceShell::StageCompareSelectedLines() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestStageSelectedLines(*compare_tab);
+  }
+}
+
+void WorkspaceShell::UnstageCompareHunk() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestUnstageHunk(*compare_tab);
+  }
+}
+
+void WorkspaceShell::UnstageCompareSelectedLines() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestUnstageSelectedLines(*compare_tab);
+  }
+}
+
+void WorkspaceShell::OpenDiscardCompareHunkPrompt() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestDiscardHunkPreview(*compare_tab);
+  }
+}
+
+void WorkspaceShell::OpenDiscardCompareSelectedLinesPrompt() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestDiscardSelectedLinesPreview(*compare_tab);
+  }
 }
 
 void WorkspaceShell::ScrollCompareRows(int delta) {

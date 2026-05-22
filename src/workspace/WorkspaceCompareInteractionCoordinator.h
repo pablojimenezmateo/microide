@@ -42,6 +42,12 @@ class CompareInteractionCoordinator {
                        const std::string&, const std::string&)>
         open_branch_head_comparison;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
+    std::function<void()> stage_compare_hunk;
+    std::function<void()> stage_compare_selected_lines;
+    std::function<void()> unstage_compare_hunk;
+    std::function<void()> unstage_compare_selected_lines;
+    std::function<void()> open_discard_compare_hunk_prompt;
+    std::function<void()> open_discard_compare_selected_lines_prompt;
   };
 
   CompareInteractionCoordinator(ProjectWorkspaceState& state, Operations operations);
@@ -60,6 +66,12 @@ class CompareInteractionCoordinator {
   void CopyComparePath();
   void CopyCompareHunkPatch();
   void CopyCompareFilePatch();
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
+  void UnstageCompareHunk();
+  void UnstageCompareSelectedLines();
+  void OpenDiscardCompareHunkPrompt();
+  void OpenDiscardCompareSelectedLinesPrompt();
   void ToggleCompareIgnoreWhitespace();
   void ToggleCompareShowWhitespace();
   void ScrollCompareRows(int delta);

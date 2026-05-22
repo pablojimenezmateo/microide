@@ -162,6 +162,9 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
   src/compare/ComparePatchExport.cpp
+  src/project/PatchApplyTypes.cpp
+  src/project/PatchGenerator.cpp
+  src/project/GitPatchApply.cpp
   src/compare/ComparePresentationModel.cpp
   src/compare/CompareReviewTypes.cpp
   src/compare/CompareSemanticMetadata.cpp
@@ -352,6 +355,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/GitRepositoryService.cpp
+  src/workspace/PatchApplyService.cpp
   src/workspace/PersistenceService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
@@ -499,6 +503,7 @@ add_executable(microide_tests
   tests/AppDirectoriesTests.cpp
   tests/CompareModelTests.cpp
   tests/CompareReviewTests.cpp
+  tests/PatchApplyTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
