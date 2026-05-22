@@ -1,3 +1,4 @@
+#include "app/AppStartupOptions.h"
 #include "app/Application.h"
 #include "persistence/PersistedRecordDump.h"
 
@@ -27,6 +28,15 @@ int main(int argc, char** argv) {
     }
   }
 
-  microide::app::Application application;
+  const microide::app::AppStartupParseResult parsed =
+      microide::app::ParseAppStartupOptions(argc, argv);
+  if (parsed.show_usage) {
+    return 0;
+  }
+  if (parsed.exit_code != 0) {
+    return parsed.exit_code;
+  }
+
+  microide::app::Application application(parsed.options);
   return application.Run();
 }

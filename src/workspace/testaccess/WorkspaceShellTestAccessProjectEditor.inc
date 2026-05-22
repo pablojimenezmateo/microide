@@ -433,6 +433,18 @@
     }
     return changed;
   }
+  static bool PluginHostEnabled(const WorkspaceShell& shell) {
+    return shell.plugin_runtime_.Host().enabled();
+  }
+  static std::size_t LoadedPluginCount(const WorkspaceShell& shell) {
+    return shell.plugin_runtime_.Host().LoadedPluginCount();
+  }
+  static std::string PluginRuntimeReloadSummary(const WorkspaceShell& shell) {
+    return shell.PluginRuntimeReloadSummary();
+  }
+  static const WorkspaceStartupOptions& StartupOptions(const WorkspaceShell& shell) {
+    return shell.startup_options_;
+  }
   static std::size_t ReloadPluginsInvocationCount(const WorkspaceShell& shell) {
     return shell.reload_plugins_invocation_count_;
   }

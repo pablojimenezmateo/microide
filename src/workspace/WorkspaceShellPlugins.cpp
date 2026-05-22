@@ -319,6 +319,9 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
   util::StartupTrace::Scope trace_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
   ++reload_plugins_invocation_count_;
+  if (startup_options_.plugins_disabled()) {
+    request.syntax_definitions = false;
+  }
   bool clean_reload;
   {
     util::StartupTrace::Scope plugin_scope("PluginRuntime::Reload");

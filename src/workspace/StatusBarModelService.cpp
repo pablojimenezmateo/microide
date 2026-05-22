@@ -89,6 +89,14 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     project_segment_cache_ = {};
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
+  if (!operations.startup_mode_text.empty()) {
+    branch_segment.text = std::string(operations.startup_mode_text);
+    branch_segment.tooltip = operations.startup_mode_tooltip.empty()
+                                 ? std::string(operations.startup_mode_text)
+                                 : std::string(operations.startup_mode_tooltip);
+    branch_segment.visible = true;
+    branch_segment.clickable = false;
+  }
   status_bar_service.SetSegment(StatusBarSegmentId::Branch, std::move(branch_segment));
 
   StatusBarSegmentValue layout_mode_segment;

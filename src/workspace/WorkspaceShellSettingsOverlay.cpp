@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "workspace/WorkspaceStartupOptions.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -25,9 +26,28 @@ void UpsertSetting(std::vector<std::pair<std::string, std::string>>& settings,
   settings.emplace_back(std::move(id), std::move(value));
 }
 
-std::vector<HelpAboutRow> BuildHelpRows() {
+void AppendStartupHelpRows(std::vector<HelpAboutRow>& rows,
+                           const WorkspaceStartupOptions& startup_options) {
+  if (startup_options.safe_mode) {
+    rows.push_back(HelpAboutRow{
+        .label = "Startup mode",
+        .detail =
+            "Safe mode: plugins disabled, plugin syntax disabled, session restore skipped",
+    });
+    return;
+  }
+  if (startup_options.disable_plugins) {
+    rows.push_back(HelpAboutRow{
+        .label = "Startup mode",
+        .detail = "Plugins disabled: user-scope plugins and plugin syntax are not loaded",
+    });
+  }
+}
+
+std::vector<HelpAboutRow> BuildHelpRows(const WorkspaceStartupOptions& startup_options) {
   std::vector<HelpAboutRow> rows;
   rows.push_back(HelpAboutRow{.label = "microide", .detail = "Desktop IDE"});
+  AppendStartupHelpRows(rows, startup_options);
   rows.push_back(HelpAboutRow{.label = "Git sidebar (focused)",
                               .detail = "Enter default view | d diff | s stage | u unstage | "
                                          "x discard (confirm) | m merge | c commit | r refresh | "
@@ -203,7 +223,7 @@ void WorkspaceShell::RefreshSettingsOverlayCatalog() {
   settings_overlay_service_.RebuildSettingsRows(AllSettingInfos(plugin_runtime_.Host()),
                                                 context_.user_settings,
                                                 context_.current_project_state.settings);
-  settings_overlay_service_.RebuildHelpRows(BuildHelpRows());
+  settings_overlay_service_.RebuildHelpRows(BuildHelpRows(startup_options_));
 }
 
 void WorkspaceShell::ApplyLiveSettings() {

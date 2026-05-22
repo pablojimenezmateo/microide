@@ -436,6 +436,7 @@ set(MICROIDE_CORE_SOURCES
 
 add_executable(microide
   src/app/main.cpp
+  src/app/AppStartupOptions.cpp
   src/app/Application.cpp
   src/app/DirtyRegionPolicy.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
@@ -516,6 +517,8 @@ add_executable(microide_tests
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
   tests/AppDirectoriesTests.cpp
+  tests/AppStartupOptionsTests.cpp
+  src/app/AppStartupOptions.cpp
   tests/CompareModelTests.cpp
   tests/CompareReviewTests.cpp
   tests/BranchReviewStateTests.cpp

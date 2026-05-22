@@ -116,13 +116,14 @@ struct PluginHost::Impl {
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";
+  bool startup_plugins_enabled = true;
 #if MICROIDE_HAS_LUA_PLUGINS
   PluginInstance* active_plugin = nullptr;
 #endif
 
   [[nodiscard]] bool enabled() const {
 #if MICROIDE_HAS_LUA_PLUGINS
-    return true;
+    return startup_plugins_enabled;
 #else
     return false;
 #endif

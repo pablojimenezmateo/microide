@@ -82,6 +82,7 @@
 #include "workspace/WorkspaceRootView.h"
 #include "workspace/WorkspaceStatusRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
+#include "workspace/WorkspaceStartupOptions.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/WorkspaceTextInputState.h"
 

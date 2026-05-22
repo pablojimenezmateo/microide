@@ -630,10 +630,20 @@ These are not current project work unless deliberately promoted into their own p
 
 - debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
-- plugin safe-mode / project-local plugin loading startup paths
+- plugin sandboxing, marketplace trust, and project-local plugin loading (preview ships
+  `--disable-plugins` / `--safe-mode` only; see `docs/git-workstation-preview.md`)
 - cloud or collaboration features
 - recent-project and recent-file affordances
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
+
+## Git Workstation Preview (in progress)
+
+OpenSpec change `prepare-git-workstation-preview` defines 0.1 preview scope, safe startup flags,
+release checklist, and trust documentation. See:
+
+- `docs/git-workstation-preview.md` — supported / unsupported workflows
+- `docs/preview-release-checklist.md` — tag, artifacts, tested-workflows matrix
+- `SECURITY.md` — trust model, safe mode, reporting
 
 ## Companion Docs
 

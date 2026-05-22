@@ -92,6 +92,8 @@
   ~WorkspaceShell();
 
   static std::vector<std::string> DocumentedCommandUsages();
+  void SetStartupOptions(WorkspaceStartupOptions options);
+  const WorkspaceStartupOptions& StartupOptions() const { return startup_options_; }
   bool Initialize(const std::filesystem::path& project_root);
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
@@ -1400,6 +1402,7 @@
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
   bool quit_requested_ = false;
+  WorkspaceStartupOptions startup_options_;
   std::vector<std::string> available_colorscheme_names_;
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;

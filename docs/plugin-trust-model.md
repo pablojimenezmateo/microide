@@ -159,12 +159,17 @@ For users:
 
 Explicit scope decision:
 
-- Plugin security-system hardening is out of current product scope. This includes safe-mode
-  startup paths, plugin sandboxing / process isolation, first-run capability prompts, and
-  re-enabling project-local plugin directories.
-- A safe-mode or project-plugin-disable startup path is not planned in the current scope.
-- If you need to inspect untrusted repositories, use external isolation (VM/container) before
-  opening them in microide.
+- Full plugin security-system hardening remains out of scope: plugin sandboxing / process
+  isolation, first-run capability prompts, signing, marketplace trust, and project-local plugin
+  directories.
+- **Git Workstation Preview** adds minimal startup trust controls only:
+  - `--disable-plugins` — skip user-scope plugins and plugin syntax loading
+  - `--safe-mode` — implies plugin disabling, skips workspace/session restore, empty shell unless
+    a project path is passed; visible in status bar and Help/About
+- These flags are not a sandbox. For untrusted repositories, still prefer external isolation
+  (VM/container) in addition to safe-mode when appropriate.
+
+See [SECURITY.md](../SECURITY.md) and [git-workstation-preview.md](git-workstation-preview.md).
 
 For plugin authors:
 

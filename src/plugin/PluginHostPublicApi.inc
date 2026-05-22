@@ -2,6 +2,10 @@ bool PluginHost::enabled() const {
   return impl_->enabled();
 }
 
+void PluginHost::SetStartupPluginsEnabled(bool enabled) {
+  impl_->startup_plugins_enabled = enabled;
+}
+
 bool PluginHost::Reload(const std::filesystem::path& project_root) {
   impl_->errors.clear();
   if (!impl_->enabled()) {
