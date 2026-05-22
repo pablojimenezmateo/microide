@@ -62,6 +62,10 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                                                 current_content, incoming_label, result_label,
                                                 current_label, selected_hunk, persistable);
               },
+          .finalize_git_merge_tab =
+              [this](MergeTabState& merge_tab, const std::filesystem::path& path) {
+                FinalizeGitMergeTab(merge_tab, path);
+              },
       });
 }
 
@@ -177,6 +181,16 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .open_discard_compare_hunk_prompt = [this]() { OpenDiscardCompareHunkPrompt(); },
           .open_discard_compare_selected_lines_prompt =
               [this]() { OpenDiscardCompareSelectedLinesPrompt(); },
+          .save_active_merge_tab =
+              [this]() {
+                MergeTabState* merge_tab = ActiveMergeTab();
+                return merge_tab != nullptr && merge_tab->result_viewport.Save();
+              },
+          .stage_merge_result_path =
+              [this](const std::filesystem::path& path) {
+                return project::GitStagePath(context_.current_project_state.root, path);
+              },
+          .refresh_git_sidebar = [this]() { RefreshGitSidebar(); },
       });
 }
 
@@ -345,6 +359,34 @@ void WorkspaceShell::ScrollMergeColumns(int delta) {
 
 void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
   MakeCompareMergeService().ApplyMergeChoice(choice);
+}
+
+void WorkspaceShell::ResetMergeHunk() {
+  MakeCompareMergeService().ResetMergeHunk();
+}
+
+void WorkspaceShell::JumpNextUnresolvedMergeConflict() {
+  MakeCompareMergeService().JumpNextUnresolvedMergeConflict();
+}
+
+void WorkspaceShell::ToggleMergeBasePane() {
+  MakeCompareMergeService().ToggleMergeBasePane();
+}
+
+void WorkspaceShell::ToggleMergeRawMarkers() {
+  MakeCompareMergeService().ToggleMergeRawMarkers();
+}
+
+void WorkspaceShell::CopyMergeIncomingSnippet() {
+  MakeCompareMergeService().CopyMergeSideSnippet(true);
+}
+
+void WorkspaceShell::CopyMergeCurrentSnippet() {
+  MakeCompareMergeService().CopyMergeSideSnippet(false);
+}
+
+void WorkspaceShell::MarkMergeResolved() {
+  MakeCompareMergeService().MarkMergeResolved();
 }
 
 }  // namespace microide::workspace

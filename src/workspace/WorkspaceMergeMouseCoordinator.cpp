@@ -101,6 +101,25 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     operations_.open_merge_result_file();
     return true;
   }
+  if (operations_.merge_secondary_toolbar_button_rect) {
+    const auto hit = [&](std::string_view label) {
+      const auto rect = operations_.merge_secondary_toolbar_button_rect(
+          layout.editor_surface, surface_layout, label);
+      return rect.has_value() && Contains(*rect, event.button.x, event.button.y);
+    };
+    if (hit("Unresolved") && operations_.jump_next_unresolved_merge_conflict) {
+      operations_.jump_next_unresolved_merge_conflict();
+      return true;
+    }
+    if (hit("Toggle Base") && operations_.toggle_merge_base_pane) {
+      operations_.toggle_merge_base_pane();
+      return true;
+    }
+    if (hit("Mark Resolved") && operations_.mark_merge_resolved) {
+      operations_.mark_merge_resolved();
+      return true;
+    }
+  }
 
   const auto source_button_rect = [&](const MergeTrackedConflict& conflict, bool incoming) {
     return operations_.build_merge_source_action_button_rect(surface_layout, interaction, conflict,
@@ -555,6 +574,15 @@ MergeMouseCoordinator WorkspaceShell::MakeMergeMouseCoordinator() {
               [this](int delta) { MakeCompareMergeService().MoveMergeSelection(delta); },
           .scroll_merge_columns =
               [this](int delta) { MakeCompareMergeService().ScrollMergeColumns(delta); },
+          .mark_merge_resolved = [this]() { MarkMergeResolved(); },
+          .toggle_merge_base_pane = [this]() { ToggleMergeBasePane(); },
+          .jump_next_unresolved_merge_conflict =
+              [this]() { JumpNextUnresolvedMergeConflict(); },
+          .merge_secondary_toolbar_button_rect =
+              [this](const SDL_FRect& rect, const MergeSurfaceLayout& surface,
+                     std::string_view label) {
+                return ComputeMergeSecondaryToolbarButtonRect(rect, surface, label);
+              },
       });
 }
 

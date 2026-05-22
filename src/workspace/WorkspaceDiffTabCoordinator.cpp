@@ -319,6 +319,9 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
   merge_tab->merge->base_path = normalized_path;
   merge_tab->merge->incoming_path = normalized_path;
   merge_tab->merge->current_path = normalized_path;
+  if (operations_.finalize_git_merge_tab) {
+    operations_.finalize_git_merge_tab(*merge_tab->merge, normalized_path);
+  }
 
   operations_.sync_active_editor_tab();
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path); existing_index.has_value()) {

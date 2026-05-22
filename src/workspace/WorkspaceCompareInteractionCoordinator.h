@@ -48,6 +48,9 @@ class CompareInteractionCoordinator {
     std::function<void()> unstage_compare_selected_lines;
     std::function<void()> open_discard_compare_hunk_prompt;
     std::function<void()> open_discard_compare_selected_lines_prompt;
+    std::function<bool()> save_active_merge_tab;
+    std::function<bool(const std::filesystem::path&)> stage_merge_result_path;
+    std::function<void()> refresh_git_sidebar;
   };
 
   CompareInteractionCoordinator(ProjectWorkspaceState& state, Operations operations);
@@ -79,6 +82,12 @@ class CompareInteractionCoordinator {
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
  void ApplyMergeChoice(compare::MergeChoice choice);
+  void ResetMergeHunk();
+  void JumpNextUnresolvedMergeConflict();
+  void ToggleMergeBasePane();
+  void ToggleMergeRawMarkers();
+  void CopyMergeSideSnippet(bool incoming);
+  void MarkMergeResolved();
 
  private:
   ProjectWorkspaceState& state_;

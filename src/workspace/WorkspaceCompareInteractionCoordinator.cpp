@@ -1,6 +1,10 @@
 #include "workspace/WorkspaceCompareInteractionCoordinator.h"
 
 #include <algorithm>
+
+#include "project/GitStatusService.h"
+#include "util/TextFileIO.h"
+#include "workspace/MergeResultValidation.h"
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -349,7 +353,8 @@ void CompareInteractionCoordinator::ScrollMergeColumns(int delta) {
 
 void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice) {
   MergeTabState* merge_tab = operations_.active_merge_tab();
-  if (merge_tab == nullptr || merge_tab->conflicts.empty()) {
+  if (merge_tab == nullptr || merge_tab->conflicts.empty() ||
+      !merge_tab->file_conflict.text_hunks_available) {
     return;
   }
 
@@ -374,6 +379,8 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   conflict.end_line = conflict.start_line + replacement_lines.size();
   conflict.last_choice = choice;
   conflict.valid = true;
+  conflict.resolved = true;
+  merge_tab->marked_resolved = false;
   const long long line_delta =
       static_cast<long long>(conflict.end_line) - static_cast<long long>(previous_end);
   for (std::size_t i = selected_hunk + 1; i < merge_tab->conflicts.size(); ++i) {
@@ -393,6 +400,151 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
         cursor_before_line, merge_tab->result_viewport.cursor_line());
     operations_.request_tab_strip_redraw();
   }
+}
+
+void CompareInteractionCoordinator::ResetMergeHunk() {
+  MergeTabState* merge_tab = operations_.active_merge_tab();
+  if (merge_tab == nullptr || merge_tab->conflicts.empty()) {
+    return;
+  }
+  const std::size_t selected_hunk =
+      std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
+  auto& conflict = merge_tab->conflicts[selected_hunk];
+  if (!conflict.valid || conflict.hunk_index >= merge_tab->model.hunks.size()) {
+    return;
+  }
+  auto& hunk = merge_tab->model.hunks[conflict.hunk_index];
+  hunk.choice = conflict.bootstrap_choice;
+  ApplyMergeChoice(conflict.bootstrap_choice);
+  conflict.resolved = false;
+  merge_tab->marked_resolved = false;
+}
+
+void CompareInteractionCoordinator::JumpNextUnresolvedMergeConflict() {
+  MergeTabState* merge_tab = operations_.active_merge_tab();
+  if (merge_tab == nullptr || merge_tab->conflicts.empty()) {
+    return;
+  }
+  const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
+  const std::size_t start = merge_tab->selected_hunk;
+  for (std::size_t offset = 1; offset <= merge_tab->conflicts.size(); ++offset) {
+    const std::size_t index = (start + offset) % merge_tab->conflicts.size();
+    if (merge_tab->conflicts[index].valid && !merge_tab->conflicts[index].resolved) {
+      merge_tab->selected_hunk = index;
+      operations_.reveal_active_merge_selection();
+      operations_.request_merge_conflict_redraw(previous_selected_hunk);
+      operations_.request_merge_conflict_redraw(index);
+      return;
+    }
+  }
+}
+
+void CompareInteractionCoordinator::ToggleMergeBasePane() {
+  MergeTabState* merge_tab = operations_.active_merge_tab();
+  if (merge_tab == nullptr) {
+    return;
+  }
+  merge_tab->base_pane_visible = !merge_tab->base_pane_visible;
+  operations_.request_editor_surface_redraw();
+}
+
+void CompareInteractionCoordinator::ToggleMergeRawMarkers() {
+  MergeTabState* merge_tab = operations_.active_merge_tab();
+  if (merge_tab == nullptr) {
+    return;
+  }
+  merge_tab->show_raw_markers = !merge_tab->show_raw_markers;
+  operations_.request_editor_surface_redraw();
+}
+
+void CompareInteractionCoordinator::CopyMergeSideSnippet(bool incoming) {
+  MergeTabState* merge_tab = operations_.active_merge_tab();
+  if (merge_tab == nullptr || merge_tab->conflicts.empty() || !operations_.write_clipboard_text) {
+    return;
+  }
+  const auto& conflict =
+      merge_tab->conflicts[std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1)];
+  if (!conflict.valid || conflict.hunk_index >= merge_tab->model.hunks.size()) {
+    return;
+  }
+  const auto& hunk = merge_tab->model.hunks[conflict.hunk_index];
+  const std::vector<std::string>& lines =
+      incoming ? hunk.incoming_lines : hunk.current_lines;
+  operations_.write_clipboard_text(util::SerializeLines(lines, merge_tab->result_line_ending));
+}
+
+void CompareInteractionCoordinator::MarkMergeResolved() {
+  MergeTabState* merge_tab = operations_.active_merge_tab();
+  if (merge_tab == nullptr || merge_tab->output_path.empty()) {
+    return;
+  }
+  if (!merge_tab->file_conflict.text_hunks_available) {
+    merge_tab->status_message = merge_tab->file_conflict.summary;
+    operations_.request_editor_surface_redraw();
+    return;
+  }
+  if (operations_.save_active_merge_tab && !operations_.save_active_merge_tab()) {
+    merge_tab->status_message = "Could not save merge result.";
+    operations_.request_editor_surface_redraw();
+    return;
+  }
+
+  const bool result_should_exist = !merge_tab->file_conflict.requires_existence_choice ||
+                                   !merge_tab->result_viewport.lines().empty();
+  MergeValidationRequest request{
+      .merge_tab = *merge_tab,
+      .project_root = state_.root,
+      .repository_generation = merge_tab->open_index_generation,
+      .allow_conflict_marker_override = merge_tab->allow_conflict_marker_override,
+      .result_should_exist = result_should_exist,
+  };
+  MergeValidationResult validation = ValidateMergeResult(request);
+  if (!validation.ok && validation.issue == MergeValidationIssue::ConflictMarkers &&
+      !merge_tab->allow_conflict_marker_override) {
+    if (merge_tab->marker_override_prompt_pending) {
+      merge_tab->allow_conflict_marker_override = true;
+      merge_tab->marker_override_prompt_pending = false;
+      request.allow_conflict_marker_override = true;
+      validation = ValidateMergeResult(request);
+    } else {
+      merge_tab->marker_override_prompt_pending = true;
+      merge_tab->status_message =
+          validation.message + " Choose Mark Resolved again to override.";
+      if (validation.marker_line.has_value()) {
+        merge_tab->result_viewport.MoveCursorTo(*validation.marker_line, 0);
+      }
+      operations_.request_editor_surface_redraw();
+      return;
+    }
+  }
+  if (!validation.ok) {
+    merge_tab->status_message = validation.message;
+    if (validation.issue == MergeValidationIssue::StaleIndexGeneration ||
+        validation.issue == MergeValidationIssue::ExternalModification) {
+      merge_tab->index_stale = validation.issue == MergeValidationIssue::StaleIndexGeneration;
+      merge_tab->external_result_stale =
+          validation.issue == MergeValidationIssue::ExternalModification;
+    }
+    operations_.request_editor_surface_redraw();
+    return;
+  }
+
+  if (!operations_.stage_merge_result_path ||
+      !operations_.stage_merge_result_path(merge_tab->output_path)) {
+    merge_tab->status_message = "Git could not mark the file resolved.";
+    operations_.request_editor_surface_redraw();
+    return;
+  }
+
+  merge_tab->marked_resolved = true;
+  merge_tab->marker_override_prompt_pending = false;
+  merge_tab->allow_conflict_marker_override = false;
+  merge_tab->status_message = "Marked resolved.";
+  if (operations_.refresh_git_sidebar) {
+    operations_.refresh_git_sidebar();
+  }
+  operations_.request_tab_strip_redraw();
+  operations_.request_editor_surface_redraw();
 }
 
 void CompareInteractionCoordinator::StageCompareHunk() {

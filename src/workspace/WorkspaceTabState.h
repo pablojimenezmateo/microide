@@ -11,6 +11,7 @@
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
+#include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
 #include "editor/FoldingModel.h"
 #include "editor/SnippetEngine.h"
@@ -80,6 +81,19 @@ struct MergeTabState {
   std::string incoming_label;
   std::string result_label;
   std::string current_label;
+  std::string base_label;
+  compare::MergeFileConflictMetadata file_conflict;
+  std::size_t remaining_conflicted_files = 0;
+  std::uint64_t open_index_generation = 0;
+  std::optional<std::uint64_t> disk_result_tick;
+  bool base_pane_visible = false;
+  bool show_raw_markers = false;
+  bool marked_resolved = false;
+  bool index_stale = false;
+  bool external_result_stale = false;
+  bool allow_conflict_marker_override = false;
+  bool marker_override_prompt_pending = false;
+  std::string status_message;
   editor::TextViewport::LineEnding result_line_ending = editor::TextViewport::LineEnding::LF;
   compare::MergeModel model;
   std::vector<std::vector<editor::SyntaxTokenKind>> incoming_tokens;

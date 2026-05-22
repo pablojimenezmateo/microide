@@ -62,6 +62,12 @@ class CompareMergeService {
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
+  void ResetMergeHunk();
+  void JumpNextUnresolvedMergeConflict();
+  void ToggleMergeBasePane();
+  void ToggleMergeRawMarkers();
+  void CopyMergeSideSnippet(bool incoming);
+  void MarkMergeResolved();
 
  private:
   DiffTabCoordinator diff_tabs_;

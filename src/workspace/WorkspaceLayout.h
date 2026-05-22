@@ -121,7 +121,9 @@ struct MergeTrackedConflict {
   std::size_t start_line = 0;
   std::size_t end_line = 0;
   compare::MergeChoice last_choice = compare::MergeChoice::Base;
+  compare::MergeChoice bootstrap_choice = compare::MergeChoice::Base;
   bool valid = true;
+  bool resolved = false;
 };
 
 struct MergeHoverState {

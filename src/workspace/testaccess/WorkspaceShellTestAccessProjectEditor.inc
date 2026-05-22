@@ -97,6 +97,9 @@
   static void ApplyMergeChoice(WorkspaceShell& shell, microide::compare::MergeChoice choice) {
     shell.ApplyMergeChoice(choice);
   }
+  static void ResetMergeHunk(WorkspaceShell& shell) { shell.ResetMergeHunk(); }
+  static void ToggleMergeBasePane(WorkspaceShell& shell) { shell.ToggleMergeBasePane(); }
+  static void MarkMergeResolved(WorkspaceShell& shell) { shell.MarkMergeResolved(); }
   static void RefreshMergeTabDerivedState(WorkspaceShell& shell) {
     shell.RefreshMergeTabDerivedState(ActiveMerge(shell));
   }

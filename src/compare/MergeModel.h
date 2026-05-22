@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "compare/CompareModel.h"
+#include "compare/MergeConflictKind.h"
 
 namespace microide::compare {
 
@@ -13,6 +14,8 @@ enum class MergeChoice {
   Incoming,
   Current,
   Both,
+  BothCurrentFirst,
+  BothIncomingFirst,
 };
 
 struct MergeHunk {
@@ -24,6 +27,7 @@ struct MergeHunk {
   std::vector<std::string> current_lines;
   bool conflict = false;
   MergeChoice choice = MergeChoice::Base;
+  MergeChoice bootstrap_choice = MergeChoice::Base;
 };
 
 struct MergeModel {
@@ -31,6 +35,7 @@ struct MergeModel {
   std::vector<std::string> incoming_lines;
   std::vector<std::string> current_lines;
   std::vector<MergeHunk> hunks;
+  MergeFileConflictMetadata file_conflict;
 };
 
 struct MergeDisplayRow {

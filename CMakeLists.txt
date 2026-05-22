@@ -168,6 +168,7 @@ set(MICROIDE_CORE_SOURCES
   src/compare/ComparePresentationModel.cpp
   src/compare/CompareReviewTypes.cpp
   src/compare/CompareSemanticMetadata.cpp
+  src/compare/MergeConflictKind.cpp
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
   src/platform/AsyncSubprocess.cpp
@@ -342,6 +343,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/AssistService.cpp
   src/workspace/CompareTabReview.cpp
   src/workspace/CompareMergeService.cpp
+  src/workspace/MergeResolverContext.cpp
+  src/workspace/MergeResultValidation.cpp
   src/workspace/FileUri.cpp
   src/workspace/CompareMergeRender.cpp
   src/workspace/ProjectCatalogService.cpp
@@ -517,6 +520,8 @@ add_executable(microide_tests
   tests/WorkspaceLspClientTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
+  tests/MergeConflictResolutionTests.cpp
+  tests/GitMergeConflictFixtures.cpp
   tests/ProjectSearchServiceTests.cpp
   tests/RegexUtilTests.cpp
   tests/RuntimePathsTests.cpp

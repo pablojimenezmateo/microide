@@ -684,7 +684,10 @@
                                                          float x,
                                                          float y) const;
   MergeToolbarLayout ComputeMergeToolbarLayout(const SDL_FRect& rect,
-                                              const MergeSurfaceLayout& surface) const;
+                                               const MergeSurfaceLayout& surface) const;
+  std::optional<SDL_FRect> ComputeMergeSecondaryToolbarButtonRect(const SDL_FRect& rect,
+                                                                  const MergeSurfaceLayout& surface,
+                                                                  std::string_view label) const;
   int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;
   void ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const;
   std::size_t MergeMaxScrollColumn(const MergeTabState& merge_tab,
@@ -759,6 +762,13 @@
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
+  void ResetMergeHunk();
+  void JumpNextUnresolvedMergeConflict();
+  void ToggleMergeBasePane();
+  void ToggleMergeRawMarkers();
+  void CopyMergeIncomingSnippet();
+  void CopyMergeCurrentSnippet();
+  void MarkMergeResolved();
   void OpenMergeResultFile();
   void MoveFileFinderSelection(int delta);
   void RenderCompareSurface(SDL_Renderer* renderer,
@@ -908,6 +918,8 @@
                                                    std::string current_label,
                                                    std::size_t selected_hunk = 0,
                                                    bool persistable = true) const;
+  void FinalizeGitMergeTab(MergeTabState& merge_tab, const std::filesystem::path& path);
+  void InvalidateStaleMergeTabs();
   bool OpenGitConflictMerge(const std::filesystem::path& path);
   void OpenBufferSearch();
   void OpenBufferReplace();

@@ -179,6 +179,12 @@ bool PersistenceCoordinator::RestoreSessionState() {
         if (text == "both") {
           return compare::MergeChoice::Both;
         }
+        if (text == "both-current-first") {
+          return compare::MergeChoice::BothCurrentFirst;
+        }
+        if (text == "both-incoming-first") {
+          return compare::MergeChoice::BothIncomingFirst;
+        }
         return compare::MergeChoice::Base;
       };
 

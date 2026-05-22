@@ -152,4 +152,28 @@ void CompareMergeService::ApplyMergeChoice(compare::MergeChoice choice) {
   interactions_.ApplyMergeChoice(choice);
 }
 
+void CompareMergeService::ResetMergeHunk() {
+  interactions_.ResetMergeHunk();
+}
+
+void CompareMergeService::JumpNextUnresolvedMergeConflict() {
+  interactions_.JumpNextUnresolvedMergeConflict();
+}
+
+void CompareMergeService::ToggleMergeBasePane() {
+  interactions_.ToggleMergeBasePane();
+}
+
+void CompareMergeService::ToggleMergeRawMarkers() {
+  interactions_.ToggleMergeRawMarkers();
+}
+
+void CompareMergeService::CopyMergeSideSnippet(bool incoming) {
+  interactions_.CopyMergeSideSnippet(incoming);
+}
+
+void CompareMergeService::MarkMergeResolved() {
+  interactions_.MarkMergeResolved();
+}
+
 }  // namespace microide::workspace

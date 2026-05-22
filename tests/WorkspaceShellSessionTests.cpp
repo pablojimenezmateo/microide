@@ -1227,6 +1227,39 @@ void TestWorkspaceShellMergeEditorParsesLargeWorkingTreeConflictBlock() {
          "later conflicts in a large block should infer the current-side choice");
 }
 
+void TestWorkspaceShellMergeBothOrdersAndBaseToggle() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\n");
+  WriteFile(current, "zero\none current\ntwo\n");
+  WriteFile(output, "zero\none\ntwo\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for both-order fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.selected_hunk = 0;
+  WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::BothCurrentFirst);
+  Expect(merge.result_viewport.lines()[1] == "one current" &&
+             merge.result_viewport.lines()[2] == "one incoming",
+         "both-current-first should place current text before incoming text");
+  WorkspaceShellTestAccess::ResetMergeHunk(shell);
+  Expect(!merge.conflicts.empty() && !merge.conflicts.front().resolved,
+         "reset hunk should return the conflict to unresolved");
+  Expect(!merge.base_pane_visible, "base pane should start hidden");
+  WorkspaceShellTestAccess::ToggleMergeBasePane(shell);
+  Expect(merge.base_pane_visible, "base pane toggle should expose the ancestor pane");
+  WorkspaceShellTestAccess::ToggleMergeBasePane(shell);
+  Expect(!merge.base_pane_visible, "base pane toggle should hide the ancestor pane again");
+}
+
 void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1854,6 +1887,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeEditorUsesWorkingTreeConflictMarkers);
   AddTest(tests, "WorkspaceShell/MergeEditorParsesLargeWorkingTreeConflictBlock",
           TestWorkspaceShellMergeEditorParsesLargeWorkingTreeConflictBlock);
+  AddTest(tests, "WorkspaceShell/MergeBothOrdersAndBaseToggle",
+          TestWorkspaceShellMergeBothOrdersAndBaseToggle);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",
           TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
   AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",

@@ -247,7 +247,11 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
           .consume_git_refresh_snapshot =
               [this](GitSidebarState::RefreshSnapshot* snapshot) {
-                return ConsumePendingGitSidebarRefreshSnapshot(snapshot);
+                const bool consumed = ConsumePendingGitSidebarRefreshSnapshot(snapshot);
+                if (consumed) {
+                  InvalidateStaleMergeTabs();
+                }
+                return consumed;
               },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },

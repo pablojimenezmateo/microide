@@ -328,6 +328,14 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
       operations_.apply_merge_choice(compare::MergeChoice::Both);
       return true;
     }
+    if (input_character == '1') {
+      operations_.apply_merge_choice(compare::MergeChoice::BothCurrentFirst);
+      return true;
+    }
+    if (input_character == '2') {
+      operations_.apply_merge_choice(compare::MergeChoice::BothIncomingFirst);
+      return true;
+    }
     if (input_character == 'o') {
       operations_.open_merge_result_file();
       return true;

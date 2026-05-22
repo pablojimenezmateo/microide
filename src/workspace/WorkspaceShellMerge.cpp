@@ -65,6 +65,34 @@ WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
   };
 }
 
+std::optional<SDL_FRect> WorkspaceShell::ComputeMergeSecondaryToolbarButtonRect(
+    const SDL_FRect& rect,
+    const MergeSurfaceLayout& surface,
+    std::string_view label) const {
+  const float width = ComputeChromeButtonWidth(text_renderer_.MeasureWidth(label));
+  if (label == "Mark Resolved") {
+    const float x = rect.x + rect.w - 8.0f - width;
+    return MakeRect(x, surface.secondary_button_y, width, kMergeToolbarButtonHeight);
+  }
+  if (label == "Toggle Base") {
+    const auto mark = ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Mark Resolved");
+    if (!mark.has_value()) {
+      return std::nullopt;
+    }
+    return MakeRect(mark->x - kMergeToolbarButtonGap - width, surface.secondary_button_y, width,
+                    kMergeToolbarButtonHeight);
+  }
+  if (label == "Unresolved") {
+    const auto toggle = ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Toggle Base");
+    if (!toggle.has_value()) {
+      return std::nullopt;
+    }
+    return MakeRect(toggle->x - kMergeToolbarButtonGap - width, surface.secondary_button_y, width,
+                    kMergeToolbarButtonHeight);
+  }
+  return std::nullopt;
+}
+
 WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     const SDL_FRect& rect,
     const MergeTabState& merge_tab) const {
