@@ -161,6 +161,10 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewportUndoHistory.cpp
   src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
+  src/compare/ComparePatchExport.cpp
+  src/compare/ComparePresentationModel.cpp
+  src/compare/CompareReviewTypes.cpp
+  src/compare/CompareSemanticMetadata.cpp
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
   src/platform/AsyncSubprocess.cpp
@@ -333,6 +337,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/AssistService.cpp
+  src/workspace/CompareTabReview.cpp
   src/workspace/CompareMergeService.cpp
   src/workspace/FileUri.cpp
   src/workspace/CompareMergeRender.cpp
@@ -493,6 +498,7 @@ add_executable(microide_tests
   ${MICROIDE_CORE_SOURCES}
   tests/AppDirectoriesTests.cpp
   tests/CompareModelTests.cpp
+  tests/CompareReviewTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp

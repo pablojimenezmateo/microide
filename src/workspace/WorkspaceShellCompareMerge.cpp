@@ -155,6 +155,21 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                 RequestActiveEditableBlameNeighborhoodRedraw(before, after);
               },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .write_clipboard_text =
+              [this](std::string_view text) { return WriteClipboardText(text); },
+          .open_working_tree_comparison =
+              [this](const std::filesystem::path& path, const std::string& left_ref,
+                     const std::string& left_label) {
+                return OpenWorkingTreeComparison(path, left_ref, left_label);
+              },
+          .open_branch_head_comparison =
+              [this](const std::filesystem::path& path, const std::string& left_ref,
+                     const std::string& left_label, const std::string& right_ref,
+                     const std::string& right_label) {
+                return OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
+              },
+          .refresh_compare_tab_derived_state =
+              [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
       });
 }
 

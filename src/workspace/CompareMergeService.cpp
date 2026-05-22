@@ -84,6 +84,30 @@ void CompareMergeService::JumpCompareHunk(int delta) {
   interactions_.JumpCompareHunk(delta);
 }
 
+void CompareMergeService::JumpCompareReviewFile(int delta) {
+  interactions_.JumpCompareReviewFile(delta);
+}
+
+void CompareMergeService::CopyComparePath() {
+  interactions_.CopyComparePath();
+}
+
+void CompareMergeService::CopyCompareHunkPatch() {
+  interactions_.CopyCompareHunkPatch();
+}
+
+void CompareMergeService::CopyCompareFilePatch() {
+  interactions_.CopyCompareFilePatch();
+}
+
+void CompareMergeService::ToggleCompareIgnoreWhitespace() {
+  interactions_.ToggleCompareIgnoreWhitespace();
+}
+
+void CompareMergeService::ToggleCompareShowWhitespace() {
+  interactions_.ToggleCompareShowWhitespace();
+}
+
 void CompareMergeService::ScrollCompareRows(int delta) {
   interactions_.ScrollCompareRows(delta);
 }

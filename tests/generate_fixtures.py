@@ -605,6 +605,19 @@ def main() -> None:
         },
     ]
 
+    rename_left = "old_name.txt\nunchanged body\n"
+    rename_right = "new_name.txt\nedited body\n"
+    binary_left = bytes([0, 1, 2, 3, 0, 5]).decode("latin-1")
+    binary_right = bytes([0, 1, 9, 3, 0, 5]).decode("latin-1")
+    line_ending_left = "alpha\r\nbeta\r\n"
+    line_ending_right = "alpha\nbeta\n"
+    submodule_left = "-" + ("a" * 40) + "\n"
+    submodule_right = "-" + ("b" * 40) + "\n"
+    huge_generated_left = "".join(f"gen {i}\n" for i in range(4000))
+    huge_generated_right = "".join(
+        (f"gen {i}\n" if i % 50 else f"changed {i}\n") for i in range(4000)
+    )
+
     manifest["diff_cases"] = [
         {
             "name": "simple-text",
@@ -617,6 +630,36 @@ def main() -> None:
             "left": write_fixture("diff/code/before.cpp", code_before)["path"],
             "right": write_fixture("diff/code/after.cpp", code_after)["path"],
             "expected": build_compare_summary(code_before, code_after),
+        },
+        {
+            "name": "rename-with-edit",
+            "left": write_fixture("diff/review/rename_left.txt", rename_left)["path"],
+            "right": write_fixture("diff/review/rename_right.txt", rename_right)["path"],
+            "expected": build_compare_summary(rename_left, rename_right),
+        },
+        {
+            "name": "binary-file",
+            "left": write_fixture("diff/review/binary_left.bin", binary_left)["path"],
+            "right": write_fixture("diff/review/binary_right.bin", binary_right)["path"],
+            "expected": build_compare_summary(binary_left, binary_right),
+        },
+        {
+            "name": "line-ending-only",
+            "left": write_fixture("diff/review/crlf_left.txt", line_ending_left)["path"],
+            "right": write_fixture("diff/review/lf_right.txt", line_ending_right)["path"],
+            "expected": build_compare_summary(line_ending_left, line_ending_right),
+        },
+        {
+            "name": "submodule-pointer",
+            "left": write_fixture("diff/review/submodule_left", submodule_left)["path"],
+            "right": write_fixture("diff/review/submodule_right", submodule_right)["path"],
+            "expected": build_compare_summary(submodule_left, submodule_right),
+        },
+        {
+            "name": "huge-generated",
+            "left": write_fixture("diff/review/huge_left.txt", huge_generated_left)["path"],
+            "right": write_fixture("diff/review/huge_right.txt", huge_generated_right)["path"],
+            "expected": build_compare_summary(huge_generated_left, huge_generated_right),
         },
     ]
 

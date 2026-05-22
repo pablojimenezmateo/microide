@@ -7,7 +7,9 @@
 #include <utility>
 #include <vector>
 
+#include "compare/ComparePatchExport.h"
 #include "project/GitCompareService.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -124,10 +126,11 @@ void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {
     return;
   }
 
-  const auto& row = compare_tab->model.rows[compare_tab->selected_row];
+  const auto& row = CompareTabSelectedModelRowRef(*compare_tab);
   int target_line = row.right_line;
   if (target_line == 0) {
-    for (std::size_t i = compare_tab->selected_row + 1; i < compare_tab->model.rows.size(); ++i) {
+    const std::size_t model_row = CompareTabSelectedModelRow(*compare_tab);
+    for (std::size_t i = model_row + 1; i < compare_tab->model.rows.size(); ++i) {
       if (compare_tab->model.rows[i].right_line > 0) {
         target_line = compare_tab->model.rows[i].right_line;
         break;
@@ -135,7 +138,8 @@ void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {
     }
   }
   if (target_line == 0) {
-    for (std::size_t i = compare_tab->selected_row; i-- > 0;) {
+    const std::size_t model_row = CompareTabSelectedModelRow(*compare_tab);
+    for (std::size_t i = model_row; i-- > 0;) {
       if (compare_tab->model.rows[i].right_line > 0) {
         target_line = compare_tab->model.rows[i].right_line;
         break;
@@ -166,7 +170,8 @@ void CompareInteractionCoordinator::MoveCompareSelection(int delta) {
   }
 
   const std::size_t previous_selected_row = compare_tab->selected_row;
-  if (!MoveSelectionIndex(compare_tab->model.rows.size(), &compare_tab->selected_row, delta)) {
+  if (!MoveSelectionIndex(CompareTabPresentationRowCount(*compare_tab), &compare_tab->selected_row,
+                          delta)) {
     return;
   }
   operations_.reveal_active_compare_selection();
@@ -180,21 +185,124 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
     return;
   }
 
-  int target = 0;
-  for (std::size_t i = 0; i < compare_tab->model.hunks.size(); ++i) {
-    if (compare_tab->model.hunks[i].start_row >= static_cast<int>(compare_tab->selected_row)) {
-      target = static_cast<int>(i);
-      break;
+  int target_hunk = CompareTabSelectedHunkIndex(*compare_tab);
+  if (target_hunk < 0) {
+    target_hunk = 0;
+  } else {
+    for (std::size_t i = 0; i < compare_tab->model.hunks.size(); ++i) {
+      const int hunk_index = compare_tab->model.hunks[i].index;
+      if (hunk_index == target_hunk) {
+        target_hunk = static_cast<int>(i);
+        break;
+      }
     }
-    target = static_cast<int>(i);
   }
   const std::size_t previous_selected_row = compare_tab->selected_row;
-  target = std::clamp(target + delta, 0, static_cast<int>(compare_tab->model.hunks.size()) - 1);
-  compare_tab->selected_row = static_cast<std::size_t>(
-      compare_tab->model.hunks[static_cast<std::size_t>(target)].start_row);
+  target_hunk = std::clamp(target_hunk + delta, 0,
+                           static_cast<int>(compare_tab->model.hunks.size()) - 1);
+  const int hunk_index = compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].index;
+  if (const auto presentation_row = CompareTabPresentationRowForHunk(*compare_tab, hunk_index);
+      presentation_row.has_value()) {
+    compare_tab->selected_row = *presentation_row;
+  } else {
+    compare_tab->selected_row = static_cast<std::size_t>(
+        compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].start_row);
+  }
   operations_.reveal_active_compare_selection();
   operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
   operations_.request_compare_row_range_redraw(compare_tab->selected_row, compare_tab->selected_row + 1);
+}
+
+void CompareInteractionCoordinator::JumpCompareReviewFile(int delta) {
+  CompareTabState* compare_tab = operations_.active_compare_tab();
+  if (compare_tab == nullptr || compare_tab->review_files.size() < 2 || delta == 0) {
+    return;
+  }
+
+  std::size_t next_index = compare_tab->review_file_index;
+  if (!MoveSelectionIndex(compare_tab->review_files.size(), &next_index, delta)) {
+    return;
+  }
+  const std::filesystem::path next_path =
+      (state_.root / compare_tab->review_files[next_index]).lexically_normal();
+  if (compare_tab->review_mode == compare::CompareReviewMode::Branch) {
+    if (!operations_.open_branch_head_comparison(
+            next_path, compare_tab->commit_hash, compare_tab->left_label, compare_tab->right_ref,
+            compare_tab->right_label)) {
+      return;
+    }
+  } else if (compare_tab->right_ref == "WORKTREE") {
+    if (!operations_.open_working_tree_comparison(next_path, compare_tab->commit_hash,
+                                                  compare_tab->left_label)) {
+      return;
+    }
+  } else {
+    return;
+  }
+  if (CompareTabState* active = operations_.active_compare_tab(); active != nullptr) {
+    active->review_file_index = next_index;
+    active->review_files = compare_tab->review_files;
+    active->review_mode = compare_tab->review_mode;
+  }
+}
+
+void CompareInteractionCoordinator::CopyComparePath() {
+  const CompareTabState* compare_tab = operations_.active_compare_tab();
+  if (compare_tab == nullptr || !operations_.write_clipboard_text) {
+    return;
+  }
+  operations_.write_clipboard_text(compare_tab->path.lexically_normal().generic_string());
+}
+
+void CompareInteractionCoordinator::CopyCompareHunkPatch() {
+  const CompareTabState* compare_tab = operations_.active_compare_tab();
+  if (compare_tab == nullptr || !operations_.write_clipboard_text) {
+    return;
+  }
+  const int hunk_index = CompareTabSelectedHunkIndex(*compare_tab);
+  if (hunk_index < 0) {
+    return;
+  }
+  const std::filesystem::path relative =
+      compare_tab->path.is_absolute() && !state_.root.empty()
+          ? std::filesystem::relative(compare_tab->path, state_.root)
+          : compare_tab->path;
+  operations_.write_clipboard_text(
+      compare::FormatCompareHunkPatch(compare_tab->model, hunk_index, relative));
+}
+
+void CompareInteractionCoordinator::CopyCompareFilePatch() {
+  const CompareTabState* compare_tab = operations_.active_compare_tab();
+  if (compare_tab == nullptr || !operations_.write_clipboard_text) {
+    return;
+  }
+  const std::filesystem::path relative =
+      compare_tab->path.is_absolute() && !state_.root.empty()
+          ? std::filesystem::relative(compare_tab->path, state_.root)
+          : compare_tab->path;
+  operations_.write_clipboard_text(
+      compare::FormatCompareFilePatch(compare_tab->model, relative));
+}
+
+void CompareInteractionCoordinator::ToggleCompareIgnoreWhitespace() {
+  CompareTabState* compare_tab = operations_.active_compare_tab();
+  if (compare_tab == nullptr || !operations_.refresh_compare_tab_derived_state) {
+    return;
+  }
+  compare_tab->build_options.ignore_whitespace = !compare_tab->build_options.ignore_whitespace;
+  operations_.refresh_compare_tab_derived_state(*compare_tab);
+  operations_.reveal_active_compare_selection();
+  operations_.request_editor_surface_redraw();
+}
+
+void CompareInteractionCoordinator::ToggleCompareShowWhitespace() {
+  CompareTabState* compare_tab = operations_.active_compare_tab();
+  if (compare_tab == nullptr) {
+    return;
+  }
+  compare_tab->show_whitespace = !compare_tab->show_whitespace;
+  RefreshCompareTabPresentation(*compare_tab);
+  operations_.request_editor_surface_redraw();
 }
 
 void CompareInteractionCoordinator::ScrollCompareRows(int delta) {

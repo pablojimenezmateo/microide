@@ -15,6 +15,7 @@
 #include "render/Theme.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/CompareMergeRender.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -203,14 +204,40 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                             TruncateLabel(compare_tab->right_label, surface.right_width - 8.0f));
 
   for (int row = 0; row < surface.visible_rows; ++row) {
-    const int model_index = compare_tab->scroll_row + row;
-    if (model_index >= static_cast<int>(compare_tab->model.rows.size())) {
+    const int presentation_index = compare_tab->scroll_row + row;
+    if (presentation_index < 0 ||
+        static_cast<std::size_t>(presentation_index) >=
+            CompareTabPresentationRowCount(*compare_tab)) {
       break;
     }
 
-    const auto& compare_row = compare_tab->model.rows[static_cast<std::size_t>(model_index)];
+    const compare::ComparePresentationRow* presentation_row =
+        CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_index));
+    if (presentation_row == nullptr) {
+      break;
+    }
+
     const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
-    const bool selected = static_cast<std::size_t>(model_index) == compare_tab->selected_row;
+    const bool selected =
+        static_cast<std::size_t>(presentation_index) == compare_tab->selected_row;
+    if (presentation_row->kind != compare::ComparePresentationRowKind::Model) {
+      const SDL_Color summary_background =
+          selected ? theme_.row_highlight : theme_.editor_background;
+      DrawFilledRect(renderer,
+                     MakeRect(rect.x, y - 1.0f, content_width, surface.line_height),
+                     summary_background);
+      text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
+                                selected ? theme_.text_primary : theme_.text_muted,
+                                TruncateLabel(presentation_row->summary_text, content_width - 16.0f));
+      continue;
+    }
+
+    const std::size_t model_index = presentation_row->model_row_index;
+    if (model_index >= compare_tab->model.rows.size()) {
+      break;
+    }
+
+    const auto& compare_row = compare_tab->model.rows[model_index];
     if (selected) {
       DrawFilledRect(renderer, MakeRect(rect.x + 1.0f, y - 1.0f, 2.0f, surface.line_height),
                      theme_.accent);
@@ -349,7 +376,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           selected ? theme_.text_primary : left_color, *cached_tokens);
       append_changed_underlines(
           left_row, surface.left_x + surface.gutter_width, surface.left_visible_columns,
-          compare_row.left_text, compare_row.left_changed_spans,
+          compare_row.left_text,
+          compare::CompareInlineLeftSpans(compare_tab->presentation, compare_tab->model, model_index),
           compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
                                                                : theme_.diff_modified);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
@@ -417,7 +445,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           selected ? theme_.text_primary : right_color, *cached_tokens);
       append_changed_underlines(
           right_row, right_interaction.text_x, surface.right_visible_columns,
-          compare_row.right_text, compare_row.right_changed_spans,
+          compare_row.right_text,
+          compare::CompareInlineRightSpans(compare_tab->presentation, compare_tab->model,
+                                           model_index),
           compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
                                                              : theme_.diff_modified);
       if (right_diagnostics != nullptr) {

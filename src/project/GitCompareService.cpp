@@ -252,4 +252,31 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
   return entries;
 }
 
+std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
+                                                                std::string_view commit_hash) {
+  const GitRepository repo(root);
+  if (commit_hash.empty() || !repo.IsValid()) {
+    return {};
+  }
+
+  const auto result =
+      repo.Execute({"diff-tree", "--no-commit-id", "--name-only", "-r", std::string(commit_hash)});
+  if (!result.success() || result.output.empty()) {
+    return {};
+  }
+
+  std::vector<std::filesystem::path> paths;
+  std::istringstream stream(result.output);
+  std::string line;
+  while (std::getline(stream, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    paths.push_back(std::filesystem::path(line).lexically_normal());
+  }
+  std::sort(paths.begin(), paths.end());
+  paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+  return paths;
+}
+
 }  // namespace microide::project

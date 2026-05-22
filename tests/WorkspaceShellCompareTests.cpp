@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "render/Theme.h"
 
@@ -263,8 +264,8 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
   std::string working_text;
   for (int i = 0; i < 120; ++i) {
     base_text += "base line " + std::to_string(i) + "\n";
-    working_text += (i == 60 ? "changed line 60\n"
-                             : "base line " + std::to_string(i) + "\n");
+    working_text += ((i % 5 == 0) ? "changed line " + std::to_string(i) + "\n"
+                                  : "base line " + std::to_string(i) + "\n");
   }
   WriteFile(source, base_text);
 
@@ -280,7 +281,8 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
 
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
-  Expect(compare.model.rows.size() > static_cast<std::size_t>(surface.visible_rows),
+  Expect(workspace::CompareTabPresentationRowCount(compare) >
+             static_cast<std::size_t>(surface.visible_rows),
          "compare wheel fixture should overflow the viewport");
 
   const int before_scroll = compare.scroll_row;

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "app/BackgroundTaskCounter.h"
+#include "compare/ComparePresentationModel.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
 
@@ -364,10 +365,17 @@ void WorkspaceShell::RequestCompareRightLineRangeRedraw(std::size_t start_line,
     RequestFocusedEditorRedraw();
     return;
   }
-  const std::size_t start_row = CompareRowIndexForRightLine(*compare_tab, start_line);
+  const std::size_t start_model_row = CompareRowIndexForRightLine(*compare_tab, start_line);
   const std::size_t end_lookup_line =
       end_line > start_line ? end_line - 1 : start_line;
-  const std::size_t end_row = CompareRowIndexForRightLine(*compare_tab, end_lookup_line) + 1;
+  const std::size_t end_model_row = CompareRowIndexForRightLine(*compare_tab, end_lookup_line) + 1;
+  const std::size_t start_row =
+      compare::ComparePresentationModelRowIndex(compare_tab->presentation, start_model_row)
+          .value_or(start_model_row);
+  const std::size_t end_row =
+      compare::ComparePresentationModelRowIndex(compare_tab->presentation, end_model_row - 1)
+          .value_or(end_model_row - 1) +
+      1;
   RequestCompareRowRangeRedraw(start_row, std::max(start_row + 1, end_row));
 }
 

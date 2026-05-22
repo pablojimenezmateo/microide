@@ -938,19 +938,62 @@ std::vector<DiffOp> BuildAnchoredFallbackOps(const std::vector<std::string>& lef
 
 }  // namespace
 
+namespace {
+
+bool LinesEqualIgnoringWhitespace(std::string_view left, std::string_view right) {
+  std::size_t left_index = 0;
+  std::size_t right_index = 0;
+  while (left_index < left.size() || right_index < right.size()) {
+    while (left_index < left.size() && std::isspace(static_cast<unsigned char>(left[left_index])) != 0) {
+      ++left_index;
+    }
+    while (right_index < right.size() &&
+           std::isspace(static_cast<unsigned char>(right[right_index])) != 0) {
+      ++right_index;
+    }
+    if (left_index >= left.size() || right_index >= right.size()) {
+      return left_index >= left.size() && right_index >= right.size();
+    }
+    if (left[left_index] != right[right_index]) {
+      return false;
+    }
+    ++left_index;
+    ++right_index;
+  }
+  return true;
+}
+
+bool LinesEqualForDiff(std::string_view left,
+                       std::string_view right,
+                       const CompareBuildOptions& options) {
+  if (left == right) {
+    return true;
+  }
+  return options.ignore_whitespace && LinesEqualIgnoringWhitespace(left, right);
+}
+
+}  // namespace
+
 std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
                                      const std::vector<std::string>& right_lines,
                                      LineDiffBuildStats* stats) {
+  return BuildLineDiffOps(left_lines, right_lines, CompareBuildOptions{}, stats);
+}
+
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
+                                     const std::vector<std::string>& right_lines,
+                                     const CompareBuildOptions& options,
+                                     LineDiffBuildStats* stats) {
   std::size_t prefix = 0;
   while (prefix < left_lines.size() && prefix < right_lines.size() &&
-         left_lines[prefix] == right_lines[prefix]) {
+         LinesEqualForDiff(left_lines[prefix], right_lines[prefix], options)) {
     ++prefix;
   }
 
   std::size_t left_suffix = left_lines.size();
   std::size_t right_suffix = right_lines.size();
   while (left_suffix > prefix && right_suffix > prefix &&
-         left_lines[left_suffix - 1] == right_lines[right_suffix - 1]) {
+         LinesEqualForDiff(left_lines[left_suffix - 1], right_lines[right_suffix - 1], options)) {
     --left_suffix;
     --right_suffix;
   }
@@ -992,6 +1035,12 @@ std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
 }
 
 CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right) {
+  return BuildCompareModelProfiled(left, right, CompareBuildOptions{});
+}
+
+CompareBuildResult BuildCompareModelProfiled(const std::string& left,
+                                             const std::string& right,
+                                             const CompareBuildOptions& options) {
   CompareBuildResult result;
   CompareModel& model = result.model;
   CompareBuildProfile& profile = result.profile;
@@ -1003,7 +1052,18 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
   const auto right_lines = util::SplitLines(right);
   profile.split_lines_ns = DurationNs(split_start, Clock::now());
 
-  if (left_lines == right_lines) {
+  const bool lines_equal = [&]() {
+    if (left_lines.size() != right_lines.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < left_lines.size(); ++i) {
+      if (!LinesEqualForDiff(left_lines[i], right_lines[i], options)) {
+        return false;
+      }
+    }
+    return true;
+  }();
+  if (lines_equal) {
     model.rows.reserve(left_lines.size());
     int line_number = 1;
     for (const auto& line : left_lines) {
@@ -1029,13 +1089,13 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
   const Clock::time_point line_alignment_start = Clock::now();
   std::size_t prefix = 0;
   while (prefix < left_lines.size() && prefix < right_lines.size() &&
-         left_lines[prefix] == right_lines[prefix]) {
+         LinesEqualForDiff(left_lines[prefix], right_lines[prefix], options)) {
     ++prefix;
   }
   std::size_t left_suffix = left_lines.size();
   std::size_t right_suffix = right_lines.size();
   while (left_suffix > prefix && right_suffix > prefix &&
-         left_lines[left_suffix - 1] == right_lines[right_suffix - 1]) {
+         LinesEqualForDiff(left_lines[left_suffix - 1], right_lines[right_suffix - 1], options)) {
     --left_suffix;
     --right_suffix;
   }
@@ -1048,7 +1108,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
       right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
 
   LineDiffBuildStats line_diff_stats;
-  const std::vector<DiffOp> ops = BuildLineDiffOps(left_middle, right_middle, &line_diff_stats);
+  const std::vector<DiffOp> ops =
+      BuildLineDiffOps(left_middle, right_middle, options, &line_diff_stats);
   profile.exact_line_alignment_calls += line_diff_stats.exact_alignment_calls;
   profile.anchored_line_alignment_calls += line_diff_stats.anchored_alignment_calls;
   profile.line_alignment_ns = DurationNs(line_alignment_start, Clock::now());
@@ -1160,6 +1221,12 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
 
 CompareModel BuildCompareModel(const std::string& left, const std::string& right) {
   return BuildCompareModelProfiled(left, right).model;
+}
+
+CompareModel BuildCompareModel(const std::string& left,
+                               const std::string& right,
+                               const CompareBuildOptions& options) {
+  return BuildCompareModelProfiled(left, right, options).model;
 }
 
 }  // namespace microide::compare

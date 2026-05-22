@@ -8,6 +8,9 @@
 #include <vector>
 
 #include "compare/CompareModel.h"
+#include "compare/ComparePresentationModel.h"
+#include "compare/CompareReviewTypes.h"
+#include "compare/CompareSemanticMetadata.h"
 #include "compare/MergeModel.h"
 #include "editor/FoldingModel.h"
 #include "editor/SnippetEngine.h"
@@ -33,6 +36,16 @@ struct CompareTabState {
   std::string left_label;
   std::string right_label;
   std::string left_content;
+  compare::CompareReviewMode review_mode = compare::CompareReviewMode::WorkingTree;
+  compare::WorkingTreeStagingView staging_view = compare::WorkingTreeStagingView::Combined;
+  compare::BranchReviewTargetIdentity branch_target;
+  compare::CompareSemanticFileMetadata semantic_file;
+  compare::ComparePresentationModel presentation;
+  compare::CompareBuildOptions build_options;
+  bool show_whitespace = false;
+  bool opened_from_commit_picker = false;
+  std::vector<std::filesystem::path> review_files;
+  std::size_t review_file_index = 0;
   editor::SyntaxState left_initial_syntax_state;
   editor::SyntaxState right_initial_syntax_state;
   editor::SyntaxState left_current_syntax_state;
