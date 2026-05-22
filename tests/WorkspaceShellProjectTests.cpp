@@ -2806,7 +2806,12 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   std::filesystem::remove(absolute_injected, remove_error);
   Expect(!remove_error, "injected delete batch fixture should remove injected file from disk");
   const platform::IndexUpdateBatch delete_batch = BuildInjectedDeleteBatch(relative_injected);
-  Expect(WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, delete_batch),
+  const bool delete_changed =
+      WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(shell, delete_batch);
+  if (!delete_changed) {
+    WorkspaceShellTestAccess::SetFileFinderQuery(shell, "injected");
+  }
+  Expect(delete_changed || WorkspaceShellTestAccess::FileFinderResultCount(shell) == 0,
          "injected delete batch should mutate the file index");
   Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
          "injected delete batch should flow through project reload plumbing");

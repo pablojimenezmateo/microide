@@ -103,11 +103,10 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
       case CompareRowKind::Unchanged: {
         const std::string context_text = NormalizePatchLineText(
             compare_row.left_text.empty() ? compare_row.right_text : compare_row.left_text);
-        if (context_text.empty()) {
-          break;
-        }
-        if (!body_lines.empty() && body_lines.back().prefix == ' ' &&
-            NormalizePatchLineText(body_lines.back().text) == context_text) {
+        const bool real_blank_line = context_text.empty() && compare_row.left_line > 0 &&
+                                     compare_row.right_line > 0 &&
+                                     compare_row.left_line == compare_row.right_line;
+        if (context_text.empty() && !real_blank_line) {
           break;
         }
         body_lines.push_back(PatchBodyLine{' ', context_text});

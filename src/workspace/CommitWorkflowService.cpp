@@ -51,7 +51,7 @@ void CommitWorkflowService::SetCallbacks(Callbacks callbacks) {
 }
 
 project::CommitDraftContext CommitWorkflowService::CurrentDraftContext() const {
-  const project::GitRepositoryState& repository_state = git_repository_service_.CurrentState();
+  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
   return project::CommitDraftContext{
       .head_oid = repository_state.branch.head_oid,
       .branch_name = repository_state.branch.branch_name,
@@ -82,7 +82,7 @@ PersistedCommitDraftState CommitWorkflowService::BuildPersistedDraft(
 }
 
 void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state) {
-  const project::GitRepositoryState& repository_state = git_repository_service_.CurrentState();
+  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
   state.staged_summary = project::BuildCommitStagedSummary(repository_state);
   if (state.staged_summary.file_count == 0) {
     state.staged_summary_line = "Nothing staged";
@@ -215,7 +215,7 @@ void CommitWorkflowService::CancelPendingConfirmation(CommitWorkflowState& state
 
 void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
                                            const project::CommitOperationKind operation) {
-  const project::GitRepositoryState& repository_state = git_repository_service_.CurrentState();
+  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
   if (repository_state.repository_root.empty() || !repository_state.repo_available) {
     return;
   }

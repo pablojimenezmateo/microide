@@ -59,6 +59,7 @@ void TestParseSafeModeImpliesDisablePlugins() {
   auto argv = ArgvFromStrings(args);
   const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
   Expect(parsed.options.safe_mode, "safe mode should be set");
+  Expect(parsed.options.disable_plugins, "safe mode should imply disable-plugins");
   Expect(parsed.options.plugins_disabled(), "safe mode should disable plugins");
   Expect(parsed.options.project_path.has_value() &&
              parsed.options.project_path->generic_string() == "/tmp/project",

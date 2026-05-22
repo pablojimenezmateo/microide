@@ -532,6 +532,7 @@ add_executable(microide_tests
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/GitRepositoryStateTests.cpp
+  tests/GitRepositoryServiceTests.cpp
   tests/CommitWorkflowTests.cpp
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp

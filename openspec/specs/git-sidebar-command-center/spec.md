@@ -1,4 +1,9 @@
-## ADDED Requirements
+## Purpose
+
+Define grouped Git sidebar presentation, deterministic row-action availability, and predictable
+keyboard shortcuts for Git workstation workflows.
+
+## Requirements
 
 ### Requirement: Git Sidebar Is Grouped By Workflow State
 The Git sidebar SHALL present repository state as branch/upstream summary followed by grouped sections for Conflicts, Staged, Changed, Untracked, and Outgoing entries when those sections contain data.

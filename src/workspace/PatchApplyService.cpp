@@ -75,7 +75,7 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     return std::nullopt;
   }
 
-  const project::GitRepositoryState& repository_state = callbacks_.current_repository_state();
+  const project::GitRepositoryState repository_state = callbacks_.current_repository_state();
   if (repository_state.repository_root.empty() || !repository_state.repo_available) {
     return std::nullopt;
   }
@@ -150,7 +150,7 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
   const std::uint64_t diff_generation = request.diff_model_generation;
   background_executor_.Post([this, request = std::move(request), patch_text = std::move(patch_text),
                              diff_generation]() mutable {
-    const project::GitRepositoryState& current_state = callbacks_.current_repository_state();
+    const project::GitRepositoryState current_state = callbacks_.current_repository_state();
     if (request.repository_snapshot_generation != current_state.generation) {
       PublishResult(
           PatchApplyResult{
@@ -163,7 +163,7 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
 
     PatchApplyResult result = project::ApplyPatchRequest(request, patch_text);
 
-    const project::GitRepositoryState& completion_state = callbacks_.current_repository_state();
+    const project::GitRepositoryState completion_state = callbacks_.current_repository_state();
     if (result.category == PatchApplyResultCategory::Success &&
         request.repository_snapshot_generation != completion_state.generation) {
       result = PatchApplyResult{

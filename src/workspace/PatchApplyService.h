@@ -17,7 +17,7 @@ class GitRepositoryService;
 class PatchApplyService {
  public:
   struct Callbacks {
-    std::function<const project::GitRepositoryState&()> current_repository_state;
+    std::function<project::GitRepositoryState()> current_repository_state;
     std::function<void()> request_git_refresh;
     std::function<void(const std::filesystem::path&)> refresh_compare_tab_for_path;
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;

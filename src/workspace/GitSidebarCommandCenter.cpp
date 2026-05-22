@@ -106,8 +106,8 @@ GitSidebarActionAvailability GitSidebarActionAvailabilityForEntry(
       availability.default_view = true;
       availability.merge = true;
       availability.diff = true;
-      availability.stage = !entry.staged;
-      availability.unstage = entry.staged;
+      availability.stage = false;
+      availability.unstage = false;
       availability.discard = true;
       availability.open_file = true;
       break;

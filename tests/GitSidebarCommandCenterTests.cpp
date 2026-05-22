@@ -94,6 +94,43 @@ void TestGitSidebarViewModelGrouping() {
          "first grouped line should be a section header");
 }
 
+void TestConflictRowsDisableDirectStageUnstage() {
+  GitSidebarEntry conflict_entry{
+      .section = GitSidebarEntry::Section::Conflicts,
+      .relative_path = "src/conflict.cpp",
+      .status = GitFileStatus::Conflicted,
+      .conflicted = true,
+      .staged = true,
+      .supports_stage = true,
+      .supports_discard = true,
+  };
+  const auto availability =
+      GitSidebarActionAvailabilityForEntry(conflict_entry, true, true);
+  Expect(availability.default_view && availability.merge && availability.diff,
+         "conflict rows should open review and merge workflows");
+  Expect(!availability.stage && !availability.unstage,
+         "unresolved conflict rows must not expose direct stage/unstage");
+  Expect(availability.discard && availability.open_file,
+         "conflict rows should still allow discard and open-file actions");
+  Expect(GitSidebarDisabledActionMessage(GitSidebarActionId::Stage, conflict_entry, true, true) ==
+             "Stage is unavailable for this row",
+         "disabled stage should explain why");
+  Expect(GitSidebarDisabledActionMessage(GitSidebarActionId::Unstage, conflict_entry, true, true) ==
+             "Unstage is unavailable for this row",
+         "disabled unstage should explain why");
+}
+
+void TestConflictDefaultViewRoutesToMerge() {
+  GitSidebarEntry conflict_entry{
+      .section = GitSidebarEntry::Section::Conflicts,
+      .conflicted = true,
+  };
+  const auto availability =
+      GitSidebarActionAvailabilityForEntry(conflict_entry, true, true);
+  Expect(availability.default_view && availability.merge,
+         "primary conflict action should prefer the merge resolver");
+}
+
 void TestGitSidebarActionAvailabilityMessages() {
   GitSidebarEntry untracked_entry{
       .section = GitSidebarEntry::Section::Untracked,
@@ -134,6 +171,10 @@ void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitSidebarCommandCenter/SectionClassification",
           TestGitSidebarSectionClassification);
   AddTest(tests, "GitSidebarCommandCenter/ViewModelGrouping", TestGitSidebarViewModelGrouping);
+  AddTest(tests, "GitSidebarCommandCenter/ConflictRowsDisableStageUnstage",
+          TestConflictRowsDisableDirectStageUnstage);
+  AddTest(tests, "GitSidebarCommandCenter/ConflictDefaultViewRoutesToMerge",
+          TestConflictDefaultViewRoutesToMerge);
   AddTest(tests, "GitSidebarCommandCenter/ActionAvailabilityMessages",
           TestGitSidebarActionAvailabilityMessages);
   AddTest(tests, "GitSidebarCommandCenter/DiscardPreviewSummary",

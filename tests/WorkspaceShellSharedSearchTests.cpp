@@ -43,22 +43,22 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
   const BranchReviewStateService branch_review;
   const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
       git_state, std::filesystem::path{"/tmp/project"}, branch_review));
-  Expect(lines.size() == 9,
+  Expect(lines.size() == 11,
          "git sidebar lines should include workflow headers, rows, and empty placeholders");
-  Expect(lines[0].kind == GitSidebarLineKind::Header && lines[0].label == "Changed (2)",
+  Expect(lines[4].kind == GitSidebarLineKind::Header && lines[4].label == "Changed (2)",
          "git sidebar lines should include the changed header with count");
-  Expect(lines[1].kind == GitSidebarLineKind::Entry && lines[1].entry_index == 0,
+  Expect(lines[5].kind == GitSidebarLineKind::Entry && lines[5].entry_index == 0,
          "git sidebar lines should map the first changed entry index");
-  Expect(lines[2].kind == GitSidebarLineKind::Entry && lines[2].entry_index == 1,
+  Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 1,
          "git sidebar lines should map the second changed entry index");
-  Expect(lines[5].kind == GitSidebarLineKind::Header &&
-             lines[5].label == "Outgoing (1)  origin/main",
+  Expect(lines[9].kind == GitSidebarLineKind::Header &&
+             lines[9].label == "Outgoing (1)  origin/main",
          "git sidebar lines should include the outgoing header with base label");
-  Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 2,
+  Expect(lines[10].kind == GitSidebarLineKind::Entry && lines[10].entry_index == 2,
          "git sidebar lines should map outgoing entries after the outgoing header");
 
   const auto selected_line = FindSelectedGitSidebarLineIndex(lines, 2);
-  Expect(selected_line.has_value() && *selected_line == 6,
+  Expect(selected_line.has_value() && *selected_line == 10,
          "git sidebar selected-line lookup should find the outgoing entry row");
   Expect(!FindSelectedGitSidebarLineIndex(lines, 9).has_value(),
          "git sidebar selected-line lookup should fail for unknown entries");
@@ -72,15 +72,15 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
       clean_state, std::filesystem::path{"/tmp/project"}, clean_branch_review));
   Expect(clean_lines.size() == 10,
          "empty git sidebar should still show all workflow section headers and empty rows");
-  Expect(clean_lines[3].kind == GitSidebarLineKind::Empty &&
-             clean_lines[3].label == "No unstaged changes",
+  Expect(clean_lines[5].kind == GitSidebarLineKind::Empty &&
+             clean_lines[5].label == "No unstaged changes",
          "git sidebar should describe a clean changed section when git is available");
 
   GitSidebarState no_repo_state;
   const BranchReviewStateService no_repo_branch_review;
   const auto no_repo_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
       no_repo_state, std::filesystem::path{"/tmp/project"}, no_repo_branch_review));
-  Expect(no_repo_lines[3].label == "Not a git repository",
+  Expect(no_repo_lines[5].label == "Not a git repository",
          "git sidebar should distinguish non-repositories from clean repositories");
 }
 

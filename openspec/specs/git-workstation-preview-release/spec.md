@@ -1,4 +1,9 @@
-## ADDED Requirements
+## Purpose
+
+Define the narrow Git Workstation Preview release scope, safe startup flags, and explicit
+unsupported-workflow boundaries.
+
+## Requirements
 
 ### Requirement: Preview Scope Is Narrow And Explicit
 The Git Workstation Preview SHALL document support for opening a local Git repository, inspecting working-tree state, viewing staged and unstaged diffs, staging and unstaging files and hunks, resolving common text conflicts, committing staged changes, and reviewing a branch against a base. Unsupported workflows SHALL be listed explicitly.

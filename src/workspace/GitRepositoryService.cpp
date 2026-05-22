@@ -65,7 +65,7 @@ void GitRepositoryService::Reset() {
   active_project_root_.clear();
 }
 
-const project::GitRepositoryState& GitRepositoryService::CurrentState() const {
+project::GitRepositoryState GitRepositoryService::CurrentState() const {
   std::lock_guard lock(mutex_);
   return current_state_;
 }

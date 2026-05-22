@@ -32,6 +32,7 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
     }
     if (arg == "--safe-mode") {
       result.options.safe_mode = true;
+      result.options.disable_plugins = true;
       continue;
     }
     if (arg == "--help" || arg == "-h") {

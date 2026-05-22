@@ -410,6 +410,10 @@ Current commands:
 - `goto-definition`
 - `goto <line[:col]>`
 - `git-refresh`
+- `mark-branch-file-reviewed`
+- `mark-branch-hunk-reviewed`
+- `clear-branch-review-state`
+- `branch-review-note <text>`
 - `indent-width [n]`
 - `jump <line[:col]>`
 - `open <path>`

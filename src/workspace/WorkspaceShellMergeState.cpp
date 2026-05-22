@@ -692,7 +692,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
 }
 
 void WorkspaceShell::InvalidateStaleMergeTabs() {
-  const project::GitRepositoryState& repository_state = git_repository_service_.CurrentState();
+  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
   for (TabEntry& tab : context_.current_project_state.open_tabs) {
     if (!tab.merge.has_value()) {
       continue;
@@ -724,7 +724,7 @@ void WorkspaceShell::InvalidateStaleMergeTabs() {
 
 void WorkspaceShell::FinalizeGitMergeTab(MergeTabState& merge_tab,
                                          const std::filesystem::path& path) {
-  const project::GitRepositoryState& repository_state = git_repository_service_.CurrentState();
+  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
   const MergeResolverLabels labels =
       BuildMergeResolverLabels(context_.current_project_state.root, path, repository_state);
   merge_tab.incoming_label = labels.incoming_label;

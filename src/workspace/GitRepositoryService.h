@@ -26,7 +26,7 @@ class GitRepositoryService {
   void SetWakeCallbacks(WakeCallbacks callbacks);
   void Reset();
 
-  const project::GitRepositoryState& CurrentState() const;
+  project::GitRepositoryState CurrentState() const;
   bool IsRefreshing() const;
 
   void MarkStale();

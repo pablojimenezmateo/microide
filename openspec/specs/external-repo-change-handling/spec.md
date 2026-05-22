@@ -1,4 +1,9 @@
-## ADDED Requirements
+## Purpose
+
+Define how external repository and filesystem changes fan out into typed host events that refresh
+Git state, editor buffers, compare tabs, and related surfaces without stale snapshots.
+
+## Requirements
 
 ### Requirement: External Changes Fan Out Through Typed Events
 MicroIDE SHALL normalize native file-watch and repository-change signals into typed project-relative events before updating Git state, editor buffers, compare tabs, merge tabs, file tree, search index, diagnostics, blame, or commit draft state.

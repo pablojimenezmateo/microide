@@ -1,4 +1,9 @@
-## ADDED Requirements
+## Purpose
+
+Define the commit workflow surface, staged-change summary, pre-commit checks, and commit execution
+semantics for the Git workstation.
+
+## Requirements
 
 ### Requirement: Commit Workflow Shows Staged Summary
 MicroIDE SHALL provide a commit workflow surface that shows staged file count, added/deleted line summary when available, staged file list, branch identity, upstream/ahead/behind state when known, and access to the staged diff.

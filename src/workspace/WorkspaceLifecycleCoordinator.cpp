@@ -130,10 +130,9 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   }
   InitializeCommitWorkflowService();
   patch_apply_service_.SetCallbacks(PatchApplyService::Callbacks{
-      .current_repository_state =
-          [this]() -> const project::GitRepositoryState& {
-            return git_repository_service_.CurrentState();
-          },
+      .current_repository_state = [this]() {
+        return git_repository_service_.CurrentState();
+      },
       .request_git_refresh = [this]() { RequestAutomaticGitSidebarRefresh(); },
       .refresh_compare_tab_for_path =
           [this](const std::filesystem::path& path) { RefreshOpenCompareTabsForPath(path); },
