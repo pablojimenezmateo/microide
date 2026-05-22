@@ -275,13 +275,6 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   draw_button(toolbar.save_rect, "Save", false, true);
   draw_button(toolbar.open_rect, "Open Result", false, true);
 
-  const MergeResolverStatus resolver_status =
-      BuildMergeResolverStatus(*merge_tab, merge_tab->remaining_conflicted_files);
-  const std::string status_text = merge_tab->status_message.empty()
-                                      ? resolver_status.progress_label
-                                      : merge_tab->status_message;
-  text_renderer_.DrawString(renderer, surface.left_x, surface.secondary_button_y,
-                            theme_.text_secondary, TruncateLabel(status_text, content_width * 0.55f));
   const SDL_FRect mark_resolved_rect = MakeRect(
       rect.x + rect.w - 8.0f -
           ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Mark Resolved")),
@@ -300,6 +293,16 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       surface.secondary_button_y,
       ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Unresolved")),
       kMergeToolbarButtonHeight);
+  const MergeResolverStatus resolver_status =
+      BuildMergeResolverStatus(*merge_tab, merge_tab->remaining_conflicted_files);
+  const std::string status_text = merge_tab->status_message.empty()
+                                      ? resolver_status.progress_label
+                                      : merge_tab->status_message;
+  const float status_max_width =
+      std::max(0.0f, unresolved_rect.x - kMergeToolbarButtonGap - surface.left_x);
+  text_renderer_.DrawString(renderer, surface.left_x, surface.secondary_button_y,
+                            theme_.text_secondary,
+                            TruncateLabel(status_text, status_max_width));
   draw_button(unresolved_rect, "Unresolved", false, !merge_tab->conflicts.empty());
   draw_button(toggle_base_rect, "Toggle Base", merge_tab->base_pane_visible, true);
   draw_button(mark_resolved_rect, "Mark Resolved", false, true);
