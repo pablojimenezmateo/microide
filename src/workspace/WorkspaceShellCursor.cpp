@@ -6,6 +6,8 @@
 
 #include "util/PerformanceTrace.h"
 #include "util/Parse.h"
+#include "workspace/SettingsOverlayService.h"
+#include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
 
@@ -204,6 +206,33 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
   const WorkspaceLayout layout = *layout_state;
 
+  if (settings_overlay_service_.Visible()) {
+    const SDL_FRect settings_rect = ComputeOverlaySurfaceRect(layout.editor_area);
+    if (!Contains(settings_rect, x, y)) {
+      return CursorKind::Default;
+    }
+    constexpr float kRowHeight = 24.0f;
+    float list_top = settings_rect.y + 42.0f;
+    if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
+      list_top += 16.0f;
+    }
+    const float list_bottom = settings_rect.y + settings_rect.h - 10.0f;
+    if (y >= list_top && y <= list_bottom) {
+      const std::size_t row =
+          static_cast<std::size_t>(std::max(0.0f, y - list_top) / kRowHeight) +
+          static_cast<std::size_t>(settings_overlay_service_.ScrollRow());
+      if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings &&
+          row < settings_overlay_service_.SettingsRows().size()) {
+        return CursorKind::Pointer;
+      }
+      if (settings_overlay_service_.Mode() == SettingsOverlayMode::HelpAbout &&
+          row < settings_overlay_service_.HelpRows().size()) {
+        return CursorKind::Pointer;
+      }
+    }
+    return CursorKind::Default;
+  }
+
   // Hit-test the popup using geometry only. The full ComputeVisiblePopupMenuItems
   // path here was calling IsMenuItemEnabled/IsMenuItemChecked for every row, and
   // CursorKindForPosition runs on every mouse motion — that cost roughly half of
@@ -265,7 +294,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     for (const VisibleWindowControlButton& button :
          ComputeVisibleWindowControlButtons(layout.menu_bar)) {
-      if (Contains(button.rect, x, y)) {
+      if (Contains(WindowControlButtonHitRect(button.rect), x, y)) {
         return CursorKind::Pointer;
       }
     }
@@ -305,10 +334,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                                                             : CursorKind::Default;
   }
 
-  if (context_.current_project_state.sidebar.visible && Contains(SidebarResizeHitRect(layout), x, y)) {
+  if (context_.current_project_state.sidebar.visible &&
+      Contains(SidebarResizeCursorRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
-  if (BottomPanelVisible() && Contains(BottomPanelResizeHitRect(layout), x, y)) {
+  if (BottomPanelVisible() && Contains(BottomPanelResizeCursorRect(layout), x, y)) {
     return CursorKind::NsResize;
   }
 
@@ -773,6 +803,8 @@ void WorkspaceShell::ClearMouseHoverState() {
   last_mouse_position_valid_ = false;
   active_editor_hover_target_.reset();
   editor_hover_refresh_pending_ = false;
+  cursor_kind_fingerprint_.valid = false;
+  ++editor_hover_target_generation_;
 
   if (cursor_kind_ == CursorKind::Default) {
     return;
@@ -812,7 +844,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
   // Fast-path: if the inputs CursorKindForPosition reads haven't changed since the
   // last call (typical PrepareFrameOnce frame where the mouse is still and no menu
   // / prompt / drag state changed), skip the hit-testing work entirely.
-  CursorKindFingerprint next_fp{
+  const CursorKindFingerprint next_fp{
       .x = x,
       .y = y,
       .drag_target = static_cast<int>(context_.interaction_state.drag_target),
@@ -822,6 +854,17 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       .menu_bar_open = context_.menu_state.menu_bar_open,
       .overflow_popup_open = context_.menu_state.overflow_popup_open,
       .tree_context_menu_open = context_.menu_state.tree_context_menu.open,
+      .active_menu_id = static_cast<int>(context_.menu_state.active_menu_id),
+      .hovered_popup_row_index = context_.menu_state.hovered_popup_row_index,
+      .hovered_submenu_row_index = context_.menu_state.hovered_submenu_row_index,
+      .active_submenu_id = static_cast<int>(context_.menu_state.active_submenu_id),
+      .overlay_visible = context_.current_project_state.overlay.visible,
+      .settings_overlay_visible = settings_overlay_service_.Visible(),
+      .bottom_panel_visible = BottomPanelVisible(),
+      .active_tab_index =
+          static_cast<std::uint32_t>(context_.current_project_state.active_tab_index),
+      .cursor_hit_generation = cursor_hit_generation_,
+      .editor_hover_target_generation = editor_hover_target_generation_,
   };
   if (cursor_kind_fingerprint_.valid &&
       cursor_kind_fingerprint_.x == next_fp.x &&
@@ -832,6 +875,17 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       cursor_kind_fingerprint_.menu_bar_open == next_fp.menu_bar_open &&
       cursor_kind_fingerprint_.overflow_popup_open == next_fp.overflow_popup_open &&
       cursor_kind_fingerprint_.tree_context_menu_open == next_fp.tree_context_menu_open &&
+      cursor_kind_fingerprint_.active_menu_id == next_fp.active_menu_id &&
+      cursor_kind_fingerprint_.hovered_popup_row_index == next_fp.hovered_popup_row_index &&
+      cursor_kind_fingerprint_.hovered_submenu_row_index == next_fp.hovered_submenu_row_index &&
+      cursor_kind_fingerprint_.active_submenu_id == next_fp.active_submenu_id &&
+      cursor_kind_fingerprint_.overlay_visible == next_fp.overlay_visible &&
+      cursor_kind_fingerprint_.settings_overlay_visible == next_fp.settings_overlay_visible &&
+      cursor_kind_fingerprint_.bottom_panel_visible == next_fp.bottom_panel_visible &&
+      cursor_kind_fingerprint_.active_tab_index == next_fp.active_tab_index &&
+      cursor_kind_fingerprint_.cursor_hit_generation == next_fp.cursor_hit_generation &&
+      cursor_kind_fingerprint_.editor_hover_target_generation ==
+          next_fp.editor_hover_target_generation &&
       !workspace_layout_recomputed) {
     return;
   }
@@ -842,14 +896,14 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
     return;
   }
 
-  if (SDL_Cursor* cursor = CursorHandle(next_kind); cursor != nullptr && SDL_SetCursor(cursor)) {
-    cursor_kind_ = next_kind;
+  cursor_kind_ = next_kind;
+  if (SDL_Cursor* cursor = CursorHandle(next_kind); cursor != nullptr) {
+    (void)SDL_SetCursor(cursor);
     return;
   }
 
-  if (SDL_Cursor* default_cursor = CursorHandle(CursorKind::Default);
-      default_cursor != nullptr && SDL_SetCursor(default_cursor)) {
-    cursor_kind_ = CursorKind::Default;
+  if (SDL_Cursor* default_cursor = CursorHandle(CursorKind::Default); default_cursor != nullptr) {
+    (void)SDL_SetCursor(default_cursor);
   }
 }
 

@@ -1283,6 +1283,7 @@
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
+  void InvalidateCursorKindFingerprint();
   void UpdateMouseCursor(float x, float y, bool update_editor_hover = true,
                          bool workspace_layout_recomputed = false);
 
@@ -1424,8 +1425,20 @@
     bool menu_bar_open = false;
     bool overflow_popup_open = false;
     bool tree_context_menu_open = false;
+    int active_menu_id = 0;
+    int hovered_popup_row_index = -1;
+    int hovered_submenu_row_index = -1;
+    int active_submenu_id = 0;
+    bool overlay_visible = false;
+    bool settings_overlay_visible = false;
+    bool bottom_panel_visible = false;
+    std::uint32_t active_tab_index = 0;
+    std::uint32_t cursor_hit_generation = 0;
+    std::uint32_t editor_hover_target_generation = 0;
   };
   CursorKindFingerprint cursor_kind_fingerprint_{};
+  std::uint32_t cursor_hit_generation_ = 0;
+  std::uint32_t editor_hover_target_generation_ = 0;
   SDL_Cursor* text_cursor_ = nullptr;
   SDL_Cursor* pointer_cursor_ = nullptr;
   SDL_Cursor* ew_resize_cursor_ = nullptr;

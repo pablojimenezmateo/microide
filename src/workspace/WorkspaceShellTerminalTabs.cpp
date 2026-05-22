@@ -111,6 +111,7 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
     return;
   }
 
+  const bool panel_visible_before = BottomPanelVisible();
   context_.current_project_state.terminal_tabs.erase(context_.current_project_state.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(index));
   if (context_.current_project_state.terminal_tabs.empty()) {
     context_.current_project_state.active_terminal_tab_index = 0;
@@ -121,6 +122,10 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
     }
     if (context_.current_project_state.surface.focus == FocusTarget::Panel && !context_.current_project_state.panel.command_mode) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
+    }
+    if (BottomPanelVisible() != panel_visible_before) {
+      MarkLayoutDirty();
+      RequestWindowRedraw();
     }
     return;
   }
@@ -165,6 +170,9 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
     }
   }
   if (BottomPanelVisible() != panel_visible_before || context_.current_project_state.terminal_tabs.size() != tab_count_before) {
+    if (BottomPanelVisible() != panel_visible_before) {
+      MarkLayoutDirty();
+    }
     RequestWindowRedraw();
   } else if (panel_visible_before) {
     RequestBottomPanelRedraw();

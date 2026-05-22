@@ -142,7 +142,8 @@ WorkspaceShell::ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) co
         .id = id,
         .rect = rect,
         .hovered =
-            last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+            last_mouse_position_valid_ &&
+            Contains(WindowControlButtonHitRect(rect), last_mouse_x_, last_mouse_y_),
     });
     x += button_size + kWorkspaceWindowControlButtonGap;
   }

@@ -441,11 +441,15 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     editor_hover_refresh_pending_ = false;
     return;
   }
+  const std::optional<EditorHoverTarget> previous_target = active_editor_hover_target_;
   const auto target = [&]() -> std::optional<EditorHoverTarget> {
     util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateEditorHover::TargetAtPosition");
     return EditorHoverTargetAtPosition(x, y);
   }();
   if (target.has_value()) {
+    if (!previous_target.has_value() || *previous_target != *target) {
+      ++editor_hover_target_generation_;
+    }
     active_editor_hover_target_ = *target;
     return;
   }
@@ -457,6 +461,9 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     }
   }
 
+  if (previous_target.has_value()) {
+    ++editor_hover_target_generation_;
+  }
   active_editor_hover_target_.reset();
 }
 

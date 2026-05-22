@@ -137,7 +137,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
   const auto menu_bar_items = operations_.compute_visible_menu_bar_items(layout.menu_bar);
   const auto window_buttons = operations_.compute_visible_window_control_buttons(layout.menu_bar);
   for (const auto& button : window_buttons) {
-    if (!Contains(button.rect, event.button.x, event.button.y)) {
+    if (!Contains(WindowControlButtonHitRect(button.rect), event.button.x, event.button.y)) {
       continue;
     }
     operations_.close_menu_bar();

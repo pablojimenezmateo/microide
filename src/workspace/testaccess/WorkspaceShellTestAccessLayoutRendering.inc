@@ -397,6 +397,76 @@
     }
     return std::nullopt;
   }
+  static std::optional<SDL_FRect> WindowControlButtonRect(
+      WorkspaceShell& shell,
+      WorkspaceShell::WindowControlButtonId id) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto buttons = shell.ComputeVisibleWindowControlButtons(layout.menu_bar);
+    for (const auto& button : buttons) {
+      if (button.id == id) {
+        return button.rect;
+      }
+    }
+    return std::nullopt;
+  }
+  static std::optional<SDL_FRect> MinimizeButtonRect(WorkspaceShell& shell) {
+    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Minimize);
+  }
+  static std::optional<SDL_FRect> MaximizeButtonRect(WorkspaceShell& shell) {
+    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Maximize);
+  }
+  static std::optional<SDL_FRect> CloseButtonRect(WorkspaceShell& shell) {
+    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Close);
+  }
+  static bool CachedCursorIs(const WorkspaceShell& shell, WorkspaceShell::CursorKind expected) {
+    return shell.cursor_kind_ == expected;
+  }
+  static bool CachedCursorIsDefault(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::Default;
+  }
+  static bool CachedCursorIsNsResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::NsResize;
+  }
+  static bool CachedCursorIsEwResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::EwResize;
+  }
+  static bool CachedCursorIsPointer(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::Pointer;
+  }
+  static bool CursorKindAtIs(WorkspaceShell& shell,
+                             float x,
+                             float y,
+                             WorkspaceShell::CursorKind expected) {
+    return shell.CursorKindForPosition(x, y) == expected;
+  }
+  static bool CursorKindAtIsDefault(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::Default;
+  }
+  static bool CursorKindAtIsText(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::Text;
+  }
+  static bool CursorKindAtIsNsResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::NsResize;
+  }
+  static bool CursorKindAtIsEwResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::EwResize;
+  }
+  static bool CursorKindAtIsPointer(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::Pointer;
+  }
+  static int CursorKindAtValue(WorkspaceShell& shell, float x, float y) {
+    return static_cast<int>(shell.CursorKindForPosition(x, y));
+  }
+  static void UpdateMouseCursor(WorkspaceShell& shell, float x, float y) {
+    shell.UpdateMouseCursor(x, y, false, false);
+  }
+  static void InvalidateCursorKindFingerprint(WorkspaceShell& shell) {
+    shell.InvalidateCursorKindFingerprint();
+  }
+  static void CloseTerminalTab(WorkspaceShell& shell, std::size_t index) {
+    shell.CloseTerminalTab(index);
+  }
+  static void MarkLayoutDirty(WorkspaceShell& shell) { shell.MarkLayoutDirty(); }
   static SDL_FRect TerminalTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =

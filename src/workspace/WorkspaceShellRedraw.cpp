@@ -31,8 +31,13 @@ std::size_t MaxVisualColumns(const editor::TextViewport& viewport) {
 
 }  // namespace
 
+void WorkspaceShell::InvalidateCursorKindFingerprint() {
+  ++cursor_hit_generation_;
+}
+
 void WorkspaceShell::MarkLayoutDirty() {
   layout_dirty_ = true;
+  InvalidateCursorKindFingerprint();
 }
 
 void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
@@ -113,6 +118,7 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
 }
 
 void WorkspaceShell::RequestFullRedraw() {
+  InvalidateCursorKindFingerprint();
   pending_render_invalidation_.full = true;
   pending_render_invalidation_.rects.clear();
   QueueEditorHoverRefresh();
@@ -122,6 +128,7 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   if (pending_render_invalidation_.full || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
+  InvalidateCursorKindFingerprint();
   pending_render_invalidation_.rects.push_back(rect);
   QueueEditorHoverRefresh();
 }

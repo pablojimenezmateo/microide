@@ -283,17 +283,20 @@ void WorkspaceShell::ApplyLiveSettings() {
 void WorkspaceShell::OpenSettingsOverlay() {
   settings_overlay_service_.OpenSettings();
   RefreshSettingsOverlayCatalog();
+  InvalidateCursorKindFingerprint();
   RequestOverlayRedraw();
 }
 
 void WorkspaceShell::OpenHelpAboutOverlay() {
   settings_overlay_service_.OpenHelpAbout();
   RefreshSettingsOverlayCatalog();
+  InvalidateCursorKindFingerprint();
   RequestOverlayRedraw();
 }
 
 void WorkspaceShell::CloseSettingsOverlay() {
   settings_overlay_service_.Close();
+  InvalidateCursorKindFingerprint();
   RequestOverlayRedraw();
 }
 

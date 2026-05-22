@@ -11,6 +11,7 @@ WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   RequestOverlayRedraw();
+  InvalidateCursorKindFingerprint();
   context_.current_project_state.overlay.visible = true;
   context_.current_project_state.overlay.mode = mode;
   context_.current_project_state.surface.focus = FocusTarget::Overlay;
@@ -20,6 +21,7 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
 
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
   RequestOverlayRedraw();
+  InvalidateCursorKindFingerprint();
   const bool preserve_buffer_search_expansions =
       context_.current_project_state.overlay.mode == OverlayMode::BufferSearch &&
       focus_editor;

@@ -231,6 +231,24 @@ SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout) {
                   kResizeHandleThickness + kDivider);
 }
 
+SDL_FRect SidebarResizeCursorRect(const WorkspaceLayout& layout) {
+  const SDL_FRect visual = SidebarResizeHandleRect(layout);
+  if (visual.w <= 0.0f || visual.h <= 0.0f) {
+    return visual;
+  }
+  return MakeRect(visual.x - kWorkspaceResizeHandleCursorInflate, visual.y,
+                  visual.w + kWorkspaceResizeHandleCursorInflate * 2.0f, visual.h);
+}
+
+SDL_FRect BottomPanelResizeCursorRect(const WorkspaceLayout& layout) {
+  const SDL_FRect visual = BottomPanelResizeHandleRect(layout);
+  if (visual.w <= 0.0f || visual.h <= 0.0f) {
+    return visual;
+  }
+  return MakeRect(visual.x, visual.y - kWorkspaceResizeHandleCursorInflate, visual.w,
+                  visual.h + kWorkspaceResizeHandleCursorInflate * 2.0f);
+}
+
 SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout) {
   const SDL_FRect visual = SidebarResizeHandleRect(layout);
   if (visual.w <= 0.0f || visual.h <= 0.0f) {
@@ -247,6 +265,16 @@ SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout) {
   }
   return MakeRect(visual.x, visual.y - kWorkspaceResizeHandleHitInflate, visual.w,
                   visual.h + kWorkspaceResizeHandleHitInflate * 2.0f);
+}
+
+SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect) {
+  if (button_rect.w <= 0.0f || button_rect.h <= 0.0f) {
+    return button_rect;
+  }
+  return MakeRect(button_rect.x - kWorkspaceWindowControlButtonHitInflate,
+                  button_rect.y - kWorkspaceWindowControlButtonHitInflate,
+                  button_rect.w + kWorkspaceWindowControlButtonHitInflate * 2.0f,
+                  button_rect.h + kWorkspaceWindowControlButtonHitInflate * 2.0f);
 }
 
 SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry) {
