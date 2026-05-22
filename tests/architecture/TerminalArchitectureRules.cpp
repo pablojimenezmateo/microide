@@ -195,7 +195,7 @@ RuleResult CheckTerminalInternalHeadersStayInTerminalDir(const std::filesystem::
           path.extension() != ".inc") {
         continue;
       }
-      const std::string relative = path.lexically_relative(repo_root).string();
+      const std::string relative = path.lexically_relative(repo_root).generic_string();
       if (relative.rfind("src/terminal/", 0) == 0) {
         continue;
       }
