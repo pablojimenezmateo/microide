@@ -159,10 +159,14 @@ bool SidebarCoordinator::DispatchGitSidebarAction(const GitSidebarActionId actio
           entry->conflicted) {
         return DispatchGitSidebarAction(GitSidebarActionId::Merge, entry_index);
       }
-      if (entry->section == GitSidebarEntry::Section::Outgoing) {
+      if (availability.diff) {
         return DispatchGitSidebarAction(GitSidebarActionId::Diff, entry_index);
       }
-      return DispatchGitSidebarAction(GitSidebarActionId::Diff, entry_index);
+      if (availability.open_file) {
+        return DispatchGitSidebarAction(GitSidebarActionId::OpenFile, entry_index);
+      }
+      ReportDisabledGitAction(action, entry_index);
+      return false;
   }
   return false;
 }

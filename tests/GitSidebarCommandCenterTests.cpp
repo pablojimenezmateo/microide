@@ -102,6 +102,8 @@ void TestGitSidebarActionAvailabilityMessages() {
       GitSidebarActionAvailabilityForEntry(untracked_entry, true, true);
   Expect(availability.stage && availability.discard && !availability.unstage,
          "untracked availability should allow stage and discard only");
+  Expect(availability.open_file && !availability.diff,
+         "untracked rows should open in the editor rather than a diff tab");
   Expect(GitSidebarDisabledActionMessage(GitSidebarActionId::Unstage, untracked_entry, true, true) ==
              "Unstage is unavailable for this row",
          "disabled unstage should explain why");

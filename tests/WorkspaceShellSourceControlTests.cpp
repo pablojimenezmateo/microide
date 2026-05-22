@@ -14,6 +14,7 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::TabEntry;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
@@ -179,6 +180,57 @@ void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
          "opening a git sidebar entry should also invalidate the sidebar selection state");
   Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == entries[1].path.lexically_normal(),
          "clicking a git sidebar entry should open the selected comparison target");
+}
+
+void TestWorkspaceShellGitSidebarUntrackedEntryOpensEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path untracked_file = root / "new_file.cpp";
+
+  WriteFile(root / "README.md", "fixture\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base commit", "git untracked open fixture");
+  WriteFile(untracked_file, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "git sidebar should list the untracked file");
+
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  const auto untracked_index = static_cast<std::size_t>(
+      std::distance(entries.begin(),
+                    std::find_if(entries.begin(), entries.end(),
+                                 [](const WorkspaceShell::GitSidebarEntry& entry) {
+                                   return entry.section ==
+                                          WorkspaceShell::GitSidebarEntry::Section::Untracked;
+                                 })));
+  Expect(untracked_index < entries.size(),
+         "fixture should expose an untracked git sidebar entry");
+
+  const SDL_FRect row_rect =
+      WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, untracked_index);
+  const auto action_rects =
+      WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, untracked_index);
+  Expect(action_rects[0].w > 0.0f && action_rects[1].w > 0.0f,
+         "untracked rows should still expose stage and discard buttons");
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  event.button.button = SDL_BUTTON_LEFT;
+  event.button.x = row_rect.x + 12.0f;
+  event.button.y = row_rect.y + row_rect.h * 0.5f;
+  const auto result = shell.HandleEvent(event);
+
+  Expect(result.handled, "clicking an untracked git sidebar entry should be handled");
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(!tabs.empty(), "clicking an untracked entry should open a tab");
+  Expect(tabs.back().path == entries[untracked_index].path.lexically_normal(),
+         "clicking an untracked entry should open the file in an editor tab");
+  Expect(tabs.back().kind == TabEntry::Kind::Editor,
+         "untracked entries should open as editor tabs, not compare tabs");
 }
 
 void TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries() {
@@ -433,6 +485,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips);
   AddTest(tests, "WorkspaceShell/OpeningGitSidebarEntryAlsoInvalidatesSidebarSelection",
           TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection);
+  AddTest(tests, "WorkspaceShell/GitSidebarUntrackedEntryOpensEditor",
+          TestWorkspaceShellGitSidebarUntrackedEntryOpensEditor);
   AddTest(tests, "WorkspaceShell/GitOutgoingBaseChoiceRefreshesOutgoingEntries",
           TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries);
   AddTest(tests, "WorkspaceShell/GitOutgoingBaseButtonOpensMenuAndPrompt",
