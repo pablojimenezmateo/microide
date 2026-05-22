@@ -718,51 +718,54 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
 bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadProjectIfFilesChanged");
   project_file_event_pending_.store(false, std::memory_order_release);
-  const bool index_changed = [&]() {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceShell::ReloadProjectIfFilesChanged::ConsumeIndexFlag");
-    return force_check ? false
-                       : file_index_has_pending_changes_.exchange(false, std::memory_order_acq_rel);
-  }();
-  const bool changed = [&]() {
+  const bool index_metadata_pending =
+      file_index_has_pending_changes_.exchange(false, std::memory_order_acq_rel);
+
+  project::ProjectChangeBatch supplemental;
+  for (const project::RepositoryChange& change : git_metadata_tracker_.SampleChanges()) {
+    supplemental.repository_changes.push_back(change);
+  }
+
+  const bool tree_polled = [&]() {
     util::PerformanceTrace::Scope scope(
         force_check ? "WorkspaceShell::ReloadProjectIfFilesChanged::ConsumePendingProjectChanges"
                     : "WorkspaceShell::ReloadProjectIfFilesChanged::PollProjectFileMonitor");
     return force_check ? project_file_monitor_.ConsumePendingChanges()
                        : project_file_monitor_.PollForChanges();
   }();
-  if (TraceProjectEventsEnabled()) {
-    const std::string root_text = context_.current_project_state.root.string();
-    const std::string active_path = context_.current_project_state.welcome_surface.viewport.path().string();
-    SDL_Log(
-        "microide project: reload-check root=%s force=%d content_changed=%d index_changed=%d active=%s",
-        root_text.empty() ? "-" : root_text.c_str(), force_check ? 1 : 0, changed ? 1 : 0,
-        index_changed ? 1 : 0, active_path.empty() ? "-" : active_path.c_str());
-  }
-  if (!changed && !index_changed) {
-    return false;
+  if (tree_polled) {
+    supplemental.tree_rescan_requested = true;
   }
 
-  {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceShell::ReloadProjectIfFilesChanged::RefreshDirectoryTree");
-    context_.current_project_state.directory_tree.Refresh();
+  if (!supplemental.repository_changes.empty() || supplemental.tree_rescan_requested) {
+    project_change_coalescer_.Ingest(std::move(supplemental));
   }
-  {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceShell::ReloadProjectIfFilesChanged::RefreshFileFinder");
+
+  const std::optional<project::ProjectChangeBatch> ready =
+      project_change_coalescer_.ConsumeReady();
+  if (!ready.has_value()) {
+    if (!index_metadata_pending) {
+      return false;
+    }
+    context_.current_project_state.directory_tree.Refresh();
     context_.current_project_state.file_finder.InvalidateIndexCache();
     if (context_.current_project_state.overlay.visible &&
         context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
       context_.current_project_state.file_finder.Refresh();
     }
+    return true;
   }
-  if (changed) {
-    util::PerformanceTrace::Scope scope(
-        "WorkspaceShell::ReloadProjectIfFilesChanged::ReloadCleanOpenBuffersFromDisk");
-    ReloadCleanOpenBuffersFromDisk();
+
+  if (TraceProjectEventsEnabled()) {
+    const std::string root_text = context_.current_project_state.root.string();
+    SDL_Log(
+        "microide project: apply-change-batch root=%s files=%zu repo=%zu tree_rescan=%d generation=%llu",
+        root_text.empty() ? "-" : root_text.c_str(), ready->file_changes.size(),
+        ready->repository_changes.size(), ready->tree_rescan_requested ? 1 : 0,
+        static_cast<unsigned long long>(ready->generation));
   }
-  RequestAutomaticGitSidebarRefresh();
+
+  ApplyProjectChangeBatch(*ready);
   return true;
 }
 

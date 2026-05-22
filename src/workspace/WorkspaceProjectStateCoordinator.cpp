@@ -7,6 +7,7 @@
 #include <system_error>
 #include <vector>
 
+#include "project/ProjectChangeNormalizer.h"
 #include "util/PerformanceTrace.h"
 #include "platform/AppDirectories.h"
 #include "app/BackgroundTaskCounter.h"
@@ -68,6 +69,11 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
       applied_to_index = context_.current_project_state.file_index.ApplyBatch(batch);
     }
     LogProjectIndexBatch(context_.current_project_state.root, batch, applied_to_index);
+    if (!batch.is_initial && !batch.changes.empty()) {
+      project::ProjectChangeBatch normalized =
+          project::NormalizeIndexUpdateBatch(context_.current_project_state.root, batch);
+      project_change_coalescer_.Ingest(std::move(normalized));
+    }
     if (batch.is_initial) {
       project_background_executor_.PostLatest(
           "project-file-monitor-arm",
@@ -202,6 +208,9 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   StopFileIndexWatcher();
   context_.current_project_state.file_index.Reset();
   project_file_monitor_.Reset();
+  project_change_coalescer_.Reset();
+  git_metadata_tracker_.Reset();
+  last_applied_project_change_generation_ = 0;
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
   CurrentLspManager().BeginShutdownAll();
@@ -420,6 +429,7 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   {
     util::StartupTrace::Scope monitor_scope("WorkspaceProjectFileMonitor::SetProjectRoot");
     project_file_monitor_.SetProjectRoot(context_.current_project_state.root);
+    git_metadata_tracker_.SetProjectRoot(context_.current_project_state.root);
   }
   project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
 

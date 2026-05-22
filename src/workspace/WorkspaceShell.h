@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <optional>
 #include <span>
 #include <string>
@@ -27,6 +28,8 @@
 #include "project/GitBlameService.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "project/FileIndex.h"
+#include "project/GitRepositoryMetadataTracker.h"
+#include "project/ProjectChangeCoalescer.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
 #include "render/TextRenderer.h"

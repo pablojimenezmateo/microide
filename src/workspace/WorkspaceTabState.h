@@ -58,6 +58,8 @@ struct CompareTabState {
   std::size_t syntax_rows_tokenized = 0;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
+  bool model_stale = false;
+  bool model_refreshing = false;
   std::size_t selected_row = 0;
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;

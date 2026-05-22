@@ -302,6 +302,9 @@
   static bool GitSidebarRefreshing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.refreshing;
   }
+  static bool GitSidebarSnapshotStale(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.git.snapshot_stale;
+  }
   static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.truncated;
   }

@@ -23,6 +23,7 @@ struct DirtyPromptState {
     Quit,
     RenamePath,
     DeletePath,
+    ExternalFileChange,
   };
 
   Kind kind = Kind::CloseTab;

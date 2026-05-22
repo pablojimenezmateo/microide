@@ -87,6 +87,10 @@ void EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path&
   coordinator_.ReloadCleanEditorTabsForPath(path);
 }
 
+void EditorTabService::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
+  coordinator_.ReloadEditorTabsForPathFromDisk(path);
+}
+
 bool EditorTabService::OpenUntitled() {
   return coordinator_.OpenUntitled();
 }

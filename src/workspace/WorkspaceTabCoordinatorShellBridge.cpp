@@ -265,6 +265,10 @@ void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
   MakeEditorTabService().ReloadCleanEditorTabsForPath(path);
 }
 
+void WorkspaceShell::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
+  MakeEditorTabService().ReloadEditorTabsForPathFromDisk(path);
+}
+
 bool WorkspaceShell::OpenUntitledTab() {
   return MakeEditorTabService().OpenUntitled();
 }

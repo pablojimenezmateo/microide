@@ -508,6 +508,70 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
   }
 }
 
+void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  operations_.invalidate_editor_blame_path(normalized_path);
+
+  std::vector<std::size_t> matching_tab_indices;
+  matching_tab_indices.reserve(state_.open_tabs.size());
+  for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
+    const auto& tab = state_.open_tabs[i];
+    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+      continue;
+    }
+    const bool has_matching_view = std::any_of(
+        tab.editor_state->views.begin(), tab.editor_state->views.end(), [&](const auto& view) {
+          return operations_.editor_view_path(view) == normalized_path;
+        });
+    if (has_matching_view) {
+      matching_tab_indices.push_back(i);
+    }
+  }
+  if (matching_tab_indices.empty()) {
+    return;
+  }
+
+  editor::TextViewport reopened_view;
+  if (!reopened_view.OpenFile(normalized_path)) {
+    return;
+  }
+  operations_.apply_editor_preferences(reopened_view);
+  operations_.apply_detected_indent_on_open(reopened_view);
+
+  for (std::size_t i : matching_tab_indices) {
+    auto& tab = state_.open_tabs[i];
+    bool reloaded_any = false;
+    for (auto& view : tab.editor_state->views) {
+      const std::filesystem::path current_path = operations_.editor_view_path(view);
+      if (current_path != normalized_path) {
+        continue;
+      }
+      const editor::TextViewport* current_view = &view.viewport;
+      editor::TextViewport restored_view = reopened_view;
+      restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
+      restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
+      restored_view.SetScrollLine(current_view->scroll_line());
+      restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
+      view.viewport = restored_view;
+      view.restored_path = normalized_path;
+      view.restored_cursor_line = restored_view.cursor_line();
+      view.restored_cursor_column = restored_view.cursor_column();
+      view.restored_scroll_line = restored_view.scroll_line();
+      view.restored_horizontal_scroll = restored_view.horizontal_scroll();
+      view.needs_restore = false;
+      reloaded_any = true;
+    }
+    if (reloaded_any && i == state_.active_tab_index) {
+      tab.editor_state->folding_model->Clear();
+      operations_.normalize_editor_split_tree(*tab.editor_state);
+      SyncActiveEditorTabMetadata();
+      operations_.request_editor_surface_redraw();
+    } else if (reloaded_any) {
+      tab.editor_state->folding_model->Clear();
+    }
+  }
+}
+
 bool TabCoordinator::OpenUntitled() {
   if (state_.root.empty()) {
     return false;

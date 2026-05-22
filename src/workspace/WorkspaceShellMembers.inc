@@ -506,6 +506,12 @@
   void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
+  void ApplyProjectChangeBatch(const project::ProjectChangeBatch& batch);
+  void MarkCompareTabsStaleForPath(const std::filesystem::path& path);
+  void InvalidateMergeTabsForPath(const std::filesystem::path& path);
+  void PromptExternalFileChanges(const std::set<std::filesystem::path>& paths);
+  void ClearDiagnosticsForPath(const std::filesystem::path& path);
+  void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   void RequestGitSidebarRefresh(GitSidebarRefreshScope scope = GitSidebarRefreshScope::Full);
   void MaybeRequestTreeGitBadgesAfterFirstPaint();
   void RequestAutomaticGitSidebarRefresh();
@@ -1293,6 +1299,9 @@
   mutable std::size_t resolved_keybindings_reload_generation_ = std::numeric_limits<std::size_t>::max();
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
+  project::ProjectChangeCoalescer project_change_coalescer_;
+  project::GitRepositoryMetadataTracker git_metadata_tracker_;
+  std::uint64_t last_applied_project_change_generation_ = 0;
   project::ProjectBackgroundExecutor project_background_executor_;
   GitRepositoryService git_repository_service_{project_background_executor_};
   PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};

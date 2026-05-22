@@ -33,6 +33,8 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
+void RegisterProjectChangeTests(std::vector<TestCase>& tests);
+void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests);
 void RegisterRegexUtilTests(std::vector<TestCase>& tests);
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests);
 void RegisterStringUtilTests(std::vector<TestCase>& tests);
@@ -317,6 +319,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPhase5Tests(tests);
   microide::tests::RegisterBackgroundTaskCounterTests(tests);
   microide::tests::RegisterFileIndexWatcherTests(tests);
+  microide::tests::RegisterProjectChangeTests(tests);
+  microide::tests::RegisterExternalRepoChangeTests(tests);
   microide::tests::RegisterPatternCacheTests(tests);
   microide::tests::RegisterWorkspaceToolDownloaderTests(tests);
   microide::tests::RegisterEditorEssentialsTests(tests);

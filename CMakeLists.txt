@@ -228,6 +228,9 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
   src/project/GitRepositoryState.cpp
+  src/project/GitRepositoryMetadataTracker.cpp
+  src/project/ProjectChangeCoalescer.cpp
+  src/project/ProjectChangeNormalizer.cpp
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
   src/project/IgnoreMatcher.cpp
@@ -311,6 +314,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMouseMotion.cpp
   src/workspace/WorkspaceShellOverlay.cpp
   src/workspace/WorkspaceShellProjectSearch.cpp
+  src/workspace/WorkspaceShellProjectChanges.cpp
   src/workspace/WorkspaceShellBufferSearch.cpp
   src/workspace/WorkspaceShellPresentation.cpp
   src/workspace/CaretRedraw.cpp
@@ -523,6 +527,8 @@ add_executable(microide_tests
   tests/MergeConflictResolutionTests.cpp
   tests/GitMergeConflictFixtures.cpp
   tests/ProjectSearchServiceTests.cpp
+  tests/ProjectChangeTests.cpp
+  tests/ExternalRepoChangeTests.cpp
   tests/RegexUtilTests.cpp
   tests/RuntimePathsTests.cpp
   tests/TaskExecutorTests.cpp
