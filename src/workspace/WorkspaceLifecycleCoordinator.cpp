@@ -127,6 +127,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (git_sidebar_event_type_ == static_cast<Uint32>(-1)) {
     git_sidebar_event_type_ = 0;
   }
+  InitializeCommitWorkflowService();
   patch_apply_service_.SetCallbacks(PatchApplyService::Callbacks{
       .current_repository_state =
           [this]() -> const project::GitRepositoryState& {

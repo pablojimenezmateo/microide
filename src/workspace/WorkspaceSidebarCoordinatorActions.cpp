@@ -91,11 +91,10 @@ bool SidebarCoordinator::DispatchGitSidebarAction(const GitSidebarActionId actio
         ReportDisabledGitAction(action, entry_index);
         return false;
       }
-      if (operations_.set_command_feedback != nullptr) {
-        operations_.set_command_feedback(
-            "Commit workflow is not available yet; staged changes remain in the Git sidebar.");
+      if (operations_.open_commit_workflow != nullptr) {
+        return operations_.open_commit_workflow();
       }
-      return true;
+      return false;
     case GitSidebarActionId::OpenFile:
       if (!availability.open_file) {
         ReportDisabledGitAction(action, entry_index);

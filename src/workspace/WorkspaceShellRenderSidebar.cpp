@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 
+#include "workspace/CommitWorkflowState.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
@@ -278,6 +279,46 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                  theme_.text_muted, theme_.surface_background,
                  TruncateLabel(summary, layout.sidebar.w - kSidebarInset * 2.0f));
       summary_y += 14.0f;
+    }
+
+    if (project_state.sidebar.git.commit_workflow.open) {
+      auto& workflow = project_state.sidebar.git.commit_workflow;
+      float panel_y = summary_y + 4.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                 theme_.text_primary, theme_.surface_background,
+                 TruncateLabel(workflow.staged_summary_line, layout.sidebar.w - kSidebarInset * 2.0f));
+      panel_y += 14.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                 theme_.text_muted, theme_.surface_background, "Subject:");
+      panel_y += 14.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset + 4.0f, panel_y,
+                 theme_.text_primary, theme_.row_highlight,
+                 TruncateLabel(workflow.subject.text().empty() ? "<required>" : workflow.subject.text(),
+                               layout.sidebar.w - kSidebarInset * 2.0f - 4.0f));
+      panel_y += 16.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                 theme_.text_muted, theme_.surface_background, "Body:");
+      panel_y += 14.0f;
+      const std::string body_preview = CommitWorkflowBodyText(workflow.body);
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset + 4.0f, panel_y,
+                 theme_.text_secondary, theme_.surface_background,
+                 TruncateLabel(body_preview.empty() ? "<optional>" : body_preview,
+                               layout.sidebar.w - kSidebarInset * 2.0f - 4.0f));
+      panel_y += 16.0f;
+      for (const project::CommitPreCheck& check : workflow.checks) {
+        const SDL_Color color = check.severity == project::CommitPreCheckSeverity::Blocking
+                                    ? theme_.text_primary
+                                    : theme_.text_muted;
+        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y, color,
+                   theme_.surface_background,
+                   TruncateLabel(check.message, layout.sidebar.w - kSidebarInset * 2.0f));
+        panel_y += 12.0f;
+      }
+      if (!workflow.status_message.empty()) {
+        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                   theme_.text_muted, theme_.surface_background,
+                   TruncateLabel(workflow.status_message, layout.sidebar.w - kSidebarInset * 2.0f));
+      }
     }
 
     const auto lines = BuildGitSidebarLines();

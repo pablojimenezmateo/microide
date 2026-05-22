@@ -228,6 +228,8 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
   src/project/GitRepositoryState.cpp
+  src/project/CommitWorkflowChecks.cpp
+  src/project/GitCommitExecutor.cpp
   src/project/GitRepositoryMetadataTracker.cpp
   src/project/ProjectChangeCoalescer.cpp
   src/project/ProjectChangeNormalizer.cpp
@@ -395,6 +397,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellBootstrapper.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
+  src/workspace/WorkspaceShellCommitWorkflow.cpp
+  src/workspace/CommitWorkflowState.cpp
+  src/workspace/CommitWorkflowService.cpp
   src/workspace/WorkspaceShellSidebarMouse.cpp
   src/workspace/WorkspaceShellSingleLineInputMouse.cpp
   src/workspace/WorkspaceShellTerminal.cpp
@@ -520,6 +525,7 @@ add_executable(microide_tests
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/GitRepositoryStateTests.cpp
+  tests/CommitWorkflowTests.cpp
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/GitBlameServiceTests.cpp
@@ -761,6 +767,8 @@ add_executable(microide_diff_bench
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
   src/project/GitRepositoryState.cpp
+  src/project/CommitWorkflowChecks.cpp
+  src/project/GitCommitExecutor.cpp
   src/render/DebugTextBackend.cpp
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp

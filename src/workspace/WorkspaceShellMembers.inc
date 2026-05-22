@@ -848,6 +848,11 @@
   bool CanDiscardAllGitSidebarEntries() const;
   bool StageAllGitSidebarEntries();
   void OpenDiscardAllGitSidebarPrompt();
+  void InitializeCommitWorkflowService();
+  bool OpenCommitWorkflow();
+  void CloseCommitWorkflow();
+  bool CommitWorkflowOpen() const;
+  float GitSidebarCommitWorkflowHeight() const;
   bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);
@@ -1305,6 +1310,7 @@
   project::ProjectBackgroundExecutor project_background_executor_;
   GitRepositoryService git_repository_service_{project_background_executor_};
   PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};
+  CommitWorkflowService commit_workflow_service_{project_background_executor_, git_repository_service_};
   std::mutex save_tab_mutex_;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};

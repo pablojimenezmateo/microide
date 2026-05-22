@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "workspace/CommitWorkflowState.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
@@ -240,6 +241,7 @@ bool PersistenceCoordinator::RestoreConfigState() {
   mutable_current.editor_preferences.soft_wrap = false;
   mutable_current.project_base_color = persisted_state.project_base_color;
   mutable_current.sidebar_policies = RuntimeSidebarPolicies(persisted_state.sidebar_policies);
+  mutable_current.sidebar.git.commit_workflow.loaded_persisted_draft = persisted_state.commit_draft;
   for (const auto& [id, value] : persisted_state.settings) {
     if (ApplyCanonicalProjectSetting(mutable_current, id, value)) {
       SetStoredSetting(mutable_current.settings, id, value);
@@ -271,7 +273,17 @@ void PersistenceCoordinator::SaveConfigState() const {
       .project_base_color = state.project_base_color.value_or(DefaultProjectBaseColor(state.root)),
       .settings = state.settings,
       .sidebar_policies = PersistedSidebarPolicies(state.sidebar_policies),
+      .commit_draft = {},
   };
+  if (!state.sidebar.git.commit_workflow.subject.text().empty() ||
+      !CommitWorkflowBodyText(state.sidebar.git.commit_workflow.body).empty()) {
+    persisted.commit_draft = PersistedCommitDraftState{
+        .head_oid = state.sidebar.git.commit_workflow.draft_context.head_oid,
+        .branch_name = state.sidebar.git.commit_workflow.draft_context.branch_name,
+        .subject = state.sidebar.git.commit_workflow.subject.text(),
+        .body = CommitWorkflowBodyText(state.sidebar.git.commit_workflow.body),
+    };
+  }
   SyncCanonicalProjectSettings(persisted.settings, state);
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }

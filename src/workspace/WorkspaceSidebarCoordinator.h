@@ -63,6 +63,7 @@ class SidebarCoordinator {
     std::function<bool(const std::vector<std::string>&)> run_tests;
     std::function<void(std::string)> set_command_feedback;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
+    std::function<bool()> open_commit_workflow;
   };
 
   SidebarCoordinator(ProjectWorkspaceState& state,

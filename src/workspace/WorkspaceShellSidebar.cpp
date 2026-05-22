@@ -140,7 +140,8 @@ float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
       static_cast<float>(GitSidebarSummaryLines().size()) * kGitSidebarSummaryLineHeight;
   return sidebar_rect.y + kGitSidebarActionRowTop + kGitSidebarActionButtonHeight +
          kGitSidebarListGap + summary_height +
-         (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f);
+         (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f) + GitSidebarCommitWorkflowHeight() +
+         (GitSidebarCommitWorkflowHeight() > 0.0f ? kGitSidebarListGap : 0.0f);
 }
 
 float WorkspaceShell::GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const {

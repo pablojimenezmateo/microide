@@ -76,6 +76,8 @@ struct PersistedSidebarViewPolicy {
   int order = 0;
 };
 
+#include "workspace/CommitWorkflowPersistence.h"
+
 struct PersistedProjectConfigState {
   std::size_t editor_tab_size = 4;
   std::size_t editor_indent_width = 4;
@@ -84,6 +86,7 @@ struct PersistedProjectConfigState {
   std::optional<SDL_Color> project_base_color;
   std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
   std::vector<PersistedSidebarViewPolicy> sidebar_policies;
+  std::optional<PersistedCommitDraftState> commit_draft;
 };
 
 struct PersistedMessageState {

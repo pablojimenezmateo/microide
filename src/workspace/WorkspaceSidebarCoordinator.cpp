@@ -330,6 +330,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
+          .open_commit_workflow = [this]() { return OpenCommitWorkflow(); },
       });
 }
 

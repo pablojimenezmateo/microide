@@ -92,6 +92,8 @@ class KeyInputCoordinator {
     std::function<bool(std::size_t)> unstage_git_sidebar_entry;
     std::function<bool(std::size_t)> discard_git_sidebar_entry;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
+    std::function<void()> close_commit_workflow;
+    std::function<bool()> request_commit_workflow_commit;
     std::function<void(int)> move_problems_sidebar_selection;
     std::function<void()> reveal_selected_problems_sidebar_line;
     std::function<bool()> open_selected_problem_sidebar_item;

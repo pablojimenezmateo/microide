@@ -53,6 +53,8 @@ struct PromptSurfaceState {
     DiscardPatchPreview,
     SetGitOutgoingBaseRef,
     OpenExternalUrl,
+    ConfirmCommitAmend,
+    ConfirmCommitNoVerify,
   };
 
   Kind kind = Kind::None;

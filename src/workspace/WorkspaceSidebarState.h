@@ -12,6 +12,7 @@
 #include "editor/DiagnosticsStore.h"
 #include "plugin/PluginHost.h"
 #include "project/GitStatusService.h"
+#include "workspace/CommitWorkflowState.h"
 
 namespace microide::workspace {
 
@@ -135,6 +136,7 @@ struct GitSidebarState {
   std::string provider_label;
   std::string error;
   std::size_t selected_index = 0;
+  CommitWorkflowState commit_workflow;
 };
 
 struct ProblemsSidebarState {

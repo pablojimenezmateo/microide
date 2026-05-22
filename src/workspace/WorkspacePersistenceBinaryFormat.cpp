@@ -115,6 +115,13 @@ bool EncodeProjectConfigRecord(const PersistedProjectConfigState& state, std::ve
       return false;
     }
   }
+  if (state.commit_draft.has_value()) {
+    std::vector<std::byte> payload;
+    if (!EncodeCommitDraft(*state.commit_draft, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectConfigTag::CommitDraft), payload, out)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -161,14 +168,22 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    state->settings.push_back(std::move(setting));
                    return true;
                  }
-                 case ProjectConfigTag::SidebarPolicy: {
-                   PersistedSidebarViewPolicy policy;
-                   if (!DecodeSidebarPolicy(payload, &policy)) {
-                     return false;
-                   }
-                   state->sidebar_policies.push_back(std::move(policy));
-                   return true;
-                 }
+                case ProjectConfigTag::SidebarPolicy: {
+                  PersistedSidebarViewPolicy policy;
+                  if (!DecodeSidebarPolicy(payload, &policy)) {
+                    return false;
+                  }
+                  state->sidebar_policies.push_back(std::move(policy));
+                  return true;
+                }
+                case ProjectConfigTag::CommitDraft: {
+                  PersistedCommitDraftState draft;
+                  if (!DecodeCommitDraft(payload, &draft)) {
+                    return false;
+                  }
+                  state->commit_draft = std::move(draft);
+                  return true;
+                }
                }
                return true;
              }) &&

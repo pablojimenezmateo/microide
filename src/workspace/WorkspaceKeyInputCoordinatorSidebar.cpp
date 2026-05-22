@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
+#include "project/CommitWorkflowTypes.h"
 #include "workspace/GitSidebarCommandCenter.h"
 
 namespace microide::workspace {
@@ -98,6 +99,18 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   }
 
   if (sidebar_mode == SidebarMode::Git) {
+    if (state_.sidebar.git.commit_workflow.open) {
+      if (event.key == SDLK_ESCAPE) {
+        if (operations_.close_commit_workflow != nullptr) {
+          operations_.close_commit_workflow();
+        }
+        return true;
+      }
+      if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
+          (modifiers & SDL_KMOD_CTRL) != 0 && operations_.request_commit_workflow_commit != nullptr) {
+        return operations_.request_commit_workflow_commit();
+      }
+    }
     const std::size_t selected_index = state_.sidebar.git.selected_index;
     switch (event.key) {
       case SDLK_UP:

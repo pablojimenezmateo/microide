@@ -39,6 +39,14 @@ enum class ProjectConfigTag : std::uint16_t {
   ProjectBaseColor = 6,
   Setting = 7,
   SidebarPolicy = 8,
+  CommitDraft = 9,
+};
+
+enum class CommitDraftTag : std::uint16_t {
+  HeadOid = 1,
+  BranchName = 2,
+  Subject = 3,
+  Body = 4,
 };
 
 enum class ConversationRegistryTag : std::uint16_t {
@@ -739,6 +747,45 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
   PrimitiveReader reader(input);
   return reader.ReadString(&policy->view_id) && reader.ReadBool(&policy->hidden) &&
          reader.ReadI32(&policy->order) && reader.remaining() == 0;
+}
+
+[[maybe_unused]] bool EncodeCommitDraft(const PersistedCommitDraftState& draft,
+                                        std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  return AppendRecord(CommitDraftTag::HeadOid,
+                        [&](PrimitiveWriter& w) { return w.WriteString(draft.head_oid); }, out) &&
+         AppendRecord(CommitDraftTag::BranchName,
+                      [&](PrimitiveWriter& w) { return w.WriteString(draft.branch_name); }, out) &&
+         AppendRecord(CommitDraftTag::Subject,
+                      [&](PrimitiveWriter& w) { return w.WriteString(draft.subject); }, out) &&
+         AppendRecord(CommitDraftTag::Body,
+                      [&](PrimitiveWriter& w) { return w.WriteString(draft.body); }, out);
+}
+
+[[maybe_unused]] bool DecodeCommitDraft(std::span<const std::byte> input,
+                                        PersistedCommitDraftState* draft) {
+  if (draft == nullptr) {
+    return false;
+  }
+  *draft = PersistedCommitDraftState{};
+  return ParseRecordStream<CommitDraftTag>(
+      input, [&](CommitDraftTag tag, std::span<const std::byte> payload) {
+        PrimitiveReader reader(payload);
+        switch (tag) {
+          case CommitDraftTag::HeadOid:
+            return reader.ReadString(&draft->head_oid) && reader.remaining() == 0;
+          case CommitDraftTag::BranchName:
+            return reader.ReadString(&draft->branch_name) && reader.remaining() == 0;
+          case CommitDraftTag::Subject:
+            return reader.ReadString(&draft->subject) && reader.remaining() == 0;
+          case CommitDraftTag::Body:
+            return reader.ReadString(&draft->body) && reader.remaining() == 0;
+        }
+        return true;
+      });
 }
 
 [[maybe_unused]] bool EncodeSettingPair(const std::pair<std::string, std::string>& setting,
