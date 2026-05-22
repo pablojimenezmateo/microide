@@ -130,7 +130,9 @@ std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
   lines.push_back(std::move(scm_line));
 
   const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git);
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                             context_.current_project_state.root,
+                             context_.current_project_state.branch_review);
   lines.insert(lines.end(), view_model.summary_lines.begin(), view_model.summary_lines.end());
   return lines;
 }
@@ -334,7 +336,9 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarTooltipRect(const Work
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
   const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git);
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                             context_.current_project_state.root,
+                             context_.current_project_state.branch_review);
   const auto specs = BuildGitSidebarLineSpecs(view_model);
   std::vector<GitSidebarLine> lines;
   lines.reserve(specs.size());
@@ -393,7 +397,9 @@ std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
   }
 
   const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git);
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                             context_.current_project_state.root,
+                             context_.current_project_state.branch_review);
   const auto specs = BuildGitSidebarLineSpecs(view_model);
   return FindSelectedGitSidebarLineIndex(specs, context_.current_project_state.sidebar.git.selected_index);
 }

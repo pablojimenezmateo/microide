@@ -25,6 +25,8 @@ struct ComparePresentationRow {
   int hunk_index = -1;
   int collapsed_line_count = 0;
   bool context_above = false;
+  std::string review_marker_label;
+  bool has_review_note = false;
 };
 
 struct ComparePresentationCollapseState {

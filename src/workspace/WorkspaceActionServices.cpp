@@ -359,6 +359,30 @@ void WorkspaceActionContext::OpenHeadComparison(const std::filesystem::path& pat
   });
 }
 
+void WorkspaceActionContext::MarkBranchFileReviewed() {
+  if (operations_.mark_branch_file_reviewed != nullptr) {
+    operations_.mark_branch_file_reviewed();
+  }
+}
+
+void WorkspaceActionContext::MarkBranchHunkReviewed() {
+  if (operations_.mark_branch_hunk_reviewed != nullptr) {
+    operations_.mark_branch_hunk_reviewed();
+  }
+}
+
+void WorkspaceActionContext::ClearBranchReviewState() {
+  if (operations_.clear_branch_review_state != nullptr) {
+    operations_.clear_branch_review_state();
+  }
+}
+
+void WorkspaceActionContext::EditBranchReviewNote(std::string note_text) {
+  if (operations_.edit_branch_review_note != nullptr) {
+    operations_.edit_branch_review_note(std::move(note_text));
+  }
+}
+
 void WorkspaceActionContext::OpenMergeEditor(const std::filesystem::path& base_path,
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,

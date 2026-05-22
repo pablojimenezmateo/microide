@@ -226,9 +226,16 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       DrawFilledRect(renderer,
                      MakeRect(rect.x, y - 1.0f, content_width, surface.line_height),
                      summary_background);
+      std::string summary = presentation_row->summary_text;
+      if (!presentation_row->review_marker_label.empty()) {
+        summary = "[" + presentation_row->review_marker_label + "]" +
+                  (presentation_row->has_review_note ? "*" : "") + " " + summary;
+      } else if (presentation_row->has_review_note) {
+        summary = "* " + summary;
+      }
       text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
                                 selected ? theme_.text_primary : theme_.text_muted,
-                                TruncateLabel(presentation_row->summary_text, content_width - 16.0f));
+                                TruncateLabel(summary, content_width - 16.0f));
       continue;
     }
 

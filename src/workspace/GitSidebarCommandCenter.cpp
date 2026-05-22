@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "compare/BranchReviewStateTypes.h"
+#include "workspace/BranchReviewStateBridge.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
 namespace microide::workspace {
@@ -238,7 +240,12 @@ std::string BuildGitDiscardPreviewSummary(const GitSidebarEntry& entry,
   return "Discard changes for " + path_label + "?";
 }
 
-GitSidebarViewModel BuildGitSidebarViewModel(const GitSidebarState& git_state) {
+GitSidebarViewModel BuildGitSidebarViewModel(
+    const GitSidebarState& git_state,
+    const std::filesystem::path& repository_root,
+    const compare::BranchReviewStateService& branch_review) {
+  const std::optional<compare::BranchReviewTargetIdentity> review_target =
+      OutgoingBranchReviewTarget(git_state, repository_root);
   GitSidebarViewModel view_model;
   view_model.refreshing = git_state.refreshing;
   view_model.stale_banner = BuildGitStaleBanner(git_state.snapshot_stale, git_state.refreshing);
@@ -284,11 +291,21 @@ GitSidebarViewModel BuildGitSidebarViewModel(const GitSidebarState& git_state) {
           BuildGitSidebarEntryTextModel(entry.relative_path, entry.section == GitSidebarEntry::Section::Staged);
       const GitSidebarActionAvailability actions = GitSidebarActionAvailabilityForEntry(
           entry, git_state.repo_available, git_state.supports_mutations);
+      std::string review_marker_label;
+      if (review_target.has_value() && entry.section == GitSidebarEntry::Section::Outgoing) {
+        const compare::BranchReviewStateQueryInput query{
+            .target = *review_target,
+            .path = entry.relative_path,
+        };
+        review_marker_label =
+            compare::BranchReviewMarkerLabel(branch_review.FileStatus(query));
+      }
       section_vm.rows.push_back(GitSidebarRowViewModel{
           .entry_index = static_cast<int>(i),
           .row_kind = RowKindFromSection(entry.section),
           .primary_label = text_model.primary_label,
           .secondary_label = text_model.secondary_label,
+          .review_marker_label = std::move(review_marker_label),
           .status = entry.status,
           .actions = actions,
           .show_stage_button = actions.stage || actions.unstage,

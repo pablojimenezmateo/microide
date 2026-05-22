@@ -1,5 +1,6 @@
 #include "workspace/CompareTabReview.h"
 
+#include "compare/BranchReviewStateTypes.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -38,6 +39,40 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
     semantic_input.old_path = input.git_entry->old_path->relative_path;
   }
   compare_tab.semantic_file = compare::InferCompareSemanticFileMetadata(semantic_input);
+}
+
+void ApplyBranchReviewPresentationMarkers(
+    CompareTabState& compare_tab,
+    const compare::BranchReviewStateService& review_service) {
+  if (compare_tab.review_mode != compare::CompareReviewMode::Branch) {
+    return;
+  }
+  const compare::BranchReviewStateQueryInput base_query{
+      .target = compare_tab.branch_target,
+      .path = compare_tab.path,
+      .model = &compare_tab.model,
+  };
+  for (compare::ComparePresentationRow& row : compare_tab.presentation.rows) {
+    row.review_marker_label.clear();
+    row.has_review_note = false;
+    if (row.kind == compare::ComparePresentationRowKind::HunkHeader && row.hunk_index >= 0) {
+      compare::BranchReviewStateQueryInput query = base_query;
+      query.selected_hunk_index = row.hunk_index;
+      row.review_marker_label =
+          compare::BranchReviewMarkerLabel(review_service.HunkStatus(query));
+      row.has_review_note =
+          review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk);
+      continue;
+    }
+    if (row.kind == compare::ComparePresentationRowKind::Model && row.hunk_index >= 0) {
+      compare::BranchReviewStateQueryInput query = base_query;
+      query.selected_hunk_index = row.hunk_index;
+      row.review_marker_label =
+          compare::BranchReviewMarkerLabel(review_service.HunkStatus(query));
+      row.has_review_note =
+          review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk);
+    }
+  }
 }
 
 void RefreshCompareTabPresentation(CompareTabState& compare_tab) {

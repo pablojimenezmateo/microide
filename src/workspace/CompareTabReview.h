@@ -4,6 +4,7 @@
 #include <optional>
 #include <vector>
 
+#include "compare/BranchReviewStateService.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
@@ -24,6 +25,9 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                    const CompareTabReviewRefreshInput& input);
 
 void RefreshCompareTabPresentation(CompareTabState& compare_tab);
+
+void ApplyBranchReviewPresentationMarkers(CompareTabState& compare_tab,
+                                          const compare::BranchReviewStateService& review_service);
 
 std::size_t CompareTabPresentationRowCount(const CompareTabState& compare_tab);
 std::size_t CompareTabSelectedModelRow(const CompareTabState& compare_tab);

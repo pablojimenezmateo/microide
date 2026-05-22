@@ -451,7 +451,9 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   const SidebarMode mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id);
   std::optional<GitSidebarViewModel> git_sidebar;
   if (mode == SidebarMode::Git) {
-    git_sidebar = BuildGitSidebarViewModel(context_.current_project_state.sidebar.git);
+    git_sidebar = BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                                           context_.current_project_state.root,
+                                           context_.current_project_state.branch_review);
   }
 
   return SidebarSurfaceViewModel{

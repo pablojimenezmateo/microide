@@ -167,6 +167,8 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitPatchApply.cpp
   src/compare/ComparePresentationModel.cpp
   src/compare/CompareReviewTypes.cpp
+  src/compare/BranchReviewStateTypes.cpp
+  src/compare/BranchReviewStateService.cpp
   src/compare/CompareSemanticMetadata.cpp
   src/compare/MergeConflictKind.cpp
   src/compare/MergeModel.cpp
@@ -348,6 +350,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/AssistService.cpp
   src/workspace/CompareTabReview.cpp
+  src/workspace/BranchReviewStateBridge.cpp
   src/workspace/CompareMergeService.cpp
   src/workspace/MergeResolverContext.cpp
   src/workspace/MergeResultValidation.cpp
@@ -515,6 +518,7 @@ add_executable(microide_tests
   tests/AppDirectoriesTests.cpp
   tests/CompareModelTests.cpp
   tests/CompareReviewTests.cpp
+  tests/BranchReviewStateTests.cpp
   tests/PatchApplyTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirectoryTreeTests.cpp

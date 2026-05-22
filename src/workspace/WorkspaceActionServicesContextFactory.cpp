@@ -240,6 +240,11 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return MakeTextInputCoordinator().CutSelectionAtActiveSingleLineSurface();
               },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
+          .mark_branch_file_reviewed = [this]() { MarkActiveBranchFileReviewed(); },
+          .mark_branch_hunk_reviewed = [this]() { MarkActiveBranchHunkReviewed(); },
+          .clear_branch_review_state = [this]() { ClearActiveBranchReviewState(); },
+          .edit_branch_review_note =
+              [this](std::string note_text) { EditActiveBranchReviewNote(note_text); },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
           .sync_compare_selection_from_viewport =

@@ -435,8 +435,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         right_edge -= marker_width + 8.0f;
       }
 
-      const std::string& primary_label =
+      std::string primary_label =
           row_vm != nullptr ? row_vm->primary_label : entry.relative_path.filename().string();
+      if (row_vm != nullptr && !row_vm->review_marker_label.empty()) {
+        primary_label = "[" + row_vm->review_marker_label + "] " + primary_label;
+      }
       const std::string& secondary_label = row_vm != nullptr ? row_vm->secondary_label : std::string{};
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;

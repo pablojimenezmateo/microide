@@ -122,6 +122,14 @@ bool EncodeProjectConfigRecord(const PersistedProjectConfigState& state, std::ve
       return false;
     }
   }
+  if (!state.branch_review.targets.empty()) {
+    std::vector<std::byte> payload;
+    if (!EncodeBranchReviewState(state.branch_review, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectConfigTag::BranchReviewState), payload,
+                            out)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -182,6 +190,14 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                     return false;
                   }
                   state->commit_draft = std::move(draft);
+                  return true;
+                }
+                case ProjectConfigTag::BranchReviewState: {
+                  PersistedBranchReviewState review_state;
+                  if (!DecodeBranchReviewState(payload, &review_state)) {
+                    return false;
+                  }
+                  state->branch_review = std::move(review_state);
                   return true;
                 }
                }

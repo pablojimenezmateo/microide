@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "workspace/BranchReviewPersistence.h"
+#include "workspace/CommitWorkflowPersistence.h"
 #include "workspace/WorkspaceSidebarState.h"
 
 namespace microide::workspace {
@@ -76,8 +78,6 @@ struct PersistedSidebarViewPolicy {
   int order = 0;
 };
 
-#include "workspace/CommitWorkflowPersistence.h"
-
 struct PersistedProjectConfigState {
   std::size_t editor_tab_size = 4;
   std::size_t editor_indent_width = 4;
@@ -87,6 +87,7 @@ struct PersistedProjectConfigState {
   std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
   std::vector<PersistedSidebarViewPolicy> sidebar_policies;
   std::optional<PersistedCommitDraftState> commit_draft;
+  PersistedBranchReviewState branch_review;
 };
 
 struct PersistedMessageState {

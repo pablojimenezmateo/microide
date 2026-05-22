@@ -430,11 +430,13 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   ++compare_tab.model_revision;
   CompareTabReviewRefreshInput review_input{
       .repository_root = context_.current_project_state.root,
-      .snapshot_generation = 0,
+      .snapshot_generation = context_.current_project_state.sidebar.git.snapshot_generation,
       .merge_base_commit = context_.current_project_state.sidebar.git.base_ref,
   };
   ApplyCompareTabReviewMetadata(compare_tab, review_input);
   RefreshCompareTabPresentation(compare_tab);
+  ApplyBranchReviewPresentationMarkers(compare_tab,
+                                       context_.current_project_state.branch_review);
   const auto left_lines = SplitSyntaxLines(compare_tab.left_content);
   const auto right_lines = SplitSyntaxLines(right_content);
   compare_tab.left_initial_syntax_state =

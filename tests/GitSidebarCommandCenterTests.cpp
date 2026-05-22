@@ -18,6 +18,7 @@ using microide::workspace::GitSidebarEntry;
 using microide::workspace::GitSidebarLineKind;
 using microide::workspace::GitSidebarState;
 using microide::workspace::GitSidebarViewModel;
+using microide::compare::BranchReviewStateService;
 
 void TestGitSidebarSectionClassification() {
   Expect(ClassifyGitSidebarSection(true, false, GitFileStatus::Modified) ==
@@ -71,7 +72,9 @@ void TestGitSidebarViewModelGrouping() {
                       .supports_discard = false},
   };
 
-  const GitSidebarViewModel view_model = BuildGitSidebarViewModel(git_state);
+  const BranchReviewStateService branch_review;
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
   Expect(view_model.sections.size() == 5,
          "grouped git sidebar should expose all workflow sections");
   Expect(view_model.sections[0].header_label == "Conflicts (1)",

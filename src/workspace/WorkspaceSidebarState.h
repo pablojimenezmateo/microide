@@ -136,6 +136,7 @@ struct GitSidebarState {
   std::string provider_label;
   std::string error;
   std::size_t selected_index = 0;
+  std::uint64_t snapshot_generation = 0;
   CommitWorkflowState commit_workflow;
 };
 

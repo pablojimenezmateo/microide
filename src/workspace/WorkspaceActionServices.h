@@ -114,6 +114,10 @@ class WorkspaceActionContext {
     std::function<bool()> select_all_at_active_single_line_text_surface;
     std::function<bool()> cut_selection_at_active_single_line_text_surface;
     std::function<CompareTabState*()> active_compare_tab;
+    std::function<void()> mark_branch_file_reviewed;
+    std::function<void()> mark_branch_hunk_reviewed;
+    std::function<void()> clear_branch_review_state;
+    std::function<void(std::string)> edit_branch_review_note;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<MergeTabState*()> active_merge_tab;
@@ -227,6 +231,10 @@ class WorkspaceActionContext {
   void OpenComparePickerForPath(const std::filesystem::path& path,
                                 const std::string& commit_spec);
   void OpenHeadComparison(const std::filesystem::path& path);
+  void MarkBranchFileReviewed();
+  void MarkBranchHunkReviewed();
+  void ClearBranchReviewState();
+  void EditBranchReviewNote(std::string note_text);
   void OpenMergeEditor(const std::filesystem::path& base_path,
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,

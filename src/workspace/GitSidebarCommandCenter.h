@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "compare/BranchReviewStateService.h"
 #include "project/GitStatusService.h"
 #include "workspace/WorkspaceSidebarState.h"
 
@@ -48,6 +49,7 @@ struct GitSidebarRowViewModel {
   GitSidebarRowKind row_kind = GitSidebarRowKind::Changed;
   std::string primary_label;
   std::string secondary_label;
+  std::string review_marker_label;
   project::GitFileStatus status = project::GitFileStatus::Clean;
   GitSidebarActionAvailability actions{};
   bool show_stage_button = false;
@@ -97,7 +99,9 @@ std::string BuildGitStaleBanner(bool snapshot_stale, bool refreshing);
 
 std::string BuildGitRefreshErrorBanner(std::string_view refresh_error);
 
-GitSidebarViewModel BuildGitSidebarViewModel(const GitSidebarState& git_state);
+GitSidebarViewModel BuildGitSidebarViewModel(const GitSidebarState& git_state,
+                                             const std::filesystem::path& repository_root,
+                                             const compare::BranchReviewStateService& branch_review);
 
 std::string BuildGitDiscardPreviewSummary(const GitSidebarEntry& entry,
                                           std::string_view project_label);

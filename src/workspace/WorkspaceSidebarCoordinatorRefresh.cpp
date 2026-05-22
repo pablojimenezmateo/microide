@@ -56,6 +56,7 @@ void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
   git_state.base_label = snapshot.base_label;
   git_state.snapshot_stale = snapshot.snapshot_stale;
   git_state.refresh_error = snapshot.refresh_error;
+  git_state.snapshot_generation = snapshot.generation;
 }
 
 }  // namespace

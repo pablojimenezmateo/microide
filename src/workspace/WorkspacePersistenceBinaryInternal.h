@@ -40,6 +40,51 @@ enum class ProjectConfigTag : std::uint16_t {
   Setting = 7,
   SidebarPolicy = 8,
   CommitDraft = 9,
+  BranchReviewState = 10,
+};
+
+enum class BranchReviewTargetTag : std::uint16_t {
+  RepositoryRoot = 1,
+  BaseCommit = 2,
+  HeadCommit = 3,
+  MergeBaseCommit = 4,
+  SnapshotGeneration = 5,
+  LastAccessedUnixMs = 6,
+  ReviewedFile = 7,
+  ReviewedHunk = 8,
+  Note = 9,
+};
+
+enum class BranchReviewHunkIdentityTag : std::uint16_t {
+  Path = 1,
+  OldStart = 2,
+  OldCount = 3,
+  NewStart = 4,
+  NewCount = 5,
+  ContentHash = 6,
+};
+
+enum class BranchReviewFileEntryTag : std::uint16_t {
+  Path = 1,
+  ReviewedSnapshotGeneration = 2,
+  ReviewedAtUnixMs = 3,
+};
+
+enum class BranchReviewHunkEntryTag : std::uint16_t {
+  Identity = 1,
+  ReviewedAtUnixMs = 2,
+};
+
+enum class BranchReviewNoteTag : std::uint16_t {
+  Scope = 1,
+  Path = 2,
+  HunkIdentity = 3,
+  Text = 4,
+  UpdatedAtUnixMs = 5,
+};
+
+enum class BranchReviewStateTag : std::uint16_t {
+  Target = 1,
 };
 
 enum class CommitDraftTag : std::uint16_t {
@@ -763,6 +808,279 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
                       [&](PrimitiveWriter& w) { return w.WriteString(draft.subject); }, out) &&
          AppendRecord(CommitDraftTag::Body,
                       [&](PrimitiveWriter& w) { return w.WriteString(draft.body); }, out);
+}
+
+[[maybe_unused]] bool EncodeBranchReviewHunkIdentity(const PersistedBranchReviewHunkIdentity& identity,
+                                                    std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  return AppendRecord(BranchReviewHunkIdentityTag::Path,
+                      [&](PrimitiveWriter& w) { return w.WritePath(identity.path); }, out) &&
+         AppendRecord(BranchReviewHunkIdentityTag::OldStart,
+                      [&](PrimitiveWriter& w) { return w.WriteI32(identity.old_start); }, out) &&
+         AppendRecord(BranchReviewHunkIdentityTag::OldCount,
+                      [&](PrimitiveWriter& w) { return w.WriteI32(identity.old_count); }, out) &&
+         AppendRecord(BranchReviewHunkIdentityTag::NewStart,
+                      [&](PrimitiveWriter& w) { return w.WriteI32(identity.new_start); }, out) &&
+         AppendRecord(BranchReviewHunkIdentityTag::NewCount,
+                      [&](PrimitiveWriter& w) { return w.WriteI32(identity.new_count); }, out) &&
+         AppendRecord(BranchReviewHunkIdentityTag::ContentHash,
+                      [&](PrimitiveWriter& w) { return w.WriteI64(identity.content_hash); }, out);
+}
+
+[[maybe_unused]] bool DecodeBranchReviewHunkIdentity(std::span<const std::byte> input,
+                                                    PersistedBranchReviewHunkIdentity* identity) {
+  if (identity == nullptr) {
+    return false;
+  }
+  *identity = PersistedBranchReviewHunkIdentity{};
+  return ParseRecordStream<BranchReviewHunkIdentityTag>(
+      input, [&](BranchReviewHunkIdentityTag tag, std::span<const std::byte> payload) {
+        PrimitiveReader reader(payload);
+        switch (tag) {
+          case BranchReviewHunkIdentityTag::Path:
+            return reader.ReadPath(&identity->path) && reader.remaining() == 0;
+          case BranchReviewHunkIdentityTag::OldStart:
+            return reader.ReadI32(&identity->old_start) && reader.remaining() == 0;
+          case BranchReviewHunkIdentityTag::OldCount:
+            return reader.ReadI32(&identity->old_count) && reader.remaining() == 0;
+          case BranchReviewHunkIdentityTag::NewStart:
+            return reader.ReadI32(&identity->new_start) && reader.remaining() == 0;
+          case BranchReviewHunkIdentityTag::NewCount:
+            return reader.ReadI32(&identity->new_count) && reader.remaining() == 0;
+          case BranchReviewHunkIdentityTag::ContentHash: {
+            std::int64_t hash = 0;
+            return reader.ReadI64(&hash) && reader.remaining() == 0 && hash >= 0 &&
+                   (identity->content_hash = static_cast<std::uint64_t>(hash), true);
+          }
+        }
+        return true;
+      });
+}
+
+[[maybe_unused]] bool EncodeBranchReviewTarget(const PersistedBranchReviewTarget& target,
+                                              std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  if (!AppendRecord(BranchReviewTargetTag::RepositoryRoot,
+                    [&](PrimitiveWriter& w) { return w.WritePath(target.repository_root); }, out) ||
+      !AppendRecord(BranchReviewTargetTag::BaseCommit,
+                    [&](PrimitiveWriter& w) { return w.WriteString(target.base_commit); }, out) ||
+      !AppendRecord(BranchReviewTargetTag::HeadCommit,
+                    [&](PrimitiveWriter& w) { return w.WriteString(target.head_commit); }, out) ||
+      !AppendRecord(BranchReviewTargetTag::MergeBaseCommit,
+                    [&](PrimitiveWriter& w) { return w.WriteString(target.merge_base_commit); }, out) ||
+      !AppendRecord(BranchReviewTargetTag::SnapshotGeneration,
+                    [&](PrimitiveWriter& w) { return w.WriteI64(target.snapshot_generation); }, out) ||
+      !AppendRecord(BranchReviewTargetTag::LastAccessedUnixMs,
+                    [&](PrimitiveWriter& w) { return w.WriteI64(target.last_accessed_unix_ms); }, out)) {
+    return false;
+  }
+  for (const PersistedBranchReviewFileEntry& file : target.reviewed_files) {
+    std::vector<std::byte> payload;
+    if (!AppendRecord(BranchReviewFileEntryTag::Path,
+                      [&](PrimitiveWriter& w) { return w.WritePath(file.path); }, &payload) ||
+        !AppendRecord(BranchReviewFileEntryTag::ReviewedSnapshotGeneration,
+                      [&](PrimitiveWriter& w) {
+                        return w.WriteI64(file.reviewed_snapshot_generation);
+                      },
+                      &payload) ||
+        !AppendRecord(BranchReviewFileEntryTag::ReviewedAtUnixMs,
+                      [&](PrimitiveWriter& w) { return w.WriteI64(file.reviewed_at_unix_ms); },
+                      &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(BranchReviewTargetTag::ReviewedFile), payload,
+                            out)) {
+      return false;
+    }
+  }
+  for (const PersistedBranchReviewHunkEntry& hunk : target.reviewed_hunks) {
+    std::vector<std::byte> identity_payload;
+    std::vector<std::byte> entry_payload;
+    if (!EncodeBranchReviewHunkIdentity(hunk.identity, &identity_payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(BranchReviewHunkEntryTag::Identity),
+                            identity_payload, &entry_payload) ||
+        !AppendRecord(BranchReviewHunkEntryTag::ReviewedAtUnixMs,
+                      [&](PrimitiveWriter& w) { return w.WriteI64(hunk.reviewed_at_unix_ms); },
+                      &entry_payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(BranchReviewTargetTag::ReviewedHunk),
+                            entry_payload, out)) {
+      return false;
+    }
+  }
+  for (const PersistedBranchReviewNote& note : target.notes) {
+    std::vector<std::byte> payload;
+    if (!AppendRecord(BranchReviewNoteTag::Scope,
+                      [&](PrimitiveWriter& w) { return w.WriteString(note.scope); }, &payload) ||
+        !AppendRecord(BranchReviewNoteTag::Path,
+                      [&](PrimitiveWriter& w) { return w.WritePath(note.path); }, &payload)) {
+      return false;
+    }
+    if (note.hunk_identity.has_value()) {
+      std::vector<std::byte> identity_payload;
+      if (!EncodeBranchReviewHunkIdentity(*note.hunk_identity, &identity_payload) ||
+          !AppendTaggedRecord(static_cast<std::uint16_t>(BranchReviewNoteTag::HunkIdentity),
+                              identity_payload, &payload)) {
+        return false;
+      }
+    }
+    if (!AppendRecord(BranchReviewNoteTag::Text,
+                      [&](PrimitiveWriter& w) { return w.WriteString(note.text); }, &payload) ||
+        !AppendRecord(BranchReviewNoteTag::UpdatedAtUnixMs,
+                      [&](PrimitiveWriter& w) { return w.WriteI64(note.updated_at_unix_ms); },
+                      &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(BranchReviewTargetTag::Note), payload, out)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[maybe_unused]] bool DecodeBranchReviewTarget(std::span<const std::byte> input,
+                                              PersistedBranchReviewTarget* target) {
+  if (target == nullptr) {
+    return false;
+  }
+  *target = PersistedBranchReviewTarget{};
+  return ParseRecordStream<BranchReviewTargetTag>(
+      input, [&](BranchReviewTargetTag tag, std::span<const std::byte> payload) {
+        PrimitiveReader reader(payload);
+        switch (tag) {
+          case BranchReviewTargetTag::RepositoryRoot:
+            return reader.ReadPath(&target->repository_root) && reader.remaining() == 0;
+          case BranchReviewTargetTag::BaseCommit:
+            return reader.ReadString(&target->base_commit) && reader.remaining() == 0;
+          case BranchReviewTargetTag::HeadCommit:
+            return reader.ReadString(&target->head_commit) && reader.remaining() == 0;
+          case BranchReviewTargetTag::MergeBaseCommit:
+            return reader.ReadString(&target->merge_base_commit) && reader.remaining() == 0;
+          case BranchReviewTargetTag::SnapshotGeneration: {
+            std::int64_t value = 0;
+            return reader.ReadI64(&value) && reader.remaining() == 0 && value >= 0 &&
+                   (target->snapshot_generation = static_cast<std::uint64_t>(value), true);
+          }
+          case BranchReviewTargetTag::LastAccessedUnixMs: {
+            std::int64_t value = 0;
+            return reader.ReadI64(&value) && reader.remaining() == 0 && value >= 0 &&
+                   (target->last_accessed_unix_ms = static_cast<std::uint64_t>(value), true);
+          }
+          case BranchReviewTargetTag::ReviewedFile: {
+            PersistedBranchReviewFileEntry file;
+            return ParseRecordStream<BranchReviewFileEntryTag>(
+                payload, [&](BranchReviewFileEntryTag file_tag,
+                             std::span<const std::byte> file_payload) {
+                  PrimitiveReader file_reader(file_payload);
+                  switch (file_tag) {
+                    case BranchReviewFileEntryTag::Path:
+                      return file_reader.ReadPath(&file.path) && file_reader.remaining() == 0;
+                    case BranchReviewFileEntryTag::ReviewedSnapshotGeneration: {
+                      std::int64_t value = 0;
+                      return file_reader.ReadI64(&value) && file_reader.remaining() == 0 &&
+                             value >= 0 &&
+                             (file.reviewed_snapshot_generation = static_cast<std::uint64_t>(value),
+                              true);
+                    }
+                    case BranchReviewFileEntryTag::ReviewedAtUnixMs: {
+                      std::int64_t value = 0;
+                      return file_reader.ReadI64(&value) && file_reader.remaining() == 0 &&
+                             value >= 0 &&
+                             (file.reviewed_at_unix_ms = static_cast<std::uint64_t>(value), true);
+                    }
+                  }
+                  return true;
+                }) && (target->reviewed_files.push_back(std::move(file)), true);
+          }
+          case BranchReviewTargetTag::ReviewedHunk: {
+            PersistedBranchReviewHunkEntry hunk;
+            return ParseRecordStream<BranchReviewHunkEntryTag>(
+                payload, [&](BranchReviewHunkEntryTag hunk_tag,
+                             std::span<const std::byte> hunk_payload) {
+                  switch (hunk_tag) {
+                    case BranchReviewHunkEntryTag::Identity:
+                      return DecodeBranchReviewHunkIdentity(hunk_payload, &hunk.identity);
+                    case BranchReviewHunkEntryTag::ReviewedAtUnixMs: {
+                      PrimitiveReader hunk_reader(hunk_payload);
+                      std::int64_t value = 0;
+                      return hunk_reader.ReadI64(&value) && hunk_reader.remaining() == 0 &&
+                             value >= 0 &&
+                             (hunk.reviewed_at_unix_ms = static_cast<std::uint64_t>(value), true);
+                    }
+                  }
+                  return true;
+                }) && (target->reviewed_hunks.push_back(std::move(hunk)), true);
+          }
+          case BranchReviewTargetTag::Note: {
+            PersistedBranchReviewNote note;
+            return ParseRecordStream<BranchReviewNoteTag>(
+                payload, [&](BranchReviewNoteTag note_tag, std::span<const std::byte> note_payload) {
+                  PrimitiveReader note_reader(note_payload);
+                  switch (note_tag) {
+                    case BranchReviewNoteTag::Scope:
+                      return note_reader.ReadString(&note.scope) && note_reader.remaining() == 0;
+                    case BranchReviewNoteTag::Path:
+                      return note_reader.ReadPath(&note.path) && note_reader.remaining() == 0;
+                    case BranchReviewNoteTag::HunkIdentity: {
+                      PersistedBranchReviewHunkIdentity identity;
+                      if (!DecodeBranchReviewHunkIdentity(note_payload, &identity)) {
+                        return false;
+                      }
+                      note.hunk_identity = std::move(identity);
+                      return true;
+                    }
+                    case BranchReviewNoteTag::Text:
+                      return note_reader.ReadString(&note.text) && note_reader.remaining() == 0;
+                    case BranchReviewNoteTag::UpdatedAtUnixMs: {
+                      std::int64_t value = 0;
+                      return note_reader.ReadI64(&value) && note_reader.remaining() == 0 &&
+                             value >= 0 &&
+                             (note.updated_at_unix_ms = static_cast<std::uint64_t>(value), true);
+                    }
+                  }
+                  return true;
+                }) && (target->notes.push_back(std::move(note)), true);
+          }
+        }
+        return true;
+      });
+}
+
+[[maybe_unused]] bool EncodeBranchReviewState(const PersistedBranchReviewState& state,
+                                              std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  for (const PersistedBranchReviewTarget& target : state.targets) {
+    std::vector<std::byte> payload;
+    if (!EncodeBranchReviewTarget(target, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(BranchReviewStateTag::Target), payload, out)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[maybe_unused]] bool DecodeBranchReviewState(std::span<const std::byte> input,
+                                              PersistedBranchReviewState* state) {
+  if (state == nullptr) {
+    return false;
+  }
+  *state = PersistedBranchReviewState{};
+  return ParseRecordStream<BranchReviewStateTag>(
+      input, [&](BranchReviewStateTag tag, std::span<const std::byte> payload) {
+        if (tag != BranchReviewStateTag::Target) {
+          return true;
+        }
+        PersistedBranchReviewTarget target;
+        if (!DecodeBranchReviewTarget(payload, &target)) {
+          return false;
+        }
+        state->targets.push_back(std::move(target));
+        return true;
+      });
 }
 
 [[maybe_unused]] bool DecodeCommitDraft(std::span<const std::byte> input,

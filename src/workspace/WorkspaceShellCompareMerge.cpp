@@ -2,8 +2,13 @@
 
 #include <algorithm>
 
+#include "compare/BranchReviewStateTypes.h"
+#include "compare/CompareReviewTypes.h"
+#include "workspace/BranchReviewStateBridge.h"
 #include "workspace/CompareMergeService.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 
 namespace microide::workspace {
 
@@ -387,6 +392,81 @@ void WorkspaceShell::CopyMergeCurrentSnippet() {
 
 void WorkspaceShell::MarkMergeResolved() {
   MakeCompareMergeService().MarkMergeResolved();
+}
+
+void WorkspaceShell::PersistBranchReviewState() {
+  MakePersistenceCoordinator().SaveConfigState();
+}
+
+void WorkspaceShell::MarkActiveBranchFileReviewed() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+    return;
+  }
+  context_.current_project_state.branch_review.MarkFileReviewed(compare_tab->branch_target,
+                                                                compare_tab->path);
+  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  PersistBranchReviewState();
+  RequestActiveTabRedraw(true);
+  RequestSidebarRedraw();
+}
+
+void WorkspaceShell::MarkActiveBranchHunkReviewed() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+    return;
+  }
+  const int hunk_index = CompareTabSelectedHunkIndex(*compare_tab);
+  if (hunk_index < 0) {
+    return;
+  }
+  const compare::BranchReviewHunkIdentity identity = compare::ComputeBranchReviewHunkIdentity(
+      compare_tab->model, hunk_index, compare_tab->path);
+  context_.current_project_state.branch_review.MarkHunkReviewed(compare_tab->branch_target, identity);
+  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  PersistBranchReviewState();
+  RequestActiveTabRedraw(true);
+}
+
+void WorkspaceShell::ClearActiveBranchReviewState() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr && compare_tab->review_mode == compare::CompareReviewMode::Branch) {
+    context_.current_project_state.branch_review.ClearTarget(compare_tab->branch_target);
+    ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+    RequestActiveTabRedraw(true);
+  } else if (const std::optional<compare::BranchReviewTargetIdentity> target =
+                 OutgoingBranchReviewTarget(context_.current_project_state.sidebar.git,
+                                            context_.current_project_state.root);
+             target.has_value()) {
+    context_.current_project_state.branch_review.ClearTarget(*target);
+  }
+  PersistBranchReviewState();
+  RequestSidebarRedraw();
+}
+
+void WorkspaceShell::EditActiveBranchReviewNote(const std::string& note_text) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+    return;
+  }
+  const int hunk_index = CompareTabSelectedHunkIndex(*compare_tab);
+  std::optional<compare::BranchReviewHunkIdentity> hunk_identity;
+  compare::BranchReviewNoteScope scope = compare::BranchReviewNoteScope::File;
+  if (hunk_index >= 0) {
+    hunk_identity =
+        compare::ComputeBranchReviewHunkIdentity(compare_tab->model, hunk_index, compare_tab->path);
+    scope = compare::BranchReviewNoteScope::Hunk;
+  }
+  if (note_text.empty()) {
+    context_.current_project_state.branch_review.DeleteNote(compare_tab->branch_target, scope,
+                                                            compare_tab->path, hunk_identity);
+  } else {
+    context_.current_project_state.branch_review.SetNote(compare_tab->branch_target, scope,
+                                                         compare_tab->path, hunk_identity, note_text);
+  }
+  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  PersistBranchReviewState();
+  RequestActiveTabRedraw(true);
 }
 
 }  // namespace microide::workspace

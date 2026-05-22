@@ -22,6 +22,7 @@ using microide::workspace::FindSelectedGitSidebarLineIndex;
 using microide::workspace::GitSidebarEntry;
 using microide::workspace::GitSidebarLineKind;
 using microide::workspace::GitSidebarState;
+using microide::compare::BranchReviewStateService;
 using microide::workspace::QuerySupportsLiteralReplace;
 using microide::workspace::ReplaceLiteralMatchesInText;
 using microide::workspace::UsesCaseSensitiveLiteralMatch;
@@ -39,7 +40,9 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
       GitSidebarEntry{.section = GitSidebarEntry::Section::Outgoing,
                       .relative_path = "src/gamma.cpp"},
   };
-  const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(git_state));
+  const BranchReviewStateService branch_review;
+  const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+      git_state, std::filesystem::path{"/tmp/project"}, branch_review));
   Expect(lines.size() == 9,
          "git sidebar lines should include workflow headers, rows, and empty placeholders");
   Expect(lines[0].kind == GitSidebarLineKind::Header && lines[0].label == "Changed (2)",
@@ -64,7 +67,9 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
 void TestWorkspaceSharedGitSidebarEmptyStates() {
   GitSidebarState clean_state;
   clean_state.repo_available = true;
-  const auto clean_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(clean_state));
+  const BranchReviewStateService clean_branch_review;
+  const auto clean_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+      clean_state, std::filesystem::path{"/tmp/project"}, clean_branch_review));
   Expect(clean_lines.size() == 10,
          "empty git sidebar should still show all workflow section headers and empty rows");
   Expect(clean_lines[3].kind == GitSidebarLineKind::Empty &&
@@ -72,7 +77,9 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
          "git sidebar should describe a clean changed section when git is available");
 
   GitSidebarState no_repo_state;
-  const auto no_repo_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(no_repo_state));
+  const BranchReviewStateService no_repo_branch_review;
+  const auto no_repo_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+      no_repo_state, std::filesystem::path{"/tmp/project"}, no_repo_branch_review));
   Expect(no_repo_lines[3].label == "Not a git repository",
          "git sidebar should distinguish non-repositories from clean repositories");
 }
