@@ -181,7 +181,9 @@ whether the backend is external or built in.
 - `dev-docs/platform/host-platform-bringup.md`: local build, launch, and focused validation flow for supported hosts
 - `dev-docs/plugins/plugin-runtime-research.md`: plugin architecture notes and external references
 - `dev-docs/project/known-tech-debt.md`: concrete open debt that still matters after recent refactors
-- `dev-docs/platform/macos-support-plan.md`: host-platform plan for bringing `microide` to macOS
+- `dev-docs/platform/macos-support-plan.md`: remaining macOS host gaps (signing, hardware validation)
+- `dev-docs/project/diff-editor-merge-rewrite-plan.md`: compare/merge pipeline unification plan
+- `dev-docs/performance/README.md`: performance doc index (harness vs investigations)
 - `dev-docs/performance/performance-findings.md`: shipped performance work worth preserving
 - `dev-docs/performance/startup-tracing.md`: how to measure startup work
 - `dev-docs/performance/runtime-profiling.md`: runtime and redraw profiling workflow

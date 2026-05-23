@@ -8,11 +8,11 @@ top-level [`docs/`](../docs/) directory is reserved for the public [GitHub Pages
 | Path | Contents |
 |------|----------|
 | [`project/`](project/) | Active work, implementation guide, tech debt, editor essentials, preview notes |
-| [`performance/`](performance/) | Perf harness, tracing, profiling, performance findings and deep dives |
-| [`platform/`](platform/) | Linux/Windows build, host bring-up, macOS plan, platform audit |
+| [`performance/`](performance/) | Perf harness, tracing, profiling, findings; [`investigations/`](performance/investigations/) for historical deep dives |
+| [`platform/`](platform/) | Linux/Windows build, host bring-up, macOS remaining gaps, platform audit |
 | [`plugins/`](plugins/) | Plugin runtime research |
-| [`design/`](design/) | Text-surface contract, responsive shell layout, shell test-access audit |
-| [`archive/`](archive/) | Shipped or superseded planning documents |
+| [`design/`](design/) | Active design contracts (e.g. text-surface unification) |
+| [`archive/`](archive/) | Shipped plans, superseded notes, out-of-scope decisions |
 
 ## Policy and handbook
 

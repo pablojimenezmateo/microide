@@ -2,7 +2,7 @@
 
 MicroIDE's text path on the software SDL renderer is the dominant cost across
 every editor paint scenario: ~4.5 s of smoke wall time concentrates in
-`SdlTtfTextBackend` according to `dev-docs/performance/performance-bottleneck-deep-dive-4.md`.
+`SdlTtfTextBackend` according to `dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md`.
 
 The current path:
 
@@ -215,8 +215,8 @@ workspace or editor TU should know about the atlas — they call
 3. Flip the flag default to on in a follow-up commit on the same change
    branch. Refresh affected baselines with the `perf-baseline:` annotation.
 4. Once shipped, mark item 15 in
-   `dev-docs/performance/performance-bottleneck-deep-dive-2.md` and the carry-over in
-   `dev-docs/performance/performance-bottleneck-deep-dive-4.md` as done.
+   `dev-docs/performance/investigations/performance-bottleneck-deep-dive-2.md` and the carry-over in
+   `dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md` as done.
 
 **Rollback:** the env var `MICROIDE_RENDER_GLYPH_ATLAS=0` disables the
 atlas at runtime and re-routes everything through the composite path. If

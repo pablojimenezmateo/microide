@@ -665,3 +665,6 @@ Keep these when you need deeper design context:
 Archived (shipped or superseded):
 - `dev-docs/archive/plugin-platform-expansion-plan.md`: plugin platform planning — shipped across Phases 1–5
 - `dev-docs/archive/production-tech-debt-review.md`: 2026-04-20 structural debt review — major items resolved by the shell-breakdown pass
+- `dev-docs/archive/responsive-shell-layout.md`: ASCII layout reference — contract in `openspec/specs/responsive-shell-layout/spec.md`
+- `dev-docs/archive/workspace-shell-testaccess-audit.md`: TestAccess cleanup audit (2026-04-29 pass)
+- `dev-docs/archive/vscode-extension-compatibility-plan.md`: explicit out-of-scope decision

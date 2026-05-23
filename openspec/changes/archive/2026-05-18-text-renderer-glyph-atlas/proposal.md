@@ -1,14 +1,14 @@
 > **STATUS: REJECTED (2026-05-15).** This change was prototyped end-to-end
 > behind an opt-in flag and **regressed** every editor paint scenario on the
 > software renderer by 48–83 % wall-time. The implementation was reverted in
-> full. See `dev-docs/performance/performance-bottleneck-deep-dive-4.md` →
+> full. See `dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md` →
 > "Rejected experiment: ASCII glyph atlas" for the measured outcome and the
 > three preconditions any future revisit MUST meet. Do not apply.
 
 ## Why
 
 Editor text paint dominates the perf budget on the software renderer.
-`dev-docs/performance/performance-bottleneck-deep-dive-4.md` measures ~4.5 s of wall time across
+`dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md` measures ~4.5 s of wall time across
 the editor paint scenarios in the smoke suite — sticky_scroll 1.08 s,
 whitespace_paint 0.80 s, smart_indent_typing 0.80 s, auto_close_typing 0.68 s,
 indent_guides_paint 0.64 s, fold_recompute 0.54 s — all dominated by

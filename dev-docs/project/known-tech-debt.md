@@ -651,7 +651,7 @@ Remaining debt focus stays on items 5 and 6 unless new profiling demonstrates re
 
 ## 13. Do Not Revisit The Editor Glyph Atlas Without GPU Renderer + ≥ 10 % Texture-Cache Miss Rate
 
-Source: `dev-docs/performance/performance-bottleneck-deep-dive-4.md` "Rejected experiment: ASCII glyph atlas".
+Source: `dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md` "Rejected experiment: ASCII glyph atlas".
 
 Impact:
 - Saves engineering time on a previously-attempted dead end.
@@ -720,9 +720,9 @@ Status:
   baselines are deferred follow-ups tracked in
   `openspec/changes/split-layout-revision-tiers/tasks.md`.
 
-Source: `dev-docs/performance/performance-bottleneck-deep-dive-2.md` Finding 16,
-`dev-docs/performance/performance-bottleneck-deep-dive-3.md` partial,
-`dev-docs/performance/performance-bottleneck-deep-dive-4.md` Finding 4 (partial).
+Source: `dev-docs/performance/investigations/performance-bottleneck-deep-dive-2.md` Finding 16,
+`dev-docs/performance/investigations/performance-bottleneck-deep-dive-3.md` partial,
+`dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md` Finding 4 (partial).
 
 Impact:
 - Medium-to-high. Every edit currently bumps a single `document_->layout_revision`,
@@ -759,7 +759,7 @@ Reproduction / measurement:
 Notes:
 
 - This is the documented "honorable mention" alongside the font-atlas work
-  (`dev-docs/performance/performance-bottleneck-deep-dive-4.md`). Surface is wide — touches every
+  (`dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md`). Surface is wide — touches every
   cache invalidation site across `TextViewport`, `EditorViewRenderer`, and the render
   view-model builder — so it should be scoped as its own openspec change rather than
   bundled with smaller optimization passes.

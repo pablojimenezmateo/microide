@@ -236,7 +236,7 @@ Continue with:
 ### 3. Diff and merge rewrite
 
 The durable behavioral contract for this work lives in `openspec/specs/diff-merge-editor/spec.md`.
-The implementation plan lives in `dev-docs/project/diff-editor-merge-rewrite-plan.md` (create if missing).
+The implementation plan lives in `dev-docs/project/diff-editor-merge-rewrite-plan.md`.
 
 Target end state:
 - editor, compare, and merge share one row-decoration and text-grid rendering pipeline
@@ -257,7 +257,8 @@ Continue with:
 
 These are explicitly deferred or out of scope unless deliberately promoted into their own phase:
 
-- plugin marketplaces, remote install flows, or Micro-plugin compatibility
+- plugin marketplaces, remote install flows, VS Code extension compatibility, or Micro-plugin compatibility
+  (see `dev-docs/archive/vscode-extension-compatibility-plan.md`)
 - cloud, collaboration, account, or sync features
 - recent-project or recent-file surfaces
 - debugger/DAP support
@@ -269,8 +270,8 @@ These were identified during the vision-alignment pass and should each become th
 
 1. **Unified decorated text-grid pipeline** — implement the shared row-decoration and text-grid
    rendering path across editor, compare, and merge as specified in
-   `openspec/specs/diff-merge-editor/spec.md`. Requires `dev-docs/project/diff-editor-merge-rewrite-plan.md`
-   to exist first (currently missing — create it as the first task of that change).
+   `openspec/specs/diff-merge-editor/spec.md`. Follow phases in
+   `dev-docs/project/diff-editor-merge-rewrite-plan.md`.
 2. **Numeric performance thresholds** — once a reference host is declared, add concrete
    millisecond startup, typing, and scroll frame targets to `openspec/specs/performance-budgets/spec.md`.
 3. **Large-file diff-semantic correctness audit** — verify that the shipped diff pipeline has no
@@ -294,7 +295,8 @@ These were identified during the vision-alignment pass and should each become th
 - `dev-docs/project/editor-essentials.md`: editor essentials settings, commands, and plugin contract surfaces
 - `dev-docs/project/implementation-guide.md`: durable product direction
 - `dev-docs/project/known-tech-debt.md`: concrete remaining debt worth preserving as a queue
-- `dev-docs/project/diff-editor-merge-rewrite-plan.md`: detailed compare and merge rewrite plan (create if missing)
+- `dev-docs/project/diff-editor-merge-rewrite-plan.md`: compare and merge rewrite implementation plan
+- `dev-docs/performance/README.md`: performance doc index
 - `dev-docs/performance/performance-findings.md`: shipped performance wins worth preserving
 - `dev-docs/performance/startup-tracing.md`: startup profiling workflow
 - `dev-docs/performance/runtime-profiling.md`: runtime and redraw profiling workflow

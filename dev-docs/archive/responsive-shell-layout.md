@@ -1,5 +1,10 @@
 # Responsive Shell Layout
 
+> **Status: archived (2026-05-23).** Shipped. The durable contract lives in
+> [`openspec/specs/responsive-shell-layout/spec.md`](../../openspec/specs/responsive-shell-layout/spec.md).
+> Shell layout guidance: [`guidelines/ui-shell.md`](../../guidelines/ui-shell.md).
+> This file is kept as a quick ASCII layout reference only.
+
 ## Regular
 
 ```text

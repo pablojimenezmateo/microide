@@ -54,5 +54,5 @@
 
 ## 9. Docs
 
-- [x] 9.1 Update `dev-docs/performance/performance-bottleneck-deep-dive-4.md` carry-over table: change "split `document_->layout_revision` into tiered revisions" from "honorable mention" to "done" with a one-line summary of the deltas (perf-baseline refresh deferred to follow-up).
+- [x] 9.1 Update `dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md` carry-over table: change "split `document_->layout_revision` into tiered revisions" from "honorable mention" to "done" with a one-line summary of the deltas (perf-baseline refresh deferred to follow-up).
 - [x] 9.2 Update `dev-docs/project/known-tech-debt.md` item 14 status to "closed in `split-layout-revision-tiers`", and leave the entry as historical record.

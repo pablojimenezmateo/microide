@@ -1,5 +1,10 @@
 # WorkspaceShellTestAccess Audit (Task 9.1)
 
+> **Status: archived (2026-05-23).** Historical record from the comprehensive tech-debt cleanup.
+> Category-(a) wrappers were removed; the header is now a scoped aggregator with a size gate.
+> Current policy: [`guidelines/testing.md`](../../guidelines/testing.md),
+> [`dev-docs/project/known-tech-debt.md`](../project/known-tech-debt.md) (TestAccess follow-up closed).
+
 - File: `src/workspace/WorkspaceShellTestAccess.h`
 - Top-level line count: 35 (scoped include fragments hold implementation methods)
 - Method count across `src/workspace/testaccess/*.inc`: 274
