@@ -168,7 +168,7 @@ serious work.
 - **Terminal escape coverage is "what real shells need," not exhaustive.** Programs that depend on
   uncommon DEC/xterm sequences may render incorrectly.
 - **Cross-platform is uneven.** Linux is the primary host. macOS and Windows have bring-up
-  documented in `docs/host-platform-bringup.md`, but day-to-day validation happens on Linux.
+  documented in `dev-docs/platform/host-platform-bringup.md`, but day-to-day validation happens on Linux.
 - **No debugger/DAP support.** Debugging is out of scope unless a dedicated phase is opened.
 - **No recent-project / recent-file UI.** Deliberate non-goal.
 - **No plugin marketplace, remote install, or signed-plugin verification.** Deliberate non-goal.
@@ -213,14 +213,14 @@ trust into `~/.config/microide/plugins/`.
 - The `plugins-reload` command picks up changes; there is no per-plugin disable in the UI yet
   beyond editing user config or starting with `--disable-plugins` / `--safe-mode`.
 - Project-local plugin loading remains out of scope. See [SECURITY.md](SECURITY.md) and
-  [docs/git-workstation-preview.md](docs/git-workstation-preview.md) for preview scope.
+  [dev-docs/project/git-workstation-preview.md](dev-docs/project/git-workstation-preview.md) for preview scope.
 
 **Out of scope.** A meaningful plugin sandbox (capability-scoped APIs, restricted Lua standard
 library, per-plugin allowlists) is not planned for the immediate roadmap. If a plugin marketplace
 or remote install flow is ever pursued — currently a deliberate non-goal — a sandbox would have
 to land first.
 
-For the full plugin trust documentation see [docs/plugin-trust-model.md](docs/plugin-trust-model.md).
+For the full plugin trust documentation see [guidelines/plugin-trust-model.md](guidelines/plugin-trust-model.md).
 
 ## Performance & Benchmark Methodology
 
@@ -280,19 +280,21 @@ cmake --build build/microide-perf-make -j8
 xvfb-run -a ./build/microide-perf-make/microide/microide_perf --smoke
 ```
 
-Full docs: [`docs/perf-harness.md`](docs/perf-harness.md),
-[`docs/runtime-profiling.md`](docs/runtime-profiling.md),
-[`docs/startup-tracing.md`](docs/startup-tracing.md).
+Full docs: [`dev-docs/performance/perf-harness.md`](dev-docs/performance/perf-harness.md),
+[`dev-docs/performance/runtime-profiling.md`](dev-docs/performance/runtime-profiling.md),
+[`dev-docs/performance/startup-tracing.md`](dev-docs/performance/startup-tracing.md).
 
 ## Companion Docs
 
-- `docs/active-work.md`
-- `docs/implementation-guide.md`
-- `docs/known-tech-debt.md`
-- `docs/plugin-trust-model.md`
-- `docs/perf-harness.md`
-- `docs/runtime-profiling.md`
-- `docs/startup-tracing.md`
+- [Project site](https://pablojimenezmateo.github.io/microide/) (GitHub Pages; `docs/` in the repo)
+- [`dev-docs/README.md`](dev-docs/README.md) — developer documentation index
+- `dev-docs/project/active-work.md`
+- `dev-docs/project/implementation-guide.md`
+- `dev-docs/project/known-tech-debt.md`
+- `guidelines/plugin-trust-model.md`
+- `dev-docs/performance/perf-harness.md`
+- `dev-docs/performance/runtime-profiling.md`
+- `dev-docs/performance/startup-tracing.md`
 - `openspec/specs/product-vision/spec.md`
 
 ## Build
@@ -313,9 +315,9 @@ cmake --build build -j8
 
 Platform-specific setup, dependency install, and bring-up notes live in dedicated docs:
 
-- [docs/linux-build.md](docs/linux-build.md) — Ubuntu/Debian, including building SDL3/SDL3_ttf from source
-- [docs/windows-build.md](docs/windows-build.md) — MSYS2 UCRT64 setup and Windows-specific notes
-- [docs/host-platform-bringup.md](docs/host-platform-bringup.md) — short macOS / Linux / Windows package summary and focused host-facing regression slice
+- [dev-docs/platform/linux-build.md](dev-docs/platform/linux-build.md) — Ubuntu/Debian, including building SDL3/SDL3_ttf from source
+- [dev-docs/platform/windows-build.md](dev-docs/platform/windows-build.md) — MSYS2 UCRT64 setup and Windows-specific notes
+- [dev-docs/platform/host-platform-bringup.md](dev-docs/platform/host-platform-bringup.md) — short macOS / Linux / Windows package summary and focused host-facing regression slice
 
 ## Project State
 
@@ -515,12 +517,12 @@ Reports diff stage timings, compare syntax timing, row-decoration build/paint ti
 env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=1 MICROIDE_TRACE_REDRAW=1 \
   ./build/microide/microide
 ```
-See `docs/startup-tracing.md` and `docs/runtime-profiling.md` for full workflows.
+See `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` for full workflows.
 
 ## Plugin Runtime
 
 - Safe startup (preview): `microide --disable-plugins` or `microide --safe-mode [project-path]` —
-  see [SECURITY.md](SECURITY.md) and [docs/git-workstation-preview.md](docs/git-workstation-preview.md)
+  see [SECURITY.md](SECURITY.md) and [dev-docs/project/git-workstation-preview.md](dev-docs/project/git-workstation-preview.md)
 - User plugins: `~/.config/microide/plugins/<plugin-id>/init.lua`
 - Repo examples: `plugins/` (copy or symlink into the user plugin directory)
 - Entry point: `return require("microide").plugin({...})`
