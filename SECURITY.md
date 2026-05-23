@@ -14,7 +14,7 @@ plugins or subprocesses launched through the host API.
   capability prompt, or per-plugin filesystem allowlist today.
 - **No plugin marketplace or remote install** in current scope.
 
-See [docs/plugin-trust-model.md](docs/plugin-trust-model.md) for the full model.
+See [guidelines/plugin-trust-model.md](guidelines/plugin-trust-model.md) for the full model.
 
 ## Safe startup flags (Git Workstation Preview)
 

@@ -77,8 +77,8 @@
 ## 12. Full-Tree Validation And Documentation
 
 - [x] 12.1 Run `cmake --build build` clean and `ctest --test-dir build --output-on-failure`; resolve any flake.
-- [x] 12.2 Run startup-trace and runtime-profiling capture per `docs/startup-tracing.md` and `docs/runtime-profiling.md` end-to-end. Compare against the pre-cleanup baseline; verify all `performance-budgets` requirements still hold.
-- [x] 12.3 Update `docs/active-work.md` to reflect the new architecture as the shipped baseline. Close items 1, 2, 3, 4, and 7 in `docs/known-tech-debt.md`.
+- [x] 12.2 Run startup-trace and runtime-profiling capture per `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` end-to-end. Compare against the pre-cleanup baseline; verify all `performance-budgets` requirements still hold.
+- [x] 12.3 Update `dev-docs/project/active-work.md` to reflect the new architecture as the shipped baseline. Close items 1, 2, 3, 4, and 7 in `dev-docs/project/known-tech-debt.md`.
 - [x] 12.4 Update `guidelines/architecture.md`, `guidelines/host-services.md`, `guidelines/cpp.md`, and `guidelines/plugins.md` to describe the service-oriented model, the single-line editor model, the persistence format, and the lint invariants.
 - [x] 12.5 Schedule the `.legacy`-file cleanup as a follow-up change for the release after next; do not delete `.legacy` files in this change.
 

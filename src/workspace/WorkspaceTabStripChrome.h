@@ -26,7 +26,7 @@ class LayoutModeService;
 // shell-member methods in WorkspaceShellChrome.cpp; pulling them onto this
 // type removes 12 entries from the WorkspaceShell symbol surface and lets
 // non-shell call sites depend on the service directly, as described in
-// docs/known-tech-debt.md item #16.
+// dev-docs/project/known-tech-debt.md item #16.
 class WorkspaceTabStripChrome {
  public:
   struct Operations {

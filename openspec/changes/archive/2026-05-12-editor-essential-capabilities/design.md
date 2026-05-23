@@ -328,7 +328,7 @@ Each is computed once per frame in `RenderViewModelBuilder` and consumed by the 
 8. Land save-time normalization (trim trailing whitespace, ensure final newline, auto-detect indent on open). Defaults true; users can disable per-project.
 9. Land outline sidebar view + LSP `textDocument/documentSymbol` request + regex fallback per language.
 10. Land snippet engine + plugin snippet contributions + `Insert Snippet…` overlay. Honor LSP snippet bodies through the existing completion overlay (no placeholder navigation for LSP snippets in v1).
-11. Update `docs/active-work.md`, `guidelines/plugins.md`, `guidelines/ui-shell.md`, and add `docs/editor-essentials.md`.
+11. Update `dev-docs/project/active-work.md`, `guidelines/plugins.md`, `guidelines/ui-shell.md`, and add `dev-docs/project/editor-essentials.md`.
 12. Run sanitizer presets (ASAN/UBSAN/TSAN) and the perf harness scenarios; commit before/after numbers in the change record per `performance-budgets`.
 
 Rollback strategy: every new capability sits behind a setting whose default lives in `WorkspaceSettingsRegistry`. Setting the flag to `false` disables the feature without touching code paths in other capabilities. If a regression is found in one area, that one setting flips off while the rest remains shipped.

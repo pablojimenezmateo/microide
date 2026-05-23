@@ -98,7 +98,7 @@ guides, render-whitespace overlays, bracket emphasis (string/comment-aware scan)
 contract-driven auto-close / surround / smart indent, shaping actions and viewport-bounded
 occurrence highlights, snippet engine + Insert Snippet overlay, symbol outline sidebar (LSP +
 regex fallback), save normalization, and auto-detect indent on open (see
-`docs/editor-essentials.md`). Committed perf baselines for the new scenarios live under
+`dev-docs/project/editor-essentials.md`). Committed perf baselines for the new scenarios live under
 `tests/perf/baselines/editor_*.json`. Remaining **partial** items in the archived
 `tasks.md`: dedicated viewport-integrated `tests/EditorFoldingTests.cpp` matrix and
 multi-caret fold-paging coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel
@@ -594,13 +594,13 @@ Current state:
 - retained redraw has comparison coverage against clean full redraws
 - search, tab ordering, context-copy flows, and many workspace mutations already have direct regression tests
 - a 2026-04-23 deep-dive identified several untracked render-path bottlenecks; all nine actionable
-  findings from that pass are now confirmed fixed; see `docs/performance-findings.md`
+  findings from that pass are now confirmed fixed; see `dev-docs/performance/performance-findings.md`
   (Deep-Dive Findings section) for the full record
 - a 2026-04-23 second static pass confirmed all previous fixes and found four new bottlenecks;
   the review-comment marker, terminal snapshot generation, editor-pane-layout, and terminal cursor
   lock items from that pass are now fixed;
-  see `docs/performance-findings.md` (Second Performance Pass section) and
-  `docs/known-tech-debt.md` items 8–11 for the prioritized list
+  see `dev-docs/performance/performance-findings.md` (Second Performance Pass section) and
+  `dev-docs/project/known-tech-debt.md` items 8–11 for the prioritized list
 
 Open work:
 
@@ -631,7 +631,7 @@ These are not current project work unless deliberately promoted into their own p
 - debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - plugin sandboxing, marketplace trust, and project-local plugin loading (preview ships
-  `--disable-plugins` / `--safe-mode` only; see `docs/git-workstation-preview.md`)
+  `--disable-plugins` / `--safe-mode` only; see `dev-docs/project/git-workstation-preview.md`)
 - cloud or collaboration features
 - recent-project and recent-file affordances
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
@@ -641,8 +641,8 @@ These are not current project work unless deliberately promoted into their own p
 OpenSpec change `prepare-git-workstation-preview` defines 0.1 preview scope, safe startup flags,
 release checklist, and trust documentation. See:
 
-- `docs/git-workstation-preview.md` — supported / unsupported workflows
-- `docs/preview-release-checklist.md` — tag, artifacts, tested-workflows matrix
+- `dev-docs/project/git-workstation-preview.md` — supported / unsupported workflows
+- `dev-docs/project/preview-release-checklist.md` — tag, artifacts, tested-workflows matrix
 - `SECURITY.md` — trust model, safe mode, reporting
 
 ## Companion Docs
@@ -653,15 +653,15 @@ Keep these when you need deeper design context:
 - `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
 - `openspec/specs/performance-budgets/spec.md`: durable performance budget policy
 - `AGENTS.md`: repo-level engineering policy, iteration loop, and agent expectations
-- `docs/implementation-guide.md`: durable product direction
-- `docs/plugin-runtime-research.md`: deeper plugin architecture notes and external references
-- `docs/known-tech-debt.md`: concrete open debt still worth preserving
-- `docs/text-surface-unification.md`: durable text-input and navigable-text interaction contract
-- `docs/performance-findings.md`: concrete shipped performance wins worth preserving
-- `docs/startup-tracing.md`: startup profiling workflow
-- `docs/runtime-profiling.md`: runtime and redraw profiling workflow
-- `docs/editor-essentials.md`: shipped editor language contract, folding, presentation toggles, shaping, save normalization
+- `dev-docs/project/implementation-guide.md`: durable product direction
+- `dev-docs/plugins/plugin-runtime-research.md`: deeper plugin architecture notes and external references
+- `dev-docs/project/known-tech-debt.md`: concrete open debt still worth preserving
+- `dev-docs/design/text-surface-unification.md`: durable text-input and navigable-text interaction contract
+- `dev-docs/performance/performance-findings.md`: concrete shipped performance wins worth preserving
+- `dev-docs/performance/startup-tracing.md`: startup profiling workflow
+- `dev-docs/performance/runtime-profiling.md`: runtime and redraw profiling workflow
+- `dev-docs/project/editor-essentials.md`: shipped editor language contract, folding, presentation toggles, shaping, save normalization
 
 Archived (shipped or superseded):
-- `docs/archive/plugin-platform-expansion-plan.md`: plugin platform planning — shipped across Phases 1–5
-- `docs/archive/production-tech-debt-review.md`: 2026-04-20 structural debt review — major items resolved by the shell-breakdown pass
+- `dev-docs/archive/plugin-platform-expansion-plan.md`: plugin platform planning — shipped across Phases 1–5
+- `dev-docs/archive/production-tech-debt-review.md`: 2026-04-20 structural debt review — major items resolved by the shell-breakdown pass

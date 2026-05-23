@@ -41,13 +41,13 @@
 
 ## 6. Performance & sanitizers
 
-- [x] 6.1 Run a wrap-on vs wrap-off render benchmark on a 10k-line file via `docs/perf-harness.md` scenarios; record per-frame paint cost. Confirm wrap-on stays within the existing editor-paint budget.
+- [x] 6.1 Run a wrap-on vs wrap-off render benchmark on a 10k-line file via `dev-docs/performance/perf-harness.md` scenarios; record per-frame paint cost. Confirm wrap-on stays within the existing editor-paint budget.
 - [x] 6.2 Run ASAN preset over the new tests: `cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure`.
 - [x] 6.3 Run UBSAN preset similarly.
 - [x] 6.4 Confirm no per-frame allocations introduced (architectural-lint test).
 
 ## 7. Documentation & spec sync
 
-- [x] 7.1 Update `docs/active-work.md` to reflect that soft wrap is fixed end-to-end (render, gutter, multi-caret motion, hit-test).
-- [x] 7.2 No change to `docs/implementation-guide.md` is expected; verify and skip if so.
+- [x] 7.1 Update `dev-docs/project/active-work.md` to reflect that soft wrap is fixed end-to-end (render, gutter, multi-caret motion, hit-test).
+- [x] 7.2 No change to `dev-docs/project/implementation-guide.md` is expected; verify and skip if so.
 - [x] 7.3 Run `openspec validate fix-word-wrap-cursor-placement --strict` and resolve any spec/format issues before archive.

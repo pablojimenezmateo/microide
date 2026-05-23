@@ -2,7 +2,7 @@
 
 ### Requirement: Startup Budget
 
-MicroIDE SHALL complete cold startup (binary launch to interactive shell with the last-session project restored) within a documented budget on a reference Linux host, measured through `docs/startup-tracing.md`. Changes that affect startup paths SHALL record startup trace output in the change record.
+MicroIDE SHALL complete cold startup (binary launch to interactive shell with the last-session project restored) within a documented budget on a reference Linux host, measured through `dev-docs/performance/startup-tracing.md`. Changes that affect startup paths SHALL record startup trace output in the change record.
 
 #### Scenario: Startup regression
 - **WHEN** a change modifies `src/app/*` bootstrap, workspace-session restore, plugin runtime startup, or syntax snapshot loading

@@ -5,7 +5,7 @@ window resize. This document records concrete, prioritized findings against the
 current tree. Numbers below are static-analysis estimates unless explicitly
 captured with `MICROIDE_PERF_TRACE`; live measurements are noted inline.
 
-The prior `docs/performance-findings.md` is largely about historical fixes and
+The prior `dev-docs/performance/performance-findings.md` is largely about historical fixes and
 backlog items. This file is the new “queue of things I’d attack next”.
 
 ## Live trace summary (SDL dummy driver, this repo as the project)
@@ -69,7 +69,7 @@ Fix options, in increasing scope:
 2. **Proper fix:** build a glyph atlas once, then issue text via
    `SDL_RenderGeometry` with per-vertex UVs and per-vertex colour. One draw
    call per atlas page covers every visible glyph regardless of colour.
-   `docs/performance-findings.md` already lists this as “Lower-cost text
+   `dev-docs/performance/performance-findings.md` already lists this as “Lower-cost text
    rendering backend”; it should be P0, not a footnote.
 3. While here, switch `DrawFastAsciiString` to actually honour the background
    parameter on `DrawStringOn` or document that ASCII paths intentionally
@@ -267,7 +267,7 @@ hit-region boundary (a cheap rect-equal compare against the last hit).
 
 ## P2 — `RuntimeSyntaxRegistry::EnsureInitialized` startup cost
 
-`docs/performance-findings.md` already calls this out (~44 ms in the old
+`dev-docs/performance/performance-findings.md` already calls this out (~44 ms in the old
 trace, observed ~88 ms here). The recommended directions (disk-cached
 compiled definitions, defer-after-first-render, parallel parse) still apply
 and are still unimplemented in the tree. Quoting the existing doc to confirm

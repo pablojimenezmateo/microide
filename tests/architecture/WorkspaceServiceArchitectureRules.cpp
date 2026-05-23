@@ -402,7 +402,7 @@ RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_r
 }
 
 // 2026-05-15 P0 lint additions (perf deep-dive round 2 Finding 19). Each guards a regression that
-// the same-day fixes closed; see docs/performance-bottleneck-deep-dive-2.md.
+// the same-day fixes closed; see dev-docs/performance/performance-bottleneck-deep-dive-2.md.
 
 RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -442,7 +442,7 @@ RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_ro
   // synchronously consult `git symbolic-ref`/`rev-parse` -- the branch label is
   // populated by the async sidebar git coordinator. The previous synchronous
   // `git symbolic-ref --short HEAD` fallback was removed in
-  // docs/performance-bottleneck-deep-dive-2.md Finding 3 to eliminate per-frame
+  // dev-docs/performance/performance-bottleneck-deep-dive-2.md Finding 3 to eliminate per-frame
   // UI stalls.
   RuleResult result;
   result.label = "RefreshStatusBar must not run synchronous git from the frame path";

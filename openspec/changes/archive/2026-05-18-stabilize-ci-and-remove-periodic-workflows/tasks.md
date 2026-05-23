@@ -26,4 +26,4 @@
 
 - [x] 5.1 Re-run all affected workflows after fixes and confirm deterministic green runs or clearly documented non-code blockers.
 - [x] 5.2 Verify no active workflow contains a periodic schedule trigger.
-- [x] 5.3 Update `docs/active-work.md` and/or CI-related docs with the final trigger policy and stabilization outcomes.
+- [x] 5.3 Update `dev-docs/project/active-work.md` and/or CI-related docs with the final trigger policy and stabilization outcomes.

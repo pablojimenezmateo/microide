@@ -2,7 +2,7 @@
 
 Reviewed on 2026-05-10.
 
-This file is the forward-looking plan for the current branch. `docs/active-work.md` remains the
+This file is the forward-looking plan for the current branch. `dev-docs/project/active-work.md` remains the
 source of truth for shipped baseline and accepted scope cuts.
 
 This roadmap intentionally does not list every generic IDE feature that could exist. It tracks
@@ -32,7 +32,7 @@ It is:
   this wedge before broadening scope again.
 - validate the shipped foundations (LSP / tasks / tests / SCM) against real workflows
 - harden the remaining host boundaries, especially around `WorkspaceShell` (file decomposition
-  is satisfied; ownership decomposition is partial — see `docs/known-tech-debt.md` items 15–16)
+  is satisfied; ownership decomposition is partial — see `dev-docs/project/known-tech-debt.md` items 15–16)
 - keep UI latency stable while the new runtime surfaces are exercised under load
 
 ## Immediate Slice
@@ -44,7 +44,7 @@ highlights, pair and indent behavior, shaping toggles, and save normalization ar
 landed; finish partial surfaces (sticky scroll UI, snippet sessions, outline
 view, remaining spec tests and perf baselines) under
 `openspec/changes/editor-essential-capabilities/tasks.md` and
-`docs/editor-essentials.md`.
+`dev-docs/project/editor-essentials.md`.
 
 ### 1. Validate shipped async and provider runtimes
 
@@ -231,12 +231,12 @@ Continue with:
   break
 - complete remaining **editor essentials** work (sticky-scroll band, snippet engine and UI, outline
   sidebar, syntax-aware bracket matching where required, and `tasks.md` section 13 perf baselines); see
-  `docs/editor-essentials.md`
+  `dev-docs/project/editor-essentials.md`
 
 ### 3. Diff and merge rewrite
 
 The durable behavioral contract for this work lives in `openspec/specs/diff-merge-editor/spec.md`.
-The implementation plan lives in `docs/diff-editor-merge-rewrite-plan.md` (create if missing).
+The implementation plan lives in `dev-docs/project/diff-editor-merge-rewrite-plan.md` (create if missing).
 
 Target end state:
 - editor, compare, and merge share one row-decoration and text-grid rendering pipeline
@@ -269,7 +269,7 @@ These were identified during the vision-alignment pass and should each become th
 
 1. **Unified decorated text-grid pipeline** — implement the shared row-decoration and text-grid
    rendering path across editor, compare, and merge as specified in
-   `openspec/specs/diff-merge-editor/spec.md`. Requires `docs/diff-editor-merge-rewrite-plan.md`
+   `openspec/specs/diff-merge-editor/spec.md`. Requires `dev-docs/project/diff-editor-merge-rewrite-plan.md`
    to exist first (currently missing — create it as the first task of that change).
 2. **Numeric performance thresholds** — once a reference host is declared, add concrete
    millisecond startup, typing, and scroll frame targets to `openspec/specs/performance-budgets/spec.md`.
@@ -281,8 +281,8 @@ These were identified during the vision-alignment pass and should each become th
 
 - every meaningful bug fix adds or tightens regression coverage
 - measure before and after performance-sensitive changes
-- use `docs/startup-tracing.md` and `docs/runtime-profiling.md` instead of guessing
-- update `docs/active-work.md` when a roadmap item lands or priorities materially change
+- use `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` instead of guessing
+- update `dev-docs/project/active-work.md` when a roadmap item lands or priorities materially change
 - delete stale compatibility shims and contradictory docs as new seams become canonical
 
 ## Companion Docs
@@ -290,11 +290,11 @@ These were identified during the vision-alignment pass and should each become th
 - `openspec/specs/product-vision/spec.md`: authoritative product thesis and in-scope/non-goal list
 - `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
 - `openspec/specs/performance-budgets/spec.md`: durable performance budget and measurement policy
-- `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
-- `docs/editor-essentials.md`: editor essentials settings, commands, and plugin contract surfaces
-- `docs/implementation-guide.md`: durable product direction
-- `docs/known-tech-debt.md`: concrete remaining debt worth preserving as a queue
-- `docs/diff-editor-merge-rewrite-plan.md`: detailed compare and merge rewrite plan (create if missing)
-- `docs/performance-findings.md`: shipped performance wins worth preserving
-- `docs/startup-tracing.md`: startup profiling workflow
-- `docs/runtime-profiling.md`: runtime and redraw profiling workflow
+- `dev-docs/project/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
+- `dev-docs/project/editor-essentials.md`: editor essentials settings, commands, and plugin contract surfaces
+- `dev-docs/project/implementation-guide.md`: durable product direction
+- `dev-docs/project/known-tech-debt.md`: concrete remaining debt worth preserving as a queue
+- `dev-docs/project/diff-editor-merge-rewrite-plan.md`: detailed compare and merge rewrite plan (create if missing)
+- `dev-docs/performance/performance-findings.md`: shipped performance wins worth preserving
+- `dev-docs/performance/startup-tracing.md`: startup profiling workflow
+- `dev-docs/performance/runtime-profiling.md`: runtime and redraw profiling workflow

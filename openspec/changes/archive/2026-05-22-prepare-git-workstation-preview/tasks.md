@@ -1,6 +1,6 @@
 ## 1. Product Scope And Docs
 
-- [x] 1.1 Update README, docs/active-work.md, implementation guide, and plugin trust docs to consistently state preview scope and plugin trust behavior.
+- [x] 1.1 Update README, dev-docs/project/active-work.md, implementation guide, and plugin trust docs to consistently state preview scope and plugin trust behavior.
 - [x] 1.2 Add `SECURITY.md` covering trusted local plugins, ignored repo-local plugin directories, safe mode, reporting, and known limitations.
 - [x] 1.3 Add preview supported/unsupported workflow documentation without comparative marketing claims.
 

@@ -1,13 +1,13 @@
 ## 1. Performance Harness Foundations
 
-- [x] 1.1 Add a `MICROIDE_PERF_HARNESS_BUILD` CMake option and a `microide-perf` preset that turns it on alongside the production build flags, plus an `xvfb-run` invocation documented in `docs/perf-harness.md`.
+- [x] 1.1 Add a `MICROIDE_PERF_HARNESS_BUILD` CMake option and a `microide-perf` preset that turns it on alongside the production build flags, plus an `xvfb-run` invocation documented in `dev-docs/performance/perf-harness.md`.
 - [x] 1.2 Add `tests/perf/AllocationCounter.{h,cpp}` overriding global `operator new`/`operator delete` behind `MICROIDE_PERF_HARNESS_BUILD`, exposing `Allocations::Snapshot()` and `Allocations::DeltaSince(...)`. Add focused tests for the counter itself.
 - [x] 1.3 Add `tests/perf/PerfHarness.{h,cpp}` defining `Scenario`, `ScenarioContext`, the static registrar, `PumpFrames(N)`, `Open(...)`, `OpenTab(...)`, `Type(...)`, `Scroll(...)`, `Wait(...)`, `AssertNoAllocationsDuringDraw()`, and the metric capture (`MetricSet`, `MetricSnapshot`, `Iteration`, `Aggregate`).
 - [x] 1.4 Add the SDL software-renderer driver: open a 1920x1080 window with `SDL_RENDERER_SOFTWARE`, force the bundled debug font, force DPI 1.0, disable plugins by default, and parameterize the seeded random source.
 - [x] 1.5 Add `tests/perf/PerfMain.cpp` consuming `PerfHarness`, parsing CLI flags (`--scenarios=`, `--update-baseline`, `--smoke`, `--iterations=`, `--report-json=`, `--report-text=`, `--reference-runner=`).
 - [x] 1.6 Add baseline loader/comparer in `tests/perf/Baseline.{h,cpp}`: load `tests/perf/baselines/<scenario>.json`, apply per-metric tolerances, compute pass/fail per metric, emit a structured diff. Default tolerances: p50 ±10 %, p95 ±20 %, max ±50 %.
 - [x] 1.7 Add a `microide_perf_tests` CTest entry running the smoke subset locally; add a separate CI job entry on `perf-runner-v1` running the full suite as the gate.
-- [x] 1.8 Add a pre-merge check that any `tests/perf/baselines/*.json` modification is accompanied by a `perf-baseline:` line in the change record (commit message or PR description). Document the rule in `docs/perf-harness.md`.
+- [x] 1.8 Add a pre-merge check that any `tests/perf/baselines/*.json` modification is accompanied by a `perf-baseline:` line in the change record (commit message or PR description). Document the rule in `dev-docs/performance/perf-harness.md`.
 
 ## 2. Initial Scenarios And Baselines
 
@@ -40,7 +40,7 @@
 - [x] 4.1 Add CMake presets `microide-asan`, `microide-ubsan`, `microide-tsan` with the appropriate `-fsanitize=` flags and link options.
 - [x] 4.2 Add three CI matrix entries running `microide_tests` under each preset. ASAN and UBSAN gate immediately; TSAN starts as soft-fail.
 - [x] 4.3 Investigate and fix the `WorkspaceLspClient` race noted in the chat-phase-2 memory record. Add a focused regression test and confirm TSAN reports clean.
-- [x] 4.4 Triage any further races, leaks, or undefined-behavior reports surfaced by the new CI variants. Fix or file in `docs/known-tech-debt.md` per the bug-detection-tooling spec.
+- [x] 4.4 Triage any further races, leaks, or undefined-behavior reports surfaced by the new CI variants. Fix or file in `dev-docs/project/known-tech-debt.md` per the bug-detection-tooling spec.
 - [x] 4.5 Flip TSAN from soft-fail to hard-fail.
 
 ## 5. Fuzzing Harnesses
@@ -52,7 +52,7 @@
 - [x] 5.5 Add `tests/fuzz/GitBlameParserFuzz.cpp` feeding arbitrary `git blame --porcelain` output through the parser.
 - [x] 5.6 Commit initial corpora under `tests/fuzz/corpora/<target>/`.
 - [x] 5.7 Add a CI job running each fuzzer for 60 s on PR; add a nightly job running each for an extended documented duration.
-- [x] 5.8 Triage fuzz findings. Fix issues that are reachable from real input or indicate memory unsafety; file the rest in `docs/known-tech-debt.md`.
+- [x] 5.8 Triage fuzz findings. Fix issues that are reachable from real input or indicate memory unsafety; file the rest in `dev-docs/project/known-tech-debt.md`.
 
 ## 6. SingleLineText Collapse
 
@@ -66,7 +66,7 @@
 
 - [x] 7.1 Identify chat-composer event paths that are behaviorally single-line (selection-range, clipboard, select-all on the visible line).
 - [x] 7.2 Route those paths through `SingleLineKeyHandler` and the shared model; keep the multiline storage for newline/vertical-movement/page-nav.
-- [x] 7.3 Update `docs/text-surface-unification.md` to describe the shrunk multiline exception. Add a regression test asserting the shared paths route through the canonical model.
+- [x] 7.3 Update `dev-docs/design/text-surface-unification.md` to describe the shrunk multiline exception. Add a regression test asserting the shared paths route through the canonical model.
 - [x] 7.4 Re-run `chat_pane_long_transcript`. Confirm green.
 
 ## 8. Coordinator-TU Decomposition
@@ -90,12 +90,12 @@
 
 ## 10. Bug Triage And Documentation
 
-- [x] 10.1 Triage every non-blocking finding from sanitizer CI, fuzz CI, and the long-soak. Add reproduction steps and severity to `docs/known-tech-debt.md`.
-- [x] 10.2 Update `docs/runtime-profiling.md` and `docs/startup-tracing.md` to describe the harness as the primary regression oracle and the env-traces as the developer fallback.
-- [x] 10.3 Add `docs/perf-harness.md` covering: how to add a scenario, how to update a baseline, the `perf-baseline:` change-record convention, the reference machine class, and the smoke vs. gate split.
+- [x] 10.1 Triage every non-blocking finding from sanitizer CI, fuzz CI, and the long-soak. Add reproduction steps and severity to `dev-docs/project/known-tech-debt.md`.
+- [x] 10.2 Update `dev-docs/performance/runtime-profiling.md` and `dev-docs/performance/startup-tracing.md` to describe the harness as the primary regression oracle and the env-traces as the developer fallback.
+- [x] 10.3 Add `dev-docs/performance/perf-harness.md` covering: how to add a scenario, how to update a baseline, the `perf-baseline:` change-record convention, the reference machine class, and the smoke vs. gate split.
 - [x] 10.4 Update `guidelines/performance.md`, `guidelines/architecture.md`, `guidelines/testing.md`, `AGENTS.md`, and `CLAUDE.md` to reference the harness, the sanitizer matrix, the fuzzing harnesses, and the new lint rules.
-- [x] 10.5 Update `docs/active-work.md` to reflect the harness, sanitizer matrix, fuzzing, and coordinator-decomposition completions as the new shipped baseline.
-- [x] 10.6 Close items in `docs/known-tech-debt.md` that this change resolves (`WorkspaceShellTestAccess` trim, `util/SingleLineText` collapse, oversized coordinator TUs, lint coverage gaps, LspClient race).
+- [x] 10.5 Update `dev-docs/project/active-work.md` to reflect the harness, sanitizer matrix, fuzzing, and coordinator-decomposition completions as the new shipped baseline.
+- [x] 10.6 Close items in `dev-docs/project/known-tech-debt.md` that this change resolves (`WorkspaceShellTestAccess` trim, `util/SingleLineText` collapse, oversized coordinator TUs, lint coverage gaps, LspClient race).
 
 ## 11. Long-Soak Nightly
 

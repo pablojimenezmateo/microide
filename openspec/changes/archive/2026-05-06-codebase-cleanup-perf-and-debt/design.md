@@ -5,7 +5,7 @@ After `comprehensive-tech-debt-cleanup` (archived 2026-04-29) and the throughput
 - The 870-LOC one-shot legacy persistence importer is still compiled. Six of its public functions (`SerializeUserConfig`, `SerializeProjectConfig`, `SerializeProjectSession`, `SerializeWorkspaceSession`, `EncodeSessionNodePath`, `DecodeSessionNodePath`) have zero callers. The `persisted-state-format` spec already schedules its deletion in the release-after-next.
 - `WorkspaceShellRenderSidebar.cpp:120-121` allocates `std::string` per frame to materialize a search/replace fallback string from a `std::string_view`. Two heap allocations every frame the search panel is visible — exactly the pattern the render lint was meant to catch, but the lint only checks for shell calls and geometry access.
 - `TextViewport::TextForRange` (`src/editor/TextViewport.cpp:754-760`) builds a multi-line clipboard string with `+=` and `push_back('\n')` without reserving capacity. On large multi-line copies this incurs O(log N) reallocations that are easy to remove.
-- `TextViewport::ReplaceAllCaseInsensitive` (line 479) copies the entire `document_->lines` vector before mutating, then the change runs per-line. Range-based undo is already shipped for ordinary edits per `docs/active-work.md`; this call site is a remnant.
+- `TextViewport::ReplaceAllCaseInsensitive` (line 479) copies the entire `document_->lines` vector before mutating, then the change runs per-line. Range-based undo is already shipped for ordinary edits per `dev-docs/project/active-work.md`; this call site is a remnant.
 - `WorkspaceTabCoordinatorShellBridge::PrepareEditorViewportForSave` (line 128-135) calls `platform::RunSubprocess(formatter->command, ...)` synchronously on the save path. `WorkspaceToolDownloader::ComputeSha256` (lines 35,41) calls `RunSubprocess` synchronously on tool installation. Both are in `src/workspace/`, both block a foreground thread, and both are flagged in tech-debt item 5 as "deferred". A `ProjectBackgroundExecutor` already exists; the migration just needs to land.
 - `FileIndexWatcher::PollFallback` (`src/platform/FileIndexWatcher.cpp:546-575`) walks the snapshot map twice — once for create/modify, once for delete. A merge-walk over both maps in one pass produces the same change set with half the lookups.
 - The architectural-lint test (`tests/ArchitectureInvariantsTests.cpp`, 896 LOC, ~14 hard-fail rules) does not cover any of the patterns above. Without new rules, every future contributor who reverts one of the cleanups above goes through code review only.
@@ -19,7 +19,7 @@ The user explicitly asked for new invariants so that the patterns we delete cann
 - Remove the four concrete perf paper-cuts above without changing any user-visible behavior.
 - Close the formatter and tool-validator follow-ups under tech-debt item 5 by routing both through `ProjectBackgroundExecutor`.
 - Extend `ArchitectureInvariantsTests` with four new hard-fail rules covering each removed pattern.
-- Update durable docs (`AGENTS.md`, `CLAUDE.md`'s "Hard Architectural Invariants" mirror, `docs/known-tech-debt.md`) so the new rules are discoverable.
+- Update durable docs (`AGENTS.md`, `CLAUDE.md`'s "Hard Architectural Invariants" mirror, `dev-docs/project/known-tech-debt.md`) so the new rules are discoverable.
 
 **Non-Goals:**
 - No new features. No user-visible behavior changes.
@@ -85,7 +85,7 @@ The `performance-budgets` capability already requires harness evidence for renam
 2. Land the formatter-async and tool-downloader-async migrations. These cross a thread boundary; ship them with their unit-test updates and a green `linter_on_save` harness run.
 3. Land the legacy importer deletion in its own commit, gated by green `cold_startup_*` runs. Delete `WorkspacePersistenceLegacyFormat.{h,cpp}`, `PersistenceService` importer call sites, and `<file>.legacy` files in the user data directory at first launch after upgrade. Remove unit tests covering the legacy parser; tests covering the structured format are unaffected.
 4. Add the four new architectural-lint rules to `tests/ArchitectureInvariantsTests.cpp` in the same commit as the deletions they enforce. Run `ctest` and confirm zero violations.
-5. Update `AGENTS.md` "Hard Architectural Invariants", `CLAUDE.md` mirror, and `docs/known-tech-debt.md` to reflect the closures.
+5. Update `AGENTS.md` "Hard Architectural Invariants", `CLAUDE.md` mirror, and `dev-docs/project/known-tech-debt.md` to reflect the closures.
 
 Rollback strategy: each step above is a separate commit; revert the offending step. The legacy-importer deletion is the only step with user-visible blast radius — its rollback restores the importer, which the new lint rule would then need to be removed alongside.
 

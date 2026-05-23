@@ -143,7 +143,7 @@ RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_ro
 }
 
 // Ratchet-only cap on the number of `WorkspaceShell*.cpp` translation units.
-// File decomposition has reached a plateau (see docs/known-tech-debt.md
+// File decomposition has reached a plateau (see dev-docs/project/known-tech-debt.md
 // item #16); new shell-adjacent behavior should land on a service, not on
 // a new `WorkspaceShell*.cpp` companion. If a migration removes one of
 // these files, lower the cap; do not raise it. This guardrail blocks

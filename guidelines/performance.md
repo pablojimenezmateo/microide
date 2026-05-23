@@ -23,10 +23,10 @@ Collect evidence when work touches:
 
 ## Tools And Entry Points
 
-- Use `docs/perf-harness.md` as the primary performance regression oracle.
+- Use `dev-docs/performance/perf-harness.md` as the primary performance regression oracle.
 - Run smoke scenarios locally through `microide_perf_tests` and treat `perf-runner-v1` baseline checks as the merge gate for perf-sensitive changes.
-- Use `docs/startup-tracing.md` for startup investigation.
-- Use `docs/runtime-profiling.md` for runtime and redraw profiling.
+- Use `dev-docs/performance/startup-tracing.md` for startup investigation.
+- Use `dev-docs/performance/runtime-profiling.md` for runtime and redraw profiling.
 - Use the in-tree benchmark utilities when search or diff behavior changes.
 - Keep before-and-after notes when a change claims a performance improvement.
 

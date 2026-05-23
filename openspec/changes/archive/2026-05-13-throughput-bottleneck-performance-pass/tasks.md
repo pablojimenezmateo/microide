@@ -4,7 +4,7 @@
 - [x] 1.2 Add deterministic cleanup for the isolated app-root before each harness process, plus a documented artifact-retention option for failed-run triage.
 - [x] 1.3 Add report metadata for runner class, SDL video driver, renderer driver, scenario list, iteration count, layout mode, seed, and advisory-vs-reference provenance.
 - [x] 1.4 Add regression coverage proving `cold_startup_no_project` ignores a real user `~/.local/state/microide/workspace-session`.
-- [x] 1.5 Update `docs/perf-harness.md` with the isolated-run contract and artifact-retention workflow.
+- [x] 1.5 Update `dev-docs/performance/perf-harness.md` with the isolated-run contract and artifact-retention workflow.
 - [x] 1.6 Rerun clean local before reports after harness isolation and save them under this change as `perf-before-isolated-smoke.*`, `perf-before-isolated-hotspots.*`, and `perf-before-isolated-idle.*`.
 
 ## 2. Fold And Row-Mapping Hot Paths
@@ -37,4 +37,4 @@
 - [x] 4.7 Capture startup and runtime after traces with `MICROIDE_STARTUP_TRACE=1`, `MICROIDE_PERF_TRACE=1`, `MICROIDE_PERF_TRACE_MIN_MS=5`, and `MICROIDE_TRACE_REDRAW=1`. (saved as `startup-trace-after.txt`, `runtime-trace-after.txt`, `editor-hotspots-trace-after.txt`)
 - [x] 4.8 Ask for a real-window manual trace run if local symptoms remain: `env MICROIDE_PERF_TRACE=1 MICROIDE_PERF_TRACE_MIN_MS=5 MICROIDE_TRACE_REDRAW=1 ./build/microide/microide`, then resize editor, scroll a 50000-line file, type with auto-close, and run terminal long output. (2026-05-13 manual trace: first real-window `WorkspaceRootView::Render` still peaked at 2514.65 ms on restored 50k-line editor state; steady-state `Application::WorkspaceRender(fallback-full)` mostly settled around 14-18 ms with occasional 27-35 ms spikes.)
 - [x] 4.9 Won't do for this archive: authoritative `perf-runner-v1` gate was not run because GitHub/runner usage is unavailable in this environment. No baseline files were updated.
-- [x] 4.10 Update `docs/performance-findings.md` with the ranked before/after ledger, final metrics, and any remaining opportunities.
+- [x] 4.10 Update `dev-docs/performance/performance-findings.md` with the ranked before/after ledger, final metrics, and any remaining opportunities.

@@ -33,5 +33,5 @@
 
 - [x] 6.1 Remove or rewrite AI/chat/plugin integration tests and test-access seams tied to removed features.
 - [x] 6.2 Replace `chat_pane_long_transcript` perf scenario/baseline with a non-AI required scenario and update harness assertions.
-- [x] 6.3 Update durable docs (`AGENTS.md`, `CLAUDE.md`, `docs/implementation-guide.md`, `docs/active-work.md`, `ROADMAP.md`, and relevant guidelines) to remove AI references and align with updated specs.
+- [x] 6.3 Update durable docs (`AGENTS.md`, `CLAUDE.md`, `dev-docs/project/implementation-guide.md`, `dev-docs/project/active-work.md`, `ROADMAP.md`, and relevant guidelines) to remove AI references and align with updated specs.
 - [x] 6.4 Run targeted build/tests for touched subsystems and record validation evidence for the change.

@@ -8,8 +8,8 @@ Purpose: document a durable architecture decision and its consequences.
 - Tags: <plugins,workspace,rendering,performance,persistence,platform,testing>
 - Related:
   - `AGENTS.md`
-  - `docs/active-work.md`
-  - `docs/implementation-guide.md`
+  - `dev-docs/project/active-work.md`
+  - `dev-docs/project/implementation-guide.md`
   - Supersedes/Superseded by: ADR-...
 
 ## Context

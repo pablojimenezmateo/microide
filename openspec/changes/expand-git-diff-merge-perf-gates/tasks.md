@@ -18,7 +18,7 @@
 
 - [ ] 3.1 Capture reference baselines on `perf-runner-v1` for each new scenario. (deferred: use workflow_dispatch `capture_git_workstation_baselines=true` when the self-hosted queue is available)
 - [x] 3.2 Commit baseline JSON files with tolerances and rationale where defaults are insufficient.
-- [x] 3.3 Update `docs/perf-harness.md` to list the new Git workstation scenarios and evidence requirements.
+- [x] 3.3 Update `dev-docs/performance/perf-harness.md` to list the new Git workstation scenarios and evidence requirements.
 
 ## 4. Verification
 

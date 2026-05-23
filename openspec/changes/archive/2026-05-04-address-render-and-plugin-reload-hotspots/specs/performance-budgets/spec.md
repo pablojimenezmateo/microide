@@ -76,7 +76,7 @@ Whole-workspace per-frame work — mouse-state synchronisation, layout recompute
 
 ### Requirement: Startup Budget
 
-MicroIDE SHALL complete cold startup (binary launch to interactive shell with the last-session project restored) within a documented budget on a reference Linux host, measured through `docs/startup-tracing.md`. Changes that affect startup paths or schedule startup-triggered background work SHALL record startup trace output and startup-to-idle evidence in the change record.
+MicroIDE SHALL complete cold startup (binary launch to interactive shell with the last-session project restored) within a documented budget on a reference Linux host, measured through `dev-docs/performance/startup-tracing.md`. Changes that affect startup paths or schedule startup-triggered background work SHALL record startup trace output and startup-to-idle evidence in the change record.
 
 The startup budget on the reference host SHALL be: `WorkspaceShell::InitializeCurrentProject` ≤ 250 ms, of which `RestoreSessionState::RebuildTabs` ≤ 100 ms. Changes that regress either bound SHALL NOT merge.
 

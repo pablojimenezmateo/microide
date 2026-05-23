@@ -20,5 +20,5 @@ Recent commits introduced a startup regression where MicroIDE reaches 100% CPU i
 ## Impact
 
 - Affected code will likely include startup initialization, the main event loop, project refresh/file watching, and any background scheduling paths activated during project open.
-- Affected documentation includes `docs/startup-tracing.md` and `docs/runtime-profiling.md` through the measured evidence recorded for this regression.
+- Affected documentation includes `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` through the measured evidence recorded for this regression.
 - Affected product contract includes `openspec/specs/performance-budgets/spec.md`.

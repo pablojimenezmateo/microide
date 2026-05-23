@@ -4,11 +4,11 @@ MicroIDE's shipped surface is already large: SDL3 shell, multi-project workspace
 
 The constraints this design operates under:
 
-- `docs/implementation-guide.md` still lists "AI/chat surfaces" as a non-goal, which contradicts the shipped chat pane, provider bridge, and MCP permission flow.
+- `dev-docs/project/implementation-guide.md` still lists "AI/chat surfaces" as a non-goal, which contradicts the shipped chat pane, provider bridge, and MCP permission flow.
 - `ROADMAP.md` is a validation pass for the plugin phase; it does not declare the product's durable shape.
-- Compare and merge are shipped but render through overlapping code paths rather than one unified decorated text-grid pipeline. `docs/diff-editor-merge-rewrite-plan.md` captures the intended unification target.
-- Performance findings (`docs/performance-findings.md`, `docs/known-tech-debt.md` items 8–12) are tracked as debt rather than as durable budgets.
-- The new `guidelines/` handbook and `CLAUDE.md` were just merged; they define source-of-truth order (`AGENTS.md` > `docs/active-work.md` > `docs/implementation-guide.md` > focused docs > handbook) but do not yet include a product-vision spec.
+- Compare and merge are shipped but render through overlapping code paths rather than one unified decorated text-grid pipeline. `dev-docs/project/diff-editor-merge-rewrite-plan.md` captures the intended unification target.
+- Performance findings (`dev-docs/performance/performance-findings.md`, `dev-docs/project/known-tech-debt.md` items 8–12) are tracked as debt rather than as durable budgets.
+- The new `guidelines/` handbook and `CLAUDE.md` were just merged; they define source-of-truth order (`AGENTS.md` > `dev-docs/project/active-work.md` > `dev-docs/project/implementation-guide.md` > focused docs > handbook) but do not yet include a product-vision spec.
 
 Stakeholder: this is a single-maintainer project; the audience for these specs is the maintainer plus any AI coding agent working in the repo under `CLAUDE.md`.
 
@@ -18,7 +18,7 @@ Stakeholder: this is a single-maintainer project; the audience for these specs i
 - Establish `openspec/specs/product-vision` as the durable, machine-readable product thesis that other changes must align with.
 - Establish `openspec/specs/diff-merge-editor` and `openspec/specs/performance-budgets` as the durable correctness and latency contracts for the product's main differentiator.
 - Establish `openspec/specs/ai-workflows` as the durable contract for the shipped AI surfaces, so the non-goal entry in the implementation guide can be retired in the same slice.
-- Align the durable docs that currently touch product scope (`docs/implementation-guide.md`, `ROADMAP.md`, `docs/active-work.md` where it duplicates vision, `AGENTS.md`, `CLAUDE.md`, `guidelines/architecture.md`, `guidelines/performance.md`) so they no longer contradict the new specs. Rewrite `README.md` as a product-first document. Archive shipped plan docs under `docs/archive/`.
+- Align the durable docs that currently touch product scope (`dev-docs/project/implementation-guide.md`, `ROADMAP.md`, `dev-docs/project/active-work.md` where it duplicates vision, `AGENTS.md`, `CLAUDE.md`, `guidelines/architecture.md`, `guidelines/performance.md`) so they no longer contradict the new specs. Rewrite `README.md` as a product-first document. Archive shipped plan docs under `dev-docs/archive/`.
 - Keep the diff-merge unification as a directional commitment backed by `microide_diff_bench` rather than a full implementation inside this change.
 
 **Non-Goals:**
@@ -32,9 +32,9 @@ Stakeholder: this is a single-maintainer project; the audience for these specs i
 
 ### D1: Product vision lives in `openspec/specs/`, not only in prose docs
 
-OpenSpec specs are machine-readable and diff-reviewable; prose docs drift. `docs/implementation-guide.md` still lists AI as a non-goal months after AI shipped, which is exactly the failure mode we need to prevent.
+OpenSpec specs are machine-readable and diff-reviewable; prose docs drift. `dev-docs/project/implementation-guide.md` still lists AI as a non-goal months after AI shipped, which is exactly the failure mode we need to prevent.
 
-Alternative considered: keep vision in `docs/implementation-guide.md` and treat OpenSpec as implementation-only. Rejected because the implementation guide has already drifted, and there is no mechanical way to flag a future proposal that contradicts it.
+Alternative considered: keep vision in `dev-docs/project/implementation-guide.md` and treat OpenSpec as implementation-only. Rejected because the implementation guide has already drifted, and there is no mechanical way to flag a future proposal that contradicts it.
 
 Decision: the durable product thesis is the `product-vision` spec. Prose docs reference it and are updated in the same slice when it changes.
 
@@ -58,7 +58,7 @@ Decision: `ai-workflows` spec pins the host-owned surfaces. Providers remain plu
 
 Perf is the project's second-highest priority after correctness. Keeping budgets only in `guidelines/performance.md` makes them easy to slide past in review. Treating them as a capability with scenarios lets a future change that regresses typing latency be flagged as a spec violation, not just a style violation.
 
-Alternative considered: keep perf as prose in `guidelines/performance.md`. Rejected because prose guidance has not prevented the regressions already tracked in `docs/known-tech-debt.md`.
+Alternative considered: keep perf as prose in `guidelines/performance.md`. Rejected because prose guidance has not prevented the regressions already tracked in `dev-docs/project/known-tech-debt.md`.
 
 Decision: `performance-budgets` spec ties each budget to a specific tool (`MICROIDE_PERF_TRACE`, `microide_diff_bench`, `microide_search_bench`) and requires before/after evidence on hot-path changes.
 
@@ -72,9 +72,9 @@ Decision: this change creates specs and updates doc pointers only. Any code chan
 
 ## Risks / Trade-offs
 
-- [Spec drift from shipped behavior] → Each spec scenario is phrased to match the existing shipped behavior described in `README.md` and `docs/active-work.md`. Where the spec requires more than the shipped behavior (unified render pipeline, no file-size-threshold diff degradation), the scenario uses SHALL and is called out in this design as a deferred implementation target.
+- [Spec drift from shipped behavior] → Each spec scenario is phrased to match the existing shipped behavior described in `README.md` and `dev-docs/project/active-work.md`. Where the spec requires more than the shipped behavior (unified render pipeline, no file-size-threshold diff degradation), the scenario uses SHALL and is called out in this design as a deferred implementation target.
 - [Budgets without numeric thresholds] → Budgets reference tools (`MICROIDE_PERF_TRACE`, `microide_diff_bench`) rather than hard numbers, because the current benchmarks do not have published per-op targets on a reference host. A follow-up change can add numeric thresholds once a reference host is declared. The scenarios still bite, because they require before/after evidence on hot-path changes.
-- [Non-goal retirement breaks expectations] → Removing "AI/chat surfaces" from the non-goal list may surprise readers of older docs. Mitigation: update `docs/implementation-guide.md` in the same slice and leave a short "AI is in scope, see `openspec/specs/ai-workflows`" pointer where the non-goal used to live.
+- [Non-goal retirement breaks expectations] → Removing "AI/chat surfaces" from the non-goal list may surprise readers of older docs. Mitigation: update `dev-docs/project/implementation-guide.md` in the same slice and leave a short "AI is in scope, see `openspec/specs/ai-workflows`" pointer where the non-goal used to live.
 - [OpenSpec becomes a second source of truth that drifts the other way] → `CLAUDE.md` already declares a source-of-truth order. Add one sentence to `CLAUDE.md` pointing at `openspec/specs/` as the authoritative product-contract layer, above focused docs but aligned with the active-work priority stack for in-flight work.
 
 ## Migration Plan
@@ -83,10 +83,10 @@ This change is docs- and spec-only. There is no deployment step.
 
 Rollout order inside the change:
 1. Create the four spec files (done as part of this proposal's `specs/` artifact).
-2. Update `docs/implementation-guide.md` to remove "AI/chat surfaces" from the non-goal list and to reference `openspec/specs/product-vision` and `openspec/specs/ai-workflows`.
+2. Update `dev-docs/project/implementation-guide.md` to remove "AI/chat surfaces" from the non-goal list and to reference `openspec/specs/product-vision` and `openspec/specs/ai-workflows`.
 3. Update `AGENTS.md` so "Current Project Reality" includes AI workflows as a built-in pillar and no longer frames plugin support as the single active phase.
 4. Rewrite `README.md` as a product-first document (pitch, capability-grouped highlights, build, controls, commands, benchmarks), replacing the current accreted changelog.
-5. Audit `docs/`: archive `docs/chat-pane-plan.md` (shipped) and any other plan docs whose phases are complete under a new `docs/archive/` directory. Keep reference docs in place.
+5. Audit `docs/`: archive `dev-docs/archive/chat-pane-plan.md` (shipped) and any other plan docs whose phases are complete under a new `dev-docs/archive/` directory. Keep reference docs in place.
 6. Update `ROADMAP.md` so the "next phase" section references the diff-merge unification and AI validation specs rather than carrying its own scope definition.
 7. Update `CLAUDE.md` source-of-truth ordering to include `openspec/specs/` as the product-contract layer, directly below `AGENTS.md`.
 8. Update `guidelines/architecture.md` and `guidelines/performance.md` to point at `openspec/specs/` for product scope and perf budget questions.

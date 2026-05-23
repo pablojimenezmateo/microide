@@ -12,7 +12,7 @@
 - [ ] 2.3 Add `IsRunAtlasEligible(std::string_view)` predicate that returns true iff every byte is `< 0x80` (i.e. every codepoint is `0x20..0x7E`; control chars and tabs are filtered upstream).
 - [ ] 2.4 Add the atlas fast-path inside `SdlTtfTextBackend::DrawRun` (or the equivalent run-draw entrypoint): when `IsRunAtlasEligible(run)` is true and the flag is on, build `src_rects` + `dst_rects` from `atlas.src_rects[c - 0x20]` and the run's screen position, call `SDL_SetTextureColorMod(atlas.texture, r, g, b)`, then `SDL_RenderTextures(atlas.texture, src_rects.data(), dst_rects.data(), n)`. Increment `render.glyph_atlas_hits` by `n`.
 - [ ] 2.5 Route every other run (non-ASCII or flag-off) through the existing composite path and increment `render.glyph_atlas_fallbacks` exactly once when a run was eligible-looking-from-outside but contains non-ASCII bytes.
-- [ ] 2.6 Re-run the full `microide_perf --smoke` smoke set with the flag off and confirm no regressions versus the pre-change numbers in `docs/performance-bottleneck-deep-dive-4.md`.
+- [ ] 2.6 Re-run the full `microide_perf --smoke` smoke set with the flag off and confirm no regressions versus the pre-change numbers in `dev-docs/performance/performance-bottleneck-deep-dive-4.md`.
 
 ## 3. Parity And Sanitizers
 
@@ -33,5 +33,5 @@
 - [ ] 5.1 Flip the compile-in default of `MICROIDE_RENDER_GLYPH_ATLAS` to on. Confirm the smoke suite still passes; `editor_render_whitespace_paint` p50 SHALL be ≥ 30 % below its pre-change baseline and `editor_sticky_scroll_scroll` p50 SHALL be ≥ 20 % below. Document the deltas in the PR.
 - [ ] 5.2 Update the affected baselines in `tests/perf/baselines/` (`editor_render_whitespace_paint.json`, `editor_sticky_scroll_scroll.json`, plus any other scenarios whose numbers shift outside tolerance). Add the required `perf-baseline: glyph atlas landed` line to the change record.
 - [ ] 5.3 Add an architectural-lint rule in `tests/ArchitectureInvariantsTests.cpp` that forbids direct atlas access outside `src/render/SdlTtfTextBackend.cpp` (regex on `GlyphAtlas` references).
-- [ ] 5.4 Update `docs/performance-bottleneck-deep-dive-2.md` Finding 15 status to `done` and add a one-line carry-over note in `docs/performance-bottleneck-deep-dive-4.md`'s status table.
+- [ ] 5.4 Update `dev-docs/performance/performance-bottleneck-deep-dive-2.md` Finding 15 status to `done` and add a one-line carry-over note in `dev-docs/performance/performance-bottleneck-deep-dive-4.md`'s status table.
 - [ ] 5.5 Capture the final before/after numbers and link the `perf-runner-v1` JSON report from the PR description.

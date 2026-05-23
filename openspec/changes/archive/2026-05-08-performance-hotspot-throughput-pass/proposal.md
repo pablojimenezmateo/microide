@@ -21,6 +21,6 @@ The current performance harness protects known regressions, but it does not yet 
 
 ## Impact
 
-- Affected systems: `tests/perf/*`, `docs/perf-harness.md`, performance baseline fixtures, and workspace/render/service code touched by prioritized optimizations.
+- Affected systems: `tests/perf/*`, `dev-docs/performance/perf-harness.md`, performance baseline fixtures, and workspace/render/service code touched by prioritized optimizations.
 - Product impact: lower latency and CPU usage in common workflows, with stronger regression detection before merge.
 - Process impact: introduces a repeatable throughput-oriented performance audit loop that can be reused for future passes.

@@ -17,8 +17,8 @@ This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
 
 Use this file for deferred work that is real, actionable, and still open.
-Use `docs/active-work.md` for current priorities.
-The broader architectural review (from 2026-04-20) is archived at `docs/archive/production-tech-debt-review.md`.
+Use `dev-docs/project/active-work.md` for current priorities.
+The broader architectural review (from 2026-04-20) is archived at `dev-docs/archive/production-tech-debt-review.md`.
 
 ## Scope
 
@@ -269,9 +269,9 @@ What is still open:
   mixed edit/scroll traces remain open.
 
 References:
-- `docs/startup-tracing.md`
-- `docs/runtime-profiling.md`
-- `docs/performance-findings.md`
+- `dev-docs/performance/startup-tracing.md`
+- `dev-docs/performance/runtime-profiling.md`
+- `dev-docs/performance/performance-findings.md`
 
 Recommended follow-up:
 - Add or extend focused benchmarks where repeated regressions are likely:
@@ -318,7 +318,7 @@ Relevant code:
 - `src/workspace/WorkspaceReviewComments.cpp` — `GetThreads`, `GetComments`
 - `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
 
-See also `docs/performance-findings.md` — Second Performance Pass, New finding 1.
+See also `dev-docs/performance/performance-findings.md` — Second Performance Pass, New finding 1.
 
 ## 9. `ComputeEditorPaneLayouts` Called Twice Per Render Frame
 
@@ -338,7 +338,7 @@ What remains:
 Relevant code:
 - `src/workspace/WorkspaceShellRenderFrame.cpp`
 
-See also `docs/performance-findings.md` — Second Performance Pass, New finding 2.
+See also `dev-docs/performance/performance-findings.md` — Second Performance Pass, New finding 2.
 
 ## 10. Terminal Cursor State Acquired Under Three Separate Mutex Locks Per Frame
 
@@ -360,7 +360,7 @@ Relevant code:
 - `src/terminal/TerminalSession.h` — `TerminalCursorSnapshot`, `CursorSnapshot()`
 - `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal cursor render path
 
-See also `docs/performance-findings.md` — Second Performance Pass, New finding 3.
+See also `dev-docs/performance/performance-findings.md` — Second Performance Pass, New finding 3.
 
 ## 11. `std::find` on `marked_lines` Vector in Review-Comment Marker Rendering
 
@@ -380,7 +380,7 @@ What remains:
 Relevant code:
 - `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
 
-See also `docs/performance-findings.md` — Second Performance Pass, New finding 4.
+See also `dev-docs/performance/performance-findings.md` — Second Performance Pass, New finding 4.
 
 ## 15. `TextViewport.cpp` Ownership Concentration
 
@@ -651,7 +651,7 @@ Remaining debt focus stays on items 5 and 6 unless new profiling demonstrates re
 
 ## 13. Do Not Revisit The Editor Glyph Atlas Without GPU Renderer + ≥ 10 % Texture-Cache Miss Rate
 
-Source: `docs/performance-bottleneck-deep-dive-4.md` "Rejected experiment: ASCII glyph atlas".
+Source: `dev-docs/performance/performance-bottleneck-deep-dive-4.md` "Rejected experiment: ASCII glyph atlas".
 
 Impact:
 - Saves engineering time on a previously-attempted dead end.
@@ -720,9 +720,9 @@ Status:
   baselines are deferred follow-ups tracked in
   `openspec/changes/split-layout-revision-tiers/tasks.md`.
 
-Source: `docs/performance-bottleneck-deep-dive-2.md` Finding 16,
-`docs/performance-bottleneck-deep-dive-3.md` partial,
-`docs/performance-bottleneck-deep-dive-4.md` Finding 4 (partial).
+Source: `dev-docs/performance/performance-bottleneck-deep-dive-2.md` Finding 16,
+`dev-docs/performance/performance-bottleneck-deep-dive-3.md` partial,
+`dev-docs/performance/performance-bottleneck-deep-dive-4.md` Finding 4 (partial).
 
 Impact:
 - Medium-to-high. Every edit currently bumps a single `document_->layout_revision`,
@@ -759,7 +759,7 @@ Reproduction / measurement:
 Notes:
 
 - This is the documented "honorable mention" alongside the font-atlas work
-  (`docs/performance-bottleneck-deep-dive-4.md`). Surface is wide — touches every
+  (`dev-docs/performance/performance-bottleneck-deep-dive-4.md`). Surface is wide — touches every
   cache invalidation site across `TextViewport`, `EditorViewRenderer`, and the render
   view-model builder — so it should be scoped as its own openspec change rather than
   bundled with smaller optimization passes.
@@ -787,7 +787,7 @@ Reproduction:
 
 Notes:
 - This is an environment prerequisite, not an app bug.
-- Documented in `docs/runtime-profiling.md`, `guidelines/testing.md`, `AGENTS.md`, and
+- Documented in `dev-docs/performance/runtime-profiling.md`, `guidelines/testing.md`, `AGENTS.md`, and
   `CLAUDE.md`.
 
 ### 12.2 UBSAN Intermittent FileWatcher Assertion Under Heavy Mixed Runs

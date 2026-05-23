@@ -92,9 +92,9 @@ Concrete local references:
 - `src/plugin/PluginHost.h`
 - `src/plugin/PluginHost.cpp`
 - `src/workspace/WorkspaceShellPlugins.cpp`
-- `docs/active-work.md`
-- `docs/plugin-runtime-research.md`
-- `docs/production-tech-debt-review.md`
+- `dev-docs/project/active-work.md`
+- `dev-docs/plugins/plugin-runtime-research.md`
+- `dev-docs/archive/production-tech-debt-review.md`
 
 Important current constraints:
 
@@ -245,7 +245,7 @@ The useful borrowable ideas are:
 
 This is both a product and dependency choice.
 
-`docs/implementation-guide.md` already says the tree should stay simple and technical rather than
+`dev-docs/project/implementation-guide.md` already says the tree should stay simple and technical rather than
 pictorial. Adding icon packs would:
 
 - widen rendering and asset-loading surface area
@@ -363,7 +363,7 @@ The current codebase now satisfies it well enough to treat Phase 1 as complete a
 contribution-model work.
 
 Before widening the plugin API, `microide` should continue the work already called out in
-`docs/production-tech-debt-review.md`:
+`dev-docs/archive/production-tech-debt-review.md`:
 
 - narrow `WorkspaceShell`
 - keep the shipped helper seams cohesive across `WorkspaceLayout*`, `WorkspaceTerminalSelection*`,
@@ -560,7 +560,7 @@ This is the part that must remain non-negotiable.
 - do not add a Node runtime, webview platform, or icon pipeline just to chase extension parity
 - do not poll by default; prefer file watching, debounced activation, and explicit invalidation
 - keep startup cheap by deferring extension activation until a command, file type, or view needs it
-- continue measuring with `docs/startup-tracing.md` and `docs/runtime-profiling.md`
+- continue measuring with `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md`
 
 ## Revised Phases
 
@@ -1017,10 +1017,10 @@ The wiring follows the existing pattern throughout the codebase:
 Local `microide` references:
 
 - `AGENTS.md`
-- `docs/active-work.md`
-- `docs/implementation-guide.md`
-- `docs/plugin-runtime-research.md`
-- `docs/production-tech-debt-review.md`
+- `dev-docs/project/active-work.md`
+- `dev-docs/project/implementation-guide.md`
+- `dev-docs/plugins/plugin-runtime-research.md`
+- `dev-docs/archive/production-tech-debt-review.md`
 - `src/plugin/PluginHost.h`
 - `src/plugin/PluginHost.cpp`
 - `src/project/FileOperationService.cpp`

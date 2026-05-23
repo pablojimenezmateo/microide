@@ -2,7 +2,7 @@
 
 Purpose: map the durable guidance for working in the `microide` codebase.
 
-Use `../AGENTS.md` for repo policy and `../docs/` for deeper subsystem detail. Use this handbook to keep implementation and refactor work aligned with the product's native desktop architecture.
+Use `../AGENTS.md` for repo policy and `../dev-docs/` for developer documentation. The top-level `docs/` directory is reserved for the public [GitHub Pages](https://pablojimenezmateo.github.io/microide/) site. Use this handbook to keep implementation and refactor work aligned with the product's native desktop architecture.
 
 ## Start Here
 

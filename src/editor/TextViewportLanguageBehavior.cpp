@@ -16,7 +16,7 @@
 // dedent-on-close, brace-split newline, smart-indent newline, and the multi-caret
 // pair-insert path. Split out from TextViewport.cpp on 2026-05-18 to relieve the
 // single-file ownership concentration tracked as item #15 in
-// docs/known-tech-debt.md. No header / API change: these are the same
+// dev-docs/project/known-tech-debt.md. No header / API change: these are the same
 // `TextViewport` member functions, defined in a sibling translation unit.
 //
 // Shared file-scope helpers used across TUs live in `TextViewportInternal.h`.

@@ -9,8 +9,8 @@ Purpose: record the durable policy for core product ownership in `microide`.
 - Related:
   - `AGENTS.md`
   - `../architecture.md`
-  - `../../docs/active-work.md`
-  - `../../docs/implementation-guide.md`
+  - `../../dev-docs/project/active-work.md`
+  - `../../dev-docs/project/implementation-guide.md`
 
 ## Context
 

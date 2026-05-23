@@ -4,7 +4,7 @@ The MicroIDE workspace layer accumulated debt during fast feature growth. Concre
 
 - `src/workspace/WorkspaceShell.h` is 1548 lines and exposes 600+ method declarations.
 - `src/workspace/WorkspaceShellTooling.cpp` is 2703 lines, `src/plugin/PluginHost.cpp` is 5074 lines, `src/workspace/WorkspaceActionContext.cpp` is 1086 lines.
-- 21+ `Workspace*Coordinator*` types exist; most hold a `WorkspaceShell&` and reach directly into shell internals. `docs/known-tech-debt.md` items 1, 2, and 4 already document this.
+- 21+ `Workspace*Coordinator*` types exist; most hold a `WorkspaceShell&` and reach directly into shell internals. `dev-docs/project/known-tech-debt.md` items 1, 2, and 4 already document this.
 - `current_project_state_.text_viewport` still exists alongside `ActiveEditorViewport()` (item 3).
 - `WorkspacePersistenceFormat.cpp` (835 lines) parses project state, preferences, and sessions as ad-hoc command lines, with `ParseSizeToken`/`ParseFloatToken`/`ParseIntToken`/`ParseInt64Token` wrapping `std::stoull`/`stoi`/`stof`/`stoll` in `try`/`catch`. ~22 numeric-parse call sites in the tree share that pattern.
 - Single-line text editing (insertion, caret, composition) is shared via `WorkspaceTextInputCoordinator`, but selection, backspace, copy/cut, and movement remain duplicated across prompt, command, chat, overlay, and sidebar surfaces (item 7).

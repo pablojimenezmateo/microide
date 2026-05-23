@@ -9,7 +9,7 @@ terminal, search, git, compare, and plugin paths.
 
 The local measurements below used the existing perf harness under SDL dummy video. They are useful
 for ranking bottlenecks, but the authoritative gate remains `perf-runner-v1` and the documented
-baseline workflow in `docs/perf-harness.md`.
+baseline workflow in `dev-docs/performance/perf-harness.md`.
 
 ## Implemented Tooling (2026-05-14)
 

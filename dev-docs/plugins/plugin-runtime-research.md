@@ -77,11 +77,11 @@ Plugin support is now an intentional project phase.
 
 The single source of truth for current status and priorities is:
 
-- `docs/active-work.md`
+- `dev-docs/project/active-work.md`
 
 This note remains the deeper architecture record for plugin expansion. It complements:
 
-- `docs/implementation-guide.md`
+- `dev-docs/project/implementation-guide.md`
 - `AGENTS.md`
 
 ## External Sources Studied
@@ -137,7 +137,7 @@ The biggest blockers are:
 
 1. `WorkspaceShell` still owns too much.
 
-   - `docs/archive/production-tech-debt-review.md` already called this out as the highest-impact remaining debt.
+   - `dev-docs/archive/production-tech-debt-review.md` already called this out as the highest-impact remaining debt.
    - `src/workspace/WorkspaceShell.h` still carries sidebar state, action metadata, prompts, projects, tabs, terminal state, hover state, and render helpers in one class.
 
 2. Sidebar modes are hardcoded product state, not registered contributions.
@@ -403,7 +403,7 @@ Required host behavior:
 - optional keybinding integration
 - optional menu exposure later
 
-This is a strong fit for the existing direction in `docs/archive/production-tech-debt-review.md`, which already recommended moving away from shell-centered action dispatch.
+This is a strong fit for the existing direction in `dev-docs/archive/production-tech-debt-review.md`, which already recommended moving away from shell-centered action dispatch.
 
 ### 2. Sidebar Provider Registry
 
@@ -724,8 +724,8 @@ The first plugin system should solve concrete editor extension problems, not bec
 If the architecture can support ESLint cleanly, the plugin system is probably on the right track.
 
 > Note: AI, chat, inline-completion, and provider-bridge workflows are retired
-> product scope (see `docs/implementation-guide.md` and the Phase 5 retirement note
-> in `docs/active-work.md`). Earlier revisions of this doc included an "LLM plugin"
+> product scope (see `dev-docs/project/implementation-guide.md` and the Phase 5 retirement note
+> in `dev-docs/project/active-work.md`). Earlier revisions of this doc included an "LLM plugin"
 > sketch as a second exemplar; it has been removed deliberately. New plugin-facing
 > seams should be motivated by ESLint-class, formatter-class, or language-server
 > workflows that the host already supports end to end.

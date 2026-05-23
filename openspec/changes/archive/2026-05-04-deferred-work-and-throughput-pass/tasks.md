@@ -82,10 +82,10 @@
 
 ## 10. Documentation And Final Validation
 
-- [x] 10.1 Update `docs/active-work.md` with the new shipped capabilities: event-driven file index, background git dispatch, layout cache, search streaming, adaptive idle
-- [x] 10.2 Update `docs/known-tech-debt.md` to mark item 5 (search/index snapshot model) as resolved by this change; update any related items whose status has changed
+- [x] 10.1 Update `dev-docs/project/active-work.md` with the new shipped capabilities: event-driven file index, background git dispatch, layout cache, search streaming, adaptive idle
+- [x] 10.2 Update `dev-docs/project/known-tech-debt.md` to mark item 5 (search/index snapshot model) as resolved by this change; update any related items whose status has changed
 - [x] 10.3 Update `AGENTS.md` § Do-Not-Regress Patterns with four new invariants: (a) no synchronous subprocess wait on main thread in workspace code, (b) LSP didOpen is non-blocking, (c) `ComputeLayout` skipped when dirty flag is clear, (d) SDL event loop never uses zero-delay poll at idle
-- [x] 10.4 Update `docs/perf-harness.md` with the three new scenarios and the extended `idle_soak_30s` coverage
+- [x] 10.4 Update `dev-docs/performance/perf-harness.md` with the three new scenarios and the extended `idle_soak_30s` coverage
 - [x] 10.5 Run the full default test suite: `cmake --build build && ctest --test-dir build --output-on-failure`
 - [x] 10.6 Run the ASAN preset: `cmake --preset microide-asan && cmake --build build/microide-asan && ctest --test-dir build/microide-asan --output-on-failure` (build succeeded; `ctest` failed on existing `WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard`; initial run also hit environment-specific LSan ptrace limitation)
 - [x] 10.7 Run the UBSAN preset: `cmake --preset microide-ubsan && cmake --build build/microide-ubsan && ctest --test-dir build/microide-ubsan --output-on-failure` (build succeeded; `ctest` failed on existing `WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard`)

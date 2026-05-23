@@ -30,7 +30,7 @@ Deferred items are tracked individually and will be tackled in follow-up passes.
 
 ---
 
-This is a follow-up investigation after the round-1 fixes (`docs/performance-bottleneck-deep-dive.md`)
+This is a follow-up investigation after the round-1 fixes (`dev-docs/performance/performance-bottleneck-deep-dive.md`)
 were implemented. The first deep dive removed the worst frame-prep regressions; this round digs
 deeper into render-path translation units, edit invalidation, terminal text storage, and several
 architectural-invariant violations that were missed.

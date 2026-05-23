@@ -26,7 +26,7 @@
 
 - [x] 5.1 Run targeted workspace UI tests covering status-bar routing, responsive layout mode controls, and settings overlay content.
 - [x] 5.2 Perform manual UX verification in regular and compact modes to confirm discoverability improvements in all revised app paths.
-- [x] 5.3 Update `docs/active-work.md` if the shipped UX baseline or rollout priorities change after implementation.
+- [x] 5.3 Update `dev-docs/project/active-work.md` if the shipped UX baseline or rollout priorities change after implementation.
 
 ## 6. Sidebar Header Cohesion Pass
 

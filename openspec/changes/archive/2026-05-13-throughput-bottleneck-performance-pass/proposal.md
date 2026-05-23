@@ -30,6 +30,6 @@ This pass is needed now because MicroIDE's product goal is speed first, and the 
 ## Impact
 
 - Affected code: `tests/perf/PerfHarness.*`, `tests/perf/PerfMain.cpp`, `tests/perf/baselines/*`, `src/editor/TextViewport.*`, `src/editor/FoldingModel.*`, `src/editor/EditorViewRenderer.cpp`, `src/workspace/RenderViewModelBuilder.*`, and focused regression tests for editor edit deltas and folding row maps.
-- Affected docs: `docs/perf-harness.md`, `docs/performance-findings.md`, and any baseline-change commit or PR text must include `perf-baseline:` when committed baselines move.
+- Affected docs: `dev-docs/performance/perf-harness.md`, `dev-docs/performance/performance-findings.md`, and any baseline-change commit or PR text must include `perf-baseline:` when committed baselines move.
 - Measurement artifacts already captured for this proposal: `perf-before-smoke.json`, `perf-before-gate-selected-3it.json`, `perf-before-idle-soak.json`, `startup-trace-before.txt`, `runtime-trace-before.txt`, `editor-hotspots-trace-before.txt`, `terminal-trace-before.txt`, `diff-bench-before.txt`, and `search-bench-before.txt`.
 - No external dependencies are required.

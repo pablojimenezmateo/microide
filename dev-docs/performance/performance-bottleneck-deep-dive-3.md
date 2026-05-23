@@ -4,9 +4,9 @@ Date: 2026-05-15
 
 ## Scope
 
-This pass assumes the round-2 workstream in `docs/performance-bottleneck-deep-dive-2.md` is **in progress or partially landed**: many render-path and editor-structure fixes there are real wins, but several items remain **partial** or **deferred**, and new hotspots appear once the obvious per-row paint and folding costs shrink.
+This pass assumes the round-2 workstream in `dev-docs/performance/performance-bottleneck-deep-dive-2.md` is **in progress or partially landed**: many render-path and editor-structure fixes there are real wins, but several items remain **partial** or **deferred**, and new hotspots appear once the obvious per-row paint and folding costs shrink.
 
-Measurements below mix **implemented counter evidence** (local `microide-perf` runs) with static analysis. For authoritative regression gating, use `docs/perf-harness.md` with `perf-runner-v1` provenance.
+Measurements below mix **implemented counter evidence** (local `microide-perf` runs) with static analysis. For authoritative regression gating, use `dev-docs/performance/perf-harness.md` with `perf-runner-v1` provenance.
 
 ## Status snapshot (carry-over from round 2)
 

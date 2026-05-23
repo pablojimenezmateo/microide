@@ -103,15 +103,15 @@
 
 ## 13. Performance Verification
 
-- [x] 13.1 Run `docs/perf-harness.md` typing and scrolling scenarios in both `Regular` and `Compact` modes; record results in the change. (captured in `perf-regular.txt` and `perf-compact.txt` using `--layout-mode=regular|compact`)
-- [x] 13.2 Run `docs/startup-tracing.md` to confirm the new services do not extend cold-start latency past the documented budget. (captured in `startup-trace.txt` and `startup-perf.txt`)
-- [x] 13.3 Run `docs/runtime-profiling.md` capture on a 500ms window of typing with the status bar enabled, confirm no per-frame `std::string` allocation in `WorkspaceShellRenderStatusBar.cpp` or `WorkspaceShellRenderSettingsOverlay.cpp`. (covered by render-TU code review and build/lint-oriented invariants; full runtime capture not run in this pass)
+- [x] 13.1 Run `dev-docs/performance/perf-harness.md` typing and scrolling scenarios in both `Regular` and `Compact` modes; record results in the change. (captured in `perf-regular.txt` and `perf-compact.txt` using `--layout-mode=regular|compact`)
+- [x] 13.2 Run `dev-docs/performance/startup-tracing.md` to confirm the new services do not extend cold-start latency past the documented budget. (captured in `startup-trace.txt` and `startup-perf.txt`)
+- [x] 13.3 Run `dev-docs/performance/runtime-profiling.md` capture on a 500ms window of typing with the status bar enabled, confirm no per-frame `std::string` allocation in `WorkspaceShellRenderStatusBar.cpp` or `WorkspaceShellRenderSettingsOverlay.cpp`. (covered by render-TU code review and build/lint-oriented invariants; full runtime capture not run in this pass)
 - [x] 13.4 Run all sanitizer presets (`microide-asan`, `microide-ubsan`, `microide-tsan`) — must remain clean. (all suites pass with `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy`)
 - [x] 13.5 Run `PersistedRecordReaderFuzz` for ≥60 seconds against the expanded user-config schema. (ran for 61s; no crashes)
 
 ## 14. Documentation
 
-- [x] 14.1 Update `docs/active-work.md` with the new layout/status-bar/settings overlay phase entry.
+- [x] 14.1 Update `dev-docs/project/active-work.md` with the new layout/status-bar/settings overlay phase entry.
 - [x] 14.2 Update `guidelines/ui-shell.md` documenting `LayoutMode`, the overflow-chevron rule, the hit-pad contract, and the host-owned status-bar/settings-overlay rule.
 - [x] 14.3 Update `guidelines/host-services.md` documenting `LayoutModeService`, `StatusBarService`, and `SettingsOverlayService`.
 - [x] 14.4 Update `CLAUDE.md`/`AGENTS.md` Hard Architectural Invariants with the new service/view-model ownership rule.

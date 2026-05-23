@@ -7,7 +7,7 @@ Purpose: first-stop operating guide for agents working in this repository.
 - `microide` is a native desktop IDE shell built in C++20 with CMake and SDL3.
 - The current priority is correctness first, then speed, then low CPU usage.
 - Plugin support is an active expansion phase; keep plugin seams narrow and host-owned.
-- `AGENTS.md` owns repo policy, `docs/active-work.md` owns current direction, and `docs/implementation-guide.md` owns the durable product map.
+- `AGENTS.md` owns repo policy, `dev-docs/project/active-work.md` owns current direction, and `dev-docs/project/implementation-guide.md` owns the durable product map.
 - Build with `cmake`, test with `ctest`, and use focused `microide_tests` filters for quick validation.
 - Prefer explicit ownership, deterministic helpers, and thin coordinators over broad mutable facades.
 
@@ -30,9 +30,9 @@ When guidance conflicts, use this order:
 
 1. `AGENTS.md`
 2. `openspec/specs/` — authoritative product contracts (vision, diff/merge, performance budgets)
-3. `docs/active-work.md`
-4. `docs/implementation-guide.md`
-5. Focused subsystem docs in `docs/`
+3. `dev-docs/project/active-work.md`
+4. `dev-docs/project/implementation-guide.md`
+5. Focused subsystem docs in `dev-docs/`
 6. The handbook under `guidelines/`
 
 ## Agent Best Practices
@@ -44,7 +44,7 @@ When guidance conflicts, use this order:
 - Prefer RAII, explicit ownership, and value semantics. Reach for inheritance only when there is a durable polymorphic boundary; otherwise prefer plain types, composition, and focused helpers.
 - Keep deterministic logic out of SDL event glue and paint code when possible. Thin orchestration layers are easier to test and safer to refactor.
 - Avoid hidden coupling through mutable global state, shared singleton-style services, or broad friend access.
-- Treat performance-sensitive work as measurable engineering. Use `docs/startup-tracing.md` and `docs/runtime-profiling.md` instead of guessing.
+- Treat performance-sensitive work as measurable engineering. Use `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` instead of guessing.
 
 ## Development Workflow
 
@@ -68,7 +68,7 @@ Run focused tests with one or more substring filters:
 ./build/microide/microide_tests "WorkspaceShell/EditorDirty"
 ```
 
-When a change affects performance-sensitive code, run relevant `docs/perf-harness.md` scenarios first, then use startup/runtime tracing docs for deeper diagnosis.
+When a change affects performance-sensitive code, run relevant `dev-docs/performance/perf-harness.md` scenarios first, then use startup/runtime tracing docs for deeper diagnosis.
 
 Sanitizer and fuzz workflows expected for risky changes:
 
@@ -125,8 +125,8 @@ The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `
 ## Related Docs
 
 - `AGENTS.md`: repo policy, priorities, and iteration loop
-- `docs/active-work.md`: current shipped baseline and active phases
-- `docs/implementation-guide.md`: durable product and subsystem map
+- `dev-docs/project/active-work.md`: current shipped baseline and active phases
+- `dev-docs/project/implementation-guide.md`: durable product and subsystem map
 - `guidelines/architecture.md`: handbook summary of subsystem boundaries
 - `guidelines/host-services.md`: service and integration rules
 - `guidelines/ui-shell.md`: shell composition and render-path rules

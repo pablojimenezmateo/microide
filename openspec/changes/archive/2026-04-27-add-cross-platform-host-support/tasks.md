@@ -14,4 +14,4 @@
 
 - [x] 3.1 Add packaging and launch support for macOS app bundles and Windows desktop builds, including runtime asset discovery and documented local bring-up steps.
 - [x] 3.2 Add targeted automated validation and CI coverage for Linux, macOS, and Windows host-facing workflows affected by the new platform services.
-- [x] 3.3 Update durable docs such as `docs/implementation-guide.md`, `docs/active-work.md`, and platform support notes so the supported-host contract, known gaps, and rollout plan stay aligned with the shipped architecture.
+- [x] 3.3 Update durable docs such as `dev-docs/project/implementation-guide.md`, `dev-docs/project/active-work.md`, and platform support notes so the supported-host contract, known gaps, and rollout plan stay aligned with the shipped architecture.

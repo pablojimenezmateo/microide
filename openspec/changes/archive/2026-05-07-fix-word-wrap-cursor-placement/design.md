@@ -93,7 +93,7 @@ We do **not** invalidate the cache on cursor motion, scroll, or selection change
 - **Risk**: Per-caret `preferred_column` increases `secondary_carets_` size by one int per caret. → **Mitigation**: negligible; multi-caret count is bounded by user input and already tracked in a `std::vector`.
 - **Risk**: Hit-testing tab-expanded characters on a continuation row could land between cells if `visual_col` isn't snapped. → **Mitigation**: reuse `TextLayout::TextColumnForVisualColumn` (already used by the no-wrap hit path) and clamp to `[visual_start, visual_end]`.
 - **Risk**: A logical line of width 0 (empty) must still produce one wrapped row. → **Mitigation**: existing `EnsureWrappedRowLayouts()` already emits `{line, 0, 0}` for empty lines; the render branch must paint nothing but still advance one row, mirroring no-wrap behaviour.
-- **Risk**: Performance regression from extra indirection per row. → **Mitigation**: `VisibleWrappedRowLayout` is `[[nodiscard]]` const-by-reference into a contiguous vector; benchmark wrap-on render against wrap-off baseline using `docs/perf-harness.md` scenarios on a 10k-line file.
+- **Risk**: Performance regression from extra indirection per row. → **Mitigation**: `VisibleWrappedRowLayout` is `[[nodiscard]]` const-by-reference into a contiguous vector; benchmark wrap-on render against wrap-off baseline using `dev-docs/performance/perf-harness.md` scenarios on a 10k-line file.
 
 ## Migration Plan
 

@@ -3,7 +3,7 @@
 Reviewed on 2026-04-25.
 
 This file captures the durable product direction for the current C++/SDL3 codebase.
-Keep it shorter than `docs/active-work.md`.
+Keep it shorter than `dev-docs/project/active-work.md`.
 
 ## Scope
 
@@ -74,7 +74,7 @@ The current SDL shell already includes:
   and common chrome glyphs across prompts, overlays, sidebar, panel, and editor-empty states
 - an optional `SDL3_ttf` backend with a debug-text fallback
 
-Current implementation status and active priorities are tracked in `docs/active-work.md`.
+Current implementation status and active priorities are tracked in `dev-docs/project/active-work.md`.
 
 ## Durable Product Decisions
 
@@ -175,13 +175,13 @@ whether the backend is external or built in.
 - `openspec/specs/performance-budgets/spec.md`: durable latency, CPU, and measurement policy
 - `openspec/specs/host-platform-support/spec.md`: durable supported-host contract for Linux,
   macOS, and Windows host services
-- `docs/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
+- `dev-docs/project/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
-- `docs/host-platform-audit.md`: current host-service seam map and the remaining POSIX-only gaps
-- `docs/host-platform-bringup.md`: local build, launch, and focused validation flow for supported hosts
-- `docs/plugin-runtime-research.md`: plugin architecture notes and external references
-- `docs/known-tech-debt.md`: concrete open debt that still matters after recent refactors
-- `docs/macos-support-plan.md`: host-platform plan for bringing `microide` to macOS
-- `docs/performance-findings.md`: shipped performance work worth preserving
-- `docs/startup-tracing.md`: how to measure startup work
-- `docs/runtime-profiling.md`: runtime and redraw profiling workflow
+- `dev-docs/platform/host-platform-audit.md`: current host-service seam map and the remaining POSIX-only gaps
+- `dev-docs/platform/host-platform-bringup.md`: local build, launch, and focused validation flow for supported hosts
+- `dev-docs/plugins/plugin-runtime-research.md`: plugin architecture notes and external references
+- `dev-docs/project/known-tech-debt.md`: concrete open debt that still matters after recent refactors
+- `dev-docs/platform/macos-support-plan.md`: host-platform plan for bringing `microide` to macOS
+- `dev-docs/performance/performance-findings.md`: shipped performance work worth preserving
+- `dev-docs/performance/startup-tracing.md`: how to measure startup work
+- `dev-docs/performance/runtime-profiling.md`: runtime and redraw profiling workflow

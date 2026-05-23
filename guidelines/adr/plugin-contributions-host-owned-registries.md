@@ -9,8 +9,8 @@ Purpose: record the durable policy for how plugins extend `microide`.
 - Related:
   - `AGENTS.md`
   - `../architecture.md`
-  - `../../docs/active-work.md`
-  - `../../docs/plugin-runtime-research.md`
+  - `../../dev-docs/project/active-work.md`
+  - `../../dev-docs/plugins/plugin-runtime-research.md`
 
 ## Context
 

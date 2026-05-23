@@ -7,7 +7,7 @@ MicroIDE now has two complementary profiling surfaces for post-commit regression
 - command-line benchmarks for repeatable before/after runs
 - env-gated runtime tracing for live resize and redraw investigations
 
-Perf regression gating should prefer `docs/perf-harness.md` and scenario baselines first. Runtime
+Perf regression gating should prefer `dev-docs/performance/perf-harness.md` and scenario baselines first. Runtime
 profiling in this document is the fallback for root-cause analysis when a scenario regresses or a
 new hotspot appears.
 

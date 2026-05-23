@@ -62,8 +62,8 @@
 
 - [x] 10.1 Update `AGENTS.md` § "Hard Architectural Invariants" to list the four new invariants alongside the existing ones, with one-line rationales.
 - [x] 10.2 Mirror the new invariants in `CLAUDE.md` § "Hard Architectural Invariants" so the project context loaded by Claude Code stays accurate.
-- [x] 10.3 Update `docs/known-tech-debt.md`: close item 5's "formatter and tool-validator follow-ups" subsection and the "legacy-persistence-cleanup" follow-up under "Open Follow-Ups After The 2026-04-29 Cleanup".
-- [x] 10.4 Add a one-paragraph entry to `docs/active-work.md` under the current phase summarizing what shipped in this cleanup so future readers can find the trail without consulting the openspec archive.
+- [x] 10.3 Update `dev-docs/project/known-tech-debt.md`: close item 5's "formatter and tool-validator follow-ups" subsection and the "legacy-persistence-cleanup" follow-up under "Open Follow-Ups After The 2026-04-29 Cleanup".
+- [x] 10.4 Add a one-paragraph entry to `dev-docs/project/active-work.md` under the current phase summarizing what shipped in this cleanup so future readers can find the trail without consulting the openspec archive.
 
 ## 11. Validation and harness re-run
 

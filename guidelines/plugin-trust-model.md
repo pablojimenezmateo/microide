@@ -9,7 +9,7 @@ The short version: **plugins are trusted local code that runs with the same priv
 microide process.** Only install plugins you trust into your user config directory. Opening a
 project no longer auto-loads plugin code shipped inside that repository.
 
-For the broader architecture see `docs/plugin-runtime-research.md`. For the README summary see the
+For the broader architecture see `dev-docs/plugins/plugin-runtime-research.md`. For the README summary see the
 "Security & Trust Model" section of `README.md`. This file should win on disagreements.
 
 ## Where plugins come from

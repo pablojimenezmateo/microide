@@ -57,11 +57,11 @@ The repository SHALL provide an instrumented allocator that test fixtures can us
 
 ### Requirement: Bug Triage Queue
 
-Findings from sanitizers, fuzzers, and the long-soak SHALL be tracked in `docs/known-tech-debt.md` as a triage queue when they are not blocking the merge that surfaced them.
+Findings from sanitizers, fuzzers, and the long-soak SHALL be tracked in `dev-docs/project/known-tech-debt.md` as a triage queue when they are not blocking the merge that surfaced them.
 
 #### Scenario: Non-blocking finding
 - **WHEN** a fuzzer or sanitizer surfaces an issue that is not reachable from real input or is not on the change's critical path
-- **THEN** the issue SHALL be added to `docs/known-tech-debt.md` with reproduction steps and a severity assessment, and SHALL NOT block the merge that surfaced it
+- **THEN** the issue SHALL be added to `dev-docs/project/known-tech-debt.md` with reproduction steps and a severity assessment, and SHALL NOT block the merge that surfaced it
 
 #### Scenario: Blocking finding
 - **WHEN** a finding is reachable from real input, indicates memory unsafety, or affects a hot path under measurement

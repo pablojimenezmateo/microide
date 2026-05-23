@@ -16,8 +16,8 @@ suffix of every derived cache. The round-4 deep-dive added lazy invalidation
 *cursors* (`line_highlight_states_valid_through_`, `highlight_checkpoints_valid_through_`)
 that made the reset O(1), but **readers still recompute** because the revision
 they compare against still moves. With the glyph atlas closed as a dead end
-(`docs/known-tech-debt.md` #13), this is now the single biggest remaining
-editor-paint win on the board; `docs/known-tech-debt.md` #14 estimates 10–30 %
+(`dev-docs/project/known-tech-debt.md` #13), this is now the single biggest remaining
+editor-paint win on the board; `dev-docs/project/known-tech-debt.md` #14 estimates 10–30 %
 wall-time reduction across editor scenarios.
 
 ## What Changes

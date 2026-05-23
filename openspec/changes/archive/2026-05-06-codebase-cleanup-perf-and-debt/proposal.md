@@ -15,7 +15,7 @@ Recent cleanup passes archived the workspace god-class layer, replaced the legac
   - No `platform::RunSubprocess(` call site exists in `src/workspace/` outside an explicit allowlist of background-executor wrappers.
   - No `std::string` is materialized (via `operator+`, `operator+=`, or a `std::string(` constructor that takes a `std::string_view`) inside any function body in `src/workspace/WorkspaceShellRender*.cpp`; all draw-time strings must come from prebuilt view-model fields.
   - No `TextViewport` member function takes a full-document copy of `document_->lines`; range-based snapshots only.
-- Update `docs/known-tech-debt.md` to close item 5's formatter/tool-validator follow-ups and the legacy-persistence cleanup follow-up.
+- Update `dev-docs/project/known-tech-debt.md` to close item 5's formatter/tool-validator follow-ups and the legacy-persistence cleanup follow-up.
 
 No user-visible features change. No on-disk format changes other than the deletion of `.legacy` migration leftovers covered by the existing EOL scenario.
 
@@ -36,6 +36,6 @@ No user-visible features change. No on-disk format changes other than the deleti
 - Affected code: `src/workspace/WorkspacePersistenceLegacyFormat.{h,cpp}` (deleted), `src/workspace/PersistenceService.cpp` (importer call sites removed), `src/editor/TextViewport.cpp`, `src/workspace/WorkspaceShellRenderSidebar.cpp`, `src/workspace/RenderViewModelBuilder*.{h,cpp}` (new fields), `src/workspace/WorkspaceTabCoordinatorShellBridge.cpp`, `src/workspace/WorkspaceToolDownloader.cpp`, `src/platform/FileIndexWatcher.cpp`, `tests/ArchitectureInvariantsTests.cpp`, `tests/PersistenceMigrationTests.cpp` (importer cases removed).
 - Affected APIs: internal-only; no plugin-facing Lua API changes; no public C ABI exists.
 - Affected on-disk artifacts: `<file>.legacy` files left over from the original migration are deleted on first launch after this change ships, per the existing EOL scenario.
-- Affected docs: `docs/known-tech-debt.md`, `docs/active-work.md`, `AGENTS.md` § "Hard Architectural Invariants" (new invariants documented), `CLAUDE.md` (mirror).
+- Affected docs: `dev-docs/project/known-tech-debt.md`, `dev-docs/project/active-work.md`, `AGENTS.md` § "Hard Architectural Invariants" (new invariants documented), `CLAUDE.md` (mirror).
 - Affected tests: legacy-format unit tests removed; `ArchitectureInvariantsTests` extended with four new rules and their fixtures; existing perf harness scenarios re-baselined where this change moves the numbers.
 - Risk: low. All edits are bounded in scope, the architectural-lint changes are mechanical, and the harness already covers the surfaces touched. The largest unknown is whether the formatter-async migration moves `linter_on_save` p99 enough to require a baseline update — this is captured as a `perf-baseline:` budget in tasks.md.

@@ -32,7 +32,7 @@ RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo
                    " exceeds cap " + std::to_string(kCap) +
                    "; land new shell-adjacent behavior on a service instead of a new "
                    "WorkspaceShell*.cpp file, then lower the cap when migrations succeed "
-                   "(see docs/known-tech-debt.md item #16)",
+                   "(see dev-docs/project/known-tech-debt.md item #16)",
     });
   }
   return result;

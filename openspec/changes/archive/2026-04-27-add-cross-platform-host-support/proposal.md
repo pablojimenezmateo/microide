@@ -20,5 +20,5 @@ MicroIDE is still effectively Linux-first in several host-facing subsystems, whi
 ## Impact
 
 - Affected code will span `src/platform/*`, `src/terminal/*`, `src/project/*`, `src/app/*`, and the CMake or packaging layer.
-- Affected docs include `docs/implementation-guide.md`, `docs/active-work.md`, and the existing `docs/macos-support-plan.md`, which should align to one cross-platform host direction instead of a Linux-first baseline plus side plans.
+- Affected docs include `dev-docs/project/implementation-guide.md`, `dev-docs/project/active-work.md`, and the existing `dev-docs/platform/macos-support-plan.md`, which should align to one cross-platform host direction instead of a Linux-first baseline plus side plans.
 - Affected tests and validation include host-specific filesystem, process, terminal, and launch coverage plus CI setup for macOS and Windows.

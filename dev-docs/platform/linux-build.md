@@ -54,5 +54,5 @@ debug-text backend if neither is found.
 ctest --test-dir build --output-on-failure
 ```
 
-See `docs/host-platform-bringup.md` for the focused host-facing regression slice,
+See `dev-docs/platform/host-platform-bringup.md` for the focused host-facing regression slice,
 and the sanitizer / fuzz workflows in `CLAUDE.md` for risky changes.

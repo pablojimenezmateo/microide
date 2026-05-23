@@ -2,7 +2,7 @@
 
 MicroIDE's text path on the software SDL renderer is the dominant cost across
 every editor paint scenario: ~4.5 s of smoke wall time concentrates in
-`SdlTtfTextBackend` according to `docs/performance-bottleneck-deep-dive-4.md`.
+`SdlTtfTextBackend` according to `dev-docs/performance/performance-bottleneck-deep-dive-4.md`.
 
 The current path:
 
@@ -57,7 +57,7 @@ Stakeholders: anyone touching `src/render/*`, `src/editor/EditorViewRenderer.cpp
   is a separate change and probably wants a different data structure
   (variable-size cells, possibly a hash-keyed glyph cache).
 - Splitting `document_->layout_revision` into tiers
-  (tracked separately at `docs/known-tech-debt.md` #13). That change improves
+  (tracked separately at `dev-docs/project/known-tech-debt.md` #13). That change improves
   *invalidation cascade* costs; this change improves *paint* costs. They are
   complementary but independent.
 - Replacing the SDL renderer or moving the editor text path off SDL3_ttf.
@@ -199,7 +199,7 @@ workspace or editor TU should know about the atlas — they call
 - **First-paint cold cost** → atlas build adds ~95 `TTF_RenderGlyph_Blended`
   calls on the first init. Mitigation: this is one-time, amortizes across
   every subsequent frame, and is bounded; capture it under
-  `MICROIDE_STARTUP_TRACE` per `docs/startup-tracing.md`.
+  `MICROIDE_STARTUP_TRACE` per `dev-docs/performance/startup-tracing.md`.
 
 - **SDL3_ttf version skew** → `TTF_RenderGlyph_Blended` and
   `SDL_RenderTextures` are both in SDL3 / SDL3_ttf 3.x; the existing build
@@ -215,8 +215,8 @@ workspace or editor TU should know about the atlas — they call
 3. Flip the flag default to on in a follow-up commit on the same change
    branch. Refresh affected baselines with the `perf-baseline:` annotation.
 4. Once shipped, mark item 15 in
-   `docs/performance-bottleneck-deep-dive-2.md` and the carry-over in
-   `docs/performance-bottleneck-deep-dive-4.md` as done.
+   `dev-docs/performance/performance-bottleneck-deep-dive-2.md` and the carry-over in
+   `dev-docs/performance/performance-bottleneck-deep-dive-4.md` as done.
 
 **Rollback:** the env var `MICROIDE_RENDER_GLYPH_ATLAS=0` disables the
 atlas at runtime and re-routes everything through the composite path. If

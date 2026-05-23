@@ -34,7 +34,7 @@ The repository SHALL ship libFuzzer entry points for the typed persistence reade
 
 #### Scenario: Long-running fuzz runs nightly
 - **WHEN** the nightly CI job executes
-- **THEN** each fuzz target SHALL run for an extended documented duration against the same corpus, and SHALL surface findings into a triage queue tracked in `docs/known-tech-debt.md`
+- **THEN** each fuzz target SHALL run for an extended documented duration against the same corpus, and SHALL surface findings into a triage queue tracked in `dev-docs/project/known-tech-debt.md`
 
 ### Requirement: Allocation-Counter Test Support
 
@@ -62,11 +62,11 @@ A nightly CI job SHALL run a headless 8-hour idle scenario and SHALL fail if ave
 
 ### Requirement: Bug Triage Queue
 
-Findings from sanitizers, fuzzers, and the long-soak SHALL be tracked in `docs/known-tech-debt.md` as a triage queue when they are not blocking the merge that surfaced them.
+Findings from sanitizers, fuzzers, and the long-soak SHALL be tracked in `dev-docs/project/known-tech-debt.md` as a triage queue when they are not blocking the merge that surfaced them.
 
 #### Scenario: Non-blocking finding
 - **WHEN** a fuzzer or sanitizer surfaces an issue that is not reachable from real input or is not on the change's critical path
-- **THEN** the issue SHALL be added to `docs/known-tech-debt.md` with reproduction steps and a severity assessment, and SHALL NOT block the merge that surfaced it
+- **THEN** the issue SHALL be added to `dev-docs/project/known-tech-debt.md` with reproduction steps and a severity assessment, and SHALL NOT block the merge that surfaced it
 
 #### Scenario: Blocking finding
 - **WHEN** a finding is reachable from real input, indicates memory unsafety, or affects a hot path under measurement

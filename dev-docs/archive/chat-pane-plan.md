@@ -545,7 +545,7 @@ The pane needs performance rules before transcripts get large:
 - parsed markdown should be cached by content hash instead of ad hoc mutable state
 - link hit testing should be derived from rendered spans, not re-parsed raw strings
 - scroll, typing, resize, and request-status updates must stay responsive with long histories
-- profile long-transcript redraw and interaction paths with `docs/runtime-profiling.md` instead of
+- profile long-transcript redraw and interaction paths with `dev-docs/performance/runtime-profiling.md` instead of
   guessing
 
 ## Runtime Direction

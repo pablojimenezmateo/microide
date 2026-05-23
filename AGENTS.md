@@ -66,9 +66,9 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 - Speed is the main optimization target after correctness.
 - CPU comes before memory, especially idle CPU and redraw-path CPU.
 - Measure before and after performance-sensitive changes.
-- Use `docs/perf-harness.md` scenarios and baselines as the primary regression oracle.
+- Use `dev-docs/performance/perf-harness.md` scenarios and baselines as the primary regression oracle.
 - Keep `microide_perf_tests` green locally for touched scenarios and treat `perf-runner-v1` baseline checks as the authoritative gate.
-- Use `docs/startup-tracing.md` and `docs/runtime-profiling.md` instead of guessing.
+- Use `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-profiling.md` instead of guessing.
 - Preserve typing, scrolling, resize, and startup responsiveness even when adding features.
 - Prefer deleting redundant work over caching everything by default.
 - The durable performance budget contract lives in `openspec/specs/performance-budgets/spec.md`.
@@ -193,8 +193,8 @@ durable invariant moves.
 
 ## Documentation Rules
 
-- Keep `docs/active-work.md` current when priorities or shipped status change.
-- Keep `docs/implementation-guide.md` aligned with durable product direction.
+- Keep `dev-docs/project/active-work.md` current when priorities or shipped status change.
+- Keep `dev-docs/project/implementation-guide.md` aligned with durable product direction.
 - Update subsystem design docs when a change materially alters the intended architecture.
 - Remove stale or split-brain docs rather than leaving contradictory guidance around.
 - When a durable policy changes, update the relevant `openspec/specs/` file in the same commit.

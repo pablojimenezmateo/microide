@@ -122,7 +122,7 @@ Implementation is a `std::condition_variable` + counter on `async_process_state`
 
 ### D7. Perf-harness regression scenario
 
-**Decision:** Add `tests/perf-harness/scenarios/switch-and-idle.cpp` (or extend an existing scenario file, per `docs/perf-harness.md`) that:
+**Decision:** Add `tests/perf-harness/scenarios/switch-and-idle.cpp` (or extend an existing scenario file, per `dev-docs/performance/perf-harness.md`) that:
 
 1. Loads a fixture project A with 20 tabs persisted.
 2. Switches to fixture project B with 15 tabs persisted.
