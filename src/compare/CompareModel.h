@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "compare/CompareReviewTypes.h"
+
 namespace microide::compare {
 
 enum class CompareRowKind {
@@ -78,9 +80,19 @@ struct LineDiffBuildStats {
 };
 
 CompareModel BuildCompareModel(const std::string& left, const std::string& right);
+CompareModel BuildCompareModel(const std::string& left,
+                               const std::string& right,
+                               const CompareBuildOptions& options);
 CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right);
+CompareBuildResult BuildCompareModelProfiled(const std::string& left,
+                                             const std::string& right,
+                                             const CompareBuildOptions& options);
 std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
                                      const std::vector<std::string>& right_lines,
+                                     LineDiffBuildStats* stats = nullptr);
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
+                                     const std::vector<std::string>& right_lines,
+                                     const CompareBuildOptions& options,
                                      LineDiffBuildStats* stats = nullptr);
 
 }  // namespace microide::compare

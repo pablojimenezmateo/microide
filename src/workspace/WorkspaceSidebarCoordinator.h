@@ -13,6 +13,7 @@
 #include "workspace/WorkspacePluginRuntime.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspacePromptState.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceSidebarState.h"
 
 namespace microide::workspace {
@@ -60,6 +61,9 @@ class SidebarCoordinator {
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_plugin_sidebar_list_layout;
     std::function<bool()> refresh_tests_sidebar_state;
     std::function<bool(const std::vector<std::string>&)> run_tests;
+    std::function<void(std::string)> set_command_feedback;
+    std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
+    std::function<bool()> open_commit_workflow;
   };
 
   SidebarCoordinator(ProjectWorkspaceState& state,
@@ -106,9 +110,13 @@ class SidebarCoordinator {
   bool StageGitEntry(std::size_t entry_index);
   bool UnstageGitEntry(std::size_t entry_index);
   bool DiscardGitEntry(std::size_t entry_index);
+  void OpenDiscardGitEntryPrompt(std::size_t entry_index);
+  bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
 
  private:
+  const GitSidebarEntry* GitEntry(std::size_t entry_index) const;
+  void ReportDisabledGitAction(GitSidebarActionId action, std::size_t entry_index) const;
   SidebarMode SidebarModeForViewId(std::string_view view_id) const;
   SidebarMode ActiveSidebarMode() const;
 

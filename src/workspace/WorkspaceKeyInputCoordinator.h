@@ -11,6 +11,7 @@
 #include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuState.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspacePromptState.h"
 #include "workspace/WorkspaceTextInputState.h"
@@ -90,6 +91,9 @@ class KeyInputCoordinator {
     std::function<bool(std::size_t)> stage_git_sidebar_entry;
     std::function<bool(std::size_t)> unstage_git_sidebar_entry;
     std::function<bool(std::size_t)> discard_git_sidebar_entry;
+    std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
+    std::function<void()> close_commit_workflow;
+    std::function<bool()> request_commit_workflow_commit;
     std::function<void(int)> move_problems_sidebar_selection;
     std::function<void()> reveal_selected_problems_sidebar_line;
     std::function<bool()> open_selected_problem_sidebar_item;
@@ -108,6 +112,12 @@ class KeyInputCoordinator {
     std::function<void()> open_compare_picker;
     std::function<void(int)> move_compare_selection;
     std::function<void(int)> jump_compare_hunk;
+    std::function<void()> stage_compare_hunk;
+    std::function<void()> stage_compare_selected_lines;
+    std::function<void()> unstage_compare_hunk;
+    std::function<void()> unstage_compare_selected_lines;
+    std::function<void()> open_discard_compare_hunk_prompt;
+    std::function<void()> open_discard_compare_selected_lines_prompt;
     std::function<void()> open_working_file_from_compare;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;

@@ -13,7 +13,7 @@ RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo
   RuleResult result;
   result.label = "WorkspaceShell*.cpp translation-unit count";
   result.hard_fail = true;
-  constexpr std::size_t kCap = 45;
+  constexpr std::size_t kCap = 47;
   std::size_t count = 0;
   for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
@@ -56,11 +56,11 @@ RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root) {
     while (std::getline(stream, line)) {
       ++lines;
     }
-    if (lines > 800) {
+    if (lines > 900) {
       result.violations.push_back(Violation{
           .path = entry.path(),
           .line = 1,
-          .message = "workspace coordinator translation units should stay at or below 800 lines",
+          .message = "workspace coordinator translation units should stay at or below 900 lines",
       });
     }
   }

@@ -158,10 +158,10 @@ serious work.
   carets are not yet exposed.
 - **No sandbox for plugins.** Plugins are trusted local code. See
   [Security & Trust Model](#security--trust-model).
-- **No safe-mode / project-plugin-disable startup path.** There is no `--safe-mode` or
-  `--disable-project-plugins` path, and adding one is currently out of scope. Opening a
-  repository does not load plugin code from that repository; only user-installed plugins under
-  `~/.config/microide/plugins/` run.
+- **Preview-safe startup only.** `--disable-plugins` and `--safe-mode` skip user-scope plugins
+  and (for safe mode) workspace/session restore. These are recovery/trust aids, not a sandbox.
+  Opening a repository still does not load plugin code from that repository; only user-installed
+  plugins under `~/.config/microide/plugins/` run when plugins are enabled.
 - **Single-window only.** No detached OS windows. This is deliberate (see
   `openspec/specs/product-vision/spec.md`), not a bug.
 - **No native OS menu bar.** The menu bar is rendered by the app.
@@ -211,9 +211,9 @@ trust into `~/.config/microide/plugins/`.
   privileges.
 - Only copy or symlink plugins into `~/.config/microide/plugins/` when you trust their source.
 - The `plugins-reload` command picks up changes; there is no per-plugin disable in the UI yet
-  beyond editing user config.
-- This project is not planning a safe-mode startup path or project-local plugin loading in the
-  current scope.
+  beyond editing user config or starting with `--disable-plugins` / `--safe-mode`.
+- Project-local plugin loading remains out of scope. See [SECURITY.md](SECURITY.md) and
+  [docs/git-workstation-preview.md](docs/git-workstation-preview.md) for preview scope.
 
 **Out of scope.** A meaningful plugin sandbox (capability-scoped APIs, restricted Lua standard
 library, per-plugin allowlists) is not planned for the immediate roadmap. If a plugin marketplace
@@ -410,6 +410,10 @@ Current commands:
 - `goto-definition`
 - `goto <line[:col]>`
 - `git-refresh`
+- `mark-branch-file-reviewed`
+- `mark-branch-hunk-reviewed`
+- `clear-branch-review-state`
+- `branch-review-note <text>`
 - `indent-width [n]`
 - `jump <line[:col]>`
 - `open <path>`
@@ -515,6 +519,8 @@ See `docs/startup-tracing.md` and `docs/runtime-profiling.md` for full workflows
 
 ## Plugin Runtime
 
+- Safe startup (preview): `microide --disable-plugins` or `microide --safe-mode [project-path]` —
+  see [SECURITY.md](SECURITY.md) and [docs/git-workstation-preview.md](docs/git-workstation-preview.md)
 - User plugins: `~/.config/microide/plugins/<plugin-id>/init.lua`
 - Repo examples: `plugins/` (copy or symlink into the user plugin directory)
 - Entry point: `return require("microide").plugin({...})`

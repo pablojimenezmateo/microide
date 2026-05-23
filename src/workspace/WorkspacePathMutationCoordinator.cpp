@@ -3,7 +3,9 @@
 #include <filesystem>
 #include <utility>
 
+#include "util/Parse.h"
 #include "project/FileOperationService.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceShell.h"
@@ -34,6 +36,10 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
 
   const PromptSurfaceState state = context_.prompts.surface;
   if (state.selected_button == 1) {
+    if (state.action == PromptSurfaceState::Action::DiscardPatchPreview &&
+        operations_.cancel_discard_patch_preview) {
+      operations_.cancel_discard_patch_preview();
+    }
     prompt_surfaces_.DismissPromptSurface(true);
     return;
   }
@@ -108,6 +114,28 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     return;
   }
 
+  if (state.action == PromptSurfaceState::Action::DiscardGitEntry) {
+    const auto entry_index = util::ParseSize(state.input.text());
+    const bool discarded =
+        entry_index.has_value() &&
+        operations_.discard_git_sidebar_entry(*entry_index);
+    prompt_surfaces_.DismissPromptSurface(discarded ? false : true);
+    if (discarded) {
+      CurrentProjectState().surface.focus = FocusTarget::Sidebar;
+    }
+    return;
+  }
+
+  if (state.action == PromptSurfaceState::Action::DiscardPatchPreview) {
+    const bool discarded =
+        operations_.confirm_discard_patch_preview && operations_.confirm_discard_patch_preview();
+    prompt_surfaces_.DismissPromptSurface(discarded ? false : true);
+    if (discarded) {
+      CurrentProjectState().surface.focus = FocusTarget::Editor;
+    }
+    return;
+  }
+
   if (!ResolveDirtyTabsForPath(state.path, DirtyPromptState::Kind::DeletePath, resolution)) {
     return;
   }
@@ -139,6 +167,12 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .clear_editor_blame = [this]() { ClearEditorBlame(); },
           .discard_all_git_sidebar_entries = [this]() { return DiscardAllGitSidebarEntries(); },
+          .discard_git_sidebar_entry =
+              [this](std::size_t index) { return DiscardGitSidebarEntry(index); },
+          .confirm_discard_patch_preview =
+              [this]() { return patch_apply_service_.ConfirmPendingDiscard(); },
+          .cancel_discard_patch_preview =
+              [this]() { patch_apply_service_.CancelPendingDiscard(); },
           .refresh_project_files = [this]() { RefreshProjectFiles(); },
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },

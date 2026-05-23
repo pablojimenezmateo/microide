@@ -14,9 +14,10 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kMergeToolbarHeight = 36.0f;
 constexpr float kMergeToolbarButtonHeight = 22.0f;
 constexpr float kMergeToolbarButtonGap = 8.0f;
+constexpr float kMergeToolbarRowGap = 6.0f;
+constexpr float kMergeHeaderRowGap = 6.0f;
 }  // namespace
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
@@ -65,6 +66,34 @@ WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
   };
 }
 
+std::optional<SDL_FRect> WorkspaceShell::ComputeMergeSecondaryToolbarButtonRect(
+    const SDL_FRect& rect,
+    const MergeSurfaceLayout& surface,
+    std::string_view label) const {
+  const float width = ComputeChromeButtonWidth(text_renderer_.MeasureWidth(label));
+  if (label == "Mark Resolved") {
+    const float x = rect.x + rect.w - 8.0f - width;
+    return MakeRect(x, surface.secondary_button_y, width, kMergeToolbarButtonHeight);
+  }
+  if (label == "Toggle Base") {
+    const auto mark = ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Mark Resolved");
+    if (!mark.has_value()) {
+      return std::nullopt;
+    }
+    return MakeRect(mark->x - kMergeToolbarButtonGap - width, surface.secondary_button_y, width,
+                    kMergeToolbarButtonHeight);
+  }
+  if (label == "Unresolved") {
+    const auto toggle = ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Toggle Base");
+    if (!toggle.has_value()) {
+      return std::nullopt;
+    }
+    return MakeRect(toggle->x - kMergeToolbarButtonGap - width, surface.secondary_button_y, width,
+                    kMergeToolbarButtonHeight);
+  }
+  return std::nullopt;
+}
+
 WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     const SDL_FRect& rect,
     const MergeTabState& merge_tab) const {
@@ -87,9 +116,11 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     layout.divider_width = 16.0f;
     layout.left_x = rect.x + 8.0f;
     layout.button_y = rect.y + 6.0f;
-    layout.secondary_button_y = layout.button_y + kMergeToolbarButtonHeight + 6.0f;
-    layout.header_y = rect.y + kMergeToolbarHeight + 4.0f;
-    layout.rows_y = rect.y + kMergeToolbarHeight + layout.line_height + 12.0f;
+    layout.secondary_button_y =
+        layout.button_y + kMergeToolbarButtonHeight + kMergeToolbarRowGap;
+    layout.header_y =
+        layout.secondary_button_y + kMergeToolbarButtonHeight + kMergeHeaderRowGap;
+    layout.rows_y = layout.header_y + layout.line_height + 8.0f;
 
     const float reserved_width = reserve_vertical
                                      ? (kWorkspaceScrollbarThickness +

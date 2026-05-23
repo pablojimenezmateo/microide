@@ -268,7 +268,7 @@
     git.entries.clear();
     if (repo_available && dirty_worktree) {
       GitSidebarEntry entry;
-      entry.section = GitSidebarEntry::Section::Modified;
+      entry.section = GitSidebarEntry::Section::Changed;
       entry.path = shell.context_.current_project_state.root / "status_bar_fixture.cpp";
       entry.relative_path = std::filesystem::path("status_bar_fixture.cpp");
       entry.status = project::GitFileStatus::Modified;
@@ -301,6 +301,9 @@
   }
   static bool GitSidebarRefreshing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.refreshing;
+  }
+  static bool GitSidebarSnapshotStale(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.git.snapshot_stale;
   }
   static bool ProjectSearchTruncated(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.truncated;

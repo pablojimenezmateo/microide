@@ -125,15 +125,18 @@
                                                              std::size_t entry_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto lines = shell.BuildGitSidebarLines();
-    const auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+    auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     for (std::size_t i = 0; i < lines.size(); ++i) {
       if (lines[i].entry_index < 0 || static_cast<std::size_t>(lines[i].entry_index) != entry_index) {
         continue;
       }
-      const SDL_FRect row_rect = ScrollableListRowRect(
-          list_layout, static_cast<int>(i) - list_layout.scroll_row);
-      const auto actions = shell.ComputeGitSidebarEntryActionLayout(
-          row_rect, shell.context_.current_project_state.sidebar.git.entries[entry_index]);
+      shell.context_.current_project_state.sidebar.scroll_row =
+          RevealScrollableListIndex(list_layout, static_cast<int>(i));
+      list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+      const int visible_row = static_cast<int>(i) - list_layout.scroll_row;
+      const SDL_FRect row_rect = ScrollableListRowRect(list_layout, visible_row);
+      const auto& entry = shell.context_.current_project_state.sidebar.git.entries[entry_index];
+      const auto actions = shell.ComputeGitSidebarEntryActionLayout(row_rect, entry);
       return {actions.primary_rect.value_or(SDL_FRect{}),
               actions.discard_rect.value_or(SDL_FRect{})};
     }
@@ -142,13 +145,15 @@
   static SDL_FRect GitSidebarEntryRowRect(WorkspaceShell& shell, std::size_t entry_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto lines = shell.BuildGitSidebarLines();
-    const auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+    auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     for (std::size_t i = 0; i < lines.size(); ++i) {
       if (lines[i].entry_index < 0 || static_cast<std::size_t>(lines[i].entry_index) != entry_index) {
         continue;
       }
-      return ScrollableListRowRect(
-          list_layout, static_cast<int>(i) - list_layout.scroll_row);
+      shell.context_.current_project_state.sidebar.scroll_row =
+          RevealScrollableListIndex(list_layout, static_cast<int>(i));
+      list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+      return ScrollableListRowRect(list_layout, static_cast<int>(i) - list_layout.scroll_row);
     }
     return {};
   }
@@ -392,6 +397,76 @@
     }
     return std::nullopt;
   }
+  static std::optional<SDL_FRect> WindowControlButtonRect(
+      WorkspaceShell& shell,
+      WorkspaceShell::WindowControlButtonId id) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto buttons = shell.ComputeVisibleWindowControlButtons(layout.menu_bar);
+    for (const auto& button : buttons) {
+      if (button.id == id) {
+        return button.rect;
+      }
+    }
+    return std::nullopt;
+  }
+  static std::optional<SDL_FRect> MinimizeButtonRect(WorkspaceShell& shell) {
+    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Minimize);
+  }
+  static std::optional<SDL_FRect> MaximizeButtonRect(WorkspaceShell& shell) {
+    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Maximize);
+  }
+  static std::optional<SDL_FRect> CloseButtonRect(WorkspaceShell& shell) {
+    return WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Close);
+  }
+  static bool CachedCursorIs(const WorkspaceShell& shell, WorkspaceShell::CursorKind expected) {
+    return shell.cursor_kind_ == expected;
+  }
+  static bool CachedCursorIsDefault(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::Default;
+  }
+  static bool CachedCursorIsNsResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::NsResize;
+  }
+  static bool CachedCursorIsEwResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::EwResize;
+  }
+  static bool CachedCursorIsPointer(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::Pointer;
+  }
+  static bool CursorKindAtIs(WorkspaceShell& shell,
+                             float x,
+                             float y,
+                             WorkspaceShell::CursorKind expected) {
+    return shell.CursorKindForPosition(x, y) == expected;
+  }
+  static bool CursorKindAtIsDefault(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::Default;
+  }
+  static bool CursorKindAtIsText(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::Text;
+  }
+  static bool CursorKindAtIsNsResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::NsResize;
+  }
+  static bool CursorKindAtIsEwResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::EwResize;
+  }
+  static bool CursorKindAtIsPointer(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::Pointer;
+  }
+  static int CursorKindAtValue(WorkspaceShell& shell, float x, float y) {
+    return static_cast<int>(shell.CursorKindForPosition(x, y));
+  }
+  static void UpdateMouseCursor(WorkspaceShell& shell, float x, float y) {
+    shell.UpdateMouseCursor(x, y, false, false);
+  }
+  static void InvalidateCursorKindFingerprint(WorkspaceShell& shell) {
+    shell.InvalidateCursorKindFingerprint();
+  }
+  static void CloseTerminalTab(WorkspaceShell& shell, std::size_t index) {
+    shell.CloseTerminalTab(index);
+  }
+  static void MarkLayoutDirty(WorkspaceShell& shell) { shell.MarkLayoutDirty(); }
   static SDL_FRect TerminalTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =

@@ -14,6 +14,7 @@
 #include "render/Theme.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/CompareMergeRender.h"
+#include "workspace/MergeResolverContext.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -22,6 +23,8 @@ namespace {
 
 constexpr float kMergeDiffRowTint = 0.14f;
 constexpr float kMergeDiffRowTintSelected = 0.22f;
+constexpr float kMergeToolbarButtonHeight = 22.0f;
+constexpr float kMergeToolbarButtonGap = 8.0f;
 
 SDL_Color MergeMarkerColor(const render::Theme& theme,
                            compare::MergeChoice choice,
@@ -36,6 +39,8 @@ SDL_Color MergeMarkerColor(const render::Theme& theme,
     case compare::MergeChoice::Current:
       return theme.diff_modified;
     case compare::MergeChoice::Both:
+    case compare::MergeChoice::BothCurrentFirst:
+    case compare::MergeChoice::BothIncomingFirst:
       return theme.accent;
     case compare::MergeChoice::Base:
     default:
@@ -269,6 +274,58 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   draw_button(toolbar.next_rect, "Next", false, !merge_tab->conflicts.empty());
   draw_button(toolbar.save_rect, "Save", false, true);
   draw_button(toolbar.open_rect, "Open Result", false, true);
+
+  const SDL_FRect mark_resolved_rect = MakeRect(
+      rect.x + rect.w - 8.0f -
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Mark Resolved")),
+      surface.secondary_button_y,
+      ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Mark Resolved")),
+      kMergeToolbarButtonHeight);
+  const SDL_FRect toggle_base_rect = MakeRect(
+      mark_resolved_rect.x - kMergeToolbarButtonGap -
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Toggle Base")),
+      surface.secondary_button_y,
+      ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Toggle Base")),
+      kMergeToolbarButtonHeight);
+  const SDL_FRect unresolved_rect = MakeRect(
+      toggle_base_rect.x - kMergeToolbarButtonGap -
+          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Unresolved")),
+      surface.secondary_button_y,
+      ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Unresolved")),
+      kMergeToolbarButtonHeight);
+  const MergeResolverStatus resolver_status =
+      BuildMergeResolverStatus(*merge_tab, merge_tab->remaining_conflicted_files);
+  const std::string status_text = merge_tab->status_message.empty()
+                                      ? resolver_status.progress_label
+                                      : merge_tab->status_message;
+  const float status_max_width =
+      std::max(0.0f, unresolved_rect.x - kMergeToolbarButtonGap - surface.left_x);
+  text_renderer_.DrawString(renderer, surface.left_x, surface.secondary_button_y,
+                            theme_.text_secondary,
+                            TruncateLabel(status_text, status_max_width));
+  draw_button(unresolved_rect, "Unresolved", false, !merge_tab->conflicts.empty());
+  draw_button(toggle_base_rect, "Toggle Base", merge_tab->base_pane_visible, true);
+  draw_button(mark_resolved_rect, "Mark Resolved", false, true);
+
+  const float base_band_height =
+      merge_tab->base_pane_visible && !merge_tab->model.base_lines.empty()
+          ? surface.line_height * static_cast<float>(std::min<std::size_t>(4, merge_tab->model.base_lines.size())) +
+                8.0f
+          : 0.0f;
+  if (base_band_height > 0.0f) {
+    const float base_y = surface.header_y - base_band_height;
+    DrawFilledRect(renderer, MakeRect(surface.left_x, base_y, content_width, base_band_height),
+                   theme_.surface_raised);
+    text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, base_y + 2.0f,
+                              theme_.text_secondary,
+                              TruncateLabel(merge_tab->base_label, content_width - 16.0f));
+    for (std::size_t row = 0; row < merge_tab->model.base_lines.size() && row < 4; ++row) {
+      const float y = base_y + 2.0f + surface.line_height * static_cast<float>(row + 1);
+      text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
+                                theme_.text_secondary,
+                                TruncateLabel(merge_tab->model.base_lines[row], content_width - 16.0f));
+    }
+  }
 
   DrawFilledRect(renderer, MakeRect(rect.x, surface.rows_y - 6.0f, content_width, 1.0f),
                  theme_.border);

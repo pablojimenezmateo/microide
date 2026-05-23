@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "workspace/BranchReviewPersistence.h"
+#include "workspace/CommitWorkflowPersistence.h"
 #include "workspace/WorkspaceSidebarState.h"
 
 namespace microide::workspace {
@@ -50,6 +52,8 @@ struct PersistedEditorTabState {
   std::size_t compare_scroll_row = 0;
   std::size_t compare_horizontal_scroll = 0;
   float compare_divider_fraction = 0.5f;
+  std::string compare_review_mode;
+  std::string compare_staging_view;
   std::filesystem::path merge_base_path;
   std::filesystem::path merge_incoming_path;
   std::filesystem::path merge_current_path;
@@ -82,6 +86,8 @@ struct PersistedProjectConfigState {
   std::optional<SDL_Color> project_base_color;
   std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
   std::vector<PersistedSidebarViewPolicy> sidebar_policies;
+  std::optional<PersistedCommitDraftState> commit_draft;
+  PersistedBranchReviewState branch_review;
 };
 
 struct PersistedMessageState {

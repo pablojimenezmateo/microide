@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "util/Parse.h"
 #include "workspace/EditorTabService.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
@@ -66,6 +68,10 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 }
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
+  if (context_.prompts.dirty.kind == DirtyPromptState::Kind::ExternalFileChange) {
+    return {"Reload", "Keep", "Cancel"};
+  }
+
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::Quit ||
       context_.prompts.dirty.kind == DirtyPromptState::Kind::CloseTabs ||
       context_.prompts.dirty.kind == DirtyPromptState::Kind::CloseProject ||
@@ -97,6 +103,9 @@ std::string WorkspaceShell::DirtyPromptTitle() const {
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::DeletePath) {
     return "Unsaved changes before delete";
   }
+  if (context_.prompts.dirty.kind == DirtyPromptState::Kind::ExternalFileChange) {
+    return "File changed on disk";
+  }
   return "Unsaved changes";
 }
 
@@ -122,6 +131,16 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
                ? "Save the dirty tab before closing the selected tabs?"
                : "Save the " + std::to_string(context_.prompts.dirty.dirty_count) +
                      " dirty tabs before closing the selected tabs?";
+  }
+
+  if (context_.prompts.dirty.kind == DirtyPromptState::Kind::ExternalFileChange) {
+    const std::filesystem::path path = context_.prompts.dirty.path;
+    const std::string label =
+        path.empty() ? "this file"
+                     : (path == context_.current_project_state.root
+                            ? ProjectLabel()
+                            : RelativePathLabel(context_.current_project_state.root, path));
+    return "Reload " + label + " from disk or keep the in-memory edits?";
   }
 
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::RenamePath ||
@@ -170,10 +189,18 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Delete";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard All Changes";
+    case PromptSurfaceState::Action::DiscardGitEntry:
+      return "Discard Git Changes";
+    case PromptSurfaceState::Action::DiscardPatchPreview:
+      return "Discard Patch";
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return "Outgoing Base Ref";
     case PromptSurfaceState::Action::OpenExternalUrl:
       return "Open External Link";
+    case PromptSurfaceState::Action::ConfirmCommitAmend:
+      return "Amend Commit";
+    case PromptSurfaceState::Action::ConfirmCommitNoVerify:
+      return "Commit Without Hooks";
   }
   return "Prompt";
 }
@@ -194,10 +221,26 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Move " + label + " to trash?";
     case PromptSurfaceState::Action::DiscardGitChanges:
       return "Discard all tracked, untracked, and conflicted changes in " + ProjectLabel() + "?";
+    case PromptSurfaceState::Action::DiscardGitEntry: {
+      const auto entry_index = util::ParseSize(context_.prompts.surface.input.text());
+      if (!entry_index.has_value() ||
+          *entry_index >= context_.current_project_state.sidebar.git.entries.size()) {
+        return "Discard changes for the selected Git sidebar row?";
+      }
+      return BuildGitDiscardPreviewSummary(
+          context_.current_project_state.sidebar.git.entries[*entry_index], ProjectLabel());
+    }
+    case PromptSurfaceState::Action::DiscardPatchPreview:
+      return context_.prompts.surface.detail.empty()
+                 ? "Discard the selected changes from the working tree?"
+                 : context_.prompts.surface.detail;
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return "Compare outgoing files against this ref.";
     case PromptSurfaceState::Action::OpenExternalUrl:
       return "Open " + context_.prompts.surface.detail + " in your browser?";
+    case PromptSurfaceState::Action::ConfirmCommitAmend:
+    case PromptSurfaceState::Action::ConfirmCommitNoVerify:
+      return context_.prompts.surface.detail;
   }
   return {};
 }
@@ -224,10 +267,18 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Delete", "Cancel"};
     case PromptSurfaceState::Action::DiscardGitChanges:
       return {"Discard All", "Cancel"};
+    case PromptSurfaceState::Action::DiscardGitEntry:
+      return {"Discard", "Cancel"};
+    case PromptSurfaceState::Action::DiscardPatchPreview:
+      return {"Discard", "Cancel"};
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
       return {"Use Ref", "Cancel"};
     case PromptSurfaceState::Action::OpenExternalUrl:
       return {"Open Link", "Cancel"};
+    case PromptSurfaceState::Action::ConfirmCommitAmend:
+      return {"Amend", "Cancel"};
+    case PromptSurfaceState::Action::ConfirmCommitNoVerify:
+      return {"Commit", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -274,6 +325,20 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     const std::string url = context_.prompts.surface.detail;
     const bool opened = !url.empty() && OpenExternalUrl(url);
     MakePromptSurfaceService().DismissPromptSurface(!opened);
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      (context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommitAmend ||
+       context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmCommitNoVerify)) {
+    InitializeCommitWorkflowService();
+    auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+    if (resolution != DirtyPathResolution::Discard) {
+      commit_workflow_service_.ConfirmPendingOperation(workflow);
+    } else {
+      commit_workflow_service_.CancelPendingConfirmation(workflow);
+    }
+    MakePromptSurfaceService().DismissPromptSurface(false);
+    context_.current_project_state.surface.focus = FocusTarget::Sidebar;
     return;
   }
   if (context_.prompts.surface_visible &&

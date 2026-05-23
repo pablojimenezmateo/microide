@@ -51,6 +51,8 @@ class SidebarService {
   bool StageGitEntry(std::size_t entry_index);
   bool UnstageGitEntry(std::size_t entry_index);
   bool DiscardGitEntry(std::size_t entry_index);
+  void OpenDiscardGitEntryPrompt(std::size_t entry_index);
+  bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
 
  private:

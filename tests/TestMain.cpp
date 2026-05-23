@@ -14,7 +14,11 @@
 namespace microide::tests {
 
 void RegisterAppDirectoriesTests(std::vector<TestCase>& tests);
+void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests);
 void RegisterCompareModelTests(std::vector<TestCase>& tests);
+void RegisterCompareReviewTests(std::vector<TestCase>& tests);
+void RegisterBranchReviewStateTests(std::vector<TestCase>& tests);
+void RegisterPatchApplyTests(std::vector<TestCase>& tests);
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests);
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
@@ -25,10 +29,16 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests);
+void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests);
+void RegisterCommitWorkflowTests(std::vector<TestCase>& tests);
+void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
+void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
+void RegisterProjectChangeTests(std::vector<TestCase>& tests);
+void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests);
 void RegisterRegexUtilTests(std::vector<TestCase>& tests);
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests);
 void RegisterStringUtilTests(std::vector<TestCase>& tests);
@@ -48,6 +58,7 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests);
@@ -250,7 +261,11 @@ int main(int argc, char** argv) {
   microide::tests::RegisterTestRunnerCliTests(tests);
   microide::tests::RegisterWheelAccumulatorTests(tests);
   microide::tests::RegisterAppDirectoriesTests(tests);
+  microide::tests::RegisterAppStartupOptionsTests(tests);
   microide::tests::RegisterCompareModelTests(tests);
+  microide::tests::RegisterCompareReviewTests(tests);
+  microide::tests::RegisterBranchReviewStateTests(tests);
+  microide::tests::RegisterPatchApplyTests(tests);
   microide::tests::RegisterDiagnosticsStoreTests(tests);
   microide::tests::RegisterDirectoryTreeTests(tests);
   microide::tests::RegisterDirtyRegionPolicyTests(tests);
@@ -293,6 +308,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellPluginTests(tests);
   microide::tests::RegisterWorkspaceShellPromptTests(tests);
   microide::tests::RegisterWorkspaceShellCompareTests(tests);
+  microide::tests::RegisterWorkspaceShellCursorTests(tests);
   microide::tests::RegisterWorkspaceShellProjectTests(tests);
   microide::tests::RegisterWorkspaceShellSearchTests(tests);
   microide::tests::RegisterWorkspaceShellSessionTests(tests);
@@ -300,8 +316,12 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellTerminalTests(tests);
   microide::tests::RegisterGitServiceTests(tests);
   microide::tests::RegisterGitRepositoryStateTests(tests);
+  microide::tests::RegisterGitRepositoryServiceTests(tests);
+  microide::tests::RegisterCommitWorkflowTests(tests);
+  microide::tests::RegisterGitSidebarCommandCenterTests(tests);
   microide::tests::RegisterWorkspaceLspClientTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
+  microide::tests::RegisterMergeConflictResolutionTests(tests);
   microide::tests::RegisterFileOperationServiceTests(tests);
   microide::tests::RegisterContributionRegistryTests(tests);
   microide::tests::RegisterPhase3Tests(tests);
@@ -309,6 +329,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPhase5Tests(tests);
   microide::tests::RegisterBackgroundTaskCounterTests(tests);
   microide::tests::RegisterFileIndexWatcherTests(tests);
+  microide::tests::RegisterProjectChangeTests(tests);
+  microide::tests::RegisterExternalRepoChangeTests(tests);
   microide::tests::RegisterPatternCacheTests(tests);
   microide::tests::RegisterWorkspaceToolDownloaderTests(tests);
   microide::tests::RegisterEditorEssentialsTests(tests);

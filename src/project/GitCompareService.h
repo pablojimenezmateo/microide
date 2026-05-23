@@ -41,5 +41,7 @@ struct GitBranchFileEntry {
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root);
 std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
                                                               std::string_view base_ref);
+std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
+                                                                std::string_view commit_hash);
 
 }  // namespace microide::project

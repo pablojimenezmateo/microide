@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include "workspace/WorkspaceStartupOptions.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -95,6 +97,9 @@ void SyncWindowState(SDL_Window* window) {
 }
 
 }  // namespace
+
+Application::Application(AppStartupOptions startup_options)
+    : startup_options_(std::move(startup_options)) {}
 
 Application::~Application() {
   Shutdown();
@@ -258,8 +263,21 @@ bool Application::Initialize() {
   SDL_RenderPresent(renderer_);
 
   {
+    workspace::WorkspaceStartupOptions shell_startup;
+    shell_startup.disable_plugins = startup_options_.disable_plugins;
+    shell_startup.safe_mode = startup_options_.safe_mode;
+    shell_startup.project_path = startup_options_.project_path;
+    workspace_shell_.SetStartupOptions(std::move(shell_startup));
+
+    std::filesystem::path initial_project;
+    if (startup_options_.project_path.has_value()) {
+      initial_project = startup_options_.project_path.value();
+    } else if (!startup_options_.safe_mode) {
+      initial_project = std::filesystem::current_path();
+    }
+
     util::StartupTrace::Scope workspace_init_scope("WorkspaceShell::Initialize");
-    if (!workspace_shell_.Initialize(std::filesystem::current_path())) {
+    if (!workspace_shell_.Initialize(initial_project)) {
       SDL_Log("Workspace initialization failed");
       return false;
     }

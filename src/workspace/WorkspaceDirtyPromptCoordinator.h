@@ -18,6 +18,7 @@ class DirtyPromptCoordinator {
  public:
   struct Operations {
     std::function<void(bool)> confirm_path_prompt;
+    std::function<void(const std::filesystem::path&)> refresh_compare_tabs_for_path;
     std::function<bool(std::size_t, bool)> switch_project;
     std::function<void(std::size_t)> close_project;
   };

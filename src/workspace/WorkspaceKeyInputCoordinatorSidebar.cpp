@@ -1,5 +1,8 @@
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 
+#include "project/CommitWorkflowTypes.h"
+#include "workspace/GitSidebarCommandCenter.h"
+
 namespace microide::workspace {
 bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
@@ -96,6 +99,19 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   }
 
   if (sidebar_mode == SidebarMode::Git) {
+    if (state_.sidebar.git.commit_workflow.open) {
+      if (event.key == SDLK_ESCAPE) {
+        if (operations_.close_commit_workflow != nullptr) {
+          operations_.close_commit_workflow();
+        }
+        return true;
+      }
+      if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
+          (modifiers & SDL_KMOD_CTRL) != 0 && operations_.request_commit_workflow_commit != nullptr) {
+        return operations_.request_commit_workflow_commit();
+      }
+    }
+    const std::size_t selected_index = state_.sidebar.git.selected_index;
     switch (event.key) {
       case SDLK_UP:
         operations_.move_git_sidebar_selection(-1);
@@ -123,19 +139,37 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        return operations_.open_git_sidebar_entry(state_.sidebar.git.selected_index);
+        return operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
+                                                       selected_index);
       case SDLK_R:
-        return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
+        return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Refresh,
+                                                       selected_index);
       default: {
         const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
+        if (input_character == 'd') {
+          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Diff, selected_index);
+        }
         if (input_character == 's') {
-          return operations_.stage_git_sidebar_entry(state_.sidebar.git.selected_index);
+          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Stage, selected_index);
         }
         if (input_character == 'u') {
-          return operations_.unstage_git_sidebar_entry(state_.sidebar.git.selected_index);
+          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Unstage,
+                                                         selected_index);
         }
         if (input_character == 'x') {
-          return operations_.discard_git_sidebar_entry(state_.sidebar.git.selected_index);
+          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Discard,
+                                                         selected_index);
+        }
+        if (input_character == 'm') {
+          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Merge, selected_index);
+        }
+        if (input_character == 'c') {
+          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Commit,
+                                                         selected_index);
+        }
+        if (input_character == 'o') {
+          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::OpenFile,
+                                                         selected_index);
         }
         return false;
       }

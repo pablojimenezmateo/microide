@@ -1,4 +1,9 @@
-## ADDED Requirements
+## Purpose
+
+Define authoritative, immutable Git repository snapshots, machine-stable status parsing, and async
+refresh generations shared by Git sidebar, compare, commit, and merge surfaces.
+
+## Requirements
 
 ### Requirement: Authoritative Git Repository Snapshot
 MicroIDE SHALL represent repository state for each open project as an immutable `GitRepositoryState` snapshot owned by a Git repository service. The snapshot SHALL include repository root, head identity, branch name, upstream identity when known, ahead and behind counts when known, staged entries, unstaged entries, untracked entries, conflict entries, submodule entries, ongoing operation state, refresh generation, refresh timestamp, stale flag, and last refresh error.

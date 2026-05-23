@@ -71,6 +71,13 @@ CommandResult ReadCommandOutput(const std::vector<std::string>& command, bool si
 CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
                                    std::vector<std::string> arguments,
                                    bool silence_stderr) {
+  return ReadGitCommandOutputWithStdin(root, std::move(arguments), {}, silence_stderr);
+}
+
+CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
+                                            std::vector<std::string> arguments,
+                                            std::string stdin_text,
+                                            bool silence_stderr) {
   std::vector<std::string> command;
   command.reserve(arguments.size() + 4);
   command.emplace_back("git");
@@ -83,7 +90,23 @@ CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
   for (std::string& argument : arguments) {
     command.push_back(std::move(argument));
   }
-  return ReadCommandOutput(command, silence_stderr);
+  platform::SubprocessOptions options;
+  options.capture_stdout = true;
+  options.capture_stderr = !silence_stderr;
+  options.silence_stderr = silence_stderr;
+  options.stdin_text = std::move(stdin_text);
+  const platform::SubprocessResult result = platform::RunSubprocess(command, options);
+  std::string output = result.stdout_text;
+  if (!silence_stderr && !result.stderr_text.empty()) {
+    if (!output.empty() && output.back() != '\n') {
+      output.push_back('\n');
+    }
+    output += result.stderr_text;
+  }
+  return CommandResult{
+      .exit_code = result.exit_code,
+      .output = std::move(output),
+  };
 }
 
 bool CommandSucceeds(const std::vector<std::string>& command, bool silence_stderr) {

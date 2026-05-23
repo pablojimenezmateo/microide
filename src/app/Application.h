@@ -6,13 +6,14 @@
 #include <thread>
 #include <vector>
 
+#include "app/AppStartupOptions.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::app {
 
 class Application {
  public:
-  Application() = default;
+  explicit Application(AppStartupOptions startup_options = {});
   ~Application();
 
   Application(const Application&) = delete;
@@ -69,6 +70,7 @@ class Application {
   std::size_t redraw_trace_max_dirty_rects_ = 0;
   std::size_t redraw_trace_max_rendered_clips_ = 0;
 
+  AppStartupOptions startup_options_;
   workspace::WorkspaceShell workspace_shell_;
   // Background-init worker for the syntax-highlight registry. Runs in
   // parallel with shell construction so its parse cost is hidden behind

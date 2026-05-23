@@ -17,6 +17,8 @@ class StatusBarModelService {
   struct Operations {
     std::function<bool(const std::filesystem::path&)> is_git_repo_valid;
     std::function<void(bool, std::string&, std::string&)> active_lsp_status_strings;
+    std::string_view startup_mode_text;
+    std::string_view startup_mode_tooltip;
   };
 
   void Refresh(StatusBarService& status_bar_service,

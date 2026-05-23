@@ -53,7 +53,7 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
     operations_.reset_project_scoped_state(true);
   }
 
-  {
+  if (!operations_.skip_workspace_session_restore()) {
     util::StartupTrace::Scope restore_workspace_scope("WorkspaceShell::RestoreWorkspaceSession");
     if (operations_.restore_workspace_session()) {
       operations_.set_project_watcher_deferred_arming(false);
@@ -68,7 +68,8 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   }
 
   util::StartupTrace::Scope open_project_scope("WorkspaceShell::OpenProjectTab");
-  const bool opened = operations_.open_project_tab(project_root, true, true);
+  const bool restore_persistence = !operations_.skip_workspace_session_restore();
+  const bool opened = operations_.open_project_tab(project_root, restore_persistence, true);
   operations_.set_project_watcher_deferred_arming(false);
   return opened;
 }
@@ -127,6 +128,37 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (git_sidebar_event_type_ == static_cast<Uint32>(-1)) {
     git_sidebar_event_type_ = 0;
   }
+  InitializeCommitWorkflowService();
+  patch_apply_service_.SetCallbacks(PatchApplyService::Callbacks{
+      .current_repository_state = [this]() {
+        return git_repository_service_.CurrentState();
+      },
+      .request_git_refresh = [this]() { RequestAutomaticGitSidebarRefresh(); },
+      .refresh_compare_tab_for_path =
+          [this](const std::filesystem::path& path) { RefreshOpenCompareTabsForPath(path); },
+      .invalidate_editor_blame_path =
+          [this](const std::filesystem::path& path) { InvalidateEditorBlamePath(path); },
+      .reload_clean_editor_tabs_for_path =
+          [this](const std::filesystem::path& path) { ReloadCleanEditorTabsForPath(path); },
+      .set_command_feedback =
+          [this](std::string_view feedback) {
+            context_.current_project_state.panel.command.feedback_text = std::string(feedback);
+          },
+      .open_discard_preview_prompt =
+          [this](project::PatchApplyPreview preview) {
+            OpenPromptSurface(PromptSurfaceState::Action::DiscardPatchPreview,
+                              PromptSurfaceState::Kind::Confirm, ActiveCompareTab() != nullptr
+                                  ? ActiveCompareTab()->path
+                                  : std::filesystem::path{},
+                              {});
+            context_.prompts.surface.detail = std::move(preview.summary);
+            if (!preview.patch_text.empty()) {
+              context_.prompts.surface.detail += "\n\n";
+              context_.prompts.surface.detail += preview.patch_text;
+            }
+          },
+  });
+
   git_repository_service_.SetWakeCallbacks(GitRepositoryService::WakeCallbacks{
       .increment_background_task_count = []() { app::IncrementBackgroundTaskCount(); },
       .decrement_background_task_count_and_wake = []() { app::DecrementBackgroundTaskCountAndWake(); },
@@ -220,6 +252,8 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           },
           .set_project_watcher_deferred_arming =
               [this](bool deferred) { project_file_monitor_.SetDeferredArming(deferred); },
+          .skip_workspace_session_restore =
+              [this]() { return startup_options_.skip_workspace_session_restore(); },
           .restore_workspace_session =
               [this]() { return MakePersistenceCoordinator().RestoreWorkspaceSession(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },

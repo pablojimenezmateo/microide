@@ -99,7 +99,8 @@ These are out of scope unless deliberately added as a separate phase:
 
 - debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
-- plugin security-system hardening work, including safe-mode startup, plugin sandboxing, and per-plugin capability prompts
+- broad plugin security-system hardening (sandboxing, capability prompts, signing, marketplace
+  trust); Git Workstation Preview adds `--disable-plugins` / `--safe-mode` only
 - cloud or collaboration features
 - account systems and sync
 - native GitHub-style review dashboards

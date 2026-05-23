@@ -320,6 +320,7 @@ class PluginHost {
   int ConsumeAsyncProcessCallbacks();
   int PendingAsyncProcessCount() const;
   bool enabled() const;
+  void SetStartupPluginsEnabled(bool enabled);
   bool Reload(const std::filesystem::path& project_root);
   void Shutdown();
   void OnBufferOpen(const std::filesystem::path& path);

@@ -84,6 +84,54 @@ void CompareMergeService::JumpCompareHunk(int delta) {
   interactions_.JumpCompareHunk(delta);
 }
 
+void CompareMergeService::JumpCompareReviewFile(int delta) {
+  interactions_.JumpCompareReviewFile(delta);
+}
+
+void CompareMergeService::CopyComparePath() {
+  interactions_.CopyComparePath();
+}
+
+void CompareMergeService::CopyCompareHunkPatch() {
+  interactions_.CopyCompareHunkPatch();
+}
+
+void CompareMergeService::CopyCompareFilePatch() {
+  interactions_.CopyCompareFilePatch();
+}
+
+void CompareMergeService::StageCompareHunk() {
+  interactions_.StageCompareHunk();
+}
+
+void CompareMergeService::StageCompareSelectedLines() {
+  interactions_.StageCompareSelectedLines();
+}
+
+void CompareMergeService::UnstageCompareHunk() {
+  interactions_.UnstageCompareHunk();
+}
+
+void CompareMergeService::UnstageCompareSelectedLines() {
+  interactions_.UnstageCompareSelectedLines();
+}
+
+void CompareMergeService::OpenDiscardCompareHunkPrompt() {
+  interactions_.OpenDiscardCompareHunkPrompt();
+}
+
+void CompareMergeService::OpenDiscardCompareSelectedLinesPrompt() {
+  interactions_.OpenDiscardCompareSelectedLinesPrompt();
+}
+
+void CompareMergeService::ToggleCompareIgnoreWhitespace() {
+  interactions_.ToggleCompareIgnoreWhitespace();
+}
+
+void CompareMergeService::ToggleCompareShowWhitespace() {
+  interactions_.ToggleCompareShowWhitespace();
+}
+
 void CompareMergeService::ScrollCompareRows(int delta) {
   interactions_.ScrollCompareRows(delta);
 }
@@ -102,6 +150,30 @@ void CompareMergeService::ScrollMergeColumns(int delta) {
 
 void CompareMergeService::ApplyMergeChoice(compare::MergeChoice choice) {
   interactions_.ApplyMergeChoice(choice);
+}
+
+void CompareMergeService::ResetMergeHunk() {
+  interactions_.ResetMergeHunk();
+}
+
+void CompareMergeService::JumpNextUnresolvedMergeConflict() {
+  interactions_.JumpNextUnresolvedMergeConflict();
+}
+
+void CompareMergeService::ToggleMergeBasePane() {
+  interactions_.ToggleMergeBasePane();
+}
+
+void CompareMergeService::ToggleMergeRawMarkers() {
+  interactions_.ToggleMergeRawMarkers();
+}
+
+void CompareMergeService::CopyMergeSideSnippet(bool incoming) {
+  interactions_.CopyMergeSideSnippet(incoming);
+}
+
+void CompareMergeService::MarkMergeResolved() {
+  interactions_.MarkMergeResolved();
 }
 
 }  // namespace microide::workspace

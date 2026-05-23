@@ -2,8 +2,13 @@
 
 #include <algorithm>
 
+#include "compare/BranchReviewStateTypes.h"
+#include "compare/CompareReviewTypes.h"
+#include "workspace/BranchReviewStateBridge.h"
 #include "workspace/CompareMergeService.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 
 namespace microide::workspace {
 
@@ -61,6 +66,10 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 return BuildMergeTabFromBuffers(output_path, base_content, incoming_content,
                                                 current_content, incoming_label, result_label,
                                                 current_label, selected_hunk, persistable);
+              },
+          .finalize_git_merge_tab =
+              [this](MergeTabState& merge_tab, const std::filesystem::path& path) {
+                FinalizeGitMergeTab(merge_tab, path);
               },
       });
 }
@@ -155,6 +164,38 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                 RequestActiveEditableBlameNeighborhoodRedraw(before, after);
               },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
+          .write_clipboard_text =
+              [this](std::string_view text) { return WriteClipboardText(text); },
+          .open_working_tree_comparison =
+              [this](const std::filesystem::path& path, const std::string& left_ref,
+                     const std::string& left_label) {
+                return OpenWorkingTreeComparison(path, left_ref, left_label);
+              },
+          .open_branch_head_comparison =
+              [this](const std::filesystem::path& path, const std::string& left_ref,
+                     const std::string& left_label, const std::string& right_ref,
+                     const std::string& right_label) {
+                return OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
+              },
+          .refresh_compare_tab_derived_state =
+              [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
+          .stage_compare_hunk = [this]() { StageCompareHunk(); },
+          .stage_compare_selected_lines = [this]() { StageCompareSelectedLines(); },
+          .unstage_compare_hunk = [this]() { UnstageCompareHunk(); },
+          .unstage_compare_selected_lines = [this]() { UnstageCompareSelectedLines(); },
+          .open_discard_compare_hunk_prompt = [this]() { OpenDiscardCompareHunkPrompt(); },
+          .open_discard_compare_selected_lines_prompt =
+              [this]() { OpenDiscardCompareSelectedLinesPrompt(); },
+          .save_active_merge_tab =
+              [this]() {
+                MergeTabState* merge_tab = ActiveMergeTab();
+                return merge_tab != nullptr && merge_tab->result_viewport.Save();
+              },
+          .stage_merge_result_path =
+              [this](const std::filesystem::path& path) {
+                return project::GitStagePath(context_.current_project_state.root, path);
+              },
+          .refresh_git_sidebar = [this]() { RefreshGitSidebar(); },
       });
 }
 
@@ -243,6 +284,68 @@ void WorkspaceShell::JumpCompareHunk(int delta) {
   MakeCompareMergeService().JumpCompareHunk(delta);
 }
 
+void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  for (std::size_t index = 0; index < context_.current_project_state.open_tabs.size(); ++index) {
+    const auto& tab = context_.current_project_state.open_tabs[index];
+    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+        tab.compare->path != normalized_path) {
+      continue;
+    }
+    auto rebuilt = BuildCompareTabEntry(normalized_path, tab.compare.value());
+    if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
+      continue;
+    }
+    context_.current_project_state.open_tabs[index] = std::move(*rebuilt);
+    if (index == context_.current_project_state.active_tab_index) {
+      RevealActiveCompareSelection();
+      RequestActiveTabRedraw(false);
+    }
+  }
+}
+
+void WorkspaceShell::StageCompareHunk() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestStageHunk(*compare_tab);
+  }
+}
+
+void WorkspaceShell::StageCompareSelectedLines() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestStageSelectedLines(*compare_tab);
+  }
+}
+
+void WorkspaceShell::UnstageCompareHunk() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestUnstageHunk(*compare_tab);
+  }
+}
+
+void WorkspaceShell::UnstageCompareSelectedLines() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestUnstageSelectedLines(*compare_tab);
+  }
+}
+
+void WorkspaceShell::OpenDiscardCompareHunkPrompt() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestDiscardHunkPreview(*compare_tab);
+  }
+}
+
+void WorkspaceShell::OpenDiscardCompareSelectedLinesPrompt() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr) {
+    patch_apply_service_.RequestDiscardSelectedLinesPreview(*compare_tab);
+  }
+}
+
 void WorkspaceShell::ScrollCompareRows(int delta) {
   MakeCompareMergeService().ScrollCompareRows(delta);
 }
@@ -261,6 +364,109 @@ void WorkspaceShell::ScrollMergeColumns(int delta) {
 
 void WorkspaceShell::ApplyMergeChoice(compare::MergeChoice choice) {
   MakeCompareMergeService().ApplyMergeChoice(choice);
+}
+
+void WorkspaceShell::ResetMergeHunk() {
+  MakeCompareMergeService().ResetMergeHunk();
+}
+
+void WorkspaceShell::JumpNextUnresolvedMergeConflict() {
+  MakeCompareMergeService().JumpNextUnresolvedMergeConflict();
+}
+
+void WorkspaceShell::ToggleMergeBasePane() {
+  MakeCompareMergeService().ToggleMergeBasePane();
+}
+
+void WorkspaceShell::ToggleMergeRawMarkers() {
+  MakeCompareMergeService().ToggleMergeRawMarkers();
+}
+
+void WorkspaceShell::CopyMergeIncomingSnippet() {
+  MakeCompareMergeService().CopyMergeSideSnippet(true);
+}
+
+void WorkspaceShell::CopyMergeCurrentSnippet() {
+  MakeCompareMergeService().CopyMergeSideSnippet(false);
+}
+
+void WorkspaceShell::MarkMergeResolved() {
+  MakeCompareMergeService().MarkMergeResolved();
+}
+
+void WorkspaceShell::PersistBranchReviewState() {
+  MakePersistenceCoordinator().SaveConfigState();
+}
+
+void WorkspaceShell::MarkActiveBranchFileReviewed() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+    return;
+  }
+  context_.current_project_state.branch_review.MarkFileReviewed(compare_tab->branch_target,
+                                                                compare_tab->path);
+  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  PersistBranchReviewState();
+  RequestActiveTabRedraw(true);
+  RequestSidebarRedraw();
+}
+
+void WorkspaceShell::MarkActiveBranchHunkReviewed() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+    return;
+  }
+  const int hunk_index = CompareTabSelectedHunkIndex(*compare_tab);
+  if (hunk_index < 0) {
+    return;
+  }
+  const compare::BranchReviewHunkIdentity identity = compare::ComputeBranchReviewHunkIdentity(
+      compare_tab->model, hunk_index, compare_tab->path);
+  context_.current_project_state.branch_review.MarkHunkReviewed(compare_tab->branch_target, identity);
+  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  PersistBranchReviewState();
+  RequestActiveTabRedraw(true);
+}
+
+void WorkspaceShell::ClearActiveBranchReviewState() {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab != nullptr && compare_tab->review_mode == compare::CompareReviewMode::Branch) {
+    context_.current_project_state.branch_review.ClearTarget(compare_tab->branch_target);
+    ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+    RequestActiveTabRedraw(true);
+  } else if (const std::optional<compare::BranchReviewTargetIdentity> target =
+                 OutgoingBranchReviewTarget(context_.current_project_state.sidebar.git,
+                                            context_.current_project_state.root);
+             target.has_value()) {
+    context_.current_project_state.branch_review.ClearTarget(*target);
+  }
+  PersistBranchReviewState();
+  RequestSidebarRedraw();
+}
+
+void WorkspaceShell::EditActiveBranchReviewNote(const std::string& note_text) {
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+    return;
+  }
+  const int hunk_index = CompareTabSelectedHunkIndex(*compare_tab);
+  std::optional<compare::BranchReviewHunkIdentity> hunk_identity;
+  compare::BranchReviewNoteScope scope = compare::BranchReviewNoteScope::File;
+  if (hunk_index >= 0) {
+    hunk_identity =
+        compare::ComputeBranchReviewHunkIdentity(compare_tab->model, hunk_index, compare_tab->path);
+    scope = compare::BranchReviewNoteScope::Hunk;
+  }
+  if (note_text.empty()) {
+    context_.current_project_state.branch_review.DeleteNote(compare_tab->branch_target, scope,
+                                                            compare_tab->path, hunk_identity);
+  } else {
+    context_.current_project_state.branch_review.SetNote(compare_tab->branch_target, scope,
+                                                         compare_tab->path, hunk_identity, note_text);
+  }
+  ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
+  PersistBranchReviewState();
+  RequestActiveTabRedraw(true);
 }
 
 }  // namespace microide::workspace

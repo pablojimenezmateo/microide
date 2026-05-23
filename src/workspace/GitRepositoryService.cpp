@@ -2,9 +2,11 @@
 
 #include <SDL3/SDL_timer.h>
 
+#include <unordered_set>
 #include <utility>
 
 #include "app/BackgroundTaskCounter.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "project/GitCompareService.h"
 #include "project/GitPorcelainV2Parser.h"
 #include "project/GitRepository.h"
@@ -64,7 +66,7 @@ void GitRepositoryService::Reset() {
   active_project_root_.clear();
 }
 
-const project::GitRepositoryState& GitRepositoryService::CurrentState() const {
+project::GitRepositoryState GitRepositoryService::CurrentState() const {
   std::lock_guard lock(mutex_);
   return current_state_;
 }
@@ -156,7 +158,7 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
       continue;
     }
     snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
-        .section = GitSidebarEntry::Section::Modified,
+        .section = ClassifyGitSidebarSection(entry.conflicted, entry.staged, entry.status),
         .relative_path = entry.path.relative_path,
         .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
         .conflicted = entry.conflicted,
@@ -169,13 +171,28 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
                              repository_state.repo_available);
   snapshot.repo_available = resolved_base.repo_available;
   snapshot.branch_label = BranchLabelFromState(repository_state);
+  snapshot.upstream_label = repository_state.branch.upstream;
+  snapshot.ahead = repository_state.branch.ahead;
+  snapshot.behind = repository_state.branch.behind;
+  snapshot.snapshot_stale = repository_state.stale;
+  snapshot.refresh_error = repository_state.refresh_error.detail;
   snapshot.base_ref = resolved_base.base_ref;
   snapshot.base_label = resolved_base.base_label;
 
   if (include_outgoing_entries && !snapshot.base_ref.empty()) {
+    std::unordered_set<std::string> workflow_paths;
+    workflow_paths.reserve(snapshot.entries.size());
+    for (const GitSidebarState::RefreshSnapshotEntry& entry : snapshot.entries) {
+      workflow_paths.insert(entry.relative_path.generic_string());
+    }
+
     const auto outgoing_entries =
         project::CollectGitBranchOutgoingFiles(request.project_root, snapshot.base_ref);
     for (const auto& entry : outgoing_entries) {
+      const std::string path_key = entry.relative_path.generic_string();
+      if (workflow_paths.contains(path_key)) {
+        continue;
+      }
       snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
           .section = GitSidebarEntry::Section::Outgoing,
           .relative_path = entry.relative_path,
@@ -317,6 +334,44 @@ void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_r
     ScheduleRefresh(std::move(request));
   }
 }
+
+#ifdef MICROIDE_TESTING
+void GitRepositoryService::RunRefreshSynchronouslyForTesting(
+    const std::filesystem::path& project_root,
+    GitSidebarRefreshScope scope,
+    OutgoingBaseChoice outgoing_base_choice,
+    bool tree_git_badges_materialized) {
+  if (project_root.empty()) {
+    Reset();
+    return;
+  }
+
+  RefreshRequest request{
+      .project_root = project_root,
+      .scope = scope,
+      .outgoing_base_choice = outgoing_base_choice,
+      .tree_git_badges_materialized = tree_git_badges_materialized,
+  };
+  {
+    std::lock_guard lock(mutex_);
+    active_project_root_ = project_root;
+    refresh_in_flight_ = false;
+    follow_up_refresh_pending_ = false;
+    deferred_refresh_.reset();
+    request.generation = ++refresh_generation_;
+    current_state_.stale = true;
+    current_state_.refreshing = true;
+  }
+
+  const project::GitRepositoryState repository_state = BuildRepositoryState(request);
+  {
+    std::lock_guard lock(mutex_);
+    current_state_ = repository_state;
+  }
+  GitSidebarState::RefreshSnapshot snapshot = BuildSidebarSnapshot(repository_state, request);
+  PublishSnapshot(std::move(snapshot), request.generation);
+}
+#endif
 
 bool GitRepositoryService::ConsumePendingSidebarSnapshot(
     GitSidebarState::RefreshSnapshot* snapshot) {

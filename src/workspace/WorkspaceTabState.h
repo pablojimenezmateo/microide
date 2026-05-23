@@ -8,6 +8,10 @@
 #include <vector>
 
 #include "compare/CompareModel.h"
+#include "compare/ComparePresentationModel.h"
+#include "compare/CompareReviewTypes.h"
+#include "compare/CompareSemanticMetadata.h"
+#include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
 #include "editor/FoldingModel.h"
 #include "editor/SnippetEngine.h"
@@ -33,6 +37,16 @@ struct CompareTabState {
   std::string left_label;
   std::string right_label;
   std::string left_content;
+  compare::CompareReviewMode review_mode = compare::CompareReviewMode::WorkingTree;
+  compare::WorkingTreeStagingView staging_view = compare::WorkingTreeStagingView::Combined;
+  compare::BranchReviewTargetIdentity branch_target;
+  compare::CompareSemanticFileMetadata semantic_file;
+  compare::ComparePresentationModel presentation;
+  compare::CompareBuildOptions build_options;
+  bool show_whitespace = false;
+  bool opened_from_commit_picker = false;
+  std::vector<std::filesystem::path> review_files;
+  std::size_t review_file_index = 0;
   editor::SyntaxState left_initial_syntax_state;
   editor::SyntaxState right_initial_syntax_state;
   editor::SyntaxState left_current_syntax_state;
@@ -44,6 +58,8 @@ struct CompareTabState {
   std::size_t syntax_rows_tokenized = 0;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
+  bool model_stale = false;
+  bool model_refreshing = false;
   std::size_t selected_row = 0;
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;
@@ -67,6 +83,19 @@ struct MergeTabState {
   std::string incoming_label;
   std::string result_label;
   std::string current_label;
+  std::string base_label;
+  compare::MergeFileConflictMetadata file_conflict;
+  std::size_t remaining_conflicted_files = 0;
+  std::uint64_t open_index_generation = 0;
+  std::optional<std::uint64_t> disk_result_tick;
+  bool base_pane_visible = false;
+  bool show_raw_markers = false;
+  bool marked_resolved = false;
+  bool index_stale = false;
+  bool external_result_stale = false;
+  bool allow_conflict_marker_override = false;
+  bool marker_override_prompt_pending = false;
+  std::string status_message;
   editor::TextViewport::LineEnding result_line_ending = editor::TextViewport::LineEnding::LF;
   compare::MergeModel model;
   std::vector<std::vector<editor::SyntaxTokenKind>> incoming_tokens;

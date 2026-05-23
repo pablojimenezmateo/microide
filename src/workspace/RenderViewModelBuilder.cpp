@@ -1,5 +1,7 @@
 #include "workspace/RenderViewModelBuilder.h"
 
+#include "workspace/GitSidebarCommandCenter.h"
+
 #include "editor/FoldingModel.h"
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
@@ -446,14 +448,23 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   const std::string_view replace_fallback_text =
       replace_text.empty() ? kReplacePlaceholder : replace_text;
 
+  const SidebarMode mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id);
+  std::optional<GitSidebarViewModel> git_sidebar;
+  if (mode == SidebarMode::Git) {
+    git_sidebar = BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                                           context_.current_project_state.root,
+                                           context_.current_project_state.branch_review);
+  }
+
   return SidebarSurfaceViewModel{
       .visible = context_.current_project_state.sidebar.visible,
-      .mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id),
+      .mode = mode,
       .scroll_row = context_.current_project_state.sidebar.scroll_row,
       .project_search_editing =
           context_.current_project_state.overlay.workflow.project_search.editing,
       .query_fallback_text = query_fallback_text,
       .replace_fallback_text = replace_fallback_text,
+      .git_sidebar = std::move(git_sidebar),
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }

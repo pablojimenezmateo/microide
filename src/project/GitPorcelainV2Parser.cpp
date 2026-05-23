@@ -114,7 +114,8 @@ GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
       .conflict_kind = conflicted ? ConflictKindFromUnmergedCodes(xy) : GitConflictKind::None,
       .path = MakeGitRepositoryPathIdentity(std::move(path)),
       .old_path = std::nullopt,
-      .staged = !conflicted && xy.size() >= 1 && xy[0] != ' ' && xy[0] != '?' && xy[0] != '!',
+      .staged = !conflicted && xy.size() >= 1 && xy[0] != ' ' && xy[0] != '?' &&
+                 xy[0] != '!' && xy[0] != '.',
       .conflicted = conflicted,
   };
   if (old_path.has_value()) {
@@ -213,7 +214,8 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
       }
       case 'u': {
         const std::string_view xy = fields[0];
-        const std::string_view path = PathAfterLeadingTokens(body, 10);
+        // Porcelain v2 unmerged: XY sub m1 m2 m3 mW h1 h2 h3 <path>
+        const std::string_view path = PathAfterLeadingTokens(body, 9);
         if (path.empty()) {
           break;
         }

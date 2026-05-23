@@ -24,6 +24,10 @@ CommandResult ReadCommandOutput(const std::vector<std::string>& command,
 CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
                                    std::vector<std::string> arguments,
                                    bool silence_stderr = true);
+CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
+                                            std::vector<std::string> arguments,
+                                            std::string stdin_text,
+                                            bool silence_stderr = true);
 bool CommandSucceeds(const std::vector<std::string>& command, bool silence_stderr = true);
 bool GitCommandSucceeds(const std::filesystem::path& root,
                         std::vector<std::string> arguments,

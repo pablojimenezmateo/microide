@@ -4,6 +4,8 @@
 #include <cmath>
 #include <string>
 
+#include "workspace/CommitWorkflowState.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
 namespace microide::workspace {
@@ -279,6 +281,46 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       summary_y += 14.0f;
     }
 
+    if (project_state.sidebar.git.commit_workflow.open) {
+      auto& workflow = project_state.sidebar.git.commit_workflow;
+      float panel_y = summary_y + 4.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                 theme_.text_primary, theme_.surface_background,
+                 TruncateLabel(workflow.staged_summary_line, layout.sidebar.w - kSidebarInset * 2.0f));
+      panel_y += 14.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                 theme_.text_muted, theme_.surface_background, "Subject:");
+      panel_y += 14.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset + 4.0f, panel_y,
+                 theme_.text_primary, theme_.row_highlight,
+                 TruncateLabel(workflow.subject.text().empty() ? "<required>" : workflow.subject.text(),
+                               layout.sidebar.w - kSidebarInset * 2.0f - 4.0f));
+      panel_y += 16.0f;
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                 theme_.text_muted, theme_.surface_background, "Body:");
+      panel_y += 14.0f;
+      const std::string body_preview = CommitWorkflowBodyText(workflow.body);
+      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset + 4.0f, panel_y,
+                 theme_.text_secondary, theme_.surface_background,
+                 TruncateLabel(body_preview.empty() ? "<optional>" : body_preview,
+                               layout.sidebar.w - kSidebarInset * 2.0f - 4.0f));
+      panel_y += 16.0f;
+      for (const project::CommitPreCheck& check : workflow.checks) {
+        const SDL_Color color = check.severity == project::CommitPreCheckSeverity::Blocking
+                                    ? theme_.text_primary
+                                    : theme_.text_muted;
+        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y, color,
+                   theme_.surface_background,
+                   TruncateLabel(check.message, layout.sidebar.w - kSidebarInset * 2.0f));
+        panel_y += 12.0f;
+      }
+      if (!workflow.status_message.empty()) {
+        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+                   theme_.text_muted, theme_.surface_background,
+                   TruncateLabel(workflow.status_message, layout.sidebar.w - kSidebarInset * 2.0f));
+      }
+    }
+
     const auto lines = BuildGitSidebarLines();
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     const int scroll_row = list_layout.scroll_row;
@@ -330,14 +372,26 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
 
       const auto& entry = project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
+      const GitSidebarRowViewModel* row_vm = nullptr;
+      if (sidebar_vm.git_sidebar.has_value()) {
+        for (const GitSidebarSectionViewModel& section : sidebar_vm.git_sidebar->sections) {
+          for (const GitSidebarRowViewModel& candidate : section.rows) {
+            if (candidate.entry_index == line.entry_index) {
+              row_vm = &candidate;
+              break;
+            }
+          }
+          if (row_vm != nullptr) {
+            break;
+          }
+        }
+      }
       const bool selected =
           static_cast<std::size_t>(line.entry_index) == project_state.sidebar.git.selected_index;
       DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
                                   selected);
 
-      const char git_marker = GitMarker(entry.status);
-      // Hold the marker as a single-char string_view into the local `git_marker` storage to avoid
-      // the per-row std::string allocation.
+      const char git_marker = GitMarker(row_vm != nullptr ? row_vm->status : entry.status);
       const std::string_view marker_text =
           git_marker == ' ' ? std::string_view{} : std::string_view(&git_marker, 1);
       const float marker_width =
@@ -348,42 +402,52 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
       const auto draw_button = [&](const SDL_FRect& button_rect,
                                    std::string_view label,
-                                   ButtonTone tone) {
+                                   ButtonTone tone,
+                                   bool enabled) {
         DrawButtonCentered(
             text_renderer_, renderer, theme_, button_rect, label, tone,
             ButtonVisualState{
-                .enabled = true,
+                .enabled = enabled,
                 .hovered = false,
                 .active = selected,
             });
       };
 
+      const GitSidebarActionAvailability row_actions =
+          row_vm != nullptr ? row_vm->actions
+                            : GitSidebarActionAvailabilityForEntry(
+                                  entry, project_state.sidebar.git.repo_available,
+                                  project_state.sidebar.git.supports_mutations);
       if (actions.primary_rect.has_value()) {
-        draw_button(*actions.primary_rect, entry.staged ? "Unstage" : "Stage",
-                    ButtonTone::Accent);
+        draw_button(*actions.primary_rect, row_actions.unstage ? "Unstage" : "Stage",
+                    ButtonTone::Accent, row_actions.stage || row_actions.unstage);
       }
       if (actions.discard_rect.has_value()) {
-        draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive);
+        draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive, row_actions.discard);
       }
 
       if (!marker_text.empty()) {
         DrawVCenteredTextOn(
             text_renderer_, renderer,
             MakeRect(right_edge - marker_width, row_rect.y, marker_width, row_rect.h), 0.0f,
-            GitMarkerColor(theme_, entry.status),
+            GitMarkerColor(theme_, row_vm != nullptr ? row_vm->status : entry.status),
             selected ? theme_.row_highlight : theme_.surface_background, marker_text);
         right_edge -= marker_width + 8.0f;
       }
 
-      const GitSidebarEntryTextModel text_model =
-          BuildGitSidebarEntryTextModel(entry.relative_path, entry.staged);
+      std::string primary_label =
+          row_vm != nullptr ? row_vm->primary_label : entry.relative_path.filename().string();
+      if (row_vm != nullptr && !row_vm->review_marker_label.empty()) {
+        primary_label = "[" + row_vm->review_marker_label + "] " + primary_label;
+      }
+      const std::string& secondary_label = row_vm != nullptr ? row_vm->secondary_label : std::string{};
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
       const SDL_Color primary_color = theme_.text_primary;
       const SDL_Color secondary_color = theme_.text_muted;
       DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 6.0f, right_edge,
-                                  primary_color, secondary_color, row_background,
-                                  text_model.primary_label, text_model.secondary_label, 1.0f);
+                                  primary_color, secondary_color, row_background, primary_label,
+                                  secondary_label, 1.0f);
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),

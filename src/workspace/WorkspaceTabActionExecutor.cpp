@@ -228,6 +228,27 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       context_.WriteClipboardText(clipboard_text);
       return DispatchResult::Handled;
     }
+    case ActionId::MarkBranchFileReviewed:
+      context_.MarkBranchFileReviewed();
+      return DispatchResult::Handled;
+    case ActionId::MarkBranchHunkReviewed:
+      context_.MarkBranchHunkReviewed();
+      return DispatchResult::Handled;
+    case ActionId::ClearBranchReviewState:
+      context_.ClearBranchReviewState();
+      return DispatchResult::Handled;
+    case ActionId::EditBranchReviewNote: {
+      std::string note_text;
+      if (!args.empty()) {
+        note_text = args.front();
+        for (std::size_t i = 1; i < args.size(); ++i) {
+          note_text.push_back(' ');
+          note_text += args[i];
+        }
+      }
+      context_.EditBranchReviewNote(note_text);
+      return DispatchResult::Handled;
+    }
     default:
       return DispatchResult::Unhandled;
   }

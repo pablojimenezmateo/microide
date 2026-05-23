@@ -44,6 +44,13 @@ void WorkspaceShell::ClearEditorBlame() {
   git_blame_service_.Clear();
 }
 
+void WorkspaceShell::SetStartupOptions(WorkspaceStartupOptions options) {
+  startup_options_ = std::move(options);
+  if (startup_options_.plugins_disabled()) {
+    plugin_runtime_.Host().SetStartupPluginsEnabled(false);
+  }
+}
+
 WorkspaceShell::~WorkspaceShell() {
   // Drain project background work before member teardown to avoid races on
   // git sidebar refresh state during shell destruction.

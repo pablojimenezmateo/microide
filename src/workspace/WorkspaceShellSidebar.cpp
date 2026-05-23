@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceShellRenderPrimitives.h"
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -121,7 +122,6 @@ std::optional<SDL_FRect> WorkspaceShell::GitSidebarOutgoingBaseButtonRect(
 
 std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
   std::vector<std::string> lines;
-
   std::string scm_line = "SCM: Git";
   for (const ScmProviderSpec& provider : scm_registry_.Specs()) {
     scm_line += ", ";
@@ -129,6 +129,11 @@ std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
   }
   lines.push_back(std::move(scm_line));
 
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                             context_.current_project_state.root,
+                             context_.current_project_state.branch_review);
+  lines.insert(lines.end(), view_model.summary_lines.begin(), view_model.summary_lines.end());
   return lines;
 }
 
@@ -137,7 +142,8 @@ float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
       static_cast<float>(GitSidebarSummaryLines().size()) * kGitSidebarSummaryLineHeight;
   return sidebar_rect.y + kGitSidebarActionRowTop + kGitSidebarActionButtonHeight +
          kGitSidebarListGap + summary_height +
-         (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f);
+         (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f) + GitSidebarCommitWorkflowHeight() +
+         (GitSidebarCommitWorkflowHeight() > 0.0f ? kGitSidebarListGap : 0.0f);
 }
 
 float WorkspaceShell::GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const {
@@ -295,7 +301,10 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
     if (actions.primary_rect.has_value() &&
         Contains(ExpandRect(*actions.primary_rect, kGitSidebarEntryButtonHoverPadding),
                  last_mouse_x_, last_mouse_y_)) {
-      return entry.staged ? "Unstage" : "Stage";
+      const GitSidebarActionAvailability availability = GitSidebarActionAvailabilityForEntry(
+          entry, context_.current_project_state.sidebar.git.repo_available,
+          context_.current_project_state.sidebar.git.supports_mutations);
+      return availability.unstage ? "Unstage" : "Stage";
     }
     if (actions.discard_rect.has_value() &&
         Contains(ExpandRect(*actions.discard_rect, kGitSidebarEntryButtonHoverPadding),
@@ -326,19 +335,11 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarTooltipRect(const Work
 }
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
-  std::vector<GitSidebarSection> sections;
-  sections.reserve(context_.current_project_state.sidebar.git.entries.size());
-  for (const auto& entry : context_.current_project_state.sidebar.git.entries) {
-    sections.push_back(entry.section == GitSidebarEntry::Section::Modified
-                           ? GitSidebarSection::Modified
-                           : GitSidebarSection::Outgoing);
-  }
-
-  const auto specs =
-      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available,
-                               context_.current_project_state.sidebar.git.refreshing,
-                               context_.current_project_state.sidebar.git.base_ref,
-                               context_.current_project_state.sidebar.git.base_label);
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                             context_.current_project_state.root,
+                             context_.current_project_state.branch_review);
+  const auto specs = BuildGitSidebarLineSpecs(view_model);
   std::vector<GitSidebarLine> lines;
   lines.reserve(specs.size());
   for (const GitSidebarLineSpec& spec : specs) {
@@ -347,9 +348,7 @@ std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines
                     ? GitSidebarLine::Kind::Header
                     : spec.kind == GitSidebarLineKind::Entry ? GitSidebarLine::Kind::Entry
                                                              : GitSidebarLine::Kind::Empty,
-        .section = spec.section == GitSidebarSection::Modified
-                       ? GitSidebarEntry::Section::Modified
-                       : GitSidebarEntry::Section::Outgoing,
+        .section = spec.section,
         .label = spec.label,
         .entry_index = spec.entry_index,
     });
@@ -362,8 +361,14 @@ WorkspaceShell::GitSidebarEntryActionLayout WorkspaceShell::ComputeGitSidebarEnt
     const GitSidebarEntry& entry) const {
   GitSidebarEntryActionLayout layout;
   layout.content_right_edge = row_rect.x + row_rect.w - 8.0f;
-  if (entry.section != GitSidebarEntry::Section::Modified || row_rect.w <= 0.0f ||
-      row_rect.h <= 0.0f) {
+  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
+    return layout;
+  }
+
+  const GitSidebarActionAvailability availability = GitSidebarActionAvailabilityForEntry(
+      entry, context_.current_project_state.sidebar.git.repo_available,
+      context_.current_project_state.sidebar.git.supports_mutations);
+  if (!availability.stage && !availability.unstage && !availability.discard) {
     return layout;
   }
 
@@ -372,14 +377,17 @@ WorkspaceShell::GitSidebarEntryActionLayout WorkspaceShell::ComputeGitSidebarEnt
     return MakeRect(right_edge - width, row_rect.y + 1.0f, width, row_rect.h - 2.0f);
   };
 
-  const SDL_FRect primary_rect =
-      button_rect(layout.content_right_edge, entry.staged ? "Unstage" : "Stage");
-  layout.primary_rect = primary_rect;
-  layout.content_right_edge = primary_rect.x - kGitSidebarEntryButtonGap;
-
-  const SDL_FRect discard_rect = button_rect(layout.content_right_edge, "Discard");
-  layout.discard_rect = discard_rect;
-  layout.content_right_edge = discard_rect.x - 6.0f;
+  if (availability.stage || availability.unstage) {
+    const SDL_FRect primary_rect = button_rect(layout.content_right_edge,
+                                               availability.unstage ? "Unstage" : "Stage");
+    layout.primary_rect = primary_rect;
+    layout.content_right_edge = primary_rect.x - kGitSidebarEntryButtonGap;
+  }
+  if (availability.discard) {
+    const SDL_FRect discard_rect = button_rect(layout.content_right_edge, "Discard");
+    layout.discard_rect = discard_rect;
+    layout.content_right_edge = discard_rect.x - 6.0f;
+  }
   return layout;
 }
 
@@ -388,18 +396,11 @@ std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
     return std::nullopt;
   }
 
-  std::vector<GitSidebarSection> sections;
-  sections.reserve(context_.current_project_state.sidebar.git.entries.size());
-  for (const auto& entry : context_.current_project_state.sidebar.git.entries) {
-    sections.push_back(entry.section == GitSidebarEntry::Section::Modified
-                           ? GitSidebarSection::Modified
-                           : GitSidebarSection::Outgoing);
-  }
-  const auto specs =
-      BuildGitSidebarLineSpecs(sections, context_.current_project_state.sidebar.git.repo_available,
-                               context_.current_project_state.sidebar.git.refreshing,
-                               context_.current_project_state.sidebar.git.base_ref,
-                               context_.current_project_state.sidebar.git.base_label);
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                             context_.current_project_state.root,
+                             context_.current_project_state.branch_review);
+  const auto specs = BuildGitSidebarLineSpecs(view_model);
   return FindSelectedGitSidebarLineIndex(specs, context_.current_project_state.sidebar.git.selected_index);
 }
 

@@ -8,6 +8,7 @@
   using MenuSpec = workspace::MenuSpec;
   using SidebarMode = workspace::SidebarMode;
   using GitSidebarEntry = workspace::GitSidebarEntry;
+  using GitSidebarActionId = workspace::GitSidebarActionId;
   using GitSidebarLine = workspace::GitSidebarLine;
   using GitSidebarEntryActionLayout = workspace::GitSidebarEntryActionLayout;
   using ProblemsSidebarEntry = workspace::ProblemsSidebarEntry;
@@ -91,6 +92,8 @@
   ~WorkspaceShell();
 
   static std::vector<std::string> DocumentedCommandUsages();
+  void SetStartupOptions(WorkspaceStartupOptions options);
+  const WorkspaceStartupOptions& StartupOptions() const { return startup_options_; }
   bool Initialize(const std::filesystem::path& project_root);
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
@@ -505,6 +508,12 @@
   void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
+  void ApplyProjectChangeBatch(const project::ProjectChangeBatch& batch);
+  void MarkCompareTabsStaleForPath(const std::filesystem::path& path);
+  void InvalidateMergeTabsForPath(const std::filesystem::path& path);
+  void PromptExternalFileChanges(const std::set<std::filesystem::path>& paths);
+  void ClearDiagnosticsForPath(const std::filesystem::path& path);
+  void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   void RequestGitSidebarRefresh(GitSidebarRefreshScope scope = GitSidebarRefreshScope::Full);
   void MaybeRequestTreeGitBadgesAfterFirstPaint();
   void RequestAutomaticGitSidebarRefresh();
@@ -683,7 +692,10 @@
                                                          float x,
                                                          float y) const;
   MergeToolbarLayout ComputeMergeToolbarLayout(const SDL_FRect& rect,
-                                              const MergeSurfaceLayout& surface) const;
+                                               const MergeSurfaceLayout& surface) const;
+  std::optional<SDL_FRect> ComputeMergeSecondaryToolbarButtonRect(const SDL_FRect& rect,
+                                                                  const MergeSurfaceLayout& surface,
+                                                                  std::string_view label) const;
   int MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const;
   void ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const;
   std::size_t MergeMaxScrollColumn(const MergeTabState& merge_tab,
@@ -720,6 +732,18 @@
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
+  void MarkActiveBranchFileReviewed();
+  void MarkActiveBranchHunkReviewed();
+  void ClearActiveBranchReviewState();
+  void EditActiveBranchReviewNote(const std::string& note_text);
+  void PersistBranchReviewState();
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
+  void UnstageCompareHunk();
+  void UnstageCompareSelectedLines();
+  void OpenDiscardCompareHunkPrompt();
+  void OpenDiscardCompareSelectedLinesPrompt();
+  void RefreshOpenCompareTabsForPath(const std::filesystem::path& path);
   void ScrollCompareRows(int delta);
   void ScrollCompareColumns(int delta);
   bool OpenMergeEditor(const std::filesystem::path& base_path,
@@ -751,6 +775,13 @@
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
+  void ResetMergeHunk();
+  void JumpNextUnresolvedMergeConflict();
+  void ToggleMergeBasePane();
+  void ToggleMergeRawMarkers();
+  void CopyMergeIncomingSnippet();
+  void CopyMergeCurrentSnippet();
+  void MarkMergeResolved();
   void OpenMergeResultFile();
   void MoveFileFinderSelection(int delta);
   void RenderCompareSurface(SDL_Renderer* renderer,
@@ -824,10 +855,17 @@
   bool CanDiscardAllGitSidebarEntries() const;
   bool StageAllGitSidebarEntries();
   void OpenDiscardAllGitSidebarPrompt();
+  void InitializeCommitWorkflowService();
+  bool OpenCommitWorkflow();
+  void CloseCommitWorkflow();
+  bool CommitWorkflowOpen() const;
+  float GitSidebarCommitWorkflowHeight() const;
   bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
+  void OpenDiscardGitSidebarEntryPrompt(std::size_t entry_index);
+  bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
   void OpenGitOutgoingBasePrompt();
@@ -898,6 +936,8 @@
                                                    std::string current_label,
                                                    std::size_t selected_hunk = 0,
                                                    bool persistable = true) const;
+  void FinalizeGitMergeTab(MergeTabState& merge_tab, const std::filesystem::path& path);
+  void InvalidateStaleMergeTabs();
   bool OpenGitConflictMerge(const std::filesystem::path& path);
   void OpenBufferSearch();
   void OpenBufferReplace();
@@ -1243,6 +1283,7 @@
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
+  void InvalidateCursorKindFingerprint();
   void UpdateMouseCursor(float x, float y, bool update_editor_hover = true,
                          bool workspace_layout_recomputed = false);
 
@@ -1271,8 +1312,13 @@
   mutable std::size_t resolved_keybindings_reload_generation_ = std::numeric_limits<std::size_t>::max();
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
+  project::ProjectChangeCoalescer project_change_coalescer_;
+  project::GitRepositoryMetadataTracker git_metadata_tracker_;
+  std::uint64_t last_applied_project_change_generation_ = 0;
   project::ProjectBackgroundExecutor project_background_executor_;
   GitRepositoryService git_repository_service_{project_background_executor_};
+  PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};
+  CommitWorkflowService commit_workflow_service_{project_background_executor_, git_repository_service_};
   std::mutex save_tab_mutex_;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};
@@ -1357,6 +1403,7 @@
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
   bool quit_requested_ = false;
+  WorkspaceStartupOptions startup_options_;
   std::vector<std::string> available_colorscheme_names_;
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;
@@ -1378,8 +1425,20 @@
     bool menu_bar_open = false;
     bool overflow_popup_open = false;
     bool tree_context_menu_open = false;
+    int active_menu_id = 0;
+    int hovered_popup_row_index = -1;
+    int hovered_submenu_row_index = -1;
+    int active_submenu_id = 0;
+    bool overlay_visible = false;
+    bool settings_overlay_visible = false;
+    bool bottom_panel_visible = false;
+    std::uint32_t active_tab_index = 0;
+    std::uint32_t cursor_hit_generation = 0;
+    std::uint32_t editor_hover_target_generation = 0;
   };
   CursorKindFingerprint cursor_kind_fingerprint_{};
+  std::uint32_t cursor_hit_generation_ = 0;
+  std::uint32_t editor_hover_target_generation_ = 0;
   SDL_Cursor* text_cursor_ = nullptr;
   SDL_Cursor* pointer_cursor_ = nullptr;
   SDL_Cursor* ew_resize_cursor_ = nullptr;

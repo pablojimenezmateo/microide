@@ -23,6 +23,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
   };
   if (context_.prompts.dirty_visible) {
+    UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
@@ -56,6 +57,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (context_.prompts.surface_visible) {
+    UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     ensure_redraw([this]() { RequestPromptRedraw(); });
     return true;
   }
@@ -187,6 +189,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   };
 
   if (context_.interaction_state.drag_target != DragTarget::None) {
+    UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
       ClearDragState();
       UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
@@ -262,6 +265,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
   if (context_.interaction_state.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0) {
     if (!Contains(layout.editor_surface, event.motion.x, event.motion.y)) {
+      UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
       return false;
     }
 
@@ -471,6 +475,8 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   if (!layout_state.has_value()) {
     return false;
   }
+  UpdateMouseCursor(static_cast<float>(event.wheel.mouse_x),
+                    static_cast<float>(event.wheel.mouse_y), false);
 
   // Fold the raw float wheel deltas into whole-line ticks via the shared
   // accumulator helper. Pulling this out keeps WorkspaceInteractionState

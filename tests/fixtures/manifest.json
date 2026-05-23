@@ -25,6 +25,71 @@
       "left": "diff/code/before.cpp",
       "name": "code-compare",
       "right": "diff/code/after.cpp"
+    },
+    {
+      "expected": {
+        "added": 0,
+        "deleted": 0,
+        "hunks": 1,
+        "modified": 2,
+        "rows": 2,
+        "unchanged": 0
+      },
+      "left": "diff/review/rename_left.txt",
+      "name": "rename-with-edit",
+      "right": "diff/review/rename_right.txt"
+    },
+    {
+      "expected": {
+        "added": 0,
+        "deleted": 0,
+        "hunks": 1,
+        "modified": 1,
+        "rows": 1,
+        "unchanged": 0
+      },
+      "left": "diff/review/binary_left.bin",
+      "name": "binary-file",
+      "right": "diff/review/binary_right.bin"
+    },
+    {
+      "expected": {
+        "added": 0,
+        "deleted": 0,
+        "hunks": 1,
+        "modified": 2,
+        "rows": 2,
+        "unchanged": 0
+      },
+      "left": "diff/review/crlf_left.txt",
+      "name": "line-ending-only",
+      "right": "diff/review/lf_right.txt"
+    },
+    {
+      "expected": {
+        "added": 0,
+        "deleted": 0,
+        "hunks": 1,
+        "modified": 1,
+        "rows": 1,
+        "unchanged": 0
+      },
+      "left": "diff/review/submodule_left",
+      "name": "submodule-pointer",
+      "right": "diff/review/submodule_right"
+    },
+    {
+      "expected": {
+        "added": 0,
+        "deleted": 0,
+        "hunks": 80,
+        "modified": 80,
+        "rows": 4000,
+        "unchanged": 3920
+      },
+      "left": "diff/review/huge_left.txt",
+      "name": "huge-generated",
+      "right": "diff/review/huge_right.txt"
     }
   ],
   "git_repo_seed": {

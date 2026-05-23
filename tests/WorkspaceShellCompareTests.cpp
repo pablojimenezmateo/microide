@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "render/Theme.h"
 
@@ -263,8 +264,8 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
   std::string working_text;
   for (int i = 0; i < 120; ++i) {
     base_text += "base line " + std::to_string(i) + "\n";
-    working_text += (i == 60 ? "changed line 60\n"
-                             : "base line " + std::to_string(i) + "\n");
+    working_text += ((i % 5 == 0) ? "changed line " + std::to_string(i) + "\n"
+                                  : "base line " + std::to_string(i) + "\n");
   }
   WriteFile(source, base_text);
 
@@ -280,7 +281,8 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
 
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
-  Expect(compare.model.rows.size() > static_cast<std::size_t>(surface.visible_rows),
+  Expect(workspace::CompareTabPresentationRowCount(compare) >
+             static_cast<std::size_t>(surface.visible_rows),
          "compare wheel fixture should overflow the viewport");
 
   const int before_scroll = compare.scroll_row;
@@ -673,6 +675,38 @@ void TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns() {
          "merge layout should preserve one visible column at minimum divider fractions");
 }
 
+void TestWorkspaceShellMergeToolbarLayoutClearsPaneHeaders() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "conflict.txt";
+  WriteFile(base, "line 1\nshared\n");
+  WriteFile(incoming, "line 1\nincoming change\nline 3\n");
+  WriteFile(current, "line 1\ncurrent change\nline 3\n");
+  WriteFile(output, "line 1\nshared\nline 3\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1920, 1080);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge toolbar layout fixture should open");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  const auto toolbar = WorkspaceShellTestAccess::MergeToolbarNavigationRects(shell);
+
+  constexpr float kMergeToolbarButtonHeight = 22.0f;
+  Expect(surface.header_y >= surface.secondary_button_y + kMergeToolbarButtonHeight + 4.0f,
+         "pane headers should sit below the secondary toolbar row");
+  Expect(surface.rows_y >= surface.header_y + surface.line_height,
+         "merge rows should start below pane headers");
+  Expect(toolbar[0].y + toolbar[0].h <= surface.secondary_button_y + 0.5f,
+         "primary toolbar should stay on the first row");
+  Expect(surface.secondary_button_y + kMergeToolbarButtonHeight <= surface.header_y + 0.5f,
+         "secondary toolbar should stay above pane headers");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
@@ -708,6 +742,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellComparePaneResizeKeepsWiderPaneTextVisible);
   AddTest(tests, "WorkspaceShell/CompareAndMergePaneMinimaPreserveVisibleColumns",
           TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns);
+  AddTest(tests, "WorkspaceShell/MergeToolbarLayoutClearsPaneHeaders",
+          TestWorkspaceShellMergeToolbarLayoutClearsPaneHeaders);
 }
 
 }  // namespace microide::tests

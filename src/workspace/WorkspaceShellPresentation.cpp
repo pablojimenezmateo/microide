@@ -77,6 +77,17 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
 }
 
 void WorkspaceShell::RefreshStatusBar() {
+  std::string_view startup_mode_text;
+  std::string_view startup_mode_tooltip;
+  if (startup_options_.safe_mode) {
+    startup_mode_text = "Safe mode";
+    startup_mode_tooltip =
+        "Plugins disabled; workspace/session restore skipped at startup";
+  } else if (startup_options_.disable_plugins) {
+    startup_mode_text = "Plugins off";
+    startup_mode_tooltip = "User-scope plugins and plugin syntax are disabled";
+  }
+
   status_bar_model_service_.Refresh(
       status_bar_service_,
       StatusBarModelService::Operations{
@@ -88,6 +99,8 @@ void WorkspaceShell::RefreshStatusBar() {
               [this](bool ensure_started, std::string& text, std::string& tooltip) {
                 ActiveLspStatusStrings(ensure_started, text, tooltip);
               },
+          .startup_mode_text = startup_mode_text,
+          .startup_mode_tooltip = startup_mode_tooltip,
       },
       context_.current_project_state, layout_mode_service_.CurrentMode(), ActiveEditorViewport());
 }

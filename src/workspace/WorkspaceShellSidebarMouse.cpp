@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
@@ -69,12 +70,12 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const SDL_FRect& rect, const GitSidebarEntry& entry) {
                 return ComputeGitSidebarEntryActionLayout(rect, entry);
               },
-          .unstage_git_sidebar_entry =
-              [this](std::size_t index) { return UnstageGitSidebarEntry(index); },
-          .stage_git_sidebar_entry = [this](std::size_t index) { return StageGitSidebarEntry(index); },
-          .discard_git_sidebar_entry =
-              [this](std::size_t index) { return DiscardGitSidebarEntry(index); },
-          .open_git_sidebar_entry = [this](std::size_t index) { return OpenGitSidebarEntry(index); },
+          .open_discard_git_entry_prompt =
+              [this](std::size_t index) { OpenDiscardGitSidebarEntryPrompt(index); },
+          .dispatch_git_sidebar_action =
+              [this](GitSidebarActionId action, std::size_t index) {
+                return DispatchGitSidebarAction(action, index);
+              },
           .compute_problems_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeProblemsSidebarListLayout(rect, count);

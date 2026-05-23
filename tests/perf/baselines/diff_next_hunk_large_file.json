@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":268226,"p50_allocations":262526,"p95_allocations":265707.79999999999,"p95_wall_ms":241.17586749999998,"max_wall_ms":244.61347599999999,"p50_wall_ms":209.6214545},"scenario":"diff_next_hunk_large_file"}

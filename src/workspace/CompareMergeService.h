@@ -45,11 +45,29 @@ class CompareMergeService {
   void OpenMergeResultFile();
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
+  void JumpCompareReviewFile(int delta);
+  void CopyComparePath();
+  void CopyCompareHunkPatch();
+  void CopyCompareFilePatch();
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
+  void UnstageCompareHunk();
+  void UnstageCompareSelectedLines();
+  void OpenDiscardCompareHunkPrompt();
+  void OpenDiscardCompareSelectedLinesPrompt();
+  void ToggleCompareIgnoreWhitespace();
+  void ToggleCompareShowWhitespace();
   void ScrollCompareRows(int delta);
   void ScrollCompareColumns(int delta);
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
+  void ResetMergeHunk();
+  void JumpNextUnresolvedMergeConflict();
+  void ToggleMergeBasePane();
+  void ToggleMergeRawMarkers();
+  void CopyMergeSideSnippet(bool incoming);
+  void MarkMergeResolved();
 
  private:
   DiffTabCoordinator diff_tabs_;

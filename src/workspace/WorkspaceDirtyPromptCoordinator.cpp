@@ -38,6 +38,17 @@ void DirtyPromptCoordinator::Confirm() {
     return;
   }
 
+  if (prompt.kind == DirtyPromptState::Kind::ExternalFileChange) {
+    if (prompt.selected_action == 0 && !prompt.path.empty()) {
+      editor_tabs_.ReloadEditorTabsForPathFromDisk(prompt.path);
+      if (operations_.refresh_compare_tabs_for_path) {
+        operations_.refresh_compare_tabs_for_path(prompt.path);
+      }
+    }
+    prompt_surfaces_.DismissDirtyPrompt(prompt.selected_action != 2);
+    return;
+  }
+
   switch (prompt.kind) {
     case DirtyPromptState::Kind::CloseTab:
       ConfirmCloseTab(prompt);
@@ -53,6 +64,7 @@ void DirtyPromptCoordinator::Confirm() {
       return;
     case DirtyPromptState::Kind::RenamePath:
     case DirtyPromptState::Kind::DeletePath:
+    case DirtyPromptState::Kind::ExternalFileChange:
       return;
   }
 }
@@ -190,6 +202,8 @@ DirtyPromptCoordinator WorkspaceShell::MakeDirtyPromptCoordinator(
                 ConfirmPromptSurface(save_changes ? DirtyPathResolution::Save
                                                  : DirtyPathResolution::Discard);
               },
+          .refresh_compare_tabs_for_path =
+              [this](const std::filesystem::path& path) { RefreshOpenCompareTabsForPath(path); },
           .switch_project =
               [this](std::size_t index, bool log_feedback) {
                 return SwitchProject(index, log_feedback);

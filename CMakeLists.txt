@@ -161,6 +161,16 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewportUndoHistory.cpp
   src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
+  src/compare/ComparePatchExport.cpp
+  src/project/PatchApplyTypes.cpp
+  src/project/PatchGenerator.cpp
+  src/project/GitPatchApply.cpp
+  src/compare/ComparePresentationModel.cpp
+  src/compare/CompareReviewTypes.cpp
+  src/compare/BranchReviewStateTypes.cpp
+  src/compare/BranchReviewStateService.cpp
+  src/compare/CompareSemanticMetadata.cpp
+  src/compare/MergeConflictKind.cpp
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
   src/platform/AsyncSubprocess.cpp
@@ -220,6 +230,11 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
   src/project/GitRepositoryState.cpp
+  src/project/CommitWorkflowChecks.cpp
+  src/project/GitCommitExecutor.cpp
+  src/project/GitRepositoryMetadataTracker.cpp
+  src/project/ProjectChangeCoalescer.cpp
+  src/project/ProjectChangeNormalizer.cpp
   src/project/ProjectFileScanner.cpp
   src/project/GitStatusService.cpp
   src/project/IgnoreMatcher.cpp
@@ -303,6 +318,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMouseMotion.cpp
   src/workspace/WorkspaceShellOverlay.cpp
   src/workspace/WorkspaceShellProjectSearch.cpp
+  src/workspace/WorkspaceShellProjectChanges.cpp
   src/workspace/WorkspaceShellBufferSearch.cpp
   src/workspace/WorkspaceShellPresentation.cpp
   src/workspace/CaretRedraw.cpp
@@ -333,7 +349,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/AssistService.cpp
+  src/workspace/CompareTabReview.cpp
+  src/workspace/BranchReviewStateBridge.cpp
   src/workspace/CompareMergeService.cpp
+  src/workspace/MergeResolverContext.cpp
+  src/workspace/MergeResultValidation.cpp
   src/workspace/FileUri.cpp
   src/workspace/CompareMergeRender.cpp
   src/workspace/ProjectCatalogService.cpp
@@ -347,6 +367,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/GitRepositoryService.cpp
+  src/workspace/PatchApplyService.cpp
   src/workspace/PersistenceService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
@@ -373,11 +394,15 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectSearchRuntime.cpp
   src/workspace/WorkspaceProjectStateCoordinator.cpp
   src/workspace/WorkspaceGitOutgoingBase.cpp
+  src/workspace/GitSidebarCommandCenter.cpp
   src/workspace/WorkspaceGitSidebarPresentation.cpp
   src/workspace/WorkspaceRootView.cpp
   src/workspace/WorkspaceShellBootstrapper.cpp
   src/workspace/WorkspaceShellRender.cpp
   src/workspace/WorkspaceShellSidebar.cpp
+  src/workspace/WorkspaceShellCommitWorkflow.cpp
+  src/workspace/CommitWorkflowState.cpp
+  src/workspace/CommitWorkflowService.cpp
   src/workspace/WorkspaceShellSidebarMouse.cpp
   src/workspace/WorkspaceShellSingleLineInputMouse.cpp
   src/workspace/WorkspaceShellTerminal.cpp
@@ -411,6 +436,7 @@ set(MICROIDE_CORE_SOURCES
 
 add_executable(microide
   src/app/main.cpp
+  src/app/AppStartupOptions.cpp
   src/app/Application.cpp
   src/app/DirtyRegionPolicy.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
@@ -491,7 +517,12 @@ add_executable(microide_tests
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
   tests/AppDirectoriesTests.cpp
+  tests/AppStartupOptionsTests.cpp
+  src/app/AppStartupOptions.cpp
   tests/CompareModelTests.cpp
+  tests/CompareReviewTests.cpp
+  tests/BranchReviewStateTests.cpp
+  tests/PatchApplyTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
@@ -501,10 +532,17 @@ add_executable(microide_tests
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
   tests/GitRepositoryStateTests.cpp
+  tests/GitRepositoryServiceTests.cpp
+  tests/CommitWorkflowTests.cpp
+  tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
+  tests/MergeConflictResolutionTests.cpp
+  tests/GitMergeConflictFixtures.cpp
   tests/ProjectSearchServiceTests.cpp
+  tests/ProjectChangeTests.cpp
+  tests/ExternalRepoChangeTests.cpp
   tests/RegexUtilTests.cpp
   tests/RuntimePathsTests.cpp
   tests/TaskExecutorTests.cpp
@@ -554,6 +592,7 @@ add_executable(microide_tests
   tests/WorkspaceShellPluginTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellCompareTests.cpp
+  tests/WorkspaceShellCursorTests.cpp
   tests/WorkspaceShellProjectTests.cpp
   tests/WorkspaceShellSearchTests.cpp
   tests/WorkspaceShellSessionTests.cpp
@@ -663,6 +702,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/PerfHarnessIsolation.cpp
     tests/perf/Baseline.cpp
     tests/perf/AdvisoryPerfScenarios.cpp
+    tests/perf/GitWorkstationPerfScenarios.cpp
     tests/perf/EditorEssentialsPerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )
@@ -736,6 +776,8 @@ add_executable(microide_diff_bench
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
   src/project/GitRepositoryState.cpp
+  src/project/CommitWorkflowChecks.cpp
+  src/project/GitCommitExecutor.cpp
   src/render/DebugTextBackend.cpp
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp

@@ -6,12 +6,10 @@
 #include <string_view>
 #include <vector>
 
-namespace microide::workspace {
+#include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/WorkspaceSidebarState.h"
 
-enum class GitSidebarSection {
-  Modified,
-  Outgoing,
-};
+namespace microide::workspace {
 
 enum class GitSidebarLineKind {
   Header,
@@ -21,7 +19,7 @@ enum class GitSidebarLineKind {
 
 struct GitSidebarLineSpec {
   GitSidebarLineKind kind = GitSidebarLineKind::Empty;
-  GitSidebarSection section = GitSidebarSection::Modified;
+  GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string label;
   int entry_index = -1;
 };
@@ -31,12 +29,7 @@ struct GitSidebarEntryTextModel {
   std::string secondary_label;
 };
 
-std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
-    const std::vector<GitSidebarSection>& entry_sections,
-    bool git_repo_available,
-    bool refreshing,
-    std::string_view git_base_ref,
-    std::string_view git_base_label);
+std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(const GitSidebarViewModel& view_model);
 std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
     const std::vector<GitSidebarLineSpec>& lines,
     std::size_t selected_entry_index);

@@ -60,6 +60,14 @@ class MergeMouseCoordinator {
     std::function<void()> reset_caret_blink;
     std::function<void(int)> move_merge_selection;
     std::function<void(int)> scroll_merge_columns;
+    std::function<void()> mark_merge_resolved;
+    std::function<void()> toggle_merge_base_pane;
+    std::function<void()> jump_next_unresolved_merge_conflict;
+    std::function<std::optional<SDL_FRect>(
+        const SDL_FRect&,
+        const WorkspaceShell::MergeSurfaceLayout&,
+        std::string_view)>
+        merge_secondary_toolbar_button_rect;
   };
 
   MergeMouseCoordinator(ProjectWorkspaceState& state,

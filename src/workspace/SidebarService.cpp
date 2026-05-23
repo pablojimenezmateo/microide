@@ -155,6 +155,14 @@ bool SidebarService::DiscardGitEntry(std::size_t entry_index) {
   return coordinator_.DiscardGitEntry(entry_index);
 }
 
+void SidebarService::OpenDiscardGitEntryPrompt(std::size_t entry_index) {
+  coordinator_.OpenDiscardGitEntryPrompt(entry_index);
+}
+
+bool SidebarService::DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index) {
+  return coordinator_.DispatchGitSidebarAction(action, entry_index);
+}
+
 void SidebarService::ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path) {
   coordinator_.ReconcileOpenTabsAfterPathDiscard(path);
 }

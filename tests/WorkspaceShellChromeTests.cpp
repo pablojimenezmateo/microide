@@ -31,6 +31,20 @@ bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& tar
                      [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
 }
 
+bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_count) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    if (WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count &&
+        !WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count;
+}
+
 float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
   float max_height = 0.0f;
   for (const SDL_FRect& rect : rects) {
@@ -513,14 +527,8 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
-  {
-    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-    while (std::chrono::steady_clock::now() < git_deadline &&
-           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-  }
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "git header hover fixture should expose one changed row");
 
   const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
   Expect(top_action_rects[0].w > 0.0f && top_action_rects[2].w > 0.0f,

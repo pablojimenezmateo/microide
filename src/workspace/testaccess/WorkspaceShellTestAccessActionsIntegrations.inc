@@ -120,6 +120,10 @@
     return shell.RefreshProblemsSidebar();
   }
   static void RefreshGitSidebar(WorkspaceShell& shell) { shell.RefreshGitSidebar(); }
+  static void RevealGitSidebarEntry(WorkspaceShell& shell, std::size_t entry_index) {
+    shell.context_.current_project_state.sidebar.git.selected_index = entry_index;
+    shell.RevealSelectedGitSidebarLine();
+  }
   static void RequestAutomaticGitSidebarRefresh(WorkspaceShell& shell) {
     shell.RequestAutomaticGitSidebarRefresh();
   }

@@ -7,8 +7,10 @@
 #include <string_view>
 #include <utility>
 
+#include "compare/CompareReviewTypes.h"
 #include "project/GitCompareService.h"
 #include "util/TextFileIO.h"
+#include "workspace/CompareTabReview.h"
 
 namespace microide::workspace {
 
@@ -123,6 +125,8 @@ void DiffTabCoordinator::RestoreMergeViewState(MergeTabState& rebuilt_merge,
 }
 
 void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
+  const std::vector<std::filesystem::path> review_files =
+      project::CollectGitCommitChangedFiles(state_.root, commit.hash);
   if (const auto existing_index =
           FindOpenCompareTabIndex(state_.overlay.workflow.compare_picker.path, commit.hash, "WORKTREE");
       existing_index.has_value()) {
@@ -140,8 +144,20 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
 
   operations_.sync_active_editor_tab();
   state_.open_tabs.push_back(std::move(*compare_tab));
+  TabEntry& opened = state_.open_tabs.back();
+  if (opened.compare.has_value()) {
+    opened.compare->opened_from_commit_picker = true;
+    opened.compare->review_mode = compare::CompareReviewMode::Commit;
+    opened.compare->review_files = review_files;
+    const auto current = std::find(review_files.begin(), review_files.end(),
+                                   opened.compare->path.lexically_normal());
+    if (current != review_files.end()) {
+      opened.compare->review_file_index =
+          static_cast<std::size_t>(current - review_files.begin());
+    }
+  }
   ActivateCompareTab(state_.open_tabs.size() - 1, true);
-  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
+  NotifyBufferOpenForEditableTab(opened, operations_);
 }
 
 bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
@@ -211,6 +227,9 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
   compare_tab->compare->right_path = normalized_path;
   compare_tab->compare->right_editable = true;
   compare_tab->compare->right_view_active = true;
+  compare_tab->compare->review_mode = compare::CompareReviewMode::WorkingTree;
+  compare_tab->compare->staging_view =
+      compare::InferWorkingTreeStagingView(left_ref, compare_tab->compare->right_ref);
 
   operations_.sync_active_editor_tab();
   state_.open_tabs.push_back(std::move(*compare_tab));
@@ -248,6 +267,22 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
   compare_tab->compare->right_ref = right_ref;
   compare_tab->compare->left_path = normalized_path;
   compare_tab->compare->right_path = normalized_path;
+  compare_tab->compare->review_mode = compare::CompareReviewMode::Branch;
+  compare_tab->compare->review_files =
+      [&]() {
+        std::vector<std::filesystem::path> paths;
+        for (const project::GitBranchFileEntry& entry :
+             project::CollectGitBranchOutgoingFiles(state_.root, left_ref)) {
+          paths.push_back(entry.relative_path);
+        }
+        return paths;
+      }();
+  const auto current = std::find(compare_tab->compare->review_files.begin(),
+                                 compare_tab->compare->review_files.end(), normalized_path);
+  if (current != compare_tab->compare->review_files.end()) {
+    compare_tab->compare->review_file_index =
+        static_cast<std::size_t>(current - compare_tab->compare->review_files.begin());
+  }
 
   operations_.sync_active_editor_tab();
   state_.open_tabs.push_back(std::move(*compare_tab));
@@ -284,6 +319,9 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
   merge_tab->merge->base_path = normalized_path;
   merge_tab->merge->incoming_path = normalized_path;
   merge_tab->merge->current_path = normalized_path;
+  if (operations_.finalize_git_merge_tab) {
+    operations_.finalize_git_merge_tab(*merge_tab->merge, normalized_path);
+  }
 
   operations_.sync_active_editor_tab();
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path); existing_index.has_value()) {

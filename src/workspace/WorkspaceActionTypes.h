@@ -123,6 +123,10 @@ enum class ActionId {
   ToggleEditorSaveTrim,
   ToggleEditorSaveEnsureNewline,
   ToggleEditorAutoDetectIndent,
+  MarkBranchFileReviewed,
+  MarkBranchHunkReviewed,
+  ClearBranchReviewState,
+  EditBranchReviewNote,
 };
 
 enum class ActionSource {

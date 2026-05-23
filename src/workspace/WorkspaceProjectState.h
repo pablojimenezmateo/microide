@@ -15,6 +15,7 @@
 #include "project/FileFinder.h"
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
+#include "compare/BranchReviewStateService.h"
 #include "project/ProjectSearchService.h"
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -202,6 +203,7 @@ struct ProjectWorkspaceState {
   EditorPreferences editor_preferences;
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<SidebarViewPolicy> sidebar_policies;
+  compare::BranchReviewStateService branch_review;
 };
 
 struct ProjectCatalogState {

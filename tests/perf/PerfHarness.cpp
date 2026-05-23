@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <thread>
 #include <limits>
 #include <sstream>
 #include <thread>
@@ -103,6 +104,14 @@ void ScenarioContext::PumpFrames(std::size_t count) {
     shell_.Render(renderer_, 1920, 1080);
     SDL_RenderPresent(renderer_);
   }
+}
+
+void ScenarioContext::PumpEvents() {
+  SDL_Event event{};
+  while (SDL_PollEvent(&event)) {
+    (void)shell_.HandleEvent(event);
+  }
+  workspace::WorkspaceShell::TestAccess::ConsumePluginAsyncProcessCallbacks(shell_);
 }
 
 bool ScenarioContext::Open(const std::filesystem::path& project_root) {
@@ -244,6 +253,86 @@ void ScenarioContext::OpenFileFinder() {
 
 void ScenarioContext::ActivateGitSidebar() {
   ExecuteCommand("sidebar-show git");
+}
+
+void ScenarioContext::ShowGitSidebar() {
+  workspace::WorkspaceShell::TestAccess::ShowGitSidebar(shell_);
+}
+
+void ScenarioContext::RefreshGitSidebar() {
+  workspace::WorkspaceShell::TestAccess::RefreshGitSidebar(shell_);
+}
+
+bool ScenarioContext::WaitForGitSidebarIdle(std::chrono::milliseconds timeout) {
+  return WaitForGitSidebarEntries(0, timeout) &&
+         !workspace::WorkspaceShell::TestAccess::GitSidebarRefreshing(shell_);
+}
+
+bool ScenarioContext::WaitForGitSidebarEntries(std::size_t min_entries,
+                                               std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    PumpEvents();
+    workspace::WorkspaceShell::TestAccess::ConsumeGitSidebarRefresh(shell_);
+    if (workspace::WorkspaceShell::TestAccess::GitSidebarEntries(shell_).size() >= min_entries) {
+      return true;
+    }
+    const auto wake = shell_.HandleScheduledWake();
+    if (wake.handled) {
+      PumpFrames(1);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  PumpEvents();
+  workspace::WorkspaceShell::TestAccess::ConsumeGitSidebarRefresh(shell_);
+  return workspace::WorkspaceShell::TestAccess::GitSidebarEntries(shell_).size() >= min_entries;
+}
+
+void ScenarioContext::JumpCompareHunk(int delta) {
+  const SDL_Keycode key = delta < 0 ? SDLK_LEFTBRACKET : SDLK_RIGHTBRACKET;
+  KeyDown(key, SDL_KMOD_NONE);
+  PumpFrames(1);
+}
+
+void ScenarioContext::StageCompareHunk() {
+  workspace::WorkspaceShell::TestAccess::StageCompareHunk(shell_);
+  PumpFrames(4);
+}
+
+void ScenarioContext::StageCompareSelectedLines() {
+  workspace::WorkspaceShell::TestAccess::StageCompareSelectedLines(shell_);
+  PumpFrames(4);
+}
+
+void ScenarioContext::MoveMergeConflict(int delta) {
+  const SDL_Keycode key = delta < 0 ? SDLK_LEFTBRACKET : SDLK_RIGHTBRACKET;
+  KeyDown(key, SDL_KMOD_ALT);
+  PumpFrames(1);
+}
+
+void ScenarioContext::ApplyMergeChoice(compare::MergeChoice choice) {
+  workspace::WorkspaceShell::TestAccess::ApplyMergeChoice(shell_, choice);
+  PumpFrames(1);
+}
+
+void ScenarioContext::SimulateExternalFileChange(const std::filesystem::path& path,
+                                                 std::string_view appended_text) {
+  std::error_code error;
+  std::filesystem::path resolved = path;
+  if (!path.is_absolute()) {
+    resolved = workspace::WorkspaceShell::TestAccess::ProjectRoot(shell_) / path;
+  }
+  resolved = std::filesystem::absolute(resolved, error).lexically_normal();
+  std::ofstream output(resolved, std::ios::binary | std::ios::app);
+  if (!output) {
+    throw std::runtime_error("SimulateExternalFileChange: failed to open " + resolved.string());
+  }
+  output << appended_text;
+  if (!output.good()) {
+    throw std::runtime_error("SimulateExternalFileChange: failed to write " + resolved.string());
+  }
+  (void)workspace::WorkspaceShell::TestAccess::ReloadProjectIfFilesChanged(shell_, true);
+  PumpFrames(2);
 }
 
 void ScenarioContext::StartSearch(std::string_view query) {

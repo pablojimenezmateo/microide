@@ -23,6 +23,7 @@ struct DirtyPromptState {
     Quit,
     RenamePath,
     DeletePath,
+    ExternalFileChange,
   };
 
   Kind kind = Kind::CloseTab;
@@ -48,8 +49,12 @@ struct PromptSurfaceState {
     RenamePath,
     DeletePath,
     DiscardGitChanges,
+    DiscardGitEntry,
+    DiscardPatchPreview,
     SetGitOutgoingBaseRef,
     OpenExternalUrl,
+    ConfirmCommitAmend,
+    ConfirmCommitNoVerify,
   };
 
   Kind kind = Kind::None;

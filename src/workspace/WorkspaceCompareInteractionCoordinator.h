@@ -35,6 +35,22 @@ class CompareInteractionCoordinator {
     std::function<void(std::size_t)> request_merge_result_line_to_bottom_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
     std::function<void()> request_tab_strip_redraw;
+    std::function<bool(std::string_view)> write_clipboard_text;
+    std::function<bool(const std::filesystem::path&, const std::string&, const std::string&)>
+        open_working_tree_comparison;
+    std::function<bool(const std::filesystem::path&, const std::string&, const std::string&,
+                       const std::string&, const std::string&)>
+        open_branch_head_comparison;
+    std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
+    std::function<void()> stage_compare_hunk;
+    std::function<void()> stage_compare_selected_lines;
+    std::function<void()> unstage_compare_hunk;
+    std::function<void()> unstage_compare_selected_lines;
+    std::function<void()> open_discard_compare_hunk_prompt;
+    std::function<void()> open_discard_compare_selected_lines_prompt;
+    std::function<bool()> save_active_merge_tab;
+    std::function<bool(const std::filesystem::path&)> stage_merge_result_path;
+    std::function<void()> refresh_git_sidebar;
   };
 
   CompareInteractionCoordinator(ProjectWorkspaceState& state, Operations operations);
@@ -49,11 +65,29 @@ class CompareInteractionCoordinator {
   void OpenMergeResultFile();
   void MoveCompareSelection(int delta);
   void JumpCompareHunk(int delta);
+  void JumpCompareReviewFile(int delta);
+  void CopyComparePath();
+  void CopyCompareHunkPatch();
+  void CopyCompareFilePatch();
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
+  void UnstageCompareHunk();
+  void UnstageCompareSelectedLines();
+  void OpenDiscardCompareHunkPrompt();
+  void OpenDiscardCompareSelectedLinesPrompt();
+  void ToggleCompareIgnoreWhitespace();
+  void ToggleCompareShowWhitespace();
   void ScrollCompareRows(int delta);
   void ScrollCompareColumns(int delta);
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
  void ApplyMergeChoice(compare::MergeChoice choice);
+  void ResetMergeHunk();
+  void JumpNextUnresolvedMergeConflict();
+  void ToggleMergeBasePane();
+  void ToggleMergeRawMarkers();
+  void CopyMergeSideSnippet(bool incoming);
+  void MarkMergeResolved();
 
  private:
   ProjectWorkspaceState& state_;

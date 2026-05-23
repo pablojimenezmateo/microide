@@ -1,3 +1,4 @@
+#include "compare/CompareReviewTypes.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 
 #include <algorithm>
@@ -103,6 +104,26 @@ bool PersistenceCoordinator::RestoreSessionState() {
             persisted_tab.compare_scroll_row,
             static_cast<std::size_t>(std::numeric_limits<int>::max())));
         compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+        if (!persisted_tab.compare_review_mode.empty()) {
+          if (persisted_tab.compare_review_mode == "commit") {
+            compare_state.review_mode = compare::CompareReviewMode::Commit;
+          } else if (persisted_tab.compare_review_mode == "branch") {
+            compare_state.review_mode = compare::CompareReviewMode::Branch;
+          } else if (persisted_tab.compare_review_mode == "conflict") {
+            compare_state.review_mode = compare::CompareReviewMode::Conflict;
+          } else {
+            compare_state.review_mode = compare::CompareReviewMode::WorkingTree;
+          }
+        }
+        if (!persisted_tab.compare_staging_view.empty()) {
+          if (persisted_tab.compare_staging_view == "staged") {
+            compare_state.staging_view = compare::WorkingTreeStagingView::Staged;
+          } else if (persisted_tab.compare_staging_view == "unstaged") {
+            compare_state.staging_view = compare::WorkingTreeStagingView::Unstaged;
+          } else {
+            compare_state.staging_view = compare::WorkingTreeStagingView::Combined;
+          }
+        }
         compare_state.divider_fraction = persisted_tab.compare_divider_fraction;
         compare_state.persistable = true;
         compare_tab = operations_.build_compare_tab_from_state(compare_path, compare_state);
@@ -157,6 +178,12 @@ bool PersistenceCoordinator::RestoreSessionState() {
         }
         if (text == "both") {
           return compare::MergeChoice::Both;
+        }
+        if (text == "both-current-first") {
+          return compare::MergeChoice::BothCurrentFirst;
+        }
+        if (text == "both-incoming-first") {
+          return compare::MergeChoice::BothIncomingFirst;
         }
         return compare::MergeChoice::Base;
       };
@@ -424,6 +451,9 @@ PersistenceCoordinator::BuildPersistedCompareTabState(
   persisted_tab.compare_scroll_row = static_cast<std::size_t>(std::max(0, tab.compare->scroll_row));
   persisted_tab.compare_horizontal_scroll = tab.compare->horizontal_scroll;
   persisted_tab.compare_divider_fraction = tab.compare->divider_fraction;
+  persisted_tab.compare_review_mode = compare::CompareReviewModeLabel(tab.compare->review_mode);
+  persisted_tab.compare_staging_view =
+      compare::WorkingTreeStagingViewLabel(tab.compare->staging_view);
   return persisted_tab;
 }
 

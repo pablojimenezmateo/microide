@@ -172,6 +172,7 @@ MergeModel BuildMergeModel(const std::string& base,
                     hunk.incoming_lines != hunk.base_lines &&
                     hunk.current_lines != hunk.base_lines;
     hunk.choice = BootstrapMergeChoice(hunk);
+    hunk.bootstrap_choice = hunk.choice;
     model.hunks.push_back(std::move(hunk));
   };
 
@@ -237,6 +238,7 @@ std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice cho
     case MergeChoice::Current:
       return hunk.current_lines;
     case MergeChoice::Both:
+    case MergeChoice::BothIncomingFirst:
       if (hunk.incoming_lines == hunk.current_lines) {
         return hunk.incoming_lines;
       }
@@ -249,6 +251,21 @@ std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice cho
       {
         std::vector<std::string> lines = hunk.incoming_lines;
         lines.insert(lines.end(), hunk.current_lines.begin(), hunk.current_lines.end());
+        return lines;
+      }
+    case MergeChoice::BothCurrentFirst:
+      if (hunk.incoming_lines == hunk.current_lines) {
+        return hunk.current_lines;
+      }
+      if (hunk.incoming_lines == hunk.base_lines) {
+        return hunk.current_lines;
+      }
+      if (hunk.current_lines == hunk.base_lines) {
+        return hunk.incoming_lines;
+      }
+      {
+        std::vector<std::string> lines = hunk.current_lines;
+        lines.insert(lines.end(), hunk.incoming_lines.begin(), hunk.incoming_lines.end());
         return lines;
       }
     default:
@@ -406,6 +423,10 @@ const char* MergeChoiceLabel(MergeChoice choice) {
       return "current";
     case MergeChoice::Both:
       return "both";
+    case MergeChoice::BothCurrentFirst:
+      return "both-current-first";
+    case MergeChoice::BothIncomingFirst:
+      return "both-incoming-first";
   }
   return "base";
 }

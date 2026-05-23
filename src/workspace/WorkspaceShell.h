@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <optional>
 #include <span>
 #include <string>
@@ -27,6 +28,8 @@
 #include "project/GitBlameService.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "project/FileIndex.h"
+#include "project/GitRepositoryMetadataTracker.h"
+#include "project/ProjectChangeCoalescer.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
 #include "render/TextRenderer.h"
@@ -57,6 +60,8 @@
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/LayoutModeService.h"
 #include "workspace/GitRepositoryService.h"
+#include "workspace/CommitWorkflowService.h"
+#include "workspace/PatchApplyService.h"
 #include "workspace/PersistenceService.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarModelService.h"
@@ -77,6 +82,7 @@
 #include "workspace/WorkspaceRootView.h"
 #include "workspace/WorkspaceStatusRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
+#include "workspace/WorkspaceStartupOptions.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/WorkspaceTextInputState.h"
 

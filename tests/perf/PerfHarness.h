@@ -15,6 +15,7 @@
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceVirtualDocument.h"
 
+#include "compare/MergeModel.h"
 #include "editor/TextViewport.h"
 #include "perf/PerfHarnessIsolation.h"
 
@@ -78,6 +79,7 @@ class ScenarioContext {
   ScenarioContext(workspace::WorkspaceShell& shell, SDL_Window* window, SDL_Renderer* renderer);
 
   void PumpFrames(std::size_t count);
+  void PumpEvents();
   bool Open(const std::filesystem::path& project_root);
   void OpenTab(const std::filesystem::path& path);
   void Type(std::string_view text);
@@ -95,6 +97,16 @@ class ScenarioContext {
   std::uint64_t RandomU64();
   void OpenFileFinder();
   void ActivateGitSidebar();
+  void ShowGitSidebar();
+  void RefreshGitSidebar();
+  bool WaitForGitSidebarIdle(std::chrono::milliseconds timeout);
+  bool WaitForGitSidebarEntries(std::size_t min_entries, std::chrono::milliseconds timeout);
+  void JumpCompareHunk(int delta);
+  void StageCompareHunk();
+  void StageCompareSelectedLines();
+  void MoveMergeConflict(int delta);
+  void ApplyMergeChoice(compare::MergeChoice choice);
+  void SimulateExternalFileChange(const std::filesystem::path& path, std::string_view appended_text);
   void StartSearch(std::string_view query);
   void OpenTerminal(std::string_view command);
   void ResizeWindow(int width, int height);

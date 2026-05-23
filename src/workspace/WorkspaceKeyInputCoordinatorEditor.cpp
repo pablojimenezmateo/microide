@@ -239,6 +239,30 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
         operations_.open_working_file_from_compare();
         return true;
       }
+      if (input_character == 'a') {
+        operations_.stage_compare_hunk();
+        return true;
+      }
+      if (input_character == 'A') {
+        operations_.stage_compare_selected_lines();
+        return true;
+      }
+      if (input_character == 'c') {
+        operations_.unstage_compare_hunk();
+        return true;
+      }
+      if (input_character == 'C') {
+        operations_.unstage_compare_selected_lines();
+        return true;
+      }
+      if (input_character == 'd') {
+        operations_.open_discard_compare_hunk_prompt();
+        return true;
+      }
+      if (input_character == 'D') {
+        operations_.open_discard_compare_selected_lines_prompt();
+        return true;
+      }
       return false;
     }
   }
@@ -302,6 +326,14 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     }
     if (input_character == 'm') {
       operations_.apply_merge_choice(compare::MergeChoice::Both);
+      return true;
+    }
+    if (input_character == '1') {
+      operations_.apply_merge_choice(compare::MergeChoice::BothCurrentFirst);
+      return true;
+    }
+    if (input_character == '2') {
+      operations_.apply_merge_choice(compare::MergeChoice::BothIncomingFirst);
       return true;
     }
     if (input_character == 'o') {

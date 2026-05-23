@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <string_view>
 
+#include "compare/MergeConflictKind.h"
 #include "editor/SyntaxHighlighter.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
+#include "workspace/MergeResolverContext.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -299,7 +301,9 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
           .start_line = result_line,
           .end_line = result_line + result_lines.size(),
           .last_choice = hunk.choice,
+          .bootstrap_choice = hunk.bootstrap_choice,
           .valid = true,
+          .resolved = false,
       });
     }
 
@@ -394,7 +398,9 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
           .start_line = result_line,
           .end_line = result_line + committed_lines.size(),
           .last_choice = hunk.choice,
+          .bootstrap_choice = hunk.bootstrap_choice,
           .valid = valid,
+          .resolved = valid,
       });
       result_line += committed_lines.size();
       ++conflict_index;
@@ -611,6 +617,16 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
       output_text.has_value() ? *output_text : (!current_content.empty() ? current_content : base_content);
   merge_tab.result_line_ending = util::DetectLineEnding(line_ending_source);
   merge_tab.model = compare::BuildMergeModel(base_content, incoming_content, current_content);
+  merge_tab.model.file_conflict = compare::ClassifyMergeFileConflict(
+      compare::MergeConflictClassificationInput{
+          .base_exists = !base_content.empty(),
+          .incoming_exists = !incoming_content.empty(),
+          .current_exists = !current_content.empty(),
+          .base_content = base_content,
+          .incoming_content = incoming_content,
+          .current_content = current_content,
+      });
+  merge_tab.file_conflict = merge_tab.model.file_conflict;
   merge_tab.incoming_tokens.resize(merge_tab.model.incoming_lines.size());
   merge_tab.current_tokens.resize(merge_tab.model.current_lines.size());
   merge_tab.incoming_initial_syntax_state =
@@ -673,6 +689,81 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
       .compare = std::nullopt,
       .merge = std::move(merge_tab),
   };
+}
+
+void WorkspaceShell::InvalidateStaleMergeTabs() {
+  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
+  for (TabEntry& tab : context_.current_project_state.open_tabs) {
+    if (!tab.merge.has_value()) {
+      continue;
+    }
+    MergeTabState& merge_tab = tab.merge.value();
+    if (merge_tab.open_index_generation != 0 &&
+        merge_tab.open_index_generation != repository_state.generation) {
+      merge_tab.index_stale = true;
+      merge_tab.marked_resolved = false;
+    }
+    if (!merge_tab.output_path.empty() && std::filesystem::exists(merge_tab.output_path)) {
+      std::error_code error;
+      const auto tick = std::filesystem::last_write_time(merge_tab.output_path, error);
+      if (!error && merge_tab.disk_result_tick.has_value() &&
+          static_cast<std::uint64_t>(tick.time_since_epoch().count()) != *merge_tab.disk_result_tick) {
+        merge_tab.external_result_stale = true;
+        merge_tab.marked_resolved = false;
+      }
+    }
+    std::size_t remaining_files = 0;
+    for (const project::GitRepositoryEntry& entry : repository_state.entries) {
+      if (entry.conflicted) {
+        ++remaining_files;
+      }
+    }
+    merge_tab.remaining_conflicted_files = remaining_files;
+  }
+}
+
+void WorkspaceShell::FinalizeGitMergeTab(MergeTabState& merge_tab,
+                                         const std::filesystem::path& path) {
+  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
+  const MergeResolverLabels labels =
+      BuildMergeResolverLabels(context_.current_project_state.root, path, repository_state);
+  merge_tab.incoming_label = labels.incoming_label;
+  merge_tab.current_label = labels.current_label;
+  merge_tab.result_label = labels.result_label;
+  merge_tab.base_label = labels.base_label;
+
+  const std::optional<project::GitRepositoryEntry> entry =
+      FindConflictRepositoryEntry(repository_state, path);
+  compare::MergeConflictClassificationInput classification{
+      .repository_entry = entry.has_value() ? &*entry : nullptr,
+      .base_exists = !merge_tab.model.base_lines.empty(),
+      .incoming_exists = !merge_tab.model.incoming_lines.empty(),
+      .current_exists = !merge_tab.model.current_lines.empty(),
+      .base_content = util::SerializeLines(merge_tab.model.base_lines, merge_tab.result_line_ending),
+      .incoming_content =
+          util::SerializeLines(merge_tab.model.incoming_lines, merge_tab.result_line_ending),
+      .current_content =
+          util::SerializeLines(merge_tab.model.current_lines, merge_tab.result_line_ending),
+  };
+  merge_tab.model.file_conflict = compare::ClassifyMergeFileConflict(classification);
+  merge_tab.file_conflict = merge_tab.model.file_conflict;
+
+  merge_tab.open_index_generation = repository_state.generation;
+  std::size_t remaining_files = 0;
+  for (const project::GitRepositoryEntry& repository_entry : repository_state.entries) {
+    if (repository_entry.conflicted) {
+      ++remaining_files;
+    }
+  }
+  merge_tab.remaining_conflicted_files = remaining_files;
+  if (!merge_tab.output_path.empty() && std::filesystem::exists(merge_tab.output_path)) {
+    std::error_code error;
+    const auto tick = std::filesystem::last_write_time(merge_tab.output_path, error);
+    if (!error) {
+      merge_tab.disk_result_tick =
+          static_cast<std::uint64_t>(tick.time_since_epoch().count());
+    }
+  }
 }
 
 }  // namespace microide::workspace

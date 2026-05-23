@@ -3,6 +3,7 @@
 #include <functional>
 #include <vector>
 
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceMenuState.h"
@@ -48,8 +49,8 @@ class SidebarMouseCoordinator {
         compute_git_sidebar_entry_action_layout;
     std::function<bool(std::size_t)> unstage_git_sidebar_entry;
     std::function<bool(std::size_t)> stage_git_sidebar_entry;
-    std::function<bool(std::size_t)> discard_git_sidebar_entry;
-    std::function<bool(std::size_t)> open_git_sidebar_entry;
+    std::function<void(std::size_t)> open_discard_git_entry_prompt;
+    std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_problems_sidebar_list_layout;
     std::function<void()> reveal_selected_problems_sidebar_line;

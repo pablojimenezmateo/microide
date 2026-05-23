@@ -65,6 +65,7 @@ class TabCoordinator {
   bool UnsplitActiveEditor();
   bool CycleEditorSplit(int delta);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
+  void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,

@@ -1,3 +1,4 @@
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 
 #include <algorithm>
@@ -98,22 +99,22 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   const int clicked_row =
       static_cast<int>((event.button.y - surface_layout.rows_y) / surface_layout.line_height);
-  const int model_row = compare_tab->scroll_row + clicked_row;
-  if (clicked_row < 0 || model_row < 0 ||
-      model_row >= static_cast<int>(compare_tab->model.rows.size())) {
+  const int presentation_row = compare_tab->scroll_row + clicked_row;
+  if (clicked_row < 0 || presentation_row < 0 ||
+      static_cast<std::size_t>(presentation_row) >= CompareTabPresentationRowCount(*compare_tab)) {
     compare_tab->right_view_active = false;
     return false;
   }
 
   const std::size_t previous_selected_row = compare_tab->selected_row;
   const bool previous_right_view_active = compare_tab->right_view_active;
-  compare_tab->selected_row = static_cast<std::size_t>(model_row);
+  compare_tab->selected_row = static_cast<std::size_t>(presentation_row);
   if (event.button.x >= surface_layout.right_x) {
     compare_tab->right_view_active = true;
     const TextGridInteractionLayout right_interaction =
         operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
-    const std::size_t line =
-        operations_.compare_right_line_for_row(*compare_tab, compare_tab->selected_row);
+    const std::size_t line = operations_.compare_right_line_for_row(
+        *compare_tab, CompareTabSelectedModelRow(*compare_tab));
     const std::size_t visual_column = TextGridVisualColumnAtX(right_interaction, event.button.x);
     compare_tab->right_viewport.MoveCursorToVisualColumn(
         line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
