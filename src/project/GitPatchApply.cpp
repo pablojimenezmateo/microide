@@ -88,6 +88,7 @@ PatchApplyResult ApplyPatchRequest(const PatchApplyRequest& request, std::string
   if (outcome.ok) {
     return PatchApplyResult{
         .category = PatchApplyResultCategory::Success,
+        .detail = {},
         .completed_repository_generation = request.repository_snapshot_generation,
     };
   }

@@ -43,17 +43,19 @@ GitRepositoryState MakeRepositoryState() {
   };
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Ordinary,
-      .path = {.relative_path = std::filesystem::path("tracked.cpp")},
+      .path = {.relative_path = std::filesystem::path("tracked.cpp"),
+               .display_label = "tracked.cpp"},
       .staged = true,
   });
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Ordinary,
-      .path = {.relative_path = std::filesystem::path("tracked.cpp")},
+      .path = {.relative_path = std::filesystem::path("tracked.cpp"),
+               .display_label = "tracked.cpp"},
       .staged = false,
   });
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Untracked,
-      .path = {.relative_path = std::filesystem::path("new.cpp")},
+      .path = {.relative_path = std::filesystem::path("new.cpp"), .display_label = "new.cpp"},
       .staged = false,
   });
   return state;
@@ -89,6 +91,9 @@ void TestWarningsRequireAcknowledgement() {
 
 void TestCommitDraftPersistenceRoundTrip() {
   PersistedProjectConfigState config{
+      .project_base_color = std::nullopt,
+      .settings = {},
+      .sidebar_policies = {},
       .commit_draft =
           PersistedCommitDraftState{
               .head_oid = "abc123",
@@ -96,6 +101,7 @@ void TestCommitDraftPersistenceRoundTrip() {
               .subject = "Fix tests",
               .body = "Body text",
           },
+      .branch_review = {},
   };
   std::vector<std::byte> encoded;
   Expect(EncodeProjectConfigRecord(config, &encoded), "encode project config with commit draft");

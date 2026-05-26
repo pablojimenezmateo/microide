@@ -136,8 +136,31 @@ Shipped but with caveats (see [Known Limitations](#known-limitations)):
   ongoing
 - Tool downloader / SHA verification: implemented, not exercised against production tool catalogs
 - Native file-watch backends: Linux `inotify`, macOS `FSEvents`, Windows `ReadDirectoryChangesW`
-  exist; the watcher is not yet wired into project-search and file-finder call sites — those still
-  fall back to directory traversal
+  exist and are wired into `FileIndex`; project search and file finder consume index snapshots
+  instead of rescanning on each refresh. First-load indexing and large watcher bursts can still
+  show refresh lag in large repositories.
+
+## Git Workstation Workflow
+
+Current validated flow:
+
+1. Open a local repository (`microide /path/to/repo`) and switch to the **Git** sidebar.
+2. Inspect grouped sections: **Conflicts**, **Staged**, **Unstaged**, **Untracked**, **Outgoing**.
+3. Open unstaged or staged diffs from sidebar rows (or from compare tabs), then stage/unstage by
+   file, hunk, or selected lines where text mapping is available.
+4. Use discard actions only after confirmation/preview prompts.
+5. Open conflicted files into the merge tab, resolve hunks, then stage resolved files.
+6. Open commit workflow from the Git sidebar, verify staged summary, write subject/body, and
+   commit.
+7. On commit failure, read status/output feedback, fix the issue, and retry without losing draft
+   text.
+
+Known workflow boundaries in preview:
+
+- Binary, submodule, and some complex rename/file-directory conflicts are recognized but not fully
+  interactive in the three-way merge UI.
+- Patch staging for hunk/selected-lines can fail when the diff is stale; refresh and retry.
+- Branch review markers are preview scope and should not be treated as a durable review database.
 
 ## Known Limitations
 

@@ -89,6 +89,7 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
         .ok = false,
         .issue = MergeValidationIssue::Unsaved,
         .message = "Save the merge result before marking the file resolved.",
+        .marker_line = std::nullopt,
     };
   }
 
@@ -111,8 +112,9 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
         .ok = false,
         .issue = MergeValidationIssue::ExpectedExistenceMismatch,
         .message = request.result_should_exist
-                        ? "The merge result file must exist before marking resolved."
-                        : "Remove the merge result file before marking this delete conflict resolved.",
+                       ? "The merge result file must exist before marking resolved."
+                       : "Remove the merge result file before marking this delete conflict resolved.",
+        .marker_line = std::nullopt,
     };
   }
 
@@ -121,6 +123,7 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
         .ok = false,
         .issue = MergeValidationIssue::ExternalModification,
         .message = "The merge result changed on disk; refresh the resolver before marking resolved.",
+        .marker_line = std::nullopt,
     };
   }
 
@@ -129,6 +132,7 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
         .ok = false,
         .issue = MergeValidationIssue::StaleIndexGeneration,
         .message = "Git index conflict state changed; refresh the resolver before marking resolved.",
+        .marker_line = std::nullopt,
     };
   }
 
@@ -139,6 +143,7 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
           .ok = false,
           .issue = MergeValidationIssue::LineEndingMismatch,
           .message = "Line endings differ from the opened result file.",
+          .marker_line = std::nullopt,
       };
     }
   }
@@ -151,11 +156,16 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
           .ok = false,
           .issue = MergeValidationIssue::ExternalModification,
           .message = "The merge result changed on disk; refresh the resolver before marking resolved.",
+          .marker_line = std::nullopt,
       };
     }
   }
 
-  return MergeValidationResult{.ok = true};
+  return MergeValidationResult{
+      .ok = true,
+      .message = {},
+      .marker_line = std::nullopt,
+  };
 }
 
 }  // namespace microide::workspace

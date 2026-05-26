@@ -34,19 +34,28 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
   git_state.base_label = "origin/main";
   git_state.entries = {
       GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
-                      .relative_path = "src/alpha.cpp"},
+                      .path = "src/alpha.cpp",
+                      .relative_path = "src/alpha.cpp",
+                      .provider_id = {},
+                      .provider_label = {}},
       GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
-                      .relative_path = "src/beta.cpp"},
+                      .path = "src/beta.cpp",
+                      .relative_path = "src/beta.cpp",
+                      .provider_id = {},
+                      .provider_label = {}},
       GitSidebarEntry{.section = GitSidebarEntry::Section::Outgoing,
-                      .relative_path = "src/gamma.cpp"},
+                      .path = "src/gamma.cpp",
+                      .relative_path = "src/gamma.cpp",
+                      .provider_id = {},
+                      .provider_label = {}},
   };
   const BranchReviewStateService branch_review;
   const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
       git_state, std::filesystem::path{"/tmp/project"}, branch_review));
   Expect(lines.size() == 11,
          "git sidebar lines should include workflow headers, rows, and empty placeholders");
-  Expect(lines[4].kind == GitSidebarLineKind::Header && lines[4].label == "Changed (2)",
-         "git sidebar lines should include the changed header with count");
+  Expect(lines[4].kind == GitSidebarLineKind::Header && lines[4].label == "Unstaged (2)",
+         "git sidebar lines should include the unstaged header with count");
   Expect(lines[5].kind == GitSidebarLineKind::Entry && lines[5].entry_index == 0,
          "git sidebar lines should map the first changed entry index");
   Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 1,

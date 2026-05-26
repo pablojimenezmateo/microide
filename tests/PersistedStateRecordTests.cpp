@@ -53,6 +53,8 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
       .project_base_color = SDL_Color{0x12, 0x34, 0x56, 0x78},
       .settings = {{"editor.wrap", "word"}},
       .sidebar_policies = {PersistedSidebarViewPolicy{.view_id = "explorer", .hidden = false, .order = 3}},
+      .commit_draft = std::nullopt,
+      .branch_review = {},
   };
   std::vector<std::byte> encoded_project;
   Expect(EncodeProjectConfigRecord(project, &encoded_project),

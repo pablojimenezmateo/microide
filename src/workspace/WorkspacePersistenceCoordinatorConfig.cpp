@@ -229,6 +229,8 @@ bool PersistenceCoordinator::RestoreConfigState() {
       .project_base_color = current.project_base_color,
       .settings = {},
       .sidebar_policies = {},
+      .commit_draft = std::nullopt,
+      .branch_review = {},
   };
   if (!operations_.persistence_service->LoadProjectConfig(config_path, &persisted_state)) {
     return false;

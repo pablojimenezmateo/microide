@@ -1361,8 +1361,8 @@ void TestTextViewportSoftWrapToggleBumpsLayoutShapeOnly() {
          "Soft-wrap toggle must bump layout_shape and presentation only");
 }
 
-void TestTextViewportSyntaxConfigDoesNotInvalidateWrappedRowLayouts() {
 #ifndef NDEBUG
+void TestTextViewportSyntaxConfigDoesNotInvalidateWrappedRowLayouts() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd\ne\n", "/tmp/tier-wrapped-rows.cpp");
   viewport.SetSoftWrap(true);
@@ -1376,8 +1376,8 @@ void TestTextViewportSyntaxConfigDoesNotInvalidateWrappedRowLayouts() {
   const std::size_t after_builds = viewport.WrappedRowLayoutBuildCountForDebug();
   Expect(after_builds == before_builds,
          "SyntaxConfig invalidation must not rebuild wrapped_row_layouts_");
-#endif
 }
+#endif
 
 void TestTextViewportSyntaxConfigForcesHighlightCacheMiss() {
   TextViewport viewport;

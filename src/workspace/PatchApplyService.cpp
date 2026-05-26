@@ -92,6 +92,8 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
       .review_mode = compare_tab.review_mode,
       .staging_view = compare_tab.staging_view,
       .semantic_file = compare_tab.semantic_file,
+      .hunk = std::nullopt,
+      .line_selection = std::nullopt,
   };
 
   if (line_scope) {

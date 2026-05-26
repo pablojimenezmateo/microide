@@ -923,7 +923,7 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   (void)SendMouseMotion(
       shell, action_rects[0].x + action_rects[0].w * 0.5f,
       action_rects[0].y + action_rects[0].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage file",
          "git tooltip fixture should expose the compact action tooltip");
 
   const auto tooltip_rect = WorkspaceShellTestAccess::HoveredGitSidebarTooltipRect(shell);

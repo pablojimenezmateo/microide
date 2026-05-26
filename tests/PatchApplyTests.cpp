@@ -73,6 +73,8 @@ void TestPatchStageHunkInRepository() {
       .target{
           .repository_root = repo_path,
           .relative_path = std::filesystem::path("tracked.txt"),
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
       },
       .model = model,
   };
@@ -89,7 +91,12 @@ void TestPatchStageHunkInRepository() {
 void TestPatchStaleGenerationCategory() {
   PatchApplyRequest request{
       .operation = PatchOperationKind::StageHunk,
-      .target{.repository_root = "/nonexistent", .relative_path = "missing.txt"},
+      .target{
+          .repository_root = "/nonexistent",
+          .relative_path = "missing.txt",
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
+      },
   };
   const auto result = ApplyPatchRequest(request, "not a real patch\n");
   Expect(result.category == PatchApplyResultCategory::PatchDidNotApply ||
@@ -142,11 +149,11 @@ void TestPatchGeneratorPreservesBlankContextLines() {
   const CompareModel model = MakePatchModel(
       {
           {.left_text = "before", .right_text = "before", .left_line = 1, .right_line = 1,
-           .kind = CompareRowKind::Unchanged},
+           .kind = CompareRowKind::Unchanged, .left_changed_spans = {}, .right_changed_spans = {}},
           {.left_text = "", .right_text = "", .left_line = 2, .right_line = 2,
-           .kind = CompareRowKind::Unchanged},
+           .kind = CompareRowKind::Unchanged, .left_changed_spans = {}, .right_changed_spans = {}},
           {.left_text = "old", .right_text = "new", .left_line = 3, .right_line = 3,
-           .kind = CompareRowKind::Modified},
+           .kind = CompareRowKind::Modified, .left_changed_spans = {}, .right_changed_spans = {}},
       },
       1, 2);
   const auto patch = GenerateComparePatch(model, "file.txt", 0);
@@ -161,11 +168,11 @@ void TestPatchGeneratorPreservesRepeatedContextLines() {
   const CompareModel model = MakePatchModel(
       {
           {.left_text = "same", .right_text = "same", .left_line = 1, .right_line = 1,
-           .kind = CompareRowKind::Unchanged},
+           .kind = CompareRowKind::Unchanged, .left_changed_spans = {}, .right_changed_spans = {}},
           {.left_text = "same", .right_text = "same", .left_line = 2, .right_line = 2,
-           .kind = CompareRowKind::Unchanged},
+           .kind = CompareRowKind::Unchanged, .left_changed_spans = {}, .right_changed_spans = {}},
           {.left_text = "old", .right_text = "new", .left_line = 3, .right_line = 3,
-           .kind = CompareRowKind::Modified},
+           .kind = CompareRowKind::Modified, .left_changed_spans = {}, .right_changed_spans = {}},
       },
       0, 2);
   const auto patch = GenerateComparePatch(model, "file.txt", 0);
@@ -179,11 +186,11 @@ void TestPatchGeneratorSelectedLinesBesideBlankContext() {
   const CompareModel model = MakePatchModel(
       {
           {.left_text = "keep", .right_text = "keep", .left_line = 1, .right_line = 1,
-           .kind = CompareRowKind::Unchanged},
+           .kind = CompareRowKind::Unchanged, .left_changed_spans = {}, .right_changed_spans = {}},
           {.left_text = "", .right_text = "", .left_line = 2, .right_line = 2,
-           .kind = CompareRowKind::Unchanged},
+           .kind = CompareRowKind::Unchanged, .left_changed_spans = {}, .right_changed_spans = {}},
           {.left_text = "old", .right_text = "new", .left_line = 3, .right_line = 3,
-           .kind = CompareRowKind::Modified},
+           .kind = CompareRowKind::Modified, .left_changed_spans = {}, .right_changed_spans = {}},
       },
       2, 2);
   const auto patch = GenerateComparePatchForRows(model, "file.txt", 2, 2);
@@ -235,6 +242,8 @@ void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
       .target{
           .repository_root = repo_path,
           .relative_path = std::filesystem::path("file.txt"),
+          .hunk = std::nullopt,
+          .line_selection = std::nullopt,
       },
       .model = model,
   };

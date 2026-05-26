@@ -44,30 +44,45 @@ void TestGitSidebarViewModelGrouping() {
   git_state.behind = 1;
   git_state.entries = {
       GitSidebarEntry{.section = GitSidebarEntry::Section::Conflicts,
+                      .path = "src/conflict.cpp",
                       .relative_path = "src/conflict.cpp",
                       .status = GitFileStatus::Conflicted,
                       .conflicted = true,
+                      .provider_id = {},
+                      .provider_label = {},
                       .supports_stage = true,
                       .supports_discard = true},
       GitSidebarEntry{.section = GitSidebarEntry::Section::Staged,
+                      .path = "src/staged.cpp",
                       .relative_path = "src/staged.cpp",
                       .status = GitFileStatus::Modified,
                       .staged = true,
+                      .provider_id = {},
+                      .provider_label = {},
                       .supports_stage = false,
                       .supports_discard = true},
       GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
+                      .path = "src/changed.cpp",
                       .relative_path = "src/changed.cpp",
                       .status = GitFileStatus::Modified,
+                      .provider_id = {},
+                      .provider_label = {},
                       .supports_stage = true,
                       .supports_discard = true},
       GitSidebarEntry{.section = GitSidebarEntry::Section::Untracked,
+                      .path = "notes.txt",
                       .relative_path = "notes.txt",
                       .status = GitFileStatus::Untracked,
+                      .provider_id = {},
+                      .provider_label = {},
                       .supports_stage = true,
                       .supports_discard = true},
       GitSidebarEntry{.section = GitSidebarEntry::Section::Outgoing,
+                      .path = "src/outgoing.cpp",
                       .relative_path = "src/outgoing.cpp",
                       .status = GitFileStatus::Modified,
+                      .provider_id = {},
+                      .provider_label = {},
                       .supports_stage = false,
                       .supports_discard = false},
   };
@@ -81,6 +96,8 @@ void TestGitSidebarViewModelGrouping() {
          "conflict section header should include count");
   Expect(view_model.sections[1].rows.size() == 1 && view_model.sections[1].rows[0].actions.unstage,
          "staged rows should expose unstage");
+  Expect(view_model.sections[2].header_label == "Unstaged (1)",
+         "unstaged section header should use explicit unstaged wording");
   Expect(view_model.sections[3].rows[0].actions.stage &&
              view_model.sections[3].rows[0].actions.discard,
          "untracked rows should expose stage and discard");
@@ -97,10 +114,13 @@ void TestGitSidebarViewModelGrouping() {
 void TestConflictRowsDisableDirectStageUnstage() {
   GitSidebarEntry conflict_entry{
       .section = GitSidebarEntry::Section::Conflicts,
+      .path = "src/conflict.cpp",
       .relative_path = "src/conflict.cpp",
       .status = GitFileStatus::Conflicted,
       .conflicted = true,
       .staged = true,
+      .provider_id = {},
+      .provider_label = {},
       .supports_stage = true,
       .supports_discard = true,
   };
@@ -123,7 +143,11 @@ void TestConflictRowsDisableDirectStageUnstage() {
 void TestConflictDefaultViewRoutesToMerge() {
   GitSidebarEntry conflict_entry{
       .section = GitSidebarEntry::Section::Conflicts,
+      .path = "src/conflict.cpp",
+      .relative_path = "src/conflict.cpp",
       .conflicted = true,
+      .provider_id = {},
+      .provider_label = {},
   };
   const auto availability =
       GitSidebarActionAvailabilityForEntry(conflict_entry, true, true);
@@ -134,7 +158,11 @@ void TestConflictDefaultViewRoutesToMerge() {
 void TestGitSidebarActionAvailabilityMessages() {
   GitSidebarEntry untracked_entry{
       .section = GitSidebarEntry::Section::Untracked,
+      .path = "new.cpp",
+      .relative_path = "new.cpp",
       .status = GitFileStatus::Untracked,
+      .provider_id = {},
+      .provider_label = {},
       .supports_stage = true,
       .supports_discard = true,
   };
@@ -148,7 +176,13 @@ void TestGitSidebarActionAvailabilityMessages() {
              "Unstage is unavailable for this row",
          "disabled unstage should explain why");
 
-  GitSidebarEntry outgoing_entry{.section = GitSidebarEntry::Section::Outgoing};
+  GitSidebarEntry outgoing_entry{
+      .section = GitSidebarEntry::Section::Outgoing,
+      .path = "src/outgoing.cpp",
+      .relative_path = "src/outgoing.cpp",
+      .provider_id = {},
+      .provider_label = {},
+  };
   Expect(!GitSidebarActionAvailabilityForEntry(outgoing_entry, true, true).stage,
          "outgoing rows should not be stageable from the sidebar");
 }
@@ -156,7 +190,10 @@ void TestGitSidebarActionAvailabilityMessages() {
 void TestGitDiscardPreviewSummaryMentionsUntrackedPolicy() {
   GitSidebarEntry entry{
       .section = GitSidebarEntry::Section::Untracked,
+      .path = "scratch.txt",
       .relative_path = "scratch.txt",
+      .provider_id = {},
+      .provider_label = {},
   };
   const std::string summary = BuildGitDiscardPreviewSummary(entry, "fixture");
   Expect(summary.find("untracked") != std::string::npos,
