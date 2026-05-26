@@ -61,6 +61,7 @@ class Application {
   // recent resize"; the texture is allowed to be (re)allocated immediately.
   Uint64 last_resize_event_ns_ = 0;
   bool presentation_state_dirty_ = true;
+  float last_presented_ui_scale_ = 1.0f;
   Uint64 redraw_trace_frames_ = 0;
   Uint64 redraw_trace_full_frames_ = 0;
   Uint64 redraw_trace_partial_frames_ = 0;
