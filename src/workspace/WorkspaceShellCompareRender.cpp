@@ -48,11 +48,12 @@ void DrawCompareScrollbarMarkers(SDL_Renderer* renderer,
   }
 
   if (!compare_tab.scrollbar_marker_cache_valid ||
-      compare_tab.scrollbar_marker_cache_revision != compare_tab.model_revision ||
+      compare_tab.scrollbar_marker_cache_revision != compare_tab.presentation_revision ||
       !RectsEqual(compare_tab.scrollbar_marker_cache_track, track)) {
-    compare_tab.scrollbar_marker_cache = BuildCompareScrollbarMarkers(track, compare_tab.model);
+    compare_tab.scrollbar_marker_cache =
+        BuildCompareScrollbarMarkers(track, compare_tab.presentation, compare_tab.model);
     compare_tab.scrollbar_marker_cache_track = track;
-    compare_tab.scrollbar_marker_cache_revision = compare_tab.model_revision;
+    compare_tab.scrollbar_marker_cache_revision = compare_tab.presentation_revision;
     compare_tab.scrollbar_marker_cache_valid = true;
   }
   for (const CompareScrollbarMarker& marker : compare_tab.scrollbar_marker_cache) {

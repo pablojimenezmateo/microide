@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
 #include "compare/CompareModel.h"
+#include "compare/ComparePresentationModel.h"
+#include "compare/CompareSemanticMetadata.h"
 #include "workspace/LayoutModeService.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -143,7 +145,20 @@ void TestWorkspaceSharedCompareScrollbarMarkers() {
       make_row(microide::compare::CompareRowKind::Unchanged),
   };
 
-  const auto markers = BuildCompareScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 70.0f), model);
+  const auto presentation = microide::compare::BuildComparePresentationModel(
+      model,
+      microide::compare::InferCompareSemanticFileMetadata(
+          microide::compare::CompareSemanticMetadataInput{
+              .path = "f.txt",
+              .left_content = "a\nb\nc\nd\ne\nf\ng\n",
+              .right_content = "a\nb\nc\nd\ne\nf\ng\n",
+              .git_entry = std::nullopt,
+              .old_path = {},
+          }),
+      microide::compare::ComparePresentationOptions{},
+      microide::compare::ComparePresentationCollapseState{}, 1);
+  const auto markers =
+      BuildCompareScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 70.0f), presentation, model);
   Expect(markers.size() == 3, "compare scrollbar markers should group contiguous changed rows");
   Expect(markers[0].kind == microide::compare::CompareRowKind::Added &&
              markers[0].start_row == 1 && markers[0].end_row == 3,
@@ -158,6 +173,53 @@ void TestWorkspaceSharedCompareScrollbarMarkers() {
          "compare scrollbar markers should stay inside the track bounds");
   Expect(markers[1].rect.h >= 2.0f,
          "compare scrollbar markers should stay visible even for single-row changes");
+}
+
+void TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows() {
+  const auto build_text = [](std::string_view first_change, std::string_view second_change) {
+    std::string text;
+    for (int i = 0; i < 24; ++i) {
+      text += "prefix " + std::to_string(i) + "\n";
+    }
+    text += std::string(first_change) + "\n";
+    for (int i = 0; i < 30; ++i) {
+      text += "middle " + std::to_string(i) + "\n";
+    }
+    text += std::string(second_change) + "\n";
+    for (int i = 0; i < 8; ++i) {
+      text += "suffix " + std::to_string(i) + "\n";
+    }
+    return text;
+  };
+
+  const std::string left = build_text("left a", "left b");
+  const std::string right = build_text("right a", "right b");
+  const auto model = microide::compare::BuildCompareModel(left, right);
+  const auto presentation = microide::compare::BuildComparePresentationModel(
+      model,
+      microide::compare::InferCompareSemanticFileMetadata(
+          microide::compare::CompareSemanticMetadataInput{
+              .path = "f.txt",
+              .left_content = left,
+              .right_content = right,
+              .git_entry = std::nullopt,
+              .old_path = {},
+          }),
+      microide::compare::ComparePresentationOptions{},
+      microide::compare::ComparePresentationCollapseState{}, 1);
+
+  const auto markers =
+      BuildCompareScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 100.0f), presentation, model);
+  Expect(markers.size() == 2,
+         "collapsed compare presentations should still emit one marker per visible changed run");
+  Expect(presentation.rows.size() == 5,
+         "collapsed compare fixture should reduce to five visible presentation rows");
+  Expect(markers[0].start_row == 1 && markers[0].end_row == 2,
+         "first changed run should be positioned using presentation-row coordinates");
+  Expect(markers[1].start_row == 3 && markers[1].end_row == 4,
+         "second changed run should also be positioned using presentation-row coordinates");
+  Expect(markers[1].rect.y < 90.0f,
+         "collapsed context should shrink the marker gap instead of preserving raw model spacing");
 }
 
 void TestWorkspaceSharedMergeScrollbarMarkers() {
@@ -750,6 +812,8 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedScrollbarReserveGeometry);
   AddTest(tests, "WorkspaceShared/CompareScrollbarMarkers",
           TestWorkspaceSharedCompareScrollbarMarkers);
+  AddTest(tests, "WorkspaceShared/CompareScrollbarMarkersFollowPresentationRows",
+          TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows);
   AddTest(tests, "WorkspaceShared/MergeScrollbarMarkers",
           TestWorkspaceSharedMergeScrollbarMarkers);
   AddTest(tests, "WorkspaceShared/PanelGeometryHelpers", TestWorkspaceSharedPanelGeometryHelpers);

@@ -314,6 +314,92 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                                         .collapsed_run_length == collapsed_run_length,
                             "expanding previous context should keep the same collapsed block selected");
                    }});
+
+  tests.push_back({"CompareReview/CollapsedContextExpansionPersistsAcrossRuns",
+                   [] {
+                     const auto build_text = [](std::string_view changed_a,
+                                                std::string_view changed_b,
+                                                std::string_view changed_c) {
+                       std::string text;
+                       for (int i = 0; i < 24; ++i) {
+                         text += "prefix " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_a) + "\n";
+                       for (int i = 0; i < 30; ++i) {
+                         text += "middle-a " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_b) + "\n";
+                       for (int i = 0; i < 30; ++i) {
+                         text += "middle-b " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_c) + "\n";
+                       for (int i = 0; i < 8; ++i) {
+                         text += "suffix " + std::to_string(i) + "\n";
+                       }
+                       return text;
+                     };
+
+                     const std::string left = build_text("left a", "left b", "left c");
+                     const std::string right = build_text("right a", "right b", "right c");
+
+                     CompareTabState compare_tab;
+                     compare_tab.model = BuildCompareModel(left, right);
+                     compare_tab.presentation = BuildComparePresentationModel(
+                         compare_tab.model,
+                         InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+                             .path = "f.txt",
+                             .left_content = left,
+                             .right_content = right,
+                             .git_entry = std::nullopt,
+                             .old_path = {},
+                         }),
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+
+                     std::vector<std::pair<std::size_t, std::size_t>> middle_run_identities;
+                     for (const auto& row : compare_tab.presentation.rows) {
+                       if (row.kind == ComparePresentationRowKind::CollapsedContext &&
+                           row.previous_hunk_index >= 0 && row.next_hunk_index >= 0) {
+                         middle_run_identities.push_back(
+                             {row.collapsed_run_start_model_row, row.collapsed_run_length});
+                       }
+                     }
+                     Expect(middle_run_identities.size() >= 2,
+                            "fixture should expose multiple independently collapsed middle runs");
+
+                     const auto find_run_row = [&](std::pair<std::size_t, std::size_t> identity) {
+                       for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
+                         const auto& row = compare_tab.presentation.rows[i];
+                         if (row.kind == ComparePresentationRowKind::CollapsedContext &&
+                             row.collapsed_run_start_model_row == identity.first &&
+                             row.collapsed_run_length == identity.second) {
+                           return std::optional<std::size_t>(i);
+                         }
+                       }
+                       return std::optional<std::size_t>{};
+                     };
+
+                     const std::optional<std::size_t> first_row =
+                         find_run_row(middle_run_identities[0]);
+                     Expect(first_row.has_value(),
+                            "first collapsed middle run should be present before expansion");
+                     Expect(ExpandCompareCollapsedContext(compare_tab, *first_row,
+                                                         CompareCollapsedContextAction::ShowAll),
+                            "ShowAll should fully expand the first collapsed middle run");
+                     Expect(!find_run_row(middle_run_identities[0]).has_value(),
+                            "fully expanding the first run should remove its collapsed row");
+
+                     const std::optional<std::size_t> second_row =
+                         find_run_row(middle_run_identities[1]);
+                     Expect(second_row.has_value(),
+                            "second collapsed middle run should remain available after the first expansion");
+                     Expect(ExpandCompareCollapsedContext(compare_tab, *second_row,
+                                                         CompareCollapsedContextAction::ShowAll),
+                            "ShowAll should fully expand the second collapsed middle run");
+                     Expect(!find_run_row(middle_run_identities[0]).has_value(),
+                            "expanding a second run should not re-collapse the first");
+                     Expect(!find_run_row(middle_run_identities[1]).has_value(),
+                            "fully expanding the second run should also remove its collapsed row");
+                   }});
 }
 
 }  // namespace microide::tests

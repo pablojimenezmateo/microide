@@ -339,6 +339,196 @@ void TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive() {
          "ordinary editable compare content should restore the text cursor");
 }
 
+void TestWorkspaceShellCompareCollapsedContextExpansionPersistsAcrossChunks() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const auto build_text = [](std::string_view first_change,
+                             std::string_view second_change,
+                             std::string_view third_change) {
+    std::string text;
+    for (int i = 0; i < 24; ++i) {
+      text += "prefix " + std::to_string(i) + "\n";
+    }
+    text += std::string(first_change) + "\n";
+    for (int i = 0; i < 30; ++i) {
+      text += "middle-a " + std::to_string(i) + "\n";
+    }
+    text += std::string(second_change) + "\n";
+    for (int i = 0; i < 30; ++i) {
+      text += "middle-b " + std::to_string(i) + "\n";
+    }
+    text += std::string(third_change) + "\n";
+    for (int i = 0; i < 8; ++i) {
+      text += "suffix " + std::to_string(i) + "\n";
+    }
+    return text;
+  };
+  WriteFile(source, build_text("left a", "left b", "left c"));
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare multi-chunk fixture", "compare multi-chunk fixture");
+  WriteFile(source, build_text("right a", "right b", "right c"));
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare multi-chunk fixture should open");
+
+  const auto collect_middle_runs = [&](WorkspaceShell& current_shell) {
+    std::vector<std::pair<std::size_t, std::size_t>> identities;
+    const std::size_t row_count =
+        WorkspaceShellTestAccess::ActiveComparePresentationRowCount(current_shell);
+    for (std::size_t i = 0; i < row_count; ++i) {
+      if (WorkspaceShellTestAccess::ActiveComparePresentationRowKind(current_shell, i) !=
+          microide::compare::ComparePresentationRowKind::CollapsedContext) {
+        continue;
+      }
+      const auto action_rects =
+          WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(current_shell, i);
+      if (action_rects.previous_rect.has_value() && action_rects.next_rect.has_value()) {
+        identities.push_back(
+            WorkspaceShellTestAccess::ActiveCompareCollapsedRunIdentity(current_shell, i));
+      }
+    }
+    return identities;
+  };
+  const auto find_row = [&](WorkspaceShell& current_shell,
+                            std::pair<std::size_t, std::size_t> identity) {
+    const std::size_t row_count =
+        WorkspaceShellTestAccess::ActiveComparePresentationRowCount(current_shell);
+    for (std::size_t i = 0; i < row_count; ++i) {
+      if (WorkspaceShellTestAccess::ActiveComparePresentationRowKind(current_shell, i) !=
+          microide::compare::ComparePresentationRowKind::CollapsedContext) {
+        continue;
+      }
+      if (WorkspaceShellTestAccess::ActiveCompareCollapsedRunIdentity(current_shell, i) ==
+          identity) {
+        return std::optional<std::size_t>(i);
+      }
+    }
+    return std::optional<std::size_t>{};
+  };
+  const std::vector<std::pair<std::size_t, std::size_t>> middle_runs = collect_middle_runs(shell);
+  Expect(middle_runs.size() >= 2,
+         "compare multi-chunk fixture should expose at least two independently collapsed middle runs");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const std::optional<std::size_t> first_row = find_row(shell, middle_runs[0]);
+  Expect(first_row.has_value(), "first collapsed middle run should be present before expansion");
+  Expect(ExpandCompareCollapsedContext(compare, *first_row,
+                                       microide::workspace::CompareCollapsedContextAction::ShowAll),
+         "ShowAll should expand the first collapsed middle run");
+  const std::size_t after_first_expand =
+      WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
+  Expect(!find_row(shell, middle_runs[0]).has_value(),
+         "the first collapsed middle run should remain expanded");
+
+  const std::optional<std::size_t> second_row = find_row(shell, middle_runs[1]);
+  Expect(second_row.has_value(),
+         "the second collapsed middle run should remain available after the first expansion");
+  Expect(ExpandCompareCollapsedContext(compare, *second_row,
+                                       microide::workspace::CompareCollapsedContextAction::ShowAll),
+         "ShowAll should expand the second collapsed middle run");
+  Expect(WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell) > after_first_expand,
+         "expanding a second collapsed middle run should reveal additional rows");
+  Expect(!find_row(shell, middle_runs[0]).has_value(),
+         "expanding a second run should not collapse the first one again");
+  Expect(!find_row(shell, middle_runs[1]).has_value(),
+         "the second collapsed middle run should also remain expanded");
+}
+
+void TestWorkspaceShellCompareCollapsedContextExpansionSurvivesTreeRefresh() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const auto build_text = [](std::string_view first_change, std::string_view second_change) {
+    std::string text;
+    for (int i = 0; i < 24; ++i) {
+      text += "prefix " + std::to_string(i) + "\n";
+    }
+    text += std::string(first_change) + "\n";
+    for (int i = 0; i < 30; ++i) {
+      text += "middle " + std::to_string(i) + "\n";
+    }
+    text += std::string(second_change) + "\n";
+    for (int i = 0; i < 8; ++i) {
+      text += "suffix " + std::to_string(i) + "\n";
+    }
+    return text;
+  };
+  const std::string left = build_text("left a", "left b");
+  const std::string right = build_text("right a", "right b");
+  WriteFile(source, left);
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare refresh fixture", "compare refresh fixture");
+  WriteFile(source, right);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare refresh fixture should open");
+
+  std::optional<std::size_t> collapsed_row;
+  std::pair<std::size_t, std::size_t> collapsed_run_identity{0, 0};
+  const std::size_t initial_row_count =
+      WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
+  for (std::size_t i = 0; i < initial_row_count; ++i) {
+    if (WorkspaceShellTestAccess::ActiveComparePresentationRowKind(shell, i) !=
+        microide::compare::ComparePresentationRowKind::CollapsedContext) {
+      continue;
+    }
+    const auto action_rects =
+        WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(shell, i);
+    if (action_rects.previous_rect.has_value() && action_rects.next_rect.has_value()) {
+      collapsed_row = i;
+      collapsed_run_identity =
+          WorkspaceShellTestAccess::ActiveCompareCollapsedRunIdentity(shell, i);
+      break;
+    }
+  }
+  Expect(collapsed_row.has_value(),
+         "compare refresh fixture should expose a collapsed middle run before expansion");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  compare.scroll_row = std::max(0, static_cast<int>(*collapsed_row) - 2);
+  const auto action_rects =
+      WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(shell, *collapsed_row);
+  const SDL_FRect button = action_rects.all_rect;
+  Expect(SendMouseDown(shell, button.x + button.w * 0.5f, button.y + button.h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "clicking Show all before refresh should be handled");
+  const std::size_t expanded_row_count =
+      WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
+  Expect(expanded_row_count > initial_row_count,
+         "expanding the middle collapsed run should reveal additional rows");
+
+  Expect(WorkspaceShellTestAccess::ExecuteTreeRefresh(shell),
+         "tree refresh should execute for compare refresh fixture");
+  Expect(WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell) == expanded_row_count,
+         "tree refresh should preserve the expanded compare presentation row count");
+
+  bool run_recollapsed = false;
+  const std::size_t refreshed_row_count =
+      WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
+  for (std::size_t i = 0; i < refreshed_row_count; ++i) {
+    if (WorkspaceShellTestAccess::ActiveComparePresentationRowKind(shell, i) !=
+        microide::compare::ComparePresentationRowKind::CollapsedContext) {
+      continue;
+    }
+    if (WorkspaceShellTestAccess::ActiveCompareCollapsedRunIdentity(shell, i) ==
+        collapsed_run_identity) {
+      run_recollapsed = true;
+      break;
+    }
+  }
+  Expect(!run_recollapsed,
+         "tree refresh should preserve expanded compare runs instead of re-collapsing them");
+}
+
 void TestWorkspaceShellReadOnlyCompareRightPaneSupportsSelectAllAndCopy() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -888,6 +1078,10 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareCollapsedContextButtonsExpandHiddenRows);
   AddTest(tests, "WorkspaceShell/CompareCollapsedContextButtonsHoverAsInteractive",
           TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive);
+  AddTest(tests, "WorkspaceShell/CompareCollapsedContextExpansionPersistsAcrossChunks",
+          TestWorkspaceShellCompareCollapsedContextExpansionPersistsAcrossChunks);
+  AddTest(tests, "WorkspaceShell/CompareCollapsedContextExpansionSurvivesTreeRefresh",
+          TestWorkspaceShellCompareCollapsedContextExpansionSurvivesTreeRefresh);
   AddTest(tests, "WorkspaceShell/ReadOnlyCompareRightPaneSupportsSelectAllAndCopy",
           TestWorkspaceShellReadOnlyCompareRightPaneSupportsSelectAllAndCopy);
   AddTest(tests, "WorkspaceShell/ReadOnlyCompareShortcutCopyUsesNavigableViewport",

@@ -120,7 +120,11 @@ Compare tabs SHALL support inline word diff inside changed lines, context expans
 
 #### Scenario: Collapsed context is expanded
 - **WHEN** the user expands context above a collapsed hunk
-- **THEN** the compare tab SHALL reveal additional unchanged rows while preserving the selected hunk and corresponding file-line mapping
+- **THEN** the compare tab SHALL reveal additional unchanged rows while preserving the selected hunk and corresponding file-line mapping, and the reveal SHALL remain in effect for the lifetime of the open compare tab unless the tab is closed
+
+#### Scenario: Change-overview lane follows collapsed presentation
+- **WHEN** unchanged compare context is collapsed or later expanded
+- **THEN** the compare tab's change-overview lane SHALL position changed-run markers against the current visible presentation rows so collapsed gaps shrink in the lane until that context is expanded again
 
 #### Scenario: Binary file is compared
 - **WHEN** the selected file is binary
@@ -206,4 +210,3 @@ Before a merge file is marked resolved, MicroIDE SHALL verify that the result is
 #### Scenario: Index changed under resolver
 - **WHEN** the Git index conflict state changes after the merge tab opens
 - **THEN** mark-resolved SHALL fail with a stale conflict state and SHALL offer to refresh the resolver
-

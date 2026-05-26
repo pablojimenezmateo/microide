@@ -92,6 +92,7 @@ void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
   compare_tab.presentation = compare::BuildComparePresentationModel(
       compare_tab.model, compare_tab.semantic_file, PresentationOptionsFromTab(compare_tab),
       compare_tab.presentation.collapse_state, compare_tab.model_revision);
+  ++compare_tab.presentation_revision;
   if (!compare_tab.presentation.rows.empty()) {
     compare_tab.selected_row =
         std::min(compare_tab.selected_row, compare_tab.presentation.rows.size() - 1);
