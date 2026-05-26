@@ -24,14 +24,24 @@ struct ComparePresentationRow {
   std::string summary_text;
   int hunk_index = -1;
   int collapsed_line_count = 0;
+  std::size_t collapsed_run_start_model_row = 0;
+  std::size_t collapsed_run_length = 0;
   bool context_above = false;
+  int previous_hunk_index = -1;
+  int next_hunk_index = -1;
   std::string review_marker_label;
   bool has_review_note = false;
 };
 
+struct ComparePresentationCollapsedRunState {
+  std::size_t run_start_model_row = 0;
+  std::size_t run_length = 0;
+  std::size_t expanded_above = 0;
+  std::size_t expanded_below = 0;
+};
+
 struct ComparePresentationCollapseState {
-  std::vector<bool> expanded_above;
-  std::vector<bool> expanded_below;
+  std::vector<ComparePresentationCollapsedRunState> collapsed_runs;
 };
 
 struct ComparePresentationOptions {

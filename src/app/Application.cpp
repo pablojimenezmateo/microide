@@ -14,6 +14,7 @@
 #include <thread>
 
 #include "app/DirtyRegionPolicy.h"
+#include "app/ApplicationPresentationCache.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
@@ -538,21 +539,20 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
   // SDL_SetRenderLogicalPresentation reapply. They are individually cheap but
   // run every frame of the render loop, so caching saves measurable time on
   // steady-state full-redraw frames.
-  if (!presentation_state_dirty_) {
-    const auto cached = workspace_shell_.CurrentWindowPresentationState();
-    if (cached.has_value()) {
-      if (logical_width != nullptr) {
-        *logical_width = cached->logical_width;
-      }
-      if (logical_height != nullptr) {
-        *logical_height = cached->logical_height;
-      }
-      return true;
+  const float current_ui_scale = workspace_shell_.UiScale();
+  const auto cached = workspace_shell_.CurrentWindowPresentationState();
+  if (CanReuseCachedPresentationState(presentation_state_dirty_, cached, last_presented_ui_scale_,
+                                      current_ui_scale)) {
+    if (logical_width != nullptr) {
+      *logical_width = cached->logical_width;
     }
+    if (logical_height != nullptr) {
+      *logical_height = cached->logical_height;
+    }
+    return true;
   }
 
-  const auto presentation =
-      CaptureWindowPresentationState(window_, renderer_, workspace_shell_.UiScale());
+  const auto presentation = CaptureWindowPresentationState(window_, renderer_, current_ui_scale);
   if (!presentation.has_value()) {
     return false;
   }
@@ -566,6 +566,7 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
   }
 
   presentation_state_dirty_ = false;
+  last_presented_ui_scale_ = current_ui_scale;
   if (logical_width != nullptr) {
     *logical_width = presentation->logical_width;
   }

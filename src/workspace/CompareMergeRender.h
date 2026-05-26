@@ -2,12 +2,14 @@
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <string_view>
 
 #include <SDL3/SDL.h>
 
 namespace microide::render {
 struct Theme;
+class TextRenderer;
 }
 
 namespace microide::workspace {
@@ -35,5 +37,18 @@ void DrawScrollbar(SDL_Renderer* renderer,
                    const SDL_FRect& track,
                    const SDL_FRect& thumb,
                    bool active = false);
+
+struct CollapsedContextActionRects {
+  std::optional<SDL_FRect> previous_rect;
+  SDL_FRect all_rect{};
+  std::optional<SDL_FRect> next_rect;
+  float text_right_edge = 0.0f;
+};
+
+CollapsedContextActionRects BuildCollapsedContextActionRects(
+    const render::TextRenderer& text_renderer,
+    const SDL_FRect& row_rect,
+    bool show_previous,
+    bool show_next);
 
 }  // namespace microide::workspace

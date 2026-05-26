@@ -50,6 +50,18 @@ bool RowIsChanged(const CompareRow& row) {
   return row.kind != CompareRowKind::Unchanged;
 }
 
+const ComparePresentationCollapsedRunState* FindCollapsedRunState(
+    const std::vector<ComparePresentationCollapsedRunState>& collapsed_runs,
+    std::size_t run_start,
+    std::size_t run_length) {
+  for (const ComparePresentationCollapsedRunState& state : collapsed_runs) {
+    if (state.run_start_model_row == run_start && state.run_length == run_length) {
+      return &state;
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 ComparePresentationModel BuildComparePresentationModel(
@@ -60,12 +72,9 @@ ComparePresentationModel BuildComparePresentationModel(
     std::uint64_t model_generation) {
   ComparePresentationModel presentation;
   presentation.collapse_state = std::move(collapse_state);
-  if (presentation.collapse_state.expanded_above.size() != model.hunks.size()) {
-    presentation.collapse_state.expanded_above.assign(model.hunks.size(), false);
-  }
-  if (presentation.collapse_state.expanded_below.size() != model.hunks.size()) {
-    presentation.collapse_state.expanded_below.assign(model.hunks.size(), false);
-  }
+  const std::vector<ComparePresentationCollapsedRunState> previous_collapsed_runs =
+      presentation.collapse_state.collapsed_runs;
+  presentation.collapse_state.collapsed_runs.clear();
 
   const std::string metadata_summary = BuildMetadataSummary(semantic);
   if (!metadata_summary.empty()) {
@@ -90,20 +99,25 @@ ComparePresentationModel BuildComparePresentationModel(
         ++row_index;
       }
       const std::size_t run_length = row_index - run_start;
-      const int owning_hunk = run_start > 0 ? model.rows[run_start - 1].hunk : -1;
-      const bool expand_above =
-          owning_hunk >= 0 && owning_hunk < static_cast<int>(presentation.collapse_state.expanded_above.size()) &&
-          presentation.collapse_state.expanded_above[static_cast<std::size_t>(owning_hunk)];
-      const bool expand_below =
-          row_index < model.rows.size() && model.rows[row_index].hunk >= 0 &&
-          static_cast<std::size_t>(model.rows[row_index].hunk) <
-              presentation.collapse_state.expanded_below.size() &&
-          presentation.collapse_state.expanded_below[static_cast<std::size_t>(model.rows[row_index].hunk)];
+      const int previous_hunk_index = run_start > 0 ? model.rows[run_start - 1].hunk : -1;
+      const int next_hunk_index =
+          row_index < model.rows.size() ? model.rows[row_index].hunk : -1;
+      ComparePresentationCollapsedRunState collapsed_run_state;
+      collapsed_run_state.run_start_model_row = run_start;
+      collapsed_run_state.run_length = run_length;
+      if (const ComparePresentationCollapsedRunState* previous_state =
+              FindCollapsedRunState(previous_collapsed_runs, run_start, run_length);
+          previous_state != nullptr) {
+        collapsed_run_state.expanded_above = previous_state->expanded_above;
+        collapsed_run_state.expanded_below = previous_state->expanded_below;
+      }
+      const std::size_t expanded_above = collapsed_run_state.expanded_above;
+      const std::size_t expanded_below = collapsed_run_state.expanded_below;
 
       const std::size_t visible_prefix =
-          expand_above ? std::min(options.context_lines, run_length) : 0;
+          std::min(expanded_above, run_length);
       const std::size_t visible_suffix =
-          expand_below ? std::min(options.context_lines, run_length - visible_prefix) : 0;
+          std::min(expanded_below, run_length - visible_prefix);
       const std::size_t collapsed_count =
           run_length > visible_prefix + visible_suffix
               ? run_length - visible_prefix - visible_suffix
@@ -122,9 +136,16 @@ ComparePresentationModel BuildComparePresentationModel(
             .kind = ComparePresentationRowKind::CollapsedContext,
             .summary_text = std::to_string(collapsed_count) + " unchanged lines hidden",
             .collapsed_line_count = static_cast<int>(collapsed_count),
-            .context_above = expand_above,
+            .collapsed_run_start_model_row = run_start,
+            .collapsed_run_length = run_length,
+            .context_above = visible_prefix > 0,
+            .previous_hunk_index = previous_hunk_index,
+            .next_hunk_index = next_hunk_index,
             .review_marker_label = {},
         });
+        if (expanded_above > 0 || expanded_below > 0) {
+          presentation.collapse_state.collapsed_runs.push_back(collapsed_run_state);
+        }
       } else {
         for (std::size_t i = visible_prefix; i < run_length - visible_suffix; ++i) {
           presentation.rows.push_back(ComparePresentationRow{

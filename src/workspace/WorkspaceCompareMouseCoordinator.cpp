@@ -1,4 +1,5 @@
 #include "workspace/CompareTabReview.h"
+#include "workspace/CompareMergeRender.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 
 #include <algorithm>
@@ -13,6 +14,30 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kCompareScrollbarReserve = 12.0f;
+
+bool CompareHoverStatesEqual(const std::optional<CompareHoverState>& lhs,
+                             const std::optional<CompareHoverState>& rhs) {
+  return lhs.has_value() == rhs.has_value() &&
+         (!lhs.has_value() ||
+          (lhs->kind == rhs->kind && lhs->presentation_row == rhs->presentation_row &&
+           lhs->collapsed_run_start_model_row == rhs->collapsed_run_start_model_row &&
+           lhs->collapsed_run_length == rhs->collapsed_run_length));
+}
+
+std::optional<CompareHoverKind> CompareHoverKindAtPoint(const CollapsedContextActionRects& rects,
+                                                        float x,
+                                                        float y) {
+  if (rects.previous_rect.has_value() && Contains(*rects.previous_rect, x, y)) {
+    return CompareHoverKind::CollapsedContextPreviousAction;
+  }
+  if (Contains(rects.all_rect, x, y)) {
+    return CompareHoverKind::CollapsedContextAllAction;
+  }
+  if (rects.next_rect.has_value() && Contains(*rects.next_rect, x, y)) {
+    return CompareHoverKind::CollapsedContextNextAction;
+  }
+  return std::nullopt;
+}
 
 }  // namespace
 
@@ -109,6 +134,44 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const std::size_t previous_selected_row = compare_tab->selected_row;
   const bool previous_right_view_active = compare_tab->right_view_active;
   compare_tab->selected_row = static_cast<std::size_t>(presentation_row);
+  if (const compare::ComparePresentationRow* row =
+          CompareTabPresentationRowAt(*compare_tab, compare_tab->selected_row);
+      row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
+    const SDL_FRect row_rect = MakeRect(layout.editor_surface.x, surface_layout.rows_y +
+                                                             static_cast<float>(clicked_row) *
+                                                                 surface_layout.line_height -
+                                                             1.0f,
+                                        layout.editor_surface.w,
+                                        surface_layout.line_height);
+    const auto action_rects =
+        operations_.build_compare_collapsed_context_action_rects != nullptr
+            ? operations_.build_compare_collapsed_context_action_rects(row_rect, *row)
+            : CollapsedContextActionRects{};
+    const float mouse_x = static_cast<float>(event.button.x);
+    const float mouse_y = static_cast<float>(event.button.y);
+    const auto handle_expand = [&](const std::optional<SDL_FRect>& rect,
+                                   CompareCollapsedContextAction action) {
+      return rect.has_value() && Contains(*rect, mouse_x, mouse_y) &&
+             operations_.expand_compare_collapsed_context &&
+             operations_.expand_compare_collapsed_context(*compare_tab, compare_tab->selected_row,
+                                                          action);
+    };
+    if (handle_expand(action_rects.previous_rect, CompareCollapsedContextAction::ShowPrevious) ||
+        handle_expand(action_rects.next_rect, CompareCollapsedContextAction::ShowNext) ||
+        (Contains(action_rects.all_rect, mouse_x, mouse_y) &&
+         operations_.expand_compare_collapsed_context &&
+         operations_.expand_compare_collapsed_context(*compare_tab, compare_tab->selected_row,
+                                                      CompareCollapsedContextAction::ShowAll))) {
+      state_.surface.focus = FocusTarget::Editor;
+      return true;
+    }
+    compare_tab->right_view_active = false;
+    operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
+    operations_.request_compare_row_range_redraw(compare_tab->selected_row,
+                                                 compare_tab->selected_row + 1);
+    state_.surface.focus = FocusTarget::Editor;
+    return true;
+  }
   if (event.button.x >= surface_layout.right_x) {
     compare_tab->right_view_active = true;
     const TextGridInteractionLayout right_interaction =
@@ -228,6 +291,11 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   if (compare_tab == nullptr || !compare_tab->right_view_active) {
     return false;
   }
+  if (compare_tab->hover_state.has_value()) {
+    operations_.request_compare_row_range_redraw(compare_tab->hover_state->presentation_row,
+                                                 compare_tab->hover_state->presentation_row + 1);
+    compare_tab->hover_state.reset();
+  }
 
   const auto surface_layout =
       operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
@@ -255,6 +323,78 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     operations_.request_focused_editor_redraw();
   }
   state_.surface.focus = FocusTarget::Editor;
+  return true;
+}
+
+bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
+                                                const WorkspaceLayout& layout) {
+  if (!ActiveTabIsCompare()) {
+    return false;
+  }
+
+  CompareTabState* compare_tab = ActiveCompareTab();
+  if (compare_tab == nullptr) {
+    return false;
+  }
+
+  const std::optional<CompareHoverState> previous_hover = compare_tab->hover_state;
+  std::optional<CompareHoverState> next_hover;
+  if (Contains(layout.editor_surface, event.motion.x, event.motion.y) &&
+      !(interaction_state_.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0)) {
+    const auto surface_layout =
+        operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
+    const auto scroll_layout =
+        operations_.compute_compare_scroll_layout(layout.editor_surface, surface_layout, *compare_tab);
+    compare_tab->scroll_row = scroll_layout.vertical_scroll;
+    compare_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
+    operations_.sync_compare_viewport_scroll(*compare_tab);
+
+    const int hovered_row =
+        static_cast<int>((event.motion.y - surface_layout.rows_y) / surface_layout.line_height);
+    const int presentation_row = compare_tab->scroll_row + hovered_row;
+    if (hovered_row >= 0 && presentation_row >= 0 &&
+        static_cast<std::size_t>(presentation_row) < CompareTabPresentationRowCount(*compare_tab)) {
+      if (const compare::ComparePresentationRow* row =
+              CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_row));
+          row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
+        const SDL_FRect row_rect = MakeRect(layout.editor_surface.x,
+                                            surface_layout.rows_y +
+                                                static_cast<float>(hovered_row) *
+                                                    surface_layout.line_height -
+                                                1.0f,
+                                            layout.editor_surface.w,
+                                            surface_layout.line_height);
+        const auto action_rects =
+            operations_.build_compare_collapsed_context_action_rects != nullptr
+                ? operations_.build_compare_collapsed_context_action_rects(row_rect, *row)
+                : CollapsedContextActionRects{};
+        if (const std::optional<CompareHoverKind> kind =
+                CompareHoverKindAtPoint(action_rects, static_cast<float>(event.motion.x),
+                                        static_cast<float>(event.motion.y));
+            kind.has_value()) {
+          next_hover = CompareHoverState{
+              .kind = *kind,
+              .presentation_row = static_cast<std::size_t>(presentation_row),
+              .collapsed_run_start_model_row = row->collapsed_run_start_model_row,
+              .collapsed_run_length = row->collapsed_run_length,
+          };
+        }
+      }
+    }
+  }
+
+  compare_tab->hover_state = next_hover;
+  if (CompareHoverStatesEqual(previous_hover, compare_tab->hover_state)) {
+    return false;
+  }
+  if (previous_hover.has_value()) {
+    operations_.request_compare_row_range_redraw(previous_hover->presentation_row,
+                                                 previous_hover->presentation_row + 1);
+  }
+  if (compare_tab->hover_state.has_value()) {
+    operations_.request_compare_row_range_redraw(compare_tab->hover_state->presentation_row,
+                                                 compare_tab->hover_state->presentation_row + 1);
+  }
   return true;
 }
 
@@ -327,6 +467,23 @@ CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
                 RequestCompareRowRangeRedraw(start_row, end_row);
               },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
+          .build_compare_collapsed_context_action_rects =
+              [this](const SDL_FRect& row_rect, const compare::ComparePresentationRow& row) {
+                return BuildCollapsedContextActionRects(
+                    text_renderer_, row_rect, row.previous_hunk_index >= 0,
+                    row.next_hunk_index >= 0);
+              },
+          .expand_compare_collapsed_context =
+              [this](CompareTabState& compare_tab,
+                     std::size_t presentation_row,
+                     CompareCollapsedContextAction action) {
+                const bool expanded =
+                    ExpandCompareCollapsedContext(compare_tab, presentation_row, action);
+                if (expanded) {
+                  RequestEditorSurfaceRedraw();
+                }
+                return expanded;
+              },
           .scroll_compare_rows =
               [this](int delta) { MakeCompareMergeService().ScrollCompareRows(delta); },
           .scroll_compare_columns =

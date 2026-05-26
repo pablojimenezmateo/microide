@@ -2,6 +2,8 @@
 
 #include <functional>
 
+#include "workspace/CompareMergeRender.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
@@ -31,6 +33,10 @@ class CompareMouseCoordinator {
     std::function<void()> request_tab_strip_redraw;
     std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
     std::function<void()> request_focused_editor_redraw;
+    std::function<CollapsedContextActionRects(const SDL_FRect&, const compare::ComparePresentationRow&)>
+        build_compare_collapsed_context_action_rects;
+    std::function<bool(CompareTabState&, std::size_t, CompareCollapsedContextAction)>
+        expand_compare_collapsed_context;
     std::function<void(int)> scroll_compare_rows;
     std::function<void(int)> scroll_compare_columns;
     std::function<void()> clear_drag_state;
@@ -42,6 +48,7 @@ class CompareMouseCoordinator {
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleHoverMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleSelectionMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,

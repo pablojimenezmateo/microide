@@ -23,6 +23,7 @@ constexpr float kGitSidebarActionRowTop = 34.0f;
 constexpr float kGitSidebarActionButtonHeight = 18.0f;
 constexpr float kGitSidebarActionGap = 6.0f;
 constexpr float kGitSidebarListGap = 8.0f;
+constexpr float kGitSidebarHeaderButtonSize = 18.0f;
 constexpr float kTreeSidebarActionRowTop = 34.0f;
 constexpr float kTreeSidebarActionButtonHeight = 18.0f;
 constexpr float kTreeSidebarListGap = 8.0f;
@@ -52,15 +53,12 @@ bool UseCompactTreeHeader(float sidebar_width,
 }  // namespace
 
 SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const {
-  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
-  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
-
-  const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
-  return MakeRect(row_rect.x + (button_width + kGitSidebarActionGap) * 2.0f, row_rect.y,
-                  button_width, row_rect.h);
+  const float size = std::min(kGitSidebarHeaderButtonSize, std::max(0.0f, sidebar_rect.h - 8.0f));
+  return MakeRect(sidebar_rect.x + sidebar_rect.w - kSidebarInset - size, sidebar_rect.y + 4.0f,
+                  size, size);
 }
 
 SDL_FRect WorkspaceShell::GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const {
@@ -80,7 +78,7 @@ SDL_FRect WorkspaceShell::GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_
   }
 
   const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap) * 0.5f);
   return MakeRect(row_rect.x, row_rect.y, button_width, row_rect.h);
 }
 
@@ -91,7 +89,7 @@ SDL_FRect WorkspaceShell::GitSidebarDiscardAllButtonRect(const SDL_FRect& sideba
   }
 
   const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap) * 0.5f);
   return MakeRect(row_rect.x + button_width + kGitSidebarActionGap, row_rect.y, button_width,
                   row_rect.h);
 }
@@ -258,7 +256,9 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
 
   const std::string label = SidebarModeControlLabel();
   const float left = sidebar_rect.x + 10.0f;
-  const float reserved_right = 10.0f;
+  const float reserved_right =
+      ActiveSidebarMode() == SidebarMode::Git ? kSidebarInset + kGitSidebarHeaderButtonSize + 6.0f
+                                              : 10.0f;
   const float max_width =
       std::max(0.0f, sidebar_rect.w - (left - sidebar_rect.x) - reserved_right - 6.0f);
   const float desired_width =
@@ -275,6 +275,10 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
       ActiveSidebarMode() != SidebarMode::Git || MenuSurfaceCapturingMouse() ||
       !Contains(sidebar_rect, last_mouse_x_, last_mouse_y_)) {
     return {};
+  }
+
+  if (Contains(GitSidebarRefreshButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
+    return "Refresh";
   }
 
   if (last_mouse_y_ < GitSidebarListTop(sidebar_rect)) {

@@ -142,6 +142,71 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeCompareSurfaceLayout(layout.editor_surface, ActiveCompare(shell));
   }
+  static std::size_t ActiveComparePresentationRowCount(WorkspaceShell& shell) {
+    return CompareTabPresentationRowCount(ActiveCompare(shell));
+  }
+  static compare::ComparePresentationRowKind ActiveComparePresentationRowKind(
+      WorkspaceShell& shell,
+      std::size_t presentation_row) {
+    const compare::ComparePresentationRow* row =
+        CompareTabPresentationRowAt(ActiveCompare(shell), presentation_row);
+    return row != nullptr ? row->kind : compare::ComparePresentationRowKind::Metadata;
+  }
+  static int ActiveCompareCollapsedLineCount(WorkspaceShell& shell,
+                                             std::size_t presentation_row) {
+    const compare::ComparePresentationRow* row =
+        CompareTabPresentationRowAt(ActiveCompare(shell), presentation_row);
+    return row != nullptr ? row->collapsed_line_count : 0;
+  }
+  static std::pair<std::size_t, std::size_t> ActiveCompareCollapsedRunIdentity(
+      WorkspaceShell& shell,
+      std::size_t presentation_row) {
+    const compare::ComparePresentationRow* row =
+        CompareTabPresentationRowAt(ActiveCompare(shell), presentation_row);
+    if (row == nullptr) {
+      return {0, 0};
+    }
+    return {row->collapsed_run_start_model_row, row->collapsed_run_length};
+  }
+  static std::optional<CompareHoverKind> ActiveCompareHoverKind(const WorkspaceShell& shell) {
+    const auto& compare = shell.context_.current_project_state
+                              .open_tabs[shell.context_.current_project_state.active_tab_index]
+                              .compare;
+    return compare.has_value() && compare->hover_state.has_value()
+               ? std::optional<CompareHoverKind>(compare->hover_state->kind)
+               : std::nullopt;
+  }
+  static std::optional<std::size_t> ActiveCompareHoverPresentationRow(const WorkspaceShell& shell) {
+    const auto& compare = shell.context_.current_project_state
+                              .open_tabs[shell.context_.current_project_state.active_tab_index]
+                              .compare;
+    return compare.has_value() && compare->hover_state.has_value()
+               ? std::optional<std::size_t>(compare->hover_state->presentation_row)
+               : std::nullopt;
+  }
+  static CollapsedContextActionRects ActiveCompareCollapsedContextActionRects(
+      WorkspaceShell& shell,
+      std::size_t presentation_row) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    auto& compare = ActiveCompare(shell);
+    const auto surface = shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare);
+    const int visible_row = static_cast<int>(presentation_row) - compare.scroll_row;
+    if (visible_row < 0 || visible_row >= surface.visible_rows) {
+      return {};
+    }
+    const compare::ComparePresentationRow* row =
+        CompareTabPresentationRowAt(compare, presentation_row);
+    if (row == nullptr || row->kind != compare::ComparePresentationRowKind::CollapsedContext) {
+      return {};
+    }
+    const SDL_FRect row_rect = MakeRect(layout.editor_surface.x,
+                                        surface.rows_y +
+                                            static_cast<float>(visible_row) * surface.line_height - 1.0f,
+                                        layout.editor_surface.w, surface.line_height);
+    return BuildCollapsedContextActionRects(shell.text_renderer_, row_rect,
+                                            row->previous_hunk_index >= 0,
+                                            row->next_hunk_index >= 0);
+  }
   static SDL_FRect ActiveCompareEditableRect(WorkspaceShell& shell) {
     auto& compare = ActiveCompare(shell);
     const auto surface = ActiveCompareSurfaceLayout(shell);

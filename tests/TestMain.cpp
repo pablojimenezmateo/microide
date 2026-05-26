@@ -14,6 +14,7 @@
 namespace microide::tests {
 
 void RegisterAppDirectoriesTests(std::vector<TestCase>& tests);
+void RegisterApplicationTests(std::vector<TestCase>& tests);
 void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests);
 void RegisterCompareModelTests(std::vector<TestCase>& tests);
 void RegisterCompareReviewTests(std::vector<TestCase>& tests);
@@ -261,6 +262,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterTestRunnerCliTests(tests);
   microide::tests::RegisterWheelAccumulatorTests(tests);
   microide::tests::RegisterAppDirectoriesTests(tests);
+  microide::tests::RegisterApplicationTests(tests);
   microide::tests::RegisterAppStartupOptionsTests(tests);
   microide::tests::RegisterCompareModelTests(tests);
   microide::tests::RegisterCompareReviewTests(tests);

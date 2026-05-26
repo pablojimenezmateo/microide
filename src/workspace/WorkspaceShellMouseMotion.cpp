@@ -447,6 +447,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         hover_visual_changed ||
         MakeMergeMouseCoordinator().HandleHoverMotion(event, layout);
   }
+  if (ActiveTabIsCompare()) {
+    hover_visual_changed =
+        hover_visual_changed ||
+        MakeCompareMouseCoordinator().HandleHoverMotion(event, layout);
+  }
 
   if (hover_visual_changed) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });

@@ -269,7 +269,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                        CanStageAllGitSidebarEntries());
     draw_action_button(GitSidebarDiscardAllButtonRect(layout.sidebar), "Discard All",
                        CanDiscardAllGitSidebarEntries(), true);
-    draw_action_button(GitSidebarRefreshButtonRect(layout.sidebar), "Refresh", true);
+    draw_action_button(GitSidebarRefreshButtonRect(layout.sidebar), "R", true);
 
     const auto summary_lines = GitSidebarSummaryLines();
     float summary_y = GitSidebarActionRowRect(layout.sidebar).y +

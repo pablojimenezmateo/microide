@@ -146,6 +146,8 @@ class WorkspaceActionContext {
     std::function<bool(std::string_view, std::string)> set_setting_value;
     std::function<void()> normalize_sidebar_view_selection;
     std::function<void(float)> apply_ui_scale;
+    std::function<void()> mark_layout_dirty;
+    std::function<void()> request_window_redraw;
     std::function<TerminalTabState*()> active_terminal_tab;
     std::function<void()> reset_command_prompt_session;
     std::function<void(bool)> request_command_mode_transition_redraw;
