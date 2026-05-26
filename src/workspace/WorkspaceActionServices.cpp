@@ -830,6 +830,12 @@ float WorkspaceActionContext::UiScale() const {
 
 void WorkspaceActionContext::ApplyUiScale(float scale) {
   operations_.apply_ui_scale(scale);
+  if (operations_.mark_layout_dirty) {
+    operations_.mark_layout_dirty();
+  }
+  if (operations_.request_window_redraw) {
+    operations_.request_window_redraw();
+  }
 }
 
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {

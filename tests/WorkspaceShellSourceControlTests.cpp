@@ -357,6 +357,61 @@ void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
          "specific-ref outgoing base prompt should prefill the saved custom ref");
 }
 
+void TestWorkspaceShellGitSidebarKeepsOutgoingRowsWhenFilesAlsoHaveWorkingTreeChanges() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path alpha = root / "src" / "alpha.cpp";
+  const std::filesystem::path beta = root / "src" / "beta.cpp";
+  WriteFile(alpha, "int alpha() {\n  return 1;\n}\n");
+  WriteFile(beta, "int beta() {\n  return 2;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  RequireGitCommandSuccess(root, {"checkout", "-b", "feature/outgoing-visible"},
+                           "git checkout feature branch");
+
+  WriteFile(alpha, "int alpha() {\n  return 10;\n}\n");
+  CommitAll(root, "feature alpha", "feature alpha");
+  WriteFile(beta, "int beta() {\n  return 20;\n}\n");
+  CommitAll(root, "feature beta", "feature beta");
+  WriteFile(alpha, "int alpha() {\n  return 11;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 3),
+         "outgoing-visible fixture should expose the changed file plus both outgoing rows");
+
+  auto count_outgoing = [&]() {
+    return static_cast<int>(std::count_if(
+        WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
+        WorkspaceShellTestAccess::GitSidebarEntries(shell).end(),
+        [](const WorkspaceShell::GitSidebarEntry& entry) {
+          return entry.section == WorkspaceShell::GitSidebarEntry::Section::Outgoing;
+        }));
+  };
+  auto count_changed = [&]() {
+    return static_cast<int>(std::count_if(
+        WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
+        WorkspaceShellTestAccess::GitSidebarEntries(shell).end(),
+        [](const WorkspaceShell::GitSidebarEntry& entry) {
+          return entry.section == WorkspaceShell::GitSidebarEntry::Section::Changed;
+        }));
+  };
+
+  Expect(count_changed() >= 1,
+         "fixture should still show working-tree changed entries");
+  Expect(count_outgoing() == 2,
+         "outgoing rows should remain visible even when one path also has working-tree changes");
+
+  WorkspaceShellTestAccess::RequestAutomaticGitSidebarRefresh(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 3),
+         "automatic refresh should preserve outgoing rows while source control is active");
+  Expect(count_outgoing() == 2,
+         "automatic refresh should keep the outgoing section populated for active source control");
+}
+
 void TestWorkspaceShellGitSidebarGroupsWorkflowSections() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -492,6 +547,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitOutgoingBaseChoiceRefreshesOutgoingEntries);
   AddTest(tests, "WorkspaceShell/GitOutgoingBaseButtonOpensMenuAndPrompt",
           TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt);
+  AddTest(tests, "WorkspaceShell/GitSidebarKeepsOutgoingRowsWhenFilesAlsoHaveWorkingTreeChanges",
+          TestWorkspaceShellGitSidebarKeepsOutgoingRowsWhenFilesAlsoHaveWorkingTreeChanges);
   AddTest(tests, "WorkspaceShell/GitSidebarGroupsWorkflowSections",
           TestWorkspaceShellGitSidebarGroupsWorkflowSections);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardRequiresConfirmation",

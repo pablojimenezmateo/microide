@@ -13,6 +13,18 @@ compare::ComparePresentationOptions PresentationOptionsFromTab(const CompareTabS
   };
 }
 
+compare::ComparePresentationCollapsedRunState* FindCollapsedRunState(
+    compare::ComparePresentationCollapseState& collapse_state,
+    std::size_t run_start_model_row,
+    std::size_t run_length) {
+  for (compare::ComparePresentationCollapsedRunState& state : collapse_state.collapsed_runs) {
+    if (state.run_start_model_row == run_start_model_row && state.run_length == run_length) {
+      return &state;
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
@@ -81,6 +93,8 @@ void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
       compare_tab.model, compare_tab.semantic_file, PresentationOptionsFromTab(compare_tab),
       compare_tab.presentation.collapse_state, compare_tab.model_revision);
   if (!compare_tab.presentation.rows.empty()) {
+    compare_tab.selected_row =
+        std::min(compare_tab.selected_row, compare_tab.presentation.rows.size() - 1);
     const auto& selected = compare_tab.presentation.rows[compare_tab.selected_row];
     if (selected.kind != compare::ComparePresentationRowKind::Model) {
       for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
@@ -170,6 +184,100 @@ std::optional<std::size_t> CompareTabPresentationRowForHunk(const CompareTabStat
     }
   }
   return std::nullopt;
+}
+
+bool ExpandCompareCollapsedContext(CompareTabState& compare_tab,
+                                   std::size_t presentation_row,
+                                   CompareCollapsedContextAction action,
+                                   std::size_t reveal_lines) {
+  const compare::ComparePresentationRow* row =
+      CompareTabPresentationRowAt(compare_tab, presentation_row);
+  if (row == nullptr || row->kind != compare::ComparePresentationRowKind::CollapsedContext ||
+      row->collapsed_line_count <= 0) {
+    return false;
+  }
+
+  const std::size_t collapsed_lines = static_cast<std::size_t>(row->collapsed_line_count);
+  const std::size_t previous_selected_row = compare_tab.selected_row;
+  const int previous_scroll_row = compare_tab.scroll_row;
+  const std::size_t collapsed_run_start_model_row = row->collapsed_run_start_model_row;
+  const std::size_t collapsed_run_length = row->collapsed_run_length;
+  std::size_t revealed_before = 0;
+  compare::ComparePresentationCollapsedRunState* collapsed_run_state =
+      FindCollapsedRunState(compare_tab.presentation.collapse_state, collapsed_run_start_model_row,
+                            collapsed_run_length);
+  if (collapsed_run_state == nullptr) {
+    compare_tab.presentation.collapse_state.collapsed_runs.push_back(
+        compare::ComparePresentationCollapsedRunState{
+            .run_start_model_row = collapsed_run_start_model_row,
+            .run_length = collapsed_run_length,
+        });
+    collapsed_run_state =
+        &compare_tab.presentation.collapse_state.collapsed_runs.back();
+  }
+  auto grow_reveal = [&](std::size_t& current,
+                         std::size_t opposite,
+                         std::size_t amount,
+                         std::size_t* revealed_delta) {
+    const std::size_t max_reveal =
+        collapsed_run_length > opposite ? collapsed_run_length - opposite : 0;
+    const std::size_t target = std::min(max_reveal, current + amount);
+    if (current >= target) {
+      return false;
+    }
+    if (revealed_delta != nullptr) {
+      *revealed_delta += target - current;
+    }
+    current = target;
+    return true;
+  };
+
+  bool changed = false;
+  switch (action) {
+    case CompareCollapsedContextAction::ShowPrevious:
+      changed = grow_reveal(collapsed_run_state->expanded_above,
+                            collapsed_run_state->expanded_below, reveal_lines,
+                            &revealed_before);
+      break;
+    case CompareCollapsedContextAction::ShowAll:
+      changed = grow_reveal(collapsed_run_state->expanded_above,
+                            collapsed_run_state->expanded_below, collapsed_lines,
+                            &revealed_before) ||
+                changed;
+      changed = grow_reveal(collapsed_run_state->expanded_below,
+                            collapsed_run_state->expanded_above, collapsed_lines, nullptr) ||
+                changed;
+      break;
+    case CompareCollapsedContextAction::ShowNext:
+      changed = grow_reveal(collapsed_run_state->expanded_below,
+                            collapsed_run_state->expanded_above, reveal_lines, nullptr);
+      break;
+  }
+  if (!changed) {
+    return false;
+  }
+  RefreshCompareTabPresentation(compare_tab);
+  if (revealed_before > 0) {
+    compare_tab.scroll_row =
+        std::max(0, previous_scroll_row + static_cast<int>(revealed_before));
+  }
+  const auto matches_collapsed_row = [&](const compare::ComparePresentationRow& candidate) {
+    return candidate.kind == compare::ComparePresentationRowKind::CollapsedContext &&
+           candidate.collapsed_run_start_model_row == collapsed_run_start_model_row &&
+           candidate.collapsed_run_length == collapsed_run_length;
+  };
+  for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
+    if (matches_collapsed_row(compare_tab.presentation.rows[i])) {
+      compare_tab.selected_row = i;
+      return true;
+    }
+  }
+  const std::size_t target_selected_row = previous_selected_row + revealed_before;
+  compare_tab.selected_row =
+      compare_tab.presentation.rows.empty()
+          ? 0
+          : std::min(target_selected_row, compare_tab.presentation.rows.size() - 1);
+  return true;
 }
 
 }  // namespace microide::workspace

@@ -433,7 +433,10 @@ void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
     return;
   }
   next_automatic_git_sidebar_refresh_ms_ = now_ms + kAutomaticGitRefreshThrottleMs;
-  RequestGitSidebarRefresh(GitSidebarRefreshScope::StatusOnly);
+  const bool git_sidebar_active =
+      context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git;
+  RequestGitSidebarRefresh(git_sidebar_active ? GitSidebarRefreshScope::Full
+                                              : GitSidebarRefreshScope::StatusOnly);
 }
 
 bool WorkspaceShell::ConsumePendingGitSidebarRefreshSnapshot(
