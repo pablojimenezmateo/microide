@@ -297,6 +297,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .normalize_sidebar_view_selection = [this]() { NormalizeSidebarViewSelection(); },
           .apply_ui_scale =
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
+          .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
+          .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
           .reset_command_prompt_session =
               [this]() { MakeCommandPromptCoordinator().ResetSessionState(); },

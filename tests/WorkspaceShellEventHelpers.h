@@ -6,12 +6,18 @@
 
 namespace microide::tests {
 
-inline bool SendKeyDown(workspace::WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
+inline workspace::WorkspaceShell::EventResult SendKeyDownResult(workspace::WorkspaceShell& shell,
+                                                                SDL_Keycode key,
+                                                                SDL_Keymod modifiers) {
   SDL_Event event{};
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = key;
   event.key.mod = modifiers;
-  return shell.HandleEvent(event).handled;
+  return shell.HandleEvent(event);
+}
+
+inline bool SendKeyDown(workspace::WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
+  return SendKeyDownResult(shell, key, modifiers).handled;
 }
 
 inline bool SendMouseDown(workspace::WorkspaceShell& shell,

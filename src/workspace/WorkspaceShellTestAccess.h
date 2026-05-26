@@ -1,6 +1,8 @@
 #pragma once
 
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/CompareMergeRender.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"

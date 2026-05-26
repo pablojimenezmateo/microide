@@ -1017,11 +1017,21 @@ void TestWorkspaceShellGotoTargetsActiveSplitViewport() {
 void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  (void)shell.ConsumePendingRenderInvalidation();
 
-  Expect(ExecuteCommand(shell, "ui-scale 125%"),
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
+         "ui-scale should open the command prompt");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "ui-scale 125%"),
+         "ui-scale should populate the command prompt");
+  const auto ui_scale_submit =
+      SendKeyDownResult(shell, SDLK_RETURN, SDL_KMOD_NONE);
+  Expect(ui_scale_submit.handled,
          "ui-scale should execute with a parsed numeric scale");
   Expect(std::fabs(shell.UiScale() - 1.25f) < 0.001f,
          "ui-scale should apply the parsed scale");
+  Expect(ui_scale_submit.redraw.full || !ui_scale_submit.redraw.rects.empty(),
+         "ui-scale command should request an immediate redraw");
 
   Expect(ExecuteCommand(shell, "soft-tabs on"),
          "soft-tabs should execute with a typed boolean request");

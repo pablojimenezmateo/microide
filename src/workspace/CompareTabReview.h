@@ -13,6 +13,12 @@
 
 namespace microide::workspace {
 
+enum class CompareCollapsedContextAction {
+  ShowPrevious,
+  ShowAll,
+  ShowNext,
+};
+
 struct CompareTabReviewRefreshInput {
   std::filesystem::path repository_root;
   std::optional<project::GitRepositoryEntry> git_entry;
@@ -41,5 +47,9 @@ std::optional<std::size_t> CompareTabPresentationRowForHunk(const CompareTabStat
                                                             int hunk_index);
 std::size_t CompareTabModelRowForRightLine(const CompareTabState& compare_tab,
                                            std::size_t right_line_index);
+bool ExpandCompareCollapsedContext(CompareTabState& compare_tab,
+                                   std::size_t presentation_row,
+                                   CompareCollapsedContextAction action,
+                                   std::size_t reveal_lines = 20);
 
 }  // namespace microide::workspace

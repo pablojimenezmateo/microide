@@ -3,6 +3,9 @@
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
+#include "workspace/CompareTabReview.h"
+
+#include <algorithm>
 
 namespace microide::tests {
 
@@ -19,6 +22,9 @@ using microide::compare::InferCompareReviewMode;
 using microide::compare::InferCompareSemanticFileMetadata;
 using microide::compare::InferWorkingTreeStagingView;
 using microide::compare::WorkingTreeStagingView;
+using microide::workspace::CompareCollapsedContextAction;
+using microide::workspace::CompareTabState;
+using microide::workspace::ExpandCompareCollapsedContext;
 
 void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
   tests.push_back({"CompareReview/WorkingTreeMode",
@@ -154,6 +160,159 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          ComparePresentationToModelRow(presentation, *changed_presentation);
                      Expect(model.rows[mapped].kind != microide::compare::CompareRowKind::Unchanged,
                             "presentation row should map to a changed model row");
+                   }});
+
+  tests.push_back({"CompareReview/CollapsedContextExpansionRevealsMoreRows",
+                   [] {
+                     const auto build_text = [](std::string_view changed_a,
+                                                std::string_view changed_b) {
+                       std::string text;
+                       for (int i = 0; i < 24; ++i) {
+                         text += "prefix " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_a) + "\n";
+                       for (int i = 0; i < 500; ++i) {
+                         text += "middle " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_b) + "\n";
+                       for (int i = 0; i < 8; ++i) {
+                         text += "suffix " + std::to_string(i) + "\n";
+                       }
+                       return text;
+                     };
+
+                     CompareTabState compare_tab;
+                     compare_tab.model = BuildCompareModel(build_text("left a", "left b"),
+                                                           build_text("right a", "right b"));
+                     compare_tab.presentation = BuildComparePresentationModel(
+                         compare_tab.model,
+                         InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+                             .path = "f.txt",
+                             .left_content = build_text("left a", "left b"),
+                             .right_content = build_text("right a", "right b"),
+                             .git_entry = std::nullopt,
+                             .old_path = {},
+                         }),
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+
+                     std::optional<std::size_t> collapsed_row;
+                     std::size_t collapsed_run_start = 0;
+                     std::size_t collapsed_run_length = 0;
+                     for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
+                       const auto& row = compare_tab.presentation.rows[i];
+                       if (row.kind == ComparePresentationRowKind::CollapsedContext &&
+                           row.previous_hunk_index >= 0 && row.next_hunk_index >= 0) {
+                         collapsed_row = i;
+                         collapsed_run_start = row.collapsed_run_start_model_row;
+                         collapsed_run_length = row.collapsed_run_length;
+                         break;
+                       }
+                     }
+                     Expect(collapsed_row.has_value(),
+                            "fixture should expose a middle collapsed context row");
+
+                     const std::size_t initial_row_count = compare_tab.presentation.rows.size();
+                     const int initial_hidden_lines =
+                         compare_tab.presentation.rows[*collapsed_row].collapsed_line_count;
+                     Expect(ExpandCompareCollapsedContext(compare_tab, *collapsed_row,
+                                                         CompareCollapsedContextAction::ShowPrevious),
+                            "ShowPrevious should expand a collapsed context row");
+                     const std::size_t after_previous_count =
+                         compare_tab.presentation.rows.size();
+                     Expect(after_previous_count > initial_row_count,
+                            "ShowPrevious should reveal more presentation rows");
+
+                     std::optional<std::size_t> updated_collapsed_row;
+                     for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
+                       const auto& row = compare_tab.presentation.rows[i];
+                       if (row.kind == ComparePresentationRowKind::CollapsedContext &&
+                           row.collapsed_run_start_model_row == collapsed_run_start &&
+                           row.collapsed_run_length == collapsed_run_length) {
+                         updated_collapsed_row = i;
+                         break;
+                       }
+                     }
+                     Expect(updated_collapsed_row.has_value(),
+                            "collapsed row should remain after a partial expansion");
+                     Expect(compare_tab.presentation.rows[*updated_collapsed_row].collapsed_line_count ==
+                                initial_hidden_lines - 20,
+                            "ShowPrevious should reduce the hidden-line count by exactly 20");
+                     Expect(ExpandCompareCollapsedContext(compare_tab, *updated_collapsed_row,
+                                                         CompareCollapsedContextAction::ShowAll),
+                            "ShowAll should fully expand the remaining hidden lines");
+                     Expect(compare_tab.presentation.rows.size() > after_previous_count,
+                            "ShowAll should reveal the rest of the hidden rows");
+                   }});
+
+  tests.push_back({"CompareReview/CollapsedContextExpansionAboveKeepsViewportAnchor",
+                   [] {
+                     const auto build_text = [](std::string_view changed_a,
+                                                std::string_view changed_b) {
+                       std::string text;
+                       for (int i = 0; i < 24; ++i) {
+                         text += "prefix " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_a) + "\n";
+                       for (int i = 0; i < 500; ++i) {
+                         text += "middle " + std::to_string(i) + "\n";
+                       }
+                       text += std::string(changed_b) + "\n";
+                       for (int i = 0; i < 8; ++i) {
+                         text += "suffix " + std::to_string(i) + "\n";
+                       }
+                       return text;
+                     };
+
+                     CompareTabState compare_tab;
+                     compare_tab.model = BuildCompareModel(build_text("left a", "left b"),
+                                                           build_text("right a", "right b"));
+                     compare_tab.presentation = BuildComparePresentationModel(
+                         compare_tab.model,
+                         InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+                             .path = "f.txt",
+                             .left_content = build_text("left a", "left b"),
+                             .right_content = build_text("right a", "right b"),
+                             .git_entry = std::nullopt,
+                             .old_path = {},
+                         }),
+                         ComparePresentationOptions{}, ComparePresentationCollapseState{}, 1);
+
+                     std::optional<std::size_t> collapsed_row;
+                     std::size_t collapsed_run_start = 0;
+                     std::size_t collapsed_run_length = 0;
+                     for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
+                       const auto& row = compare_tab.presentation.rows[i];
+                       if (row.kind == ComparePresentationRowKind::CollapsedContext &&
+                           row.previous_hunk_index >= 0 && row.next_hunk_index >= 0) {
+                         collapsed_row = i;
+                         collapsed_run_start = row.collapsed_run_start_model_row;
+                         collapsed_run_length = row.collapsed_run_length;
+                         break;
+                       }
+                     }
+                     Expect(collapsed_row.has_value(),
+                            "fixture should expose a middle collapsed context row");
+
+                     compare_tab.selected_row = *collapsed_row;
+                     compare_tab.scroll_row = std::max(0, static_cast<int>(*collapsed_row) - 2);
+                     const int before_scroll = compare_tab.scroll_row;
+
+                     Expect(ExpandCompareCollapsedContext(compare_tab, *collapsed_row,
+                                                         CompareCollapsedContextAction::ShowPrevious),
+                            "ShowPrevious should expand a collapsed context row");
+                     Expect(compare_tab.scroll_row > before_scroll,
+                            "expanding previous context should advance the scroll anchor");
+                     Expect(compare_tab.selected_row > *collapsed_row,
+                            "expanding previous context should keep selection with the collapsed block");
+                     Expect(compare_tab.selected_row < compare_tab.presentation.rows.size(),
+                            "expanded compare selection should stay in range");
+                     Expect(compare_tab.presentation.rows[compare_tab.selected_row].kind ==
+                                ComparePresentationRowKind::CollapsedContext &&
+                                compare_tab.presentation.rows[compare_tab.selected_row]
+                                        .collapsed_run_start_model_row == collapsed_run_start &&
+                                compare_tab.presentation.rows[compare_tab.selected_row]
+                                        .collapsed_run_length == collapsed_run_length,
+                            "expanding previous context should keep the same collapsed block selected");
                    }});
 }
 
