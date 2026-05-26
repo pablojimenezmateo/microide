@@ -152,8 +152,12 @@ ComparePresentationModel BuildComparePresentationModel(
               .kind = ComparePresentationRowKind::Model,
               .model_row_index = run_start + i,
               .summary_text = {},
-              .review_marker_label = {},
+            .review_marker_label = {},
           });
+        }
+        if (run_length >= options.collapse_threshold &&
+            (expanded_above > 0 || expanded_below > 0)) {
+          presentation.collapse_state.collapsed_runs.push_back(collapsed_run_state);
         }
       }
       for (std::size_t i = run_length - visible_suffix; i < run_length; ++i) {

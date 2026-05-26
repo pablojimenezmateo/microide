@@ -102,6 +102,12 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   rebuilt->compare->right_path = right_source_path;
   rebuilt->compare->scroll_row = compare_tab.scroll_row;
   rebuilt->compare->horizontal_scroll = compare_tab.horizontal_scroll;
+  rebuilt->compare->build_options = compare_tab.build_options;
+  rebuilt->compare->show_whitespace = compare_tab.show_whitespace;
+  rebuilt->compare->opened_from_commit_picker = compare_tab.opened_from_commit_picker;
+  rebuilt->compare->review_files = compare_tab.review_files;
+  rebuilt->compare->review_file_index = compare_tab.review_file_index;
+  rebuilt->compare->presentation.collapse_state = compare_tab.presentation.collapse_state;
   rebuilt->compare->right_editable = compare_tab.right_ref == "WORKTREE";
   rebuilt->compare->right_view_active =
       compare_tab.right_view_active || !rebuilt->compare->right_editable;
@@ -117,6 +123,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
             ? 0
             : std::min(compare_tab.selected_row, rebuilt->compare->model.rows.size() - 1);
   }
+  RefreshCompareTabDerivedState(*rebuilt->compare);
   return rebuilt;
 }
 

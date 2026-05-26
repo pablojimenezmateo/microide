@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "compare/CompareModel.h"
+#include "compare/ComparePresentationModel.h"
 #include "compare/MergeModel.h"
 
 namespace microide::workspace {
@@ -350,6 +351,7 @@ float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
                             float grab_offset);
 std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
     const SDL_FRect& track,
+    const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model);
 std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
     const SDL_FRect& track,

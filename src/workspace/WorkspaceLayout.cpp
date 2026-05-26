@@ -678,15 +678,19 @@ float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
 
 std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
     const SDL_FRect& track,
+    const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model) {
   std::vector<CompareScrollbarMarker> markers;
-  if (track.w <= 0.0f || track.h <= 0.0f || model.rows.empty()) {
+  if (track.w <= 0.0f || track.h <= 0.0f || presentation.rows.empty() ||
+      model.rows.empty()) {
     return markers;
   }
 
-  const float total_rows = static_cast<float>(model.rows.size());
+  const float total_rows = static_cast<float>(presentation.rows.size());
   const float track_end = track.y + track.h;
-  auto push_marker = [&](int start_row, int end_row, compare::CompareRowKind kind) {
+  auto push_marker = [&](int start_row,
+                         int end_row,
+                         compare::CompareRowKind kind) {
     if (kind == compare::CompareRowKind::Unchanged || start_row < 0 || end_row <= start_row) {
       return;
     }
@@ -713,8 +717,17 @@ std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
 
   int run_start = -1;
   compare::CompareRowKind run_kind = compare::CompareRowKind::Unchanged;
-  for (std::size_t i = 0; i < model.rows.size(); ++i) {
-    const compare::CompareRowKind kind = model.rows[i].kind;
+  for (std::size_t i = 0; i < presentation.rows.size(); ++i) {
+    const compare::ComparePresentationRow& presentation_row = presentation.rows[i];
+    if (presentation_row.kind != compare::ComparePresentationRowKind::Model ||
+        presentation_row.model_row_index >= model.rows.size()) {
+      push_marker(run_start, static_cast<int>(i), run_kind);
+      run_start = -1;
+      run_kind = compare::CompareRowKind::Unchanged;
+      continue;
+    }
+
+    const compare::CompareRowKind kind = model.rows[presentation_row.model_row_index].kind;
     if (kind == compare::CompareRowKind::Unchanged) {
       push_marker(run_start, static_cast<int>(i), run_kind);
       run_start = -1;
@@ -730,7 +743,7 @@ std::vector<CompareScrollbarMarker> BuildCompareScrollbarMarkers(
     run_start = static_cast<int>(i);
     run_kind = kind;
   }
-  push_marker(run_start, static_cast<int>(model.rows.size()), run_kind);
+  push_marker(run_start, static_cast<int>(presentation.rows.size()), run_kind);
   return markers;
 }
 

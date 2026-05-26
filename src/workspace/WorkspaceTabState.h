@@ -55,6 +55,7 @@ struct CompareTabState {
   compare::BranchReviewTargetIdentity branch_target;
   compare::CompareSemanticFileMetadata semantic_file;
   compare::ComparePresentationModel presentation;
+  std::uint64_t presentation_revision = 0;
   compare::CompareBuildOptions build_options;
   bool show_whitespace = false;
   bool opened_from_commit_picker = false;
