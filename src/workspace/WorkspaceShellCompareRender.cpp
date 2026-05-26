@@ -226,9 +226,13 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       const SDL_FRect row_rect =
           MakeRect(rect.x, y - 1.0f, content_width, surface.line_height);
       DrawFilledRect(renderer, row_rect, summary_background);
-      const auto draw_context_button = [&](const SDL_FRect& button_rect, std::string_view label) {
-        DrawFilledRect(renderer, button_rect, selected ? theme_.chrome_active : theme_.surface_raised);
-        DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
+      const auto draw_context_button = [&](const SDL_FRect& button_rect,
+                                           std::string_view label,
+                                           bool hovered) {
+        const bool emphasized = selected || hovered;
+        DrawFilledRect(renderer, button_rect,
+                       emphasized ? theme_.chrome_active : theme_.surface_raised);
+        DrawRect(renderer, button_rect, emphasized ? theme_.accent : theme_.border);
         const float text_x =
             button_rect.x +
             std::max(0.0f, (button_rect.w - text_renderer_.MeasureWidth(label)) * 0.5f);
@@ -236,8 +240,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
             button_rect.y +
             std::max(0.0f, (button_rect.h - text_renderer_.LineHeight()) * 0.5f);
         text_renderer_.DrawStringOn(renderer, text_x, text_y,
-                                    selected ? theme_.text_primary : theme_.text_secondary,
-                                    selected ? theme_.chrome_active : theme_.surface_raised, label);
+                                    emphasized ? theme_.text_primary : theme_.text_secondary,
+                                    emphasized ? theme_.chrome_active : theme_.surface_raised, label);
       };
       std::string summary = presentation_row->summary_text;
       if (!presentation_row->review_marker_label.empty()) {
@@ -251,14 +255,28 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         const auto action_rects = BuildCollapsedContextActionRects(
             text_renderer_, row_rect, presentation_row->previous_hunk_index >= 0,
             presentation_row->next_hunk_index >= 0);
+        const auto hovered_action = [&compare_tab, presentation_index,
+                                     presentation_row](CompareHoverKind kind) {
+          return compare_tab->hover_state.has_value() &&
+                 compare_tab->hover_state->kind == kind &&
+                 compare_tab->hover_state->presentation_row ==
+                     static_cast<std::size_t>(presentation_index) &&
+                 compare_tab->hover_state->collapsed_run_start_model_row ==
+                     presentation_row->collapsed_run_start_model_row &&
+                 compare_tab->hover_state->collapsed_run_length ==
+                     presentation_row->collapsed_run_length;
+        };
         summary_width = std::max(0.0f, action_rects.text_right_edge -
                                            (surface.left_x + surface.gutter_width));
         if (action_rects.previous_rect.has_value()) {
-          draw_context_button(*action_rects.previous_rect, "Show previous 20");
+          draw_context_button(*action_rects.previous_rect, "Show previous 20",
+                              hovered_action(CompareHoverKind::CollapsedContextPreviousAction));
         }
-        draw_context_button(action_rects.all_rect, "Show all");
+        draw_context_button(action_rects.all_rect, "Show all",
+                            hovered_action(CompareHoverKind::CollapsedContextAllAction));
         if (action_rects.next_rect.has_value()) {
-          draw_context_button(*action_rects.next_rect, "Show next 20");
+          draw_context_button(*action_rects.next_rect, "Show next 20",
+                              hovered_action(CompareHoverKind::CollapsedContextNextAction));
         }
       }
       text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,

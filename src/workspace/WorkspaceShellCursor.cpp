@@ -6,6 +6,8 @@
 
 #include "util/PerformanceTrace.h"
 #include "util/Parse.h"
+#include "workspace/CompareMergeRender.h"
+#include "workspace/CompareTabReview.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -615,6 +617,30 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         CompareDividerHitRect(layout.editor_surface, surface_layout);
     if (Contains(divider_rect, x, y)) {
       return CursorKind::EwResize;
+    }
+    const int hovered_row =
+        static_cast<int>((y - surface_layout.rows_y) / surface_layout.line_height);
+    const int presentation_row = compare_tab->scroll_row + hovered_row;
+    if (hovered_row >= 0 && presentation_row >= 0 &&
+        static_cast<std::size_t>(presentation_row) < CompareTabPresentationRowCount(*compare_tab)) {
+      if (const compare::ComparePresentationRow* row =
+              CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_row));
+          row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
+        const SDL_FRect row_rect = MakeRect(layout.editor_surface.x,
+                                            surface_layout.rows_y +
+                                                static_cast<float>(hovered_row) *
+                                                    surface_layout.line_height -
+                                                1.0f,
+                                            layout.editor_surface.w,
+                                            surface_layout.line_height);
+        const auto action_rects = BuildCollapsedContextActionRects(
+            text_renderer_, row_rect, row->previous_hunk_index >= 0, row->next_hunk_index >= 0);
+        if ((action_rects.previous_rect.has_value() && Contains(*action_rects.previous_rect, x, y)) ||
+            Contains(action_rects.all_rect, x, y) ||
+            (action_rects.next_rect.has_value() && Contains(*action_rects.next_rect, x, y))) {
+          return CursorKind::Pointer;
+        }
+      }
     }
     if (compare_tab->right_editable && x >= surface_layout.right_x) {
       return CursorKind::Text;

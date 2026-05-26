@@ -168,6 +168,22 @@
     }
     return {row->collapsed_run_start_model_row, row->collapsed_run_length};
   }
+  static std::optional<CompareHoverKind> ActiveCompareHoverKind(const WorkspaceShell& shell) {
+    const auto& compare = shell.context_.current_project_state
+                              .open_tabs[shell.context_.current_project_state.active_tab_index]
+                              .compare;
+    return compare.has_value() && compare->hover_state.has_value()
+               ? std::optional<CompareHoverKind>(compare->hover_state->kind)
+               : std::nullopt;
+  }
+  static std::optional<std::size_t> ActiveCompareHoverPresentationRow(const WorkspaceShell& shell) {
+    const auto& compare = shell.context_.current_project_state
+                              .open_tabs[shell.context_.current_project_state.active_tab_index]
+                              .compare;
+    return compare.has_value() && compare->hover_state.has_value()
+               ? std::optional<std::size_t>(compare->hover_state->presentation_row)
+               : std::nullopt;
+  }
   static CollapsedContextActionRects ActiveCompareCollapsedContextActionRects(
       WorkspaceShell& shell,
       std::size_t presentation_row) {

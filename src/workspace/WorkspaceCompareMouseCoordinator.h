@@ -48,6 +48,7 @@ class CompareMouseCoordinator {
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
+  bool HandleHoverMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleSelectionMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,

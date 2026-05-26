@@ -27,6 +27,19 @@ enum class EditorSplitOrientation {
   Horizontal,
 };
 
+enum class CompareHoverKind {
+  CollapsedContextPreviousAction,
+  CollapsedContextAllAction,
+  CollapsedContextNextAction,
+};
+
+struct CompareHoverState {
+  CompareHoverKind kind = CompareHoverKind::CollapsedContextAllAction;
+  std::size_t presentation_row = 0;
+  std::size_t collapsed_run_start_model_row = 0;
+  std::size_t collapsed_run_length = 0;
+};
+
 struct CompareTabState {
   std::filesystem::path path;
   std::filesystem::path left_path;
@@ -60,6 +73,7 @@ struct CompareTabState {
   std::uint64_t model_revision = 0;
   bool model_stale = false;
   bool model_refreshing = false;
+  std::optional<CompareHoverState> hover_state;
   std::size_t selected_row = 0;
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;

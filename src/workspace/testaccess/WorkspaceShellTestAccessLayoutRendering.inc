@@ -433,6 +433,9 @@
   static bool CachedCursorIsPointer(const WorkspaceShell& shell) {
     return shell.cursor_kind_ == WorkspaceShell::CursorKind::Pointer;
   }
+  static bool CachedCursorIsText(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::Text;
+  }
   static bool CursorKindAtIs(WorkspaceShell& shell,
                              float x,
                              float y,
