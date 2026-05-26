@@ -114,17 +114,18 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
   const float stage_button_x = row_rect.x + row_rect.w - 12.0f;
   const float row_center_y = row_rect.y + row_rect.h * 0.5f;
   SendMouseMotion(shell, stage_button_x, row_center_y, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage file",
          "hovering the compact stage button should expose the full action name");
 
   SendMouseMotion(shell, stage_button_x - 2.0f, row_center_y, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage",
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage file",
          "stage button hover should tolerate a small hitbox miss");
 
   const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
   SendMouseMotion(shell, action_rects[1].x + action_rects[1].w * 0.5f,
                                               action_rects[1].y + action_rects[1].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Discard",
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) ==
+             "Discard unstaged changes",
          "hovering the compact discard button should expose the full action name");
 
   Expect(WorkspaceShellTestAccess::StageAllGitSidebarEntries(shell),
@@ -135,7 +136,7 @@ void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
   SendMouseMotion(
       shell, staged_action_rects[0].x + staged_action_rects[0].w * 0.5f,
       staged_action_rects[0].y + staged_action_rects[0].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Unstage",
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Unstage file",
          "hovering the compact unstage button should expose the full action name");
 }
 

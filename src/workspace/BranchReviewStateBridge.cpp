@@ -36,6 +36,9 @@ PersistedBranchReviewTarget ToPersistedTarget(const compare::BranchReviewTargetS
       .merge_base_commit = target_state.target.merge_base_commit,
       .snapshot_generation = target_state.target.snapshot_generation,
       .last_accessed_unix_ms = target_state.last_accessed_unix_ms,
+      .reviewed_files = {},
+      .reviewed_hunks = {},
+      .notes = {},
   };
   for (const compare::BranchReviewFileReviewEntry& file : target_state.reviewed_files) {
     persisted.reviewed_files.push_back(PersistedBranchReviewFileEntry{
@@ -76,6 +79,9 @@ compare::BranchReviewTargetState FromPersistedTarget(const PersistedBranchReview
               .merge_base_commit = persisted.merge_base_commit,
               .snapshot_generation = persisted.snapshot_generation,
           },
+      .reviewed_files = {},
+      .reviewed_hunks = {},
+      .notes = {},
       .last_accessed_unix_ms = persisted.last_accessed_unix_ms,
   };
   for (const PersistedBranchReviewFileEntry& file : persisted.reviewed_files) {

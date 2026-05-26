@@ -40,6 +40,7 @@ void TestBothAddedClassification() {
       .base_exists = false,
       .incoming_exists = true,
       .current_exists = true,
+      .base_content = {},
       .incoming_content = "incoming added\n",
       .current_content = "current added\n",
   });
@@ -50,6 +51,7 @@ void TestBothAddedClassification() {
 void TestBinaryClassification() {
   std::string binary(8, '\0');
   const auto metadata = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_content = {},
       .incoming_content = binary,
       .current_content = binary,
   });
@@ -79,6 +81,7 @@ void TestValidationBlocksConflictMarkers() {
   merge_tab.result_viewport.SetDirty(false);
   const MergeValidationResult validation = ValidateMergeResult(MergeValidationRequest{
       .merge_tab = merge_tab,
+      .project_root = {},
       .result_should_exist = true,
   });
   Expect(!validation.ok && validation.issue == MergeValidationIssue::ConflictMarkers,

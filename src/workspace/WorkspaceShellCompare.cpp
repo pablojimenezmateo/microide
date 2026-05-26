@@ -430,6 +430,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   ++compare_tab.model_revision;
   CompareTabReviewRefreshInput review_input{
       .repository_root = context_.current_project_state.root,
+      .git_entry = std::nullopt,
       .snapshot_generation = context_.current_project_state.sidebar.git.snapshot_generation,
       .merge_base_commit = context_.current_project_state.sidebar.git.base_ref,
   };

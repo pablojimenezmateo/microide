@@ -304,12 +304,24 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
       const GitSidebarActionAvailability availability = GitSidebarActionAvailabilityForEntry(
           entry, context_.current_project_state.sidebar.git.repo_available,
           context_.current_project_state.sidebar.git.supports_mutations);
-      return availability.unstage ? "Unstage" : "Stage";
+      return availability.unstage ? "Unstage file" : "Stage file";
     }
     if (actions.discard_rect.has_value() &&
         Contains(ExpandRect(*actions.discard_rect, kGitSidebarEntryButtonHoverPadding),
                  last_mouse_x_, last_mouse_y_)) {
-      return "Discard";
+      switch (entry.section) {
+        case GitSidebarEntry::Section::Staged:
+          return "Discard staged changes";
+        case GitSidebarEntry::Section::Conflicts:
+          return "Discard conflicted changes";
+        case GitSidebarEntry::Section::Untracked:
+          return "Discard untracked file";
+        case GitSidebarEntry::Section::Changed:
+          return "Discard unstaged changes";
+        case GitSidebarEntry::Section::Outgoing:
+          return "Discard is unavailable";
+      }
+      return "Discard changes";
     }
   }
   return {};

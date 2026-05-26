@@ -12,7 +12,7 @@ namespace {
 
 constexpr std::string_view kSectionTitleConflicts = "Conflicts";
 constexpr std::string_view kSectionTitleStaged = "Staged";
-constexpr std::string_view kSectionTitleChanged = "Changed";
+constexpr std::string_view kSectionTitleChanged = "Unstaged";
 constexpr std::string_view kSectionTitleUntracked = "Untracked";
 constexpr std::string_view kSectionTitleOutgoing = "Outgoing";
 
