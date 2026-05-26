@@ -640,13 +640,20 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
     return vm;
   }
   const auto& snapshot = service.Snapshot();
+  vm.left_segments.reserve(5);
+  vm.right_segments.reserve(4);
   const auto add_segment = [&](StatusBarSegmentId id,
                                 std::vector<StatusBarSegmentViewModel>& target) {
     const auto& seg = snapshot[static_cast<std::size_t>(id)];
     if (!seg.visible || seg.text.empty()) {
       return;
     }
-    target.push_back(StatusBarSegmentViewModel{id, seg.text, seg.tooltip, seg.clickable});
+    target.emplace_back(StatusBarSegmentViewModel{
+        .id = id,
+        .text = seg.text,
+        .tooltip = seg.tooltip,
+        .clickable = seg.clickable,
+    });
   };
   // Spec ordering (workspace-status-bar §"Segment list at first slice"):
   //   left:  project, branch, language, indent, encoding

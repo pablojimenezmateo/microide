@@ -70,6 +70,10 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const SDL_FRect& rect, const GitSidebarEntry& entry) {
                 return ComputeGitSidebarEntryActionLayout(rect, entry);
               },
+          .unstage_git_sidebar_entry =
+              [this](std::size_t index) { return UnstageGitSidebarEntry(index); },
+          .stage_git_sidebar_entry =
+              [this](std::size_t index) { return StageGitSidebarEntry(index); },
           .open_discard_git_entry_prompt =
               [this](std::size_t index) { OpenDiscardGitSidebarEntryPrompt(index); },
           .dispatch_git_sidebar_action =

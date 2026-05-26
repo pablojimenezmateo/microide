@@ -230,6 +230,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              SettingEnabled(operations_, "editor.multicursor.add_at_match.enabled", true);
     case ActionId::JumpToMatchingBracket:
       return active_viewport != nullptr;
+    case ActionId::MarkBranchFileReviewed:
+    case ActionId::MarkBranchHunkReviewed:
+    case ActionId::ClearBranchReviewState:
+    case ActionId::EditBranchReviewNote:
+      return operations_.active_tab_is_compare();
     case ActionId::Fold:
     case ActionId::Unfold:
     case ActionId::ToggleFoldAtCursor:

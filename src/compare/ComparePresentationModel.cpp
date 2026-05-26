@@ -72,6 +72,7 @@ ComparePresentationModel BuildComparePresentationModel(
     presentation.rows.push_back(ComparePresentationRow{
         .kind = ComparePresentationRowKind::Metadata,
         .summary_text = metadata_summary,
+        .review_marker_label = {},
     });
   }
 
@@ -112,6 +113,8 @@ ComparePresentationModel BuildComparePresentationModel(
         presentation.rows.push_back(ComparePresentationRow{
             .kind = ComparePresentationRowKind::Model,
             .model_row_index = run_start + i,
+            .summary_text = {},
+            .review_marker_label = {},
         });
       }
       if (collapsed_count >= options.collapse_threshold) {
@@ -120,12 +123,15 @@ ComparePresentationModel BuildComparePresentationModel(
             .summary_text = std::to_string(collapsed_count) + " unchanged lines hidden",
             .collapsed_line_count = static_cast<int>(collapsed_count),
             .context_above = expand_above,
+            .review_marker_label = {},
         });
       } else {
         for (std::size_t i = visible_prefix; i < run_length - visible_suffix; ++i) {
           presentation.rows.push_back(ComparePresentationRow{
               .kind = ComparePresentationRowKind::Model,
               .model_row_index = run_start + i,
+              .summary_text = {},
+              .review_marker_label = {},
           });
         }
       }
@@ -133,6 +139,8 @@ ComparePresentationModel BuildComparePresentationModel(
         presentation.rows.push_back(ComparePresentationRow{
             .kind = ComparePresentationRowKind::Model,
             .model_row_index = run_start + i,
+            .summary_text = {},
+            .review_marker_label = {},
         });
       }
       continue;
@@ -141,6 +149,8 @@ ComparePresentationModel BuildComparePresentationModel(
     presentation.rows.push_back(ComparePresentationRow{
         .kind = ComparePresentationRowKind::Model,
         .model_row_index = row_index,
+        .summary_text = {},
+        .review_marker_label = {},
     });
     ++row_index;
   }

@@ -45,6 +45,7 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(const GitSidebarViewMod
       lines.push_back(GitSidebarLineSpec{
           .kind = GitSidebarLineKind::Entry,
           .section = section.section,
+          .label = {},
           .entry_index = row.entry_index,
       });
     }

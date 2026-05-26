@@ -283,11 +283,17 @@ void BranchReviewStateService::PruneForRepository(
       if (matching.size() == kMaxTargetsPerRepository) {
         matching.back() = BranchReviewTargetState{
             .target = *active_target,
+            .reviewed_files = {},
+            .reviewed_hunks = {},
+            .notes = {},
             .last_accessed_unix_ms = NowUnixMs(),
         };
       } else {
         matching.push_back(BranchReviewTargetState{
             .target = *active_target,
+            .reviewed_files = {},
+            .reviewed_hunks = {},
+            .notes = {},
             .last_accessed_unix_ms = NowUnixMs(),
         });
       }

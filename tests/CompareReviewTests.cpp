@@ -57,6 +57,8 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          .path = "bin.dat",
                          .left_content = std::string(32, '\0'),
                          .right_content = std::string(32, '\1'),
+                         .git_entry = std::nullopt,
+                         .old_path = {},
                      });
                      Expect(metadata.file_kind == CompareSemanticFileKind::Binary,
                             "NUL bytes should classify as binary");
@@ -68,6 +70,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          .path = "new.txt",
                          .left_content = "a\n",
                          .right_content = "a\n",
+                         .git_entry = std::nullopt,
                          .old_path = "old.txt",
                          .old_executable = false,
                          .new_executable = true,
@@ -83,6 +86,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          .path = "f.txt",
                          .left_content = "a\n",
                          .right_content = "b\n",
+                         .git_entry = std::nullopt,
                          .old_path = "g.txt",
                      });
                      const auto presentation = BuildComparePresentationModel(
@@ -113,6 +117,8 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                                       .path = "f.txt",
                                       .left_content = "old\n",
                                       .right_content = "new\n",
+                                      .git_entry = std::nullopt,
+                                      .old_path = {},
                                   }),
                          ComparePresentationOptions{}, ComparePresentationCollapseState{}, 7);
                      Expect(presentation.inline_cache.model_generation == 7,
@@ -128,6 +134,8 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                          .path = "f.txt",
                          .left_content = "unchanged\n\nleft\n",
                          .right_content = "unchanged\n\nright\n",
+                         .git_entry = std::nullopt,
+                         .old_path = {},
                      });
                      auto presentation = BuildComparePresentationModel(
                          model, semantic, ComparePresentationOptions{}, ComparePresentationCollapseState{},

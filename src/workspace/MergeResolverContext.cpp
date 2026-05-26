@@ -90,6 +90,8 @@ MergeResolverStatus BuildMergeResolverStatus(const MergeTabState& merge_tab,
       .remaining_conflicts = CountRemainingMergeConflicts(merge_tab.conflicts),
       .remaining_files = remaining_conflicted_files,
       .result_state = ComputeMergeResultState(merge_tab, merge_tab.file_conflict),
+      .result_state_label = {},
+      .progress_label = {},
   };
 
   switch (status.result_state) {

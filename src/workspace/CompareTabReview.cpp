@@ -34,6 +34,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
           util::SerializeLines(compare_tab.right_viewport.lines(),
                                compare_tab.right_viewport.line_ending()),
       .git_entry = input.git_entry,
+      .old_path = {},
   };
   if (input.git_entry.has_value() && input.git_entry->old_path.has_value()) {
     semantic_input.old_path = input.git_entry->old_path->relative_path;

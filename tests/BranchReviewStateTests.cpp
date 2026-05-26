@@ -58,6 +58,10 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      service.MarkFileReviewed(target, std::filesystem::path("src/a.cpp"));
 
                      PersistedProjectConfigState persisted{
+                         .project_base_color = std::nullopt,
+                         .settings = {},
+                         .sidebar_policies = {},
+                         .commit_draft = std::nullopt,
                          .branch_review = ToPersistedBranchReviewState(service),
                      };
                      std::vector<std::byte> encoded;

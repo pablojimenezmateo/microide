@@ -100,18 +100,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   const auto rects_equal = [](const SDL_FRect& lhs, const SDL_FRect& rhs) {
     return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
   };
-  const auto optional_rects_equal = [&rects_equal](const std::optional<SDL_FRect>& lhs,
-                                                   const std::optional<SDL_FRect>& rhs) {
-    if (!lhs.has_value() || !rhs.has_value()) {
-      return lhs.has_value() == rhs.has_value();
-    }
-    return rects_equal(*lhs, *rhs);
-  };
-  const auto request_hover_button_redraw = [this](const std::optional<SDL_FRect>& rect) {
-    if (!rect.has_value()) {
-      return;
-    }
-    RequestRedrawRect(MakeRect(rect->x - 1.0f, rect->y - 1.0f, rect->w + 2.0f, rect->h + 2.0f));
+  const auto request_hover_button_redraw = [this](const SDL_FRect& rect) {
+    RequestRedrawRect(MakeRect(rect.x - 1.0f, rect.y - 1.0f, rect.w + 2.0f, rect.h + 2.0f));
   };
   const auto sidebar_hover_button_rect_at =
       [this, &layout](float x, float y) -> std::optional<SDL_FRect> {
@@ -358,18 +348,33 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           "WorkspaceShell::HandleMouseMotion::UpdateMouseCursor");
       UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
     }
-    const std::optional<SDL_FRect> previous_sidebar_hover_button_rect =
+    const std::optional<SDL_FRect> previous_sidebar_hover_button_rect_optional =
         previous_mouse_position_valid
             ? sidebar_hover_button_rect_at(previous_mouse_x, previous_mouse_y)
             : std::nullopt;
-    const std::optional<SDL_FRect> current_sidebar_hover_button_rect =
+    const std::optional<SDL_FRect> current_sidebar_hover_button_rect_optional =
         sidebar_hover_button_rect_at(static_cast<float>(event.motion.x),
                                      static_cast<float>(event.motion.y));
-    sidebar_hover_button_changed = !optional_rects_equal(previous_sidebar_hover_button_rect,
-                                                         current_sidebar_hover_button_rect);
+    const bool previous_has_button_rect = previous_sidebar_hover_button_rect_optional.has_value();
+    const bool current_has_button_rect = current_sidebar_hover_button_rect_optional.has_value();
+    SDL_FRect previous_button_rect = MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+    SDL_FRect current_button_rect = MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+    if (previous_has_button_rect) {
+      previous_button_rect = *previous_sidebar_hover_button_rect_optional;
+    }
+    if (current_has_button_rect) {
+      current_button_rect = *current_sidebar_hover_button_rect_optional;
+    }
+    sidebar_hover_button_changed =
+        previous_has_button_rect != current_has_button_rect ||
+        (previous_has_button_rect && !rects_equal(previous_button_rect, current_button_rect));
     if (sidebar_hover_button_changed) {
-      request_hover_button_redraw(previous_sidebar_hover_button_rect);
-      request_hover_button_redraw(current_sidebar_hover_button_rect);
+      if (previous_has_button_rect) {
+        request_hover_button_redraw(previous_button_rect);
+      }
+      if (current_has_button_rect) {
+        request_hover_button_redraw(current_button_rect);
+      }
     }
     const bool current_action_hovered =
         EditorHoverPopupPrimaryActionHovered(static_cast<float>(event.motion.x),
