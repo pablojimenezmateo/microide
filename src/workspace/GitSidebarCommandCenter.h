@@ -47,9 +47,11 @@ struct GitSidebarActionAvailability {
 struct GitSidebarRowViewModel {
   int entry_index = -1;
   GitSidebarRowKind row_kind = GitSidebarRowKind::Changed;
+  std::filesystem::path relative_path;
   std::string primary_label;
   std::string secondary_label;
   std::string review_marker_label;
+  std::string primary_action_label;
   project::GitFileStatus status = project::GitFileStatus::Clean;
   GitSidebarActionAvailability actions{};
   bool show_stage_button = false;
@@ -65,6 +67,10 @@ struct GitSidebarSectionViewModel {
 
 struct GitSidebarViewModel {
   std::vector<std::string> summary_lines;
+  std::string workflow_summary_line;
+  std::string commit_summary_line;
+  std::string selection_summary_line;
+  std::string selection_action_line;
   std::string stale_banner;
   std::string error_banner;
   bool refreshing = false;

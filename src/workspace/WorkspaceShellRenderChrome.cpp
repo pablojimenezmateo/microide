@@ -243,10 +243,11 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
   float breadcrumb_text_right = layout.breadcrumb.x + layout.breadcrumb.w - 12.0f;
   for (const VisibleStatusItem& item : status_items) {
-    const SDL_Color background = item.hovered ? theme_.row_highlight : theme_.surface_raised;
-    const SDL_Color text_color = item.hovered ? theme_.text_primary : theme_.text_secondary;
-    DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.surface_raised, item.hovered);
-    DrawRect(renderer, item.rect, theme_.border);
+    const SDL_Color background = item.hovered ? theme_.row_highlight : theme_.chrome_background;
+    const SDL_Color text_color = item.hovered ? theme_.text_primary : theme_.text_muted;
+    if (item.hovered) {
+      DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.chrome_background, true);
+    }
     DrawVCenteredTextOn(text_renderer_, renderer, item.rect, 8.0f, text_color, background,
                         item.item.text);
     if (item.item.alignment == StatusAlignment::Left) {

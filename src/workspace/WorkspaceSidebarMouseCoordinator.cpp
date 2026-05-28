@@ -150,6 +150,10 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
   }
 
   const auto& line = lines[static_cast<std::size_t>(*line_index)];
+  if (line.kind == GitSidebarLine::Kind::Directory) {
+    return operations_.toggle_git_sidebar_directory_collapsed != nullptr &&
+           operations_.toggle_git_sidebar_directory_collapsed(line.tree_node_key);
+  }
   if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
     return true;
   }

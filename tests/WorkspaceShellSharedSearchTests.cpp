@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace microide::tests {
@@ -52,22 +53,29 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
   const BranchReviewStateService branch_review;
   const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
       git_state, std::filesystem::path{"/tmp/project"}, branch_review));
-  Expect(lines.size() == 11,
-         "git sidebar lines should include workflow headers, rows, and empty placeholders");
+  Expect(lines.size() == 13,
+         "git sidebar lines should include workflow headers, tree rows, and empty placeholders");
   Expect(lines[4].kind == GitSidebarLineKind::Header && lines[4].label == "Unstaged (2)",
          "git sidebar lines should include the unstaged header with count");
-  Expect(lines[5].kind == GitSidebarLineKind::Entry && lines[5].entry_index == 0,
-         "git sidebar lines should map the first changed entry index");
-  Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 1,
-         "git sidebar lines should map the second changed entry index");
-  Expect(lines[9].kind == GitSidebarLineKind::Header &&
-             lines[9].label == "Outgoing (1)  origin/main",
+  Expect(lines[5].kind == GitSidebarLineKind::Directory && lines[5].label == "src",
+         "git sidebar lines should insert a directory row for nested changed files");
+  Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 0 &&
+             lines[6].depth == 1,
+         "git sidebar lines should map the first changed entry under the directory");
+  Expect(lines[7].kind == GitSidebarLineKind::Entry && lines[7].entry_index == 1 &&
+             lines[7].depth == 1,
+         "git sidebar lines should map the second changed entry under the directory");
+  Expect(lines[10].kind == GitSidebarLineKind::Header &&
+             lines[10].label == "Outgoing (1)  origin/main",
          "git sidebar lines should include the outgoing header with base label");
-  Expect(lines[10].kind == GitSidebarLineKind::Entry && lines[10].entry_index == 2,
-         "git sidebar lines should map outgoing entries after the outgoing header");
+  Expect(lines[11].kind == GitSidebarLineKind::Directory && lines[11].label == "src",
+         "git sidebar lines should also tree-group outgoing files by directory");
+  Expect(lines[12].kind == GitSidebarLineKind::Entry && lines[12].entry_index == 2 &&
+             lines[12].depth == 1,
+         "git sidebar lines should map outgoing entries after the directory row");
 
   const auto selected_line = FindSelectedGitSidebarLineIndex(lines, 2);
-  Expect(selected_line.has_value() && *selected_line == 10,
+  Expect(selected_line.has_value() && *selected_line == 12,
          "git sidebar selected-line lookup should find the outgoing entry row");
   Expect(!FindSelectedGitSidebarLineIndex(lines, 9).has_value(),
          "git sidebar selected-line lookup should fail for unknown entries");
@@ -105,6 +113,49 @@ void TestWorkspaceSharedGitSidebarEntryTextModel() {
          "git sidebar text model should preserve root-level filenames");
   Expect(staged.secondary_label == "[staged]",
          "git sidebar text model should keep staged state in the secondary label");
+}
+
+void TestWorkspaceSharedGitSidebarDirectoryCollapse() {
+  GitSidebarState git_state;
+  git_state.repo_available = true;
+  git_state.entries = {
+      GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
+                      .path = "src/deep/alpha.cpp",
+                      .relative_path = "src/deep/alpha.cpp",
+                      .provider_id = {},
+                      .provider_label = {}},
+      GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
+                      .path = "src/deep/beta.cpp",
+                      .relative_path = "src/deep/beta.cpp",
+                      .provider_id = {},
+                      .provider_label = {}},
+  };
+  const BranchReviewStateService branch_review;
+  const auto expanded_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+      git_state, std::filesystem::path{"/tmp/project"}, branch_review));
+  std::optional<std::string> src_key;
+  for (const auto& line : expanded_lines) {
+    if (line.kind == GitSidebarLineKind::Directory && line.label == "src") {
+      src_key = line.tree_node_key;
+      break;
+    }
+  }
+  Expect(src_key.has_value(),
+         "expanded git tree should expose a collapsible src directory node key");
+
+  std::unordered_set<std::string> collapsed{*src_key};
+  const auto collapsed_lines = BuildGitSidebarLineSpecs(
+      BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review),
+      &collapsed);
+  Expect(std::none_of(collapsed_lines.begin(), collapsed_lines.end(),
+                      [](const auto& line) { return line.kind == GitSidebarLineKind::Entry; }),
+         "collapsed top-level git directory should hide nested file entries");
+  Expect(std::any_of(collapsed_lines.begin(), collapsed_lines.end(),
+                     [](const auto& line) {
+                       return line.kind == GitSidebarLineKind::Directory &&
+                              line.label == "src" && !line.expanded;
+                     }),
+         "collapsed git directory row should expose collapsed visual state");
 }
 
 void TestWorkspaceSharedLiteralSearchHelpers() {
@@ -294,6 +345,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedGitSidebarEmptyStates);
   AddTest(tests, "WorkspaceGitSidebarPresentation/EntryTextModel",
           TestWorkspaceSharedGitSidebarEntryTextModel);
+  AddTest(tests, "WorkspaceGitSidebarPresentation/DirectoryCollapse",
+          TestWorkspaceSharedGitSidebarDirectoryCollapse);
   AddTest(tests, "WorkspaceTextSearch/LiteralSearchHelpers",
           TestWorkspaceSharedLiteralSearchHelpers);
   AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",

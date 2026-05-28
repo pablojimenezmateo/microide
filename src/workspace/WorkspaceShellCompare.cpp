@@ -53,6 +53,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     compare_tab->compare->right_ref = "WORKTREE";
     compare_tab->compare->right_editable = true;
     compare_tab->compare->right_view_active = true;
+    RefreshCompareTabDerivedState(*compare_tab->compare);
   }
   return compare_tab;
 }
@@ -210,8 +211,10 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
             12.0f);
     layout.divider_width = std::max(1.0f, std::ceil(text_renderer_.CharWidth()));
     layout.left_x = rect.x + 8.0f;
-    layout.header_y = rect.y + 6.0f;
-    layout.rows_y = rect.y + layout.line_height + 12.0f;
+    layout.review_summary_y = rect.y + 4.0f;
+    layout.action_hint_y = layout.review_summary_y + layout.line_height;
+    layout.header_y = layout.review_summary_y + layout.line_height;
+    layout.rows_y = layout.header_y + layout.line_height + 6.0f;
 
     const float reserved_width =
         reserve_vertical ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
@@ -445,6 +448,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   RefreshCompareTabPresentation(compare_tab);
   ApplyBranchReviewPresentationMarkers(compare_tab,
                                        context_.current_project_state.branch_review);
+  RefreshCompareReviewHeader(compare_tab);
   const auto left_lines = SplitSyntaxLines(compare_tab.left_content);
   const auto right_lines = SplitSyntaxLines(right_content);
   compare_tab.left_initial_syntax_state =

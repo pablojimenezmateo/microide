@@ -142,7 +142,7 @@ struct PersistedChatState {
 struct PersistedProjectSessionState {
   bool sidebar_visible = true;
   float sidebar_width = 288.0f;
-  float bottom_panel_height = 184.0f;
+  float bottom_panel_height = 156.0f;
   OutgoingBaseChoice outgoing_base_choice;
   std::size_t active_tab_index = 0;
   std::vector<PersistedEditorTabState> tabs;

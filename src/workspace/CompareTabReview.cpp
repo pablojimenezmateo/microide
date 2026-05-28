@@ -2,6 +2,7 @@
 
 #include "compare/BranchReviewStateTypes.h"
 #include "util/StringUtil.h"
+#include "workspace/WorkspaceUiText.h"
 
 namespace microide::workspace {
 
@@ -23,6 +24,42 @@ compare::ComparePresentationCollapsedRunState* FindCollapsedRunState(
     }
   }
   return nullptr;
+}
+
+std::string CompareReviewHeaderModeLabel(compare::CompareReviewMode mode) {
+  switch (mode) {
+    case compare::CompareReviewMode::WorkingTree:
+      return "Working tree review";
+    case compare::CompareReviewMode::Commit:
+      return "Commit review";
+    case compare::CompareReviewMode::Branch:
+      return "Branch review";
+    case compare::CompareReviewMode::Conflict:
+      return "Conflict review";
+  }
+  return "Working tree review";
+}
+
+std::string CompareReviewHeaderStagingLabel(compare::WorkingTreeStagingView view) {
+  switch (view) {
+    case compare::WorkingTreeStagingView::Combined:
+      return "combined";
+    case compare::WorkingTreeStagingView::Unstaged:
+      return "unstaged";
+    case compare::WorkingTreeStagingView::Staged:
+      return "staged";
+  }
+  return "combined";
+}
+
+void AppendHintSegment(std::string& line, std::string_view segment) {
+  if (segment.empty()) {
+    return;
+  }
+  if (!line.empty()) {
+    line += "  |  ";
+  }
+  line.append(segment.data(), segment.size());
 }
 
 }  // namespace
@@ -106,6 +143,60 @@ void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
       }
     }
   }
+}
+
+void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
+  std::string summary = CompareReviewHeaderModeLabel(compare_tab.review_mode);
+  if (compare_tab.review_mode == compare::CompareReviewMode::WorkingTree) {
+    summary += "  ·  ";
+    summary += CompareReviewHeaderStagingLabel(compare_tab.staging_view);
+  }
+  summary += "  ·  ";
+  AppendUnsigned(summary, compare_tab.model.hunks.size());
+  summary += compare_tab.model.hunks.size() == 1 ? " hunk" : " hunks";
+  switch (compare_tab.semantic_file.file_kind) {
+    case compare::CompareSemanticFileKind::Binary:
+      summary += "  ·  binary";
+      break;
+    case compare::CompareSemanticFileKind::Submodule:
+      summary += "  ·  submodule";
+      break;
+    case compare::CompareSemanticFileKind::Text:
+      break;
+  }
+  if (compare_tab.semantic_file.renamed) {
+    summary += "  ·  rename";
+  }
+  if (compare_tab.semantic_file.mode_changed) {
+    summary += "  ·  mode";
+  }
+  if (compare_tab.semantic_file.line_ending_only) {
+    summary += "  ·  line endings";
+  }
+  const std::string file_label = compare_tab.path.filename().string();
+  if (!file_label.empty()) {
+    summary += "  ·  ";
+    summary += file_label;
+  }
+  compare_tab.review_header.summary_line = std::move(summary);
+
+  std::string actions;
+  AppendHintSegment(actions, "[ / ] hunks");
+  AppendHintSegment(actions, "Enter open");
+  AppendHintSegment(actions, "o open");
+  if (compare_tab.semantic_file.file_kind == compare::CompareSemanticFileKind::Text &&
+      compare_tab.right_editable && !compare_tab.model.hunks.empty()) {
+    if (compare_tab.staging_view == compare::WorkingTreeStagingView::Staged) {
+      AppendHintSegment(actions, "c unstage hunk");
+      AppendHintSegment(actions, "C unstage lines");
+    } else {
+      AppendHintSegment(actions, "a stage hunk");
+      AppendHintSegment(actions, "A stage lines");
+    }
+    AppendHintSegment(actions, "d discard hunk");
+    AppendHintSegment(actions, "D discard lines");
+  }
+  compare_tab.review_header.action_hint_line = std::move(actions);
 }
 
 std::size_t CompareTabPresentationRowCount(const CompareTabState& compare_tab) {

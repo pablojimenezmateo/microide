@@ -96,6 +96,8 @@ void TestGitSidebarViewModelGrouping() {
          "conflict section header should include count");
   Expect(view_model.sections[1].rows.size() == 1 && view_model.sections[1].rows[0].actions.unstage,
          "staged rows should expose unstage");
+  Expect(view_model.sections[1].rows[0].primary_action_label == "diff review",
+         "staged rows should advertise diff review as the default action");
   Expect(view_model.sections[2].header_label == "Unstaged (1)",
          "unstaged section header should use explicit unstaged wording");
   Expect(view_model.sections[3].rows[0].actions.stage &&
@@ -103,12 +105,25 @@ void TestGitSidebarViewModelGrouping() {
          "untracked rows should expose stage and discard");
   Expect(!view_model.sections[4].rows[0].actions.discard,
          "outgoing rows should not expose discard");
+  Expect(view_model.workflow_summary_line.find("1 conflict") != std::string::npos &&
+             view_model.workflow_summary_line.find("1 staged") != std::string::npos,
+         "workflow summary should surface the active git work buckets");
+  Expect(view_model.commit_summary_line.find("blocked") != std::string::npos,
+         "conflicts should block commit readiness messaging");
+  Expect(view_model.selection_summary_line.find("merge resolver") != std::string::npos,
+         "selected conflict row should advertise merge as the primary action");
+  Expect(view_model.selection_action_line.find("m merge") != std::string::npos,
+         "selected conflict row should surface merge action hints");
 
   const auto lines = BuildGitSidebarLineSpecs(view_model);
-  Expect(lines.size() == 10,
-         "line specs should include one header and one row per populated section");
+  Expect(lines.size() == 14,
+         "line specs should include section headers plus tree directory and file rows");
   Expect(lines[0].kind == GitSidebarLineKind::Header,
          "first grouped line should be a section header");
+  Expect(lines[1].kind == GitSidebarLineKind::Directory && lines[1].label == "src",
+         "grouped line specs should include a directory row before nested file entries");
+  Expect(lines[2].kind == GitSidebarLineKind::Entry && lines[2].depth == 1,
+         "nested file entries should be indented under their directory");
 }
 
 void TestConflictRowsDisableDirectStageUnstage() {
@@ -202,6 +217,56 @@ void TestGitDiscardPreviewSummaryMentionsUntrackedPolicy() {
          "discard preview should mention file-operation policy");
 }
 
+void TestCommitReadySummaryAppearsWithoutConflicts() {
+  GitSidebarState git_state;
+  git_state.repo_available = true;
+  git_state.entries = {
+      GitSidebarEntry{.section = GitSidebarEntry::Section::Staged,
+                      .path = "src/staged.cpp",
+                      .relative_path = "src/staged.cpp",
+                      .status = GitFileStatus::Modified,
+                      .staged = true,
+                      .provider_id = {},
+                      .provider_label = {},
+                      .supports_stage = false,
+                      .supports_discard = true},
+      GitSidebarEntry{.section = GitSidebarEntry::Section::Changed,
+                      .path = "src/changed.cpp",
+                      .relative_path = "src/changed.cpp",
+                      .status = GitFileStatus::Modified,
+                      .provider_id = {},
+                      .provider_label = {},
+                      .supports_stage = true,
+                      .supports_discard = true},
+  };
+  git_state.selected_index = 1;
+
+  const BranchReviewStateService branch_review;
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
+  Expect(view_model.commit_summary_line == "Commit ready  |  c commit",
+         "staged changes without conflicts should surface commit readiness");
+  Expect(view_model.selection_action_line.find("s stage") != std::string::npos &&
+             view_model.selection_action_line.find("c commit") != std::string::npos,
+         "selected unstaged rows should expose both row actions and commit readiness");
+}
+
+void TestRefreshingDoesNotReplaceUnstagedEmptyLabel() {
+  GitSidebarState git_state;
+  git_state.repo_available = true;
+  git_state.refreshing = true;
+  git_state.snapshot_stale = true;
+
+  const BranchReviewStateService branch_review;
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
+  Expect(view_model.stale_banner.empty(),
+         "refreshing should move snapshot activity off the summary banner");
+  Expect(view_model.sections.size() >= 3 &&
+             view_model.sections[2].empty_label == "No unstaged changes",
+         "refreshing should not replace the unstaged empty-state label");
+}
+
 }  // namespace
 
 void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests) {
@@ -216,6 +281,10 @@ void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests) {
           TestGitSidebarActionAvailabilityMessages);
   AddTest(tests, "GitSidebarCommandCenter/DiscardPreviewSummary",
           TestGitDiscardPreviewSummaryMentionsUntrackedPolicy);
+  AddTest(tests, "GitSidebarCommandCenter/CommitReadySummary",
+          TestCommitReadySummaryAppearsWithoutConflicts);
+  AddTest(tests, "GitSidebarCommandCenter/RefreshingKeepsUnstagedEmptyLabel",
+          TestRefreshingDoesNotReplaceUnstagedEmptyLabel);
 }
 
 }  // namespace microide::tests

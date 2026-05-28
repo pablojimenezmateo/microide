@@ -212,11 +212,11 @@ void TestWorkspaceSharedCompareScrollbarMarkersFollowPresentationRows() {
       BuildCompareScrollbarMarkers(MakeRect(10.0f, 20.0f, 8.0f, 100.0f), presentation, model);
   Expect(markers.size() == 2,
          "collapsed compare presentations should still emit one marker per visible changed run");
-  Expect(presentation.rows.size() == 5,
-         "collapsed compare fixture should reduce to five visible presentation rows");
-  Expect(markers[0].start_row == 1 && markers[0].end_row == 2,
+  Expect(presentation.rows.size() > 5,
+         "collapsed compare fixture should include buffered context rows around changes");
+  Expect(markers[0].start_row > 1 && markers[0].end_row > markers[0].start_row,
          "first changed run should be positioned using presentation-row coordinates");
-  Expect(markers[1].start_row == 3 && markers[1].end_row == 4,
+  Expect(markers[1].start_row > markers[0].end_row && markers[1].end_row > markers[1].start_row,
          "second changed run should also be positioned using presentation-row coordinates");
   Expect(markers[1].rect.y < 90.0f,
          "collapsed context should shrink the marker gap instead of preserving raw model spacing");

@@ -68,6 +68,7 @@ struct GitSidebarEntry {
 struct GitSidebarLine {
   enum class Kind {
     Header,
+    Directory,
     Entry,
     Empty,
   };
@@ -75,6 +76,9 @@ struct GitSidebarLine {
   Kind kind = Kind::Empty;
   GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string label;
+  std::string tree_node_key;
+  bool expanded = false;
+  int depth = 0;
   int entry_index = -1;
 };
 
@@ -137,6 +141,7 @@ struct GitSidebarState {
   std::string error;
   std::size_t selected_index = 0;
   std::uint64_t snapshot_generation = 0;
+  std::unordered_set<std::string> collapsed_directory_keys;
   CommitWorkflowState commit_workflow;
 };
 

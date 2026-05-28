@@ -40,6 +40,11 @@ struct CompareHoverState {
   std::size_t collapsed_run_length = 0;
 };
 
+struct CompareReviewHeaderState {
+  std::string summary_line;
+  std::string action_hint_line;
+};
+
 struct CompareTabState {
   std::filesystem::path path;
   std::filesystem::path left_path;
@@ -55,6 +60,7 @@ struct CompareTabState {
   compare::BranchReviewTargetIdentity branch_target;
   compare::CompareSemanticFileMetadata semantic_file;
   compare::ComparePresentationModel presentation;
+  CompareReviewHeaderState review_header;
   std::uint64_t presentation_revision = 0;
   compare::CompareBuildOptions build_options;
   bool show_whitespace = false;
