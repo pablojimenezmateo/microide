@@ -1,9 +1,11 @@
 #include "workspace/GitSidebarCommandCenter.h"
 
 #include <algorithm>
+#include <array>
 
 #include "compare/BranchReviewStateTypes.h"
 #include "workspace/BranchReviewStateBridge.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 
 namespace microide::workspace {
@@ -15,6 +17,48 @@ constexpr std::string_view kSectionTitleStaged = "Staged";
 constexpr std::string_view kSectionTitleChanged = "Unstaged";
 constexpr std::string_view kSectionTitleUntracked = "Untracked";
 constexpr std::string_view kSectionTitleOutgoing = "Outgoing";
+
+struct GitSidebarCounts {
+  std::size_t conflicts = 0;
+  std::size_t staged = 0;
+  std::size_t changed = 0;
+  std::size_t untracked = 0;
+  std::size_t outgoing = 0;
+};
+
+void AppendHintSegment(std::string& line, std::string_view segment) {
+  if (segment.empty()) {
+    return;
+  }
+  if (!line.empty()) {
+    line += "  |  ";
+  }
+  line.append(segment.data(), segment.size());
+}
+
+GitSidebarCounts CountEntriesBySection(const GitSidebarState& git_state) {
+  GitSidebarCounts counts;
+  for (const GitSidebarEntry& entry : git_state.entries) {
+    switch (entry.section) {
+      case GitSidebarEntry::Section::Conflicts:
+        ++counts.conflicts;
+        break;
+      case GitSidebarEntry::Section::Staged:
+        ++counts.staged;
+        break;
+      case GitSidebarEntry::Section::Changed:
+        ++counts.changed;
+        break;
+      case GitSidebarEntry::Section::Untracked:
+        ++counts.untracked;
+        break;
+      case GitSidebarEntry::Section::Outgoing:
+        ++counts.outgoing;
+        break;
+    }
+  }
+  return counts;
+}
 
 std::string_view SectionTitle(GitSidebarEntry::Section section) {
   switch (section) {
@@ -32,6 +76,133 @@ std::string_view SectionTitle(GitSidebarEntry::Section section) {
   return {};
 }
 
+std::string GitSidebarPrimaryActionLabel(const GitSidebarEntry& entry,
+                                         const GitSidebarActionAvailability& actions) {
+  if (actions.merge) {
+    return "merge resolver";
+  }
+  if (actions.diff) {
+    return entry.section == GitSidebarEntry::Section::Outgoing ? "outgoing diff"
+                                                               : "diff review";
+  }
+  if (actions.open_file) {
+    return "open file";
+  }
+  return "inspect";
+}
+
+std::string GitSidebarWorkflowSummaryLine(const GitSidebarState& git_state,
+                                          const GitSidebarCounts& counts) {
+  if (!git_state.repo_available) {
+    return "Open a Git repository to review changes.";
+  }
+
+  std::string line;
+  line.reserve(96);
+  if (counts.conflicts > 0) {
+    AppendUnsigned(line, counts.conflicts);
+    line += counts.conflicts == 1 ? " conflict" : " conflicts";
+  }
+  if (counts.staged > 0) {
+    if (!line.empty()) {
+      line += "  ·  ";
+    }
+    AppendUnsigned(line, counts.staged);
+    line += counts.staged == 1 ? " staged" : " staged";
+  }
+  if (counts.changed > 0) {
+    if (!line.empty()) {
+      line += "  ·  ";
+    }
+    AppendUnsigned(line, counts.changed);
+    line += counts.changed == 1 ? " unstaged" : " unstaged";
+  }
+  if (counts.untracked > 0) {
+    if (!line.empty()) {
+      line += "  ·  ";
+    }
+    AppendUnsigned(line, counts.untracked);
+    line += counts.untracked == 1 ? " untracked" : " untracked";
+  }
+  if (counts.outgoing > 0) {
+    if (!line.empty()) {
+      line += "  ·  ";
+    }
+    AppendUnsigned(line, counts.outgoing);
+    line += counts.outgoing == 1 ? " outgoing" : " outgoing";
+  }
+  if (line.empty()) {
+    line = "Working tree clean.";
+  }
+  return line;
+}
+
+std::string GitSidebarCommitSummaryLine(const GitSidebarState& git_state,
+                                        const GitSidebarCounts& counts) {
+  if (!git_state.repo_available) {
+    return {};
+  }
+  if (git_state.commit_workflow.operation_in_flight) {
+    return "Commit in progress...";
+  }
+  if (git_state.commit_workflow.open) {
+    return "Commit draft open  |  Ctrl+Enter commit  |  Esc close";
+  }
+  if (counts.conflicts > 0) {
+    return counts.conflicts == 1 ? "Commit blocked  |  resolve the remaining conflict"
+                                 : "Commit blocked  |  resolve conflicts first";
+  }
+  if (counts.staged == 0) {
+    return "Commit blocked  |  nothing staged";
+  }
+  return "Commit ready  |  c commit";
+}
+
+std::string GitSidebarSelectionSummaryLine(const GitSidebarEntry& entry,
+                                           std::string_view primary_action_label) {
+  const std::string path_label =
+      entry.relative_path.empty() ? entry.path.generic_string() : entry.relative_path.generic_string();
+  std::string line = "Selected: ";
+  line.append(primary_action_label.data(), primary_action_label.size());
+  if (!path_label.empty()) {
+    line += "  ·  ";
+    line += path_label;
+  }
+  return line;
+}
+
+std::string GitSidebarSelectionActionLine(const GitSidebarEntry& entry,
+                                          const GitSidebarActionAvailability& actions,
+                                          bool commit_ready) {
+  std::string line;
+  if (actions.default_view) {
+    AppendHintSegment(line, "Enter default");
+  }
+  if (actions.diff) {
+    AppendHintSegment(line, "d diff");
+  }
+  if (actions.stage) {
+    AppendHintSegment(line, "s stage");
+  }
+  if (actions.unstage) {
+    AppendHintSegment(line, "u unstage");
+  }
+  if (actions.discard) {
+    AppendHintSegment(line, "x discard");
+  }
+  if (actions.merge) {
+    AppendHintSegment(line, "m merge");
+  }
+  if (actions.open_file) {
+    AppendHintSegment(line, "o open");
+  }
+  if (commit_ready && entry.section != GitSidebarEntry::Section::Outgoing) {
+    AppendHintSegment(line, "c commit");
+  }
+  AppendHintSegment(line, "r refresh");
+  return line;
+}
+
 std::string EmptySectionLabel(GitSidebarEntry::Section section,
                               bool git_repo_available,
                               bool refreshing,
@@ -40,11 +211,9 @@ std::string EmptySectionLabel(GitSidebarEntry::Section section,
     case GitSidebarEntry::Section::Conflicts:
       return "No merge conflicts";
     case GitSidebarEntry::Section::Staged:
-      return "Nothing staged";
+      return "No staged changes";
     case GitSidebarEntry::Section::Changed:
-      if (refreshing) {
-        return "Refreshing git status...";
-      }
+      (void)refreshing;
       return git_repo_available ? "No unstaged changes" : "Not a git repository";
     case GitSidebarEntry::Section::Untracked:
       return "No untracked files";
@@ -200,10 +369,10 @@ std::string BuildGitBranchSummaryLine(const std::string_view branch_label,
 }
 
 std::string BuildGitStaleBanner(const bool snapshot_stale, const bool refreshing) {
-  if (!snapshot_stale) {
+  if (!snapshot_stale || refreshing) {
     return {};
   }
-  return refreshing ? "Refreshing repository snapshot..." : "Repository snapshot is stale — refresh pending";
+  return "Repository snapshot is stale — refresh pending";
 }
 
 std::string BuildGitRefreshErrorBanner(const std::string_view refresh_error) {
@@ -252,6 +421,10 @@ GitSidebarViewModel BuildGitSidebarViewModel(
   view_model.error_banner =
       git_state.error.empty() ? BuildGitRefreshErrorBanner(git_state.refresh_error)
                               : "Git: " + git_state.error;
+  const GitSidebarCounts counts = CountEntriesBySection(git_state);
+  const bool commit_ready = git_state.repo_available && counts.conflicts == 0 && counts.staged > 0 &&
+                            !git_state.commit_workflow.open &&
+                            !git_state.commit_workflow.operation_in_flight;
 
   view_model.summary_lines.push_back(
       BuildGitBranchSummaryLine(git_state.branch_label, git_state.upstream_label, git_state.ahead,
@@ -262,6 +435,8 @@ GitSidebarViewModel BuildGitSidebarViewModel(
   if (!view_model.error_banner.empty()) {
     view_model.summary_lines.push_back(view_model.error_banner);
   }
+  view_model.workflow_summary_line = GitSidebarWorkflowSummaryLine(git_state, counts);
+  view_model.commit_summary_line = GitSidebarCommitSummaryLine(git_state, counts);
 
   const std::array<GitSidebarEntry::Section, 5> section_order = {
       GitSidebarEntry::Section::Conflicts,
@@ -303,9 +478,11 @@ GitSidebarViewModel BuildGitSidebarViewModel(
       section_vm.rows.push_back(GitSidebarRowViewModel{
           .entry_index = static_cast<int>(i),
           .row_kind = RowKindFromSection(entry.section),
+          .relative_path = entry.relative_path,
           .primary_label = text_model.primary_label,
           .secondary_label = text_model.secondary_label,
           .review_marker_label = std::move(review_marker_label),
+          .primary_action_label = GitSidebarPrimaryActionLabel(entry, actions),
           .status = entry.status,
           .actions = actions,
           .show_stage_button = actions.stage || actions.unstage,
@@ -320,6 +497,20 @@ GitSidebarViewModel BuildGitSidebarViewModel(
     }
 
     view_model.sections.push_back(std::move(section_vm));
+  }
+
+  if (git_state.selected_index < git_state.entries.size()) {
+    const GitSidebarEntry& selected_entry = git_state.entries[git_state.selected_index];
+    const GitSidebarActionAvailability actions = GitSidebarActionAvailabilityForEntry(
+        selected_entry, git_state.repo_available, git_state.supports_mutations);
+    const std::string primary_action_label = GitSidebarPrimaryActionLabel(selected_entry, actions);
+    view_model.selection_summary_line =
+        GitSidebarSelectionSummaryLine(selected_entry, primary_action_label);
+    view_model.selection_action_line =
+        GitSidebarSelectionActionLine(selected_entry, actions, commit_ready);
+  } else if (git_state.repo_available) {
+    view_model.selection_summary_line = "Select a file to review or mutate.";
+    view_model.selection_action_line = "Enter default  |  r refresh";
   }
 
   return view_model;

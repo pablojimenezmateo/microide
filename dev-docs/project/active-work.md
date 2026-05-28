@@ -104,6 +104,11 @@ regex fallback), save normalization, and auto-detect indent on open (see
 multi-caret fold-paging coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel
 that maps cleanly (16.3 — environmental; ASAN/UBSAN focused runs clean).
 
+Update (2026-05-28): Git-first shell UX pass shipped in the current tree. The Git sidebar now
+surfaces workflow and commit-readiness summaries plus selected-row action hints, and compare tabs
+now render explicit review-mode/action-hint chrome so working-tree staging flows read more like a
+guided review surface than a raw diff.
+
 ### 1. Plugin Platform Expansion
 
 This is the dominant current phase and will be large.

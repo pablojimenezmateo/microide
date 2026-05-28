@@ -19,6 +19,15 @@ scenarios — not comparisons to other editors.
 | Commit staged changes | Commit workflow in Git sidebar |
 | Review branch against base | Branch review mode in compare (local base ref) |
 
+### Git/Diff UI behavior
+
+- Compare headers keep review context compact and show shortcut discovery as a hint instead of a full
+  always-on shortcut wall.
+- Collapsed unchanged diff context renders as an intentional row block with attached reveal controls
+  (`Show previous 20`, `Show all`, `Show next 20`).
+- Git sidebar row action buttons are surfaced on the selected entry, reducing always-visible noise
+  while preserving keyboard and command-palette actions.
+
 ### Conflict support boundaries
 
 - **Supported in preview:** common line-oriented text conflicts surfaced in merge tabs.

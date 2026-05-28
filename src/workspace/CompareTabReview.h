@@ -31,6 +31,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                    const CompareTabReviewRefreshInput& input);
 
 void RefreshCompareTabPresentation(CompareTabState& compare_tab);
+void RefreshCompareReviewHeader(CompareTabState& compare_tab);
 
 void ApplyBranchReviewPresentationMarkers(CompareTabState& compare_tab,
                                           const compare::BranchReviewStateService& review_service);

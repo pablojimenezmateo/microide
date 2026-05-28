@@ -56,12 +56,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                             color, hover_color);
   };
   const StripTabPalette panel_tab_palette{
-      .active_fill = theme_.chrome_active,
-      .inactive_fill = theme_.surface_raised,
+      .active_fill = render::BlendColors(theme_.chrome_active, theme_.surface_background, 0.42f),
+      .inactive_fill = render::BlendColors(theme_.surface_raised, theme_.surface_background, 0.66f),
       .active_text = theme_.chrome_active_text,
-      .inactive_text = theme_.surface_text,
+      .inactive_text = theme_.text_secondary,
       .active_glyph = theme_.chrome_active_text,
-      .inactive_glyph = theme_.surface_text,
+      .inactive_glyph = theme_.text_secondary,
   };
 
   const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style, bool selected) {

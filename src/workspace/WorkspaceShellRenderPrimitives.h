@@ -118,7 +118,7 @@ inline ButtonColors ResolveButtonColors(const render::Theme& theme,
   if (state.active) {
     if (tone == ButtonTone::Destructive) {
       return ButtonColors{
-          .fill = theme.diff_deleted,
+          .fill = render::BlendColors(theme.diff_deleted, theme.editor_background, 0.22f),
           .border = theme.diff_deleted,
           .text = theme.text_primary,
       };
@@ -142,7 +142,7 @@ inline ButtonColors ResolveButtonColors(const render::Theme& theme,
       .fill = theme.surface_raised,
       .border = theme.border,
       .text = tone == ButtonTone::Destructive
-                  ? theme.diff_deleted
+                  ? render::BlendColors(theme.diff_deleted, theme.text_secondary, 0.45f)
                   : tone == ButtonTone::Accent ? theme.accent : theme.text_secondary,
   };
 }
@@ -242,7 +242,8 @@ inline void DrawScrollbarThumb(SDL_Renderer* renderer,
     return;
   }
 
-  const SDL_Color thumb_color = active ? theme.accent : theme.text_disabled;
+  const SDL_Color thumb_color =
+      active ? theme.accent : render::BlendColors(theme.text_muted, theme.surface_raised, 0.35f);
   FillRect(renderer, thumb, thumb_color);
 }
 

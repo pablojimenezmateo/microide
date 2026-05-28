@@ -66,14 +66,14 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeGitSidebarListLayout(rect, count);
               },
+          .toggle_git_sidebar_directory_collapsed =
+              [this](const std::string& tree_node_key) {
+                return ToggleGitSidebarDirectoryCollapsed(tree_node_key);
+              },
           .compute_git_sidebar_entry_action_layout =
               [this](const SDL_FRect& rect, const GitSidebarEntry& entry) {
                 return ComputeGitSidebarEntryActionLayout(rect, entry);
               },
-          .unstage_git_sidebar_entry =
-              [this](std::size_t index) { return UnstageGitSidebarEntry(index); },
-          .stage_git_sidebar_entry =
-              [this](std::size_t index) { return StageGitSidebarEntry(index); },
           .open_discard_git_entry_prompt =
               [this](std::size_t index) { OpenDiscardGitSidebarEntryPrompt(index); },
           .dispatch_git_sidebar_action =

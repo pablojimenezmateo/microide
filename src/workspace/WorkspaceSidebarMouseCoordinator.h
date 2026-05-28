@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <string>
 #include <vector>
 
 #include "workspace/GitSidebarCommandCenter.h"
@@ -45,10 +46,9 @@ class SidebarMouseCoordinator {
     std::function<float(const SDL_FRect&)> git_sidebar_list_top;
     std::function<std::vector<GitSidebarLine>()> build_git_sidebar_lines;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_git_sidebar_list_layout;
+    std::function<bool(const std::string&)> toggle_git_sidebar_directory_collapsed;
     std::function<GitSidebarEntryActionLayout(const SDL_FRect&, const GitSidebarEntry&)>
         compute_git_sidebar_entry_action_layout;
-    std::function<bool(std::size_t)> unstage_git_sidebar_entry;
-    std::function<bool(std::size_t)> stage_git_sidebar_entry;
     std::function<void(std::size_t)> open_discard_git_entry_prompt;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>

@@ -222,6 +222,8 @@
     float left_x = 0.0f;
     float center_x = 0.0f;
     float right_x = 0.0f;
+    float review_summary_y = 0.0f;
+    float action_hint_y = 0.0f;
     float header_y = 0.0f;
     float rows_y = 0.0f;
     int visible_rows = 1;
@@ -818,6 +820,7 @@
   SDL_FRect GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const;
   std::optional<SDL_FRect> GitSidebarOutgoingBaseButtonRect(const SDL_FRect& sidebar_rect) const;
   std::vector<std::string> GitSidebarSummaryLines() const;
+  float GitSidebarSummaryHeight() const;
   float GitSidebarListTop(const SDL_FRect& sidebar_rect) const;
   float GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const;
   ScrollableListLayout ComputeProjectSearchSidebarListLayout(const SDL_FRect& sidebar_rect,
@@ -833,6 +836,7 @@
   ScrollableListLayout ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                       std::size_t line_count) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
+  bool ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key);
   GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
                                                                  const GitSidebarEntry& entry) const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;

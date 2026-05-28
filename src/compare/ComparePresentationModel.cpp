@@ -113,11 +113,16 @@ ComparePresentationModel BuildComparePresentationModel(
       }
       const std::size_t expanded_above = collapsed_run_state.expanded_above;
       const std::size_t expanded_below = collapsed_run_state.expanded_below;
-
+      const std::size_t default_prefix =
+          previous_hunk_index >= 0 ? std::min(options.context_lines, run_length) : 0;
+      const std::size_t default_suffix =
+          next_hunk_index >= 0 ? std::min(options.context_lines, run_length) : 0;
+      const std::size_t max_prefix = run_length > default_suffix ? run_length - default_suffix : 0;
       const std::size_t visible_prefix =
-          std::min(expanded_above, run_length);
+          std::min(max_prefix, default_prefix + expanded_above);
+      const std::size_t max_suffix = run_length - visible_prefix;
       const std::size_t visible_suffix =
-          std::min(expanded_below, run_length - visible_prefix);
+          std::min(max_suffix, default_suffix + expanded_below);
       const std::size_t collapsed_count =
           run_length > visible_prefix + visible_suffix
               ? run_length - visible_prefix - visible_suffix

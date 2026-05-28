@@ -130,16 +130,28 @@ std::string BuildCompareBreadcrumbLabel(const std::filesystem::path& project_roo
                                         const std::filesystem::path& path,
                                         std::string_view left_label,
                                         std::string_view right_label) {
-  return RelativePathLabel(project_root, path) + "  |  " + std::string(left_label) + " -> " +
-         std::string(right_label);
+  const std::string relative_path = RelativePathLabel(project_root, path);
+  if (!relative_path.empty()) {
+    return relative_path;
+  }
+  if (!left_label.empty() || !right_label.empty()) {
+    return std::string(left_label) + " -> " + std::string(right_label);
+  }
+  return "compare";
 }
 
 std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
                                       const std::filesystem::path& output_path,
                                       std::string_view incoming_label,
                                       std::string_view current_label) {
-  return RelativePathLabel(project_root, output_path) + "  |  " + std::string(incoming_label) +
-         " -> " + std::string(current_label);
+  const std::string relative_path = RelativePathLabel(project_root, output_path);
+  if (!relative_path.empty()) {
+    return relative_path;
+  }
+  if (!incoming_label.empty() || !current_label.empty()) {
+    return std::string(incoming_label) + " -> " + std::string(current_label);
+  }
+  return "merge";
 }
 
 std::optional<SDL_Color> ParseProjectColor(std::string_view text) {

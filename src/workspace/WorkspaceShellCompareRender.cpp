@@ -22,8 +22,8 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kDiffRowTint = 0.16f;
-constexpr float kDiffRowTintSelected = 0.24f;
+constexpr float kDiffRowTint = 0.12f;
+constexpr float kDiffRowTintSelected = 0.18f;
 
 SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
   switch (kind) {
@@ -197,6 +197,19 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   DrawFilledRect(renderer, MakeRect(surface.right_x - 1.0f, rect.y, 1.0f, content_height),
                  theme_.border);
 
+  if (!compare_tab->review_header.summary_line.empty()) {
+    constexpr std::string_view kShortcutHint = "Ctrl+E  keyboard-shortcuts";
+    const float hint_width = text_renderer_.MeasureWidth(kShortcutHint);
+    const float hint_x = rect.x + std::max(8.0f, content_width - hint_width - 10.0f);
+    const float summary_width =
+        std::max(0.0f, (hint_x - 14.0f) - (rect.x + 8.0f));
+    text_renderer_.DrawString(renderer, rect.x + 8.0f, surface.review_summary_y,
+                              theme_.text_primary,
+                              TruncateLabel(compare_tab->review_header.summary_line,
+                                            summary_width));
+    text_renderer_.DrawString(renderer, hint_x, surface.review_summary_y,
+                              theme_.text_muted, kShortcutHint);
+  }
   text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabel(compare_tab->left_label, surface.left_width - 8.0f));
@@ -222,8 +235,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     const bool selected =
         static_cast<std::size_t>(presentation_index) == compare_tab->selected_row;
     if (presentation_row->kind != compare::ComparePresentationRowKind::Model) {
-      const SDL_Color summary_background =
-          selected ? theme_.row_highlight : theme_.editor_background;
+      const SDL_Color summary_background = selected
+                                               ? theme_.row_highlight
+                                               : render::BlendColors(theme_.editor_background,
+                                                                     theme_.surface_background, 0.24f);
       const SDL_FRect row_rect =
           MakeRect(rect.x, y - 1.0f, content_width, surface.line_height);
       DrawFilledRect(renderer, row_rect, summary_background);
@@ -231,9 +246,12 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                            std::string_view label,
                                            bool hovered) {
         const bool emphasized = selected || hovered;
-        DrawFilledRect(renderer, button_rect,
-                       emphasized ? theme_.chrome_active : theme_.surface_raised);
-        DrawRect(renderer, button_rect, emphasized ? theme_.accent : theme_.border);
+        const SDL_Color fill = emphasized
+                                   ? theme_.chrome_active
+                                   : render::BlendColors(theme_.surface_raised,
+                                                         theme_.editor_background, 0.36f);
+        DrawFilledRect(renderer, button_rect, fill);
+        DrawRect(renderer, button_rect, emphasized ? theme_.text_secondary : theme_.border);
         const float text_x =
             button_rect.x +
             std::max(0.0f, (button_rect.w - text_renderer_.MeasureWidth(label)) * 0.5f);
@@ -241,8 +259,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
             button_rect.y +
             std::max(0.0f, (button_rect.h - text_renderer_.LineHeight()) * 0.5f);
         text_renderer_.DrawStringOn(renderer, text_x, text_y,
-                                    emphasized ? theme_.text_primary : theme_.text_secondary,
-                                    emphasized ? theme_.chrome_active : theme_.surface_raised, label);
+                                    emphasized ? theme_.text_primary : theme_.text_muted,
+                                    fill, label);
       };
       std::string summary = presentation_row->summary_text;
       if (!presentation_row->review_marker_label.empty()) {
@@ -253,8 +271,15 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       }
       float summary_width = content_width - 16.0f;
       if (presentation_row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
+        const SDL_FRect block_rect =
+            MakeRect(row_rect.x + 4.0f, row_rect.y, std::max(0.0f, row_rect.w - 8.0f), row_rect.h);
+        DrawFilledRect(renderer, block_rect,
+                       selected ? theme_.chrome_active
+                                : render::BlendColors(theme_.surface_raised, theme_.editor_background,
+                                                      0.30f));
+        DrawRect(renderer, block_rect, selected ? theme_.accent : theme_.border);
         const auto action_rects = BuildCollapsedContextActionRects(
-            text_renderer_, row_rect, presentation_row->previous_hunk_index >= 0,
+            text_renderer_, block_rect, presentation_row->previous_hunk_index >= 0,
             presentation_row->next_hunk_index >= 0);
         const auto hovered_action = [&compare_tab, presentation_index,
                                      presentation_row](CompareHoverKind kind) {
@@ -267,8 +292,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                  compare_tab->hover_state->collapsed_run_length ==
                      presentation_row->collapsed_run_length;
         };
-        summary_width = std::max(0.0f, action_rects.text_right_edge -
-                                           (surface.left_x + surface.gutter_width));
+        const float summary_x = block_rect.x + 8.0f;
+        summary_width = std::max(0.0f, action_rects.text_right_edge - summary_x);
         if (action_rects.previous_rect.has_value()) {
           draw_context_button(*action_rects.previous_rect, "Show previous 20",
                               hovered_action(CompareHoverKind::CollapsedContextPreviousAction));
@@ -279,10 +304,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           draw_context_button(*action_rects.next_rect, "Show next 20",
                               hovered_action(CompareHoverKind::CollapsedContextNextAction));
         }
+        text_renderer_.DrawString(renderer, summary_x, y,
+                                  selected ? theme_.text_primary : theme_.text_secondary,
+                                  TruncateLabel(summary, summary_width));
+      } else {
+        text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
+                                  selected ? theme_.text_primary : theme_.text_muted,
+                                  TruncateLabel(summary, summary_width));
       }
-      text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
-                                selected ? theme_.text_primary : theme_.text_muted,
-                                TruncateLabel(summary, summary_width));
       continue;
     }
 

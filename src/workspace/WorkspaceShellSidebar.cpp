@@ -23,7 +23,6 @@ constexpr float kGitSidebarActionRowTop = 34.0f;
 constexpr float kGitSidebarActionButtonHeight = 18.0f;
 constexpr float kGitSidebarActionGap = 6.0f;
 constexpr float kGitSidebarListGap = 8.0f;
-constexpr float kGitSidebarHeaderButtonSize = 18.0f;
 constexpr float kTreeSidebarActionRowTop = 34.0f;
 constexpr float kTreeSidebarActionButtonHeight = 18.0f;
 constexpr float kTreeSidebarListGap = 8.0f;
@@ -56,9 +55,16 @@ SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_r
   if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
-  const float size = std::min(kGitSidebarHeaderButtonSize, std::max(0.0f, sidebar_rect.h - 8.0f));
-  return MakeRect(sidebar_rect.x + sidebar_rect.w - kSidebarInset - size, sidebar_rect.y + 4.0f,
-                  size, size);
+
+  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
+  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+
+  const float button_width =
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
+  return MakeRect(row_rect.x + (button_width + kGitSidebarActionGap) * 2.0f, row_rect.y,
+                  button_width, row_rect.h);
 }
 
 SDL_FRect WorkspaceShell::GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const {
@@ -78,7 +84,7 @@ SDL_FRect WorkspaceShell::GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_
   }
 
   const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap) * 0.5f);
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
   return MakeRect(row_rect.x, row_rect.y, button_width, row_rect.h);
 }
 
@@ -89,7 +95,7 @@ SDL_FRect WorkspaceShell::GitSidebarDiscardAllButtonRect(const SDL_FRect& sideba
   }
 
   const float button_width =
-      std::max(0.0f, (row_rect.w - kGitSidebarActionGap) * 0.5f);
+      std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
   return MakeRect(row_rect.x + button_width + kGitSidebarActionGap, row_rect.y, button_width,
                   row_rect.h);
 }
@@ -120,24 +126,51 @@ std::optional<SDL_FRect> WorkspaceShell::GitSidebarOutgoingBaseButtonRect(
 
 std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
   std::vector<std::string> lines;
-  std::string scm_line = "SCM: Git";
-  for (const ScmProviderSpec& provider : scm_registry_.Specs()) {
-    scm_line += ", ";
-    scm_line += provider.label.empty() ? provider.id : provider.label;
-  }
-  lines.push_back(std::move(scm_line));
 
   const GitSidebarViewModel view_model =
       BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
                              context_.current_project_state.root,
                              context_.current_project_state.branch_review);
   lines.insert(lines.end(), view_model.summary_lines.begin(), view_model.summary_lines.end());
+  if (!view_model.workflow_summary_line.empty()) {
+    lines.push_back(view_model.workflow_summary_line);
+  }
+  if (!view_model.commit_summary_line.empty()) {
+    lines.push_back(view_model.commit_summary_line);
+  }
+  if (!view_model.selection_summary_line.empty()) {
+    lines.push_back(view_model.selection_summary_line);
+  }
   return lines;
 }
 
+float WorkspaceShell::GitSidebarSummaryHeight() const {
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                               context_.current_project_state.root,
+                               context_.current_project_state.branch_review);
+  const bool sidebar_focus_details =
+      context_.current_project_state.surface.focus == FocusTarget::Sidebar &&
+      ActiveSidebarMode() == SidebarMode::Git;
+
+  float height = 0.0f;
+  // Keep list offset in sync with the compact grouped summary block.
+  height += static_cast<float>(view_model.summary_lines.size()) * kGitSidebarSummaryLineHeight;
+  if (!view_model.workflow_summary_line.empty()) {
+    height += kGitSidebarSummaryLineHeight;
+  }
+  if (!view_model.commit_summary_line.empty()) {
+    height += kGitSidebarSummaryLineHeight;
+  }
+  if (sidebar_focus_details && !view_model.selection_summary_line.empty()) {
+    height += kGitSidebarSummaryLineHeight;
+    height += kGitSidebarSummaryLineHeight;  // "Ctrl+E for row actions and shortcuts"
+  }
+  return height;
+}
+
 float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
-  const float summary_height =
-      static_cast<float>(GitSidebarSummaryLines().size()) * kGitSidebarSummaryLineHeight;
+  const float summary_height = GitSidebarSummaryHeight();
   return sidebar_rect.y + kGitSidebarActionRowTop + kGitSidebarActionButtonHeight +
          kGitSidebarListGap + summary_height +
          (summary_height > 0.0f ? kGitSidebarListGap * 0.5f : 0.0f) + GitSidebarCommitWorkflowHeight() +
@@ -256,9 +289,7 @@ SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) 
 
   const std::string label = SidebarModeControlLabel();
   const float left = sidebar_rect.x + 10.0f;
-  const float reserved_right =
-      ActiveSidebarMode() == SidebarMode::Git ? kSidebarInset + kGitSidebarHeaderButtonSize + 6.0f
-                                              : 10.0f;
+  const float reserved_right = 10.0f;
   const float max_width =
       std::max(0.0f, sidebar_rect.w - (left - sidebar_rect.x) - reserved_right - 6.0f);
   const float desired_width =
@@ -278,7 +309,8 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
   }
 
   if (Contains(GitSidebarRefreshButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
-    return "Refresh";
+    return context_.current_project_state.sidebar.git.refreshing ? "Refreshing repository snapshot"
+                                                                 : "Refresh";
   }
 
   if (last_mouse_y_ < GitSidebarListTop(sidebar_rect)) {
@@ -355,21 +387,41 @@ std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines
       BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
                              context_.current_project_state.root,
                              context_.current_project_state.branch_review);
-  const auto specs = BuildGitSidebarLineSpecs(view_model);
+  const auto specs = BuildGitSidebarLineSpecs(
+      view_model, &context_.current_project_state.sidebar.git.collapsed_directory_keys);
   std::vector<GitSidebarLine> lines;
   lines.reserve(specs.size());
   for (const GitSidebarLineSpec& spec : specs) {
     lines.push_back(GitSidebarLine{
         .kind = spec.kind == GitSidebarLineKind::Header
                     ? GitSidebarLine::Kind::Header
+                    : spec.kind == GitSidebarLineKind::Directory
+                        ? GitSidebarLine::Kind::Directory
                     : spec.kind == GitSidebarLineKind::Entry ? GitSidebarLine::Kind::Entry
                                                              : GitSidebarLine::Kind::Empty,
         .section = spec.section,
         .label = spec.label,
+        .tree_node_key = spec.tree_node_key,
+        .expanded = spec.expanded,
+        .depth = spec.depth,
         .entry_index = spec.entry_index,
     });
   }
   return lines;
+}
+
+bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key) {
+  if (tree_node_key.empty()) {
+    return false;
+  }
+  auto& collapsed = context_.current_project_state.sidebar.git.collapsed_directory_keys;
+  const auto it = collapsed.find(tree_node_key);
+  if (it == collapsed.end()) {
+    collapsed.insert(tree_node_key);
+  } else {
+    collapsed.erase(it);
+  }
+  return true;
 }
 
 WorkspaceShell::GitSidebarEntryActionLayout WorkspaceShell::ComputeGitSidebarEntryActionLayout(
@@ -384,6 +436,12 @@ WorkspaceShell::GitSidebarEntryActionLayout WorkspaceShell::ComputeGitSidebarEnt
   const GitSidebarActionAvailability availability = GitSidebarActionAvailabilityForEntry(
       entry, context_.current_project_state.sidebar.git.repo_available,
       context_.current_project_state.sidebar.git.supports_mutations);
+  const auto& entries = context_.current_project_state.sidebar.git.entries;
+  const std::size_t selected_index = context_.current_project_state.sidebar.git.selected_index;
+  const bool selected_entry = selected_index < entries.size() && &entry == &entries[selected_index];
+  if (!selected_entry) {
+    return layout;
+  }
   if (!availability.stage && !availability.unstage && !availability.discard) {
     return layout;
   }
@@ -416,7 +474,8 @@ std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
       BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
                              context_.current_project_state.root,
                              context_.current_project_state.branch_review);
-  const auto specs = BuildGitSidebarLineSpecs(view_model);
+  const auto specs = BuildGitSidebarLineSpecs(
+      view_model, &context_.current_project_state.sidebar.git.collapsed_directory_keys);
   return FindSelectedGitSidebarLineIndex(specs, context_.current_project_state.sidebar.git.selected_index);
 }
 

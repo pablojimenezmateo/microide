@@ -169,7 +169,7 @@ struct LspUiState {
 struct PanelState {
   PanelContentKind content = PanelContentKind::None;
   bool command_mode = false;
-  float height = 184.0f;
+  float height = 156.0f;
   CommandState command;
   OutputPanelState output;
 };

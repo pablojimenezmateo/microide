@@ -13,12 +13,12 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kCollapsedContextButtonGap = 6.0f;
-constexpr float kCollapsedContextButtonHeight = 18.0f;
-constexpr float kCollapsedContextButtonHorizontalPadding = 16.0f;
+constexpr float kCollapsedContextButtonHeight = 16.0f;
+constexpr float kCollapsedContextButtonHorizontalPadding = 12.0f;
 
 float CollapsedContextButtonWidth(const render::TextRenderer& text_renderer,
                                   std::string_view label) {
-  return std::max(56.0f, text_renderer.MeasureWidth(label) + kCollapsedContextButtonHorizontalPadding);
+  return std::max(48.0f, text_renderer.MeasureWidth(label) + kCollapsedContextButtonHorizontalPadding);
 }
 
 }  // namespace

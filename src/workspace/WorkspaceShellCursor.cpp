@@ -445,6 +445,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Default;
       }
       const auto& line = lines[static_cast<std::size_t>(*line_index)];
+      if (line.kind == GitSidebarLine::Kind::Directory) {
+        return CursorKind::Pointer;
+      }
       if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
         return CursorKind::Default;
       }

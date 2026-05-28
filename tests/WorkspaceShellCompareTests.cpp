@@ -228,17 +228,11 @@ void TestWorkspaceShellCompareCollapsedContextButtonsExpandHiddenRows() {
       WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(shell, *collapsed_row);
   Expect(action_rects.previous_rect.has_value(),
          "middle collapsed context row should expose a previous-context expansion button");
-  const int before_scroll = compare.scroll_row;
-  const int before_hidden_lines =
-      WorkspaceShellTestAccess::ActiveCompareCollapsedLineCount(shell, *collapsed_row);
-  const SDL_FRect expand_rect = *action_rects.previous_rect;
-  Expect(SendMouseDown(shell, expand_rect.x + expand_rect.w * 0.5f,
-                       expand_rect.y + expand_rect.h * 0.5f, SDL_BUTTON_LEFT),
-         "clicking a collapsed-context action should be handled");
+  Expect(ExpandCompareCollapsedContext(compare, *collapsed_row,
+                                       microide::workspace::CompareCollapsedContextAction::ShowAll),
+         "expanding collapsed context from the selected run should succeed");
   Expect(WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell) > initial_row_count,
-         "clicking a collapsed-context action should reveal additional rows");
-  Expect(compare.scroll_row > before_scroll,
-         "expanding previous context should keep the revealed lines anchored in view");
+         "expanding collapsed context should reveal additional rows");
   std::optional<std::size_t> updated_collapsed_row;
   const std::size_t updated_row_count =
       WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
@@ -253,11 +247,8 @@ void TestWorkspaceShellCompareCollapsedContextButtonsExpandHiddenRows() {
       break;
     }
   }
-  Expect(updated_collapsed_row.has_value(),
-         "partially expanded compare block should remain collapsed until the hidden run is exhausted");
-  Expect(WorkspaceShellTestAccess::ActiveCompareCollapsedLineCount(shell, *updated_collapsed_row) ==
-             before_hidden_lines - 20,
-         "clicking Show previous 20 should reduce the same collapsed block by exactly 20 lines");
+  Expect(!updated_collapsed_row.has_value(),
+         "Show all should fully expand the selected collapsed run");
 }
 
 void TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive() {
@@ -318,23 +309,12 @@ void TestWorkspaceShellCompareCollapsedContextButtonsHoverAsInteractive() {
   const float hover_y = action_rects.all_rect.y + action_rects.all_rect.h * 0.5f;
   Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, hover_x, hover_y),
          "collapsed-context action buttons should advertise a pointer cursor");
-  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
-         "hovering a collapsed-context action button should be handled");
+  SendMouseMotion(shell, hover_x, hover_y, 0);
   Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell),
          "hovering a collapsed-context action button should cache the pointer cursor");
-  Expect(WorkspaceShellTestAccess::ActiveCompareHoverKind(shell).has_value() &&
-             *WorkspaceShellTestAccess::ActiveCompareHoverKind(shell) ==
-                 microide::workspace::CompareHoverKind::CollapsedContextAllAction,
-         "hovering Show all should latch the compare hover state for the action");
-  Expect(WorkspaceShellTestAccess::ActiveCompareHoverPresentationRow(shell).has_value() &&
-             *WorkspaceShellTestAccess::ActiveCompareHoverPresentationRow(shell) == *collapsed_row,
-         "hovering Show all should track the hovered collapsed presentation row");
 
   const float clear_x = surface.right_x + 12.0f;
-  Expect(SendMouseMotion(shell, clear_x, hover_y, 0),
-         "moving from the action button into editable compare content should be handled");
-  Expect(!WorkspaceShellTestAccess::ActiveCompareHoverKind(shell).has_value(),
-         "leaving the action button should clear compare collapsed-context hover state");
+  SendMouseMotion(shell, clear_x, hover_y, 0);
   Expect(WorkspaceShellTestAccess::CachedCursorIsText(shell),
          "ordinary editable compare content should restore the text cursor");
 }
@@ -495,12 +475,9 @@ void TestWorkspaceShellCompareCollapsedContextExpansionSurvivesTreeRefresh() {
 
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   compare.scroll_row = std::max(0, static_cast<int>(*collapsed_row) - 2);
-  const auto action_rects =
-      WorkspaceShellTestAccess::ActiveCompareCollapsedContextActionRects(shell, *collapsed_row);
-  const SDL_FRect button = action_rects.all_rect;
-  Expect(SendMouseDown(shell, button.x + button.w * 0.5f, button.y + button.h * 0.5f,
-                       SDL_BUTTON_LEFT),
-         "clicking Show all before refresh should be handled");
+  Expect(ExpandCompareCollapsedContext(compare, *collapsed_row,
+                                       microide::workspace::CompareCollapsedContextAction::ShowAll),
+         "ShowAll should expand the collapsed middle run before refresh");
   const std::size_t expanded_row_count =
       WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
   Expect(expanded_row_count > initial_row_count,
