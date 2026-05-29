@@ -283,6 +283,13 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
     return;
   }
 
+  if (viewport->soft_wrap()) {
+    util::PerformanceTrace::Scope redraw_scope(
+        "WorkspaceShell::RequestActiveEditableLastChangeRedraw::SoftWrapFocusedPane");
+    RequestFocusedEditorRedraw();
+    return;
+  }
+
   std::size_t start_line = 0;
   std::size_t removed_lines = 0;
   std::size_t inserted_lines = 0;
@@ -597,9 +604,10 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   const std::size_t visible_start_row = viewport->scroll_line();
   const std::size_t visible_end_row = visible_start_row + metrics.visible_rows;
   const std::size_t start_row = viewport->VisualRowForLine(start_line);
-  const std::size_t end_row = end_line == 0
-                                  ? start_row + 1
-                                  : viewport->VisualRowForLine(end_line - 1) + 1;
+  const std::size_t end_row =
+      end_line == 0 ? start_row + 1
+                    : end_line >= viewport->line_count() ? viewport->visual_line_count()
+                                                         : viewport->VisualRowForLine(end_line);
   if (end_row <= visible_start_row || start_row >= visible_end_row) {
     return std::nullopt;
   }

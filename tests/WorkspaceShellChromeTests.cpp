@@ -709,6 +709,63 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "single-line editor typing should redraw less than the full active pane");
 }
 
+void TestWorkspaceShellWrappedEditorLineRangeRectCoversContinuationRows() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "wrap.cpp";
+  WriteFile(source, "abcdefghij klmnopqrst uvwxyz 0123456789 ABCDEFGHIJ\nshort\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.SetSoftWrap(true);
+  viewport.SetViewportSize(40, 8);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto line_rect = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
+  const auto single_row_rect = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 1, 2);
+  Expect(line_rect.has_value(),
+         "wrapped editor line-range rect fixture should return a redraw rect");
+  Expect(single_row_rect.has_value(),
+         "wrapped editor line-range rect fixture should expose a single-row rect for comparison");
+  Expect(line_rect->h > single_row_rect->h,
+         "a wrapped logical line should invalidate every continuation row, not only the opener row");
+}
+
+void TestWorkspaceShellWrappedTypingReturnsFocusedPaneInvalidation() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "wrap.cpp";
+  WriteFile(source, "abcdefghij klmnopqrst uvwxyz\nalpha\nbeta\ngamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 700, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.SetSoftWrap(true);
+  viewport.SetDirty(true);
+  viewport.MoveCursorTo(0, viewport.lines().front().size());
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  SDL_Event event{};
+  event.type = SDL_EVENT_TEXT_INPUT;
+  const std::string text = "!";
+  event.text.text = text.c_str();
+  const auto result = shell.HandleEvent(event);
+  const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+
+  Expect(result.handled, "wrapped typing should be handled");
+  Expect(!result.redraw.full && !result.redraw.rects.empty(),
+         "wrapped typing should stay on the partial redraw path");
+  Expect(AnyRectIntersects(result.redraw.rects, active_pane),
+         "wrapped typing redraws should include the active editor pane");
+  Expect(MaxRectHeight(result.redraw.rects) >= active_pane.h,
+         "wrapped typing should invalidate the full focused pane so wrapped-row reflow repaints correctly");
+}
+
 void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -2034,6 +2091,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret);
   AddTest(tests, "WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation",
           TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation);
+  AddTest(tests, "WorkspaceShell/WrappedEditorLineRangeRectCoversContinuationRows",
+          TestWorkspaceShellWrappedEditorLineRangeRectCoversContinuationRows);
   AddTest(tests, "WorkspaceShell/CommandTextInputReturnsPartialCommandInvalidation",
           TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation);
   AddTest(tests, "WorkspaceShell/CommandPasteShortcutUsesSharedTextInputPath",
@@ -2069,6 +2128,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPartialRedrawWithoutCompareTabSkipsCompareSurfaceRender);
   AddTest(tests, "WorkspaceShell/NewlineInsertionRequestsEditorPartialRedraw",
           TestWorkspaceShellNewlineInsertionRequestsEditorPartialRedraw);
+  AddTest(tests, "WorkspaceShell/WrappedTypingReturnsFocusedPaneInvalidation",
+          TestWorkspaceShellWrappedTypingReturnsFocusedPaneInvalidation);
   AddTest(tests, "WorkspaceShell/BottomEdgeNewlineRetainedRedrawMatchesFullRender",
           TestWorkspaceShellBottomEdgeNewlineRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/SidebarResizeRequestsFullRedrawAndMatchesFullRender",
