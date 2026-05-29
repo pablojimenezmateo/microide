@@ -457,6 +457,54 @@
   static bool CursorKindAtIsPointer(WorkspaceShell& shell, float x, float y) {
     return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::Pointer;
   }
+  static bool CursorKindAtIsNResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::NResize;
+  }
+  static bool CursorKindAtIsEResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::EResize;
+  }
+  static bool CursorKindAtIsSResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::SResize;
+  }
+  static bool CursorKindAtIsWResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::WResize;
+  }
+  static bool CursorKindAtIsNeResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::NeResize;
+  }
+  static bool CursorKindAtIsSeResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::SeResize;
+  }
+  static bool CursorKindAtIsSwResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::SwResize;
+  }
+  static bool CursorKindAtIsNwResize(WorkspaceShell& shell, float x, float y) {
+    return shell.CursorKindForPosition(x, y) == WorkspaceShell::CursorKind::NwResize;
+  }
+  static bool CachedCursorIsNResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::NResize;
+  }
+  static bool CachedCursorIsEResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::EResize;
+  }
+  static bool CachedCursorIsSResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::SResize;
+  }
+  static bool CachedCursorIsWResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::WResize;
+  }
+  static bool CachedCursorIsNeResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::NeResize;
+  }
+  static bool CachedCursorIsSeResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::SeResize;
+  }
+  static bool CachedCursorIsSwResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::SwResize;
+  }
+  static bool CachedCursorIsNwResize(const WorkspaceShell& shell) {
+    return shell.cursor_kind_ == WorkspaceShell::CursorKind::NwResize;
+  }
   static int CursorKindAtValue(WorkspaceShell& shell, float x, float y) {
     return static_cast<int>(shell.CursorKindForPosition(x, y));
   }

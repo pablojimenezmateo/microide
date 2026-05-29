@@ -132,6 +132,10 @@ std::string BuildCompareBreadcrumbLabel(const std::filesystem::path& project_roo
                                         std::string_view right_label) {
   const std::string relative_path = RelativePathLabel(project_root, path);
   if (!relative_path.empty()) {
+    if (!left_label.empty() || !right_label.empty()) {
+      return relative_path + "  |  " + std::string(left_label) + " -> " +
+             std::string(right_label);
+    }
     return relative_path;
   }
   if (!left_label.empty() || !right_label.empty()) {
@@ -146,6 +150,10 @@ std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
                                       std::string_view current_label) {
   const std::string relative_path = RelativePathLabel(project_root, output_path);
   if (!relative_path.empty()) {
+    if (!incoming_label.empty() || !current_label.empty()) {
+      return relative_path + "  |  " + std::string(incoming_label) + " -> " +
+             std::string(current_label);
+    }
     return relative_path;
   }
   if (!incoming_label.empty() || !current_label.empty()) {

@@ -210,6 +210,14 @@
     Pointer,
     EwResize,
     NsResize,
+    NResize,
+    EResize,
+    SResize,
+    WResize,
+    NeResize,
+    SeResize,
+    SwResize,
+    NwResize,
   };
 
  public:
@@ -1436,6 +1444,11 @@
     bool overlay_visible = false;
     bool settings_overlay_visible = false;
     bool bottom_panel_visible = false;
+    bool chrome_custom_enabled = false;
+    bool chrome_maximized = false;
+    bool chrome_fullscreen = false;
+    int window_width = 0;
+    int window_height = 0;
     std::uint32_t active_tab_index = 0;
     std::uint32_t cursor_hit_generation = 0;
     std::uint32_t editor_hover_target_generation = 0;
@@ -1447,6 +1460,14 @@
   SDL_Cursor* pointer_cursor_ = nullptr;
   SDL_Cursor* ew_resize_cursor_ = nullptr;
   SDL_Cursor* ns_resize_cursor_ = nullptr;
+  SDL_Cursor* n_resize_cursor_ = nullptr;
+  SDL_Cursor* e_resize_cursor_ = nullptr;
+  SDL_Cursor* s_resize_cursor_ = nullptr;
+  SDL_Cursor* w_resize_cursor_ = nullptr;
+  SDL_Cursor* ne_resize_cursor_ = nullptr;
+  SDL_Cursor* se_resize_cursor_ = nullptr;
+  SDL_Cursor* sw_resize_cursor_ = nullptr;
+  SDL_Cursor* nw_resize_cursor_ = nullptr;
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;

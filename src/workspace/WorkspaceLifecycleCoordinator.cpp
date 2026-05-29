@@ -231,6 +231,38 @@ void WorkspaceShell::DestroyLifecycleCursors() {
     SDL_DestroyCursor(ns_resize_cursor_);
     ns_resize_cursor_ = nullptr;
   }
+  if (n_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(n_resize_cursor_);
+    n_resize_cursor_ = nullptr;
+  }
+  if (e_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(e_resize_cursor_);
+    e_resize_cursor_ = nullptr;
+  }
+  if (s_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(s_resize_cursor_);
+    s_resize_cursor_ = nullptr;
+  }
+  if (w_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(w_resize_cursor_);
+    w_resize_cursor_ = nullptr;
+  }
+  if (ne_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(ne_resize_cursor_);
+    ne_resize_cursor_ = nullptr;
+  }
+  if (se_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(se_resize_cursor_);
+    se_resize_cursor_ = nullptr;
+  }
+  if (sw_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(sw_resize_cursor_);
+    sw_resize_cursor_ = nullptr;
+  }
+  if (nw_resize_cursor_ != nullptr) {
+    SDL_DestroyCursor(nw_resize_cursor_);
+    nw_resize_cursor_ = nullptr;
+  }
 
   cursor_kind_ = CursorKind::Default;
   last_mouse_position_valid_ = false;

@@ -177,6 +177,27 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
+  switch (WindowHitTest(x, y)) {
+    case SDL_HITTEST_RESIZE_TOPLEFT:
+      return CursorKind::NwResize;
+    case SDL_HITTEST_RESIZE_TOP:
+      return CursorKind::NResize;
+    case SDL_HITTEST_RESIZE_TOPRIGHT:
+      return CursorKind::NeResize;
+    case SDL_HITTEST_RESIZE_RIGHT:
+      return CursorKind::EResize;
+    case SDL_HITTEST_RESIZE_BOTTOMRIGHT:
+      return CursorKind::SeResize;
+    case SDL_HITTEST_RESIZE_BOTTOM:
+      return CursorKind::SResize;
+    case SDL_HITTEST_RESIZE_BOTTOMLEFT:
+      return CursorKind::SwResize;
+    case SDL_HITTEST_RESIZE_LEFT:
+      return CursorKind::WResize;
+    default:
+      break;
+  }
+
   if (context_.prompts.dirty_visible) {
     const auto buttons = ComputeDirtyPromptButtonRects(ComputeDirtyPromptRect(*window_rect));
     for (const SDL_FRect& button : buttons) {
@@ -342,6 +363,35 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
   if (BottomPanelVisible() && Contains(BottomPanelResizeCursorRect(layout), x, y)) {
     return CursorKind::NsResize;
+  }
+
+  if (layout.status_bar.w > 0.0f && layout.status_bar.h > 0.0f &&
+      Contains(layout.status_bar, x, y)) {
+    const StatusBarViewModel vm =
+        RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
+    constexpr float kStatusPadding = 12.0f;
+    constexpr float kStatusGap = 14.0f;
+    float left_x = vm.rect.x + kStatusPadding;
+    for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
+      const float width = text_renderer_.MeasureWidth(segment.text);
+      const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
+      if (segment.clickable && Contains(row, x, y)) {
+        return CursorKind::Pointer;
+      }
+      left_x += width + kStatusGap;
+    }
+
+    float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
+    for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
+      const float width = text_renderer_.MeasureWidth(it->text);
+      right_x -= width;
+      const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
+      if (it->clickable && Contains(row, x, y)) {
+        return CursorKind::Pointer;
+      }
+      right_x -= kStatusGap;
+    }
+    return CursorKind::Default;
   }
 
   if (Contains(layout.project_tab_strip, x, y)) {
@@ -823,6 +873,46 @@ SDL_Cursor* WorkspaceShell::CursorHandle(CursorKind kind) {
         ns_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
       }
       return ns_resize_cursor_;
+    case CursorKind::NResize:
+      if (n_resize_cursor_ == nullptr) {
+        n_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_N_RESIZE);
+      }
+      return n_resize_cursor_;
+    case CursorKind::EResize:
+      if (e_resize_cursor_ == nullptr) {
+        e_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_E_RESIZE);
+      }
+      return e_resize_cursor_;
+    case CursorKind::SResize:
+      if (s_resize_cursor_ == nullptr) {
+        s_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_S_RESIZE);
+      }
+      return s_resize_cursor_;
+    case CursorKind::WResize:
+      if (w_resize_cursor_ == nullptr) {
+        w_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_W_RESIZE);
+      }
+      return w_resize_cursor_;
+    case CursorKind::NeResize:
+      if (ne_resize_cursor_ == nullptr) {
+        ne_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NE_RESIZE);
+      }
+      return ne_resize_cursor_;
+    case CursorKind::SeResize:
+      if (se_resize_cursor_ == nullptr) {
+        se_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SE_RESIZE);
+      }
+      return se_resize_cursor_;
+    case CursorKind::SwResize:
+      if (sw_resize_cursor_ == nullptr) {
+        sw_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SW_RESIZE);
+      }
+      return sw_resize_cursor_;
+    case CursorKind::NwResize:
+      if (nw_resize_cursor_ == nullptr) {
+        nw_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NW_RESIZE);
+      }
+      return nw_resize_cursor_;
   }
 
   return SDL_GetDefaultCursor();
@@ -890,6 +980,11 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       .overlay_visible = context_.current_project_state.overlay.visible,
       .settings_overlay_visible = settings_overlay_service_.Visible(),
       .bottom_panel_visible = BottomPanelVisible(),
+      .chrome_custom_enabled = window_presentation_.chrome.custom_enabled,
+      .chrome_maximized = window_presentation_.chrome.maximized,
+      .chrome_fullscreen = window_presentation_.chrome.fullscreen,
+      .window_width = window_presentation_.logical_width,
+      .window_height = window_presentation_.logical_height,
       .active_tab_index =
           static_cast<std::uint32_t>(context_.current_project_state.active_tab_index),
       .cursor_hit_generation = cursor_hit_generation_,
@@ -911,6 +1006,11 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       cursor_kind_fingerprint_.overlay_visible == next_fp.overlay_visible &&
       cursor_kind_fingerprint_.settings_overlay_visible == next_fp.settings_overlay_visible &&
       cursor_kind_fingerprint_.bottom_panel_visible == next_fp.bottom_panel_visible &&
+      cursor_kind_fingerprint_.chrome_custom_enabled == next_fp.chrome_custom_enabled &&
+      cursor_kind_fingerprint_.chrome_maximized == next_fp.chrome_maximized &&
+      cursor_kind_fingerprint_.chrome_fullscreen == next_fp.chrome_fullscreen &&
+      cursor_kind_fingerprint_.window_width == next_fp.window_width &&
+      cursor_kind_fingerprint_.window_height == next_fp.window_height &&
       cursor_kind_fingerprint_.active_tab_index == next_fp.active_tab_index &&
       cursor_kind_fingerprint_.cursor_hit_generation == next_fp.cursor_hit_generation &&
       cursor_kind_fingerprint_.editor_hover_target_generation ==

@@ -219,6 +219,90 @@ void TestWorkspaceShellWindowControlCursorUsesPaddedHitRect() {
          "window-control hit testing should use the padded hover target");
 }
 
+void TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest() {
+  EnsureDummySdlVideoInitialized();
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const auto expect_cursor = [&](float x,
+                                 float y,
+                                 SDL_HitTestResult expected_hit,
+                                 bool (*kind_at)(WorkspaceShell&, float, float),
+                                 bool (*cached_kind)(const WorkspaceShell&),
+                                 const char* message) {
+    Expect(shell.WindowHitTest(x, y) == expected_hit, message);
+    WorkspaceShellTestAccess::UpdateMouseCursor(shell, x, y);
+    Expect(kind_at(shell, x, y),
+           "custom frame hit-test and cursor kind should agree");
+    Expect(cached_kind(shell),
+           "custom frame cursor should be cached after updating the mouse cursor");
+  };
+
+  expect_cursor(1.0f, 1.0f, SDL_HITTEST_RESIZE_TOPLEFT,
+                WorkspaceShellTestAccess::CursorKindAtIsNwResize,
+                WorkspaceShellTestAccess::CachedCursorIsNwResize,
+                "top-left custom frame edge should resize diagonally");
+  expect_cursor(1278.0f, 1.0f, SDL_HITTEST_RESIZE_TOPRIGHT,
+                WorkspaceShellTestAccess::CursorKindAtIsNeResize,
+                WorkspaceShellTestAccess::CachedCursorIsNeResize,
+                "top-right custom frame edge should resize diagonally");
+  expect_cursor(1278.0f, 718.0f, SDL_HITTEST_RESIZE_BOTTOMRIGHT,
+                WorkspaceShellTestAccess::CursorKindAtIsSeResize,
+                WorkspaceShellTestAccess::CachedCursorIsSeResize,
+                "bottom-right custom frame edge should resize diagonally");
+  expect_cursor(1.0f, 718.0f, SDL_HITTEST_RESIZE_BOTTOMLEFT,
+                WorkspaceShellTestAccess::CursorKindAtIsSwResize,
+                WorkspaceShellTestAccess::CachedCursorIsSwResize,
+                "bottom-left custom frame edge should resize diagonally");
+  expect_cursor(640.0f, 1.0f, SDL_HITTEST_RESIZE_TOP,
+                WorkspaceShellTestAccess::CursorKindAtIsNResize,
+                WorkspaceShellTestAccess::CachedCursorIsNResize,
+                "top custom frame edge should use a vertical resize cursor");
+  expect_cursor(1278.0f, 360.0f, SDL_HITTEST_RESIZE_RIGHT,
+                WorkspaceShellTestAccess::CursorKindAtIsEResize,
+                WorkspaceShellTestAccess::CachedCursorIsEResize,
+                "right custom frame edge should use a horizontal resize cursor");
+  expect_cursor(640.0f, 718.0f, SDL_HITTEST_RESIZE_BOTTOM,
+                WorkspaceShellTestAccess::CursorKindAtIsSResize,
+                WorkspaceShellTestAccess::CachedCursorIsSResize,
+                "bottom custom frame edge should use a vertical resize cursor");
+  expect_cursor(1.0f, 360.0f, SDL_HITTEST_RESIZE_LEFT,
+                WorkspaceShellTestAccess::CursorKindAtIsWResize,
+                WorkspaceShellTestAccess::CachedCursorIsWResize,
+                "left custom frame edge should use a horizontal resize cursor");
+}
+
+void TestWorkspaceShellStatusBarClickableSegmentsUsePointerCursor() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+
+  const auto segment_rect = WorkspaceShellTestAccess::StatusBarSegmentRect(
+      shell, microide::workspace::StatusBarSegmentId::Project);
+  Expect(segment_rect.has_value(),
+         "status bar cursor fixture should expose a clickable project segment");
+  const float x = segment_rect->x + segment_rect->w * 0.5f;
+  const float y = segment_rect->y + segment_rect->h * 0.5f;
+
+  WorkspaceShellTestAccess::UpdateMouseCursor(shell, x, y);
+  Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell),
+         "clickable status bar segments should cache the pointer cursor");
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, x, y),
+         "clickable status bar segments should resolve to the pointer cursor");
+}
+
 void TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion() {
   EnsureDummySdlVideoInitialized();
 
@@ -277,6 +361,10 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellResizeCursorFallsBackOutsideVisibleSeams);
   AddTest(tests, "WorkspaceShell/WindowControlCursorUsesPaddedHitRect",
           TestWorkspaceShellWindowControlCursorUsesPaddedHitRect);
+  AddTest(tests, "WorkspaceShell/CustomFrameResizeCursorsMatchHitTest",
+          TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest);
+  AddTest(tests, "WorkspaceShell/StatusBarClickableSegmentsUsePointerCursor",
+          TestWorkspaceShellStatusBarClickableSegmentsUsePointerCursor);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenProjectSearchResultsArriveWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion);
 }

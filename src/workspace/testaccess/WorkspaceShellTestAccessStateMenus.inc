@@ -252,6 +252,35 @@
                                       StatusBarSegmentId id) {
     return shell.status_bar_service_.Segment(id).visible;
   }
+  static std::optional<SDL_FRect> StatusBarSegmentRect(WorkspaceShell& shell,
+                                                       StatusBarSegmentId id) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const StatusBarViewModel vm =
+        RenderViewModelBuilder(shell.context_).BuildStatusBar(layout, shell.status_bar_service_);
+    constexpr float kStatusPadding = 12.0f;
+    constexpr float kStatusGap = 14.0f;
+    float left_x = vm.rect.x + kStatusPadding;
+    for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
+      const float width = shell.text_renderer_.MeasureWidth(segment.text);
+      const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
+      if (segment.id == id) {
+        return row;
+      }
+      left_x += width + kStatusGap;
+    }
+
+    float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
+    for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
+      const float width = shell.text_renderer_.MeasureWidth(it->text);
+      right_x -= width;
+      const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
+      if (it->id == id) {
+        return row;
+      }
+      right_x -= kStatusGap;
+    }
+    return std::nullopt;
+  }
   static std::string SettingsOverlayInputHintLabel(const WorkspaceShell& shell) {
     return shell.SettingsOverlayInputHintLabel();
   }
