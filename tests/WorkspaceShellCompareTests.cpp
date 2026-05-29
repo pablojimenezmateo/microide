@@ -631,6 +631,41 @@ void TestWorkspaceShellCompareWheelScrollsRows() {
          "scrolling the compare surface should advance the visible row");
 }
 
+void TestWorkspaceShellCompareWheelScrollsColumns() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+
+  const std::string base_line =
+      "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789\n";
+  const std::string working_line =
+      "abcdefghijklmnopqrstuvwxyz9876543210abcdefghijklmnopqrstuvwxyz9876543210\n";
+  WriteFile(source, base_line);
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare horizontal wheel fixture", "compare horizontal wheel fixture");
+  WriteFile(source, working_line);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 420);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare horizontal wheel fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(compare.max_visual_columns > surface.visible_columns,
+         "compare horizontal wheel fixture should overflow horizontally");
+
+  const std::size_t before_scroll = compare.horizontal_scroll;
+  const float wheel_x = surface.right_x + 24.0f;
+  const float wheel_y = surface.rows_y + surface.line_height * 0.5f;
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, 0, -1),
+         "horizontal scrolling the compare surface should be handled");
+  Expect(compare.horizontal_scroll > before_scroll,
+         "horizontal scrolling the compare surface should advance the visible column");
+}
+
 void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1065,6 +1100,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellReadOnlyCompareShortcutCopyUsesNavigableViewport);
   AddTest(tests, "WorkspaceShell/CompareWheelScrollsRows",
           TestWorkspaceShellCompareWheelScrollsRows);
+  AddTest(tests, "WorkspaceShell/CompareWheelScrollsColumns",
+          TestWorkspaceShellCompareWheelScrollsColumns);
   AddTest(tests, "WorkspaceShell/CompareHorizontalNavigationInvalidatesEditablePane",
           TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane);
   AddTest(tests, "WorkspaceShell/CompareSelectionStepInvalidatesRowBand",

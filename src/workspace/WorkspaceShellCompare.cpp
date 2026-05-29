@@ -518,6 +518,12 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
     return;
   }
 
+  if (const auto layout_state = CurrentWorkspaceLayout(); layout_state.has_value()) {
+    const CompareSurfaceLayout surface_layout =
+        ComputeCompareSurfaceLayout(layout_state->editor_surface, compare_tab);
+    compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface_layout.visible_rows),
+                                               surface_layout.right_visible_columns);
+  }
   compare_tab.right_viewport.SetHorizontalScroll(compare_tab.horizontal_scroll);
   const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
   const std::size_t model_scroll_row =
