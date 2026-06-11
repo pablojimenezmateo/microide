@@ -494,9 +494,41 @@ void TestGitPorcelainParserLog() {
   Expect(commits[1].subject == "second subject", "second parsed subject mismatch");
 }
 
+// Git-independent regression for the `-z` name-status parser. The prior parser
+// split on whitespace, truncating paths with spaces and mis-handling renames.
+void TestGitBranchDiffNameStatusZParser() {
+  using microide::project::ParseGitBranchDiffNameStatusZ;
+  // status NUL path NUL records, including a rename (status NUL old NUL new) and
+  // paths containing spaces. Built token-by-token to avoid fragile byte counts.
+  std::string output;
+  const auto add_token = [&](std::string_view token) {
+    output.append(token.data(), token.size());
+    output.push_back('\0');
+  };
+  add_token("M");
+  add_token("src/file one.txt");
+  add_token("R100");
+  add_token("old name.txt");
+  add_token("new name.txt");
+  add_token("A");
+  add_token("added.txt");
+  const auto entries = ParseGitBranchDiffNameStatusZ(output);
+  Expect(entries.size() == 3, "parser should yield three entries");
+  // Sorted by path: added.txt, new name.txt, src/file one.txt
+  Expect(entries[0].relative_path.generic_string() == "added.txt", "added path");
+  Expect(entries[0].status == GitFileStatus::Added, "added status");
+  Expect(entries[1].relative_path.generic_string() == "new name.txt",
+         "rename reports new path with space preserved");
+  Expect(entries[1].status == GitFileStatus::Modified, "rename status is modified");
+  Expect(entries[2].relative_path.generic_string() == "src/file one.txt",
+         "modified path with space preserved");
+  Expect(entries[2].status == GitFileStatus::Modified, "modified status");
+}
+
 }  // namespace
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Git/BranchDiffNameStatusZParser", TestGitBranchDiffNameStatusZParser);
   AddTest(tests, "Git/CompareFixture", TestGitCompareFixture);
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);

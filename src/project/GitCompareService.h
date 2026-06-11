@@ -41,6 +41,10 @@ struct GitBranchFileEntry {
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root);
 std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
                                                               std::string_view base_ref);
+// Parses the NUL-delimited output of `git diff --name-status -z --find-renames`.
+// Exposed for testing: handles paths containing spaces and rename/copy records
+// (status NUL old NUL new), which the previous whitespace-split parser corrupted.
+std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output);
 std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
                                                                 std::string_view commit_hash);
 

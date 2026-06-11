@@ -203,45 +203,47 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
   return std::nullopt;
 }
 
-std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
-                                                              std::string_view base_ref) {
-  const GitRepository repo(root);
-  if (base_ref.empty() || !repo.IsValid()) {
-    return {};
-  }
-
-  const auto result = repo.Execute(
-      {"diff", "--name-status", "--find-renames", std::string(base_ref) + "...HEAD"});
-  if (!result.success() || result.output.empty()) {
-    return {};
-  }
-
+std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output) {
   std::vector<GitBranchFileEntry> entries;
-  std::istringstream stream(result.output);
-  std::string line;
-  while (std::getline(stream, line)) {
-    if (line.empty()) {
-      continue;
+  std::size_t pos = 0;
+  const auto next_token = [&](std::string_view& token) -> bool {
+    if (pos >= output.size()) {
+      return false;
     }
+    const std::size_t nul = output.find('\0', pos);
+    if (nul == std::string_view::npos) {
+      token = output.substr(pos);
+      pos = output.size();
+      return !token.empty();
+    }
+    token = output.substr(pos, nul - pos);
+    pos = nul + 1;
+    return true;
+  };
 
-    std::istringstream line_stream(line);
-    std::string status_code;
-    std::string path;
-    std::string target_path;
-    if (!(line_stream >> status_code)) {
+  std::string_view status_token;
+  while (next_token(status_token)) {
+    if (status_token.empty()) {
       continue;
     }
-    if (!(line_stream >> path)) {
+    const char code = status_token.front();
+    std::string_view path_token;
+    if (!next_token(path_token)) {
+      break;
+    }
+    // Rename/copy records carry the old path then the new path; report the new one.
+    if (code == 'R' || code == 'C') {
+      std::string_view new_path;
+      if (next_token(new_path) && !new_path.empty()) {
+        path_token = new_path;
+      }
+    }
+    if (path_token.empty()) {
       continue;
     }
-    if ((status_code[0] == 'R' || status_code[0] == 'C') && (line_stream >> target_path) &&
-        !target_path.empty()) {
-      path = target_path;
-    }
-
     entries.push_back(GitBranchFileEntry{
-        .relative_path = std::filesystem::path(path).lexically_normal(),
-        .status = GitPorcelainParser::StatusFromDiffCode(status_code[0]),
+        .relative_path = std::filesystem::path(std::string(path_token)).lexically_normal(),
+        .status = GitPorcelainParser::StatusFromDiffCode(code),
     });
   }
 
@@ -250,6 +252,25 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
     return lhs.relative_path.generic_string() < rhs.relative_path.generic_string();
   });
   return entries;
+}
+
+std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
+                                                              std::string_view base_ref) {
+  const GitRepository repo(root);
+  if (base_ref.empty() || !repo.IsValid()) {
+    return {};
+  }
+
+  // `-z` makes paths NUL-delimited so paths containing spaces and rename records
+  // (status NUL old NUL new) parse correctly; the prior whitespace-split parser
+  // truncated spaced paths and mis-attributed renames.
+  const auto result = repo.Execute(
+      {"diff", "--name-status", "-z", "--find-renames", std::string(base_ref) + "...HEAD"});
+  if (!result.success() || result.output.empty()) {
+    return {};
+  }
+
+  return ParseGitBranchDiffNameStatusZ(result.output);
 }
 
 std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
