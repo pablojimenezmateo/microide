@@ -109,6 +109,7 @@ Several patterns were intentionally removed by the 2026-04-29 `comprehensive-tec
 - No `platform::RunSubprocess(...)` calls in workspace `.cpp` units; dispatch through `ProjectBackgroundExecutor` to avoid shell-thread stalls.
 - Render translation units must not materialize new strings in hot paths (`std::string(...)`, string `+`/`+=`, `to_string`, or `std::format`/`fmt::format`); compute render text in `RenderViewModelBuilder` instead.
 - `TextViewport` non-const editing paths must not snapshot-copy `document_->lines`; capture affected ranges only for undo/edit operations.
+- Overlay dismissal is centralized: no bare `overlay.visible = false` in `src/workspace/*.cpp` outside `WorkspaceShellOverlay.cpp` (canonical `DismissOverlay`) and `WorkspacePersistenceCoordinatorSession.cpp` (full-state restore reset). Hide overlays via `WorkspaceShell::DismissOverlay` or the focus-safe `HideOverlay(state)` helper so keyboard focus never strands on a hidden surface (enforced by `CheckOverlayDismissalIsCentralized`).
 
 The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `openspec/specs/persisted-state-format/spec.md`, and `openspec/specs/shared-edit-primitives/spec.md`. The full reasoning is in `AGENTS.md` § Do-Not-Regress Patterns and in the archived change at `openspec/changes/archive/2026-04-29-comprehensive-tech-debt-cleanup/`.
 

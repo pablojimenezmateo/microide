@@ -821,3 +821,84 @@ Notes:
 - Initial clang/fuzz build surfaced integration defects (sized-delete portability in tests and
   missing object linkage in `LegacyImporterFuzz`), both fixed in-tree.
 - No additional deferred fuzz finding is open from this triage pass.
+
+## 18. 2026-06-11 Deep Correctness / Tech-Debt Audit Pass
+
+A fan-out correctness/tech-debt audit across editor, platform, project, plugin, workspace,
+and compare/persistence subsystems. The findings below are the substantiated ones; each was
+verified against source before being recorded.
+
+### Fixed in this pass (with regression coverage)
+
+- **Persisted-state OOM on corrupt input**: `DecodeSplitNode` and the generic
+  `PrimitiveReader::ReadVector` reserved an attacker-controlled `count` (up to 2^32-1) before
+  reading any element, so a corrupt session file could force a multi-GB allocation. Both now
+  clamp the reservation to the remaining input. `src/workspace/WorkspacePersistenceBinaryInternal.h`,
+  `src/persistence/PersistedRecord.h`; test `PersistedStateRecord/RejectsAdversarialLengthWithoutOom`.
+- **Keyboard-focus stranding ("dead input")**: confirming an external-URL prompt
+  (`WorkspaceShellPrompts.cpp`, was `DismissPromptSurface(!opened)`), Escape from
+  BufferReplace / ProjectSearch overlays (`WorkspaceKeyInputCoordinatorSurfaces.cpp`, hand-rolled
+  `overlay.visible=false`), and renaming a file under an open commit picker
+  (`WorkspacePathMutationCoordinatorTabs.cpp`) all left `surface.focus == Overlay` on a hidden
+  surface. Centralized via `PrimarySurfaceFocus` / `HideOverlay` in `WorkspaceProjectState.h`;
+  the Escape paths now route through the canonical `DismissOverlay`. New hard architectural
+  invariant `CheckOverlayDismissalIsCentralized` forbids bare `overlay.visible = false` outside
+  `WorkspaceShellOverlay.cpp` / `WorkspacePersistenceCoordinatorSession.cpp`.
+- **Git branch-diff parser corrupted spaced paths / renames**: `CollectGitBranchOutgoingFiles`
+  parsed `--name-status` (no `-z`) by whitespace-splitting, truncating paths with spaces and
+  mis-handling rename records. Rewritten to `-z` NUL parsing via the testable
+  `ParseGitBranchDiffNameStatusZ`. `src/project/GitCompareService.cpp`; test
+  `Git/BranchDiffNameStatusZParser`.
+- **SIGPIPE crash**: no handler existed, so a `write()` to a subprocess/PTY/LSP pipe whose
+  reader died could terminate the editor. `platform::IgnoreBrokenPipeSignal()` is now installed
+  at startup (`main.cpp`). `src/platform/HostPlatform.cpp`; test
+  `Subprocess/IgnoreBrokenPipeSignalPreventsCrash`.
+- **Compare `ignore_whitespace` showed wrong right-column text**: the all-equal fast path in
+  `BuildCompareModel` copied the left line into `right_text`, so whitespace-only differences
+  rendered the left file's text on the right. `src/compare/CompareModel.cpp`; test
+  `Compare/IgnoreWhitespacePreservesRightText`.
+- **Plugin Lua stack leak (hot paths)**: `QueryCompletions` / `QueryCodeActions` left the pushed
+  function + args on the Lua stack when `find_plugin_by_state` returned null (PCall skipped),
+  accumulating across keystrokes toward stack overflow. They now `lua_settop` back to the captured
+  base on that branch. `src/plugin/PluginProviderQueryInterop.cpp`.
+
+### Deferred — verified, still open (next pass)
+
+- **Plugin `luaL_error` longjmp over C++ destructors** (the project links the C build of Lua, so
+  `luaL_error` `longjmp`s rather than throws). `LuaProcessRun`/`LuaProcessRunAsync` and other
+  interop entry points construct live `std::vector`/`std::string` locals and then `luaL_error`
+  mid-construction, leaking them. Fix shape: validate all argument types *before* constructing
+  heap objects. `src/plugin/PluginProcessInterop.cpp` and peers.
+- **Plugin Lua stack leak (cold paths)**: the same null-plugin early-return leak exists in the
+  remaining provider/hover/scm/auth/test-discovery functions in
+  `src/plugin/PluginProviderQueryInterop.cpp` and `src/plugin/PluginSidebarHoverInterop.cpp`. Apply
+  the same `lua_settop(state, base)` pattern uniformly (low severity — only the rare null-plugin
+  branch leaks; PCall already balances the stack on error).
+- **`PosixAsyncProcessBackend` / `PosixTerminalBackend` fd lifecycle races**: unlike
+  `AsyncSubprocess`, `PosixAsyncProcessBackend` (`src/platform/ProcessBackend.cpp`) mutates
+  `running_/pid_/fds` across `IsRunning`/`Read`/`Write`/`Shutdown` with no mutex; `PosixTerminalBackend`
+  (`src/platform/TerminalBackend.cpp`) can `write()` to a `master_fd_` being closed by `Stop()`.
+  Either add synchronization or document+enforce single-thread use.
+- **`RunSubprocessWithBackend` large-stdin deadlock**: `src/platform/ProcessBackend.cpp` writes all
+  stdin synchronously *before* draining captured stdout/stderr; a child that fills its stdout pipe
+  before reading stdin deadlocks. Drain concurrently with the stdin write.
+- **Recursive scanners have no symlink-loop guard**: `src/project/DirectoryTree.cpp` and
+  `src/project/ProjectFileScanner.cpp` follow directory symlinks with no visited-inode set; an
+  ancestor-referential symlink causes unbounded recursion.
+- **Snippet linked-placeholder column desync**: in `src/editor/SnippetEngine.cpp`, editing one of
+  several same-line linked placeholder ranges does not shift the `start.column` of the other ranges,
+  so multi-keystroke edits to multi-occurrence snippets insert at the wrong place. Masked by
+  single-keystroke test coverage.
+- **Blame cache can become eligible-but-empty after self-eviction**: `src/project/GitBlameService.cpp`
+  uses `file_caches[key]` (operator[]) after `EnforceCacheBudgets()` may have evicted `key`,
+  recreating an empty cache marked `eligible=true`.
+- **Duplicated hit-test geometry across cursor / click / motion / render TUs**: bottom-panel
+  line-at-point, compare collapsed-context row + action buttons, per-mode sidebar header buttons,
+  empty-tab-strip placeholder rect, and the tab-strip overflow/tab/close walk are each re-implemented
+  in 2–3 TUs (already diverging on truncate-vs-floor). Centralize into shared helpers
+  (`WorkspaceLayout.h` / `CompareMergeRender.h`). See the workspace audit for exact file:line sets.
+- **Settings/Help overlay does not trap focus**: `SettingsOverlayService` only consumes Escape;
+  other keys edit the surface underneath. Fold it into the shared overlay/focus ownership.
+- **Divergent git status-priority tables**: `GitStatusService::BuildGitStatusMap` and
+  `GitPorcelainParser::GitStatusPriority` rank `Added`/`Untracked` differently, so folder-aggregated
+  status depends on which path produced it.
