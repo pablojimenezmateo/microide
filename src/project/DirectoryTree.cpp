@@ -7,6 +7,7 @@
 
 #include "project/GitStatusService.h"
 #include "project/IgnoreMatcher.h"
+#include "project/SymlinkLoopGuard.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "util/StringUtil.h"
@@ -19,6 +20,7 @@ struct SortableEntry {
   std::filesystem::path path;
   std::string sort_key;
   bool is_directory = false;
+  bool is_symlink = false;
   bool ignored = false;
   IgnoreMatcher matcher;
 };
@@ -311,7 +313,8 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
       .children_materialized = true,
       .git_status = GitFileStatus::Clean,
   });
-  AppendDirectory(root_, 1, matcher);
+  SymlinkLoopGuard loop_guard;
+  AppendDirectory(root_, 1, matcher, loop_guard);
 
   selected_index_ = 0;
   for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -324,7 +327,8 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
 
 void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
                                     int depth,
-                                    const IgnoreMatcher& matcher) {
+                                    const IgnoreMatcher& matcher,
+                                    SymlinkLoopGuard& loop_guard) {
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::AppendDirectory");
   if (directory != root_ && !IsExpanded(directory)) {
     return;
@@ -362,12 +366,15 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     }
 
     if (is_directory) {
+      std::error_code link_error;
+      const bool is_symlink = iterator->is_symlink(link_error);
       IgnoreMatcher child_matcher = matcher;
       child_matcher.LoadIgnoreFile(path / ".gitignore");
       children.push_back(SortableEntry{
           .path = path,
           .sort_key = sort_key,
           .is_directory = true,
+          .is_symlink = is_symlink && !link_error,
           .ignored = ignored,
           .matcher = std::move(child_matcher),
       });
@@ -406,7 +413,10 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     });
 
     if (child.is_directory) {
-      AppendDirectory(child.path, depth + 1, child.matcher);
+      const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(child.path, child.is_symlink);
+      if (scope.entered()) {
+        AppendDirectory(child.path, depth + 1, child.matcher, loop_guard);
+      }
     }
   }
 }

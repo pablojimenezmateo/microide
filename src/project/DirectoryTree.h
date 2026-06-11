@@ -10,6 +10,7 @@
 namespace microide::project {
 
 class IgnoreMatcher;
+class SymlinkLoopGuard;
 
 enum class GitFileStatus {
   Clean,
@@ -62,7 +63,8 @@ class DirectoryTree {
   void RebuildEntries(bool refresh_git_statuses);
   void AppendDirectory(const std::filesystem::path& directory,
                        int depth,
-                       const IgnoreMatcher& matcher);
+                       const IgnoreMatcher& matcher,
+                       SymlinkLoopGuard& loop_guard);
   GitFileStatus EntryGitStatus(const std::filesystem::path& path) const;
   bool IsExpanded(const std::filesystem::path& path) const;
   static std::string NormalizePathKey(const std::filesystem::path& path);

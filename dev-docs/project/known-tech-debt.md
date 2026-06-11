@@ -877,9 +877,6 @@ verified against source before being recorded.
 - **`RunSubprocessWithBackend` large-stdin deadlock**: `src/platform/ProcessBackend.cpp` writes all
   stdin synchronously *before* draining captured stdout/stderr; a child that fills its stdout pipe
   before reading stdin deadlocks. Drain concurrently with the stdin write.
-- **Recursive scanners have no symlink-loop guard**: `src/project/DirectoryTree.cpp` and
-  `src/project/ProjectFileScanner.cpp` follow directory symlinks with no visited-inode set; an
-  ancestor-referential symlink causes unbounded recursion.
 - **Snippet linked-placeholder column desync**: in `src/editor/SnippetEngine.cpp`, editing one of
   several same-line linked placeholder ranges does not shift the `start.column` of the other ranges,
   so multi-keystroke edits to multi-occurrence snippets insert at the wrong place. Masked by
@@ -935,3 +932,27 @@ stack stays intact). New hard invariant `CheckPluginLuaErrorDoesNotLongjmpOverCp
 allowed. Note: this pass required installing `liblua5.4-dev` locally so `MICROIDE_HAS_LUA_PLUGINS=1`
 — the plugin code (and the §18 `PluginProviderQueryInterop` hot-path fix) is compiled out when Lua
 dev headers are absent, so always validate plugin work with Lua enabled.
+
+## 20. 2026-06-11 Recursive-scanner symlink-loop guard
+
+Closed the deferred "recursive scanners have no symlink-loop guard" item from §18. Both
+`ProjectFileScanner::CollectFiles` and `DirectoryTree::AppendDirectory` recurse into child
+directories, and a directory symlink whose real target is an ancestor (`loop -> .`, or a mutual
+`a/p -> b`, `b/q -> a` pair) turned the directory tree into a cycle. The file scanner recurses
+unconditionally, so an ancestor-referential symlink anywhere under the project root drove unbounded
+recursion — a stack-overflow crash or hang on simply opening such a project.
+
+A real directory can never be its own ancestor (POSIX forbids hard-linked directories), so every
+cycle must cross at least one directory *symlink* and will repeat that symlink's real target
+infinitely. The fix exploits that: new header-only `src/project/SymlinkLoopGuard.h` records the
+canonical targets of the symlinks followed on the current descent branch and refuses to descend when
+a symlink resolves to a target already on the branch (or is broken/inaccessible). Non-symlink
+directories enter unconditionally and record nothing, so the common case pays no `canonical()` cost;
+the guard's `Scope` is RAII so sibling branches may still legitimately follow a symlink to the same
+real directory once each. Both scanners now thread a `SymlinkLoopGuard&` through their recursion and
+gate each directory descent on `loop_guard.TryEnter(path, is_symlink).entered()`.
+
+Regression coverage: `ProjectFileScanner/TerminatesOnSymlinkLoop` (a `sub/loop -> root` cycle: the
+scan terminates and indexes the real file exactly once) and `DirectoryTree/StopsExpandingSymlinkCycle`
+(a `loop -> root` symlink: following it once materializes its children, but expanding `loop/loop`
+does not re-enter the cycle). Validated under the regular and ASAN presets.

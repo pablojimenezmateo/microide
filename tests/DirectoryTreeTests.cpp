@@ -125,6 +125,34 @@ void TestDirectoryTreeSelectPathExpandsAncestors() {
          "selecting a nested file path should expand ancestors and materialize the file row");
 }
 
+void TestDirectoryTreeStopsExpandingSymlinkCycle() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a" / "marker.txt", "marker\n");
+
+  // `loop` is a directory symlink back to the project root, so loop/loop/loop/…
+  // all resolve to the same real directory. The tree may follow it once, but
+  // expanding `loop/loop` must not re-materialize the root subtree underneath
+  // it — otherwise expansion through a cycle grows without bound.
+  std::error_code link_error;
+  std::filesystem::create_directory_symlink(root, root / "loop", link_error);
+  Expect(!link_error, "fixture should create a root-referential directory symlink");
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open the symlink-cycle fixture root");
+
+  Expect(tree.SelectPathIfVisible(root / "loop"), "the symlink directory should be visible");
+  tree.ExpandSelection();
+  Expect(FindEntry(tree, root / "loop" / "a") != nullptr,
+         "following the symlink once should materialize its real children");
+
+  Expect(tree.SelectPathIfVisible(root / "loop" / "loop"),
+         "the nested symlink entry should appear after the first expansion");
+  tree.ExpandSelection();
+  Expect(FindEntry(tree, root / "loop" / "loop" / "a") == nullptr,
+         "expanding a symlink that loops back to an ancestor must not re-enter the cycle");
+}
+
 }  // namespace
 
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
@@ -136,6 +164,8 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
           TestDirectoryTreeShowsHiddenIgnoredEntries);
   AddTest(tests, "DirectoryTree/SelectPathExpandsAncestors",
           TestDirectoryTreeSelectPathExpandsAncestors);
+  AddTest(tests, "DirectoryTree/StopsExpandingSymlinkCycle",
+          TestDirectoryTreeStopsExpandingSymlinkCycle);
 }
 
 }  // namespace microide::tests

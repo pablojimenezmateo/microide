@@ -461,6 +461,34 @@ void TestProjectSearchServiceProgressPublishesBeforeFirstMatch() {
          "first progress publish should expose the full denominator");
 }
 
+void TestProjectFileScannerTerminatesOnSymlinkLoop() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "sub" / "real.txt", "hello\n");
+
+  // A directory symlink whose target is an ancestor turns the tree into a
+  // cycle: without a visited-target guard, CollectProjectFiles would recurse
+  // sub/loop/sub/loop/... forever. The scan must terminate and index the real
+  // file, following the symlink at most a bounded number of times.
+  std::error_code link_error;
+  std::filesystem::create_directory_symlink(root, root / "sub" / "loop", link_error);
+  Expect(!link_error, "fixture should create an ancestor-referential directory symlink");
+
+  const auto files =
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::IncludeHidden);
+
+  std::size_t real_file_hits = 0;
+  for (const auto& file : files) {
+    if (file == std::filesystem::path("sub") / "real.txt") {
+      ++real_file_hits;
+    }
+  }
+  Expect(real_file_hits == 1, "the real file should be indexed exactly once by its real path");
+  // Termination alone proves the cycle was cut; the bound guards against a
+  // regression that follows the loop several extra times before stopping.
+  Expect(files.size() < 16, "an ancestor symlink loop must not inflate the scan unbounded");
+}
+
 }  // namespace
 
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
@@ -490,6 +518,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServicePublishesProgressDenominator);
   AddTest(tests, "ProjectSearchService/ProgressPublishesBeforeFirstMatch",
           TestProjectSearchServiceProgressPublishesBeforeFirstMatch);
+  AddTest(tests, "ProjectFileScanner/TerminatesOnSymlinkLoop",
+          TestProjectFileScannerTerminatesOnSymlinkLoop);
 }
 
 }  // namespace microide::tests

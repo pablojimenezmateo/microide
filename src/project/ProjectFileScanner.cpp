@@ -4,6 +4,7 @@
 #include <system_error>
 
 #include "project/IgnoreMatcher.h"
+#include "project/SymlinkLoopGuard.h"
 #include "util/PerformanceCounters.h"
 
 namespace microide::project {
@@ -19,7 +20,8 @@ void CollectFiles(const std::filesystem::path& root,
                   const std::filesystem::path& directory,
                   const IgnoreMatcher& matcher,
                   ProjectFileScanMode mode,
-                  std::vector<std::filesystem::path>& files) {
+                  std::vector<std::filesystem::path>& files,
+                  SymlinkLoopGuard& loop_guard) {
   std::error_code error;
   std::filesystem::directory_iterator iterator(
       directory, std::filesystem::directory_options::skip_permission_denied, error);
@@ -53,7 +55,12 @@ void CollectFiles(const std::filesystem::path& root,
         ++iterator;
         continue;
       }
-      CollectFiles(root, path, child_matcher, mode, files);
+      std::error_code link_error;
+      const bool is_symlink = iterator->is_symlink(link_error);
+      const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);
+      if (scope.entered()) {
+        CollectFiles(root, path, child_matcher, mode, files, loop_guard);
+      }
       ++iterator;
       continue;
     }
@@ -86,7 +93,8 @@ std::vector<std::filesystem::path> CollectProjectFiles(const std::filesystem::pa
   matcher.SetRoot(absolute_root);
 
   std::vector<std::filesystem::path> files;
-  CollectFiles(absolute_root, absolute_root, matcher, mode, files);
+  SymlinkLoopGuard loop_guard;
+  CollectFiles(absolute_root, absolute_root, matcher, mode, files, loop_guard);
   std::sort(files.begin(), files.end(), [](const auto& lhs, const auto& rhs) {
     return lhs.native() < rhs.native();
   });
