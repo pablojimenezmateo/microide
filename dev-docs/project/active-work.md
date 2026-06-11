@@ -506,7 +506,8 @@ Open work:
 ### 6. Deferred Work And Throughput Pass (2026-05-02)
 
 This phase addresses background-thread isolation, event-driven file watching, search throughput,
-and adaptive idle rendering. The infrastructure layer is shipped; workspace wiring is in progress.
+and adaptive idle rendering. The infrastructure layer **and** the workspace wiring are now shipped
+(verified 2026-06-11; the items previously listed under "Open work" all landed).
 
 Shipped:
 
@@ -533,18 +534,31 @@ Shipped:
   wakeup-rate assertion
 - Full unit test coverage for `BackgroundTaskCounter`, `FileIndexWatcher`, and `PatternCache`
 
-Open work (tracked in `openspec/changes/deferred-work-and-throughput-pass/tasks.md`):
+Workspace wiring (was "Open work"; all landed and verified in tree on 2026-06-11):
 
-- wire `FileIndexWatcher` to project open/close in the workspace coordinator (task 2.2–2.3) and
-  update file-finder and search call sites to consume `ProjectFileIndex::Snapshot()` (tasks 2.4–2.5)
-- migrate git `Status`, `Blame`, and `Log` call sites through `ProjectBackgroundExecutor` with SDL
-  user-event delivery (tasks 3.2–3.4); verify cancel-on-project-switch (task 3.5)
-- add `layout_dirty_` flag and guard `ComputeLayout` in `PrepareFrameOnce` (tasks 5.1–5.2); add
-  `visible_line_range` to `FrameToken` and plumb render phases through it (tasks 5.3–5.4)
-- add `SearchResultBuffer` and incremental search streaming with per-batch SDL wake events (tasks
-  7.1–7.4); update cancel path and add integration tests (tasks 7.5–7.6)
-- add `IdleHint` enum and replace zero-delay SDL poll loop with `IdleHint`-driven strategy (tasks
-  8.5–8.6); run `idle_soak_30s` harness to verify near-zero wake rate at rest (task 8.8)
+- `FileIndexWatcher` is wired to project open/close in
+  `WorkspaceProjectStateCoordinator` (`StartFileIndexWatcherForCurrentProject` /
+  `StopFileIndexWatcher`), and the file finder/search consume `state.file_index` snapshots
+- git `Status` dispatches through `ProjectBackgroundExecutor::PostLatest`
+  (`GitRepositoryService`), blame runs on its own background `TaskExecutor`
+  (`GitBlameService`), and sidebar refresh is async with a `refreshing` flag
+- `ComputeLayout` is guarded by `layout_dirty_` in `WorkspaceShellRenderFrame.cpp`
+  (set via `MarkLayoutDirty()`), and `visible_line_range` is plumbed into `FrameToken`
+- incremental search streaming publishes `kBatchSize` batches with progress wake events
+  (`ProjectSearchService`); the runtime appends cumulatively
+- the `IdleHint`-driven event loop is live in `Application.cpp`
+  (`Full` → `SDL_PollEvent`, `CaretOnly` → `SDL_WaitEventTimeout`, `Idle` → `SDL_WaitEvent`),
+  fed by `CurrentIdleWaitState()`; the caret-blink delay freezes after
+  `kCaretBlinkIdleStopMs`, so a focused-but-idle editor still reaches a full blocking wait
+
+Idle-CPU note (2026-06-11): a proposal to suppress the project file-monitor poll delay
+whenever a native watcher is configured was investigated and rejected. On a healthy Linux
+host the native inotify backend already sets `polling_required_ = false`, so
+`FileTreeWatcher::NextPollDelay()` returns `nullopt` and the loop blocks fully; the poll
+delay is only non-null when native arming fails (missing root, unreadable subtree, or
+inotify watch exhaustion on very large repos), where polling is the *only* way to detect
+changes. Forcing it off there would silently miss filesystem changes — a correctness
+regression — so the current behavior is correct as-is.
 
 ### 2. Terminal Hardening
 
