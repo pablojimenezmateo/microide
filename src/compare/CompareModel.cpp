@@ -1066,10 +1066,13 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   if (lines_equal) {
     model.rows.reserve(left_lines.size());
     int line_number = 1;
-    for (const auto& line : left_lines) {
+    for (std::size_t i = 0; i < left_lines.size(); ++i) {
+      // Under ignore_whitespace the two sides can compare equal while differing in
+      // whitespace; the right column must still show the right file's actual text,
+      // not a copy of the left line.
       model.rows.push_back(CompareRow{
-          .left_text = line,
-          .right_text = line,
+          .left_text = left_lines[i],
+          .right_text = right_lines[i],
           .left_line = line_number,
           .right_line = line_number,
           .kind = CompareRowKind::Unchanged,

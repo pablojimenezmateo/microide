@@ -12,6 +12,7 @@ namespace {
 
 using microide::compare::BuildCompareModel;
 using microide::compare::BuildCompareModelProfiled;
+using microide::compare::CompareBuildOptions;
 using microide::compare::CompareModel;
 using microide::compare::CompareRowKind;
 using microide::compare::CompareTextSpan;
@@ -718,9 +719,26 @@ void TestProfiledCompareBuildMatchesUnprofiledModel() {
   }
 }
 
+// Regression: under ignore_whitespace, two sides can compare equal while their
+// whitespace differs. The all-equal fast path must still show each column's own
+// text — it previously copied the left line into right_text.
+void TestCompareIgnoreWhitespacePreservesRightText() {
+  CompareBuildOptions options;
+  options.ignore_whitespace = true;
+  const CompareModel model = BuildCompareModel("foo\n  bar", "foo\nbar", options);
+  Expect(model.rows.size() == 2, "two unchanged rows under ignore_whitespace");
+  Expect(model.rows[1].kind == CompareRowKind::Unchanged,
+         "a whitespace-only difference is Unchanged when whitespace is ignored");
+  Expect(model.rows[1].left_text == "  bar", "left column keeps the left file's text");
+  Expect(model.rows[1].right_text == "bar",
+         "right column must reflect the right file, not a copy of the left line");
+}
+
 }  // namespace
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Compare/IgnoreWhitespacePreservesRightText",
+          TestCompareIgnoreWhitespacePreservesRightText);
   AddTest(tests, "Compare/SimpleFixture", TestCompareSimpleFixture);
   AddTest(tests, "Compare/CodeFixture", TestCompareCodeFixture);
   AddTest(tests, "Compare/AsciiChangedSpans", TestCompareAsciiChangedSpans);
