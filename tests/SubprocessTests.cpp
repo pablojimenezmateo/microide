@@ -262,6 +262,37 @@ void TestIgnoreBrokenPipeSignalPreventsCrash() {
   Expect(written == -1, "write to a broken pipe should fail");
   Expect(saved_errno == EPIPE, "write to a broken pipe should report EPIPE, not crash");
 }
+
+// Regression: a child that echoes a payload larger than the kernel pipe buffer
+// would deadlock if the parent wrote all of stdin before draining stdout — the
+// child blocks on write(stdout) while the parent blocks on write(stdin). The
+// pump must interleave the two directions. A hang here (caught by the ctest
+// timeout) is the failure mode; completing with the echoed payload is the pass.
+void TestSubprocessLargeStdinDoesNotDeadlock() {
+  microide::platform::IgnoreBrokenPipeSignal();
+  // 4 MiB dwarfs the ~64 KiB default pipe buffer on Linux, so both directions
+  // must make progress concurrently for `cat` to finish.
+  std::string payload;
+  payload.reserve(4u * 1024u * 1024u);
+  for (std::size_t i = 0; i < 4u * 1024u * 1024u; ++i) {
+    payload.push_back(static_cast<char>('A' + (i % 26)));
+  }
+
+  const auto result = RunSubprocess({"cat"}, SubprocessOptions{
+                                                 .cwd = {},
+                                                 .stdin_text = payload,
+                                                 .environment_overrides = {},
+                                                 .capture_stdout = true,
+                                                 .capture_stderr = true,
+                                                 .silence_stderr = false,
+                                             });
+  Expect(result.exit_code == 0, "large-stdin cat fixture should exit successfully");
+  Expect(result.stdout_text.size() == payload.size(),
+         "large-stdin cat should echo the entire payload without truncation");
+  Expect(result.stdout_text == payload,
+         "large-stdin cat should echo the payload byte-for-byte");
+  Expect(result.stderr_text.empty(), "large-stdin cat should not write to stderr");
+}
 #endif
 
 }  // namespace
@@ -278,6 +309,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite);
   AddTest(tests, "Subprocess/IgnoreBrokenPipeSignalPreventsCrash",
           TestIgnoreBrokenPipeSignalPreventsCrash);
+  AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",
+          TestSubprocessLargeStdinDoesNotDeadlock);
 #endif
 }
 

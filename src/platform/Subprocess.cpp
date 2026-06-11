@@ -83,6 +83,18 @@ bool OpenPipe(bool enabled, std::array<UniqueFd, 2>* pipe_fds) {
   return true;
 }
 
+void SetNonBlocking(int fd) {
+  if (fd < 0) {
+    return;
+  }
+  const int flags = fcntl(fd, F_GETFL, 0);
+  if (flags >= 0) {
+    (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+  }
+}
+
+// Drains a (non-blocking) readable pipe into `output`. Stops on EOF (closing
+// the fd) or once the kernel buffer is exhausted (EAGAIN); never blocks.
 void DrainReadyPipe(UniqueFd* fd, std::string* output) {
   if (fd == nullptr || !fd->IsValid() || output == nullptr) {
     return;
@@ -93,10 +105,7 @@ void DrainReadyPipe(UniqueFd* fd, std::string* output) {
     const ssize_t bytes_read = read(fd->Get(), buffer.data(), buffer.size());
     if (bytes_read > 0) {
       output->append(buffer.data(), static_cast<std::size_t>(bytes_read));
-      if (bytes_read == static_cast<ssize_t>(buffer.size())) {
-        continue;
-      }
-      return;
+      continue;
     }
     if (bytes_read == 0) {
       fd->Reset();
@@ -105,26 +114,57 @@ void DrainReadyPipe(UniqueFd* fd, std::string* output) {
     if (errno == EINTR) {
       continue;
     }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return;
+    }
     fd->Reset();
     return;
   }
 }
 
-void DrainCapturedPipes(UniqueFd* stdout_fd,
-                        std::string* stdout_text,
-                        UniqueFd* stderr_fd,
-                        std::string* stderr_text) {
-  while ((stdout_fd != nullptr && stdout_fd->IsValid()) ||
-         (stderr_fd != nullptr && stderr_fd->IsValid())) {
-    std::array<pollfd, 2> poll_fds{};
+// Pumps the child's stdio in a single non-blocking poll loop: feeds `stdin_text`
+// to `stdin_fd` while concurrently draining captured stdout/stderr. Writing all
+// of stdin up front (as the old code did) deadlocks when the child fills its
+// stdout pipe before consuming stdin — the child blocks on write(stdout) and we
+// block on write(stdin). Interleaving the two directions cannot deadlock.
+void PumpChildIo(UniqueFd* stdin_fd,
+                 const std::string& stdin_text,
+                 UniqueFd* stdout_fd,
+                 std::string* stdout_text,
+                 UniqueFd* stderr_fd,
+                 std::string* stderr_text) {
+  if (stdin_fd != nullptr && stdin_fd->IsValid()) {
+    SetNonBlocking(stdin_fd->Get());
+    if (stdin_text.empty()) {
+      stdin_fd->Reset();  // No payload: close immediately so the child sees EOF.
+    }
+  }
+  if (stdout_fd != nullptr && stdout_fd->IsValid()) {
+    SetNonBlocking(stdout_fd->Get());
+  }
+  if (stderr_fd != nullptr && stderr_fd->IsValid()) {
+    SetNonBlocking(stderr_fd->Get());
+  }
+
+  std::size_t stdin_offset = 0;
+  while (true) {
+    std::array<pollfd, 3> poll_fds{};
     nfds_t count = 0;
+    int stdout_index = -1;
+    int stderr_index = -1;
+    int stdin_index = -1;
+
     if (stdout_fd != nullptr && stdout_fd->IsValid()) {
-      poll_fds[count++] =
-          pollfd{.fd = stdout_fd->Get(), .events = POLLIN | POLLHUP, .revents = 0};
+      stdout_index = static_cast<int>(count);
+      poll_fds[count++] = pollfd{.fd = stdout_fd->Get(), .events = POLLIN | POLLHUP, .revents = 0};
     }
     if (stderr_fd != nullptr && stderr_fd->IsValid()) {
-      poll_fds[count++] =
-          pollfd{.fd = stderr_fd->Get(), .events = POLLIN | POLLHUP, .revents = 0};
+      stderr_index = static_cast<int>(count);
+      poll_fds[count++] = pollfd{.fd = stderr_fd->Get(), .events = POLLIN | POLLHUP, .revents = 0};
+    }
+    if (stdin_fd != nullptr && stdin_fd->IsValid()) {
+      stdin_index = static_cast<int>(count);
+      poll_fds[count++] = pollfd{.fd = stdin_fd->Get(), .events = POLLOUT, .revents = 0};
     }
 
     if (count == 0) {
@@ -139,37 +179,29 @@ void DrainCapturedPipes(UniqueFd* stdout_fd,
       break;
     }
 
-    for (nfds_t index = 0; index < count; ++index) {
-      if ((poll_fds[index].revents & (POLLIN | POLLHUP)) == 0) {
-        continue;
-      }
-      if (stdout_fd != nullptr && stdout_fd->IsValid() &&
-          poll_fds[index].fd == stdout_fd->Get()) {
-        DrainReadyPipe(stdout_fd, stdout_text);
-        continue;
-      }
-      if (stderr_fd != nullptr && stderr_fd->IsValid() &&
-          poll_fds[index].fd == stderr_fd->Get()) {
-        DrainReadyPipe(stderr_fd, stderr_text);
+    if (stdout_index >= 0 &&
+        (poll_fds[stdout_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+      DrainReadyPipe(stdout_fd, stdout_text);
+    }
+    if (stderr_index >= 0 &&
+        (poll_fds[stderr_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+      DrainReadyPipe(stderr_fd, stderr_text);
+    }
+    if (stdin_index >= 0 &&
+        (poll_fds[stdin_index].revents & (POLLOUT | POLLERR | POLLHUP)) != 0) {
+      const ssize_t written =
+          write(stdin_fd->Get(), stdin_text.data() + stdin_offset, stdin_text.size() - stdin_offset);
+      if (written > 0) {
+        stdin_offset += static_cast<std::size_t>(written);
+        if (stdin_offset >= stdin_text.size()) {
+          stdin_fd->Reset();  // Fully written: close to signal EOF to the child.
+        }
+      } else if (written < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) {
+        // Transient: retry on the next poll.
+      } else {
+        stdin_fd->Reset();  // EPIPE or fatal error: child is gone, stop feeding it.
       }
     }
-  }
-}
-
-void WriteAllToPipe(int fd, const std::string& text) {
-  const char* data = text.data();
-  std::size_t remaining = text.size();
-  while (remaining > 0) {
-    const ssize_t written = write(fd, data, remaining);
-    if (written > 0) {
-      data += written;
-      remaining -= static_cast<std::size_t>(written);
-      continue;
-    }
-    if (written < 0 && errno == EINTR) {
-      continue;
-    }
-    break;
   }
 }
 
@@ -431,13 +463,11 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   stdout_pipe[1].Reset();
   stderr_pipe[1].Reset();
   stdin_pipe[0].Reset();
-  if (!options.stdin_text.empty()) {
-    WriteAllToPipe(stdin_pipe[1].Get(), options.stdin_text);
-  }
-  stdin_pipe[1].Reset();
 
-  DrainCapturedPipes(options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
-                     options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text);
+  PumpChildIo(&stdin_pipe[1], options.stdin_text,
+              options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
+              options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text);
+  stdin_pipe[1].Reset();
   stdout_pipe[0].Reset();
   stderr_pipe[0].Reset();
 

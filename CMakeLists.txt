@@ -181,7 +181,6 @@ set(MICROIDE_CORE_SOURCES
   src/platform/Filesystem.cpp
   src/platform/HostIntegration.cpp
   src/platform/HostPlatform.cpp
-  src/platform/ProcessBackend.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
   src/platform/TerminalBackend.cpp

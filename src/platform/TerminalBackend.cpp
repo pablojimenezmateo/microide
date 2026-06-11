@@ -201,12 +201,31 @@ class PosixTerminalBackend final : public TerminalBackend {
 
     close(slave_fd);
 
+    // Self-pipe used to wake the reader's poll() on shutdown without closing
+    // master_fd out from under it (closing an fd another thread is polling is
+    // a data race and risks fd-number reuse).
+    int wake_pipe[2] = {-1, -1};
+    if (pipe(wake_pipe) != 0) {
+      close(master_fd);
+      RequestTerminalChildShutdown(child_pid);
+      return TerminalStartResult{
+          .started = false,
+          .running = false,
+          .child_process_id = -1,
+          .launch_label = request.command.empty() ? shell_name : request.command,
+          .initial_output = "failed to allocate terminal wake pipe.",
+      };
+    }
+
     callbacks_ = std::move(callbacks);
-    master_fd_ = master_fd;
+    master_fd_.store(master_fd, std::memory_order_release);
+    wake_read_fd_ = wake_pipe[0];
+    wake_write_fd_ = wake_pipe[1];
     child_pid_ = child_pid;
     running_ = true;
     stop_requested_ = false;
-    reader_thread_ = std::thread(&PosixTerminalBackend::ReaderMain, this, master_fd, child_pid);
+    reader_thread_ =
+        std::thread(&PosixTerminalBackend::ReaderMain, this, master_fd, wake_pipe[0], child_pid);
 
     return TerminalStartResult{
         .started = true,
@@ -218,14 +237,22 @@ class PosixTerminalBackend final : public TerminalBackend {
   }
 
   void Stop() override {
-    const int master_fd = master_fd_;
+    const int master_fd = master_fd_.exchange(-1, std::memory_order_acq_rel);
     const int child_pid = child_pid_;
+    const int wake_write_fd = wake_write_fd_;
+    const int wake_read_fd = wake_read_fd_;
     stop_requested_.store(true, std::memory_order_release);
-    master_fd_ = -1;
     child_pid_ = -1;
 
-    if (master_fd >= 0) {
-      close(master_fd);
+    // Wake the reader's poll() via the self-pipe, then reap the child, then
+    // join. Only once the reader has fully stopped touching master_fd is it
+    // safe to close it.
+    if (wake_write_fd >= 0) {
+      const char byte = 1;
+      ssize_t result = 0;
+      do {
+        result = write(wake_write_fd, &byte, 1);
+      } while (result < 0 && errno == EINTR);
     }
     RequestTerminalChildShutdown(child_pid);
 
@@ -233,30 +260,44 @@ class PosixTerminalBackend final : public TerminalBackend {
       reader_thread_.join();
     }
 
+    if (master_fd >= 0) {
+      close(master_fd);
+    }
+    if (wake_read_fd >= 0) {
+      close(wake_read_fd);
+    }
+    if (wake_write_fd >= 0) {
+      close(wake_write_fd);
+    }
+    wake_read_fd_ = -1;
+    wake_write_fd_ = -1;
+
     running_.store(false, std::memory_order_release);
     stop_requested_.store(false, std::memory_order_release);
   }
 
   void Resize(std::size_t rows, std::size_t columns) override {
-    if (master_fd_ < 0) {
+    const int master_fd = master_fd_.load(std::memory_order_acquire);
+    if (master_fd < 0) {
       return;
     }
 
     winsize window_size{};
     window_size.ws_row = static_cast<unsigned short>(std::min<std::size_t>(rows, 65535));
     window_size.ws_col = static_cast<unsigned short>(std::min<std::size_t>(columns, 65535));
-    ioctl(master_fd_, TIOCSWINSZ, &window_size);
+    ioctl(master_fd, TIOCSWINSZ, &window_size);
   }
 
   void Write(std::string_view bytes) override {
-    if (master_fd_ < 0 || bytes.empty()) {
+    const int master_fd = master_fd_.load(std::memory_order_acquire);
+    if (master_fd < 0 || bytes.empty()) {
       return;
     }
 
     std::size_t offset = 0;
     while (offset < bytes.size()) {
       const ssize_t written =
-          write(master_fd_, bytes.data() + static_cast<std::ptrdiff_t>(offset), bytes.size() - offset);
+          write(master_fd, bytes.data() + static_cast<std::ptrdiff_t>(offset), bytes.size() - offset);
       if (written < 0) {
         if (errno == EINTR) {
           continue;
@@ -270,11 +311,16 @@ class PosixTerminalBackend final : public TerminalBackend {
   bool running() const override { return running_.load(std::memory_order_acquire); }
 
  private:
-  void ReaderMain(int master_fd, int child_pid) {
+  void ReaderMain(int master_fd, int wake_fd, int child_pid) {
     std::array<char, 4096> buffer{};
     while (!stop_requested_.load(std::memory_order_acquire)) {
-      pollfd pfd{.fd = master_fd, .events = POLLIN | POLLHUP, .revents = 0};
-      const int ready = poll(&pfd, 1, 100);
+      std::array<pollfd, 2> pfds{
+          pollfd{.fd = master_fd, .events = POLLIN | POLLHUP, .revents = 0},
+          pollfd{.fd = wake_fd, .events = POLLIN, .revents = 0},
+      };
+      // No timeout: the wake pipe interrupts the poll on shutdown, so the
+      // reader never busy-polls while idle.
+      const int ready = poll(pfds.data(), 2, -1);
       if (ready < 0) {
         if (errno == EINTR) {
           continue;
@@ -284,8 +330,15 @@ class PosixTerminalBackend final : public TerminalBackend {
       if (ready == 0) {
         continue;
       }
-      if ((pfd.revents & (POLLERR | POLLNVAL)) != 0) {
+      // Shutdown signalled via the self-pipe: stop before touching master_fd.
+      if ((pfds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
         break;
+      }
+      if ((pfds[0].revents & (POLLERR | POLLNVAL)) != 0) {
+        break;
+      }
+      if ((pfds[0].revents & (POLLIN | POLLHUP)) == 0) {
+        continue;
       }
       const ssize_t count = read(master_fd, buffer.data(), buffer.size());
       if (count > 0) {
@@ -312,7 +365,9 @@ class PosixTerminalBackend final : public TerminalBackend {
 
   TerminalBackendCallbacks callbacks_;
   std::thread reader_thread_;
-  int master_fd_ = -1;
+  std::atomic<int> master_fd_{-1};
+  int wake_read_fd_ = -1;
+  int wake_write_fd_ = -1;
   int child_pid_ = -1;
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};

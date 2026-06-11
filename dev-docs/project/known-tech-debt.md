@@ -869,14 +869,6 @@ verified against source before being recorded.
   `src/plugin/PluginProviderQueryInterop.cpp` and `src/plugin/PluginSidebarHoverInterop.cpp`. Apply
   the same `lua_settop(state, base)` pattern uniformly (low severity — only the rare null-plugin
   branch leaks; PCall already balances the stack on error).
-- **`PosixAsyncProcessBackend` / `PosixTerminalBackend` fd lifecycle races**: unlike
-  `AsyncSubprocess`, `PosixAsyncProcessBackend` (`src/platform/ProcessBackend.cpp`) mutates
-  `running_/pid_/fds` across `IsRunning`/`Read`/`Write`/`Shutdown` with no mutex; `PosixTerminalBackend`
-  (`src/platform/TerminalBackend.cpp`) can `write()` to a `master_fd_` being closed by `Stop()`.
-  Either add synchronization or document+enforce single-thread use.
-- **`RunSubprocessWithBackend` large-stdin deadlock**: `src/platform/ProcessBackend.cpp` writes all
-  stdin synchronously *before* draining captured stdout/stderr; a child that fills its stdout pipe
-  before reading stdin deadlocks. Drain concurrently with the stdin write.
 - **Snippet linked-placeholder column desync**: in `src/editor/SnippetEngine.cpp`, editing one of
   several same-line linked placeholder ranges does not shift the `start.column` of the other ranges,
   so multi-keystroke edits to multi-occurrence snippets insert at the wrong place. Masked by
@@ -956,3 +948,35 @@ Regression coverage: `ProjectFileScanner/TerminatesOnSymlinkLoop` (a `sub/loop -
 scan terminates and indexes the real file exactly once) and `DirectoryTree/StopsExpandingSymlinkCycle`
 (a `loop -> root` symlink: following it once materializes its children, but expanding `loop/loop`
 does not re-enter the cycle). Validated under the regular and ASAN presets.
+
+## 21. 2026-06-11 Subprocess deadlock + terminal fd-lifecycle hardening
+
+Closed the deferred "`RunSubprocessWithBackend` large-stdin deadlock" and
+"`PosixAsyncProcessBackend` / `PosixTerminalBackend` fd lifecycle races" items from §18.
+
+**Dead code removed.** `src/platform/ProcessBackend.cpp` / `.h` (`RunSubprocessWithBackend`,
+`AsyncProcessBackend`, `PosixAsyncProcessBackend`, `CreateAsyncProcessBackend`) had **zero
+consumers** anywhere in `src/`, `tests/`, or `tools/`, and duplicated ~190 lines of pipe/fd helpers
+verbatim from the live `src/platform/Subprocess.cpp`. Deleting both files (and the CMake entry)
+resolves the `PosixAsyncProcessBackend` fd-race outright and removes the dead twin of the stdin
+deadlock. The live subprocess path is `Subprocess.cpp::RunSubprocess`.
+
+**Live stdin deadlock fixed.** `RunSubprocess` wrote *all* of stdin synchronously
+(`WriteAllToPipe`) before draining captured stdout/stderr. A child that filled its stdout pipe
+(~64 KiB) before consuming stdin would block on `write(stdout)` while the parent blocked on
+`write(stdin)` — a classic pipe deadlock. Replaced the sequential write-then-drain with a single
+non-blocking `poll()` pump (`PumpChildIo`) that feeds stdin (`POLLOUT`) while concurrently draining
+stdout/stderr (`POLLIN`); all three pipe ends are set `O_NONBLOCK` and `DrainReadyPipe` now treats
+`EAGAIN` as "buffer drained" rather than blocking. Interleaving the two directions cannot deadlock.
+Regression: `Subprocess/LargeStdinDoesNotDeadlock` echoes a 4 MiB payload through `cat` (a hang,
+caught by the ctest timeout, is the pre-fix failure mode).
+
+**Terminal fd race fixed.** `PosixTerminalBackend::Stop()` (`src/platform/TerminalBackend.cpp`)
+`close()`d `master_fd` to interrupt the reader thread's `poll()`/`read()` — closing an fd another
+thread is actively polling is a data race and risks fd-number reuse. Added a self-pipe: the reader
+now polls `master_fd` plus a wake fd, `Stop()` wakes it by writing one byte, reaps the child, joins
+the reader, and only *then* closes `master_fd` (when the reader has provably stopped touching it).
+`master_fd_` became `std::atomic<int>` so owner-thread `Write`/`Resize`/`Start`/`Stop` accesses are
+race-free. The reader's `poll()` lost its 100 ms timeout (the wake fd interrupts it directly), so an
+idle terminal no longer wakes ten times a second — a small low-CPU win. Existing terminal tests
+(81) plus the subprocess suite pass clean under the regular, ASAN, and **TSAN** presets.
