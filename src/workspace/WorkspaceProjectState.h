@@ -216,4 +216,23 @@ struct ProjectCatalogState {
   int tab_scroll_index = 0;
 };
 
+// The surface keyboard focus lands on when no overlay/prompt owns input — the
+// sidebar when it is visible, otherwise the editor. Single source of truth so
+// dismissal paths cannot drift apart.
+inline FocusTarget PrimarySurfaceFocus(const ProjectWorkspaceState& state) {
+  return state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+}
+
+// Hide the overlay and ensure keyboard focus never strands on the now-hidden
+// surface (the root cause of several "dead input" bugs). Shell-level dismissal
+// (fold-reveal cleanup, redraw requests, cursor-kind invalidation) lives in
+// WorkspaceShell::DismissOverlay; coordinators that cannot reach the shell use
+// this minimal, focus-safe transition instead of a bare `overlay.visible = false`.
+inline void HideOverlay(ProjectWorkspaceState& state) {
+  state.overlay.visible = false;
+  if (state.surface.focus == FocusTarget::Overlay) {
+    state.surface.focus = PrimarySurfaceFocus(state);
+  }
+}
+
 }  // namespace microide::workspace

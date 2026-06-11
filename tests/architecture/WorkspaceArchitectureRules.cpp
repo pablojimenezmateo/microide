@@ -32,6 +32,7 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   run(CheckNoExecutorPostThenFutureGetInWorkspace);
   run(CheckNoSynchronousSubprocessInWorkspace);
   run(CheckNoDirectGitRepositoryInWorkspace);
+  run(CheckOverlayDismissalIsCentralized);
   run(CheckRenderTuDoesNotMaterializeStrings);
   run(CheckRenderTuDoesNotCallToStringOrFormat);
   run(CheckTextViewportNoFullDocCopy);

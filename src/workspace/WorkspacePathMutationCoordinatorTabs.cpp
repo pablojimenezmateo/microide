@@ -218,7 +218,9 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     state.overlay.workflow.compare_picker.path =
         ReplacePathPrefix(state.overlay.workflow.compare_picker.path, old_path, new_path);
     if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
-      state.overlay.visible = false;
+      // Hide via the focus-safe helper so input does not strand on the dismissed
+      // commit picker when its file is renamed/deleted out from under it.
+      HideOverlay(state);
     }
   }
 }
@@ -338,7 +340,9 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     state.overlay.workflow.compare_picker.commits.clear();
     state.overlay.workflow.compare_picker.matches.clear();
     if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
-      state.overlay.visible = false;
+      // Hide via the focus-safe helper so input does not strand on the dismissed
+      // commit picker when its file is renamed/deleted out from under it.
+      HideOverlay(state);
     }
   }
 }

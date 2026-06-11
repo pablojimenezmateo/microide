@@ -258,6 +258,37 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
 }
 
 
+RuleResult CheckOverlayDismissalIsCentralized(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "overlay dismissal must not bare-assign overlay.visible = false";
+  result.hard_fail = true;
+  // Hiding an overlay without resetting keyboard focus strands input on the dead
+  // surface ("dead input" bugs). Dismissal must go through WorkspaceShell::DismissOverlay
+  // or the focus-safe HideOverlay() helper. WorkspacePersistenceCoordinatorSession.cpp is
+  // exempt: it reinitializes the entire project state on restore (no focus to strand).
+  const std::regex pattern(R"(overlay\.visible\s*=\s*false)");
+  const std::array<std::string_view, 2> allowed_files = {
+      "WorkspaceShellOverlay.cpp",
+      "WorkspacePersistenceCoordinatorSession.cpp",
+  };
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string filename = entry.path().filename().string();
+    if (std::find(allowed_files.begin(), allowed_files.end(), filename) != allowed_files.end()) {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, pattern,
+        "hide overlays via WorkspaceShell::DismissOverlay or HideOverlay(state), not a bare "
+        "overlay.visible = false (which strands keyboard focus)");
+  }
+  return result;
+}
+
 RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "direct GitRepository construction in workspace";

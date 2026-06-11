@@ -124,6 +124,17 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
          "debugger/DAP rule should catch removed surface symbols");
   Expect(!architecture::CheckNoSynchronousSubprocessInWorkspace(root).violations.empty(),
          "workspace subprocess rule should catch synchronous subprocess calls");
+
+  WriteFile(root / "src/workspace/SomeCoordinator.cpp",
+            "void F(State& s){ s.overlay.visible = false; }\n");
+  Expect(!architecture::CheckOverlayDismissalIsCentralized(root).violations.empty(),
+         "overlay-dismissal rule should catch a bare overlay.visible = false");
+  WriteFile(root / "src/workspace/WorkspaceShellOverlay.cpp",
+            "void F(State& s){ s.overlay.visible = false; }\n");
+  WriteFile(root / "src/workspace/SomeCoordinator.cpp",
+            "void F(State& s){ HideOverlay(s); }\n");
+  Expect(architecture::CheckOverlayDismissalIsCentralized(root).violations.empty(),
+         "overlay-dismissal rule should accept the canonical file and HideOverlay rewrite");
   Expect(!architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
          "render materialization rule should catch string construction in render TU");
   Expect(!architecture::CheckTextViewportNoFullDocCopy(root).violations.empty(),

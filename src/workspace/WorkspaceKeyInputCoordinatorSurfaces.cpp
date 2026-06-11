@@ -77,8 +77,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   if (state_.overlay.mode == OverlayMode::BufferReplace) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        state_.overlay.visible = false;
-        state_.surface.focus = FocusTarget::Editor;
+        // Route through the canonical dismissal so fold-reveal cleanup, cursor-kind
+        // invalidation, and focus restoration all happen (a bare visible=false here
+        // left temporarily-expanded folds open and the cursor kind stale).
+        operations_.dismiss_overlay(true);
         return true;
       case SDLK_TAB:
         state_.overlay.buffer_search_field =
@@ -114,8 +116,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
   if (state_.overlay.mode == OverlayMode::ProjectSearch) {
     switch (event.key) {
       case SDLK_ESCAPE:
-        state_.overlay.visible = false;
-        state_.surface.focus = FocusTarget::Editor;
+        operations_.dismiss_overlay(true);
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:

@@ -6,7 +6,7 @@
 namespace microide::workspace {
 
 WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
-  return context_.current_project_state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+  return PrimarySurfaceFocus(context_.current_project_state);
 }
 
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {

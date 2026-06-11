@@ -324,7 +324,11 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       context_.prompts.surface.action == PromptSurfaceState::Action::OpenExternalUrl) {
     const std::string url = context_.prompts.surface.detail;
     const bool opened = !url.empty() && OpenExternalUrl(url);
-    MakePromptSurfaceService().DismissPromptSurface(!opened);
+    (void)opened;
+    // Always restore focus to the surface that owned it before the prompt; the
+    // success branch previously passed `!opened` (== false), stranding keyboard
+    // focus on the dismissed prompt and leaving input dead until the next click.
+    MakePromptSurfaceService().DismissPromptSurface(true);
     return;
   }
   if (context_.prompts.surface_visible &&
