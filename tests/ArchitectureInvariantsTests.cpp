@@ -135,6 +135,18 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "void F(State& s){ HideOverlay(s); }\n");
   Expect(architecture::CheckOverlayDismissalIsCentralized(root).violations.empty(),
          "overlay-dismissal rule should accept the canonical file and HideOverlay rewrite");
+
+  WriteFile(root / "src/plugin/SomeInterop.cpp",
+            "int F(lua_State* s, const std::string& e){ return luaL_error(s, \"%s\", e.c_str()); }\n");
+  Expect(!architecture::CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(root).violations.empty(),
+         "plugin Lua-error rule should catch a luaL_error that longjmps over a std::string");
+  WriteFile(root / "src/plugin/SomeInterop.cpp",
+            "int F(lua_State* s, const std::string& e){\n"
+            "  lua_error_util::PushMessage(s, e, \"fallback\");\n"
+            "  return lua_error(s);\n"
+            "}\n");
+  Expect(architecture::CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(root).violations.empty(),
+         "plugin Lua-error rule should accept the PushMessage + lua_error rewrite");
   Expect(!architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
          "render materialization rule should catch string construction in render TU");
   Expect(!architecture::CheckTextViewportNoFullDocCopy(root).violations.empty(),

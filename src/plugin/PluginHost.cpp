@@ -46,6 +46,7 @@
 #include "plugin/PluginStateTeardownInterop.h"
 #include "plugin/PluginWorkspaceInterop.h"
 #include "plugin/PluginHostRuntimeTypes.h"
+#include "plugin/LuaError.h"
 #include "plugin/LuaRuntime.h"
 #include "util/TextFileIO.h"
 

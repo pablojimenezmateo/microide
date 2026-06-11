@@ -1472,6 +1472,91 @@ return ide.plugin({
          "rapid reload-and-shutdown sequence should not surface callback errors");
 }
 
+// Exercises the process.run argument-validation error paths. These raise a Lua
+// error from inside a C function that has already built std::vector/std::string
+// locals; raising Lua errors is a C longjmp, so the fix defers the raise until
+// those locals have destructed (see src/plugin/LuaError.h). The test asserts the
+// error message is preserved AND that a subsequent valid call still works, which
+// would fail if the deferred-raise restructure left the Lua stack desynchronized.
+// Under the ASAN preset it also proves the longjmp no longer leaks the locals.
+void TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "process run error fixture\n");
+
+  WritePluginInit(
+      global_plugins, "proc-errors",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "proc.errors",
+  setup = function(ctx)
+    ctx.commands.add("proc.bad-argv", function(ctx, args)
+      ctx.process.run({ {} })
+    end)
+    ctx.commands.add("proc.bad-env-value", function(ctx, args)
+      ctx.process.run({"true"}, { env = { BAD = {} } })
+    end)
+    ctx.commands.add("diag.bad-path", function(ctx, args)
+      ctx.diagnostics.publish({}, {})
+    end)
+    ctx.commands.add("files.bad-arg", function(ctx, args)
+      ctx.files.read_text({})
+    end)
+    ctx.commands.add("ws.bad-line", function(ctx, args)
+      ctx.workspace.open_file("README.md", "not-a-number")
+    end)
+    ctx.commands.add("proc.ok", function(ctx, args)
+      local result = ctx.process.run({"true"})
+      ctx.log("proc-ok:" .. tostring(result.exit_code))
+    end)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "process-error plugin should load");
+
+  std::string command_error;
+  Expect(!host.ExecuteCommand("proc.bad-argv", {}, &command_error),
+         "non-string argv entries should fail the command");
+  Expect(command_error.find("process argv entries must be strings") != std::string::npos,
+         "bad argv should preserve the descriptive error message");
+
+  command_error.clear();
+  Expect(!host.ExecuteCommand("proc.bad-env-value", {}, &command_error),
+         "non-string/non-false env values should fail the command");
+  Expect(command_error.find("process env values must be strings or false") != std::string::npos,
+         "bad env value should preserve the descriptive error message");
+
+  // The remaining cases exercise the other delegating wrappers (diagnostics /
+  // files / workspace), whose null-host ternary fallbacks previously materialized
+  // a std::filesystem::path or Callbacks temporary that the inner longjmp leaked.
+  command_error.clear();
+  Expect(!host.ExecuteCommand("diag.bad-path", {}, &command_error),
+         "diagnostics.publish with a non-string path should fail the command");
+  command_error.clear();
+  Expect(!host.ExecuteCommand("files.bad-arg", {}, &command_error),
+         "files.read_text with a non-string argument should fail the command");
+  command_error.clear();
+  Expect(!host.ExecuteCommand("ws.bad-line", {}, &command_error),
+         "workspace.open_file with a non-numeric line should fail the command");
+
+  host.ClearMessages();
+  command_error.clear();
+  Expect(host.ExecuteCommand("proc.ok", {}, &command_error),
+         "a valid process.run must still succeed after earlier error paths");
+  Expect(command_error.empty(), "successful command should clear the error output");
+  Expect(!host.Messages().empty() && host.Messages().back() == "proc.errors: proc-ok:0",
+         "the Lua stack must remain intact across deferred-raise error paths");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -1510,6 +1595,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
   AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",
           TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary);
+  AddTest(tests, "PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState",
+          TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState);
 }
 
 }  // namespace microide::tests

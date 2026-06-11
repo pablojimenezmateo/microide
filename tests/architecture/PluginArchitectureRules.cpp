@@ -238,6 +238,41 @@ RuleResult CheckNoProjectLocalPluginDiscovery(const std::filesystem::path& repo_
   return result;
 }
 
+RuleResult CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(const std::filesystem::path& repo_root) {
+  // Raising a Lua error is a C longjmp (the project links the C build of Lua), so
+  // `luaL_error` skips the destructors of any C++ automatic objects still alive on
+  // the stack — undefined behaviour and a leak whenever a std::string/std::vector
+  // local exists. All Lua-error raising in src/plugin must instead copy the message
+  // via lua_error_util::PushMessage and then `lua_error(state)` only after those
+  // locals have gone out of scope (see src/plugin/LuaError.h). Argument-entry
+  // validation that longjmps before any C++ local is constructed (luaL_checktype,
+  // luaL_checkstring, luaL_argerror) stays allowed; only luaL_error is banned
+  // because it is the one routinely reached after objects are built.
+  RuleResult result;
+  result.label = "plugin Lua errors do not longjmp over C++ locals";
+  result.hard_fail = true;
+  const std::filesystem::path plugin_dir = repo_root / "src/plugin";
+  if (!std::filesystem::exists(plugin_dir)) {
+    return result;
+  }
+  const std::regex lua_error_call(R"(\bluaL_error\s*\()");
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(plugin_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".inc" && ext != ".h" && ext != ".hpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, lua_error_call,
+        "raise Lua errors via lua_error_util::PushMessage + lua_error after C++ locals "
+        "destruct; luaL_error longjmps over them (UB + leak). See src/plugin/LuaError.h");
+  }
+  return result;
+}
+
 std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root) {
   std::vector<RuleResult> results;
   const auto run = [&](auto&& fn) { results.push_back(fn(repo_root)); };
@@ -246,6 +281,7 @@ std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& 
   run(CheckEssentialEditorCppModulesDoNotTouchLuaState);
   run(CheckPluginDrainBeforeTeardown);
   run(CheckPluginTranslationUnitSize);
+  run(CheckPluginLuaErrorDoesNotLongjmpOverCppLocals);
   return results;
 }
 

@@ -17,6 +17,20 @@
     return static_cast<Impl*>(lua_touserdata(state, lua_upvalueindex(1)));
   }
 
+  // Long-lived empty fallbacks for the null-host case. Returning a reference (not
+  // a value) lets the `host ? host->member : Fallback()` ternaries bind directly
+  // without materializing a temporary in the wrapper frame. That matters because
+  // the delegating interop call can raise a Lua error (a C longjmp), which would
+  // skip the destructor of any wrapper-frame temporary. See src/plugin/LuaError.h.
+  static const std::filesystem::path& EmptyProjectRoot() {
+    static const std::filesystem::path kEmpty;
+    return kEmpty;
+  }
+  static const PluginHost::Callbacks& EmptyCallbacks() {
+    static const PluginHost::Callbacks kEmpty;
+    return kEmpty;
+  }
+
   template <typename RegisterFn>
   static int RegisterTableContribution(lua_State* state,
                                        const char* missing_plugin_message,
@@ -25,15 +39,17 @@
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     if (plugin == nullptr) {
-      return luaL_error(state, "%s", missing_plugin_message);
+      lua_error_util::PushMessage(state, missing_plugin_message);
+      return lua_error(state);
     }
-    std::string error_message;
-    if (!register_fn(host, plugin, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? default_error_message
-                                              : error_message.c_str());
+    {
+      std::string error_message;
+      if (register_fn(host, plugin, &error_message)) {
+        return 0;
+      }
+      lua_error_util::PushMessage(state, error_message, default_error_message);
     }
-    return 0;
+    return lua_error(state);
   }
 
   template <typename RegisterFn>
@@ -43,13 +59,14 @@
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    std::string error_message;
-    if (host == nullptr || !register_fn(host, plugin, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? default_error_message
-                                              : error_message.c_str());
+    {
+      std::string error_message;
+      if (host != nullptr && register_fn(host, plugin, &error_message)) {
+        return 0;
+      }
+      lua_error_util::PushMessage(state, error_message, default_error_message);
     }
-    return 0;
+    return lua_error(state);
   }
 
   PluginInstance* FindPluginByState(lua_State* state) {
@@ -95,43 +112,46 @@
     Impl* host = HostFromUpvalue(state);
     const char* name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
-    std::string error_message;
-    if (host == nullptr || !lua_provider_registration_interop::RegisterCommand(
-                               state, host->FindPluginByState(state), host->callbacks, name, 2,
-                               &host->commands, &host->command_names, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to register plugin command"
-                                              : error_message.c_str());
+    {
+      std::string error_message;
+      if (host != nullptr && lua_provider_registration_interop::RegisterCommand(
+                                 state, host->FindPluginByState(state), host->callbacks, name, 2,
+                                 &host->commands, &host->command_names, &error_message)) {
+        return 0;
+      }
+      lua_error_util::PushMessage(state, error_message, "failed to register plugin command");
     }
-    return 0;
+    return lua_error(state);
   }
 
   static int LuaSidebarAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
-    std::string error_message;
-    if (host == nullptr || !lua_provider_registration_interop::RegisterSidebar(
-                               state, host->FindPluginByState(state), 1, &host->sidebars,
-                               &host->sidebar_providers, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to register plugin sidebar"
-                                              : error_message.c_str());
+    {
+      std::string error_message;
+      if (host != nullptr && lua_provider_registration_interop::RegisterSidebar(
+                                 state, host->FindPluginByState(state), 1, &host->sidebars,
+                                 &host->sidebar_providers, &error_message)) {
+        return 0;
+      }
+      lua_error_util::PushMessage(state, error_message, "failed to register plugin sidebar");
     }
-    return 0;
+    return lua_error(state);
   }
 
   static int LuaHoverAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
-    std::string error_message;
-    if (host == nullptr || !lua_provider_registration_interop::RegisterHoverProvider(
-                               state, host->FindPluginByState(state), 1, &host->hovers,
-                               &host->hover_provider_order, &error_message)) {
-      return luaL_error(state, "%s",
-                        error_message.empty() ? "failed to register hover provider"
-                                              : error_message.c_str());
+    {
+      std::string error_message;
+      if (host != nullptr && lua_provider_registration_interop::RegisterHoverProvider(
+                                 state, host->FindPluginByState(state), 1, &host->hovers,
+                                 &host->hover_provider_order, &error_message)) {
+        return 0;
+      }
+      lua_error_util::PushMessage(state, error_message, "failed to register hover provider");
     }
-    return 0;
+    return lua_error(state);
   }
 
   static int LuaMenusAdd(lua_State* state) {
@@ -357,81 +377,90 @@
   static int LuaWorkspaceProjectRoot(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaWorkspaceProjectRoot(
-        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
   }
 
   static int LuaWorkspaceOpenFile(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaWorkspaceOpenFile(
-        state, host != nullptr ? host->current_project_root : std::filesystem::path{},
-        host != nullptr ? host->callbacks : PluginHost::Callbacks{});
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
   static int LuaWorkspaceActiveBuffer(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaWorkspaceActiveBuffer(
-        state, host != nullptr ? host->current_project_root : std::filesystem::path{},
-        host != nullptr ? host->callbacks : PluginHost::Callbacks{});
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
   static int LuaFilesReadText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaFilesReadText(
-        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
   }
 
   static int LuaFilesWriteText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaFilesWriteText(
-        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
   }
 
   static int LuaFilesExists(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return workspace_interop::LuaFilesExists(
-        state, host != nullptr ? host->current_project_root : std::filesystem::path{});
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
   }
 
+  // The process / diagnostics delegates return lua_error_util::kPendingError instead
+  // of raising, having already pushed the message; we raise here, where the wrapper
+  // frame holds no non-trivial locals to leak across the longjmp.
   static int LuaProcessRun(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const std::filesystem::path current_project_root =
-        host != nullptr ? host->current_project_root : std::filesystem::path{};
-    return process_interop::LuaProcessRun(state, current_project_root);
+    const int rc = process_interop::LuaProcessRun(
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
   }
 
   static int LuaProcessRunAsync(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const std::filesystem::path current_project_root =
-        host != nullptr ? host->current_project_root : std::filesystem::path{};
-    return process_interop::LuaProcessRunAsync(
-        state, current_project_root, host != nullptr ? host->async_process_state : nullptr);
+    const int rc = process_interop::LuaProcessRunAsync(
+        state, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->async_process_state : nullptr);
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
   }
 
   static int LuaDiagnosticsPublish(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    return runtime_api_interop::LuaDiagnosticsPublish(
-        state, plugin, host != nullptr ? host->current_project_root : std::filesystem::path{},
-        host != nullptr ? host->callbacks : PluginHost::Callbacks{});
+    const int rc = runtime_api_interop::LuaDiagnosticsPublish(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
   }
 
   static int LuaDiagnosticsClear(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    std::optional<std::filesystem::path> path;
-    if (lua_gettop(state) >= 1 && !lua_isnil(state, 1)) {
-      path = path_interop::ResolveRuntimePath(host != nullptr ? host->current_project_root : std::filesystem::path{},
-                                std::filesystem::path(luaL_checkstring(state, 1)));
+    int rc = 0;
+    {
+      std::optional<std::filesystem::path> path;
+      if (lua_gettop(state) >= 1 && !lua_isnil(state, 1)) {
+        const char* raw_path = luaL_checkstring(state, 1);
+        path = path_interop::ResolveRuntimePath(
+            host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+            std::filesystem::path(raw_path));
+      }
+      rc = runtime_api_interop::LuaDiagnosticsClear(
+          state, plugin, path, host != nullptr ? host->callbacks : EmptyCallbacks());
     }
-
-    return runtime_api_interop::LuaDiagnosticsClear(
-        state, plugin, path, host != nullptr ? host->callbacks : PluginHost::Callbacks{});
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
   }
 
   static int LuaSidebarShow(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return runtime_api_interop::LuaSidebarShow(
-        state, host != nullptr ? host->callbacks : PluginHost::Callbacks{});
+        state, host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
   void PushPluginContext(lua_State* state) {

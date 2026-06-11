@@ -51,6 +51,11 @@ int LuaWorkspaceOpenFile(lua_State* state,
                          const std::filesystem::path& current_project_root,
                          const PluginHost::Callbacks& callbacks) {
   const char* raw_path = luaL_checkstring(state, 1);
+  // Read all longjmp-capable arguments before constructing the std::filesystem::path
+  // local: luaL_optinteger raises on a present-but-non-numeric argument, and that
+  // error is a C longjmp that would skip `path`'s destructor.
+  const lua_Integer line = luaL_optinteger(state, 2, 0);
+  const lua_Integer column = luaL_optinteger(state, 3, 0);
   if (!callbacks.open_file) {
     lua_pushboolean(state, 0);
     return 1;
@@ -61,8 +66,6 @@ int LuaWorkspaceOpenFile(lua_State* state,
     lua_pushboolean(state, 0);
     return 1;
   }
-  const lua_Integer line = luaL_optinteger(state, 2, 0);
-  const lua_Integer column = luaL_optinteger(state, 3, 0);
   lua_pushboolean(state, callbacks.open_file(PluginHost::OpenFileRequest{
                               .path = path,
                               .line = line > 0 ? static_cast<std::size_t>(line) : 0,
