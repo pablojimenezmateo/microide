@@ -1210,6 +1210,13 @@
   std::string HoveredSidebarSearchTooltipLabel(const SDL_FRect& sidebar_rect) const;
   std::optional<SDL_FRect> HoveredSidebarSearchTooltipRect(const WorkspaceLayout& layout) const;
   std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
+  // Hovered interactive-element rects used both by the cursor (pointer feedback) and by
+  // the motion handler (hover-state redraw invalidation). Centralizing the geometry here
+  // keeps render, cursor, and invalidation from each maintaining their own hit-test copy.
+  std::optional<SDL_FRect> HoveredGitSidebarActionButtonRect(const WorkspaceLayout& layout,
+                                                             float x, float y) const;
+  std::optional<SDL_FRect> HoveredStatusBarSegmentRect(const WorkspaceLayout& layout, float x,
+                                                       float y) const;
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;

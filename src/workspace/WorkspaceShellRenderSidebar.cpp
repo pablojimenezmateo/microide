@@ -500,7 +500,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
             text_renderer_, renderer, theme_, button_rect, label, tone,
             ButtonVisualState{
                 .enabled = enabled,
-                .hovered = false,
+                .hovered = enabled && last_mouse_position_valid_ &&
+                           Contains(button_rect, last_mouse_x_, last_mouse_y_),
                 .active = selected,
             });
       };

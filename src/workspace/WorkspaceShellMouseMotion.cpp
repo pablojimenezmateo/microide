@@ -152,6 +152,12 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
             outgoing_base_rect.has_value() && Contains(*outgoing_base_rect, x, y)) {
           return outgoing_base_rect;
         }
+        // Per-row Stage / Discard buttons share this hover-invalidation path so their
+        // hover state repaints on enter/leave like the header buttons above.
+        if (const auto row_button = HoveredGitSidebarActionButtonRect(layout, x, y);
+            row_button.has_value()) {
+          return row_button;
+        }
         return std::nullopt;
       }
       case SidebarMode::Tree: {
@@ -316,6 +322,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
   bool hover_visual_changed = false;
   bool sidebar_hover_button_changed = false;
+  bool status_segment_hover_changed = false;
   std::optional<SDL_FRect> previous_project_tab_tooltip_rect;
   std::optional<SDL_FRect> previous_tab_tooltip_rect;
   std::optional<SDL_FRect> previous_status_tooltip_rect;
@@ -381,6 +388,29 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                                              static_cast<float>(event.motion.y));
     hover_visual_changed = !(previous_hover_target == active_editor_hover_target_) ||
                            previous_action_hovered != current_action_hovered;
+
+    // Clickable status-bar segments repaint their hover background on enter/leave. The
+    // hover fill extends a few px past the text rect, so the redraw rect is padded wider.
+    const std::optional<SDL_FRect> previous_status_segment_rect =
+        previous_mouse_position_valid
+            ? HoveredStatusBarSegmentRect(layout, previous_mouse_x, previous_mouse_y)
+            : std::nullopt;
+    const std::optional<SDL_FRect> current_status_segment_rect = HoveredStatusBarSegmentRect(
+        layout, static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
+    if (previous_status_segment_rect.has_value() != current_status_segment_rect.has_value() ||
+        (previous_status_segment_rect.has_value() &&
+         !rects_equal(*previous_status_segment_rect, *current_status_segment_rect))) {
+      const auto request_status_redraw = [this](const SDL_FRect& rect) {
+        RequestRedrawRect(MakeRect(rect.x - 6.0f, rect.y - 1.0f, rect.w + 12.0f, rect.h + 2.0f));
+      };
+      if (previous_status_segment_rect.has_value()) {
+        request_status_redraw(*previous_status_segment_rect);
+      }
+      if (current_status_segment_rect.has_value()) {
+        request_status_redraw(*current_status_segment_rect);
+      }
+      status_segment_hover_changed = true;
+    }
   }
 
   const auto request_tooltip_redraw_if_changed =
@@ -457,7 +487,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
 
-  return hover_visual_changed || chrome_tooltip_visual_changed || sidebar_hover_button_changed;
+  return hover_visual_changed || chrome_tooltip_visual_changed || sidebar_hover_button_changed ||
+         status_segment_hover_changed;
 }
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {

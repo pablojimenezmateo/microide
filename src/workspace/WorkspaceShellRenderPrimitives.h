@@ -242,8 +242,11 @@ inline void DrawScrollbarThumb(SDL_Renderer* renderer,
     return;
   }
 
+  // Resting thumbs need to read as grabbable at a glance; the prior 0.35 blend sat
+  // almost flush with the track. Lift the resting contrast and keep accent for the
+  // active drag so the grab gives a strong, distinct response.
   const SDL_Color thumb_color =
-      active ? theme.accent : render::BlendColors(theme.text_muted, theme.surface_raised, 0.35f);
+      active ? theme.accent : render::BlendColors(theme.text_muted, theme.surface_raised, 0.6f);
   FillRect(renderer, thumb, thumb_color);
 }
 

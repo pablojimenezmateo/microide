@@ -53,7 +53,8 @@ void WorkspaceShell::RenderPromptSurface(
         text_renderer_, renderer, theme_, buttons[i], labels[i], ButtonTone::Neutral,
         ButtonVisualState{
             .enabled = true,
-            .hovered = false,
+            .hovered = last_mouse_position_valid_ &&
+                       Contains(buttons[i], last_mouse_x_, last_mouse_y_),
             .active = context_.prompts.surface.selected_button == static_cast<int>(i),
         });
   }
@@ -89,7 +90,8 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
         i == 1 ? ButtonTone::Destructive : ButtonTone::Neutral,
         ButtonVisualState{
             .enabled = true,
-            .hovered = false,
+            .hovered = last_mouse_position_valid_ &&
+                       Contains(buttons[i], last_mouse_x_, last_mouse_y_),
             .active = context_.prompts.dirty.selected_action == static_cast<int>(i),
         });
   }

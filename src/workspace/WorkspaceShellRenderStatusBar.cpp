@@ -42,12 +42,25 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
         return theme_.chrome_text_secondary;
     }
   };
+  // Clickable segments get a hover background so the pointer cursor (already returned by
+  // CursorKindForPosition for these segments) is matched by a visible affordance.
+  const auto draw_segment = [&](const StatusBarSegmentViewModel& seg, const SDL_FRect& row) {
+    const bool hovered = seg.clickable && last_mouse_position_valid_ &&
+                         Contains(row, last_mouse_x_, last_mouse_y_);
+    SDL_Color text_bg = theme_.chrome_background;
+    if (hovered) {
+      const SDL_FRect hover_rect = MakeRect(row.x - 4.0f, row.y, row.w + 8.0f, row.h);
+      DrawSelectableRowBackground(renderer, theme_, hover_rect, theme_.chrome_background, true);
+      text_bg = theme_.row_highlight;
+    }
+    DrawVCenteredTextOn(text_renderer_, renderer, row, 0.0f,
+                        hovered ? theme_.text_primary : segment_color(seg), text_bg, seg.text);
+  };
+
   float left_x = vm.rect.x + padding;
   for (const StatusBarSegmentViewModel& seg : vm.left_segments) {
     const float width = text_renderer_.MeasureWidth(seg.text);
-    const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
-    DrawVCenteredTextOn(text_renderer_, renderer, row, 0.0f, segment_color(seg),
-                        theme_.chrome_background, seg.text);
+    draw_segment(seg, MakeRect(left_x, vm.rect.y, width, vm.rect.h));
     left_x += width + gap;
   }
 
@@ -55,9 +68,7 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
   for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
     const float width = text_renderer_.MeasureWidth(it->text);
     right_x -= width;
-    const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
-    DrawVCenteredTextOn(text_renderer_, renderer, row, 0.0f, segment_color(*it),
-                        theme_.chrome_background, it->text);
+    draw_segment(*it, MakeRect(right_x, vm.rect.y, width, vm.rect.h));
     right_x -= gap;
   }
 }

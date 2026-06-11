@@ -49,7 +49,10 @@ void DrawScrollbarThumb(SDL_Renderer* renderer,
   if (renderer == nullptr || thumb.w <= 0.0f || thumb.h <= 0.0f) {
     return;
   }
-  const SDL_Color thumb_color = active ? theme.accent : theme.text_disabled;
+  // Match the shared workspace scrollbar resting tone so a diff scrollbar does not
+  // look like a different widget than every other scrollbar in the shell.
+  const SDL_Color thumb_color =
+      active ? theme.accent : render::BlendColors(theme.text_muted, theme.surface_raised, 0.6f);
   SDL_SetRenderDrawColor(renderer, thumb_color.r, thumb_color.g, thumb_color.b, thumb_color.a);
   SDL_RenderFillRect(renderer, &thumb);
 }

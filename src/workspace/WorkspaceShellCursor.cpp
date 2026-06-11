@@ -367,31 +367,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   if (layout.status_bar.w > 0.0f && layout.status_bar.h > 0.0f &&
       Contains(layout.status_bar, x, y)) {
-    const StatusBarViewModel vm =
-        RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
-    constexpr float kStatusPadding = 12.0f;
-    constexpr float kStatusGap = 14.0f;
-    float left_x = vm.rect.x + kStatusPadding;
-    for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
-      const float width = text_renderer_.MeasureWidth(segment.text);
-      const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
-      if (segment.clickable && Contains(row, x, y)) {
-        return CursorKind::Pointer;
-      }
-      left_x += width + kStatusGap;
-    }
-
-    float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
-    for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
-      const float width = text_renderer_.MeasureWidth(it->text);
-      right_x -= width;
-      const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
-      if (it->clickable && Contains(row, x, y)) {
-        return CursorKind::Pointer;
-      }
-      right_x -= kStatusGap;
-    }
-    return CursorKind::Default;
+    return HoveredStatusBarSegmentRect(layout, x, y).has_value() ? CursorKind::Pointer
+                                                                 : CursorKind::Default;
   }
 
   if (Contains(layout.project_tab_strip, x, y)) {
@@ -1076,6 +1053,72 @@ char WorkspaceShell::KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers) {
     default:
       return '\0';
   }
+}
+
+std::optional<SDL_FRect> WorkspaceShell::HoveredStatusBarSegmentRect(
+    const WorkspaceLayout& layout, float x, float y) const {
+  if (layout.status_bar.w <= 0.0f || layout.status_bar.h <= 0.0f ||
+      !Contains(layout.status_bar, x, y)) {
+    return std::nullopt;
+  }
+  const StatusBarViewModel vm =
+      RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
+  constexpr float kStatusPadding = 12.0f;
+  constexpr float kStatusGap = 14.0f;
+  float left_x = vm.rect.x + kStatusPadding;
+  for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
+    const float width = text_renderer_.MeasureWidth(segment.text);
+    const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
+    if (segment.clickable && Contains(row, x, y)) {
+      return row;
+    }
+    left_x += width + kStatusGap;
+  }
+  float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
+  for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
+    const float width = text_renderer_.MeasureWidth(it->text);
+    right_x -= width;
+    const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
+    if (it->clickable && Contains(row, x, y)) {
+      return row;
+    }
+    right_x -= kStatusGap;
+  }
+  return std::nullopt;
+}
+
+std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarActionButtonRect(
+    const WorkspaceLayout& layout, float x, float y) const {
+  if (!context_.current_project_state.sidebar.visible ||
+      ActiveSidebarMode() != SidebarMode::Git || !Contains(layout.sidebar, x, y)) {
+    return std::nullopt;
+  }
+  const auto lines = BuildGitSidebarLines();
+  const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
+  const auto line_index = ScrollableListIndexAtY(list_layout, y);
+  if (!line_index.has_value() || *line_index < 0 ||
+      *line_index >= static_cast<int>(lines.size())) {
+    return std::nullopt;
+  }
+  const SDL_FRect row_rect =
+      ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
+  if (!Contains(row_rect, x, y)) {
+    return std::nullopt;
+  }
+  const auto& line = lines[static_cast<std::size_t>(*line_index)];
+  if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
+    return std::nullopt;
+  }
+  const auto& entry = context_.current_project_state.sidebar.git
+                          .entries[static_cast<std::size_t>(line.entry_index)];
+  const GitSidebarEntryActionLayout actions = ComputeGitSidebarEntryActionLayout(row_rect, entry);
+  if (actions.primary_rect.has_value() && Contains(*actions.primary_rect, x, y)) {
+    return *actions.primary_rect;
+  }
+  if (actions.discard_rect.has_value() && Contains(*actions.discard_rect, x, y)) {
+    return *actions.discard_rect;
+  }
+  return std::nullopt;
 }
 
 }  // namespace microide::workspace
