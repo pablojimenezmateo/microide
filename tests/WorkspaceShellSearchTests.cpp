@@ -213,8 +213,18 @@ void TestWorkspaceShellProjectSearchSidebarClickOpensResult() {
          "clicking a project search result should be handled");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == source.lexically_normal(),
          "clicking a project search result should open the matched file");
-  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
-         "clicking a project search result should return focus to the editor");
+  // Opening a result also seeds the in-file find surface with the search term so the
+  // user can keep moving between matches in the file they just opened.
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+                 WorkspaceShell::OverlayMode::BufferSearch,
+         "clicking a project search result should open the in-file find surface");
+  Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
+         "clicking a project search result should focus the in-file find surface");
+  Expect(WorkspaceShellTestAccess::BufferSearchQuery(shell) == "alpha",
+         "the in-file find surface should be seeded with the project search term");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
+         "the in-file find surface should expose the in-file matches for the term");
 }
 
 void TestWorkspaceShellProjectSearchSidebarClickMovesToCorrectLine() {

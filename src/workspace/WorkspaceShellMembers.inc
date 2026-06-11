@@ -960,6 +960,7 @@
   void RevealBufferSearchMatch(const editor::SelectionRange& match);
   void ResetBufferSearchFoldRevealState(bool preserve_expanded_folds);
   void RefreshBufferSearch();
+  void OpenBufferSearchFromProjectSearchResult();
   void RefreshProjectSearch();
   void StopProjectSearch();
   void ConsumeProjectSearchUpdates();

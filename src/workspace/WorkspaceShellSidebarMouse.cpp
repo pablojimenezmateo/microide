@@ -39,6 +39,8 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
                 OpenFileAtLocation(path, line, column);
               },
           .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },
+          .seed_buffer_search_from_project_search =
+              [this]() { OpenBufferSearchFromProjectSearchResult(); },
           .can_stage_all_git_sidebar_entries = [this]() { return CanStageAllGitSidebarEntries(); },
           .git_sidebar_stage_all_button_rect =
               [this](const SDL_FRect& rect) { return GitSidebarStageAllButtonRect(rect); },

@@ -447,6 +447,8 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },
+          .seed_buffer_search_from_project_search =
+              [this]() { OpenBufferSearchFromProjectSearchResult(); },
           .move_git_sidebar_selection = [this](int delta) { MoveGitSidebarSelection(delta); },
           .reveal_selected_git_sidebar_line = [this]() { RevealSelectedGitSidebarLine(); },
           .open_git_sidebar_entry =

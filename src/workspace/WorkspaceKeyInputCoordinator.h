@@ -85,6 +85,7 @@ class KeyInputCoordinator {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> restore_previous_sidebar;
+    std::function<void()> seed_buffer_search_from_project_search;
     std::function<void(int)> move_git_sidebar_selection;
     std::function<void()> reveal_selected_git_sidebar_line;
     std::function<bool(std::size_t)> open_git_sidebar_entry;

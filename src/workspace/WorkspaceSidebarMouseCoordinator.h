@@ -33,6 +33,7 @@ class SidebarMouseCoordinator {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<void(const std::filesystem::path&, std::size_t, std::size_t)> open_file_at_location;
     std::function<void()> restore_previous_sidebar;
+    std::function<void()> seed_buffer_search_from_project_search;
     std::function<bool()> can_stage_all_git_sidebar_entries;
     std::function<SDL_FRect(const SDL_FRect&)> git_sidebar_stage_all_button_rect;
     std::function<bool()> stage_all_git_sidebar_entries;

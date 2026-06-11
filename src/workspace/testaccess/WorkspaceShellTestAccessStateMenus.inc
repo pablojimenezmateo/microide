@@ -353,6 +353,12 @@
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.query.text();
   }
+  static const std::string& BufferSearchQuery(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.buffer_search.query.text();
+  }
+  static std::size_t BufferSearchMatchCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.buffer_search.matches.size();
+  }
   static bool OverlayVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.overlay.visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.mode == WorkspaceShell::OverlayMode::FileFinder;

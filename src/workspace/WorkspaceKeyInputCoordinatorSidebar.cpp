@@ -47,6 +47,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
             operations_.restore_previous_sidebar();
           }
           state_.surface.focus = FocusTarget::Editor;
+          operations_.seed_buffer_search_from_project_search();
         }
         return true;
       case SDLK_UP:

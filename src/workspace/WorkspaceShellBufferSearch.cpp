@@ -26,6 +26,54 @@ void WorkspaceShell::RefreshBufferSearch() {
   RequestEditorSurfaceRedraw();
 }
 
+void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
+  auto& project_search = context_.current_project_state.overlay.workflow.project_search;
+  if (project_search.results.empty() ||
+      project_search.selected_index >= project_search.results.size()) {
+    return;
+  }
+  std::string query = project_search.query.text();
+  if (query.empty()) {
+    return;
+  }
+  const auto& result = project_search.results[project_search.selected_index];
+  const std::size_t target_line = result.line;
+  const std::size_t target_column = result.column;
+
+  // Carry the project-search term into the in-file find surface so the user can
+  // keep moving between matches in the file they just opened.
+  ShowOverlay(OverlayMode::BufferSearch);
+  context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
+  ResetBufferSearchFoldRevealState(false);
+
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  buffer_search.query.SetText(std::move(query));
+  buffer_search.replace_text.SetText("");
+  RefreshBufferSearch();
+
+  if (buffer_search.matches.empty()) {
+    return;
+  }
+
+  // Start navigation on the match at (or after) the project-search hit rather
+  // than the top of the file.
+  std::size_t selected = buffer_search.matches.size() - 1;
+  for (std::size_t i = 0; i < buffer_search.matches.size(); ++i) {
+    const auto& start = buffer_search.matches[i].start;
+    if (start.line > target_line ||
+        (start.line == target_line && start.column >= target_column)) {
+      selected = i;
+      break;
+    }
+  }
+  buffer_search.selected_index = selected;
+  RevealBufferSearchMatch(buffer_search.matches[selected]);
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+    RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+  }
+  RequestEditorSurfaceRedraw();
+}
+
 void WorkspaceShell::MoveBufferSearchSelection(int delta) {
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (buffer_search.matches.empty() || delta == 0) {

@@ -221,7 +221,7 @@ bool WorkspaceShell::ActivateOverlaySelection() {
         if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
           viewport->MoveCursorTo(result.line, result.column);
         }
-        DismissOverlay(true);
+        OpenBufferSearchFromProjectSearchResult();
       }
       return true;
     case OverlayMode::Completion:
