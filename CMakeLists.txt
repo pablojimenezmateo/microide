@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(GNUInstallDirs)
+
 enable_testing()
 
 option(MICROIDE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
@@ -443,23 +445,8 @@ add_executable(microide
   ${MICROIDE_CORE_SOURCES}
 )
 
-if(APPLE)
-  set_target_properties(microide PROPERTIES
-    MACOSX_BUNDLE TRUE
-    MACOSX_BUNDLE_BUNDLE_NAME "microide"
-    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.microide.app"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-  )
-elseif(WIN32)
-  set_target_properties(microide PROPERTIES WIN32_EXECUTABLE TRUE)
-endif()
-
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
   set(MICROIDE_RUNTIME_ASSET_DIR "$<TARGET_FILE_DIR:microide>/assets")
-  if(APPLE)
-    set(MICROIDE_RUNTIME_ASSET_DIR "$<TARGET_BUNDLE_DIR:microide>/Contents/Resources/assets")
-  endif()
   add_custom_command(TARGET microide POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -485,31 +472,50 @@ if(UNIX AND NOT APPLE)
   target_link_libraries(microide PRIVATE util)
 endif()
 
-if(APPLE)
-  target_link_libraries(microide PRIVATE "-framework CoreFoundation" "-framework CoreServices")
-endif()
-
-if(WIN32)
-  get_filename_component(MICROIDE_TOOLCHAIN_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-  add_custom_command(TARGET microide POST_BUILD
-    COMMAND ${CMAKE_COMMAND}
-            -DINPUT_FILE=$<TARGET_FILE:microide>
-            -DOUTPUT_DIR=$<TARGET_FILE_DIR:microide>
-            -DSEARCH_DIRS=${MICROIDE_TOOLCHAIN_BIN_DIR}
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyRuntimeDependencies.cmake"
-    COMMAND_EXPAND_LISTS)
-endif()
-
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide PRIVATE -Werror)
   endif()
-elseif(MSVC)
-  target_compile_options(microide PRIVATE /W4)
-  if(MICROIDE_WARNINGS_AS_ERRORS)
-    target_compile_options(microide PRIVATE /WX)
+endif()
+
+if(UNIX AND NOT APPLE)
+  set(MICROIDE_DESKTOP_FILE "${CMAKE_CURRENT_BINARY_DIR}/microide.desktop")
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/microide.desktop.in"
+    "${MICROIDE_DESKTOP_FILE}"
+    @ONLY
+  )
+
+  install(TARGETS microide RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/microide/assets")
   endif()
+  install(FILES "${MICROIDE_DESKTOP_FILE}"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/microide.png"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps")
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/microide.png"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps"
+          RENAME "microide.png")
+
+  set(CPACK_PACKAGE_NAME "${PROJECT_NAME}")
+  set(CPACK_PACKAGE_VENDOR "${PROJECT_NAME}")
+  set(CPACK_PACKAGE_CONTACT "microide")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+      "microide - a native, low-footprint keyboard-first IDE")
+  set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+  set(CPACK_PACKAGE_FILE_NAME
+      "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+  set(CPACK_OUTPUT_FILE_PREFIX "${CMAKE_BINARY_DIR}")
+  set(CPACK_GENERATOR "DEB")
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  set(CPACK_DEBIAN_PACKAGE_SECTION "devel")
+  set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+
+  include(CPack)
 endif()
 
 add_executable(microide_tests
@@ -630,10 +636,6 @@ if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
 
-if(APPLE)
-  target_link_libraries(microide_tests PRIVATE "-framework CoreFoundation" "-framework CoreServices")
-endif()
-
 target_compile_definitions(microide_tests PRIVATE
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
   MICROIDE_TESTING=1
@@ -645,11 +647,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_tests PRIVATE -Wall -Wextra -Wpedantic)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_tests PRIVATE -Werror)
-  endif()
-elseif(MSVC)
-  target_compile_options(microide_tests PRIVATE /W4)
-  if(MICROIDE_WARNINGS_AS_ERRORS)
-    target_compile_options(microide_tests PRIVATE /WX)
   endif()
 endif()
 
@@ -733,11 +730,6 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     if(MICROIDE_WARNINGS_AS_ERRORS)
       target_compile_options(microide_perf PRIVATE -Werror)
     endif()
-  elseif(MSVC)
-    target_compile_options(microide_perf PRIVATE /W4)
-    if(MICROIDE_WARNINGS_AS_ERRORS)
-      target_compile_options(microide_perf PRIVATE /WX)
-    endif()
   endif()
 
   add_test(NAME microide_perf_tests
@@ -800,11 +792,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_diff_bench PRIVATE -Werror)
   endif()
-elseif(MSVC)
-  target_compile_options(microide_diff_bench PRIVATE /W4)
-  if(MICROIDE_WARNINGS_AS_ERRORS)
-    target_compile_options(microide_diff_bench PRIVATE /WX)
-  endif()
 endif()
 
 add_executable(microide_search_bench
@@ -825,10 +812,5 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_search_bench PRIVATE -Werror)
-  endif()
-elseif(MSVC)
-  target_compile_options(microide_search_bench PRIVATE /W4)
-  if(MICROIDE_WARNINGS_AS_ERRORS)
-    target_compile_options(microide_search_bench PRIVATE /WX)
   endif()
 endif()

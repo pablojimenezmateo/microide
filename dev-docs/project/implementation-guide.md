@@ -173,15 +173,14 @@ whether the backend is external or built in.
 - `openspec/specs/product-vision/spec.md`: authoritative product thesis, in-scope capabilities, priority order, and non-goals
 - `openspec/specs/diff-merge-editor/spec.md`: durable behavioral contract for compare and merge tabs
 - `openspec/specs/performance-budgets/spec.md`: durable latency, CPU, and measurement policy
-- `openspec/specs/host-platform-support/spec.md`: durable supported-host contract for Linux,
-  macOS, and Windows host services
+- `openspec/specs/host-platform-support/spec.md`: durable supported-host contract for the Linux
+  host and its host services
 - `dev-docs/project/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
 - `dev-docs/platform/host-platform-audit.md`: current host-service seam map and the remaining POSIX-only gaps
-- `dev-docs/platform/host-platform-bringup.md`: local build, launch, and focused validation flow for supported hosts
+- `dev-docs/platform/host-platform-bringup.md`: local build, launch, and focused validation flow for the Linux host
 - `dev-docs/plugins/plugin-runtime-research.md`: plugin architecture notes and external references
 - `dev-docs/project/known-tech-debt.md`: concrete open debt that still matters after recent refactors
-- `dev-docs/platform/macos-support-plan.md`: remaining macOS host gaps (signing, hardware validation)
 - `dev-docs/project/diff-editor-merge-rewrite-plan.md`: compare/merge pipeline unification plan
 - `dev-docs/performance/README.md`: performance doc index (harness vs investigations)
 - `dev-docs/performance/performance-findings.md`: shipped performance work worth preserving

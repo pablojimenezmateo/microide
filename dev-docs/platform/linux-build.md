@@ -41,6 +41,23 @@ cmake -S . -B build && cmake --build build -j8 && sudo cmake --install build && 
 
 Then build `microide` with the quick-path commands above.
 
+## Debian package
+
+To build a local `.deb` from this repository:
+
+```bash
+./scripts/package-deb.sh
+```
+
+To install the most recently built package:
+
+```bash
+sudo ./scripts/install-deb.sh
+```
+
+The package installs the binary to `/usr/bin/microide` and runtime assets to
+`/usr/share/microide/assets`.
+
 ## Fonts
 
 If `SDL3_ttf` is available at configure time, `microide` looks for

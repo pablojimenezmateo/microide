@@ -27,14 +27,16 @@ std::filesystem::path BasePath() {
 
 }  // namespace
 
-std::filesystem::path ResolveBundledAssetDirectory() {
-  const std::filesystem::path base_path = BasePath();
+std::filesystem::path ResolveBundledAssetDirectoryForBasePath(
+    const std::filesystem::path& base_path,
+    const std::filesystem::path& explicit_asset_root) {
   const std::vector<std::filesystem::path> candidates = {
-      EnvPath("MICROIDE_ASSET_ROOT"),
+      explicit_asset_root,
       std::filesystem::path("assets"),
       std::filesystem::path("microide") / "assets",
       base_path / "assets",
       base_path / ".." / "assets",
+      base_path / ".." / "share" / "microide" / "assets",
       base_path / ".." / "Resources" / "assets",
       base_path / ".." / ".." / "Resources" / "assets",
       base_path / ".." / ".." / "microide" / "assets",
@@ -46,6 +48,11 @@ std::filesystem::path ResolveBundledAssetDirectory() {
     }
   }
   return {};
+}
+
+std::filesystem::path ResolveBundledAssetDirectory() {
+  return ResolveBundledAssetDirectoryForBasePath(BasePath(),
+                                                 EnvPath("MICROIDE_ASSET_ROOT"));
 }
 
 std::filesystem::path ResolveBundledAssetPath(std::string_view relative_path) {

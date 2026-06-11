@@ -1,5 +1,7 @@
 /build/
 /build-*/
+/_CPack_Packages/
+/*.deb
 /.microide-config
 /.microide-session
 /.codex

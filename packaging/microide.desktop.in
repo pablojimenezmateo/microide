@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=microide
+Comment=Native keyboard-first IDE
+Exec=microide
+TryExec=microide
+Icon=microide
+Terminal=false
+Categories=Development;IDE;TextEditor;
+StartupWMClass=microide
+Keywords=editor;ide;git;diff;merge;terminal;

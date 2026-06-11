@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-05-10.
+Reviewed on 2026-06-09.
 
 This is the single source of truth for:
 
@@ -108,6 +108,10 @@ Update (2026-05-28): Git-first shell UX pass shipped in the current tree. The Gi
 surfaces workflow and commit-readiness summaries plus selected-row action hints, and compare tabs
 now render explicit review-mode/action-hint chrome so working-tree staging flows read more like a
 guided review surface than a raw diff.
+
+Update (2026-06-09): Linux local packaging now includes a `.deb` path with installed desktop
+metadata and shared runtime assets. Repository-owned GitHub workflow files were removed; local
+build, test, and packaging docs are now the supported delivery path in-tree.
 
 ### 1. Plugin Platform Expansion
 

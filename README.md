@@ -6,7 +6,7 @@ search, and terminal workflows. Single-window, keyboard-first, runs without GPU 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
 > **Status: experimental.** No tagged releases. No third-party comparative benchmarks. Build from
-> source. Expect rough edges. Read [Known Limitations](#known-limitations) and
+> source or package locally. Expect rough edges. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
 
 ## Start Here
@@ -15,7 +15,7 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 - [Status: experimental](#experimental-release-status)
 - [Current UI preview](#current-ui-preview)
 - [What works today](#what-works-today)
-- [Build from source](#build)
+- [Build or package locally](#build)
 - [Known limitations](#known-limitations)
 - [Plugin trust warning](#security--trust-model)
 - [Performance methodology summary](#performance--benchmark-methodology)
@@ -100,9 +100,8 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Experimental Release Status
 
-- No tagged releases and no signed binaries. The supported path today is: build from source.
-- CI workflows under `.github/workflows/` produce artifacts for branch validation, but those are
-  not positioned as stable releases.
+- No tagged releases and no signed binaries. The supported paths today are: build from source or
+  create a local Debian package from this repository.
 - No screenshot or demo gallery is committed yet. That is deliberate for now: the UI is still
   changing quickly enough that stale marketing images would be less honest than current workflow
   docs.
@@ -135,8 +134,7 @@ Shipped but with caveats (see [Known Limitations](#known-limitations)):
 - LSP transport: implemented and tested against fake servers; real-world server validation is
   ongoing
 - Tool downloader / SHA verification: implemented, not exercised against production tool catalogs
-- Native file-watch backends: Linux `inotify`, macOS `FSEvents`, Windows `ReadDirectoryChangesW`
-  exist and are wired into `FileIndex`; project search and file finder consume index snapshots
+- Native file-watch backend: Linux `inotify` is wired into `FileIndex`; project search and file finder consume index snapshots
   instead of rescanning on each refresh. First-load indexing and large watcher bursts can still
   show refresh lag in large repositories.
 
@@ -167,8 +165,7 @@ Known workflow boundaries in preview:
 Honest list of what this is not, or what is unfinished. Read this before adopting microide for
 serious work.
 
-- **No tagged releases.** Build from source. CI artifacts exist in
-  `.github/workflows/` but no signed binaries are published.
+- **No tagged releases.** Build from source or package locally; no signed binaries are published.
 - **No comparative benchmarks.** Internal baselines compare microide against itself; the project
   has not been measured against VSCode, Zed, Helix, or any other editor. Claims like "fastest" or
   "lower CPU than X" are not supported here and are not made.
@@ -190,8 +187,8 @@ serious work.
 - **No native OS menu bar.** The menu bar is rendered by the app.
 - **Terminal escape coverage is "what real shells need," not exhaustive.** Programs that depend on
   uncommon DEC/xterm sequences may render incorrectly.
-- **Cross-platform is uneven.** Linux is the primary host. macOS and Windows have bring-up
-  documented in `dev-docs/platform/host-platform-bringup.md`, but day-to-day validation happens on Linux.
+- **Linux-only.** Linux is the only supported host. macOS and Windows are not supported build
+  targets; building and running on them is unsupported.
 - **No debugger/DAP support.** Debugging is out of scope unless a dedicated phase is opened.
 - **No recent-project / recent-file UI.** Deliberate non-goal.
 - **No plugin marketplace, remote install, or signed-plugin verification.** Deliberate non-goal.
@@ -336,11 +333,21 @@ cmake --build build -j8
 ./build/microide/microide
 ```
 
+Local Debian package:
+
+```bash
+./scripts/package-deb.sh
+sudo ./scripts/install-deb.sh
+```
+
+The package installs `microide` into `/usr/bin`, shared assets into
+`/usr/share/microide/assets`, and desktop-launcher metadata into the standard
+XDG application and icon locations.
+
 Platform-specific setup, dependency install, and bring-up notes live in dedicated docs:
 
 - [dev-docs/platform/linux-build.md](dev-docs/platform/linux-build.md) — Ubuntu/Debian, including building SDL3/SDL3_ttf from source
-- [dev-docs/platform/windows-build.md](dev-docs/platform/windows-build.md) — MSYS2 UCRT64 setup and Windows-specific notes
-- [dev-docs/platform/host-platform-bringup.md](dev-docs/platform/host-platform-bringup.md) — short macOS / Linux / Windows package summary and focused host-facing regression slice
+- [dev-docs/platform/host-platform-bringup.md](dev-docs/platform/host-platform-bringup.md) — local build, launch, and focused host-facing regression slice
 
 ## Project State
 

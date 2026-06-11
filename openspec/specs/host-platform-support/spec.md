@@ -1,26 +1,22 @@
 # host-platform-support Specification
 
 ## Purpose
-Define MicroIDE's supported-host contract for Linux, macOS, and Windows. Host-specific behavior
-must stay behind explicit platform services for directories, processes, terminals, watchers,
-trash/recycle-bin operations, packaging, launch, and host integrations.
+Define MicroIDE's supported-host contract for Linux. Host-specific behavior must stay behind
+explicit platform services for directories, processes, terminals, watchers, trash/recycle-bin
+operations, packaging, launch, and host integrations.
 
 ## Requirements
 ### Requirement: Supported Hosts
 
-MicroIDE SHALL support Linux, macOS, and Windows as first-class desktop hosts for the built-in editor, compare, merge, search, git, plugin, and terminal workflows.
+MicroIDE SHALL support Linux as its first-class desktop host for the built-in editor, compare, merge, search, git, plugin, and terminal workflows. macOS and Windows are NOT supported hosts and have no supported build, packaging, or launch path.
 
 #### Scenario: Linux remains a supported baseline
 - **WHEN** host-platform work refactors process, watcher, terminal, file-operation, or packaging seams
 - **THEN** Linux SHALL remain a supported host and SHALL continue to launch and run the built-in workflows without regression
 
-#### Scenario: macOS is treated as a supported host
-- **WHEN** MicroIDE is built for macOS
-- **THEN** the application SHALL launch with the built-in workflows available, SHALL use macOS-correct host services, and SHALL NOT rely on Linux directory or watcher policies
-
-#### Scenario: Windows is treated as a supported host
-- **WHEN** MicroIDE is built for Windows
-- **THEN** the application SHALL launch with the built-in workflows available, SHALL use Windows-correct host services, and SHALL NOT fail because Linux-only or POSIX-only terminal, process, watcher, or trash assumptions remain in the host path
+#### Scenario: Non-Linux hosts are unsupported
+- **WHEN** a contributor evaluates building or shipping MicroIDE for macOS or Windows
+- **THEN** the project SHALL treat those hosts as unsupported and SHALL NOT carry current build instructions, packaging scripts, or supported-host claims for them
 
 ### Requirement: Host Services Are Explicit
 
@@ -28,32 +24,28 @@ Host-facing behavior SHALL be routed through explicit platform services for app 
 
 #### Scenario: Workspace code requests a host action
 - **WHEN** workspace, project, plugin, or terminal code needs a host-facing action
-- **THEN** it SHALL call a host-owned platform service rather than embedding platform-specific system calls or Linux-only assumptions in UI orchestration code
+- **THEN** it SHALL call a host-owned platform service rather than embedding platform-specific system calls in UI orchestration code
 
-#### Scenario: Platform backend differs by host
-- **WHEN** Linux, macOS, and Windows require different APIs for process launch, terminal, watcher, or file-manager integration
+#### Scenario: Platform behavior stays behind the service boundary
+- **WHEN** process launch, terminal, watcher, or file-manager integration needs host-specific APIs
 - **THEN** the difference SHALL be isolated behind the platform service boundary while editor, compare, merge, search, and terminal rendering logic remain host-agnostic
 
 ### Requirement: Packaging And Launch Are Part Of Host Support
 
 A host SHALL NOT be considered supported unless MicroIDE has a documented packaging and launch path for that host, including runtime asset discovery and host-correct config, cache, state, and data directories.
 
-#### Scenario: macOS desktop launch
-- **WHEN** MicroIDE is launched on macOS from Finder or as an app bundle
-- **THEN** it SHALL find its runtime assets, SHALL resolve app-owned directories to macOS locations, and SHALL open projects and host integrations without assuming a terminal-inherited shell environment
+#### Scenario: Linux desktop launch
+- **WHEN** MicroIDE is launched on Linux from a desktop build or installed package
+- **THEN** it SHALL find its runtime assets, SHALL resolve app-owned directories to XDG locations, and SHALL open projects and host integrations correctly
 
-#### Scenario: Windows desktop launch
-- **WHEN** MicroIDE is launched on Windows from its desktop build output
-- **THEN** it SHALL find its runtime assets, SHALL resolve app-owned directories to Windows locations, and SHALL provide correct recycle-bin, process, and terminal-host behavior for built-in workflows
+#### Scenario: Linux packaging
+- **WHEN** MicroIDE is packaged for Linux
+- **THEN** the repository SHALL provide a documented local build and Debian-package path that installs the binary, runtime assets, and desktop-launcher metadata to standard locations
 
 ### Requirement: Platform Validation Is Continuous
 
-Supported-host claims SHALL be backed by targeted automated validation and documented local bring-up instructions for Linux, macOS, and Windows.
+Supported-host claims SHALL be backed by targeted automated validation and documented local bring-up instructions for Linux.
 
 #### Scenario: New platform backend lands
 - **WHEN** a change adds or modifies a host-specific backend for directories, process launch, terminal, file watching, file operations, or packaging
-- **THEN** the change SHALL include targeted tests or smoke validation for the affected host plus updated bring-up or CI documentation
-
-#### Scenario: CI review for supported hosts
-- **WHEN** Linux, macOS, or Windows is listed as a supported host in durable docs or specs
-- **THEN** the repository SHALL include a corresponding validation path in CI or a documented temporary gap with a defined follow-up plan
+- **THEN** the change SHALL include targeted tests or smoke validation for Linux plus updated bring-up documentation
