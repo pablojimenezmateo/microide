@@ -881,8 +881,9 @@ verified against source before being recorded.
   empty-tab-strip placeholder rect, and the tab-strip overflow/tab/close walk are each re-implemented
   in 2–3 TUs (already diverging on truncate-vs-floor). Centralize into shared helpers
   (`WorkspaceLayout.h` / `CompareMergeRender.h`). See the workspace audit for exact file:line sets.
-- **Settings/Help overlay does not trap focus**: `SettingsOverlayService` only consumes Escape;
-  other keys edit the surface underneath. Fold it into the shared overlay/focus ownership.
+- **Settings/Help overlay does not trap focus**: ~~`SettingsOverlayService` only consumes Escape;
+  other keys edit the surface underneath. Fold it into the shared overlay/focus ownership.~~
+  **Closed on 2026-06-11 — see §22.**
 - **Divergent git status-priority tables**: `GitStatusService::BuildGitStatusMap` and
   `GitPorcelainParser::GitStatusPriority` rank `Added`/`Untracked` differently, so folder-aggregated
   status depends on which path produced it.
@@ -980,3 +981,96 @@ the reader, and only *then* closes `master_fd` (when the reader has provably sto
 race-free. The reader's `poll()` lost its 100 ms timeout (the wake fd interrupts it directly), so an
 idle terminal no longer wakes ten times a second — a small low-CPU win. Existing terminal tests
 (81) plus the subprocess suite pass clean under the regular, ASAN, and **TSAN** presets.
+
+## 22. 2026-06-11 Overlay focus & dismissal correctness (round 2)
+
+A follow-up UI/UX correctness pass after the 2026-06-11 focus-stranding work (§18 "Keyboard-focus
+stranding"), surfaced by a fresh fan-out audit across editor/platform/project/plugin/workspace. Two
+overlay focus/dismissal defects landed; the fan-out also produced one finding that was **disproved**
+on inspection (recorded below so it is not re-investigated).
+
+### Fixed in this pass (with regression coverage)
+
+- **Commit picker stayed painted over the comparison it opened** *(fresh — not previously in §18)*.
+  In `WorkspaceShell::ActivateOverlaySelection` (`src/workspace/WorkspaceShellOverlay.cpp`), the
+  `CommitPicker` case called `OpenSelectedCompareCommit()` then `return true` with **no
+  `DismissOverlay`** — every sibling activation case (`FileFinder`, `BufferSearch`) dismisses. Traced
+  through `OpenSelectedCommit → OpenComparison → DiffTabCoordinator::OpenComparison`: nothing
+  dismissed the picker, so after pressing Enter the picker overlay remained on top of the freshly
+  opened diff and had to be cleared manually with Escape. Fix: `DismissOverlay(true)` after the open
+  (focuses the new compare tab, matching FileFinder/BufferSearch). Test
+  `WorkspaceShell/CommitPickerDismissesAfterOpeningCompare` (real git repo with file history: open
+  picker → Enter → assert overlay hidden **and** the active tab is the comparison).
+- **Settings/Help overlay did not trap keyboard focus** *(§18)*. The overlay (a `SettingsOverlayService`,
+  *not* part of `current_project_state.overlay`) set no `surface.focus`, and the key path consumed
+  only Escape — every other key fell through to `HandleDefaultEditorKeyDown` and **edited the buffer
+  underneath** (Enter inserted a newline, Backspace deleted, arrows moved the caret). Worse, because
+  the service isn't `state_.overlay`, `editor_chord_allowed` (`!state_.overlay.visible`) stayed true,
+  so editor keybindings/chords could fire too. Fix: a dedicated modal trap at the top of
+  `KeyInputCoordinator::HandleKeyDown` (before `HandleGlobalKeyDown`, so global shortcuts/chords are
+  swallowed as well) — while `settings_overlay_visible()` is true, Escape closes the overlay and
+  every other key returns handled. The now-redundant Escape branch in `HandleSurfaceNavigationKeyDown`
+  was removed. Mouse interaction is unchanged. Test
+  `WorkspaceShell/SettingsOverlayTrapsKeyboardInput` (open settings over a file → Enter/Backspace/Down
+  are all consumed and the editor buffer + caret are unchanged → Escape closes).
+
+Both changes are pure UI control-flow (no new allocations, ownership, or threading). Validated under
+the regular preset: the two new tests plus the surrounding `WorkspaceShell` / `Compare` / `KeyInput`
+suites (348 focused, full `microide_tests` green) and the `ArchitectureInvariants` lint all pass. A
+new test-access helper `OpenComparePickerForPath` and `ActiveTabIsCompare` back the commit-picker
+test. (One unrelated intermittent failure, `WorkspaceLspClient/DidOpenQueuedBeforeInitializeStillDeliversFullText`,
+was observed once in a full serial run and passed on isolated and repeat full runs — LSP-queue
+timing, not from this pass; consistent with the §12.2-style watchlist.)
+
+### Disproved by inspection (do not re-investigate)
+
+- **"Compare/Merge Escape closes the tab before dismissing an open overlay."** Not a bug. When any
+  `state_.overlay` overlay is visible the focus-stranding fix keeps `surface.focus == Overlay`, so
+  `KeyInputCoordinator::HandleKeyDown` dispatches to `HandleOverlayKeyDown` at the `focus == Overlay`
+  branch and returns **before** the compare/merge editor handlers (which carry the
+  `Escape → request_close_active_tab` binding) are ever reached. The tab-close Escape only runs when
+  no overlay is open, which is correct.
+
+### Still open after this pass (verified, ranked)
+
+These remain from the §18 deferred list; ordered by the product priority (speed → correctness →
+UI/UX). Re-confirmed against source on 2026-06-11.
+
+1. **Snippet linked-placeholder column desync** (correctness; small). `src/editor/SnippetEngine.cpp`
+   updates only `ranges[idx].end.column` after an edit (~line 416-420); same-line sibling ranges to
+   the right never shift their `start.column`/`end.column`, so the second keystroke into a
+   multi-occurrence snippet lands at the wrong column. Masked by single-keystroke coverage. Best
+   standalone correctness follow-up; needs a multi-keystroke regression test.
+2. **Divergent git status-priority tables** (correctness; small). `GitStatusService::BuildGitStatusMap`
+   ranks `Added == Untracked == 2`; `GitPorcelainParser::GitStatusPriority` ranks `Added = 2`,
+   `Untracked = 1`. Folder-badge aggregation depends on which path produced the map. Unify into one
+   shared table.
+3. **Blame cache eligible-but-empty after self-eviction** (correctness; small). `src/project/GitBlameService.cpp`
+   (~line 583) uses `file_caches[key]` (operator[]) after `EnforceCacheBudgets()` may have evicted
+   `key`, re-creating a default cache then setting `eligible=true` on it. Low frequency.
+4. **Plugin Lua stack leak (cold paths)** (correctness; small). Same null-plugin early-return leak as
+   the §18 hot-path fix, in the remaining provider/hover/scm/auth/test-discovery functions of
+   `PluginProviderQueryInterop.cpp` / `PluginSidebarHoverInterop.cpp`. Apply `lua_settop(state, base)`
+   uniformly. (Requires `liblua5.4-dev` so `MICROIDE_HAS_LUA_PLUGINS=1` — see §19.)
+5. **Duplicated hit-test geometry across cursor/click/motion/render TUs** (dedup; medium). Bottom-panel
+   line-at-point, compare collapsed-context row + action buttons, per-mode sidebar header buttons,
+   empty-tab-strip placeholder rect, and the tab-strip overflow/tab/close walk are each re-implemented
+   in 2–3 TUs (already diverging on truncate-vs-floor). Centralize into shared helpers
+   (`WorkspaceLayout.h` / `CompareMergeRender.h`).
+
+### Unmeasured perf/dedup candidates (do NOT touch without a perf fixture first)
+
+A perf-focused fan-out flagged the following, but they are **unmeasured** and this codebase has a
+documented history of "obvious" optimizations regressing the gate (§13 glyph atlas, §15 rejected
+`TextDocumentModel`). Treat as hypotheses; gate any work on a `tools/perf-compare.py` fixture that
+actually surfaces the cost before committing effort. Most of this class historically sits in the
+noise band.
+
+- Terminal render re-checks selection membership per cell per frame in
+  `WorkspaceShellRenderBottomPanel.cpp` (background + foreground passes) when a selection is active.
+- `ComputeVisibleTabs` / `ComputeVisibleProjectTabs` recomputed several times per frame across the
+  chrome render + tooltip paths (`WorkspaceShellRenderChrome.cpp`) — identical results within a frame.
+- Per-visible-row `TruncateLabel` string allocations in compare summary rendering
+  (`WorkspaceShellCompareRender.cpp`); candidate for a reused scratch buffer / `string_view` slicing.
+- Sidebar header button rects recomputed twice per mouse-motion event in
+  `WorkspaceShellMouseMotion.cpp` (previous + current hover) without a layout-revision cache.

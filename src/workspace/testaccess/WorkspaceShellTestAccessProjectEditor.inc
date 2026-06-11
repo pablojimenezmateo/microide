@@ -292,6 +292,10 @@
                                         const std::string& left_label) {
     return shell.OpenWorkingTreeComparison(path, left_ref, left_label);
   }
+  static bool OpenComparePickerForPath(WorkspaceShell& shell,
+                                       const std::filesystem::path& path) {
+    return shell.OpenComparePickerForPath(path, {});
+  }
   static void StageCompareHunk(WorkspaceShell& shell) { shell.StageCompareHunk(); }
   static void StageCompareSelectedLines(WorkspaceShell& shell) {
     shell.StageCompareSelectedLines();

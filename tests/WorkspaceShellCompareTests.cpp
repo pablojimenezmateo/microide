@@ -1079,6 +1079,38 @@ void TestWorkspaceShellMergeToolbarLayoutClearsPaneHeaders() {
          "secondary toolbar should stay above pane headers");
 }
 
+void TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add commit picker fixture", "commit picker fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+  CommitAll(root, "Edit commit picker fixture", "commit picker fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WorkspaceShellTestAccess::OpenComparePickerForPath(shell, source),
+         "opening the commit picker for a file with history should succeed");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
+         "the commit picker overlay should be visible after opening");
+  Expect(WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+             WorkspaceShell::OverlayMode::CommitPicker,
+         "the open overlay should be the commit picker");
+
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "pressing Enter in the commit picker should be handled");
+
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "selecting a commit should dismiss the picker instead of leaving it over the comparison");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell),
+         "selecting a commit should open and focus the comparison tab");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
@@ -1126,6 +1158,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareAndMergePaneMinimaPreserveVisibleColumns);
   AddTest(tests, "WorkspaceShell/MergeToolbarLayoutClearsPaneHeaders",
           TestWorkspaceShellMergeToolbarLayoutClearsPaneHeaders);
+  AddTest(tests, "WorkspaceShell/CommitPickerDismissesAfterOpeningCompare",
+          TestWorkspaceShellCommitPickerDismissesAfterOpeningCompare);
 }
 
 }  // namespace microide::tests

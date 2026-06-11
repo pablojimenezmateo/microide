@@ -73,6 +73,7 @@
     shell.context_.disabled_keybinding_ids = std::move(ids);
   }
   static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.active_tab_index; }
+  static bool ActiveTabIsCompare(const WorkspaceShell& shell) { return shell.ActiveTabIsCompare(); }
   static std::size_t ActiveTerminalTabIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.active_terminal_tab_index;
   }

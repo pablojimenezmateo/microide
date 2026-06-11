@@ -1728,6 +1728,47 @@ void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
          "right click inside settings overlay should not leak into editor context menu");
 }
 
+void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const std::size_t initial_line_count = WorkspaceShellTestAccess::ActiveEditor(shell).line_count();
+  const std::size_t initial_cursor_line = WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line();
+  const std::size_t initial_cursor_column =
+      WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column();
+
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
+         "settings overlay fixture should open the overlay");
+
+  // Editing and navigation keys must be swallowed by the modal overlay, not leak into
+  // the editor surface beneath it.
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should be consumed by the settings overlay");
+  Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+         "Backspace should be consumed by the settings overlay");
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
+         "Arrow keys should be consumed by the settings overlay");
+
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_count() == initial_line_count,
+         "keys typed while settings is open must not change the editor buffer");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == initial_cursor_line &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == initial_cursor_column,
+         "keys typed while settings is open must not move the editor cursor");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should be consumed by the settings overlay");
+  Expect(!WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
+         "Escape should close the settings overlay");
+}
+
 void TestWorkspaceShellSettingsOverlayHintUsesNoteLabel() {
   WorkspaceShell shell;
   const std::string hint = WorkspaceShellTestAccess::SettingsOverlayInputHintLabel(shell);
@@ -2960,6 +3001,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
+  AddTest(tests, "WorkspaceShell/SettingsOverlayTrapsKeyboardInput",
+          TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayHintUsesNoteLabel",
           TestWorkspaceShellSettingsOverlayHintUsesNoteLabel);
   AddTest(tests, "WorkspaceShell/HelpAboutOmitsAuthCommands",

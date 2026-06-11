@@ -211,6 +211,9 @@ bool WorkspaceShell::ActivateOverlaySelection() {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       OpenSelectedCompareCommit();
+      // Dismiss the picker so it does not stay painted on top of the comparison it
+      // just opened (matches the FileFinder / BufferSearch activation paths below).
+      DismissOverlay(true);
       return true;
     case OverlayMode::BufferSearch:
       if (!context_.current_project_state.overlay.workflow.buffer_search.matches.empty()) {

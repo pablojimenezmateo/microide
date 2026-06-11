@@ -57,6 +57,16 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     }
     return handled;
   }
+  // Settings / Help is a modal overlay: while it is visible it owns all keyboard input
+  // so keystrokes cannot leak into (and edit) the surface underneath. Escape closes it;
+  // every other key is swallowed. Mouse interaction is handled separately.
+  if (operations_.settings_overlay_visible()) {
+    if (event.key == SDLK_ESCAPE) {
+      operations_.close_settings_overlay();
+      ensure_redraw([this]() { operations_.request_window_redraw(); });
+    }
+    return true;
+  }
   if (operations_.text_input_composition_consumes_key(event.key, modifiers)) {
     return true;
   }
@@ -316,10 +326,8 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
       }
       break;
     case SDLK_ESCAPE:
-      if (operations_.settings_overlay_visible()) {
-        operations_.close_settings_overlay();
-        return true;
-      }
+      // Settings / Help Escape is handled by the modal trap in HandleKeyDown before
+      // this navigation path runs, so it no longer needs a branch here.
       if (state_.overlay.visible) {
         operations_.dismiss_overlay(false);
         return true;
