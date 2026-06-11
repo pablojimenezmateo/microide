@@ -1226,6 +1226,8 @@
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
+  SDL_FRect ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,
+                                            const SDL_FRect& caret_anchor) const;
   std::string BreadcrumbLabel() const;
   std::string ProjectLabel() const;
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;

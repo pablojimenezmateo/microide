@@ -47,10 +47,20 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     }
   };
 
-  DrawFilledRect(renderer, layout.editor_area, theme_.overlay_backdrop);
+  // Completion and code-action popups anchor to the caret and stay compact; they must not
+  // dim the editor (that hides the code being completed) or carry a title bar.
+  const bool caret_anchored = overlay_vm.mode == OverlayMode::Completion ||
+                              overlay_vm.mode == OverlayMode::CodeActions;
+  if (!caret_anchored) {
+    DrawFilledRect(renderer, layout.editor_area, theme_.overlay_backdrop);
+  }
   const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
   constexpr float kOverlayInset = 18.0f;
-  DrawTitledCardFrame(renderer, theme_, overlay, 32.0f, CardStyle::Overlay);
+  if (caret_anchored) {
+    render::DrawCardFrame(renderer, theme_, overlay, render::CardStyle::Overlay);
+  } else {
+    DrawTitledCardFrame(renderer, theme_, overlay, 32.0f, CardStyle::Overlay);
+  }
   const auto overlay_field_rect = [&](float text_y) {
     return MakeRect(overlay.x + 12.0f, text_y - 4.0f, std::max(0.0f, overlay.w - 24.0f), 18.0f);
   };
@@ -266,18 +276,11 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                  theme_.text_muted, theme_.overlay_background, FormatEmptyState("matching commits"));
     }
   } else if (overlay_vm.mode == OverlayMode::Completion) {
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
-               theme_.text_primary, theme_.chrome_background, "Completions");
-    const std::string summary =
-        overlay_state.workflow.completion.items.empty()
-            ? "No completions"
-            : BuildSelectionSummary(
-                  overlay_state.workflow.completion.selected_index,
-                  overlay_state.workflow.completion.items.size(),
-                  " completions");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               theme_.text_muted, theme_.overlay_background,
-               TruncateLabel(summary, overlay.w - 36.0f));
+    if (!overlay_state.workflow.completion.error.empty()) {
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
+                 theme_.diff_deleted, theme_.overlay_background,
+                 TruncateLabel(overlay_state.workflow.completion.error, overlay.w - 36.0f));
+    }
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = overlay_vm.scroll_row + row;
       if (item_index >= static_cast<int>(overlay_state.workflow.completion.items.size())) {
@@ -293,25 +296,12 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
               overlay_vm.scroll_row,
           TruncateLabel(label, overlay.w - 36.0f));
     }
-    if (!overlay_state.workflow.completion.error.empty()) {
-      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
-                 theme_.diff_deleted, theme_.overlay_background,
-                 TruncateLabel(overlay_state.workflow.completion.error,
-                               overlay.w - 36.0f));
-    }
   } else if (overlay_vm.mode == OverlayMode::CodeActions) {
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
-               theme_.text_primary, theme_.chrome_background, "Code Actions");
-    const std::string summary =
-        overlay_state.workflow.code_actions.items.empty()
-            ? "No actions"
-            : BuildSelectionSummary(
-                  overlay_state.workflow.code_actions.selected_index,
-                  overlay_state.workflow.code_actions.items.size(),
-                  " actions");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               theme_.text_muted, theme_.overlay_background,
-               TruncateLabel(summary, overlay.w - 36.0f));
+    if (!overlay_state.workflow.code_actions.error.empty()) {
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
+                 theme_.diff_deleted, theme_.overlay_background,
+                 TruncateLabel(overlay_state.workflow.code_actions.error, overlay.w - 36.0f));
+    }
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = overlay_vm.scroll_row + row;
       if (item_index >= static_cast<int>(overlay_state.workflow.code_actions.items.size())) {
@@ -324,12 +314,6 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
           static_cast<int>(overlay_state.workflow.code_actions.selected_index) -
               overlay_vm.scroll_row,
           TruncateLabel(item.title, overlay.w - 36.0f));
-    }
-    if (!overlay_state.workflow.code_actions.error.empty()) {
-      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
-                 theme_.diff_deleted, theme_.overlay_background,
-                 TruncateLabel(overlay_state.workflow.code_actions.error,
-                               overlay.w - 36.0f));
     }
   } else {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,

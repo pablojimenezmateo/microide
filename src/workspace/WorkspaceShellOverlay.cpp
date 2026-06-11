@@ -14,6 +14,17 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   InvalidateCursorKindFingerprint();
   context_.current_project_state.overlay.visible = true;
   context_.current_project_state.overlay.mode = mode;
+  if (mode == OverlayMode::Completion || mode == OverlayMode::CodeActions) {
+    // Anchor the compact popup to the caret so it appears next to the code being
+    // completed instead of as a centered modal that hides it.
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      context_.current_project_state.overlay.caret_anchor = ActiveEditorCaretRect(*layout);
+    } else {
+      context_.current_project_state.overlay.caret_anchor.reset();
+    }
+  } else {
+    context_.current_project_state.overlay.caret_anchor.reset();
+  }
   context_.current_project_state.surface.focus = FocusTarget::Overlay;
   ResetOverlayScroll();
   RequestOverlayRedraw();
@@ -77,11 +88,13 @@ float WorkspaceShell::OverlayListStartOffset() const {
       return 74.0f;
     case OverlayMode::BufferReplace:
       return 106.0f;
+    case OverlayMode::Completion:
+    case OverlayMode::CodeActions:
+      // Caret-anchored popups render header-less, so the list starts near the top.
+      return 8.0f;
     case OverlayMode::BufferSearch:
     case OverlayMode::ProjectSearch:
     case OverlayMode::CommitPicker:
-    case OverlayMode::Completion:
-    case OverlayMode::CodeActions:
     default:
       return 86.0f;
   }

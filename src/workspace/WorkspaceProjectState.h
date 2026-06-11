@@ -152,6 +152,10 @@ struct OverlayState {
   BufferSearchField buffer_search_field = BufferSearchField::Search;
   int scroll_row = 0;
   OverlayWorkflowState workflow;
+  // Caret rect (editor coordinates) captured when a caret-anchored overlay (completion /
+  // code actions) opens, so the popup can render as a compact list next to the caret
+  // instead of a large centered modal that hides the code being completed.
+  std::optional<SDL_FRect> caret_anchor;
 };
 
 struct OutputPanelState {

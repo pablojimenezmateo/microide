@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 
 #include "workspace/GitRepositoryService.h"
@@ -72,7 +74,46 @@ std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) c
   return HoveredChromeTabTooltipLabel(visible_tabs, last_mouse_x_, last_mouse_y_);
 }
 
+SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,
+                                                          const SDL_FRect& caret_anchor) const {
+  // Compact list popup placed next to the caret rather than a centered modal. Sized to the
+  // visible row count and clamped inside the editor area, flipping above the caret when there
+  // is not enough room below.
+  constexpr float kRowStep = 22.0f;       // must match ComputeOverlayListLayout's row_step
+  constexpr float kListBottomPadding = 16.0f;
+  constexpr float kMaxVisibleRows = 9.0f;
+  constexpr float kMargin = 4.0f;
+
+  const int rows = std::clamp(static_cast<int>(OverlayItemCount()), 1,
+                              static_cast<int>(kMaxVisibleRows));
+  const float height =
+      OverlayListStartOffset() + kListBottomPadding + static_cast<float>(rows) * kRowStep + 6.0f;
+  const float width =
+      std::min(editor_area.w - 2.0f * kMargin, std::max(260.0f, editor_area.w * 0.42f));
+
+  float x = caret_anchor.x;
+  if (x + width > editor_area.x + editor_area.w - kMargin) {
+    x = editor_area.x + editor_area.w - width - kMargin;
+  }
+  x = std::max(x, editor_area.x + kMargin);
+
+  float y = caret_anchor.y + caret_anchor.h + 2.0f;
+  if (y + height > editor_area.y + editor_area.h - kMargin) {
+    const float above_y = caret_anchor.y - height - 2.0f;
+    y = above_y >= editor_area.y + kMargin
+            ? above_y
+            : std::max(editor_area.y + kMargin, editor_area.y + editor_area.h - height - kMargin);
+  }
+
+  return SDL_FRect{std::floor(x), std::floor(y), std::floor(width), std::floor(height)};
+}
+
 SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const {
+  const OverlayState& overlay = context_.current_project_state.overlay;
+  if ((overlay.mode == OverlayMode::Completion || overlay.mode == OverlayMode::CodeActions) &&
+      overlay.caret_anchor.has_value()) {
+    return ComputeCaretAnchoredOverlayRect(editor_area, *overlay.caret_anchor);
+  }
   return ComputeOverlaySurfaceRect(editor_area);
 }
 
