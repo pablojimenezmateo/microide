@@ -1,5 +1,9 @@
 #include "platform/HostPlatform.h"
 
+#if !defined(_WIN32)
+#include <csignal>
+#endif
+
 namespace microide::platform {
 
 namespace {
@@ -49,5 +53,11 @@ void SetHostPlatformOverrideForTesting(std::optional<HostPlatform> platform) {
   HostPlatformOverride() = platform;
 }
 #endif
+
+void IgnoreBrokenPipeSignal() {
+#if !defined(_WIN32)
+  std::signal(SIGPIPE, SIG_IGN);
+#endif
+}
 
 }  // namespace microide::platform

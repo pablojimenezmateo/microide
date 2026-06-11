@@ -1,6 +1,7 @@
 #include "app/AppStartupOptions.h"
 #include "app/Application.h"
 #include "persistence/PersistedRecordDump.h"
+#include "platform/HostPlatform.h"
 
 #include <filesystem>
 #include <iostream>
@@ -8,6 +9,10 @@
 #include <string_view>
 
 int main(int argc, char** argv) {
+  // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
+  // EPIPE, not kill the editor. Install this before any I/O can occur.
+  microide::platform::IgnoreBrokenPipeSignal();
+
   if (argc >= 2) {
     const std::string_view command =
         argv[1] != nullptr ? std::string_view(argv[1]) : std::string_view{};

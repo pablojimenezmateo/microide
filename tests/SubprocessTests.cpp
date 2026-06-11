@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "platform/AsyncSubprocess.h"
+#include "platform/HostPlatform.h"
 #include "platform/Subprocess.h"
 
 #include <atomic>
@@ -11,6 +12,7 @@
 #include <thread>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -243,6 +245,23 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
   Expect(echoed.find("ping\n") != std::string::npos,
          "async subprocess concurrency fixture should echo the written payload");
 }
+
+// Regression: writing to a pipe whose read end has closed must return EPIPE rather
+// than raise SIGPIPE and terminate the process. Simply reaching the assertions
+// proves the signal was ignored (otherwise the test binary would have been killed).
+void TestIgnoreBrokenPipeSignalPreventsCrash() {
+  microide::platform::IgnoreBrokenPipeSignal();
+  int fds[2] = {-1, -1};
+  Expect(::pipe(fds) == 0, "pipe() should succeed");
+  ::close(fds[0]);  // close the read end so the next write breaks the pipe
+  errno = 0;
+  const char byte = 'x';
+  const ssize_t written = ::write(fds[1], &byte, 1);
+  const int saved_errno = errno;
+  ::close(fds[1]);
+  Expect(written == -1, "write to a broken pipe should fail");
+  Expect(saved_errno == EPIPE, "write to a broken pipe should report EPIPE, not crash");
+}
 #endif
 
 }  // namespace
@@ -257,6 +276,8 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestSubprocessWithoutExplicitStdinDoesNotInheritParentStdin);
   AddTest(tests, "Subprocess/AsyncReadTimeoutDoesNotBlockConcurrentWrite",
           TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite);
+  AddTest(tests, "Subprocess/IgnoreBrokenPipeSignalPreventsCrash",
+          TestIgnoreBrokenPipeSignalPreventsCrash);
 #endif
 }
 
