@@ -256,7 +256,34 @@ void TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto() {
 
 }  // namespace
 
+// Regression: a corrupt/adversarial length prefix must not drive an unbounded
+// reservation. PrimitiveReader::ReadVector reads a count up to 2^32-1; a tiny
+// buffer claiming a huge count must fail cleanly rather than attempt a multi-
+// gigabyte allocation (previously a bad_alloc/OOM on session restore). The
+// split-node decoder uses the identical bounded-reserve pattern.
+void TestPersistedStateRejectsAdversarialLengthWithoutOom() {
+  using microide::persistence::PrimitiveReader;
+
+  // u32 count = 0xFFFFFFFF, then no element bytes.
+  const std::vector<std::byte> bytes = {std::byte{0xFF}, std::byte{0xFF}, std::byte{0xFF},
+                                        std::byte{0xFF}};
+  PrimitiveReader reader(bytes);
+  std::vector<std::uint8_t> values;
+  const bool ok = reader.ReadVector(&values, [](PrimitiveReader& r, std::uint8_t* item) {
+    bool value = false;
+    if (!r.ReadBool(&value)) {
+      return false;
+    }
+    *item = value ? 1 : 0;
+    return true;
+  });
+  Expect(!ok, "ReadVector should fail cleanly on a huge count with no element bytes");
+  Expect(values.empty(), "ReadVector should not have populated values");
+}
+
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedStateRecord/RejectsAdversarialLengthWithoutOom",
+          TestPersistedStateRejectsAdversarialLengthWithoutOom);
   AddTest(tests, "PersistedStateRecord/UserAndProjectConfigRoundTrip",
           TestPersistedStateUserAndProjectConfigRecordRoundTrip);
   AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripOmitsChatRegistry",

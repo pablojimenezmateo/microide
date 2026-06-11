@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -102,7 +103,9 @@ class PrimitiveReader {
       return false;
     }
     values->clear();
-    values->reserve(count);
+    // Bound the reservation by the remaining input so a corrupt length field cannot
+    // force an unbounded allocation; each element consumes at least one byte.
+    values->reserve(std::min<std::size_t>(count, remaining()));
     for (std::uint32_t i = 0; i < count; ++i) {
       T item{};
       if (!read_item(*this, &item)) {

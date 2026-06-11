@@ -600,7 +600,10 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
   if (!ReadSize(reader, &count)) {
     return false;
   }
-  node->path.reserve(count);
+  // Bound the reservation by the bytes actually available: each path element is a
+  // ReadSize (4-byte u32), so a corrupt/adversarial `count` cannot force an
+  // allocation larger than the remaining input. Prevents OOM on malformed state.
+  node->path.reserve(std::min<std::size_t>(count, reader.remaining() / sizeof(std::uint32_t)));
   for (std::size_t i = 0; i < count; ++i) {
     std::size_t value = 0;
     if (!ReadSize(reader, &value)) {
