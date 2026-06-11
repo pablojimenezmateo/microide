@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <span>
 
+#include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
 #include "util/StartupTrace.h"
 
@@ -28,47 +29,15 @@ std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesys
 
 std::unordered_map<std::string, GitFileStatus> BuildGitStatusMap(
     std::span<const GitWorkingTreeEntry> entries) {
+  // Delegate file + folder aggregation to the canonical GitPorcelainParser helper so the
+  // status-priority ranking stays single-sourced. A previous inline copy ranked
+  // Added == Untracked, diverging from GitStatusPriority (Added > Untracked) and making the
+  // folder-aggregated badge depend on which path produced it.
   std::unordered_map<std::string, GitFileStatus> statuses;
-  const auto priority = [](GitFileStatus status) {
-    switch (status) {
-      case GitFileStatus::Conflicted:
-        return 5;
-      case GitFileStatus::Deleted:
-        return 4;
-      case GitFileStatus::Modified:
-        return 3;
-      case GitFileStatus::Added:
-      case GitFileStatus::Untracked:
-        return 2;
-      case GitFileStatus::Clean:
-      default:
-        return 0;
-    }
-  };
-  const auto combine = [priority](GitFileStatus current, GitFileStatus next) {
-    return priority(next) > priority(current) ? next : current;
-  };
-  const auto record = [&](std::filesystem::path relative_path, GitFileStatus status) {
-    relative_path = relative_path.lexically_normal();
-    const std::string normalized = relative_path.generic_string();
-    if (!normalized.empty() && normalized != ".") {
-      statuses[normalized] = combine(statuses[normalized], status);
-    }
-
-    std::filesystem::path dir = relative_path.parent_path();
-    while (!dir.empty() && dir != ".") {
-      const std::string key = dir.lexically_normal().generic_string();
-      statuses[key] = combine(statuses[key], status);
-      const auto next = dir.parent_path();
-      if (next == dir) {
-        break;
-      }
-      dir = next;
-    }
-  };
-
   for (const GitWorkingTreeEntry& entry : entries) {
-    record(entry.relative_path, entry.conflicted ? GitFileStatus::Conflicted : entry.status);
+    GitPorcelainParser::RecordGitStatus(
+        statuses, entry.relative_path,
+        entry.conflicted ? GitFileStatus::Conflicted : entry.status);
   }
   return statuses;
 }

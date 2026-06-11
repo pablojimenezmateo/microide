@@ -525,9 +525,37 @@ void TestGitBranchDiffNameStatusZParser() {
   Expect(entries[2].status == GitFileStatus::Modified, "modified status");
 }
 
+// Folder-aggregated status must be single-sourced through GitStatusPriority.
+// A previous inline table in BuildGitStatusMap ranked Added == Untracked, so a
+// folder holding both could aggregate to either depending on entry order.
+void TestBuildGitStatusMapFolderPriorityIsSingleSourced() {
+  using microide::project::BuildGitStatusMap;
+  using microide::project::GitWorkingTreeEntry;
+
+  // Added (priority 2) must outrank Untracked (priority 1) for the shared folder,
+  // regardless of which entry is recorded first.
+  const std::vector<GitWorkingTreeEntry> untracked_first{
+      {.relative_path = "pkg/new.txt", .status = GitFileStatus::Untracked},
+      {.relative_path = "pkg/staged.txt", .status = GitFileStatus::Added, .staged = true},
+  };
+  const std::vector<GitWorkingTreeEntry> added_first{
+      {.relative_path = "pkg/staged.txt", .status = GitFileStatus::Added, .staged = true},
+      {.relative_path = "pkg/new.txt", .status = GitFileStatus::Untracked},
+  };
+
+  const auto a = BuildGitStatusMap(untracked_first);
+  const auto b = BuildGitStatusMap(added_first);
+  Expect(a.at("pkg") == GitFileStatus::Added,
+         "folder with Added + Untracked should aggregate to Added (Added outranks Untracked)");
+  Expect(a.at("pkg") == b.at("pkg"),
+         "folder aggregation must not depend on working-tree entry order");
+}
+
 }  // namespace
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Git/BuildStatusMapFolderPriorityIsSingleSourced",
+          TestBuildGitStatusMapFolderPriorityIsSingleSourced);
   AddTest(tests, "Git/BranchDiffNameStatusZParser", TestGitBranchDiffNameStatusZParser);
   AddTest(tests, "Git/CompareFixture", TestGitCompareFixture);
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);

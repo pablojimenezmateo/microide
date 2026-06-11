@@ -864,18 +864,13 @@ verified against source before being recorded.
 
 ### Deferred — verified, still open (next pass)
 
-- **Plugin Lua stack leak (cold paths)**: the same null-plugin early-return leak exists in the
-  remaining provider/hover/scm/auth/test-discovery functions in
-  `src/plugin/PluginProviderQueryInterop.cpp` and `src/plugin/PluginSidebarHoverInterop.cpp`. Apply
-  the same `lua_settop(state, base)` pattern uniformly (low severity — only the rare null-plugin
-  branch leaks; PCall already balances the stack on error).
-- **Snippet linked-placeholder column desync**: in `src/editor/SnippetEngine.cpp`, editing one of
-  several same-line linked placeholder ranges does not shift the `start.column` of the other ranges,
-  so multi-keystroke edits to multi-occurrence snippets insert at the wrong place. Masked by
-  single-keystroke test coverage.
-- **Blame cache can become eligible-but-empty after self-eviction**: `src/project/GitBlameService.cpp`
-  uses `file_caches[key]` (operator[]) after `EnforceCacheBudgets()` may have evicted `key`,
-  recreating an empty cache marked `eligible=true`.
+- **Plugin Lua stack leak (cold paths)**: ~~the same null-plugin early-return leak exists in the
+  remaining provider/hover/scm/auth/test-discovery functions.~~ **Closed on 2026-06-11 — see §23.**
+- **Snippet linked-placeholder column desync**: ~~editing one of several same-line linked
+  placeholder ranges does not shift the others.~~ **Closed on 2026-06-11 — see §23.**
+- **Blame cache can become eligible-but-empty after self-eviction**: ~~`GitBlameService.cpp` uses
+  `file_caches[key]` after `EnforceCacheBudgets()` may have evicted `key`.~~ **Closed on
+  2026-06-11 — see §23.**
 - **Duplicated hit-test geometry across cursor / click / motion / render TUs**: bottom-panel
   line-at-point, compare collapsed-context row + action buttons, per-mode sidebar header buttons,
   empty-tab-strip placeholder rect, and the tab-strip overflow/tab/close walk are each re-implemented
@@ -884,9 +879,9 @@ verified against source before being recorded.
 - **Settings/Help overlay does not trap focus**: ~~`SettingsOverlayService` only consumes Escape;
   other keys edit the surface underneath. Fold it into the shared overlay/focus ownership.~~
   **Closed on 2026-06-11 — see §22.**
-- **Divergent git status-priority tables**: `GitStatusService::BuildGitStatusMap` and
-  `GitPorcelainParser::GitStatusPriority` rank `Added`/`Untracked` differently, so folder-aggregated
-  status depends on which path produced it.
+- **Divergent git status-priority tables**: ~~`GitStatusService::BuildGitStatusMap` and
+  `GitPorcelainParser::GitStatusPriority` rank `Added`/`Untracked` differently.~~ **Closed on
+  2026-06-11 — see §23.**
 
 ## 19. 2026-06-11 Plugin Lua-error longjmp safety pass
 
@@ -1033,30 +1028,14 @@ timing, not from this pass; consistent with the §12.2-style watchlist.)
 
 ### Still open after this pass (verified, ranked)
 
-These remain from the §18 deferred list; ordered by the product priority (speed → correctness →
-UI/UX). Re-confirmed against source on 2026-06-11.
+Items 1–4 below were **closed on 2026-06-11 in the §23 correctness batch**. The remaining open item:
 
-1. **Snippet linked-placeholder column desync** (correctness; small). `src/editor/SnippetEngine.cpp`
-   updates only `ranges[idx].end.column` after an edit (~line 416-420); same-line sibling ranges to
-   the right never shift their `start.column`/`end.column`, so the second keystroke into a
-   multi-occurrence snippet lands at the wrong column. Masked by single-keystroke coverage. Best
-   standalone correctness follow-up; needs a multi-keystroke regression test.
-2. **Divergent git status-priority tables** (correctness; small). `GitStatusService::BuildGitStatusMap`
-   ranks `Added == Untracked == 2`; `GitPorcelainParser::GitStatusPriority` ranks `Added = 2`,
-   `Untracked = 1`. Folder-badge aggregation depends on which path produced the map. Unify into one
-   shared table.
-3. **Blame cache eligible-but-empty after self-eviction** (correctness; small). `src/project/GitBlameService.cpp`
-   (~line 583) uses `file_caches[key]` (operator[]) after `EnforceCacheBudgets()` may have evicted
-   `key`, re-creating a default cache then setting `eligible=true` on it. Low frequency.
-4. **Plugin Lua stack leak (cold paths)** (correctness; small). Same null-plugin early-return leak as
-   the §18 hot-path fix, in the remaining provider/hover/scm/auth/test-discovery functions of
-   `PluginProviderQueryInterop.cpp` / `PluginSidebarHoverInterop.cpp`. Apply `lua_settop(state, base)`
-   uniformly. (Requires `liblua5.4-dev` so `MICROIDE_HAS_LUA_PLUGINS=1` — see §19.)
-5. **Duplicated hit-test geometry across cursor/click/motion/render TUs** (dedup; medium). Bottom-panel
+1. **Duplicated hit-test geometry across cursor/click/motion/render TUs** (dedup; medium). Bottom-panel
    line-at-point, compare collapsed-context row + action buttons, per-mode sidebar header buttons,
    empty-tab-strip placeholder rect, and the tab-strip overflow/tab/close walk are each re-implemented
    in 2–3 TUs (already diverging on truncate-vs-floor). Centralize into shared helpers
-   (`WorkspaceLayout.h` / `CompareMergeRender.h`).
+   (`WorkspaceLayout.h` / `CompareMergeRender.h`). The only remaining §18-derived correctness/dedup
+   item; the largest of the batch, deferred as its own pass.
 
 ### Unmeasured perf/dedup candidates (do NOT touch without a perf fixture first)
 
@@ -1074,3 +1053,55 @@ noise band.
   (`WorkspaceShellCompareRender.cpp`); candidate for a reused scratch buffer / `string_view` slicing.
 - Sidebar header button rects recomputed twice per mouse-motion event in
   `WorkspaceShellMouseMotion.cpp` (previous + current hover) without a layout-revision cache.
+
+## 23. 2026-06-11 Correctness batch: snippet mirror, git status priority, blame cache, Lua cold paths
+
+Closed four of the five remaining §18/§22 correctness items in one pass. Each fix carries regression
+coverage except where noted; the regular suite plus the ASAN preset (the §19-mandated validation for
+plugin Lua work, with `MICROIDE_HAS_LUA_PLUGINS=1`) are green.
+
+- **Snippet linked-placeholder column desync** (`src/editor/SnippetEngine.cpp`). `SnippetTryInsertText`
+  bumped only the edited range's `end.column`; same-line sibling occurrences to the right of the
+  insertion kept stale columns, so the *second* mirrored keystroke into a multi-occurrence snippet
+  landed at the wrong column. The insertion shifts every column at or after the insertion point, so
+  the fix now advances **both** `start.column` and `end.column` of every sibling range on the line
+  whose start is at/after the insertion. Test
+  `EditorSnippet/MultiOccurrenceLinkedTabMultiKeystroke` types three successive characters into a
+  two-occurrence tab stop and asserts `x!?. y!?.`.
+
+- **Divergent git status-priority tables** (`src/project/GitStatusService.cpp`).
+  `BuildGitStatusMap` carried its own inline priority table ranking `Added == Untracked == 2`, while
+  the canonical `GitPorcelainParser::GitStatusPriority` ranks `Added = 2 > Untracked = 1`; folder-badge
+  aggregation therefore depended on which producer ran. `BuildGitStatusMap` now delegates the entire
+  file + parent-folder aggregation to `GitPorcelainParser::RecordGitStatus` (which the function had
+  been duplicating verbatim), so the ranking is single-sourced and the duplication is gone. Test
+  `Git/BuildStatusMapFolderPriorityIsSingleSourced` proves a folder holding both an Added and an
+  Untracked file aggregates to `Added` regardless of entry order.
+
+- **Blame cache eligible-but-empty after self-eviction** (`src/project/GitBlameService.cpp`). The
+  post-span-loop re-validation block used `file_caches[request.file_key]` (operator[]). If the loop's
+  `EnforceCacheBudgets()` had just evicted that key (a single file whose blame exceeds
+  `kMaxCachedLines`, or eviction mid-loop), operator[] resurrected it as a default cache and then set
+  `eligible = true` — an empty-but-eligible entry that wastes the reclaimed slot and reports
+  ready-with-no-data to readers. The block now `find()`s the entry and re-validates only if it
+  survived. No deterministic regression test was added: triggering eviction of the *current* request
+  needs either a >16 000-line blame fixture or a test-only cache-budget setter (the current file is
+  always most-recently-used, so normal LRU never evicts it); the existing blame suite covers the
+  apply path for no-regression. A budget-hook-driven test is a small deferred follow-up.
+
+- **Plugin Lua stack leak (cold paths)** (`src/plugin/PluginProviderQueryInterop.cpp`,
+  `src/plugin/PluginSidebarHoverInterop.cpp`). The remaining provider/test/scm/auth/mcp/command/
+  save-participant/sidebar/hover functions shared the §18 hot-path bug: when `find_plugin_by_state`
+  returns null the protected call is skipped, leaving the pushed function + arguments on the Lua
+  stack to accumulate across queries toward overflow. Rather than scatter `lua_gettop`/`lua_settop`
+  pairs (which pushed `PluginProviderQueryInterop.cpp` over the hard 800-line plugin-TU cap), this
+  introduces a header-only RAII `lua_interop::StackResetGuard` (`PluginLuaInterop.h`) that restores
+  the stack height on *every* scope exit — success or failure. All push-then-call functions in both
+  interop TUs (including the two previously hot-patched ones, now unified) declare one right after
+  acquiring the provider state; the explicit failure-branch `lua_settop` calls were removed. The file
+  dropped to 793 lines, back under the cap. Validated under ASAN via
+  `PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState` and the plugin suite; the
+  `CheckPluginLuaErrorDoesNotLongjmpOverCppLocals` invariant still passes (the guard uses
+  `lua_settop`, never `luaL_error`).
+
+Remaining from the §18 audit: only the **duplicated hit-test geometry** dedup (medium; its own pass).

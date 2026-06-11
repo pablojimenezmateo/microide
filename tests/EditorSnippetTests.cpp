@@ -48,6 +48,27 @@ void TestSnippetMultiOccurrenceLinkedTab() {
          "linked edit mirrors at caret column inside each placeholder");
 }
 
+void TestSnippetMultiOccurrenceLinkedTabMultiKeystroke() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:x} ${1:y}$0"),
+         "multi-tab1 expansion");
+  Expect(viewport.lines()[0] == "x y", "both placeholders expand in place of trigger");
+
+  // Three successive mirrored keystrokes. After the first edit the right-hand
+  // placeholder shifts right; if its recorded range is not advanced, the second
+  // and third edits land at the wrong column.
+  Expect(SnippetTryInsertText(viewport, session, "!"), "first mirrored keystroke");
+  Expect(SnippetTryInsertText(viewport, session, "?"), "second mirrored keystroke");
+  Expect(SnippetTryInsertText(viewport, session, "."), "third mirrored keystroke");
+  Expect(viewport.lines()[0] == "x!?. y!?.",
+         "successive linked edits must keep mirroring at the correct column in every occurrence");
+}
+
 void TestSnippetChoiceTabCycles() {
   TextViewport viewport;
   viewport.LoadContent("z", "/tmp/snippet.cpp");
@@ -109,6 +130,8 @@ void TestSnippetParseFallbackLeavesDollarLiteral() {
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/SimpleExpansion", TestSnippetSimpleExpansion);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTab", TestSnippetMultiOccurrenceLinkedTab);
+  AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTabMultiKeystroke",
+          TestSnippetMultiOccurrenceLinkedTabMultiKeystroke);
   AddTest(tests, "EditorSnippet/ChoiceTabCycles", TestSnippetChoiceTabCycles);
   AddTest(tests, "EditorSnippet/ExitWhenCaretLeavesPlaceholder",
           TestSnippetExitWhenCaretLeavesPlaceholder);

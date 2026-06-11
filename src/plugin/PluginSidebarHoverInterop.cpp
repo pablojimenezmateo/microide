@@ -109,6 +109,7 @@ bool SnapshotSidebarProvider(
   }
 
   items->clear();
+  const lua_interop::StackResetGuard stack_guard(provider.state);
   lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.snapshot_ref);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(provider.state);
   std::string call_error;
@@ -193,6 +194,7 @@ bool ConfirmSidebarProviderItem(
     return false;
   }
 
+  const lua_interop::StackResetGuard stack_guard(provider.state);
   lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.confirm_ref);
   PushSidebarItemTable(provider.state, item, current_project_root, resolve_runtime_path);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(provider.state);
@@ -227,6 +229,7 @@ bool QueryHoverProvider(
     return false;
   }
 
+  const lua_interop::StackResetGuard stack_guard(provider.state);
   lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.provide_ref);
   push_buffer_table(provider.state, path);
   lua_interop::PushHoverPosition(provider.state, line, column);

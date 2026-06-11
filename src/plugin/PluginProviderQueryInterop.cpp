@@ -24,7 +24,7 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
       continue;
     }
     lua_State* state = provider.state;
-    const int stack_base = lua_gettop(state);
+    const lua_interop::StackResetGuard stack_guard(state);
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
     push_buffer_context(state, path);
     lua_interop::PushPosition(state, line, column);
@@ -35,10 +35,6 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
       if (error_message != nullptr) {
         *error_message = "completion provider '" + provider.id + "' failed: " + call_error;
       }
-      // When the plugin lookup fails PCall never runs, so the pushed function and
-      // args are still on the stack; restore the base to avoid leaking slots that
-      // accumulate across repeated queries until the Lua stack overflows.
-      lua_settop(state, stack_base);
       return {};
     }
     if (lua_istable(state, -1)) {
@@ -108,7 +104,7 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
       continue;
     }
     lua_State* state = provider.state;
-    const int stack_base = lua_gettop(state);
+    const lua_interop::StackResetGuard stack_guard(state);
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
     push_buffer_context(state, path);
     lua_interop::PushRange(state, start_line, start_column, end_line, end_column);
@@ -118,8 +114,6 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
       if (error_message != nullptr) {
         *error_message = "code action provider '" + provider.id + "' failed: " + call_error;
       }
-      // See QueryCompletions: clean up pushed slots when PCall is skipped.
-      lua_settop(state, stack_base);
       return {};
     }
     if (lua_istable(state, -1)) {
@@ -195,6 +189,7 @@ bool DiscoverTests(
   }
 
   lua_State* state = it->state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->discover_ref);
   push_buffer_context(state, path);
@@ -272,6 +267,7 @@ bool RunTests(
   }
 
   lua_State* state = it->state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
   lua_createtable(state, static_cast<int>(test_ids.size()), 0);
@@ -344,6 +340,7 @@ bool SnapshotScm(
   }
 
   lua_State* state = it->state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->snapshot_ref);
   std::string call_error;
@@ -436,6 +433,7 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
     }
 
     lua_State* state = provider.state;
+    const lua_interop::StackResetGuard stack_guard(state);
     lua_rawgeti(state, LUA_REGISTRYINDEX, provider.provide_ref);
     push_buffer_context(state, path);
     lua_pushinteger(state, static_cast<lua_Integer>(visible_start_line));
@@ -514,6 +512,7 @@ bool LoginAuthProvider(
   }
 
   lua_State* state = it->state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->login_ref);
   lua_createtable(state, static_cast<int>(scopes.size()), 0);
@@ -584,6 +583,7 @@ bool RefreshAuthSession(
   }
 
   lua_State* state = it->state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->refresh_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
@@ -651,6 +651,7 @@ bool LogoutAuthSession(
   }
 
   lua_State* state = it->state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->logout_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
@@ -681,6 +682,7 @@ bool InvokeMcpTool(
   }
 
   lua_State* state = it->state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->run_ref);
   lua_pushlstring(state, input_json.data(), input_json.size());
@@ -720,6 +722,7 @@ bool ExecuteCommand(
   }
 
   lua_State* state = it->second.state;
+  const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
   lua_rawgeti(state, LUA_REGISTRYINDEX, it->second.function_ref);
   push_plugin_context(state);
@@ -752,6 +755,7 @@ bool RunSaveParticipants(
     std::string* error_message) {
   for (const auto& participant : save_participant_runtimes) {
     lua_State* state = participant.state;
+    const lua_interop::StackResetGuard stack_guard(state);
     const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
     lua_rawgeti(state, LUA_REGISTRYINDEX, participant.function_ref);
     push_buffer_context_with_text(state, path, *text);

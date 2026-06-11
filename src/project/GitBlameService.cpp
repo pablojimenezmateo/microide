@@ -580,12 +580,18 @@ struct GitBlameService::Impl {
       if (!RequestStillCurrentLocked(request)) {
         return;
       }
-      auto& cache = file_caches[request.file_key];
-      cache.last_validated_at = Clock::now();
-      cache.eligible = true;
-      cache.head_id = *head_id;
-      cache.stamp = *stamp;
-      cache.last_access_generation = ++access_generation;
+      // Re-validate only if the entry survived EnforceCacheBudgets() in the span loop
+      // above. Using operator[] here would resurrect a just-evicted file as an
+      // empty-but-eligible cache, wasting the slot the eviction reclaimed and reporting
+      // eligible=true for a file with no blame data.
+      if (auto cache_it = file_caches.find(request.file_key); cache_it != file_caches.end()) {
+        FileCache& cache = cache_it->second;
+        cache.last_validated_at = Clock::now();
+        cache.eligible = true;
+        cache.head_id = *head_id;
+        cache.stamp = *stamp;
+        cache.last_access_generation = ++access_generation;
+      }
     }
 
     if (changed || missing_spans.empty()) {

@@ -414,10 +414,23 @@ bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, 
   });
 
   for (std::size_t idx : order) {
-    const auto& r = ranges[idx];
-    const TextPosition ins{r.start.line, r.start.column + rel};
+    const TextPosition ins{ranges[idx].start.line, ranges[idx].start.column + rel};
     viewport.ReplaceRange(SelectionRange{ins, ins}, text, false);
     ranges[idx].end.column += text.size();
+    // The insertion shifts every column at or after `ins` on this line to the right.
+    // Sibling linked placeholders to the right of the insertion must have BOTH their
+    // start and end columns advanced, or their recorded ranges go stale and the next
+    // mirrored keystroke lands at the wrong column.
+    for (std::size_t j = 0; j < ranges.size(); ++j) {
+      if (j == idx) {
+        continue;
+      }
+      SelectionRange& other = ranges[j];
+      if (other.start.line == ins.line && other.start.column >= ins.column) {
+        other.start.column += text.size();
+        other.end.column += text.size();
+      }
+    }
   }
   FocusTabStop(viewport, session, tab);
   return true;
