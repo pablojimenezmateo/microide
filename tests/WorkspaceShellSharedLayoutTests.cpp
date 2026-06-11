@@ -3,6 +3,7 @@
 #include "compare/CompareModel.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareSemanticMetadata.h"
+#include "workspace/CompareMergeRender.h"
 #include "workspace/LayoutModeService.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -15,6 +16,9 @@ namespace {
 using microide::workspace::BottomPanelCommandAreaRect;
 using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
+using microide::workspace::BottomPanelLineIndexAtY;
+using microide::workspace::CompareCollapsedContextBlockRect;
+using microide::workspace::EmptyTabStripPlaceholderRect;
 using microide::workspace::BuildChromeTabRenderItems;
 using microide::workspace::BuildCompareScrollbarMarkers;
 using microide::workspace::ClassifyMergeHoverState;
@@ -803,6 +807,79 @@ void TestLayoutModeServiceFlipFlop() {
          "user override should defeat the wide-window auto resolution");
 }
 
+void TestWorkspaceSharedEmptyTabStripPlaceholderRect() {
+  const SDL_FRect strip = MakeRect(12.0f, 30.0f, 800.0f, 26.0f);
+  const SDL_FRect rect = EmptyTabStripPlaceholderRect(strip);
+  Expect(rect.x == strip.x, "placeholder shares the strip left edge");
+  Expect(rect.y == strip.y + 2.0f, "placeholder drops 2px below the strip top");
+  Expect(rect.w == 220.0f, "placeholder uses the fixed welcome-tab width");
+  Expect(rect.h == 24.0f, "placeholder height is strip height minus 2px");
+  const SDL_FRect thin = EmptyTabStripPlaceholderRect(MakeRect(0.0f, 0.0f, 100.0f, 10.0f));
+  Expect(thin.h == 22.0f, "placeholder height clamps to the 22px minimum");
+}
+
+void TestWorkspaceSharedBottomPanelLineIndexAtY() {
+  const float text_y = 100.0f;
+  const float line_height = 18.0f;
+  const int visible_rows = 5;
+  const std::size_t line_count = 40;
+
+  // Above the first row rejects (floor, not snap-to-row-0).
+  Expect(!BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10, text_y - 1.0f, line_count)
+              .has_value(),
+         "y above the first row maps to no line");
+  // First visible row resolves to the scroll offset; later rows add to it.
+  const auto first =
+      BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10, text_y + 1.0f, line_count);
+  Expect(first.has_value() && *first == 10u, "first visible row is the scroll offset");
+  const auto third = BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10,
+                                             text_y + 2.0f * line_height + 1.0f, line_count);
+  Expect(third.has_value() && *third == 12u, "row offset adds to the scroll offset");
+  // Below the last visible row rejects.
+  Expect(!BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 10,
+                                  text_y + 5.0f * line_height + 1.0f, line_count)
+              .has_value(),
+         "y past the last visible row maps to no line");
+  // Absolute index past the content rejects even within the visible band.
+  Expect(!BottomPanelLineIndexAtY(text_y, line_height, visible_rows, 38,
+                                  text_y + 4.0f * line_height + 1.0f, line_count)
+              .has_value(),
+         "absolute index past line_count maps to no line");
+  // Non-positive line height rejects rather than dividing by zero.
+  Expect(!BottomPanelLineIndexAtY(text_y, 0.0f, visible_rows, 10, text_y + 1.0f, line_count)
+              .has_value(),
+         "non-positive line height maps to no line");
+}
+
+void TestWorkspaceSharedCompareCollapsedContextBlockRect() {
+  const SDL_FRect editor_surface = MakeRect(100.0f, 50.0f, 600.0f, 400.0f);
+  const float rows_y = 80.0f;
+  const float line_height = 16.0f;
+
+  const SDL_FRect no_bar = CompareCollapsedContextBlockRect(editor_surface, rows_y, line_height,
+                                                            /*show_vertical_scrollbar=*/false, 2);
+  Expect(no_bar.x == editor_surface.x + 4.0f, "block is inset 4px from the surface left");
+  Expect(no_bar.w == editor_surface.w - 8.0f, "block width drops the 4px inset on each side");
+  Expect(no_bar.y == rows_y + 2.0f * line_height - 1.0f, "block row y matches the painted row");
+  Expect(no_bar.h == line_height, "block height is one row");
+
+  // With a vertical scrollbar the block must also exclude the scrollbar reserve so the
+  // right-aligned action buttons stay clickable where they are painted. The pre-dedup
+  // hit-test passed the full editor-surface width, so its action rects drifted right of
+  // the painted buttons by exactly the scrollbar reserve plus the block inset.
+  const SDL_FRect with_bar = CompareCollapsedContextBlockRect(editor_surface, rows_y, line_height,
+                                                              /*show_vertical_scrollbar=*/true, 2);
+  const float reserve = microide::workspace::kWorkspaceDiffScrollbarReserve;
+  Expect(with_bar.w == editor_surface.w - reserve - 8.0f,
+         "scrollbar reserve is excluded from the block width");
+  const float painted_right = with_bar.x + with_bar.w;
+  const float buggy_full_row_right = editor_surface.x + editor_surface.w;
+  Expect(painted_right < buggy_full_row_right,
+         "block right edge is left of the full-surface edge the buggy hit-test used");
+  Expect(std::abs((buggy_full_row_right - painted_right) - (reserve + 4.0f)) < 0.001f,
+         "the old hit-test offset equals the scrollbar reserve plus the block inset");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
@@ -837,6 +914,12 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/HitTargetClickRouting", TestWorkspaceHitTargetClickRouting);
   AddTest(tests, "WorkspaceShared/LayoutModeResolution", TestWorkspaceLayoutModeResolution);
   AddTest(tests, "WorkspaceShared/LayoutModeServiceFlipFlop", TestLayoutModeServiceFlipFlop);
+  AddTest(tests, "WorkspaceShared/EmptyTabStripPlaceholderRect",
+          TestWorkspaceSharedEmptyTabStripPlaceholderRect);
+  AddTest(tests, "WorkspaceShared/BottomPanelLineIndexAtY",
+          TestWorkspaceSharedBottomPanelLineIndexAtY);
+  AddTest(tests, "WorkspaceShared/CompareCollapsedContextBlockRect",
+          TestWorkspaceSharedCompareCollapsedContextBlockRect);
 }
 
 }  // namespace microide::tests

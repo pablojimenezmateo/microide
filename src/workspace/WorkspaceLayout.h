@@ -271,6 +271,16 @@ std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,
 float ClampSidebarWidth(float width, float window_width);
 float ClampBottomPanelHeight(float height, float window_height);
 int BottomPanelVisibleRowsForHeight(float panel_height, float line_height, bool command_mode);
+// Resolve the vertical coordinate `y` to an absolute bottom-panel log line index, or
+// nullopt when `y` is above the first row, below the last visible row, or past the
+// content. Floors the row offset so coordinates above `text_y` reject rather than
+// snapping to row 0. Single-sourced for the panel click and hover-cursor paths.
+std::optional<std::size_t> BottomPanelLineIndexAtY(float text_y,
+                                                   float line_height,
+                                                   int visible_rows,
+                                                   int vertical_scroll,
+                                                   float y,
+                                                   std::size_t line_count);
 int TailScrollRowForContent(std::size_t line_count, int visible_rows);
 int ClampScrollRowToContent(int scroll_row, std::size_t line_count, int visible_rows);
 SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout);
@@ -282,6 +292,9 @@ SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry);
 SDL_FRect HorizontalScrollbarHitRect(const ScrollbarGeometry& geometry);
 SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& tab_rect);
+// The "Welcome" placeholder tab rect painted (and hit-tested) when no tabs are open.
+// Shared so the render, click, and cursor paths cannot drift apart.
+SDL_FRect EmptyTabStripPlaceholderRect(const SDL_FRect& tab_strip);
 SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect);
 LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs);
 SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count);

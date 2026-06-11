@@ -275,8 +275,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       }
       float summary_width = content_width - 16.0f;
       if (presentation_row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
-        const SDL_FRect block_rect =
-            MakeRect(row_rect.x + 4.0f, row_rect.y, std::max(0.0f, row_rect.w - 8.0f), row_rect.h);
+        const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
+            rect, surface.rows_y, surface.line_height, surface.show_vertical, row);
         DrawFilledRect(renderer, block_rect,
                        selected ? theme_.chrome_active
                                 : render::BlendColors(theme_.surface_raised, theme_.editor_background,

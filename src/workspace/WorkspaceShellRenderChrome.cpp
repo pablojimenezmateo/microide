@@ -200,9 +200,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     visible_tabs = tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
   }
   if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
-    const SDL_FRect placeholder_tab =
-        MakeRect(layout.tab_strip.x, layout.tab_strip.y + 2.0f, 220.0f,
-                 std::max(22.0f, layout.tab_strip.h - 2.0f));
+    const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(layout.tab_strip);
     DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
                  StripTabStyle{
                      .text_left_padding = 10.0f,

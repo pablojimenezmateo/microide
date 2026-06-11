@@ -51,4 +51,17 @@ CollapsedContextActionRects BuildCollapsedContextActionRects(
     bool show_previous,
     bool show_next);
 
+// The on-screen rect of a collapsed-context summary block for the diff row at
+// `visible_row` (its 0-based offset from the first painted row, not its presentation
+// index). This is the exact rectangle the renderer fills and lays the action buttons
+// out within — it excludes the vertical-scrollbar reserve and applies the 4px block
+// inset. Every hit-test path must derive the action-button rects from this same rect,
+// or the clickable region drifts right of the painted buttons (by the scrollbar
+// reserve plus the inset). Feed the result to BuildCollapsedContextActionRects.
+SDL_FRect CompareCollapsedContextBlockRect(const SDL_FRect& editor_surface,
+                                           float rows_y,
+                                           float line_height,
+                                           bool show_vertical_scrollbar,
+                                           int visible_row);
+
 }  // namespace microide::workspace

@@ -55,18 +55,9 @@ std::optional<std::size_t> BottomPanelLineIndexAtPoint(
     const WorkspaceShell::BottomPanelLogLayout& panel_layout,
     float y,
     std::size_t line_count) {
-  if (y < panel_layout.text_y || panel_layout.line_height <= 0.0f) {
-    return std::nullopt;
-  }
-  const int row = static_cast<int>(std::floor((y - panel_layout.text_y) / panel_layout.line_height));
-  if (row < 0 || row >= panel_layout.scroll.visible_rows) {
-    return std::nullopt;
-  }
-  const int absolute_index = panel_layout.scroll.vertical_scroll + row;
-  if (absolute_index < 0 || absolute_index >= static_cast<int>(line_count)) {
-    return std::nullopt;
-  }
-  return static_cast<std::size_t>(absolute_index);
+  return BottomPanelLineIndexAtY(panel_layout.text_y, panel_layout.line_height,
+                                 panel_layout.scroll.visible_rows,
+                                 panel_layout.scroll.vertical_scroll, y, line_count);
 }
 
 }  // namespace

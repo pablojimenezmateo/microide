@@ -394,9 +394,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     if (context_.current_project_state.open_tabs.empty()) {
-      return Contains(MakeRect(layout.tab_strip.x, layout.tab_strip.y + 2.0f, 220.0f,
-                               std::max(22.0f, layout.tab_strip.h - 2.0f)),
-                      x, y)
+      return Contains(EmptyTabStripPlaceholderRect(layout.tab_strip), x, y)
                  ? CursorKind::Pointer
                  : CursorKind::Default;
     }
@@ -581,19 +579,15 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           Contains(panel_layout.scroll.vertical_scrollbar->track, x, y)) {
         return CursorKind::Default;
       }
-      if (BottomPanelShowsOutput() && Contains(panel_layout.content_rect, x, y) &&
-          y >= panel_layout.text_y && panel_layout.line_height > 0.0f) {
-        const int row = static_cast<int>((y - panel_layout.text_y) / panel_layout.line_height);
-        if (row >= 0 && row < panel_layout.scroll.visible_rows) {
-          const int absolute_index = panel_layout.scroll.vertical_scroll + row;
-          if (absolute_index >= 0) {
-            if (const auto* entries =
-                    OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
-                entries != nullptr &&
-                static_cast<std::size_t>(absolute_index) < entries->size() &&
-                IsNavigableOutputLine((*entries)[static_cast<std::size_t>(absolute_index)])) {
-              return CursorKind::Pointer;
-            }
+      if (BottomPanelShowsOutput() && Contains(panel_layout.content_rect, x, y)) {
+        if (const auto* entries =
+                OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
+            entries != nullptr) {
+          const auto line_index = BottomPanelLineIndexAtY(
+              panel_layout.text_y, panel_layout.line_height, panel_layout.scroll.visible_rows,
+              panel_layout.scroll.vertical_scroll, y, entries->size());
+          if (line_index.has_value() && IsNavigableOutputLine((*entries)[*line_index])) {
+            return CursorKind::Pointer;
           }
         }
       }
@@ -656,15 +650,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (const compare::ComparePresentationRow* row =
               CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_row));
           row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
-        const SDL_FRect row_rect = MakeRect(layout.editor_surface.x,
-                                            surface_layout.rows_y +
-                                                static_cast<float>(hovered_row) *
-                                                    surface_layout.line_height -
-                                                1.0f,
-                                            layout.editor_surface.w,
-                                            surface_layout.line_height);
+        const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
+            layout.editor_surface, surface_layout.rows_y, surface_layout.line_height,
+            surface_layout.show_vertical, hovered_row);
         const auto action_rects = BuildCollapsedContextActionRects(
-            text_renderer_, row_rect, row->previous_hunk_index >= 0, row->next_hunk_index >= 0);
+            text_renderer_, block_rect, row->previous_hunk_index >= 0, row->next_hunk_index >= 0);
         if ((action_rects.previous_rect.has_value() && Contains(*action_rects.previous_rect, x, y)) ||
             Contains(action_rects.all_rect, x, y) ||
             (action_rects.next_rect.has_value() && Contains(*action_rects.next_rect, x, y))) {

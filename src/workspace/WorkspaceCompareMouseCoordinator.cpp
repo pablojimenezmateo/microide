@@ -137,15 +137,12 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (const compare::ComparePresentationRow* row =
           CompareTabPresentationRowAt(*compare_tab, compare_tab->selected_row);
       row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
-    const SDL_FRect row_rect = MakeRect(layout.editor_surface.x, surface_layout.rows_y +
-                                                             static_cast<float>(clicked_row) *
-                                                                 surface_layout.line_height -
-                                                             1.0f,
-                                        layout.editor_surface.w,
-                                        surface_layout.line_height);
+    const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
+        layout.editor_surface, surface_layout.rows_y, surface_layout.line_height,
+        surface_layout.show_vertical, clicked_row);
     const auto action_rects =
         operations_.build_compare_collapsed_context_action_rects != nullptr
-            ? operations_.build_compare_collapsed_context_action_rects(row_rect, *row)
+            ? operations_.build_compare_collapsed_context_action_rects(block_rect, *row)
             : CollapsedContextActionRects{};
     const float mouse_x = static_cast<float>(event.button.x);
     const float mouse_y = static_cast<float>(event.button.y);
@@ -357,16 +354,12 @@ bool CompareMouseCoordinator::HandleHoverMotion(const SDL_Event& event,
       if (const compare::ComparePresentationRow* row =
               CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_row));
           row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
-        const SDL_FRect row_rect = MakeRect(layout.editor_surface.x,
-                                            surface_layout.rows_y +
-                                                static_cast<float>(hovered_row) *
-                                                    surface_layout.line_height -
-                                                1.0f,
-                                            layout.editor_surface.w,
-                                            surface_layout.line_height);
+        const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
+            layout.editor_surface, surface_layout.rows_y, surface_layout.line_height,
+            surface_layout.show_vertical, hovered_row);
         const auto action_rects =
             operations_.build_compare_collapsed_context_action_rects != nullptr
-                ? operations_.build_compare_collapsed_context_action_rects(row_rect, *row)
+                ? operations_.build_compare_collapsed_context_action_rects(block_rect, *row)
                 : CollapsedContextActionRects{};
         if (const std::optional<CompareHoverKind> kind =
                 CompareHoverKindAtPoint(action_rects, static_cast<float>(event.motion.x),

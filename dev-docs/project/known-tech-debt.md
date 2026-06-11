@@ -871,11 +871,12 @@ verified against source before being recorded.
 - **Blame cache can become eligible-but-empty after self-eviction**: ~~`GitBlameService.cpp` uses
   `file_caches[key]` after `EnforceCacheBudgets()` may have evicted `key`.~~ **Closed on
   2026-06-11 — see §23.**
-- **Duplicated hit-test geometry across cursor / click / motion / render TUs**: bottom-panel
+- **Duplicated hit-test geometry across cursor / click / motion / render TUs**: ~~bottom-panel
   line-at-point, compare collapsed-context row + action buttons, per-mode sidebar header buttons,
   empty-tab-strip placeholder rect, and the tab-strip overflow/tab/close walk are each re-implemented
-  in 2–3 TUs (already diverging on truncate-vs-floor). Centralize into shared helpers
-  (`WorkspaceLayout.h` / `CompareMergeRender.h`). See the workspace audit for exact file:line sets.
+  in 2–3 TUs.~~ **Closed on 2026-06-11 — see §24.** (Two of the five clusters — sidebar header buttons
+  and the tab-strip overflow/tab/close walk — were already single-sourced; the audit overstated them.
+  The three real items are fixed, including a genuine compare hit-test bug.)
 - **Settings/Help overlay does not trap focus**: ~~`SettingsOverlayService` only consumes Escape;
   other keys edit the surface underneath. Fold it into the shared overlay/focus ownership.~~
   **Closed on 2026-06-11 — see §22.**
@@ -1028,14 +1029,9 @@ timing, not from this pass; consistent with the §12.2-style watchlist.)
 
 ### Still open after this pass (verified, ranked)
 
-Items 1–4 below were **closed on 2026-06-11 in the §23 correctness batch**. The remaining open item:
-
-1. **Duplicated hit-test geometry across cursor/click/motion/render TUs** (dedup; medium). Bottom-panel
-   line-at-point, compare collapsed-context row + action buttons, per-mode sidebar header buttons,
-   empty-tab-strip placeholder rect, and the tab-strip overflow/tab/close walk are each re-implemented
-   in 2–3 TUs (already diverging on truncate-vs-floor). Centralize into shared helpers
-   (`WorkspaceLayout.h` / `CompareMergeRender.h`). The only remaining §18-derived correctness/dedup
-   item; the largest of the batch, deferred as its own pass.
+Items 1–4 of the §18 batch were **closed on 2026-06-11 in the §23 correctness batch**; item 5 (the
+hit-test geometry dedup) was **closed on 2026-06-11 in §24**. No §18-derived correctness/dedup items
+remain open.
 
 ### Unmeasured perf/dedup candidates (do NOT touch without a perf fixture first)
 
@@ -1104,4 +1100,57 @@ plugin Lua work, with `MICROIDE_HAS_LUA_PLUGINS=1`) are green.
   `CheckPluginLuaErrorDoesNotLongjmpOverCppLocals` invariant still passes (the guard uses
   `lua_settop`, never `luaL_error`).
 
-Remaining from the §18 audit: only the **duplicated hit-test geometry** dedup (medium; its own pass).
+Remaining from the §18 audit: nothing — the **duplicated hit-test geometry** dedup closed in §24.
+
+## 24. 2026-06-11 Hit-test geometry dedup (+ a real compare hit-test bug)
+
+Closed the last §18-derived item. The audit had named five duplicated-geometry clusters; mapping them
+against current source showed two were already single-sourced and three were genuine — one of which was
+masking an actual hit-test bug.
+
+**Already centralized (audit overstated — left untouched):**
+
+- *Per-mode sidebar header buttons.* The Git/Tree header button rects (`GitSidebarStageAllButtonRect`,
+  `…DiscardAll…`, `…Refresh…`, `…OutgoingBase…`, `TreeSidebarCollapse/RefreshButtonRect`) are each
+  defined once in `WorkspaceShellSidebar.cpp` and the render / mouse / cursor paths all *call* those
+  definitions (mouse via lambda bindings). No duplicated arithmetic.
+- *Tab-strip overflow / tab / close walk.* `TabStripService` / `WorkspaceTabStripChrome` build
+  `VisibleStripTab{rect, close_rect}` and `OverflowControls` once; render, mouse, and cursor consume
+  the precomputed rects, and the close-button hit inflation is the shared `TabCloseHitRect`. No
+  duplicated arithmetic.
+
+**Fixed (three real clusters):**
+
+- **Compare collapsed-context action buttons — render/hit-test divergence (a real bug).** The renderer
+  drew the collapsed-context summary buttons inside a `block_rect` that (a) excluded the vertical
+  scrollbar reserve and (b) was inset 4px per side, then right-aligned the action buttons within it.
+  The three hit-test paths (`WorkspaceCompareMouseCoordinator` click + hover, `WorkspaceShellCursor`)
+  instead built the action rects from the **full-width** `row_rect` (full `editor_surface.w`, no inset).
+  Because the buttons are right-aligned to the input rect's right edge, the clickable region sat
+  `scrollbar_reserve + 4px` to the **right** of the painted buttons — up to 16px when the vertical
+  scrollbar was visible, enough that the painted "Show next" button could be largely unclickable.
+  New shared `CompareCollapsedContextBlockRect(editor_surface, rows_y, line_height, show_vertical, row)`
+  in `CompareMergeRender.h`/`.cpp` computes the canonical block rect once; render and all three
+  hit-test paths now feed it to `BuildCollapsedContextActionRects`, so painted and clickable rects can
+  no longer drift. Test `WorkspaceShared/CompareCollapsedContextBlockRect` pins the geometry and asserts
+  the old full-row offset equals exactly `reserve + inset`.
+
+- **Empty tab-strip "Welcome" placeholder rect.** The same
+  `MakeRect(tab_strip.x, tab_strip.y + 2, 220, max(22, tab_strip.h - 2))` was copy-pasted verbatim into
+  the render (`WorkspaceShellRenderChrome`), click (`WorkspaceTabMouseCoordinator`), and cursor
+  (`WorkspaceShellCursor`) paths. Extracted `EmptyTabStripPlaceholderRect` into `WorkspaceLayout.h`/`.cpp`;
+  all three call it. Pure dedup, no behavior change. Test `WorkspaceShared/EmptyTabStripPlaceholderRect`.
+
+- **Bottom-panel output line-at-point.** `WorkspacePanelMouseCoordinator` floored
+  `(y - text_y)/line_height`; `WorkspaceShellCursor` truncated the same expression and re-implemented the
+  scroll-offset + bounds resolution inline. Promoted to shared
+  `BottomPanelLineIndexAtY(text_y, line_height, visible_rows, vertical_scroll, y, line_count)` in
+  `WorkspaceLayout.h`/`.cpp` (floor, with the above-first-row / below-last-row / past-content guards).
+  Both paths call it; the panel coordinator's `BottomPanelLineIndexAtPoint` is now a thin forwarder.
+  Converges the floor-vs-truncate divergence (benign under the `y >= text_y` guard, but no longer a
+  latent trap). Test `WorkspaceShared/BottomPanelLineIndexAtY`. The two terminal-grid positioners in
+  `WorkspaceShellTerminal.cpp` share the arithmetic *shape* but resolve to terminal cells, not output
+  lines, so they were intentionally left separate.
+
+Validated: full `ctest` green (incl. ArchitectureInvariants), and the compare/cursor/chrome/shared-layout
+suites plus the three new tests green under the ASAN preset.

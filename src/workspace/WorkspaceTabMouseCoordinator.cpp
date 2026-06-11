@@ -111,9 +111,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       return false;
     }
     if (state_.open_tabs.empty()) {
-      const SDL_FRect placeholder_tab =
-          MakeRect(layout.tab_strip.x, layout.tab_strip.y + 2.0f, 220.0f,
-                   std::max(22.0f, layout.tab_strip.h - 2.0f));
+      const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(layout.tab_strip);
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(placeholder_tab, event.button.x, event.button.y)) {
         state_.surface.focus = FocusTarget::Editor;

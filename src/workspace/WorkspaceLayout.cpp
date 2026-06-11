@@ -305,6 +305,30 @@ SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& t
   return MakeRect(left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top));
 }
 
+SDL_FRect EmptyTabStripPlaceholderRect(const SDL_FRect& tab_strip) {
+  return MakeRect(tab_strip.x, tab_strip.y + 2.0f, 220.0f, std::max(22.0f, tab_strip.h - 2.0f));
+}
+
+std::optional<std::size_t> BottomPanelLineIndexAtY(float text_y,
+                                                   float line_height,
+                                                   int visible_rows,
+                                                   int vertical_scroll,
+                                                   float y,
+                                                   std::size_t line_count) {
+  if (y < text_y || line_height <= 0.0f) {
+    return std::nullopt;
+  }
+  const int row = static_cast<int>(std::floor((y - text_y) / line_height));
+  if (row < 0 || row >= visible_rows) {
+    return std::nullopt;
+  }
+  const int absolute_index = vertical_scroll + row;
+  if (absolute_index < 0 || absolute_index >= static_cast<int>(line_count)) {
+    return std::nullopt;
+  }
+  return static_cast<std::size_t>(absolute_index);
+}
+
 SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count) {
   const float resolved_count = std::max<std::size_t>(1, item_count);
   const float height = 8.0f + kWorkspaceMenuPopupItemHeight * static_cast<float>(resolved_count);

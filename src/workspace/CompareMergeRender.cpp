@@ -99,4 +99,15 @@ CollapsedContextActionRects BuildCollapsedContextActionRects(
   return rects;
 }
 
+SDL_FRect CompareCollapsedContextBlockRect(const SDL_FRect& editor_surface,
+                                           float rows_y,
+                                           float line_height,
+                                           bool show_vertical_scrollbar,
+                                           int visible_row) {
+  const float right_reserved = show_vertical_scrollbar ? kWorkspaceDiffScrollbarReserve : 0.0f;
+  const float content_width = std::max(0.0f, editor_surface.w - right_reserved);
+  const float row_y = rows_y + static_cast<float>(visible_row) * line_height - 1.0f;
+  return MakeRect(editor_surface.x + 4.0f, row_y, std::max(0.0f, content_width - 8.0f), line_height);
+}
+
 }  // namespace microide::workspace
