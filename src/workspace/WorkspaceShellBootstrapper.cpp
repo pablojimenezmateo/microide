@@ -12,7 +12,25 @@
 namespace microide::workspace {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
-  return Bootstrapper(*this).BuildEventDispatcher().Handle(event);
+  const FocusTarget focus_before = context_.current_project_state.surface.focus;
+  EventResult result = Bootstrapper(*this).BuildEventDispatcher().Handle(event);
+  // The focus ring is drawn per-surface from each surface's render path. When focus moves
+  // between surfaces, both the previously- and newly-focused surfaces must repaint so the
+  // old ring is erased and the new one drawn. This is the single chokepoint for that
+  // invalidation, independent of which coordinator mutated the focus field.
+  const FocusTarget focus_after = context_.current_project_state.surface.focus;
+  if (result.handled && !result.redraw.full && focus_after != focus_before) {
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      const auto add_focus_surface_redraw = [&](FocusTarget focus) {
+        if (const auto rect = FocusSurfaceRect(*layout, focus); rect.has_value()) {
+          result.redraw.rects.push_back(*rect);
+        }
+      };
+      add_focus_surface_redraw(focus_before);
+      add_focus_surface_redraw(focus_after);
+    }
+  }
+  return result;
 }
 
 TerminalPanelService WorkspaceShell::MakeTerminalPanelService() {

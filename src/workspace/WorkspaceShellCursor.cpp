@@ -1055,6 +1055,23 @@ char WorkspaceShell::KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers) {
   }
 }
 
+std::optional<SDL_FRect> WorkspaceShell::FocusSurfaceRect(const WorkspaceLayout& layout,
+                                                          FocusTarget focus) const {
+  switch (focus) {
+    case FocusTarget::Sidebar:
+      return context_.current_project_state.sidebar.visible
+                 ? std::optional<SDL_FRect>(layout.sidebar)
+                 : std::nullopt;
+    case FocusTarget::Editor:
+      return layout.editor_surface;
+    case FocusTarget::Panel:
+      return BottomPanelVisible() ? std::optional<SDL_FRect>(layout.bottom_panel) : std::nullopt;
+    case FocusTarget::Overlay:
+    default:
+      return std::nullopt;
+  }
+}
+
 std::optional<SDL_FRect> WorkspaceShell::HoveredStatusBarSegmentRect(
     const WorkspaceLayout& layout, float x, float y) const {
   if (layout.status_bar.w <= 0.0f || layout.status_bar.h <= 0.0f ||

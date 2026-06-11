@@ -450,6 +450,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                   panel_layout.scroll.vertical_scrollbar->thumb,
                   context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
   }
+  if (panel_vm.project_state->surface.focus == FocusTarget::Panel) {
+    DrawSurfaceFocusRing(renderer, layout.bottom_panel);
+  }
 }
 
 }  // namespace microide::workspace

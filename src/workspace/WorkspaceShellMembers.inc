@@ -1217,6 +1217,12 @@
                                                              float x, float y) const;
   std::optional<SDL_FRect> HoveredStatusBarSegmentRect(const WorkspaceLayout& layout, float x,
                                                        float y) const;
+  // Screen region for the surface that currently owns keyboard focus (nullopt for the
+  // modal Overlay focus, or when the surface is hidden). Used to draw the focus ring and
+  // to invalidate the old+new surface when focus moves (see HandleEvent).
+  std::optional<SDL_FRect> FocusSurfaceRect(const WorkspaceLayout& layout,
+                                            FocusTarget focus) const;
+  void DrawSurfaceFocusRing(SDL_Renderer* renderer, const SDL_FRect& region) const;
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;

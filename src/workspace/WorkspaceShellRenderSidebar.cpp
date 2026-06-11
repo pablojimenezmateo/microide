@@ -698,6 +698,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                 MakeRect(tooltip_x, tooltip_y, tooltip.rect.w, tooltip.rect.h), tooltip.text);
   };
 
+  if (project_state.surface.focus == FocusTarget::Sidebar) {
+    DrawSurfaceFocusRing(renderer, layout.sidebar);
+  }
+
   draw_sidebar_tooltip(HoveredGitSidebarTooltipLabel(layout.sidebar));
   draw_sidebar_tooltip(HoveredSidebarSearchTooltipLabel(layout.sidebar));
 }

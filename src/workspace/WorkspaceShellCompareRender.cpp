@@ -22,8 +22,12 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kDiffRowTint = 0.12f;
-constexpr float kDiffRowTintSelected = 0.18f;
+// Changed rows carry a faint full-row wash plus a saturated left-edge stripe. The wash
+// alone (previously 0.12) read almost flush with unchanged rows on the dark theme; the
+// stripe gives a scannable, full-saturation marker like the sidebar selection strip.
+constexpr float kDiffRowTint = 0.17f;
+constexpr float kDiffRowTintSelected = 0.26f;
+constexpr float kDiffEdgeStripeWidth = 3.0f;
 
 SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
   switch (kind) {
@@ -449,6 +453,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                            surface.gutter_width + surface.left_width, surface.line_height),
           .color = left_row_background,
       });
+      if (compare_row.kind == compare::CompareRowKind::Deleted ||
+          compare_row.kind == compare::CompareRowKind::Modified) {
+        left_row.fills.push_back(editor::DecoratedTextFill{
+            .rect = MakeRect(surface.left_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
+            .color = compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
+                                                                          : theme_.diff_modified,
+        });
+      }
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
           static_cast<std::size_t>(model_index) < compare_tab->left_tokens_by_row.size()
               ? &compare_tab->left_tokens_by_row[static_cast<std::size_t>(model_index)]
@@ -476,6 +488,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                            surface.gutter_width + surface.right_width, surface.line_height),
           .color = right_row_background,
       });
+      if (compare_row.kind == compare::CompareRowKind::Added ||
+          compare_row.kind == compare::CompareRowKind::Modified) {
+        right_row.fills.push_back(editor::DecoratedTextFill{
+            .rect = MakeRect(surface.right_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
+            .color = compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
+                                                                        : theme_.diff_modified,
+        });
+      }
       const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
       // The same right_text is queried for selection start/end and (potentially) the caret
       // visual column below. Build the boundary→visual column table once and reuse it instead

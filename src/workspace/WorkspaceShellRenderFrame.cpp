@@ -41,6 +41,18 @@ void WorkspaceShell::DrawFilledRect(SDL_Renderer* renderer,
   SDL_RenderFillRect(renderer, &rect);
 }
 
+void WorkspaceShell::DrawSurfaceFocusRing(SDL_Renderer* renderer, const SDL_FRect& region) const {
+  // A 1px accent outline just inside the region marks which surface owns the keyboard.
+  // Each surface draws its own ring from its render path so partial redraws repaint it
+  // consistently with full redraws; HandleEvent repaints both surfaces when focus moves.
+  if (renderer == nullptr || region.w <= 2.0f || region.h <= 2.0f) {
+    return;
+  }
+  OutlineRect(renderer,
+              MakeRect(region.x + 1.0f, region.y + 1.0f, region.w - 2.0f, region.h - 2.0f),
+              theme_.accent);
+}
+
 void WorkspaceShell::DrawRect(SDL_Renderer* renderer,
                               const SDL_FRect& rect,
                               SDL_Color color) const {
@@ -521,6 +533,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     RenderCompareScrollbars(renderer, layout.editor_surface, *active_compare_tab);
   } else if (active_merge_tab != nullptr) {
     RenderMergeScrollbars(renderer, layout.editor_surface);
+  }
+  if (project_state.surface.focus == FocusTarget::Editor) {
+    DrawSurfaceFocusRing(renderer, layout.editor_surface);
   }
 }
 
