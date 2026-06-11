@@ -864,11 +864,6 @@ verified against source before being recorded.
 
 ### Deferred — verified, still open (next pass)
 
-- **Plugin `luaL_error` longjmp over C++ destructors** (the project links the C build of Lua, so
-  `luaL_error` `longjmp`s rather than throws). `LuaProcessRun`/`LuaProcessRunAsync` and other
-  interop entry points construct live `std::vector`/`std::string` locals and then `luaL_error`
-  mid-construction, leaking them. Fix shape: validate all argument types *before* constructing
-  heap objects. `src/plugin/PluginProcessInterop.cpp` and peers.
 - **Plugin Lua stack leak (cold paths)**: the same null-plugin early-return leak exists in the
   remaining provider/hover/scm/auth/test-discovery functions in
   `src/plugin/PluginProviderQueryInterop.cpp` and `src/plugin/PluginSidebarHoverInterop.cpp`. Apply
@@ -902,3 +897,41 @@ verified against source before being recorded.
 - **Divergent git status-priority tables**: `GitStatusService::BuildGitStatusMap` and
   `GitPorcelainParser::GitStatusPriority` rank `Added`/`Untracked` differently, so folder-aggregated
   status depends on which path produced it.
+
+## 19. 2026-06-11 Plugin Lua-error longjmp safety pass
+
+Closed the deferred "`luaL_error` longjmp over C++ destructors" item from §18, and the fix turned
+out to be broader than first scoped. Raising a Lua error is a C `longjmp` (the project links the C
+build of Lua, `liblua5.4`), so it unwinds the entire native stack back to the enclosing protected
+call **without running any C++ destructor in between** — undefined behaviour and a leak whenever a
+`std::string` / `std::vector` / `std::filesystem::path` is alive on any intervening frame.
+
+ASAN proved the leak was not only in the interop functions' own locals but also in the thin
+`PluginHostLuaApi.inc` lua_CFunction **wrappers**: their `host ? host->member : T{}` null-host
+fallbacks materialized a `std::filesystem::path` / `PluginHost::Callbacks` temporary that the inner
+`longjmp` skipped.
+
+Fixed comprehensively:
+
+- New `src/plugin/LuaError.h`: `lua_error_util::PushMessage` (copies the message into Lua memory so
+  the source `std::string` may destruct first) and the `kPendingError` sentinel.
+- Delegating TU functions (`process_interop::LuaProcessRun`/`RunAsync`,
+  `runtime_api_interop::LuaDiagnosticsPublish`/`Clear`) are now **longjmp-free**: argument validation
+  uses `lua_type`/`lua_isstring` (not `luaL_*`), and on error they `PushMessage` + return
+  `kPendingError`. `LuaProcessRun` parses into a scoped `ProcessRunArgs` struct so every heap local
+  destructs before any raise.
+- The `.inc` wrappers raise (`lua_error`) only after their own locals destruct, and bind the null-host
+  fallbacks by reference via `EmptyProjectRoot()` / `EmptyCallbacks()` so **no wrapper-frame
+  temporary** exists to leak.
+- `workspace_interop::LuaWorkspaceOpenFile` reordered so its `luaL_optinteger` calls precede the
+  `std::filesystem::path` local.
+- The `.inc` registration helpers (`Register*Contribution`, `LuaCommandsAdd`/`SidebarAdd`/`HoverAdd`)
+  scope their `error_message` and raise after it destructs.
+
+Validated under the ASAN preset (`PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState`
+exercises process/diagnostics/files/workspace error paths and a follow-up success to prove the Lua
+stack stays intact). New hard invariant `CheckPluginLuaErrorDoesNotLongjmpOverCppLocals` bans
+`luaL_error` in `src/plugin` so the unsafe shape cannot return; entry-only `luaL_check*` stays
+allowed. Note: this pass required installing `liblua5.4-dev` locally so `MICROIDE_HAS_LUA_PLUGINS=1`
+— the plugin code (and the §18 `PluginProviderQueryInterop` hot-path fix) is compiled out when Lua
+dev headers are absent, so always validate plugin work with Lua enabled.
