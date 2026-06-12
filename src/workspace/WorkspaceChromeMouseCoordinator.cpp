@@ -110,7 +110,13 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   if (state_.overlay.mode == OverlayMode::CommitPicker) {
     operations_.move_compare_picker_selection(-overlay_ticks);
   } else if (state_.overlay.mode == OverlayMode::ProjectSearch) {
-    operations_.move_project_search_selection(-overlay_ticks);
+    // Detached scroll: the wheel pans the results list without moving the active
+    // selection, so the highlighted result can scroll off-screen instead of the
+    // view snapping to keep it visible.
+    const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
+    const auto list_layout = operations_.compute_overlay_list_layout(overlay);
+    state_.overlay.scroll_row =
+        std::clamp(state_.overlay.scroll_row - overlay_ticks, 0, list_layout.max_scroll);
   } else if (state_.overlay.mode == OverlayMode::Completion ||
              state_.overlay.mode == OverlayMode::CodeActions) {
     if (state_.overlay.mode == OverlayMode::Completion &&
