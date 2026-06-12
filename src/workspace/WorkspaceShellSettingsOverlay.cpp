@@ -1,11 +1,13 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <unordered_map>
 
 #include "workspace/WorkspaceStartupOptions.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 #include "util/Parse.h"
@@ -44,7 +46,31 @@ void AppendStartupHelpRows(std::vector<HelpAboutRow>& rows,
   }
 }
 
-std::vector<HelpAboutRow> BuildHelpRows(const WorkspaceStartupOptions& startup_options) {
+// Maps each action to its currently bound key chord, honoring user remaps and
+// plugin bindings (the registry is already override-resolved). A Global binding
+// wins over a context-specific one so the help list shows the chord that works
+// everywhere; key-less command bindings are skipped.
+std::unordered_map<ActionId, std::string> BuildActionChordLookup(
+    const std::vector<ResolvedKeybinding>& keybindings) {
+  std::unordered_map<ActionId, std::string> chord_by_action;
+  for (const ResolvedKeybinding& binding : keybindings) {
+    if (binding.key == SDLK_UNKNOWN) {
+      continue;
+    }
+    std::string chord = FormatKeyChord(binding.key, binding.modifiers);
+    if (chord.empty()) {
+      continue;
+    }
+    const auto [it, inserted] = chord_by_action.try_emplace(binding.action, std::move(chord));
+    if (!inserted && binding.context == KeybindingContext::Global) {
+      it->second = FormatKeyChord(binding.key, binding.modifiers);
+    }
+  }
+  return chord_by_action;
+}
+
+std::vector<HelpAboutRow> BuildHelpRows(const WorkspaceStartupOptions& startup_options,
+                                        const std::vector<ResolvedKeybinding>& keybindings) {
   std::vector<HelpAboutRow> rows;
   rows.push_back(HelpAboutRow{.label = "microide", .detail = "Desktop IDE"});
   AppendStartupHelpRows(rows, startup_options);
@@ -52,13 +78,21 @@ std::vector<HelpAboutRow> BuildHelpRows(const WorkspaceStartupOptions& startup_o
                               .detail = "Enter default view | d diff | s stage | u unstage | "
                                          "x discard (confirm) | m merge | c commit | r refresh | "
                                          "o open file"});
+  const std::unordered_map<ActionId, std::string> chord_by_action =
+      BuildActionChordLookup(keybindings);
   for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
     if (spec.command_name.empty()) {
       continue;
     }
+    std::string detail =
+        std::string(spec.command_usage.empty() ? spec.command_name : spec.command_usage);
+    if (const auto it = chord_by_action.find(spec.id); it != chord_by_action.end()) {
+      // Prefix the bound key so chords align at the start of the detail column.
+      detail = it->second + "  ·  " + detail;
+    }
     rows.push_back(HelpAboutRow{
         .label = std::string(spec.label),
-        .detail = std::string(spec.command_usage.empty() ? spec.command_name : spec.command_usage),
+        .detail = std::move(detail),
     });
   }
   return rows;
@@ -223,7 +257,7 @@ void WorkspaceShell::RefreshSettingsOverlayCatalog() {
   settings_overlay_service_.RebuildSettingsRows(AllSettingInfos(plugin_runtime_.Host()),
                                                 context_.user_settings,
                                                 context_.current_project_state.settings);
-  settings_overlay_service_.RebuildHelpRows(BuildHelpRows(startup_options_));
+  settings_overlay_service_.RebuildHelpRows(BuildHelpRows(startup_options_, ResolvedKeybindings()));
 }
 
 void WorkspaceShell::ApplyLiveSettings() {

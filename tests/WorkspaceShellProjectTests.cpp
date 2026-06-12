@@ -1792,6 +1792,21 @@ void TestWorkspaceShellHelpAboutOmitsAuthCommands() {
          "help/about rows should not include auth command references");
 }
 
+void TestWorkspaceShellHelpAboutShowsBoundKeyChords() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
+  const auto rows = WorkspaceShellTestAccess::HelpAboutRows(shell);
+  // Commands that have a keybinding should surface the bound chord, prefixed
+  // before the usage with the "  ·  " separator the help builder injects.
+  const auto chord_row = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
+    return row.detail.find("  ·  ") != std::string::npos;
+  });
+  Expect(chord_row != rows.end(),
+         "help/about rows should show the bound key chord for actions that have a keybinding");
+  Expect(chord_row->detail.find("  ·  ") > 0,
+         "the bound key chord should be prefixed before the command usage, not empty");
+}
+
 void TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3007,6 +3022,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayHintUsesNoteLabel);
   AddTest(tests, "WorkspaceShell/HelpAboutOmitsAuthCommands",
           TestWorkspaceShellHelpAboutOmitsAuthCommands);
+  AddTest(tests, "WorkspaceShell/HelpAboutShowsBoundKeyChords",
+          TestWorkspaceShellHelpAboutShowsBoundKeyChords);
   AddTest(tests, "WorkspaceShell/IgnoredTreeFileActivatesDirectOpenPath",
           TestWorkspaceShellIgnoredTreeFileActivatesDirectOpenPath);
   AddTest(tests, "WorkspaceShell/IgnoredDirectoryExpansionMaterializesOneLevel",
