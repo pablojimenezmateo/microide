@@ -203,6 +203,29 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   Expect(architecture::CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "render-string rule should pass on the string_view rewrite fixture");
 
+  // The bare `"search> " + ident` form (no std::string wrapper) anchors on a
+  // string-literal quote. BuildCodeMask flags that quote as non-code, so the
+  // all-in-code predicate could never match it -- this rule was silently dead
+  // until the trailing-anchored helper landed. Guard the live behavior here.
+  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+            "void F(const std::string& q){ auto s = \"search> \" + q; (void)s; }\n");
+  Expect(!architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
+         "render fallback rule should catch the bare \"search> \" + ident concat form");
+  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+            "void F(std::string_view fallback){ DrawText(fallback); }\n");
+  Expect(architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
+         "render fallback rule should pass when the fallback uses a precomputed view");
+
+  // literal+ident concat in a hot editor render TU must fire (trailing-anchored).
+  WriteFile(root / "src/editor/EditorViewRenderer.cpp",
+            "void F(const std::string& s){ auto row = \"ln \" + s; (void)row; }\n");
+  Expect(!architecture::CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "render-string rule should catch literal+ident concat in a hot editor render TU");
+  WriteFile(root / "src/editor/EditorViewRenderer.cpp",
+            "void F(std::string_view s){ DrawRow(s); }\n");
+  Expect(architecture::CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
+         "render-string rule should pass when the hot editor render TU avoids concat");
+
   WriteFile(root / "src/editor/EditorViewModel.h",
             "struct EditorViewModel { std::vector<std::size_t> sticky_lines; "
             "std::vector<OccurrenceRange> occurrence_ranges; };\n");

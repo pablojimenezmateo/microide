@@ -47,6 +47,30 @@ void AppendCodeMaskRegexViolations(RuleResult& result,
   }
 }
 
+void AppendTrailingCodeRegexViolations(RuleResult& result,
+                                       const std::filesystem::path& path,
+                                       const std::string& text,
+                                       const std::regex& pattern,
+                                       std::string_view message) {
+  const auto is_code = BuildCodeMask(text);
+  for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+    const std::size_t start = static_cast<std::size_t>(it->position());
+    const std::size_t len = static_cast<std::size_t>(it->length());
+    if (len == 0) {
+      continue;
+    }
+    const std::size_t last = start + len - 1;
+    if (last >= is_code.size() || !is_code[last]) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = path,
+        .line = LineNumberAt(text, start),
+        .message = std::string(message),
+    });
+  }
+}
+
 RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
                               std::string_view relative_path,
                               std::size_t limit) {

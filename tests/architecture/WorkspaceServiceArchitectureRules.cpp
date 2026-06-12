@@ -21,11 +21,15 @@ RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& r
   AppendViolations(
       result, sidebar_path, text, std::regex(R"(std::string\s*\(\s*"replace>\s*"\s*\)\s*\+)"),
       "render code must use RenderViewModelBuilder replace_fallback_text");
-  AppendViolations(
-      result, sidebar_path, text, std::regex(R"("search>\s*"\s*\+)"),
+  // These two patterns anchor on a string-literal quote, so they must use the
+  // trailing-anchored helper -- AppendViolations/AppendCodeMaskRegexViolations
+  // would never fire on a `"..." +` match because BuildCodeMask flags the
+  // opening quote as non-code.
+  AppendTrailingCodeRegexViolations(
+      result, sidebar_path, text, std::regex(R"("search>\s*"\s*\+\s*[A-Za-z_])"),
       "render code must not concatenate search fallback text in render path");
-  AppendViolations(
-      result, sidebar_path, text, std::regex(R"("replace>\s*"\s*\+)"),
+  AppendTrailingCodeRegexViolations(
+      result, sidebar_path, text, std::regex(R"("replace>\s*"\s*\+\s*[A-Za-z_])"),
       "render code must not concatenate replace fallback text in render path");
   return result;
 }
@@ -511,6 +515,18 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   // not in hot paint paths).
   const std::regex string_from_view_pattern(R"(std::string\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\.)");
 
+  // single_char_pattern is enforced across every render TU. literal+ident
+  // concatenation is enforced only on the hot per-row editor render TUs
+  // (EditorViewRenderer/DecoratedTextGridRenderer), where it would allocate once
+  // per visible row at frame rate. The overlay/sidebar/hover paint surfaces also
+  // build prefix strings, but only once per visible-surface repaint (not per row
+  // at 60fps); routing those through the view model is a separate, larger
+  // refactor and is intentionally out of scope for this rule.
+  const std::array<std::filesystem::path, 2> hot_editor_render_files = {
+      repo_root / "src/editor/EditorViewRenderer.cpp",
+      repo_root / "src/editor/DecoratedTextGridRenderer.cpp",
+  };
+
   for (const auto& path : render_files) {
     if (!std::filesystem::exists(path)) {
       continue;
@@ -519,13 +535,22 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
     AppendCodeMaskRegexViolations(
         result, path, text, single_char_pattern,
         "render TU must not build std::string(1, ch); use std::string_view over the char storage");
-    AppendCodeMaskRegexViolations(
-        result, path, text, literal_plus_pattern,
-        "render TU must not concatenate literal + identifier; use a thread_local scratch or "
-        "compose the string in RenderViewModelBuilder");
-    (void)string_from_view_pattern;  // currently advisory; some constructors of derived types
-                                      // still match; left in code for future tightening.
   }
+
+  for (const auto& path : hot_editor_render_files) {
+    if (!std::filesystem::exists(path)) {
+      continue;
+    }
+    const std::string text = ReadText(path);
+    // Trailing-anchored: the pattern starts on a string-literal quote, which
+    // BuildCodeMask flags as non-code, so AppendCodeMaskRegexViolations would
+    // never fire here.
+    AppendTrailingCodeRegexViolations(
+        result, path, text, literal_plus_pattern,
+        "hot editor render TU must not concatenate literal + identifier per row; use a "
+        "thread_local scratch or compose the string in RenderViewModelBuilder");
+  }
+  (void)string_from_view_pattern;  // advisory; some derived-type constructors still match.
   return result;
 }
 

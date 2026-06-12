@@ -188,7 +188,7 @@ bool IgnoreMatcher::Rule::Matches(std::string relative_path, bool is_directory) 
 
   if (match_basename) {
     std::size_t start = 0;
-    while (start <= relative_path.size()) {
+    while (start < relative_path.size()) {
       const std::size_t end = relative_path.find('/', start);
       const std::string_view part = end == std::string::npos
                                         ? std::string_view(relative_path).substr(start)
