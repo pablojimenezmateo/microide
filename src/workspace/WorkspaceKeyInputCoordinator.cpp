@@ -157,7 +157,11 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
           state_.overlay.mode == OverlayMode::ProjectSearch)) ||
         (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
          operations_.active_sidebar_mode() == SidebarMode::Search &&
-         state_.overlay.workflow.project_search.editing);
+         state_.overlay.workflow.project_search.editing) ||
+        (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
+         operations_.active_sidebar_mode() == SidebarMode::Git &&
+         state_.sidebar.git.commit_workflow.open &&
+         state_.sidebar.git.commit_workflow.focus_field == CommitWorkflowFocusField::Subject);
     if (surface_accepts_paste) {
       return operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
     }
@@ -174,7 +178,8 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
       text_input_surface == TextInputSurface::ProjectSearchOverlay ||
       text_input_surface == TextInputSurface::CommitPicker ||
       text_input_surface == TextInputSurface::SidebarSearchQuery ||
-      text_input_surface == TextInputSurface::SidebarSearchReplace;
+      text_input_surface == TextInputSurface::SidebarSearchReplace ||
+      text_input_surface == TextInputSurface::CommitSubject;
   if (single_line_text_surface && (modifiers & SDL_KMOD_CTRL) != 0) {
     switch (event.key) {
       case SDLK_A:
@@ -494,6 +499,20 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
                     context_.current_project_state.sidebar.git.commit_workflow,
                     project::CommitOperationKind::Create);
               },
+          .set_commit_workflow_focus_field =
+              [this](CommitWorkflowFocusField field) {
+                auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+                workflow.focus_field = field;
+                // Field switch is the coarse refresh point: re-run pre-checks and persist
+                // the draft now rather than on every keystroke.
+                InitializeCommitWorkflowService();
+                commit_workflow_service_.OnDraftEdited(workflow);
+                ResetCaretBlink();
+                RequestSidebarRedraw();
+              },
+          .commit_body_write_clipboard_text =
+              [this](std::string_view text) { return WriteClipboardText(text); },
+          .commit_body_read_clipboard_text = [this]() { return ReadClipboardText(); },
           .move_problems_sidebar_selection = [this](int delta) { MoveProblemsSidebarSelection(delta); },
           .reveal_selected_problems_sidebar_line =
               [this]() { RevealSelectedProblemsSidebarLine(); },

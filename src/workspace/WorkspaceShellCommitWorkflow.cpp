@@ -7,7 +7,9 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kCommitWorkflowPanelHeight = 188.0f;
+// Tall enough to hold the framed subject field plus a multi-line body edit area (and the
+// pre-check/status lines beneath). The body shows several lines and scrolls internally.
+constexpr float kCommitWorkflowPanelHeight = 268.0f;
 
 }  // namespace
 

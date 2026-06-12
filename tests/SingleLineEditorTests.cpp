@@ -128,6 +128,51 @@ void TestSingleLineEditorSupportsSnapshotAndAppend() {
                     "append should extend text and collapse selection");
 }
 
+void TestSingleLineEditorSupportsWordMotionAndDeletion() {
+  editor::SingleLineEditor editor("foo bar baz");
+
+  // Word-left from end stops at each word edge.
+  Expect(editor.MoveWordLeft(), "word-left should move to the start of the last word");
+  ExpectEditorState(editor, "foo bar baz", 8, std::nullopt, "word-left once");
+  Expect(editor.MoveWordLeft(), "word-left should move to the start of the previous word");
+  ExpectEditorState(editor, "foo bar baz", 4, std::nullopt, "word-left twice");
+
+  // Word-right advances past each word.
+  Expect(editor.MoveWordRight(), "word-right should move past the current word");
+  ExpectEditorState(editor, "foo bar baz", 7, std::nullopt, "word-right once");
+
+  // Ctrl+Shift+Left extends the selection by a word.
+  editor.SetCaret(11);
+  Expect(editor.MoveWordLeft(/*extend_selection=*/true),
+         "word-left with extend should grow a selection");
+  Expect(editor.Selection().has_value() && editor.Selection()->start == 8 &&
+             editor.Selection()->end == 11,
+         "extended word-left should select the trailing word");
+
+  // Word deletion removes whole words.
+  editor::SingleLineEditor deleter("foo bar baz");
+  Expect(deleter.DeleteWordLeft(), "delete-word-left should remove the trailing word");
+  ExpectEditorState(deleter, "foo bar ", 8, std::nullopt, "delete-word-left");
+  deleter.SetCaret(0);
+  Expect(deleter.DeleteWordRight(), "delete-word-right should remove the leading word");
+  ExpectEditorState(deleter, " bar ", 0, std::nullopt, "delete-word-right");
+}
+
+void TestSingleLineKeyHandlerBindsWordShortcuts() {
+  editor::SingleLineEditor editor("alpha beta");
+  const editor::SingleLineKeyHandler::Clipboard io{};
+
+  // Ctrl+Left is word-granular (not line-home).
+  Expect(editor::SingleLineKeyHandler::HandleKeyDown(editor, SDLK_LEFT, SDL_KMOD_CTRL, io),
+         "ctrl+left should be handled");
+  Expect(editor.caret() == 6, "ctrl+left should jump to the start of the last word");
+
+  // Ctrl+Backspace deletes the previous word.
+  Expect(editor::SingleLineKeyHandler::HandleKeyDown(editor, SDLK_BACKSPACE, SDL_KMOD_CTRL, io),
+         "ctrl+backspace should be handled");
+  Expect(editor.text() == "beta", "ctrl+backspace should delete the previous word");
+}
+
 }  // namespace
 
 void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
@@ -143,6 +188,10 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineEditorSupportsSnapshotAndAppend);
   AddTest(tests, "SingleLineEditor/SelectsWordAtOffset",
           TestSingleLineEditorSelectsWordAtOffset);
+  AddTest(tests, "SingleLineEditor/SupportsWordMotionAndDeletion",
+          TestSingleLineEditorSupportsWordMotionAndDeletion);
+  AddTest(tests, "SingleLineEditor/KeyHandlerBindsWordShortcuts",
+          TestSingleLineKeyHandlerBindsWordShortcuts);
 }
 
 }  // namespace microide::tests

@@ -17,6 +17,8 @@ enum class TextInputSurface {
   CommitPicker,
   SidebarSearchQuery,
   SidebarSearchReplace,
+  CommitSubject,
+  CommitBody,
   Terminal,
 };
 

@@ -3,6 +3,8 @@
 #include <string>
 #include <unordered_set>
 
+#include <SDL3/SDL.h>
+
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
 #include "project/CommitWorkflowTypes.h"
@@ -41,6 +43,14 @@ struct CommitWorkflowState {
   std::string last_hook_output;
   project::CommitOperationResultCategory last_result_category =
       project::CommitOperationResultCategory::Success;
+  // On-screen geometry of the subject/body edit fields, recomputed by the sidebar render
+  // each frame. The commit panel sits below a content-dynamic git summary, so its field
+  // positions can't be a pure layout function; mouse hit-testing and caret placement read
+  // these cached rects (kept divergence-free by being written from the single render path).
+  SDL_FRect subject_field_rect{};
+  SDL_FRect body_field_rect{};
+  SDL_FRect caret_rect{};
+  int body_visible_rows = 0;
 };
 
 }  // namespace microide::workspace

@@ -211,6 +211,26 @@
     event.text = storage.c_str();
     return shell.MakeTextInputCoordinator().HandleTextInput(event);
   }
+  static bool HandleKeyDown(WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {
+    SDL_KeyboardEvent event{};
+    event.key = key;
+    event.mod = modifiers;
+    return shell.MakeKeyInputCoordinator().HandleKeyDown(event);
+  }
+  static bool OpenCommitWorkflow(WorkspaceShell& shell) { return shell.OpenCommitWorkflow(); }
+  static CommitWorkflowState& CommitWorkflow(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.git.commit_workflow;
+  }
+  static std::string CommitSubjectText(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.git.commit_workflow.subject.text();
+  }
+  static std::string CommitBodyText(const WorkspaceShell& shell) {
+    return CommitWorkflowBodyText(
+        shell.context_.current_project_state.sidebar.git.commit_workflow.body);
+  }
+  static TextInputSurface CurrentTextInputSurface(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface();
+  }
   static int ProjectTabScrollIndex(const WorkspaceShell& shell) {
     return shell.context_.project_catalog.tab_scroll_index;
   }

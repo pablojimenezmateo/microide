@@ -42,6 +42,13 @@ class SingleLineEditor {
   bool DeleteForward();
   bool MoveLeft(bool extend_selection = false);
   bool MoveRight(bool extend_selection = false);
+  // Word-granular motion/deletion. Word boundaries use the same identifier rule as
+  // SelectWordAt: each step skips any trailing non-word bytes then the adjacent word, so
+  // the caret lands on a word edge (matches the main editor and standard input fields).
+  bool MoveWordLeft(bool extend_selection = false);
+  bool MoveWordRight(bool extend_selection = false);
+  bool DeleteWordLeft();
+  bool DeleteWordRight();
   bool MoveHome(bool extend_selection = false);
   bool MoveEnd(bool extend_selection = false);
   bool SelectAll();

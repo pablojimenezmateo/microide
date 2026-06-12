@@ -17,6 +17,7 @@
 #include "workspace/CompareMergeRender.h"
 #include "workspace/CompareTabReview.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 
 namespace microide::workspace {
 
@@ -631,13 +632,13 @@ void WorkspaceShell::RenderCompareScrollbars(SDL_Renderer* renderer,
     DrawFilledRect(renderer, marker_lane, theme_.surface_raised);
     DrawRect(renderer, marker_lane, theme_.border);
     DrawCompareScrollbarMarkers(renderer, theme_, marker_inner_lane, *compare_tab);
-    DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
-    DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
+    detail::DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
+    detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                        context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
-    DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
+    detail::DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
                   context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
   }

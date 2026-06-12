@@ -242,6 +242,17 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     }
   }
 
+  // Git commit-workflow subject field (a single-line input cached by the sidebar render).
+  if (context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git &&
+      context_.current_project_state.sidebar.git.commit_workflow.open) {
+    auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+    if (workflow.subject_field_rect.w > 0.0f && Contains(workflow.subject_field_rect, x, y)) {
+      workflow.focus_field = CommitWorkflowFocusField::Subject;
+      return FilledHit(TextInputSurface::CommitSubject, workflow.subject_field_rect, "",
+                       &workflow.subject);
+    }
+  }
+
   // Bottom panel command prompt.
   if (context_.current_project_state.panel.command_mode) {
     const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
@@ -259,6 +270,42 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
+
+  // The multi-line commit body is not a single-line surface, so hit-test it against its
+  // render-cached rect here (click positions the caret; double/triple-click select the
+  // word/line, matching the editor).
+  if (auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+      context_.current_project_state.sidebar.visible &&
+      ActiveSidebarMode() == SidebarMode::Git && workflow.open &&
+      workflow.body_field_rect.w > 0.0f &&
+      Contains(workflow.body_field_rect, static_cast<float>(event.button.x),
+               static_cast<float>(event.button.y))) {
+    workflow.focus_field = CommitWorkflowFocusField::Body;
+    context_.current_project_state.surface.focus = FocusTarget::Sidebar;
+    editor::TextViewport& body = workflow.body;
+    const float line_height = std::max(1.0f, text_renderer_.LineHeight());
+    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+    const float text_x = workflow.body_field_rect.x + 6.0f;
+    const float top_y = workflow.body_field_rect.y + 3.0f;
+    const std::size_t line_count = body.line_count();
+    const int row = static_cast<int>((static_cast<float>(event.button.y) - top_y) / line_height);
+    const std::size_t line =
+        line_count == 0
+            ? 0
+            : std::min(line_count - 1,
+                       body.scroll_line() + static_cast<std::size_t>(std::max(0, row)));
+    const std::size_t visual_col = static_cast<std::size_t>(
+        std::max(0.0f, (static_cast<float>(event.button.x) - text_x) / char_width) + 0.5f);
+    body.MoveCursorToVisualColumn(line, visual_col, false);
+    if (event.button.clicks >= 3) {
+      body.SelectLineAtCursor();
+    } else if (event.button.clicks == 2) {
+      body.SelectWordAtCursor();
+    }
+    ResetCaretBlink();
+    return true;
+  }
+
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleSingleLineInputMouseDown");
   auto hit = FindSingleLineInputHit(layout, static_cast<float>(event.button.x),
                                     static_cast<float>(event.button.y));
@@ -311,6 +358,8 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
+    case TextInputSurface::CommitBody:
       context_.current_project_state.surface.focus = FocusTarget::Sidebar;
       break;
     case TextInputSurface::None:
@@ -431,6 +480,15 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
       }
       break;
     }
+    case TextInputSurface::CommitSubject: {
+      auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+      if (workflow.open && workflow.subject_field_rect.w > 0.0f) {
+        hit = FilledHit(surface, workflow.subject_field_rect, "", &workflow.subject);
+      }
+      break;
+    }
+    case TextInputSurface::CommitBody:
+      // The multi-line body manages its own drag selection.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

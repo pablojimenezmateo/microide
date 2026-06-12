@@ -4,6 +4,8 @@
 #include <array>
 #include <limits>
 
+#include "workspace/ListSelection.h"
+
 namespace microide::workspace {
 
 bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
@@ -41,10 +43,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         }
         return true;
       case SDLK_PAGEUP:
-        operations_.move_compare_picker_selection(-8);
+        operations_.move_compare_picker_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_compare_picker_selection(8);
+        operations_.move_compare_picker_selection(kListPageStep);
         return true;
       default:
         return operations_.text_input_handle_single_line_key_down(event, modifiers);
@@ -72,10 +74,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         operations_.move_buffer_search_selection(1);
         return true;
       case SDLK_PAGEUP:
-        operations_.move_buffer_search_selection(-8);
+        operations_.move_buffer_search_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_buffer_search_selection(8);
+        operations_.move_buffer_search_selection(kListPageStep);
         return true;
       default:
         return operations_.text_input_handle_single_line_key_down(event, modifiers);
@@ -111,10 +113,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         operations_.move_buffer_search_selection(1);
         return true;
       case SDLK_PAGEUP:
-        operations_.move_buffer_search_selection(-8);
+        operations_.move_buffer_search_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_buffer_search_selection(8);
+        operations_.move_buffer_search_selection(kListPageStep);
         return true;
       default:
         return operations_.text_input_handle_single_line_key_down(event, modifiers);
@@ -137,10 +139,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         operations_.move_project_search_selection(1);
         return true;
       case SDLK_PAGEUP:
-        operations_.move_project_search_selection(-8);
+        operations_.move_project_search_selection(-kListPageStep);
         return true;
       case SDLK_PAGEDOWN:
-        operations_.move_project_search_selection(8);
+        operations_.move_project_search_selection(kListPageStep);
         return true;
       default:
         return operations_.text_input_handle_single_line_key_down(event, modifiers);
@@ -149,32 +151,20 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
 
   if (state_.overlay.mode == OverlayMode::Completion ||
       state_.overlay.mode == OverlayMode::CodeActions) {
-    auto set_selected_index = [&](std::size_t index, std::size_t item_count, std::size_t& target) {
+    // Completion and code-actions are the same list widget over different item vectors;
+    // bind the active list once and drive it through the shared clamped-move helper.
+    const bool is_completion = state_.overlay.mode == OverlayMode::Completion;
+    const std::size_t item_count = is_completion
+                                       ? state_.overlay.workflow.completion.items.size()
+                                       : state_.overlay.workflow.code_actions.items.size();
+    std::size_t& selected_index = is_completion
+                                      ? state_.overlay.workflow.completion.selected_index
+                                      : state_.overlay.workflow.code_actions.selected_index;
+    const auto apply_selection = [&](std::size_t index) {
       if (item_count == 0) {
         return;
       }
-      target = std::min(index, item_count - 1);
-      if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
-        operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
-      }
-    };
-
-    auto move_selection = [&](int delta) {
-      if (state_.overlay.mode == OverlayMode::Completion &&
-          !state_.overlay.workflow.completion.items.empty()) {
-        const int current = static_cast<int>(state_.overlay.workflow.completion.selected_index);
-        const int max_index =
-            static_cast<int>(state_.overlay.workflow.completion.items.size()) - 1;
-        state_.overlay.workflow.completion.selected_index =
-            static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-      } else if (state_.overlay.mode == OverlayMode::CodeActions &&
-                 !state_.overlay.workflow.code_actions.items.empty()) {
-        const int current = static_cast<int>(state_.overlay.workflow.code_actions.selected_index);
-        const int max_index =
-            static_cast<int>(state_.overlay.workflow.code_actions.items.size()) - 1;
-        state_.overlay.workflow.code_actions.selected_index =
-            static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-      }
+      selected_index = std::min(index, item_count - 1);
       if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
         operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
       }
@@ -189,37 +179,23 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         operations_.activate_overlay_selection();
         return true;
       case SDLK_UP:
-        move_selection(-1);
+        apply_selection(ClampListIndexMove(selected_index, item_count, -1));
         return true;
       case SDLK_DOWN:
-        move_selection(1);
+        apply_selection(ClampListIndexMove(selected_index, item_count, 1));
         return true;
       case SDLK_PAGEUP:
-        move_selection(-8);
+        apply_selection(ClampListIndexMove(selected_index, item_count, -kListPageStep));
         return true;
       case SDLK_PAGEDOWN:
-        move_selection(8);
+        apply_selection(ClampListIndexMove(selected_index, item_count, kListPageStep));
         return true;
       case SDLK_HOME:
-        if (state_.overlay.mode == OverlayMode::Completion) {
-          set_selected_index(0, state_.overlay.workflow.completion.items.size(),
-                             state_.overlay.workflow.completion.selected_index);
-        } else if (state_.overlay.mode == OverlayMode::CodeActions) {
-          set_selected_index(0, state_.overlay.workflow.code_actions.items.size(),
-                             state_.overlay.workflow.code_actions.selected_index);
-        }
+        apply_selection(0);
         return true;
       case SDLK_END:
-        if (state_.overlay.mode == OverlayMode::Completion &&
-            !state_.overlay.workflow.completion.items.empty()) {
-          set_selected_index(state_.overlay.workflow.completion.items.size() - 1,
-                             state_.overlay.workflow.completion.items.size(),
-                             state_.overlay.workflow.completion.selected_index);
-        } else if (state_.overlay.mode == OverlayMode::CodeActions &&
-                   !state_.overlay.workflow.code_actions.items.empty()) {
-          set_selected_index(state_.overlay.workflow.code_actions.items.size() - 1,
-                             state_.overlay.workflow.code_actions.items.size(),
-                             state_.overlay.workflow.code_actions.selected_index);
+        if (item_count > 0) {
+          apply_selection(item_count - 1);
         }
         return true;
       default:
@@ -239,10 +215,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       operations_.move_file_finder_selection(1);
       return true;
     case SDLK_PAGEUP:
-      operations_.move_file_finder_selection(-8);
+      operations_.move_file_finder_selection(-kListPageStep);
       return true;
     case SDLK_PAGEDOWN:
-      operations_.move_file_finder_selection(8);
+      operations_.move_file_finder_selection(kListPageStep);
       return true;
     default:
       return operations_.text_input_handle_single_line_key_down(event, modifiers);

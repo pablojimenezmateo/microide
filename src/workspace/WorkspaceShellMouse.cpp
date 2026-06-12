@@ -125,6 +125,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         break;
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace:
+      case TextInputSurface::CommitSubject:
         ensure_redraw([this]() { RequestSidebarRedraw(); });
         break;
       case TextInputSurface::FileFinder:

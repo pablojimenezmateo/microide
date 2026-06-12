@@ -14,6 +14,30 @@ std::size_t ClampCaret(std::string_view text, std::size_t offset) {
   return std::min(offset, text.size());
 }
 
+// Previous word edge: skip non-word bytes immediately left of `caret`, then the word.
+std::size_t WordBoundaryLeft(std::string_view text, std::size_t caret) {
+  std::size_t index = std::min(caret, text.size());
+  while (index > 0 && !IsIdentifierByte(text[index - 1])) {
+    --index;
+  }
+  while (index > 0 && IsIdentifierByte(text[index - 1])) {
+    --index;
+  }
+  return index;
+}
+
+// Next word edge: skip non-word bytes at `caret`, then the word.
+std::size_t WordBoundaryRight(std::string_view text, std::size_t caret) {
+  std::size_t index = std::min(caret, text.size());
+  while (index < text.size() && !IsIdentifierByte(text[index])) {
+    ++index;
+  }
+  while (index < text.size() && IsIdentifierByte(text[index])) {
+    ++index;
+  }
+  return index;
+}
+
 }  // namespace
 
 SingleLineEditor::SingleLineEditor(std::string text) {
@@ -144,6 +168,65 @@ bool SingleLineEditor::MoveRight(bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
   caret_ = util::NextUtf8Boundary(text_, caret_);
   Normalize();
+  return true;
+}
+
+bool SingleLineEditor::MoveWordLeft(bool extend_selection) {
+  Normalize();
+  if (!extend_selection && HasSelection()) {
+    caret_ = Selection()->start;
+    selection_anchor_.reset();
+    return true;
+  }
+  if (caret_ == 0) {
+    return false;
+  }
+  BeginSelectionIfNeeded(extend_selection);
+  caret_ = WordBoundaryLeft(text_, caret_);
+  Normalize();
+  return true;
+}
+
+bool SingleLineEditor::MoveWordRight(bool extend_selection) {
+  Normalize();
+  if (!extend_selection && HasSelection()) {
+    caret_ = Selection()->end;
+    selection_anchor_.reset();
+    return true;
+  }
+  if (caret_ >= text_.size()) {
+    return false;
+  }
+  BeginSelectionIfNeeded(extend_selection);
+  caret_ = WordBoundaryRight(text_, caret_);
+  Normalize();
+  return true;
+}
+
+bool SingleLineEditor::DeleteWordLeft() {
+  Normalize();
+  if (DeleteSelection()) {
+    return true;
+  }
+  if (caret_ == 0) {
+    return false;
+  }
+  const std::size_t target = WordBoundaryLeft(text_, caret_);
+  text_.erase(target, caret_ - target);
+  caret_ = target;
+  return true;
+}
+
+bool SingleLineEditor::DeleteWordRight() {
+  Normalize();
+  if (DeleteSelection()) {
+    return true;
+  }
+  if (caret_ >= text_.size()) {
+    return false;
+  }
+  const std::size_t target = WordBoundaryRight(text_, caret_);
+  text_.erase(caret_, target - caret_);
   return true;
 }
 

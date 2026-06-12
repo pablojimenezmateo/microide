@@ -77,6 +77,8 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
+    case TextInputSurface::CommitBody:
       operations_.request_sidebar_redraw();
       break;
     case TextInputSurface::FileFinder:
@@ -116,6 +118,9 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
       return &state_.overlay.workflow.project_search.edit_buffer;
+    case TextInputSurface::CommitSubject:
+      return &state_.sidebar.git.commit_workflow.subject;
+    case TextInputSurface::CommitBody:
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -181,6 +186,11 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
+    case TextInputSurface::CommitBody:
+      // Typing in the commit subject/body only repaints the sidebar; the (heavier)
+      // pre-check + draft-persist refresh happens on coarser events (field switch,
+      // close) so each keystroke stays cheap.
       operations_.request_sidebar_redraw();
       break;
     case TextInputSurface::None:
@@ -265,7 +275,17 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::CommitPicker:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
+      // CommitSubject is a single-line editor handled by ActiveSingleLineTextState above;
+      // reaching here means it had no backing state, so there is nothing to insert.
       return false;
+    case TextInputSurface::CommitBody: {
+      editor::TextViewport& body = state_.sidebar.git.commit_workflow.body;
+      body.InsertText(input);
+      operations_.reset_caret_blink();
+      operations_.request_sidebar_redraw();
+      return true;
+    }
     case TextInputSurface::Editor:
       if (operations_.active_editable_viewport() == nullptr) {
         return false;

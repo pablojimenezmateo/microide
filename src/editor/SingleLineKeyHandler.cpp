@@ -49,9 +49,15 @@ bool SingleLineKeyHandler::HandleKeyDown(SingleLineEditor& editor,
         return pasted.has_value() && editor.Paste(*pasted);
       }
       case SDLK_LEFT:
-        return editor.MoveHome(extend_selection);
+        // Ctrl+Left/Right are word-granular (Ctrl+Shift extends the selection), matching the
+        // main editor; plain Home/End still jump to the line edges.
+        return editor.MoveWordLeft(extend_selection);
       case SDLK_RIGHT:
-        return editor.MoveEnd(extend_selection);
+        return editor.MoveWordRight(extend_selection);
+      case SDLK_BACKSPACE:
+        return editor.DeleteWordLeft();
+      case SDLK_DELETE:
+        return editor.DeleteWordRight();
       default:
         break;
     }
