@@ -101,8 +101,7 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
   AdvanceCaretVertical(primary, preferred_column_, delta);
-  cursor_line_ = primary.line;
-  cursor_column_ = primary.column;
+  PlacePrimaryCaret(primary.line, primary.column, /*keep_preferred_column=*/true);
 
   for (SecondaryCaret& caret : secondary_carets_) {
     AdvanceCaretVertical(caret.position, caret.preferred_column, delta);
@@ -119,9 +118,7 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
   AdvanceCaretHorizontal(primary, delta);
-  cursor_line_ = primary.line;
-  cursor_column_ = primary.column;
-  preferred_column_ = PreferredColumnForCaret(primary);
+  PlacePrimaryCaret(primary.line, primary.column);
 
   for (SecondaryCaret& caret : secondary_carets_) {
     AdvanceCaretHorizontal(caret.position, delta);
@@ -133,8 +130,7 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
 
 void TextViewport::MoveCursorLineStart(bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
-  cursor_column_ = 0;
-  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  PlacePrimaryCaret(cursor_line_, 0);
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.position.column = 0;
     caret.preferred_column = PreferredColumnForCaret(caret.position);
@@ -145,8 +141,7 @@ void TextViewport::MoveCursorLineStart(bool extend_selection) {
 
 void TextViewport::MoveCursorLineEnd(bool extend_selection) {
   BeginSelectionIfNeeded(extend_selection);
-  cursor_column_ = CurrentLineLength();
-  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  PlacePrimaryCaret(cursor_line_, CurrentLineLength());
   for (SecondaryCaret& caret : secondary_carets_) {
     if (caret.position.line < document_->lines.size()) {
       caret.position.column = document_->lines[caret.position.line].size();
@@ -163,10 +158,11 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
   }
 
   BeginSelectionIfNeeded(extend_selection);
-  cursor_line_ = std::min(line, document_->lines.size() - 1);
-  cursor_column_ = TextLayout::ClampTextColumn(document_->lines[cursor_line_],
-                                               std::min(column, CurrentLineLength()));
-  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
+  const std::size_t line_length = document_->lines[clamped_line].size();
+  const std::size_t clamped_column = TextLayout::ClampTextColumn(
+      document_->lines[clamped_line], std::min(column, line_length));
+  PlacePrimaryCaret(clamped_line, clamped_column);
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position);
   }
@@ -244,6 +240,18 @@ void TextViewport::ClampScrollState() {
   const std::size_t max_horizontal_scroll =
       max_visual_columns > visible_columns_ ? max_visual_columns - visible_columns_ : 0;
   horizontal_scroll_ = std::min(horizontal_scroll_, max_horizontal_scroll);
+}
+
+void TextViewport::PlacePrimaryCaret(std::size_t line,
+                                     std::size_t column,
+                                     bool keep_preferred_column) {
+  cursor_line_ = line;
+  cursor_column_ = column;
+  if (!keep_preferred_column) {
+    preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  }
+  caret_navigation_content_revision_ =
+      document_ != nullptr ? document_->content_revision : 0;
 }
 
 void TextViewport::EnsureCursorVisible() {

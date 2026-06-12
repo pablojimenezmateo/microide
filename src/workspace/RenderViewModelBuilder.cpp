@@ -544,6 +544,17 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     return;
   }
 
+  // While a word is being actively typed/deleted the occurrence seed is a growing
+  // prefix ("a" → "ap" → "app"), which both churns the scan cache every keystroke
+  // and paints a fresh semi-transparent highlight layer into the retained scene
+  // texture before the prior one is cleared (visible as left-to-right darkening).
+  // Suppress occurrence highlighting for an edit-driven caret; a deliberate
+  // navigation re-syncs the anchor and restores it. A selection-seeded highlight
+  // stays (the seed is the selection, not the typed prefix).
+  if (viewport.CaretIsFromActiveTextEdit() && !viewport.selection_range().has_value()) {
+    return;
+  }
+
   const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
 
   const bool seed_cache_hit =

@@ -212,11 +212,19 @@ void TestPerFrameCacheInvalidationKeysModelAndBuilder() {
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
     Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 1,
            "SyntaxConfig bump must not invalidate the content-keyed occurrence seed cache");
-    // ContentEdit bump: seed cache is dropped because the buffer bytes changed.
+    // ContentEdit while typing: occurrence highlighting is suppressed for the
+    // edit-driven caret (the seed would otherwise chase the growing word prefix),
+    // so the builder does NOT re-run seed detection and the miss count is unchanged.
     viewport.InsertCharacter('x');
     (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
+    Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 1,
+           "an active text edit must suppress occurrence seed work");
+    // A deliberate navigation re-syncs the caret and re-runs seed detection, which
+    // drops the now-stale content-keyed seed cache (buffer bytes changed).
+    viewport.MoveCursorTo(0, 0, false);
+    (void)builder.BuildEditorViewModel(viewport, 4, nullptr, true, false);
     Expect(microide::workspace::RenderViewModelBuilder::OccurrenceSeedCacheMissesForTesting() == 2,
-           "ContentEdit must invalidate the occurrence seed cache");
+           "navigation after an edit must invalidate the content-keyed occurrence seed cache");
   }
 
   // --- Sticky scroll builder cache: fold model revision ---

@@ -147,6 +147,16 @@ class TextViewport {
   std::uint64_t content_revision() const {
     return document_ != nullptr ? document_->content_revision : 0;
   }
+  // True when the caret's current position is the result of an in-flight text
+  // edit (typing, deleting) rather than a deliberate navigation move. Edits bump
+  // `content_revision` and place the caret directly; navigation routes through
+  // `PlacePrimaryCaret`, which re-syncs the anchor. Used to suppress occurrence
+  // highlighting while a word is being typed so the highlight does not chase a
+  // growing prefix.
+  bool CaretIsFromActiveTextEdit() const {
+    return document_ != nullptr &&
+           caret_navigation_content_revision_ != document_->content_revision;
+  }
   std::uint64_t syntax_revision() const {
     return document_ != nullptr ? document_->syntax_revision : 0;
   }
@@ -278,6 +288,11 @@ class TextViewport {
   void ClampCursorColumn();
   void ClampScrollState();
   void EnsureCursorVisible();
+  // Single choke point for primary-caret navigation. Sets the primary caret,
+  // updates the preferred column (unless `keep_preferred_column`, used by vertical
+  // motion which tracks a sticky column), and re-syncs the navigation anchor so the
+  // caret reads as "navigated" rather than "edited" (see CaretIsFromActiveTextEdit).
+  void PlacePrimaryCaret(std::size_t line, std::size_t column, bool keep_preferred_column = false);
   void BeginSelectionIfNeeded(bool extend_selection);
   bool DeleteSelection();
   ViewState CaptureViewState() const;
@@ -350,6 +365,10 @@ class TextViewport {
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;
   std::size_t preferred_column_ = 0;
+  // `content_revision` as of the last navigation move. Equal to the document's
+  // current `content_revision` ⇒ caret is settled at a navigated position; not
+  // equal ⇒ an edit has advanced the revision since, i.e. the caret is mid-edit.
+  std::uint64_t caret_navigation_content_revision_ = 0;
   std::size_t scroll_line_ = 0;
   std::size_t horizontal_scroll_ = 0;
   std::size_t visible_lines_ = 1;
