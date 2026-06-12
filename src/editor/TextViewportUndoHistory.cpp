@@ -15,16 +15,24 @@ void TextViewportUndoHistory::BeginGroup(ViewState before_state) {
 }
 
 void TextViewportUndoHistory::RecordEntry(Entry entry,
-                                          const std::vector<std::string>& current_lines) {
+                                          const std::vector<std::string>& current_lines,
+                                          CoalesceHint hint) {
   redo_stack_.clear();
   if (group_stack_.empty()) {
+    if (hint.kind != CoalesceKind::None && TryCoalesceWithTop(entry, hint)) {
+      return;
+    }
     undo_stack_.push_back(std::move(entry));
     if (undo_stack_.size() > kMaxHistoryEntries) {
       undo_stack_.pop_front();
     }
+    active_run_kind_ = hint.kind;
+    active_run_last_space_ = hint.changed_is_space;
     return;
   }
 
+  // A grouped edit owns its own aggregation; never coalesce across it.
+  active_run_kind_ = CoalesceKind::None;
   for (UndoGroupFrame& frame : group_stack_) {
     if (frame.using_fallback) {
       continue;
@@ -46,8 +54,41 @@ void TextViewportUndoHistory::RecordEntry(Entry entry,
   }
 }
 
+bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint hint) {
+  if (active_run_kind_ != hint.kind || undo_stack_.empty()) {
+    return false;
+  }
+  // Split before a new word: a non-space char immediately after a space ends
+  // the previous run (so "foo " and "bar" undo separately).
+  if (!hint.changed_is_space && active_run_last_space_) {
+    return false;
+  }
+  // Replacing a selection is a discrete edit, not a continuation of typing.
+  if (next.before_state.selection_anchor.has_value()) {
+    return false;
+  }
+  // The new edit must begin exactly where the run left off; any caret jump
+  // (arrow key, click, vertical move) breaks the run.
+  Entry& top = undo_stack_.back();
+  if (next.before_state.cursor_line != top.after_state.cursor_line ||
+      next.before_state.cursor_column != top.after_state.cursor_column) {
+    return false;
+  }
+  std::optional<Entry> merged = TryMergeGroupEntry(top, next);
+  if (!merged.has_value()) {
+    return false;
+  }
+  // Preserve the run's original start state; advance its end to the new caret.
+  merged->before_state = top.before_state;
+  merged->after_state = next.after_state;
+  top = std::move(*merged);
+  active_run_last_space_ = hint.changed_is_space;
+  return true;
+}
+
 void TextViewportUndoHistory::RecordEntryDirect(Entry entry) {
   redo_stack_.clear();
+  EndCoalesceRun();
   undo_stack_.push_back(std::move(entry));
   if (undo_stack_.size() > kMaxHistoryEntries) {
     undo_stack_.pop_front();
@@ -82,18 +123,21 @@ TextViewportUndoHistory::FinishActiveGroup(const std::vector<std::string>& curre
 }
 
 TextViewportUndoHistory::Entry TextViewportUndoHistory::PopUndo() {
+  EndCoalesceRun();
   Entry entry = std::move(undo_stack_.back());
   undo_stack_.pop_back();
   return entry;
 }
 
 TextViewportUndoHistory::Entry TextViewportUndoHistory::PopRedo() {
+  EndCoalesceRun();
   Entry entry = std::move(redo_stack_.back());
   redo_stack_.pop_back();
   return entry;
 }
 
 void TextViewportUndoHistory::PushUndo(Entry entry) {
+  EndCoalesceRun();
   undo_stack_.push_back(std::move(entry));
   if (undo_stack_.size() > kMaxHistoryEntries) {
     undo_stack_.pop_front();
@@ -101,10 +145,12 @@ void TextViewportUndoHistory::PushUndo(Entry entry) {
 }
 
 void TextViewportUndoHistory::PushRedo(Entry entry) {
+  EndCoalesceRun();
   redo_stack_.push_back(std::move(entry));
 }
 
 void TextViewportUndoHistory::Clear() {
+  EndCoalesceRun();
   undo_stack_.clear();
   redo_stack_.clear();
   group_stack_.clear();

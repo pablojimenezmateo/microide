@@ -546,6 +546,72 @@ void TestTextViewportUndoGroupFallsBackForDisjointChildEdits() {
          "fallback undo group path should restore the original document");
 }
 
+void TestTextViewportTypedCharactersCoalesceIntoWordUndoSteps() {
+  TextViewport viewport;
+  viewport.LoadContent("", "/tmp/undo-coalesce.txt");
+
+  for (char ch : std::string("foo bar")) {
+    viewport.InsertCharacter(ch);
+  }
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0] == "foo bar",
+         "typing should build the full word run");
+
+  // First undo removes the second word; the trailing space stays attached to
+  // the first word's run.
+  Expect(viewport.Undo(), "first undo after a typing run should succeed");
+  Expect(viewport.lines()[0] == "foo ",
+         "undo should remove a whole word, not a single character");
+
+  Expect(viewport.Undo(), "second undo should remove the first word run");
+  Expect(viewport.lines()[0].empty(),
+         "second undo should clear the remaining typed run");
+
+  Expect(!viewport.Undo(),
+         "two undos should exhaust a 'foo bar' typing run (no per-character entries)");
+
+  // Redo should restore the runs symmetrically.
+  Expect(viewport.Redo() && viewport.lines()[0] == "foo ",
+         "redo should restore the first word run");
+  Expect(viewport.Redo() && viewport.lines()[0] == "foo bar",
+         "redo should restore the second word run");
+}
+
+void TestTextViewportCaretJumpBreaksTypingCoalesce() {
+  TextViewport viewport;
+  viewport.LoadContent("", "/tmp/undo-coalesce-break.txt");
+
+  viewport.InsertCharacter('a');
+  viewport.InsertCharacter('b');
+  viewport.InsertCharacter('c');
+  // Typing resumes at a different caret offset; that discontinuity must start a
+  // fresh undo entry rather than extending the "abc" run.
+  viewport.MoveCursorTo(0, 1);
+  viewport.InsertCharacter('X');
+  Expect(viewport.lines()[0] == "aXbc", "fixture should insert 'X' inside 'abc'");
+
+  Expect(viewport.Undo() && viewport.lines()[0] == "abc",
+         "a caret jump should isolate the relocated insertion in its own undo step");
+  Expect(viewport.Undo() && viewport.lines()[0].empty(),
+         "the original contiguous run should undo as one step");
+}
+
+void TestTextViewportBackspaceCoalescesIntoWordUndoSteps() {
+  TextViewport viewport;
+  viewport.LoadContent("foo bar", "/tmp/undo-coalesce-backspace.txt");
+  viewport.MoveCursorTo(0, 7);
+
+  for (int i = 0; i < 7; ++i) {
+    viewport.Backspace();
+  }
+  Expect(viewport.lines()[0].empty(), "backspacing should clear the line");
+
+  // The deletion run splits on the word boundary, mirroring the typing rule.
+  Expect(viewport.Undo() && viewport.lines()[0] == "foo",
+         "first undo should restore the most recently deleted word run");
+  Expect(viewport.Undo() && viewport.lines()[0] == "foo bar",
+         "second undo should restore the remaining deleted run");
+}
+
 void TestTextViewportMultiCaretInsertAndUndoAreAtomic() {
   TextViewport viewport;
   viewport.LoadContent("abc\ndef\nghi\n", "/tmp/multi-caret-insert.txt");
@@ -1459,6 +1525,12 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportUndoGroupMergesKnownRangeChildEdits);
   AddTest(tests, "TextViewport/UndoGroupFallsBackForDisjointChildEdits",
           TestTextViewportUndoGroupFallsBackForDisjointChildEdits);
+  AddTest(tests, "TextViewport/TypedCharactersCoalesceIntoWordUndoSteps",
+          TestTextViewportTypedCharactersCoalesceIntoWordUndoSteps);
+  AddTest(tests, "TextViewport/CaretJumpBreaksTypingCoalesce",
+          TestTextViewportCaretJumpBreaksTypingCoalesce);
+  AddTest(tests, "TextViewport/BackspaceCoalescesIntoWordUndoSteps",
+          TestTextViewportBackspaceCoalescesIntoWordUndoSteps);
   AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
           TestTextViewportMultiCaretInsertAndUndoAreAtomic);
   AddTest(tests, "TextViewport/MultiCaretBackspaceAndDeleteForward",

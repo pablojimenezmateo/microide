@@ -11,6 +11,20 @@
 
 namespace microide::editor {
 
+// Typing-coalesce classification for a single recorded edit. A run of edits
+// sharing the same kind, advancing contiguously from the caret, is merged into
+// one undo entry so that undo removes a word/run at a time rather than a
+// character at a time. `None` always starts (and ends) a fresh entry.
+enum class CoalesceKind { None, Insert, DeleteBackward, DeleteForward };
+
+struct CoalesceHint {
+  CoalesceKind kind = CoalesceKind::None;
+  // Whitespace class of the single character this edit added or removed. Used
+  // to split a run before a new word: a non-space char following a space (e.g.
+  // the 'b' in "foo bar") begins a fresh undo entry.
+  bool changed_is_space = false;
+};
+
 // Owns the undo / redo storage and the grouped-edit aggregation state that
 // previously lived on TextViewport (undo_stack, redo_stack, undo_group_stack_,
 // plus the static TryMerge / ReconstructFallback / ApplyEntryToLines helpers).
@@ -58,9 +72,11 @@ class TextViewportUndoHistory {
   void BeginGroup(ViewState before_state);
   // Records a candidate child edit. While a group is active this either
   // merges into the aggregate entry or falls back to whole-buffer-snapshot
-  // mode; with no group active it pushes directly onto the undo stack and
-  // clears the redo stack (same semantics as the prior PushHistoryEntry).
-  void RecordEntry(Entry entry, const std::vector<std::string>& current_lines);
+  // mode; with no group active it either coalesces into the top undo entry
+  // (per `hint`) or pushes a fresh entry, clearing the redo stack either way
+  // (same base semantics as the prior PushHistoryEntry).
+  void RecordEntry(Entry entry, const std::vector<std::string>& current_lines,
+                   CoalesceHint hint = CoalesceHint{});
   // Bypass-grouping push (matches PushHistoryEntryDirect): clears redo,
   // pushes onto undo, enforces the history cap. Used by paths that have
   // already built a known-good aggregate (e.g. ResetState / Save).
@@ -103,12 +119,20 @@ class TextViewportUndoHistory {
   static std::vector<std::string> ReconstructFallbackLines(
       const std::vector<std::string>& current_lines,
       const std::vector<Entry>& child_entries);
+  // Attempts to fold `next` into the current undo-stack top as a continuation
+  // of an open typing/deletion run. Returns true (and mutates the top entry)
+  // on success; false means the caller should push `next` as a fresh entry.
+  bool TryCoalesceWithTop(const Entry& next, CoalesceHint hint);
+  void EndCoalesceRun() { active_run_kind_ = CoalesceKind::None; }
 
   static constexpr std::size_t kMaxHistoryEntries = 128;
 
   std::deque<Entry> undo_stack_;
   std::deque<Entry> redo_stack_;
   std::vector<UndoGroupFrame> group_stack_;
+  // Open typing/deletion run that the next contiguous edit may merge into.
+  CoalesceKind active_run_kind_ = CoalesceKind::None;
+  bool active_run_last_space_ = false;
 };
 
 }  // namespace microide::editor

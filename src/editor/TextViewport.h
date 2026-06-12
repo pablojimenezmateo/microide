@@ -282,7 +282,7 @@ class TextViewport {
   bool DeleteSelection();
   ViewState CaptureViewState() const;
   void RestoreViewState(const ViewState& state);
-  void PushHistoryEntry(HistoryEntry entry);
+  void PushHistoryEntry(HistoryEntry entry, CoalesceHint hint = CoalesceHint{});
   void PushHistoryEntryDirect(HistoryEntry entry);
   void FlushActiveUndoGroup();
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
@@ -294,7 +294,8 @@ class TextViewport {
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
-  bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo);
+  bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
+                      CoalesceHint hint = CoalesceHint{});
   bool ApplyLineEdit(std::size_t start_line,
                      std::size_t end_line,
                      const std::vector<std::string>& replacement,

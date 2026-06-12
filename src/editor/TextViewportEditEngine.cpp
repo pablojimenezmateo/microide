@@ -37,7 +37,11 @@ void TextViewport::InsertCharacter(char character) {
       SelectionRange{TextPosition{cursor_line_, cursor_column_},
                      TextPosition{cursor_line_, cursor_column_}});
   const std::string text(1, character);
-  (void)ApplyRangeEdit(range, text, true);
+  const CoalesceHint hint{
+      .kind = CoalesceKind::Insert,
+      .changed_is_space = std::isspace(static_cast<unsigned char>(character)) != 0,
+  };
+  (void)ApplyRangeEdit(range, text, true, hint);
 }
 
 void TextViewport::InsertText(std::string_view text, bool record_undo) {
@@ -104,14 +108,20 @@ void TextViewport::Backspace() {
   }
 
   if (cursor_column_ > 0) {
-    const std::size_t erase_start =
-        TextLayout::PreviousTextColumn(document_->lines[cursor_line_], cursor_column_);
+    const std::string& line = document_->lines[cursor_line_];
+    const std::size_t erase_start = TextLayout::PreviousTextColumn(line, cursor_column_);
+    const CoalesceHint hint{
+        .kind = CoalesceKind::DeleteBackward,
+        .changed_is_space =
+            erase_start < line.size() &&
+            std::isspace(static_cast<unsigned char>(line[erase_start])) != 0,
+    };
     (void)ApplyRangeEdit(
         SelectionRange{
             .start = TextPosition{cursor_line_, erase_start},
             .end = TextPosition{cursor_line_, cursor_column_},
         },
-        "", true);
+        "", true, hint);
     return;
   }
 
@@ -145,12 +155,16 @@ void TextViewport::DeleteForward() {
   const std::string& line = document_->lines[cursor_line_];
   if (cursor_column_ < line.size()) {
     const std::size_t erase_end = TextLayout::NextTextColumn(line, cursor_column_);
+    const CoalesceHint hint{
+        .kind = CoalesceKind::DeleteForward,
+        .changed_is_space = std::isspace(static_cast<unsigned char>(line[cursor_column_])) != 0,
+    };
     (void)ApplyRangeEdit(
         SelectionRange{
             .start = TextPosition{cursor_line_, cursor_column_},
             .end = TextPosition{cursor_line_, erase_end},
         },
-        "", true);
+        "", true, hint);
     return;
   }
 
@@ -326,8 +340,8 @@ void TextViewport::RestoreViewState(const ViewState& state) {
   document_->dirty = state.dirty;
 }
 
-void TextViewport::PushHistoryEntry(HistoryEntry entry) {
-  undo_history_.RecordEntry(std::move(entry), document_->lines);
+void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
+  undo_history_.RecordEntry(std::move(entry), document_->lines, hint);
 }
 
 void TextViewport::PushHistoryEntryDirect(HistoryEntry entry) {
@@ -454,7 +468,8 @@ TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
 
 bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
                                   std::string_view replacement,
-                                  bool record_undo) {
+                                  bool record_undo,
+                                  CoalesceHint hint) {
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.push_back("");
@@ -471,7 +486,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
   if (record_undo) {
     HistoryEntry saved_entry = *entry;
     saved_entry.after_state = CaptureViewState();
-    PushHistoryEntry(std::move(saved_entry));
+    PushHistoryEntry(std::move(saved_entry), hint);
   } else {
     undo_history_.ClearRedo();
   }
