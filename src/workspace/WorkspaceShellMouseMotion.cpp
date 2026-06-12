@@ -536,6 +536,24 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
 
   const WorkspaceLayout layout = *layout_state;
 
+  // The Settings / Help-About overlay is modal: while it is open the wheel
+  // scrolls its row list (when the pointer is over the panel) and never reaches
+  // the editor or sidebar underneath. Scrolling tracks whole entries.
+  if (settings_overlay_service_.Visible()) {
+    if (vertical_ticks != 0) {
+      const SDL_FRect overlay_rect = ComputeOverlaySurfaceRect(layout.editor_area);
+      if (Contains(overlay_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
+        // The render pass resolves the true max scroll from the list geometry
+        // (variable-height help rows, fixed-height settings rows + headers).
+        settings_overlay_service_.SetScrollRow(std::clamp(
+            settings_overlay_service_.ScrollRow() - vertical_ticks, 0,
+            settings_overlay_max_scroll_row_));
+      }
+    }
+    ensure_redraw([this]() { RequestOverlayRedraw(); });
+    return true;
+  }
+
   if (MakeChromeMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
     ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;

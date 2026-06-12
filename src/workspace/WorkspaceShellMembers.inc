@@ -1408,6 +1408,9 @@
   StatusBarService status_bar_service_;
   StatusBarModelService status_bar_model_service_;
   SettingsOverlayService settings_overlay_service_;
+  // Settings/Help overlay max scroll row, resolved by the const render pass (it
+  // owns the list geometry) and consumed by the wheel handler to clamp scrolling.
+  mutable int settings_overlay_max_scroll_row_ = 0;
   AssistService assist_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {
