@@ -48,6 +48,7 @@ class WorkspaceEventDispatcher {
     std::function<bool(const SDL_TextEditingEvent&)> handle_text_editing;
     std::function<bool(const SDL_TextInputEvent&)> handle_text_input;
     std::function<void()> handle_window_mouse_leave;
+    std::function<void()> force_cursor_reassert;
     std::function<void()> request_window_redraw;
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_down;
   };

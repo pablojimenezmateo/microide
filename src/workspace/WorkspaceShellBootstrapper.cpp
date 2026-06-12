@@ -201,6 +201,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 return shell->MakeTextInputCoordinator().HandleTextInput(event);
               },
           .handle_window_mouse_leave = [shell]() { shell->ClearMouseHoverState(); },
+          .force_cursor_reassert = [shell]() { shell->ForceCursorReassert(); },
           .request_window_redraw = [shell]() { shell->RequestWindowRedraw(); },
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {

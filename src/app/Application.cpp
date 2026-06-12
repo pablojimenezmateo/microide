@@ -379,6 +379,9 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       presentation_state_dirty_ = true;
       last_resize_event_ns_ = SDL_GetTicksNS();
       UpdateRendererPresentation();
+      // A compositor-driven resize can leave the displayed cursor stale (e.g. the
+      // resize cursor lingering over a border); force the next update to re-apply.
+      workspace_shell_.ForceCursorReassert();
       return workspace::WorkspaceShell::EventResult{
           .handled = true,
           .redraw = workspace::WorkspaceShell::RenderInvalidation{

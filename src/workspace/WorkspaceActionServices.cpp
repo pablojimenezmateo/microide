@@ -314,8 +314,13 @@ bool WorkspaceActionContext::ActiveTabIsMerge() const {
 
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
   operations_.open_buffer_search();
-  state_.overlay.workflow.buffer_search.query.SetText(std::move(query));
-  operations_.refresh_buffer_search();
+  // Only an explicit query (e.g. a `:search foo` command) overrides the term the
+  // widget opened with. The bare Ctrl+F shortcut passes no query and must keep
+  // open_buffer_search's behaviour (seed from selection, else reuse the last term).
+  if (!query.empty()) {
+    state_.overlay.workflow.buffer_search.query.SetText(std::move(query));
+    operations_.refresh_buffer_search();
+  }
 }
 
 void WorkspaceActionContext::OpenBufferReplace() {

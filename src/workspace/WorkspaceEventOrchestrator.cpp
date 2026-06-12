@@ -148,10 +148,23 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       operations_.request_window_redraw();
       return finish(true);
       }
+    case SDL_EVENT_WINDOW_MOUSE_ENTER:
+      {
+        util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowMouseEnter");
+      // SDL re-asserts a (possibly stale) hit-test cursor on pointer-enter; make
+      // the next cursor update re-apply ours so the displayed cursor is correct.
+      if (operations_.force_cursor_reassert) {
+        operations_.force_cursor_reassert();
+      }
+      return finish(true);
+      }
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowFocusGained");
       state_.window_has_input_focus = true;
+      if (operations_.force_cursor_reassert) {
+        operations_.force_cursor_reassert();
+      }
       operations_.request_window_redraw();
       return finish(true);
       }

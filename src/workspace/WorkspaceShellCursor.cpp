@@ -325,36 +325,48 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (context_.current_project_state.overlay.visible) {
-    const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
-    if (!Contains(overlay, x, y)) {
-      return CursorKind::Default;
-    }
+    const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
+    // The find / replace widget is non-modal: it only governs the cursor while the
+    // pointer is over its small rect. Off the widget we fall through to the normal
+    // editor cursor logic so the live editor underneath behaves as usual.
+    if (overlay_mode == OverlayMode::BufferSearch || overlay_mode == OverlayMode::BufferReplace) {
+      const FindWidgetLayout fw =
+          ComputeFindWidgetLayout(layout.editor_surface, overlay_mode == OverlayMode::BufferReplace);
+      if (Contains(fw.search_field, x, y) ||
+          (fw.replace_mode && Contains(fw.replace_field, x, y))) {
+        return CursorKind::Text;
+      }
+      if (Contains(fw.widget, x, y)) {
+        return CursorKind::Pointer;
+      }
+      // Off the widget: continue to the editor / chrome cursor logic below.
+    } else {
+      const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
+      if (!Contains(overlay, x, y)) {
+        return CursorKind::Default;
+      }
 
-    const auto overlay_list_layout = ComputeOverlayListLayout(overlay);
-    if (overlay_list_layout.scrollbar.has_value() &&
-        Contains(overlay_list_layout.scrollbar->track, x, y)) {
-      return CursorKind::Default;
-    }
-    if (const auto item_index = ScrollableListIndexAtY(overlay_list_layout, y);
-        item_index.has_value() && *item_index >= 0 &&
-        *item_index < static_cast<int>(OverlayItemCount())) {
-      return CursorKind::Pointer;
-    }
+      const auto overlay_list_layout = ComputeOverlayListLayout(overlay);
+      if (overlay_list_layout.scrollbar.has_value() &&
+          Contains(overlay_list_layout.scrollbar->track, x, y)) {
+        return CursorKind::Default;
+      }
+      if (const auto item_index = ScrollableListIndexAtY(overlay_list_layout, y);
+          item_index.has_value() && *item_index >= 0 &&
+          *item_index < static_cast<int>(OverlayItemCount())) {
+        return CursorKind::Pointer;
+      }
 
-    if (context_.current_project_state.overlay.mode == OverlayMode::BufferReplace) {
-      return y >= overlay.y + 40.0f && y < overlay.y + 82.0f ? CursorKind::Text
+      if (overlay_mode == OverlayMode::CommitPicker) {
+        return y >= overlay.y + 58.0f && y < overlay.y + 78.0f ? CursorKind::Text
+                                                                : CursorKind::Default;
+      }
+      if (overlay_mode == OverlayMode::Completion || overlay_mode == OverlayMode::CodeActions) {
+        return CursorKind::Default;
+      }
+      return y >= overlay.y + 40.0f && y < overlay.y + 60.0f ? CursorKind::Text
                                                               : CursorKind::Default;
     }
-    if (context_.current_project_state.overlay.mode == OverlayMode::CommitPicker) {
-      return y >= overlay.y + 58.0f && y < overlay.y + 78.0f ? CursorKind::Text
-                                                              : CursorKind::Default;
-    }
-    if (context_.current_project_state.overlay.mode == OverlayMode::Completion ||
-        context_.current_project_state.overlay.mode == OverlayMode::CodeActions) {
-      return CursorKind::Default;
-    }
-    return y >= overlay.y + 40.0f && y < overlay.y + 60.0f ? CursorKind::Text
-                                                            : CursorKind::Default;
   }
 
   if (context_.current_project_state.sidebar.visible &&
@@ -957,7 +969,8 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       .cursor_hit_generation = cursor_hit_generation_,
       .editor_hover_target_generation = editor_hover_target_generation_,
   };
-  if (cursor_kind_fingerprint_.valid &&
+  if (!force_cursor_reassert_ &&
+      cursor_kind_fingerprint_.valid &&
       cursor_kind_fingerprint_.x == next_fp.x &&
       cursor_kind_fingerprint_.y == next_fp.y &&
       cursor_kind_fingerprint_.drag_target == next_fp.drag_target &&
@@ -988,19 +1001,34 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
   cursor_kind_fingerprint_ = next_fp;
 
   const CursorKind next_kind = CursorKindForPosition(x, y);
-  if (next_kind == cursor_kind_) {
+  const bool force = force_cursor_reassert_;
+  force_cursor_reassert_ = false;
+  if (next_kind == cursor_kind_ && !force) {
     return;
   }
 
   cursor_kind_ = next_kind;
-  if (SDL_Cursor* cursor = CursorHandle(next_kind); cursor != nullptr) {
-    (void)SDL_SetCursor(cursor);
+  SDL_Cursor* cursor = CursorHandle(next_kind);
+  if (cursor == nullptr) {
+    cursor = CursorHandle(CursorKind::Default);
+  }
+  if (cursor == nullptr) {
     return;
   }
 
-  if (SDL_Cursor* default_cursor = CursorHandle(CursorKind::Default); default_cursor != nullptr) {
-    (void)SDL_SetCursor(default_cursor);
+  if (force) {
+    // SDL_SetCursor no-ops when the cursor handle is unchanged, but SDL's Wayland
+    // hit-test path can change the *displayed* cursor (Wayland_ShowCursor) without
+    // updating SDL's current-cursor handle. Setting our (unchanged) handle would
+    // then no-op and leave the stale cursor on screen. Nudge through a different
+    // cursor first so the platform is guaranteed to re-show ours.
+    SDL_Cursor* nudge =
+        cursor == SDL_GetDefaultCursor() ? CursorHandle(CursorKind::Text) : SDL_GetDefaultCursor();
+    if (nudge != nullptr && nudge != cursor) {
+      (void)SDL_SetCursor(nudge);
+    }
   }
+  (void)SDL_SetCursor(cursor);
 }
 
 char WorkspaceShell::KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers) {

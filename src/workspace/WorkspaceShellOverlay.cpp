@@ -45,25 +45,48 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
   RequestOverlayRedraw();
 }
 
-void WorkspaceShell::OpenBufferSearch() {
-  ShowOverlay(OverlayMode::BufferSearch);
-  context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
-  ResetBufferSearchFoldRevealState(false);
-  context_.current_project_state.overlay.workflow.buffer_search.query.SetText("");
-  context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText("");
-  context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
-  context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
+std::string WorkspaceShell::SingleLineEditorSelectionSeed() const {
+  // VSCode-style: a non-empty single-line editor selection seeds the find query.
+  const editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return {};
+  }
+  const auto selection = viewport->selection_range();
+  if (!selection.has_value() || selection->start.line != selection->end.line) {
+    return {};
+  }
+  std::string text = viewport->SelectedText();
+  if (text.empty() || text.find('\n') != std::string::npos) {
+    return {};
+  }
+  return text;
 }
 
-void WorkspaceShell::OpenBufferReplace() {
-  ShowOverlay(OverlayMode::BufferReplace);
+void WorkspaceShell::OpenBufferSearchSurface(OverlayMode mode) {
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  // Re-invoking find while the widget already floats keeps the existing query and
+  // simply re-focuses + selects it (so the next keystroke replaces it). Otherwise
+  // seed from the editor selection when there is one, else reuse the last term.
+  const bool already_open = context_.current_project_state.overlay.visible &&
+                            (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
+                             context_.current_project_state.overlay.mode == OverlayMode::BufferReplace);
+  std::string seed = SingleLineEditorSelectionSeed();
+  if (!already_open) {
+    ResetBufferSearchFoldRevealState(false);
+  }
+
+  ShowOverlay(mode);
   context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
-  ResetBufferSearchFoldRevealState(false);
-  context_.current_project_state.overlay.workflow.buffer_search.query.SetText("");
-  context_.current_project_state.overlay.workflow.buffer_search.replace_text.SetText("");
-  context_.current_project_state.overlay.workflow.buffer_search.matches.clear();
-  context_.current_project_state.overlay.workflow.buffer_search.selected_index = 0;
+  if (!seed.empty()) {
+    buffer_search.query.SetText(std::move(seed));
+  }
+  buffer_search.query.SelectAll();
+  RefreshBufferSearch();
 }
+
+void WorkspaceShell::OpenBufferSearch() { OpenBufferSearchSurface(OverlayMode::BufferSearch); }
+
+void WorkspaceShell::OpenBufferReplace() { OpenBufferSearchSurface(OverlayMode::BufferReplace); }
 
 void WorkspaceShell::OpenProjectSearch() {
   if (context_.current_project_state.root.empty()) {

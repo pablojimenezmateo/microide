@@ -39,13 +39,26 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
   }
 
   if (context_.current_project_state.overlay.visible) {
+    // The find/replace widget is non-modal: while it floats, focus may be on the
+    // editor (so the user can keep editing). Only claim the buffer-search input
+    // surfaces when the widget actually holds focus; otherwise fall through so
+    // typing and the caret belong to the editor underneath.
+    const bool overlay_focused =
+        context_.current_project_state.surface.focus == FocusTarget::Overlay;
     switch (context_.current_project_state.overlay.mode) {
       case OverlayMode::BufferSearch:
-        return TextInputSurface::BufferSearch;
+        if (overlay_focused) {
+          return TextInputSurface::BufferSearch;
+        }
+        break;
       case OverlayMode::BufferReplace:
-        return context_.current_project_state.overlay.buffer_search_field == BufferSearchField::Search
-                   ? TextInputSurface::BufferReplaceSearch
-                   : TextInputSurface::BufferReplaceReplace;
+        if (overlay_focused) {
+          return context_.current_project_state.overlay.buffer_search_field ==
+                         BufferSearchField::Search
+                     ? TextInputSurface::BufferReplaceSearch
+                     : TextInputSurface::BufferReplaceReplace;
+        }
+        break;
       case OverlayMode::ProjectSearch:
         return TextInputSurface::ProjectSearchOverlay;
       case OverlayMode::CommitPicker:

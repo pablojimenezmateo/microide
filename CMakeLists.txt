@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(microide VERSION 0.1.0 LANGUAGES CXX)
+project(microide VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -465,6 +465,7 @@ if(NOT MICROIDE_LUA_TARGET STREQUAL "")
 endif()
 target_compile_definitions(microide PRIVATE
   MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
+  MICROIDE_VERSION="${PROJECT_VERSION}"
 )
 
 if(UNIX AND NOT APPLE)
@@ -501,7 +502,8 @@ if(UNIX AND NOT APPLE)
 
   set(CPACK_PACKAGE_NAME "${PROJECT_NAME}")
   set(CPACK_PACKAGE_VENDOR "${PROJECT_NAME}")
-  set(CPACK_PACKAGE_CONTACT "microide")
+  set(CPACK_PACKAGE_CONTACT "Pablo Jimenez Mateo <pablojimenezmateo@gmail.com>")
+  set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Pablo Jimenez Mateo <pablojimenezmateo@gmail.com>")
   set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
       "microide - a native, low-footprint keyboard-first IDE")
   set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

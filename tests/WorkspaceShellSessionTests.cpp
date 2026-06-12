@@ -627,7 +627,7 @@ void TestWorkspaceShellEditorEditInvalidatesFoldingFingerprint() {
          "post-edit folding fingerprint should pick up the new layout revision");
 }
 
-void TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndRestoresOnDismiss() {
+void TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndKeepsItOnClose() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "notes.cpp";
@@ -655,12 +655,16 @@ void TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndRestoresOnDismiss() {
          "buffer-search should move the caret onto the revealed match");
 
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
-         "Escape should dismiss the buffer-search overlay");
-  Expect(model->IsCollapsedAtOpener(0),
-         "dismissing buffer-search without committing to the reveal should restore the collapsed fold");
+         "Escape should close the non-modal find widget");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "Escape should hide the find widget");
+  // The non-modal widget already moved the caret onto the match, so closing it
+  // keeps the fold expanded — re-collapsing would hide where the caret landed.
+  Expect(!model->IsCollapsedAtOpener(0),
+         "closing the find widget keeps the revealed fold expanded under the caret");
 }
 
-void TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection() {
+void TestWorkspaceShellBufferSearchKeepsRevealAfterClose() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "notes.cpp";
@@ -681,12 +685,23 @@ void TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection() {
   Expect(!model->IsCollapsedAtOpener(0),
          "buffer-search activate fixture should auto-expand the collapsed match");
 
+  // Enter now cycles to the next match and keeps the non-modal find widget open
+  // (VSCode-style) instead of jumping + dismissing.
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should activate the selected buffer-search match");
-  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
-         "activating a buffer-search match should dismiss the overlay");
+         "Enter should advance the buffer-search match");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
+         "Enter must keep the non-modal find widget open");
   Expect(!model->IsCollapsedAtOpener(0),
-         "activating the revealed match should keep the fold expanded after the overlay closes");
+         "cycling matches should keep the revealed fold expanded");
+
+  // Esc closes the widget and returns focus to the editor; the fold that the
+  // search revealed stays expanded.
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Escape should close the non-modal find widget");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "closing the find widget should hide the overlay");
+  Expect(!model->IsCollapsedAtOpener(0),
+         "closing the widget should keep the fold the search revealed expanded");
 }
 
 void TestWorkspaceShellEnsureActiveFoldingModelFreshBinding() {
@@ -1863,10 +1878,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEnsureActiveFoldingModelFreshBinding);
   AddTest(tests, "WorkspaceShell/FoldingSurvivesTabVectorReallocationAndLayout",
           TestWorkspaceShellFoldingSurvivesTabVectorReallocationAndLayout);
-  AddTest(tests, "WorkspaceShell/BufferSearchRevealsCollapsedMatchAndRestoresOnDismiss",
-          TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndRestoresOnDismiss);
-  AddTest(tests, "WorkspaceShell/BufferSearchKeepsRevealAfterActivateSelection",
-          TestWorkspaceShellBufferSearchKeepsRevealAfterActivateSelection);
+  AddTest(tests, "WorkspaceShell/BufferSearchRevealsCollapsedMatchAndKeepsItOnClose",
+          TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndKeepsItOnClose);
+  AddTest(tests, "WorkspaceShell/BufferSearchKeepsRevealAfterClose",
+          TestWorkspaceShellBufferSearchKeepsRevealAfterClose);
   AddTest(tests, "WorkspaceShell/FoldAllUnfoldAllCtrlKChord",
           TestWorkspaceShellFoldAllUnfoldAllCtrlKChord);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",

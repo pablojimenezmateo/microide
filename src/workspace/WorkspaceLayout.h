@@ -450,4 +450,25 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
     float y);
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area);
 
+// Geometry of the floating (non-modal) find / find-replace widget anchored at the
+// top-right of the editor area. These sub-rects are the single source of truth
+// shared by the renderer, the field hit-test, and button mouse handling so they
+// cannot drift apart. Rects for controls that only exist in replace mode are
+// zero-sized when replace_mode is false.
+struct FindWidgetLayout {
+  SDL_FRect widget{};
+  SDL_FRect search_field{};
+  SDL_FRect replace_field{};
+  SDL_FRect count_rect{};
+  SDL_FRect prev_button{};
+  SDL_FRect next_button{};
+  SDL_FRect close_button{};
+  SDL_FRect replace_button{};
+  SDL_FRect replace_all_button{};
+  bool replace_mode = false;
+};
+
+SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode);
+FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool replace_mode);
+
 }  // namespace microide::workspace

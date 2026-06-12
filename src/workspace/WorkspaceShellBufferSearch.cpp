@@ -80,10 +80,12 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
     return;
   }
 
+  // Wrap around both ends (next on the last match jumps to the first, previous on
+  // the first jumps to the last) — VSCode-style cyclic navigation.
+  const int count = static_cast<int>(buffer_search.matches.size());
   const int current = static_cast<int>(buffer_search.selected_index);
-  const int max_index = static_cast<int>(buffer_search.matches.size()) - 1;
   buffer_search.selected_index =
-      static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
+      static_cast<std::size_t>(((current + delta) % count + count) % count);
   RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
   if (context_.current_project_state.overlay.visible) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {

@@ -822,6 +822,71 @@ SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {
                   final_height);
 }
 
+namespace {
+constexpr float kFindWidgetMargin = 12.0f;
+constexpr float kFindWidgetPad = 8.0f;
+constexpr float kFindWidgetRowHeight = 24.0f;
+constexpr float kFindWidgetRowGap = 6.0f;
+constexpr float kFindWidgetButton = 22.0f;
+constexpr float kFindWidgetButtonGap = 4.0f;
+constexpr float kFindWidgetCountWidth = 56.0f;
+constexpr float kFindWidgetReplaceButtonWidth = 70.0f;
+constexpr float kFindWidgetReplaceAllWidth = 40.0f;
+constexpr float kFindWidgetMinWidth = 280.0f;
+constexpr float kFindWidgetMaxWidth = 460.0f;
+}  // namespace
+
+SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode) {
+  const float available =
+      std::max(kFindWidgetMinWidth, editor_area.w - 2.0f * kFindWidgetMargin);
+  const float width = std::min(kFindWidgetMaxWidth, available);
+  const float rows = replace_mode ? 2.0f : 1.0f;
+  const float height = 2.0f * kFindWidgetPad + rows * kFindWidgetRowHeight +
+                       (rows - 1.0f) * kFindWidgetRowGap;
+  const float x = editor_area.x + editor_area.w - width - kFindWidgetMargin;
+  const float y = editor_area.y + kFindWidgetMargin;
+  return MakeRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
+}
+
+FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool replace_mode) {
+  FindWidgetLayout layout;
+  layout.replace_mode = replace_mode;
+  const SDL_FRect r = ComputeFindWidgetRect(editor_area, replace_mode);
+  layout.widget = r;
+
+  const float field_x = r.x + kFindWidgetPad;
+  const float row1_y = r.y + kFindWidgetPad;
+  // Row 1, right-aligned: [count] [prev] [next] [close]; the search field fills
+  // whatever width is left on the left.
+  layout.close_button =
+      MakeRect(r.x + r.w - kFindWidgetPad - kFindWidgetButton, row1_y, kFindWidgetButton,
+               kFindWidgetRowHeight);
+  layout.next_button = MakeRect(layout.close_button.x - kFindWidgetButtonGap - kFindWidgetButton,
+                                row1_y, kFindWidgetButton, kFindWidgetRowHeight);
+  layout.prev_button = MakeRect(layout.next_button.x - kFindWidgetButtonGap - kFindWidgetButton,
+                                row1_y, kFindWidgetButton, kFindWidgetRowHeight);
+  const float count_x = layout.prev_button.x - kFindWidgetButtonGap - kFindWidgetCountWidth;
+  layout.count_rect = MakeRect(count_x, row1_y, kFindWidgetCountWidth, kFindWidgetRowHeight);
+  layout.search_field = MakeRect(field_x, row1_y,
+                                 std::max(0.0f, count_x - kFindWidgetButtonGap - field_x),
+                                 kFindWidgetRowHeight);
+
+  if (replace_mode) {
+    const float row2_y = row1_y + kFindWidgetRowHeight + kFindWidgetRowGap;
+    layout.replace_all_button =
+        MakeRect(r.x + r.w - kFindWidgetPad - kFindWidgetReplaceAllWidth, row2_y,
+                 kFindWidgetReplaceAllWidth, kFindWidgetRowHeight);
+    layout.replace_button =
+        MakeRect(layout.replace_all_button.x - kFindWidgetButtonGap - kFindWidgetReplaceButtonWidth,
+                 row2_y, kFindWidgetReplaceButtonWidth, kFindWidgetRowHeight);
+    layout.replace_field =
+        MakeRect(field_x, row2_y,
+                 std::max(0.0f, layout.replace_button.x - kFindWidgetButtonGap - field_x),
+                 kFindWidgetRowHeight);
+  }
+  return layout;
+}
+
 bool operator==(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept {
   auto rect_eq = [](const SDL_FRect& a, const SDL_FRect& b) {
     return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;

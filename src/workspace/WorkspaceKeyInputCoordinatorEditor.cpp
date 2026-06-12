@@ -403,6 +403,14 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   }
 
   if (event.key == SDLK_ESCAPE) {
+    // The find/replace widget is non-modal, so it can be open while the editor
+    // holds focus; Esc closes it first (VSCode behavior).
+    if (state_.overlay.visible &&
+        (state_.overlay.mode == OverlayMode::BufferSearch ||
+         state_.overlay.mode == OverlayMode::BufferReplace)) {
+      operations_.dismiss_overlay(true);
+      return true;
+    }
     if (operations_.try_snippet_escape_in_editor && operations_.try_snippet_escape_in_editor()) {
       return true;
     }

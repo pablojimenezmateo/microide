@@ -249,6 +249,172 @@ void TestWorkspaceShellProjectSearchSidebarClickMovesToCorrectLine() {
          "clicking the second project search result should move to its line");
 }
 
+void TestWorkspaceShellProjectSearchReusesCachedResultsOnReturn() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "notes.txt", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "initial search should find the single match");
+
+  // Switch the sidebar to another panel, then return to search. The completed
+  // results must be reused: the search must not re-run (which previously cleared
+  // results and restarted the worker every time the panel was reopened).
+  WorkspaceShellTestAccess::ShowProblemsSidebar(shell);
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) != WorkspaceShell::SidebarMode::Search,
+         "switching away should leave the search panel");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", false);
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Search,
+         "returning should show the search panel again");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchRunning(shell),
+         "returning to the search panel must not re-run the completed search");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "returning to the search panel must keep the cached results");
+  Expect(WorkspaceShellTestAccess::ProjectSearchQuery(shell) == "alpha",
+         "returning to the search panel must keep the query text");
+}
+
+void TestWorkspaceShellBufferSearchIsNonModal() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"),
+         "the find widget should accept a query");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+                 WorkspaceShell::OverlayMode::BufferSearch,
+         "the find widget should be open in buffer-search mode");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "find should locate both matches in the buffer");
+  Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell) &&
+             WorkspaceShellTestAccess::BufferSearchSurfaceFocused(shell),
+         "the freshly opened find widget should hold focus");
+
+  // Click in the editor, far from the top-right widget: the widget must stay open
+  // (non-modal) while focus moves to the editor underneath it.
+  const SDL_FRect editor_area = WorkspaceShellTestAccess::EditorAreaRect(shell);
+  Expect(SendMouseDown(shell, editor_area.x + 24.0f, editor_area.y + editor_area.h - 24.0f,
+                       SDL_BUTTON_LEFT),
+         "clicking the editor under the floating widget should be handled");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
+         "clicking the editor must NOT dismiss the non-modal find widget");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "clicking the editor should move focus to the editor");
+  Expect(WorkspaceShellTestAccess::TextInputSurfaceIsEditor(shell),
+         "with the editor focused the text-input surface belongs to the editor, not the query");
+
+  // Typing now edits the document, not the find query.
+  const std::string query_before = WorkspaceShellTestAccess::BufferSearchQuery(shell);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "Z"),
+         "typing should be accepted by the focused editor");
+  Expect(WorkspaceShellTestAccess::BufferSearchQuery(shell) == query_before,
+         "typing while the editor is focused must not change the find query");
+}
+
+void TestWorkspaceShellBufferSearchEnterCyclesMatches() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nalpha\nalpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"),
+         "the find widget should accept a query");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "the query should match all three lines");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0,
+         "the first match should be selected initially");
+
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter should advance to the next match");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 1,
+         "Enter should move to the second match");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell),
+         "Enter must keep the non-modal find widget open");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter should advance again");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 2,
+         "Enter should move to the third match");
+  // Next on the last match wraps to the first.
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter on the last match should wrap");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0,
+         "Enter past the last match should wrap to the first");
+  // Previous on the first match wraps to the last.
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_SHIFT),
+         "Shift+Enter on the first match should wrap");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 2,
+         "Shift+Enter before the first match should wrap to the last");
+}
+
+void TestWorkspaceShellBufferSearchReopenKeepsQueryAndRefocuses() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "beta gamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "beta"),
+         "the find widget should accept a query");
+
+  // Move focus to the editor (widget stays open), then re-press Ctrl+F.
+  const SDL_FRect editor_area = WorkspaceShellTestAccess::EditorAreaRect(shell);
+  Expect(SendMouseDown(shell, editor_area.x + 24.0f, editor_area.y + editor_area.h - 24.0f,
+                       SDL_BUTTON_LEFT),
+         "clicking the editor should be handled");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "clicking the editor should focus it");
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F should re-focus the already-open find widget");
+  Expect(WorkspaceShellTestAccess::FocusIsOverlay(shell),
+         "re-pressing Ctrl+F should return focus to the widget");
+  Expect(WorkspaceShellTestAccess::BufferSearchQuery(shell) == "beta",
+         "re-opening the find widget should keep the existing query");
+}
+
+void TestWorkspaceShellBufferSearchSeedsFromSelection() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "needle haystack needle\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  // Select the first word, then open find: the selection should seed the query.
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 0);
+  editor.SelectWordAtCursor();
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  Expect(WorkspaceShellTestAccess::BufferSearchQuery(shell) == "needle",
+         "opening find with a selection should seed the query from it");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "the seeded query should immediately find both occurrences");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
@@ -264,8 +430,17 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchStreamsWhileRunning);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickOpensResult",
           TestWorkspaceShellProjectSearchSidebarClickOpensResult);
+  AddTest(tests, "WorkspaceShell/ProjectSearchReusesCachedResultsOnReturn",
+          TestWorkspaceShellProjectSearchReusesCachedResultsOnReturn);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarClickMovesToCorrectLine",
           TestWorkspaceShellProjectSearchSidebarClickMovesToCorrectLine);
+  AddTest(tests, "WorkspaceShell/BufferSearchIsNonModal", TestWorkspaceShellBufferSearchIsNonModal);
+  AddTest(tests, "WorkspaceShell/BufferSearchEnterCyclesMatches",
+          TestWorkspaceShellBufferSearchEnterCyclesMatches);
+  AddTest(tests, "WorkspaceShell/BufferSearchReopenKeepsQueryAndRefocuses",
+          TestWorkspaceShellBufferSearchReopenKeepsQueryAndRefocuses);
+  AddTest(tests, "WorkspaceShell/BufferSearchSeedsFromSelection",
+          TestWorkspaceShellBufferSearchSeedsFromSelection);
 }
 
 }  // namespace microide::tests

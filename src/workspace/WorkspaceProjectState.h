@@ -90,6 +90,12 @@ struct ProjectSearchState {
   ProjectSearchEditField edit_field = ProjectSearchEditField::Query;
   editor::SingleLineEditor replace_text;
   std::vector<project::ProjectSearchResult> results;
+  // Query text whose search has fully completed and whose `results` are cached.
+  // Empty until a search finishes. Lets the search sidebar reuse results when
+  // the user leaves and returns to the panel instead of re-running every time.
+  // RefreshProjectSearch clears it (a new run invalidates the cache) and
+  // ConsumeProjectSearchUpdates sets it when the worker reports `finished`.
+  std::string searched_query;
   std::size_t selected_index = 0;
   // Latest progress counters from ProjectSearchService — "X of Y files" UX.
   // total_files is the candidate-set size pinned at search start; searched_files

@@ -53,9 +53,17 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
 
   if (state_.overlay.mode == OverlayMode::BufferSearch) {
     switch (event.key) {
+      case SDLK_ESCAPE:
+        // Non-modal find: Esc closes the floating widget and returns focus to the
+        // editor. Route through the canonical dismissal so fold-reveal cleanup and
+        // cursor-kind invalidation happen.
+        operations_.dismiss_overlay(true);
+        return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-        operations_.activate_overlay_selection();
+        // Enter cycles to the next match (Shift+Enter to the previous) and keeps
+        // the widget open, VSCode-style, instead of jumping + dismissing.
+        operations_.move_buffer_search_selection((modifiers & SDL_KMOD_SHIFT) ? -1 : 1);
         return true;
       case SDLK_UP:
         operations_.move_buffer_search_selection(-1);

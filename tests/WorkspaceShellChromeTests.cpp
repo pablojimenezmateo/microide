@@ -290,7 +290,7 @@ void TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs() {
          "close all tabs should close every clean editor tab");
 }
 
-void TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle() {
+void TestWorkspaceShellTitleBarDragRegionDoesNotFabricateMaximizeToggle() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1920, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
@@ -301,11 +301,14 @@ void TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle() {
          "empty title-bar hit testing should hand borderless dragging back to the window manager");
   Expect(shell.WindowDragRegionContains(empty_x, 10.0f),
          "empty title-bar space should still be eligible for window dragging");
+  // Double-click-to-maximize was removed: on a draggable region SDL consumes the
+  // button events to drive a compositor move, so the app never sees the clicks.
+  // The Maximize chrome button is the supported affordance; a title-bar click
+  // must not fabricate a maximize toggle.
   Expect(SendMouseDown(shell, empty_x, 10.0f, SDL_BUTTON_LEFT, 2),
-         "double-clicking an empty title-bar region should be handled");
-  Expect(shell.ConsumeWindowAction() ==
-             WorkspaceShell::WindowAction::ToggleMaximize,
-         "double-clicking the title bar should request the same maximize toggle as the chrome button");
+         "a title-bar background click should be consumed");
+  Expect(shell.ConsumeWindowAction() == WorkspaceShell::WindowAction::None,
+         "clicking the title bar must not request a maximize toggle");
 }
 
 void TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest() {
@@ -2145,8 +2148,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
 #endif
   AddTest(tests, "WorkspaceShell/FileCloseAllTabsClosesOpenEditorTabs",
           TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs);
-  AddTest(tests, "WorkspaceShell/DoubleClickTitleBarRequestsMaximizeToggle",
-          TestWorkspaceShellDoubleClickTitleBarRequestsMaximizeToggle);
+  AddTest(tests, "WorkspaceShell/TitleBarDragRegionDoesNotFabricateMaximizeToggle",
+          TestWorkspaceShellTitleBarDragRegionDoesNotFabricateMaximizeToggle);
   AddTest(tests, "WorkspaceShell/FullscreenStateDisablesResizableFrameHitTest",
           TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest);
   AddTest(tests, "WorkspaceShell/WindowPresentationStateUpdatesChromeAndSize",

@@ -363,6 +363,18 @@
   static std::size_t BufferSearchMatchCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.buffer_search.matches.size();
   }
+  static std::size_t BufferSearchSelectedIndex(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.buffer_search.selected_index;
+  }
+  static bool BufferSearchSurfaceFocused(const WorkspaceShell& shell) {
+    return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::BufferSearch;
+  }
+  static SDL_FRect FindWidgetRect(WorkspaceShell& shell, bool replace_mode) {
+    return ComputeFindWidgetRect(CurrentLayout(shell).editor_surface, replace_mode);
+  }
+  static SDL_FRect EditorAreaRect(WorkspaceShell& shell) {
+    return CurrentLayout(shell).editor_area;
+  }
   static bool OverlayVisible(const WorkspaceShell& shell) { return shell.context_.current_project_state.overlay.visible; }
   static bool OverlayModeIsFileFinder(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.mode == WorkspaceShell::OverlayMode::FileFinder;

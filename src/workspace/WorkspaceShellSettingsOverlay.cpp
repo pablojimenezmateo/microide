@@ -12,6 +12,12 @@
 #include "workspace/WorkspaceSettingsRegistry.h"
 #include "util/Parse.h"
 
+// Set by CMake (target_compile_definitions) for the app target. The test target
+// compiles these sources without it, so fall back to a development marker.
+#ifndef MICROIDE_VERSION
+#define MICROIDE_VERSION "dev"
+#endif
+
 namespace microide::workspace {
 
 namespace {
@@ -73,6 +79,7 @@ std::vector<HelpAboutRow> BuildHelpRows(const WorkspaceStartupOptions& startup_o
                                         const std::vector<ResolvedKeybinding>& keybindings) {
   std::vector<HelpAboutRow> rows;
   rows.push_back(HelpAboutRow{.label = "microide", .detail = "Desktop IDE"});
+  rows.push_back(HelpAboutRow{.label = "Version", .detail = MICROIDE_VERSION});
   AppendStartupHelpRows(rows, startup_options);
   rows.push_back(HelpAboutRow{.label = "Git sidebar (focused)",
                               .detail = "Enter default view | d diff | s stage | u unstage | "

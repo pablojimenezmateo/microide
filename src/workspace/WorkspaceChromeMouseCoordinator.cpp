@@ -89,19 +89,26 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
                                          const WorkspaceLayout& layout,
                                          int vertical_ticks,
                                          int horizontal_ticks) {
-  (void)event;
-  (void)layout;
-
   if (!state_.overlay.visible) {
     return false;
   }
 
   const int overlay_ticks = vertical_ticks != 0 ? vertical_ticks : horizontal_ticks;
+  // The find/replace widget is non-modal: only consume the wheel when the pointer
+  // is over it (to cycle matches); otherwise let the editor scroll normally.
+  if (state_.overlay.mode == OverlayMode::BufferSearch ||
+      state_.overlay.mode == OverlayMode::BufferReplace) {
+    const FindWidgetLayout fw = ComputeFindWidgetLayout(
+        layout.editor_area, state_.overlay.mode == OverlayMode::BufferReplace);
+    if (!Contains(fw.widget, event.wheel.mouse_x, event.wheel.mouse_y)) {
+      return false;
+    }
+    operations_.move_buffer_search_selection(-overlay_ticks);
+    operations_.request_overlay_redraw();
+    return true;
+  }
   if (state_.overlay.mode == OverlayMode::CommitPicker) {
     operations_.move_compare_picker_selection(-overlay_ticks);
-  } else if (state_.overlay.mode == OverlayMode::BufferSearch ||
-             state_.overlay.mode == OverlayMode::BufferReplace) {
-    operations_.move_buffer_search_selection(-overlay_ticks);
   } else if (state_.overlay.mode == OverlayMode::ProjectSearch) {
     operations_.move_project_search_selection(-overlay_ticks);
   } else if (state_.overlay.mode == OverlayMode::Completion ||
@@ -264,22 +271,13 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       return true;
     }
   }
-  const Uint64 now_ms = SDL_GetTicks();
-  const float click_x = static_cast<float>(event.button.x);
-  const float click_y = static_cast<float>(event.button.y);
-  const bool own_double_click =
-      interaction_state_.last_title_bar_click_ms > 0 &&
-      now_ms - interaction_state_.last_title_bar_click_ms < 400 &&
-      std::abs(click_x - interaction_state_.last_title_bar_click_x) < 5.0f &&
-      std::abs(click_y - interaction_state_.last_title_bar_click_y) < 5.0f;
-  if (event.button.clicks == 2 || own_double_click) {
-    interaction_state_.last_title_bar_click_ms = 0;
-    operations_.set_pending_window_action(WorkspaceShell::WindowAction::ToggleMaximize);
-  } else {
-    interaction_state_.last_title_bar_click_ms = now_ms;
-    interaction_state_.last_title_bar_click_x = click_x;
-    interaction_state_.last_title_bar_click_y = click_y;
-  }
+  // A press on the empty (draggable) part of the title bar never reaches here:
+  // that region is reported as SDL_HITTEST_DRAGGABLE, and SDL consumes the
+  // button event to drive a compositor-side window move (see SDL's
+  // pointer_handle_button_common / ProcessHitTest). There is therefore no
+  // app-visible click to time, so double-click-to-maximize cannot be detected
+  // this way on Wayland (or X11) with our custom client-side title bar. Use the
+  // window-control Maximize button instead. Just consume any stray click.
   operations_.request_chrome_redraw();
   return true;
 }
@@ -426,6 +424,42 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
                                                      const WorkspaceLayout& layout) {
   if (!state_.overlay.visible || event.button.button != SDL_BUTTON_LEFT) {
     return false;
+  }
+
+  // The find / replace widget is non-modal: it has no match list, and a click
+  // outside its rect must NOT dismiss it — it falls through so the editor takes
+  // the click (and focus) while the widget keeps floating. Field clicks were
+  // already consumed earlier by HandleSingleLineInputMouseDown, so here we only
+  // see button clicks, empty-widget clicks, and outside clicks.
+  if (state_.overlay.mode == OverlayMode::BufferSearch ||
+      state_.overlay.mode == OverlayMode::BufferReplace) {
+    const bool replace_mode = state_.overlay.mode == OverlayMode::BufferReplace;
+    const FindWidgetLayout fw = ComputeFindWidgetLayout(layout.editor_surface, replace_mode);
+    if (!Contains(fw.widget, event.button.x, event.button.y)) {
+      // Repaint the widget (it will render unfocused once the editor takes focus)
+      // and let the press fall through to the editor mouse path.
+      operations_.request_overlay_redraw();
+      return false;
+    }
+    if (Contains(fw.close_button, event.button.x, event.button.y)) {
+      operations_.dismiss_overlay(true);
+      return true;
+    }
+    if (Contains(fw.prev_button, event.button.x, event.button.y)) {
+      operations_.move_buffer_search_selection(-1);
+    } else if (Contains(fw.next_button, event.button.x, event.button.y)) {
+      operations_.move_buffer_search_selection(1);
+    } else if (replace_mode &&
+               Contains(fw.replace_button, event.button.x, event.button.y)) {
+      operations_.replace_current_buffer_search_match();
+    } else if (replace_mode &&
+               Contains(fw.replace_all_button, event.button.x, event.button.y)) {
+      operations_.replace_all_buffer_search_matches();
+    }
+    // Any in-widget click (button or chrome) focuses the widget.
+    state_.surface.focus = FocusTarget::Overlay;
+    operations_.request_overlay_redraw();
+    return true;
   }
 
   const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
@@ -585,6 +619,8 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
           .close_submenu = [this]() { MakeMenuCoordinator().CloseSubmenu(); },
           .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
+          .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
+          .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },
           .move_file_finder_selection = [this](int delta) { MoveFileFinderSelection(delta); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },

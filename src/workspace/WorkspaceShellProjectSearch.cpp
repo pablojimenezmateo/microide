@@ -21,6 +21,9 @@ constexpr std::size_t kMaxProjectSearchResults = 200;
 
 void WorkspaceShell::RefreshProjectSearch() {
   StopProjectSearch();
+  // Starting (or clearing) a search invalidates the cached-results marker; it is
+  // re-armed in ConsumeProjectSearchUpdates once this run reports `finished`.
+  context_.current_project_state.overlay.workflow.project_search.searched_query.clear();
   context_.current_project_state.overlay.workflow.project_search.results.clear();
   context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
   context_.current_project_state.overlay.workflow.project_search.truncated = false;
@@ -87,6 +90,10 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   }
   if (update.finished) {
     context_.current_project_state.overlay.workflow.project_search.running = false;
+    // Arm the results cache so returning to the search sidebar with this same
+    // query reuses the results instead of re-running the search.
+    context_.current_project_state.overlay.workflow.project_search.searched_query =
+        context_.current_project_state.overlay.workflow.project_search.query.text();
   }
   if (context_.current_project_state.overlay.visible && context_.current_project_state.overlay.mode == OverlayMode::ProjectSearch) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {

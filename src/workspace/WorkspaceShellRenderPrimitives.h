@@ -323,6 +323,26 @@ inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   SDL_RenderLine(renderer, cx + 3.0f, cy - 3.0f, cx - 3.0f, cy + 3.0f);
 }
 
+inline void DrawArrowGlyph(SDL_Renderer* renderer,
+                           const SDL_FRect& rect,
+                           bool up,
+                           SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  if (up) {
+    SDL_RenderLine(renderer, cx - 3.0f, cy + 2.0f, cx, cy - 2.0f);
+    SDL_RenderLine(renderer, cx + 3.0f, cy + 2.0f, cx, cy - 2.0f);
+  } else {
+    SDL_RenderLine(renderer, cx - 3.0f, cy - 2.0f, cx, cy + 2.0f);
+    SDL_RenderLine(renderer, cx + 3.0f, cy - 2.0f, cx, cy + 2.0f);
+  }
+}
+
 inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;

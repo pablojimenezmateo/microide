@@ -51,9 +51,6 @@ struct InteractionState {
   std::vector<std::size_t> drag_editor_split_path;
   std::size_t drag_editor_split_divider_index = 0;
   TabDragState tab_drag;
-  Uint64 last_title_bar_click_ms = 0;
-  float last_title_bar_click_x = 0.0f;
-  float last_title_bar_click_y = 0.0f;
   // Sub-tick wheel accumulators. High-resolution trackpads and touchpads emit
   // many SDL_EVENT_MOUSE_WHEEL events with fractional `y`/`x` deltas. The
   // legacy path used `event.wheel.integer_y` which rounds those to zero, so

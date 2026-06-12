@@ -35,6 +35,11 @@ void WorkspaceShell::InvalidateCursorKindFingerprint() {
   ++cursor_hit_generation_;
 }
 
+void WorkspaceShell::ForceCursorReassert() {
+  force_cursor_reassert_ = true;
+  InvalidateCursorKindFingerprint();
+}
+
 void WorkspaceShell::MarkLayoutDirty() {
   layout_dirty_ = true;
   InvalidateCursorKindFingerprint();

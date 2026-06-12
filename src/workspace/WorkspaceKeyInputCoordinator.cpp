@@ -233,8 +233,14 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
     return false;
   }
 
+  // The find/replace widget is non-modal: while it floats and the editor holds
+  // focus, editor shortcuts (Ctrl+F to re-focus the widget, Undo, Copy, …) must
+  // still fire. Only a genuinely modal overlay blocks them.
+  const bool modal_overlay_visible = state_.overlay.visible &&
+                                     state_.overlay.mode != OverlayMode::BufferSearch &&
+                                     state_.overlay.mode != OverlayMode::BufferReplace;
   if (editor_shortcut &&
-      (state_.panel.command_mode || state_.overlay.visible ||
+      (state_.panel.command_mode || modal_overlay_visible ||
        state_.surface.focus != FocusTarget::Editor)) {
     return false;
   }
@@ -329,6 +335,15 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
       // Settings / Help Escape is handled by the modal trap in HandleKeyDown before
       // this navigation path runs, so it no longer needs a branch here.
       if (state_.overlay.visible) {
+        // The find/replace widget is non-modal and owns its own Esc semantics
+        // (close + return focus to the editor it floats over, preserving any folds
+        // the search auto-revealed). Let it fall through to its mode handler — when
+        // the editor (not the widget) holds focus, the editor's Esc handler closes
+        // it instead.
+        if (state_.overlay.mode == OverlayMode::BufferSearch ||
+            state_.overlay.mode == OverlayMode::BufferReplace) {
+          break;
+        }
         operations_.dismiss_overlay(false);
         return true;
       }

@@ -17,6 +17,14 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     return;
   }
 
+  // Local file search/replace renders as a compact, non-modal floating widget
+  // (no backdrop, no match list) — handled entirely by RenderFindWidget.
+  if (overlay_vm.mode == OverlayMode::BufferSearch ||
+      overlay_vm.mode == OverlayMode::BufferReplace) {
+    RenderFindWidget(renderer, layout, overlay_vm);
+    return;
+  }
+
   const TextInputSurface current_surface = overlay_vm.current_surface;
   const bool overlay_needs_visual =
       current_surface == TextInputSurface::BufferSearch ||
@@ -80,116 +88,8 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                         selected ? theme_.row_highlight : theme_.surface_raised,
                         TruncateLabel(label, row.w - 12.0f));
   };
-  const editor::TextViewport* active_viewport = ActiveEditorViewport();
 
-  if (overlay_vm.mode == OverlayMode::BufferSearch) {
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
-               theme_.text_primary, theme_.chrome_background, "Search Buffer");
-    const std::string bs_fallback =
-        "> " + overlay_state.workflow.buffer_search.query.text();
-    DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
-                       current_surface == TextInputSurface::BufferSearch);
-    DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 44.0f),
-        std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
-        theme_.surface_background,
-        overlay_display_text(TextInputSurface::BufferSearch, bs_fallback));
-    const std::string summary =
-        overlay_state.workflow.buffer_search.matches.empty()
-            ? FormatEmptyState("matches")
-            : BuildSelectionSummary(
-                  overlay_state.workflow.buffer_search.selected_index,
-                  overlay_state.workflow.buffer_search.matches.size(),
-                  " matches");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
-               theme_.text_muted, theme_.overlay_background, summary);
-    for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = overlay_vm.scroll_row + row;
-      if (item_index >= static_cast<int>(overlay_state.workflow.buffer_search.matches.size())) {
-        break;
-      }
-      const auto& match =
-          overlay_state.workflow.buffer_search.matches[static_cast<std::size_t>(item_index)];
-      std::string label;
-      label.reserve(64);
-      label += "Ln ";
-      AppendUnsigned(label, match.start.line + 1);
-      label += ", Col ";
-      AppendUnsigned(label, match.start.column + 1);
-      label += "  ";
-      label += TruncateLabel(active_viewport != nullptr
-                                 ? active_viewport->lines()[match.start.line]
-                                 : std::string_view{},
-                             overlay.w - 150.0f);
-      draw_overlay_row(row,
-                       static_cast<int>(overlay_state.workflow.buffer_search.selected_index) -
-                           overlay_vm.scroll_row,
-                       label);
-    }
-  } else if (overlay_vm.mode == OverlayMode::BufferReplace) {
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
-               theme_.text_primary, theme_.chrome_background, "Replace Buffer");
-    const std::string br_search_fallback =
-        "find: " + overlay_state.workflow.buffer_search.query.text();
-    const std::string br_replace_fallback =
-        "replace: " + overlay_state.workflow.buffer_search.replace_text.text();
-    DrawTextFieldFrame(
-        renderer, theme_, overlay_field_rect(overlay.y + 44.0f),
-        current_surface == TextInputSurface::BufferReplaceSearch);
-    DrawTextFieldFrame(
-        renderer, theme_, overlay_field_rect(overlay.y + 62.0f),
-        current_surface == TextInputSurface::BufferReplaceReplace);
-    DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 44.0f),
-        std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
-        overlay_state.buffer_search_field == BufferSearchField::Search
-            ? theme_.text_primary
-            : theme_.text_secondary,
-        theme_.surface_background,
-        overlay_display_text(TextInputSurface::BufferReplaceSearch, br_search_fallback));
-    DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 62.0f),
-        std::max(1.0f, overlay.w - kOverlayInset * 2.0f),
-        overlay_state.buffer_search_field == BufferSearchField::Replace
-            ? theme_.text_primary
-            : theme_.text_secondary,
-        theme_.surface_background,
-        overlay_display_text(TextInputSurface::BufferReplaceReplace, br_replace_fallback));
-    const std::string summary =
-        overlay_state.workflow.buffer_search.matches.empty()
-            ? FormatEmptyState("matches")
-            : BuildSelectionSummary(
-                  overlay_state.workflow.buffer_search.selected_index,
-                  overlay_state.workflow.buffer_search.matches.size(),
-                  " matches");
-    const std::string replace_hints = JoinHintSegments({"Enter replace", "Ctrl+Enter replace all"});
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 82.0f,
-               theme_.text_muted, theme_.overlay_background,
-               TruncateLabel(summary + "  |  " + replace_hints, overlay.w - 36.0f));
-    for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
-      const int item_index = overlay_vm.scroll_row + row;
-      if (item_index >= static_cast<int>(overlay_state.workflow.buffer_search.matches.size())) {
-        break;
-      }
-      const auto& match =
-          overlay_state.workflow.buffer_search.matches[static_cast<std::size_t>(item_index)];
-      std::string label;
-      label.reserve(64);
-      label += "Ln ";
-      AppendUnsigned(label, match.start.line + 1);
-      label += ", Col ";
-      AppendUnsigned(label, match.start.column + 1);
-      label += "  ";
-      label += TruncateLabel(active_viewport != nullptr
-                                 ? active_viewport->lines()[match.start.line]
-                                 : std::string_view{},
-                             overlay.w - 150.0f);
-      draw_overlay_row(row,
-                       static_cast<int>(overlay_state.workflow.buffer_search.selected_index) -
-                           overlay_vm.scroll_row,
-                       label);
-    }
-  } else if (overlay_vm.mode == OverlayMode::ProjectSearch) {
+  if (overlay_vm.mode == OverlayMode::ProjectSearch) {
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
                theme_.text_primary, theme_.chrome_background, "Project Search");
     const std::string ps_fallback =
@@ -346,6 +246,96 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                           overlay_list_layout.visible_units,
                           static_cast<float>(overlay_vm.scroll_row),
                          context_.interaction_state.drag_target == DragTarget::OverlayScrollbar);
+}
+
+void WorkspaceShell::RenderFindWidget(SDL_Renderer* renderer,
+                                      const WorkspaceLayout& layout,
+                                      const OverlaySurfaceViewModel& overlay_vm) {
+  const OverlayState& overlay_state = *overlay_vm.state;
+  const auto& buffer_search = overlay_state.workflow.buffer_search;
+  const bool replace_mode = overlay_vm.mode == OverlayMode::BufferReplace;
+  const FindWidgetLayout fw = ComputeFindWidgetLayout(layout.editor_surface, replace_mode);
+  const TextInputSurface current_surface = overlay_vm.current_surface;
+
+  // Floating card only — no backdrop, so the editor underneath stays visible and
+  // editable while the widget floats above it.
+  render::DrawCardFrame(renderer, theme_, fw.widget, render::CardStyle::Overlay);
+
+  // A focused field shows the scrolled/truncated caret-relative tail; an
+  // unfocused field (editor has focus) shows the query from the start.
+  const auto visual = BuildActiveTextInputVisual(layout, std::nullopt);
+  const auto field_text = [&](TextInputSurface surface,
+                              std::string_view raw) -> std::string_view {
+    if (visual.has_value() && visual->surface == surface && !visual->displayed_text.empty()) {
+      return visual->displayed_text;
+    }
+    return raw;
+  };
+  const auto draw_field = [&](const SDL_FRect& field, bool focused, std::string_view text) {
+    DrawTextFieldFrame(renderer, theme_, field, focused);
+    const float text_y = field.y + std::floor((field.h - text_renderer_.LineHeight()) * 0.5f);
+    DrawSingleLineTextTail(renderer, field.x + 6.0f, text_y, std::max(1.0f, field.w - 12.0f),
+                           focused ? theme_.text_primary : theme_.text_secondary,
+                           theme_.surface_background, text);
+  };
+
+  enum class Icon { Prev, Next, Close };
+  const auto icon_button = [&](const SDL_FRect& rect, Icon icon, bool enabled) {
+    const ButtonTone tone = icon == Icon::Close ? ButtonTone::Destructive : ButtonTone::Neutral;
+    const ButtonColors colors =
+        ResolveButtonColors(theme_, tone, ButtonVisualState{.enabled = enabled});
+    FillRect(renderer, rect, colors.fill);
+    OutlineRect(renderer, rect, colors.border);
+    switch (icon) {
+      case Icon::Prev:
+        DrawArrowGlyph(renderer, rect, /*up=*/true, colors.text);
+        break;
+      case Icon::Next:
+        DrawArrowGlyph(renderer, rect, /*up=*/false, colors.text);
+        break;
+      case Icon::Close:
+        DrawCloseGlyph(renderer, rect, colors.text);
+        break;
+    }
+  };
+
+  const bool search_focused = current_surface == TextInputSurface::BufferSearch ||
+                              current_surface == TextInputSurface::BufferReplaceSearch;
+  draw_field(fw.search_field, search_focused,
+             field_text(replace_mode ? TextInputSurface::BufferReplaceSearch
+                                      : TextInputSurface::BufferSearch,
+                        buffer_search.query.text()));
+
+  const bool has_matches = !buffer_search.matches.empty();
+  const bool has_query = !buffer_search.query.text().empty();
+  std::string count;
+  if (has_query) {
+    if (has_matches) {
+      AppendUnsigned(count, buffer_search.selected_index + 1);
+      count += "/";
+      AppendUnsigned(count, buffer_search.matches.size());
+    } else {
+      count = "0/0";
+    }
+  }
+  if (!count.empty()) {
+    DrawCenteredTextOn(text_renderer_, renderer, fw.count_rect,
+                       has_matches ? theme_.text_secondary : theme_.text_muted,
+                       theme_.overlay_background, count);
+  }
+
+  icon_button(fw.prev_button, Icon::Prev, has_matches);
+  icon_button(fw.next_button, Icon::Next, has_matches);
+  icon_button(fw.close_button, Icon::Close, true);
+
+  if (replace_mode) {
+    draw_field(fw.replace_field, current_surface == TextInputSurface::BufferReplaceReplace,
+               field_text(TextInputSurface::BufferReplaceReplace, buffer_search.replace_text.text()));
+    DrawButtonCentered(text_renderer_, renderer, theme_, fw.replace_button, "Replace",
+                       ButtonTone::Neutral, ButtonVisualState{.enabled = has_matches});
+    DrawButtonCentered(text_renderer_, renderer, theme_, fw.replace_all_button, "All",
+                       ButtonTone::Neutral, ButtonVisualState{.enabled = has_query});
+  }
 }
 
 }  // namespace microide::workspace

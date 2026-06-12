@@ -240,10 +240,40 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .selection_bytes = vm.selection_bytes,
       };
     }
-    case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
-    case TextInputSurface::BufferReplaceReplace:
+    case TextInputSurface::BufferReplaceReplace: {
+      // Compact find/replace widget: the caret and selection must align with the
+      // shared field geometry (same rects the renderer/hit-test use), and the
+      // fields carry no textual prefix decorators in any focus state.
+      if (!overlay_vm.visible) {
+        return std::nullopt;
+      }
+      const bool replace_mode = surface == TextInputSurface::BufferReplaceSearch ||
+                                surface == TextInputSurface::BufferReplaceReplace;
+      const bool replace_field = surface == TextInputSurface::BufferReplaceReplace;
+      const FindWidgetLayout fw = ComputeFindWidgetLayout(layout.editor_surface, replace_mode);
+      const SDL_FRect field = replace_field ? fw.replace_field : fw.search_field;
+      const float text_x = field.x + 6.0f;
+      const float text_y = field.y + std::floor((field.h - line_height) * 0.5f);
+      const float available_width = std::max(1.0f, field.w - 12.0f);
+      auto vm = ComputeSingleLineViewMetrics(
+          replace_field ? *text_input_vm.buffer_search_replace
+                        : *text_input_vm.buffer_search_query,
+          "", available_width);
+      return TextInputVisual{
+          .surface = surface,
+          .area = MakeRect(text_x, text_y, available_width, line_height),
+          .text_x = text_x,
+          .text_y = text_y,
+          .cursor_x = text_x + vm.cursor_x,
+          .foreground = theme_.text_primary,
+          .background = theme_.surface_background,
+          .displayed_text = std::move(vm.displayed_text),
+          .selection_bytes = vm.selection_bytes,
+      };
+    }
+    case TextInputSurface::FileFinder:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker: {
       if (!overlay_vm.visible) {
@@ -261,19 +291,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
       const float available_width = std::max(1.0f, overlay.w - inset * 2.0f);
       SingleLineViewMetrics vm;
       switch (surface) {
-        case TextInputSurface::BufferSearch:
-          vm = ComputeSingleLineViewMetrics(*text_input_vm.buffer_search_query, "> ",
-                                            available_width);
-          break;
-        case TextInputSurface::BufferReplaceSearch:
-          vm = ComputeSingleLineViewMetrics(*text_input_vm.buffer_search_query, "find: ",
-                                            available_width);
-          break;
-        case TextInputSurface::BufferReplaceReplace:
-          text_y = overlay_field_text_y(overlay.y + 62.0f);
-          vm = ComputeSingleLineViewMetrics(*text_input_vm.buffer_search_replace, "replace: ",
-                                            available_width);
-          break;
         case TextInputSurface::ProjectSearchOverlay:
           vm = ComputeSingleLineViewMetrics(*text_input_vm.project_search_query, "> ",
                                             available_width);

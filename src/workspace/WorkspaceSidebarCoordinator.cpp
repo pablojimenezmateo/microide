@@ -86,16 +86,26 @@ void SidebarCoordinator::ShowTree(const std::filesystem::path& root) {
 }
 
 void SidebarCoordinator::ShowSearch(std::string query, bool temporary) {
-  if (!query.empty() || state_.overlay.workflow.project_search.query.text().empty()) {
-    state_.overlay.workflow.project_search.query.SetText(std::move(query));
+  ProjectSearchState& search = state_.overlay.workflow.project_search;
+  if (!query.empty() || search.query.text().empty()) {
+    search.query.SetText(std::move(query));
   }
-  state_.overlay.workflow.project_search.edit_buffer.SetText(
-      state_.overlay.workflow.project_search.query.text());
-  state_.overlay.workflow.project_search.editing =
-      state_.overlay.workflow.project_search.query.text().empty();
-  state_.overlay.workflow.project_search.edit_field = ProjectSearchEditField::Query;
-  state_.overlay.workflow.project_search.selected_index = 0;
-  operations_.refresh_project_search();
+  search.edit_buffer.SetText(search.query.text());
+  search.editing = search.query.text().empty();
+  search.edit_field = ProjectSearchEditField::Query;
+
+  // Reuse cached results when returning to the search panel with a query whose
+  // search already completed. Previously every activation cleared the results
+  // and re-ran the search even though the query text was preserved, which
+  // wasted work and discarded the user's selection. A changed query, a toggled
+  // option, or a committed edit re-runs through RefreshProjectSearch (which
+  // clears searched_query), so the cache stays correct.
+  const bool results_cached =
+      !search.query.text().empty() && search.searched_query == search.query.text();
+  if (!results_cached) {
+    search.selected_index = 0;
+    operations_.refresh_project_search();
+  }
   ShowMode(SidebarMode::Search, temporary);
 }
 

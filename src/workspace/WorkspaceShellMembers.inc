@@ -132,6 +132,14 @@
   bool WindowDragRegionContains(float x, float y) const;
   bool MenuSurfaceCapturingMouse() const;
   WindowAction ConsumeWindowAction();
+  // Force the next UpdateMouseCursor to re-apply our cursor to the platform even
+  // if the cursor kind is unchanged. SDL's Wayland backend sets resize/draggable
+  // cursors from our hit test (and re-asserts a stale one on pointer-enter)
+  // without updating SDL's current-cursor bookkeeping, so the displayed cursor
+  // can drift out of sync with what we intend. Call this on the events where SDL
+  // may have changed the cursor behind our back: pointer-enter, focus-gain, and
+  // after a window resize.
+  void ForceCursorReassert();
 
   struct VisiblePopupMenuItem {
     std::size_t index = 0;
@@ -953,6 +961,8 @@
   bool OpenGitConflictMerge(const std::filesystem::path& path);
   void OpenBufferSearch();
   void OpenBufferReplace();
+  void OpenBufferSearchSurface(OverlayMode mode);
+  std::string SingleLineEditorSelectionSeed() const;
   void OpenProjectSearch();
   FocusTarget PrimarySurfaceFocusTarget() const;
   void ShowOverlay(OverlayMode mode);
@@ -1125,6 +1135,8 @@
   void RenderOverlaySurface(SDL_Renderer* renderer,
                             const WorkspaceLayout& layout,
                             const OverlaySurfaceViewModel& overlay_vm);
+  void RenderFindWidget(SDL_Renderer* renderer, const WorkspaceLayout& layout,
+                        const OverlaySurfaceViewModel& overlay_vm);
   void RenderBottomPanelSurface(SDL_Renderer* renderer,
                                 const WorkspaceLayout& layout,
                                 std::size_t terminal_line_count);
@@ -1226,6 +1238,7 @@
   void EnsureOutputChannelTabOpen(std::string_view channel_id);
   void CloseOutputChannelTab(std::string_view channel_id);
   SDL_FRect ComputeOverlayRect(const SDL_FRect& editor_area) const;
+  SDL_FRect FindWidgetAnchorRect(const SDL_FRect& fallback) const;  // editor_surface anchor
   SDL_FRect ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,
                                             const SDL_FRect& caret_anchor) const;
   std::string BreadcrumbLabel() const;
@@ -1441,6 +1454,10 @@
   RenderInvalidation pending_render_invalidation_;
   int post_render_full_redraws_remaining_ = 0;
   CursorKind cursor_kind_ = CursorKind::Default;
+  // When set, the next UpdateMouseCursor bypasses both the fingerprint and the
+  // unchanged-kind short-circuits and forces the platform cursor to be re-shown.
+  // See ForceCursorReassert.
+  bool force_cursor_reassert_ = false;
   // Cached fingerprint of state CursorKindForPosition depends on, so the per-frame
   // UpdateMouseCursor call can short-circuit when nothing relevant changed.
   struct CursorKindFingerprint {
