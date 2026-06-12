@@ -238,20 +238,18 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   }
 
   // A scrollbar in the right margin signals (and reflects) that more rows exist
-  // below/above the visible window. Drawn for both modes once content overflows.
+  // below/above the visible window. Drawn for both modes once content overflows,
+  // routed through the shared geometry + tone so it matches every other scrollbar in
+  // the shell rather than reading as a thinner, differently-inset widget.
   if (max_scroll > 0) {
     const float track_h = std::max(1.0f, list_bottom - list_top);
-    const float bar_w = 6.0f;
-    const float bar_x = vm.rect.x + vm.rect.w - bar_w - 3.0f;
-    const SDL_FRect track = MakeRect(bar_x, list_top, bar_w, track_h);
-    const float thumb_h = std::clamp(
-        track_h * static_cast<float>(visible_rows) / static_cast<float>(std::max(1, total_rows)),
-        24.0f, track_h);
-    const float position = std::clamp(
-        static_cast<float>(effective_scroll) / static_cast<float>(max_scroll), 0.0f, 1.0f);
-    const SDL_FRect thumb =
-        MakeRect(bar_x, list_top + (track_h - thumb_h) * position, bar_w, thumb_h);
-    DrawScrollbar(renderer, theme_, track, thumb, false);
+    const SDL_FRect list_area = MakeRect(vm.rect.x, list_top, vm.rect.w, track_h);
+    if (const auto geometry = MakeVerticalScrollbarGeometry(
+            list_area, static_cast<float>(total_rows), static_cast<float>(visible_rows),
+            static_cast<float>(effective_scroll), false);
+        geometry.has_value()) {
+      DrawScrollbar(renderer, theme_, geometry->track, geometry->thumb, false);
+    }
   }
 }
 

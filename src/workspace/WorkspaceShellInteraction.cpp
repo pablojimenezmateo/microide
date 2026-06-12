@@ -80,6 +80,15 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
                : TextInputSurface::SidebarSearchReplace;
   }
 
+  if (context_.current_project_state.surface.focus == FocusTarget::Sidebar &&
+      context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git &&
+      context_.current_project_state.sidebar.git.commit_workflow.open) {
+    return context_.current_project_state.sidebar.git.commit_workflow.focus_field ==
+                   CommitWorkflowFocusField::Subject
+               ? TextInputSurface::CommitSubject
+               : TextInputSurface::CommitBody;
+  }
+
   if (context_.current_project_state.surface.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
     return TextInputSurface::Editor;
   }

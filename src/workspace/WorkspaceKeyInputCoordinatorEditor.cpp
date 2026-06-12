@@ -394,6 +394,110 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
   }
 }
 
+bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event,
+                                                  SDL_Keymod modifiers) {
+  // The commit body is a self-contained multi-line field living in the git sidebar. It
+  // deliberately does NOT route through ActiveEditableViewport()/HandleDefaultEditorKeyDown
+  // (which are tab-bound and feed LSP/folding/blame) — it edits its own viewport directly,
+  // mirroring the compare/merge per-viewport handlers.
+  editor::TextViewport& viewport = state_.sidebar.git.commit_workflow.body;
+  const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
+  const auto after_edit = [&]() {
+    operations_.reset_caret_blink();
+    operations_.request_sidebar_redraw();
+    return true;
+  };
+
+  if ((modifiers & SDL_KMOD_CTRL) != 0) {
+    switch (event.key) {
+      case SDLK_A:
+        viewport.SelectAll();
+        return after_edit();
+      case SDLK_C: {
+        const std::string selection = viewport.SelectedText();
+        if (!selection.empty() && operations_.commit_body_write_clipboard_text) {
+          operations_.commit_body_write_clipboard_text(selection);
+        }
+        return true;
+      }
+      case SDLK_X: {
+        const std::string selection = viewport.SelectedText();
+        if (selection.empty()) {
+          return true;
+        }
+        if (operations_.commit_body_write_clipboard_text) {
+          operations_.commit_body_write_clipboard_text(selection);
+        }
+        viewport.DeleteSelectedText();
+        return after_edit();
+      }
+      case SDLK_V: {
+        if (operations_.commit_body_read_clipboard_text) {
+          if (const auto pasted = operations_.commit_body_read_clipboard_text();
+              pasted.has_value() && !pasted->empty()) {
+            viewport.InsertText(*pasted);
+            return after_edit();
+          }
+        }
+        return true;
+      }
+      default:
+        break;
+    }
+  }
+
+  switch (event.key) {
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+      viewport.InsertNewline();
+      return after_edit();
+    case SDLK_BACKSPACE:
+      viewport.Backspace();
+      return after_edit();
+    case SDLK_DELETE:
+      viewport.DeleteForward();
+      return after_edit();
+    case SDLK_UP:
+      viewport.MoveCursorVertical(-1, extend_selection);
+      return after_edit();
+    case SDLK_DOWN:
+      viewport.MoveCursorVertical(1, extend_selection);
+      return after_edit();
+    case SDLK_LEFT:
+      viewport.MoveCursorHorizontal(-1, extend_selection);
+      return after_edit();
+    case SDLK_RIGHT:
+      viewport.MoveCursorHorizontal(1, extend_selection);
+      return after_edit();
+    case SDLK_PAGEUP:
+      viewport.Page(-1);
+      return after_edit();
+    case SDLK_PAGEDOWN:
+      viewport.Page(1);
+      return after_edit();
+    case SDLK_HOME:
+      if (modifiers & SDL_KMOD_CTRL) {
+        viewport.MoveCursorTo(0, 0, extend_selection);
+      } else {
+        viewport.MoveCursorLineStart(extend_selection);
+      }
+      return after_edit();
+    case SDLK_END:
+      if (modifiers & SDL_KMOD_CTRL) {
+        const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
+        viewport.MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(), extend_selection);
+      } else {
+        viewport.MoveCursorLineEnd(extend_selection);
+      }
+      return after_edit();
+    default:
+      // Plain character keys are inserted by the SDL_TextInput event; consume the keydown
+      // so it cannot fall through to a git-sidebar action.
+      return operations_.keycode_to_ascii != nullptr &&
+             operations_.keycode_to_ascii(event.key, modifiers) != '\0';
+  }
+}
+
 bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
                                                      SDL_Keymod modifiers) {
   editor::TextViewport* viewport = operations_.active_editor_viewport();

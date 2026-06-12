@@ -409,7 +409,11 @@ void WorkspaceShell::RenderSingleLineTextSelection(
     case TextInputSurface::CommitPicker:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
       break;
+    case TextInputSurface::CommitBody:
+      // The body is a multi-line field rendered by the sidebar panel, not the shared
+      // single-line caret/selection machinery.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -462,7 +466,11 @@ void WorkspaceShell::RenderActiveTextInputCaret(
     case TextInputSurface::CommitPicker:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
       break;
+    case TextInputSurface::CommitBody:
+      // The body is a multi-line field rendered by the sidebar panel, not the shared
+      // single-line caret/selection machinery.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

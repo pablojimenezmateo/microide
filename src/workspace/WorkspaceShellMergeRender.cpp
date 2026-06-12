@@ -16,6 +16,7 @@
 #include "workspace/CompareMergeRender.h"
 #include "workspace/MergeResolverContext.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 
 namespace microide::workspace {
 
@@ -169,13 +170,13 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
     DrawRect(renderer, marker_lane, theme_.border);
     DrawMergeScrollbarMarkers(renderer, theme_, marker_inner_lane, line_count, inputs,
                               *merge_tab);
-    DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
-    DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
+    detail::DrawScrollbarTrack(renderer, theme_, scroll_layout.vertical_scrollbar->track);
+    detail::DrawScrollbarThumb(renderer, theme_, scroll_layout.vertical_scrollbar->thumb,
                        context_.interaction_state.drag_target == DragTarget::CompareVerticalScrollbar);
   }
 
   if (scroll_layout.horizontal_scrollbar.has_value()) {
-    DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
+    detail::DrawScrollbar(renderer, theme_, scroll_layout.horizontal_scrollbar->track,
                   scroll_layout.horizontal_scrollbar->thumb,
                   context_.interaction_state.drag_target == DragTarget::CompareHorizontalScrollbar);
   }
@@ -216,22 +217,23 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   const std::size_t selected_hunk =
       merge_tab->conflicts.empty() ? 0 : std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1);
 
+  // Route merge buttons through the shared button primitive so they read identically to
+  // every other button in the shell. `primary` (the actionable/emphasized flag) maps to
+  // the enabled state — which de-emphasizes prev/next/unresolved into the shared disabled
+  // tone when there are no conflicts — and `selected` maps to the active state for the
+  // base toggle and the currently-previewed conflict choice.
   const auto draw_button = [&](const SDL_FRect& button_rect,
                                std::string_view label,
                                bool selected,
                                bool primary = false) {
-    const SDL_Color background =
-        selected ? theme_.chrome_active : primary ? theme_.surface_raised : theme_.surface_background;
-    DrawFilledRect(renderer, button_rect, background);
-    DrawRect(renderer, button_rect, selected ? theme_.accent : theme_.border);
     const std::string display = TruncateLabel(label, button_rect.w - 18.0f);
-    const float text_x =
-        button_rect.x + std::max(0.0f, (button_rect.w - text_renderer_.MeasureWidth(display)) * 0.5f);
-    const float text_y =
-        button_rect.y + std::max(0.0f, (button_rect.h - text_renderer_.LineHeight()) * 0.5f);
-    text_renderer_.DrawStringOn(renderer, text_x, text_y,
-                                selected ? theme_.text_primary : theme_.text_secondary,
-                                background, display);
+    detail::DrawButtonCentered(text_renderer_, renderer, theme_, button_rect, display,
+                               detail::ButtonTone::Neutral,
+                               detail::ButtonVisualState{
+                                   .enabled = primary,
+                                   .hovered = false,
+                                   .active = selected,
+                               });
   };
   const auto conflict_at_source_line =
       [&](std::size_t line, bool incoming) -> const MergeTrackedConflict* {

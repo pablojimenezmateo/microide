@@ -563,6 +563,76 @@ void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
          "stage-failure feedback should name the affected file");
 }
 
+void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "seed commit", "seed body");
+  WriteFile(source, "int main() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "fixture should expose a single modified entry");
+
+  Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "commit workflow should open");
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  Expect(WorkspaceShellTestAccess::CurrentTextInputSurface(shell) ==
+             microide::workspace::TextInputSurface::CommitSubject,
+         "the commit subject should be the active text-input surface");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "Fix the bug"),
+         "typing should be accepted by the commit subject");
+  Expect(WorkspaceShellTestAccess::CommitSubjectText(shell) == "Fix the bug",
+         "typed text should populate the commit subject");
+  WorkspaceShellTestAccess::RenderFrame(shell);
+
+  // While a commit field owns the keyboard, git-action keys are gated: 's' (Stage) and the
+  // Down navigation key must be ignored by the git sidebar (returning unhandled) instead of
+  // staging the file or moving the git selection.
+  Expect(!WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_S, SDL_KMOD_NONE),
+         "'s' must not trigger Stage while the commit subject is focused");
+  Expect(!WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
+         "Down must not move the git selection while the commit subject is focused");
+
+  // Tab moves focus to the body; typing then lands in the body.
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should be consumed by the commit panel");
+  Expect(WorkspaceShellTestAccess::CommitWorkflow(shell).focus_field ==
+             microide::workspace::CommitWorkflowFocusField::Body,
+         "Tab should move focus to the commit body");
+  Expect(WorkspaceShellTestAccess::CurrentTextInputSurface(shell) ==
+             microide::workspace::TextInputSurface::CommitBody,
+         "the commit body should be the active text-input surface after Tab");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "More detail"),
+         "typing should be accepted by the commit body");
+  Expect(WorkspaceShellTestAccess::CommitBodyText(shell).find("More detail") != std::string::npos,
+         "typed text should populate the commit body");
+
+  // Exercise the multi-line body render path: add several wrapped lines (so the body
+  // scrolls), select across them, and render to confirm the panel paints without faulting.
+  for (int i = 0; i < 8; ++i) {
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+           "Enter should insert a newline in the commit body");
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "more body text"),
+           "typing should be accepted by the commit body");
+  }
+  WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_HOME, SDL_KMOD_CTRL);
+  WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_END, SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+
+  // Shift+Tab returns to the subject.
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
+         "Shift+Tab should be consumed by the commit panel");
+  Expect(WorkspaceShellTestAccess::CommitWorkflow(shell).focus_field ==
+             microide::workspace::CommitWorkflowFocusField::Subject,
+         "Shift+Tab should move focus back to the commit subject");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -588,6 +658,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarKeyboardStageShortcut);
   AddTest(tests, "WorkspaceShell/GitStageFailureSurfacesFeedback",
           TestWorkspaceShellGitStageFailureSurfacesFeedback);
+  AddTest(tests, "WorkspaceShell/CommitWorkflowFieldsAreKeyboardEditable",
+          TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable);
 }
 
 }  // namespace microide::tests

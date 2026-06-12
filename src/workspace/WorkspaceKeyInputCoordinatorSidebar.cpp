@@ -101,16 +101,43 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
 
   if (sidebar_mode == SidebarMode::Git) {
     if (state_.sidebar.git.commit_workflow.open) {
-      if (event.key == SDLK_ESCAPE) {
-        if (operations_.close_commit_workflow != nullptr) {
-          operations_.close_commit_workflow();
-        }
-        return true;
-      }
+      auto& workflow = state_.sidebar.git.commit_workflow;
+      // Ctrl+Enter commits from either field; plain Enter is a newline in the body and a
+      // no-op in the single-line subject.
       if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
           (modifiers & SDL_KMOD_CTRL) != 0 && operations_.request_commit_workflow_commit != nullptr) {
         return operations_.request_commit_workflow_commit();
       }
+      switch (event.key) {
+        case SDLK_ESCAPE:
+          if (operations_.close_commit_workflow != nullptr) {
+            operations_.close_commit_workflow();
+          }
+          return true;
+        case SDLK_TAB:
+          // Tab moves between subject and body (Shift+Tab always returns to the subject),
+          // keeping the panel keyboard-navigable like every other multi-field surface.
+          if (operations_.set_commit_workflow_focus_field != nullptr) {
+            const CommitWorkflowFocusField next =
+                (modifiers & SDL_KMOD_SHIFT) != 0
+                    ? CommitWorkflowFocusField::Subject
+                    : (workflow.focus_field == CommitWorkflowFocusField::Subject
+                           ? CommitWorkflowFocusField::Body
+                           : CommitWorkflowFocusField::Subject);
+            operations_.set_commit_workflow_focus_field(next);
+          }
+          return true;
+        default:
+          break;
+      }
+      if (workflow.focus_field == CommitWorkflowFocusField::Body) {
+        return HandleCommitBodyKeyDown(event, modifiers);
+      }
+      // The subject is a single-line field: hand navigation/editing keys to the shared
+      // single-line handler. Plain character keys return false here and are inserted by the
+      // separate SDL_TextInput event; returning early keeps git-action keys (s/c/d/...) from
+      // firing while the workflow owns the keyboard.
+      return operations_.text_input_handle_single_line_key_down(event, modifiers);
     }
     const std::size_t selected_index = state_.sidebar.git.selected_index;
     switch (event.key) {

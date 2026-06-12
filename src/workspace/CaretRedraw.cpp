@@ -61,6 +61,8 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::CommitPicker:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
+    case TextInputSurface::CommitBody:
       return true;
     case TextInputSurface::None:
     case TextInputSurface::Editor:
@@ -100,6 +102,17 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCaretDirtyRect() const {
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value()) {
     return std::nullopt;
+  }
+
+  if (const auto surface = CurrentTextInputSurface();
+      surface == TextInputSurface::CommitSubject || surface == TextInputSurface::CommitBody) {
+    // The commit fields are rendered by the sidebar panel, which caches the focused field's
+    // caret rect each frame; reuse it so blink-only wake-ups repaint a tight region.
+    const SDL_FRect caret = context_.current_project_state.sidebar.git.commit_workflow.caret_rect;
+    return (caret.w > 0.0f && caret.h > 0.0f)
+               ? std::optional<SDL_FRect>(MakeRect(caret.x, caret.y, std::max(1.0f, caret.w),
+                                                   caret.h))
+               : std::nullopt;
   }
 
   if (const auto surface = CurrentTextInputSurface();

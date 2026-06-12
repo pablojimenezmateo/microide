@@ -54,6 +54,84 @@ std::string CompactCommitSummaryLabel(std::string_view commit_summary) {
   return std::string(prefix);
 }
 
+// Renders the multi-line commit body edit area (visible lines, selection, caret) and clamps
+// the body viewport's scroll so the caret row stays on screen. Writes the focused field's
+// caret rect to `caret_rect_out` so the caret-redraw path can target a tight dirty region.
+void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& theme,
+                           SDL_Renderer* renderer, editor::TextViewport& body,
+                           const SDL_FRect& field, int visible_rows, bool focused,
+                           bool caret_visible, SDL_FRect* caret_rect_out) {
+  const float line_height = tr.LineHeight();
+  const float char_width = std::max(1.0f, tr.CharWidth());
+  const float text_x = field.x + 6.0f;
+  const float top_y = field.y + 3.0f;
+  const float avail_w = std::max(1.0f, field.w - 12.0f);
+
+  const std::size_t rows = static_cast<std::size_t>(std::max(1, visible_rows));
+  body.SetViewportSize(rows, static_cast<std::size_t>(std::max(1.0f, avail_w / char_width)));
+  std::size_t scroll = body.scroll_line();
+  const std::size_t caret_line_now = body.cursor_line();
+  if (caret_line_now < scroll) {
+    scroll = caret_line_now;
+  } else if (caret_line_now >= scroll + rows) {
+    scroll = caret_line_now - rows + 1;
+  }
+  body.SetScrollLine(scroll);
+
+  const std::vector<std::string>& lines = body.lines();
+  scroll = body.scroll_line();
+  const std::optional<editor::SelectionRange> selection = body.selection_range();
+  const std::size_t caret_line = body.cursor_line();
+  const std::size_t caret_col = body.cursor_column();
+
+  if (lines.size() == 1 && lines[0].empty() && !focused) {
+    DrawTextOn(tr, renderer, text_x, top_y, theme.text_muted, theme.surface_background, "<optional>");
+    return;
+  }
+
+  for (int row = 0; row < visible_rows; ++row) {
+    const std::size_t line_index = scroll + static_cast<std::size_t>(row);
+    if (line_index >= lines.size()) {
+      break;
+    }
+    const std::string& text = lines[line_index];
+    const std::string_view text_view = text;
+    const float row_y = top_y + static_cast<float>(row) * line_height;
+
+    if (selection.has_value() && line_index >= selection->start.line &&
+        line_index <= selection->end.line) {
+      const std::size_t sel_start_col =
+          line_index == selection->start.line ? selection->start.column : 0;
+      const std::size_t sel_end_col =
+          line_index == selection->end.line ? std::min(selection->end.column, text.size())
+                                            : text.size();
+      if (sel_start_col < sel_end_col && sel_start_col <= text.size()) {
+        const float sx = text_x + tr.MeasureWidth(text_view.substr(0, sel_start_col));
+        const float sw = tr.MeasureWidth(text_view.substr(sel_start_col, sel_end_col - sel_start_col));
+        if (sw > 0.0f) {
+          FillRect(renderer, MakeRect(sx, row_y - 1.0f, sw, line_height), theme.selection_fill);
+        }
+      }
+    }
+
+    DrawTextOn(tr, renderer, text_x, row_y, theme.text_primary, theme.surface_background,
+               tr.TruncateToWidth(text, avail_w));
+
+    if (focused && line_index == caret_line) {
+      const std::size_t clamped_col = std::min(caret_col, text.size());
+      const float caret_x = std::min(text_x + tr.MeasureWidth(text_view.substr(0, clamped_col)),
+                                     field.x + field.w - 2.0f);
+      const SDL_FRect caret = MakeRect(caret_x, row_y - 1.0f, 1.0f, line_height);
+      if (caret_rect_out != nullptr) {
+        *caret_rect_out = caret;
+      }
+      if (caret_visible) {
+        FillRect(renderer, caret, theme.text_primary);
+      }
+    }
+  }
+}
+
 }  // namespace
 
 void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout) {
@@ -354,28 +432,77 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     }
     if (project_state.sidebar.git.commit_workflow.open) {
       auto& workflow = project_state.sidebar.git.commit_workflow;
+      const float field_x = layout.sidebar.x + kSidebarInset;
+      const float field_w = layout.sidebar.w - kSidebarInset * 2.0f;
+      const float line_height = text_renderer_.LineHeight();
+      const bool panel_focused =
+          project_state.surface.focus == FocusTarget::Sidebar && sidebar_mode == SidebarMode::Git;
+      const bool subject_focused =
+          panel_focused && workflow.focus_field == CommitWorkflowFocusField::Subject;
+      const bool body_focused =
+          panel_focused && workflow.focus_field == CommitWorkflowFocusField::Body;
+      const bool caret_on = CaretVisibleNow();
+      workflow.caret_rect = SDL_FRect{};
       float panel_y = summary_y + 4.0f;
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
-                 theme_.text_primary, theme_.surface_background,
-                 TruncateLabel(workflow.staged_summary_line, layout.sidebar.w - kSidebarInset * 2.0f));
+      DrawTextOn(text_renderer_, renderer, field_x, panel_y, theme_.text_primary,
+                 theme_.surface_background,
+                 TruncateLabel(workflow.staged_summary_line, field_w));
       panel_y += 14.0f;
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
-                 theme_.text_muted, theme_.surface_background, "Subject:");
-      panel_y += 14.0f;
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset + 4.0f, panel_y,
-                 theme_.text_primary, theme_.row_highlight,
-                 TruncateLabel(workflow.subject.text().empty() ? "<required>" : workflow.subject.text(),
-                               layout.sidebar.w - kSidebarInset * 2.0f - 4.0f));
+
+      // --- Subject: a framed single-line input. ComputeSingleLineViewMetrics gives the
+      //     in-field horizontal scroll, caret x, and visible selection slice. ---
+      DrawTextOn(text_renderer_, renderer, field_x, panel_y, theme_.text_muted,
+                 theme_.surface_background, "Subject:");
       panel_y += 16.0f;
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
-                 theme_.text_muted, theme_.surface_background, "Body:");
-      panel_y += 14.0f;
-      const std::string body_preview = CommitWorkflowBodyText(workflow.body);
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset + 4.0f, panel_y,
-                 theme_.text_secondary, theme_.surface_background,
-                 TruncateLabel(body_preview.empty() ? "<optional>" : body_preview,
-                               layout.sidebar.w - kSidebarInset * 2.0f - 4.0f));
+      const SDL_FRect subject_field =
+          MakeRect(field_x, panel_y, field_w, line_height + 6.0f);
+      workflow.subject_field_rect = subject_field;
+      DrawTextFieldFrame(renderer, theme_, subject_field, subject_focused);
+      const float subject_text_x = subject_field.x + 6.0f;
+      const float subject_text_y = subject_field.y + std::floor((subject_field.h - line_height) * 0.5f);
+      const float subject_avail = std::max(1.0f, subject_field.w - 12.0f);
+      if (workflow.subject.text().empty() && !subject_focused) {
+        DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_muted,
+                   theme_.surface_background, "<required>");
+      } else {
+        const auto subject_vm = ComputeSingleLineViewMetrics(workflow.subject, "", subject_avail);
+        if (subject_vm.selection_bytes.has_value()) {
+          const auto [sb, se] = *subject_vm.selection_bytes;
+          const std::string_view shown = subject_vm.displayed_text;
+          if (se <= shown.size() && sb < se) {
+            const float sx = subject_text_x + text_renderer_.MeasureWidth(shown.substr(0, sb));
+            const float sw = text_renderer_.MeasureWidth(shown.substr(sb, se - sb));
+            DrawFilledRect(renderer, MakeRect(sx, subject_field.y + 2.0f, sw, subject_field.h - 4.0f),
+                           theme_.selection_fill);
+          }
+        }
+        DrawTextOn(text_renderer_, renderer, subject_text_x, subject_text_y, theme_.text_primary,
+                   theme_.surface_background, subject_vm.displayed_text);
+        if (subject_focused) {
+          const SDL_FRect caret = MakeRect(subject_text_x + subject_vm.cursor_x,
+                                           subject_field.y + 2.0f, 1.0f, subject_field.h - 4.0f);
+          workflow.caret_rect = caret;
+          if (caret_on) {
+            DrawFilledRect(renderer, caret, theme_.text_primary);
+          }
+        }
+      }
+      panel_y += subject_field.h + 6.0f;
+
+      // --- Body: a framed multi-line edit area with its own caret/selection + scroll. ---
+      DrawTextOn(text_renderer_, renderer, field_x, panel_y, theme_.text_muted,
+                 theme_.surface_background, "Body:");
       panel_y += 16.0f;
+      const int body_rows = 4;
+      const SDL_FRect body_field =
+          MakeRect(field_x, panel_y, field_w, line_height * static_cast<float>(body_rows) + 6.0f);
+      workflow.body_field_rect = body_field;
+      workflow.body_visible_rows = body_rows;
+      DrawTextFieldFrame(renderer, theme_, body_field, body_focused);
+      RenderCommitBodyField(text_renderer_, theme_, renderer, workflow.body, body_field, body_rows,
+                            body_focused, caret_on, &workflow.caret_rect);
+      panel_y += body_field.h + 6.0f;
+
       for (const project::CommitPreCheck& check : workflow.checks) {
         const SDL_Color color = check.severity == project::CommitPreCheckSeverity::Blocking
                                     ? theme_.text_primary

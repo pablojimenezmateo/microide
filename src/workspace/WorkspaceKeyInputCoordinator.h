@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "workspace/CommitWorkflowState.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceLayout.h"
@@ -95,6 +96,11 @@ class KeyInputCoordinator {
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<void()> close_commit_workflow;
     std::function<bool()> request_commit_workflow_commit;
+    // Move keyboard focus between the commit subject and body fields, then refresh the
+    // commit pre-checks/draft (this is the coarse refresh point, not every keystroke).
+    std::function<void(CommitWorkflowFocusField)> set_commit_workflow_focus_field;
+    std::function<bool(std::string_view)> commit_body_write_clipboard_text;
+    std::function<std::optional<std::string>()> commit_body_read_clipboard_text;
     std::function<void(int)> move_problems_sidebar_selection;
     std::function<void()> reveal_selected_problems_sidebar_line;
     std::function<bool()> open_selected_problem_sidebar_item;
@@ -178,6 +184,7 @@ class KeyInputCoordinator {
   bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleOverlayKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleSidebarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  bool HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
