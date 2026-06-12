@@ -303,6 +303,10 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
       operations_.reveal_selected_tree_sidebar_line();
       if (opened.has_value()) {
         operations_.open_file(*opened);
+        // Opening a file from the tree shows it in the editor but should not
+        // steal keyboard focus: keep focus on the sidebar so tree navigation
+        // shortcuts (arrows, Enter, R, D) stay live after the click.
+        state_.surface.focus = FocusTarget::Sidebar;
       }
     }
     return true;

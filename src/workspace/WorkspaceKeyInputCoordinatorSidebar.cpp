@@ -334,6 +334,9 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       operations_.reveal_selected_tree_sidebar_line();
       if (opened.has_value()) {
         operations_.open_file(*opened);
+        // Keep keyboard focus on the tree after opening so arrow/Enter
+        // navigation continues without a manual refocus.
+        state_.surface.focus = FocusTarget::Sidebar;
       }
       return true;
     }
