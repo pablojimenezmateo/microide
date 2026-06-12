@@ -109,6 +109,7 @@ struct StatusBarSegmentViewModel {
   std::string_view text;
   std::string_view tooltip;
   bool clickable = false;
+  StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
 };
 
 struct StatusBarViewModel {

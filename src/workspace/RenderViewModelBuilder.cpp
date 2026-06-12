@@ -653,6 +653,7 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
         .text = seg.text,
         .tooltip = seg.tooltip,
         .clickable = seg.clickable,
+        .tone = seg.tone,
     });
   };
   // Spec ordering (workspace-status-bar §"Segment list at first slice"):

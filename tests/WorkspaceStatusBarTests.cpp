@@ -16,6 +16,7 @@ using microide::workspace::LayoutMode;
 using microide::workspace::LayoutModeInputs;
 using microide::workspace::RenderViewModelBuilder;
 using microide::workspace::StatusBarSegmentId;
+using microide::workspace::StatusBarSegmentTone;
 using microide::workspace::StatusBarSegmentValue;
 using microide::workspace::StatusBarService;
 using microide::workspace::WorkspaceContext;
@@ -121,6 +122,33 @@ void TestStatusBarCompactDropOrder() {
          "compact mode must keep LineColumn visible per spec");
 }
 
+void TestStatusBarPropagatesSemanticTone() {
+  // The render path colors diagnostic segments from `tone`, not from the
+  // display text, so the builder must carry tone through verbatim. This guards
+  // against regressing to text-scanning (e.g. `text.find("0")`), which
+  // mis-classifies counts like "10 errors, 0 warnings".
+  WorkspaceContext context;
+  StatusBarService service;
+  service.SetSegment(StatusBarSegmentId::Problems,
+                     StatusBarSegmentValue{
+                         .text = "10 errors, 0 warnings",
+                         .tooltip = {},
+                         .clickable = true,
+                         .visible = true,
+                         .tone = StatusBarSegmentTone::Error,
+                     });
+
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+  const auto vm = RenderViewModelBuilder(context).BuildStatusBar(layout, service);
+
+  Expect(vm.right_segments.size() == 1, "only the Problems segment should be present");
+  Expect(vm.right_segments[0].id == StatusBarSegmentId::Problems,
+         "the single segment should be Problems");
+  Expect(vm.right_segments[0].tone == StatusBarSegmentTone::Error,
+         "builder must propagate the semantic tone so the render path never re-parses text");
+}
+
 }  // namespace
 
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
@@ -130,6 +158,8 @@ void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
           TestStatusBarNoOpsWhenNotReserved);
   AddTest(tests, "WorkspaceStatusBar/CompactDropOrder",
           TestStatusBarCompactDropOrder);
+  AddTest(tests, "WorkspaceStatusBar/PropagatesSemanticTone",
+          TestStatusBarPropagatesSemanticTone);
 }
 
 }  // namespace microide::tests

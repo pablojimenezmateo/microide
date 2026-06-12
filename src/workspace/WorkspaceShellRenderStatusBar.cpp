@@ -19,7 +19,32 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
 
   const float padding = 12.0f;
   const float gap = 14.0f;
-  const auto segment_color = [&](const StatusBarSegmentViewModel& seg) {
+  const auto tone_color = [&](StatusBarSegmentTone tone, SDL_Color fallback) -> SDL_Color {
+    switch (tone) {
+      case StatusBarSegmentTone::Error:
+        return theme_.diagnostic_error;
+      case StatusBarSegmentTone::Warning:
+        return theme_.diagnostic_warning;
+      case StatusBarSegmentTone::Info:
+        return theme_.diagnostic_info;
+      case StatusBarSegmentTone::Default:
+      default:
+        return fallback;
+    }
+  };
+  const auto segment_color = [&](const StatusBarSegmentViewModel& seg) -> SDL_Color {
+    // Diagnostic segments are colored by semantic tone (set in
+    // StatusBarModelService) so the count/state -- not the display text -- picks
+    // the color. Problems keeps a severity color even though it is clickable;
+    // the clickable hover affordance is applied separately in draw_segment.
+    switch (seg.id) {
+      case StatusBarSegmentId::Problems:
+        return tone_color(seg.tone, theme_.diagnostic_warning);
+      case StatusBarSegmentId::Lsp:
+        return tone_color(seg.tone, theme_.chrome_text_secondary);
+      default:
+        break;
+    }
     if (seg.clickable) {
       return theme_.accent;
     }
@@ -28,16 +53,6 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
       case StatusBarSegmentId::Branch:
       case StatusBarSegmentId::LineColumn:
         return theme_.chrome_text;
-      case StatusBarSegmentId::Problems:
-        return seg.text.find("0") != std::string_view::npos ? theme_.chrome_text_secondary
-                                                             : theme_.diagnostic_warning;
-      case StatusBarSegmentId::Lsp:
-        return seg.text.find("Ready") != std::string_view::npos ? theme_.chrome_text_secondary
-                                                                 : theme_.diagnostic_info;
-      case StatusBarSegmentId::Language:
-      case StatusBarSegmentId::Indent:
-      case StatusBarSegmentId::Encoding:
-      case StatusBarSegmentId::LayoutMode:
       default:
         return theme_.chrome_text_secondary;
     }

@@ -204,6 +204,8 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       problems.tooltip = "Open Problems";
       problems.visible = true;
       problems.clickable = true;
+      problems.tone =
+          errors > 0 ? StatusBarSegmentTone::Error : StatusBarSegmentTone::Warning;
     } else {
       editor_segments_cache_.errors = 0;
       editor_segments_cache_.warnings = 0;
@@ -218,6 +220,12 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     std::string lsp_tooltip;
     operations.active_lsp_status_strings(false, lsp_text, lsp_tooltip);
     if (!lsp_text.empty()) {
+      // "Ready" is the calm/idle sentinel; any other state (indexing,
+      // restarting, errored) is surfaced with an info tone. Derive it here so
+      // the render path colors from semantic state instead of re-scanning the
+      // label text.
+      lsp.tone = lsp_text.find("Ready") != std::string::npos ? StatusBarSegmentTone::Default
+                                                             : StatusBarSegmentTone::Info;
       lsp.text = std::move(lsp_text);
       lsp.tooltip = std::move(lsp_tooltip);
       lsp.visible = true;

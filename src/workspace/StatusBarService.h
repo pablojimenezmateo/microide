@@ -20,11 +20,22 @@ enum class StatusBarSegmentId : std::uint8_t {
   Count,
 };
 
+// Semantic severity/state of a segment, derived where the value is known
+// (StatusBarModelService) so the render path never re-parses display text to
+// pick a color.
+enum class StatusBarSegmentTone : std::uint8_t {
+  Default = 0,
+  Info,
+  Warning,
+  Error,
+};
+
 struct StatusBarSegmentValue {
   std::string text;
   std::string tooltip;
   bool clickable = false;
   bool visible = false;
+  StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
 };
 
 class StatusBarService {
