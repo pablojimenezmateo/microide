@@ -67,8 +67,14 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style, bool selected) {
     SDL_Color foreground = style.foreground.value_or(theme_.text_primary);
     SDL_Color background = style.background.value_or(theme_.surface_background);
-    if (style.inverse) {
+    if (style.inverse()) {
       std::swap(foreground, background);
+    }
+    if (style.dim()) {
+      foreground = render::BlendColors(foreground, background, 0.40f);
+    }
+    if (style.hidden()) {
+      foreground = background;
     }
     if (selected) {
       foreground = theme_.text_primary;
@@ -123,22 +129,39 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     terminal_foreground_runs_scratch_.clear();
     terminal_foreground_runs_blob_.clear();
 
+    const auto is_wide_lead = [&](std::size_t column) {
+      return column + 1 < line.cells.size() && line.cells[column + 1].style.wide_trailing();
+    };
+
     for (std::size_t column = 0; column < visible_columns;) {
       const auto& cell = line.cells[column];
+      // Trailing spacer of a double-width glyph: painted by its lead cell, so
+      // never emit a glyph (a blank here would erase the right half).
+      if (cell.style.wide_trailing()) {
+        ++column;
+        continue;
+      }
       const bool selected = TerminalCellSelected(row_index, column);
       const SDL_Color foreground = resolve_terminal_colors(cell.style, selected).first;
 
       std::size_t run_end = column + 1;
-      while (run_end < visible_columns) {
-        const auto& next_cell = line.cells[run_end];
-        const bool next_selected = TerminalCellSelected(row_index, run_end);
-        const SDL_Color next_foreground =
-            resolve_terminal_colors(next_cell.style, next_selected).first;
-        if (next_foreground.r != foreground.r || next_foreground.g != foreground.g ||
-            next_foreground.b != foreground.b || next_foreground.a != foreground.a) {
-          break;
+      // A wide glyph is positioned on its own grid column, so it terminates the
+      // run; the following spacer column is skipped on the next iteration.
+      if (!is_wide_lead(column)) {
+        while (run_end < visible_columns) {
+          const auto& next_cell = line.cells[run_end];
+          if (next_cell.style.wide_trailing() || is_wide_lead(run_end)) {
+            break;
+          }
+          const bool next_selected = TerminalCellSelected(row_index, run_end);
+          const SDL_Color next_foreground =
+              resolve_terminal_colors(next_cell.style, next_selected).first;
+          if (next_foreground.r != foreground.r || next_foreground.g != foreground.g ||
+              next_foreground.b != foreground.b || next_foreground.a != foreground.a) {
+            break;
+          }
+          ++run_end;
         }
-        ++run_end;
       }
 
       const std::size_t blob_start = terminal_foreground_runs_blob_.size();
@@ -173,6 +196,59 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       const std::string_view run_text(terminal_foreground_runs_blob_.data() + run.blob_offset,
                                       run.blob_length);
       text_renderer_.DrawString(renderer, run_x, y, run.foreground, run_text);
+    }
+
+    // Underline / double-underline / strikethrough decorations. Run-length
+    // coalesced over (foreground color, decoration bits) so a styled span emits
+    // a single filled rect rather than one per cell. Wide trailing spacers carry
+    // the lead cell's style, so the decoration spans both columns of a wide glyph.
+    constexpr std::uint16_t kDecorationMask = terminal::cell_attr::kUnderline |
+                                              terminal::cell_attr::kDoubleUnderline |
+                                              terminal::cell_attr::kStrikethrough;
+    const float line_height = text_renderer_.LineHeight();
+    const float thickness = std::max(1.0f, std::round(line_height / 14.0f));
+    for (std::size_t column = 0; column < visible_columns;) {
+      const auto& style = line.cells[column].style;
+      const std::uint16_t decoration = static_cast<std::uint16_t>(style.attrs & kDecorationMask);
+      if (decoration == 0) {
+        ++column;
+        continue;
+      }
+      const bool selected = TerminalCellSelected(row_index, column);
+      const SDL_Color color = resolve_terminal_colors(style, selected).first;
+      std::size_t run_end = column + 1;
+      while (run_end < visible_columns) {
+        const auto& next_style = line.cells[run_end].style;
+        if (static_cast<std::uint16_t>(next_style.attrs & kDecorationMask) != decoration) {
+          break;
+        }
+        const SDL_Color next_color =
+            resolve_terminal_colors(next_style, TerminalCellSelected(row_index, run_end)).first;
+        if (next_color.r != color.r || next_color.g != color.g || next_color.b != color.b ||
+            next_color.a != color.a) {
+          break;
+        }
+        ++run_end;
+      }
+
+      const float run_x = x + static_cast<float>(column) * char_width;
+      const float run_w = static_cast<float>(run_end - column) * char_width;
+      if (decoration & terminal::cell_attr::kStrikethrough) {
+        DrawFilledRect(renderer, MakeRect(run_x, y + std::round(line_height * 0.45f), run_w, thickness),
+                       color);
+      }
+      if (decoration & terminal::cell_attr::kUnderline) {
+        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness - 1.0f, run_w, thickness),
+                       color);
+      }
+      if (decoration & terminal::cell_attr::kDoubleUnderline) {
+        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness * 3.0f - 1.0f, run_w,
+                                          thickness),
+                       color);
+        DrawFilledRect(renderer, MakeRect(run_x, y + line_height - thickness - 1.0f, run_w, thickness),
+                       color);
+      }
+      column = run_end;
     }
   };
 

@@ -191,6 +191,8 @@ class PosixTerminalBackend final : public TerminalBackend {
         _exit(127);
       }
       setenv("TERM", "xterm-256color", 1);
+      // Advertise 24-bit color so applications enable truecolor output.
+      setenv("COLORTERM", "truecolor", 1);
       if (request.command.empty()) {
         execl(shell_path.c_str(), shell_name.c_str(), "-i", nullptr);
       } else {

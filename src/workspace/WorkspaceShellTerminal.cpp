@@ -34,7 +34,13 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
   std::string text;
   text.reserve(clamped_end - clamped_start);
   for (std::size_t column = clamped_start; column < clamped_end; ++column) {
-    const auto display_text = line.cells[column].DisplayText();
+    const auto& cell = line.cells[column];
+    // The trailing spacer of a double-width glyph holds no text of its own;
+    // skipping it keeps copied/selected text free of phantom spaces.
+    if (cell.style.wide_trailing()) {
+      continue;
+    }
+    const auto display_text = cell.DisplayText();
     if (!display_text.empty()) {
       text.append(display_text);
       continue;

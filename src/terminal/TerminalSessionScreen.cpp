@@ -164,23 +164,64 @@ void TerminalSession::PutCharacterLocked(char character) {
 }
 
 void TerminalSession::PutGlyphLocked(std::string_view glyph) {
-  if (columns_ > 0 && cursor_column_ >= columns_) {
+  // Fast path: a single ASCII byte is always one column, so skip UTF-8 decoding
+  // and the width tables entirely for the overwhelmingly common case.
+  const bool ascii = glyph.size() == 1 && static_cast<unsigned char>(glyph.front()) < 0x80;
+  const int width = ascii ? 1 : util::CodepointDisplayWidth(util::DecodeUtf8Codepoint(glyph));
+
+  // Zero-width (combining marks, variation selectors, joiners): attach to the
+  // previously written cell instead of consuming a column, so accents and emoji
+  // modifiers stay with their base glyph. Dropped if it would overflow the
+  // 4-byte inline cell or there is no base cell yet.
+  if (width == 0) {
+    if (cursor_column_ == 0) {
+      return;
+    }
+    EnsureCursorLineExistsLocked();
+    auto& line = lines_[cursor_row_];
+    const std::size_t base = cursor_column_ - 1;
+    if (base < line.cells.size()) {
+      TerminalCell& cell = line.cells[base];
+      if (cell.length > 0 && cell.length + glyph.size() <= cell.bytes.size()) {
+        for (char byte : glyph) {
+          cell.bytes[cell.length++] = byte;
+        }
+      }
+    }
+    return;
+  }
+
+  const std::size_t advance = width == 2 ? 2 : 1;
+
+  // Ensure the whole glyph fits on the current row before writing. A
+  // double-width glyph cannot straddle the right margin.
+  if (columns_ > 0 && cursor_column_ + advance > columns_) {
     if (auto_wrap_mode_) {
       AdvanceCursorRowLocked(true);
     } else {
       cursor_column_ = columns_ - 1;
+      // Without autowrap a wide glyph degrades to a single overwrite in place.
+      EnsureCursorLineExistsLocked();
+      auto& line = lines_[cursor_row_];
+      ResizeLineLocked(line, cursor_column_ + 1);
+      line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
+      return;
     }
   }
 
   EnsureCursorLineExistsLocked();
   auto& line = lines_[cursor_row_];
-  ResizeLineLocked(line, cursor_column_);
-  if (cursor_column_ == line.cells.size()) {
-    line.cells.push_back(MakeUtf8TerminalCell(glyph, current_style_));
-  } else {
-    line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
+  ResizeLineLocked(line, cursor_column_ + advance);
+  line.cells[cursor_column_] = MakeUtf8TerminalCell(glyph, current_style_);
+  if (advance == 2) {
+    // Trailing spacer carries the lead's style (so background fills span both
+    // columns) plus the wide-trailing marker so the renderer skips painting it.
+    TerminalCell spacer;
+    spacer.style = current_style_;
+    spacer.style.set(cell_attr::kWideTrailing, true);
+    line.cells[cursor_column_ + 1] = spacer;
   }
-  ++cursor_column_;
+  cursor_column_ += advance;
 }
 
 void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {
@@ -246,6 +287,42 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
 void TerminalSession::ResetScrollRegionLocked() {
   scroll_region_top_ = 0;
   scroll_region_bottom_ = rows_ > 0 ? rows_ - 1 : 0;
+}
+
+void TerminalSession::ResetTabStopsLocked() {
+  const std::size_t width = std::max<std::size_t>(1, columns_);
+  tab_stops_.assign(width, false);
+  for (std::size_t column = 8; column < width; column += 8) {
+    tab_stops_[column] = true;
+  }
+}
+
+std::size_t TerminalSession::NextTabStopLocked(std::size_t column) const {
+  const std::size_t width = std::max<std::size_t>(1, columns_);
+  if (tab_stops_.empty()) {
+    return std::min(((column / 8) + 1) * 8, width - 1);
+  }
+  for (std::size_t candidate = column + 1; candidate < width; ++candidate) {
+    if (candidate < tab_stops_.size() && tab_stops_[candidate]) {
+      return candidate;
+    }
+  }
+  return width - 1;
+}
+
+std::size_t TerminalSession::PreviousTabStopLocked(std::size_t column) const {
+  if (column == 0) {
+    return 0;
+  }
+  if (tab_stops_.empty()) {
+    return ((column - 1) / 8) * 8;
+  }
+  for (std::size_t candidate = column; candidate-- > 0;) {
+    if (candidate < tab_stops_.size() && tab_stops_[candidate]) {
+      return candidate;
+    }
+  }
+  return 0;
 }
 
 void TerminalSession::ClampScrollRegionLocked() {

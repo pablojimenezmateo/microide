@@ -97,11 +97,15 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   auto callbacks = platform::TerminalBackendCallbacks{
       .on_output =
           [this](std::string_view output) {
+            bool wake = true;
             {
               std::scoped_lock lock(mutex_);
               AppendOutputLocked(output);
+              wake = ConsumeWakeDecisionLocked();
             }
-            PushWakeEvent();
+            if (wake) {
+              PushWakeEvent();
+            }
           },
       .on_exit =
           [this]() {
@@ -287,6 +291,7 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
         columns_ > 0 ? std::min(alternate_screen_.saved_cursor_column, columns_ - 1)
                      : alternate_screen_.saved_cursor_column;
     ClampScrollRegionLocked();
+    ResetTabStopsLocked();
     if (use_alternate_screen_) {
       lines_.resize(std::max<std::size_t>(1, rows_));
     }
@@ -450,6 +455,26 @@ bool TerminalSession::using_alternate_screen() const {
   return use_alternate_screen_;
 }
 
+TerminalSession::CursorShape TerminalSession::cursor_shape() const {
+  std::scoped_lock lock(mutex_);
+  return cursor_shape_;
+}
+
+bool TerminalSession::cursor_blinking() const {
+  std::scoped_lock lock(mutex_);
+  return cursor_blinking_;
+}
+
+bool TerminalSession::synchronized_output_active() const {
+  std::scoped_lock lock(mutex_);
+  return synchronized_output_;
+}
+
+std::filesystem::path TerminalSession::reported_working_directory() const {
+  std::scoped_lock lock(mutex_);
+  return reported_working_directory_;
+}
+
 bool TerminalSession::ConsumeWakeEvent() {
   std::scoped_lock lock(mutex_);
   const bool pending = wake_event_pending_;
@@ -502,6 +527,20 @@ void TerminalSession::AdvanceSnapshotGenerationLocked() {
   if (++snapshot_generation_ == 0) {
     snapshot_generation_ = 1;
   }
+}
+
+bool TerminalSession::ConsumeWakeDecisionLocked() {
+  // Under synchronized output (DEC 2026) the application brackets a full frame
+  // between `?2026h` and `?2026l`; repainting mid-frame both tears and burns
+  // CPU. Suppress the redraw wake while the frame is open, with a safety cap so
+  // an application that never closes the frame cannot freeze the display.
+  constexpr int kMaxSuppressedWakes = 8;
+  if (synchronized_output_ && sync_suppressed_wakes_ < kMaxSuppressedWakes) {
+    ++sync_suppressed_wakes_;
+    return false;
+  }
+  sync_suppressed_wakes_ = 0;
+  return true;
 }
 
 bool TerminalSession::ReserveWakeEvent(Uint32& event_type) const {

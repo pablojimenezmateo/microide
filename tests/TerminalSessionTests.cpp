@@ -486,10 +486,250 @@ void TestTerminalSessionTracksInverseVideoStyle() {
   const auto lines = session.SnapshotLines();
   Expect(lines.size() == 1 && lines[0].cells.size() >= 2,
          "inverse-video fixture should preserve the rendered cells");
-  Expect(lines[0].cells[0].ascii_character() == 'A' && lines[0].cells[0].style.inverse,
+  Expect(lines[0].cells[0].ascii_character() == 'A' && lines[0].cells[0].style.inverse(),
          "SGR 7 should mark terminal cells as inverse video");
-  Expect(lines[0].cells[1].ascii_character() == 'B' && !lines[0].cells[1].style.inverse,
+  Expect(lines[0].cells[1].ascii_character() == 'B' && !lines[0].cells[1].style.inverse(),
          "SGR 27 should clear inverse video for later cells");
+}
+
+void TestTerminalSessionAllocatesTwoColumnsForWideGlyphs() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // U+6211 (CJK, double-width) followed by an ASCII letter.
+  TerminalSessionTestAccess::AppendOutput(session, "\xE6\x88\x91" "A");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 1 && lines[0].cells.size() == 3,
+         "a double-width glyph should occupy a lead cell plus a trailing spacer");
+  Expect(lines[0].cells[0].DisplayText() == "\xE6\x88\x91" &&
+             !lines[0].cells[0].style.wide_trailing(),
+         "the wide glyph should live in the lead cell");
+  Expect(lines[0].cells[1].style.wide_trailing() && lines[0].cells[1].length == 0,
+         "the column after a wide glyph should be an empty trailing spacer");
+  Expect(lines[0].cells[2].ascii_character() == 'A',
+         "the following glyph should land two columns after the wide glyph");
+  Expect(session.cursor_column() == 3,
+         "the cursor should advance two columns across a wide glyph");
+}
+
+void TestTerminalSessionAttachesCombiningMarksToBaseCell() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // 'e' + U+0301 COMBINING ACUTE ACCENT (CC 81).
+  TerminalSessionTestAccess::AppendOutput(session, "e\xCC\x81X");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 1 && lines[0].cells.size() == 2,
+         "a combining mark should fold into the base cell, not consume a column");
+  Expect(lines[0].cells[0].DisplayText() == "e\xCC\x81",
+         "the base glyph and its combining mark should share one cell");
+  Expect(lines[0].cells[1].ascii_character() == 'X',
+         "the next glyph should follow the combined base cell directly");
+}
+
+void TestTerminalSessionReportsWorkingDirectoryAndColors() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session,
+                                          "\x1b]7;file://host/home/user/proj%20x\x07");
+  Expect(session.reported_working_directory() == std::filesystem::path("/home/user/proj x"),
+         "OSC 7 should record the percent-decoded working directory");
+
+  // OSC 11 background query must receive an rgb: reply terminated by ST.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]11;?\x1b\\");
+  const std::string sent = TerminalSessionTestAccess::SentBytes(session);
+  Expect(sent.rfind("\x1b]11;rgb:", 0) == 0 && sent.find("\x1b\\") != std::string::npos,
+         "OSC 11 background query should be answered with an rgb: color reply");
+}
+
+void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
+  using KeyPress = microide::terminal::TerminalSession::KeyPress;
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  const auto sent_after = [&](const KeyPress& press) {
+    session.SendKeyPress(press);
+    std::string out = TerminalSessionTestAccess::SentBytes(session);
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    return out;
+  };
+
+  KeyPress up;
+  up.key = KeyPress::Key::Up;
+  Expect(sent_after(up) == "\x1b[A", "an unmodified Up arrow should send CSI A");
+
+  KeyPress shift_up = up;
+  shift_up.shift = true;
+  Expect(sent_after(shift_up) == "\x1b[1;2A",
+         "Shift+Up should send CSI 1;2 A with the shift modifier parameter");
+
+  KeyPress ctrl_left;
+  ctrl_left.key = KeyPress::Key::Left;
+  ctrl_left.ctrl = true;
+  Expect(sent_after(ctrl_left) == "\x1b[1;5D", "Ctrl+Left should send CSI 1;5 D");
+
+  KeyPress f5;
+  f5.key = KeyPress::Key::F5;
+  Expect(sent_after(f5) == "\x1b[15~", "F5 should send CSI 15 ~");
+
+  KeyPress shift_f5 = f5;
+  shift_f5.shift = true;
+  Expect(sent_after(shift_f5) == "\x1b[15;2~", "Shift+F5 should carry the modifier parameter");
+
+  KeyPress shift_tab;
+  shift_tab.key = KeyPress::Key::Tab;
+  shift_tab.shift = true;
+  Expect(sent_after(shift_tab) == "\x1b[Z", "Shift+Tab should send CBT (CSI Z)");
+
+  KeyPress ctrl_a;
+  ctrl_a.key = KeyPress::Key::Char;
+  ctrl_a.codepoint = 'a';
+  ctrl_a.ctrl = true;
+  Expect(sent_after(ctrl_a) == std::string(1, '\x01'),
+         "Ctrl+A should send the C0 control byte 0x01 in legacy mode");
+}
+
+void TestTerminalSessionAppliesKittyKeyboardProtocol() {
+  using KeyPress = microide::terminal::TerminalSession::KeyPress;
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // Query before any negotiation reports flags = 0.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?u");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[?0u",
+         "a Kitty keyboard query should report zero flags before negotiation");
+
+  // Enable disambiguation (flag 1) via the set form, then Ctrl+A becomes CSI-u.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[=1;1u");
+  KeyPress ctrl_a;
+  ctrl_a.key = KeyPress::Key::Char;
+  ctrl_a.codepoint = 'a';
+  ctrl_a.ctrl = true;
+  session.SendKeyPress(ctrl_a);
+  Expect(TerminalSessionTestAccess::SentBytes(session).find("\x1b[97;5u") != std::string::npos,
+         "with Kitty disambiguation, Ctrl+A should be CSI 97;5 u");
+
+  // Shift+Enter is unrepresentable in legacy mode but disambiguated under Kitty.
+  TerminalSessionTestAccess::SetRunning(session, false);
+  microide::terminal::TerminalSession session2;
+  TerminalSessionTestAccess::Reset(session2, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session2, "\x1b[>1u");  // push flags = 1
+  KeyPress shift_enter;
+  shift_enter.key = KeyPress::Key::Enter;
+  shift_enter.shift = true;
+  session2.SendKeyPress(shift_enter);
+  Expect(TerminalSessionTestAccess::SentBytes(session2) == "\x1b[13;2u",
+         "Shift+Enter under Kitty should send CSI 13;2 u");
+
+  // Popping the stack returns to legacy mode (flags 0): Shift+Enter -> CR.
+  TerminalSessionTestAccess::AppendOutput(session2, "\x1b[<1u");  // pop
+  TerminalSessionTestAccess::AppendOutput(session2, "\x1b[?u");
+  Expect(TerminalSessionTestAccess::SentBytes(session2).ends_with("\x1b[?0u"),
+         "popping the Kitty stack should restore zero flags");
+}
+
+void TestTerminalSessionTracksSynchronizedOutputMode() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  Expect(!session.synchronized_output_active(),
+         "synchronized output should start disabled");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026h");
+  Expect(session.synchronized_output_active(),
+         "DEC mode 2026 set should open a synchronized-output frame");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026l");
+  Expect(!session.synchronized_output_active(),
+         "DEC mode 2026 reset should close the synchronized-output frame");
+}
+
+void TestTerminalSessionAnswersDecrqmQueries() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::SetRunning(session, true);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004h");      // enable bracketed paste
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004$p");     // DECRQM query
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2026$p");     // DECRQM query (reset)
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?9999$p");     // unknown mode
+
+  const std::string sent = TerminalSessionTestAccess::SentBytes(session);
+  Expect(sent.find("\x1b[?2004;1$y") != std::string::npos,
+         "DECRQM should report an enabled mode as set (1)");
+  Expect(sent.find("\x1b[?2026;2$y") != std::string::npos,
+         "DECRQM should report a disabled known mode as reset (2)");
+  Expect(sent.find("\x1b[?9999;0$y") != std::string::npos,
+         "DECRQM should report an unknown mode as not recognized (0)");
+}
+
+void TestTerminalSessionTracksCursorShape() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[5 q");  // steady... blinking bar
+  Expect(session.cursor_shape() == microide::terminal::TerminalSession::CursorShape::Bar &&
+             session.cursor_blinking(),
+         "DECSCUSR 5 should select a blinking bar cursor");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2 q");  // steady block
+  Expect(session.cursor_shape() == microide::terminal::TerminalSession::CursorShape::Block &&
+             !session.cursor_blinking(),
+         "DECSCUSR 2 should select a steady block cursor");
+}
+
+void TestTerminalSessionHonorsCustomTabStops() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  // Establish the default 8-column grid, then clear all and set a stop at col 3.
+  session.Resize(24, 80);
+  TerminalSessionTestAccess::SetCursorPosition(session, 0, 0);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[3g");  // clear all tab stops
+  TerminalSessionTestAccess::SetCursorPosition(session, 0, 3);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1bH");    // HTS at column 3
+  TerminalSessionTestAccess::SetCursorPosition(session, 0, 0);
+  TerminalSessionTestAccess::AppendOutput(session, "\t");       // tab from col 0
+  Expect(session.cursor_column() == 3,
+         "a tab should advance to the next custom tab stop");
+}
+
+void TestTerminalSessionTracksExtendedSgrAttributes() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // dim + italic + underline + strikethrough, then a reset clears them all.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[2;3;4;9mA\x1b[0mB");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 1 && lines[0].cells.size() >= 2,
+         "extended-attribute fixture should preserve the rendered cells");
+  const auto& a = lines[0].cells[0].style;
+  Expect(a.dim() && a.italic() && a.underline() && a.strikethrough(),
+         "SGR 2/3/4/9 should set dim, italic, underline, and strikethrough");
+  const auto& b = lines[0].cells[1].style;
+  Expect(!b.dim() && !b.italic() && !b.underline() && !b.strikethrough(),
+         "SGR 0 should reset every extended attribute");
+}
+
+void TestTerminalSessionParsesColonTruecolorAndUnderlineStyles() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // Colon-form direct color (38:2:r:g:b), colon-form double underline (4:2),
+  // and an underline color (58) that must be consumed without corrupting state.
+  TerminalSessionTestAccess::AppendOutput(
+      session, "\x1b[38:2:10:20:30;4:2;58:5:9mZ");
+
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() == 1 && !lines[0].cells.empty(),
+         "colon-SGR fixture should render a cell");
+  const auto& cell = lines[0].cells[0];
+  Expect(cell.ascii_character() == 'Z', "the glyph after colon-SGR should still render");
+  Expect(cell.style.foreground.has_value() && cell.style.foreground->r == 10 &&
+             cell.style.foreground->g == 20 && cell.style.foreground->b == 30,
+         "colon-form 38:2:r:g:b should set a direct RGB foreground");
+  Expect(cell.style.double_underline() && !cell.style.underline(),
+         "colon-form 4:2 should select double underline");
 }
 
 void TestTerminalSessionCoalescesWakeEventsUntilConsumed() {
@@ -846,6 +1086,27 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionSnapshotsLineRanges);
   AddTest(tests, "TerminalSession/TracksInverseVideoStyle",
           TestTerminalSessionTracksInverseVideoStyle);
+  AddTest(tests, "TerminalSession/ReportsWorkingDirectoryAndColors",
+          TestTerminalSessionReportsWorkingDirectoryAndColors);
+  AddTest(tests, "TerminalSession/EncodesModifiedAndFunctionKeys",
+          TestTerminalSessionEncodesModifiedAndFunctionKeys);
+  AddTest(tests, "TerminalSession/AppliesKittyKeyboardProtocol",
+          TestTerminalSessionAppliesKittyKeyboardProtocol);
+  AddTest(tests, "TerminalSession/TracksSynchronizedOutputMode",
+          TestTerminalSessionTracksSynchronizedOutputMode);
+  AddTest(tests, "TerminalSession/AnswersDecrqmQueries",
+          TestTerminalSessionAnswersDecrqmQueries);
+  AddTest(tests, "TerminalSession/TracksCursorShape", TestTerminalSessionTracksCursorShape);
+  AddTest(tests, "TerminalSession/HonorsCustomTabStops",
+          TestTerminalSessionHonorsCustomTabStops);
+  AddTest(tests, "TerminalSession/AllocatesTwoColumnsForWideGlyphs",
+          TestTerminalSessionAllocatesTwoColumnsForWideGlyphs);
+  AddTest(tests, "TerminalSession/AttachesCombiningMarksToBaseCell",
+          TestTerminalSessionAttachesCombiningMarksToBaseCell);
+  AddTest(tests, "TerminalSession/TracksExtendedSgrAttributes",
+          TestTerminalSessionTracksExtendedSgrAttributes);
+  AddTest(tests, "TerminalSession/ParsesColonTruecolorAndUnderlineStyles",
+          TestTerminalSessionParsesColonTruecolorAndUnderlineStyles);
   AddTest(tests, "TerminalSession/CoalescesWakeEventsUntilConsumed",
           TestTerminalSessionCoalescesWakeEventsUntilConsumed);
   AddTest(tests, "TerminalSession/CsiParameterParsingEdgeCases",

@@ -42,6 +42,14 @@ struct TerminalSessionTestAccess {
     session.bracketed_paste_mode_ = false;
     session.focus_event_mode_ = false;
     session.cursor_visible_ = true;
+    session.synchronized_output_ = false;
+    session.sync_suppressed_wakes_ = 0;
+    session.kitty_keyboard_flags_ = 0;
+    session.kitty_keyboard_stack_.clear();
+    session.cursor_shape_ = microide::terminal::TerminalSession::CursorShape::Block;
+    session.cursor_blinking_ = true;
+    session.tab_stops_.clear();
+    session.reported_working_directory_.clear();
     session.rows_ = std::max<std::size_t>(1, rows);
     session.columns_ = std::max<std::size_t>(1, columns);
     session.cursor_row_ = 0;

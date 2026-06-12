@@ -3,9 +3,9 @@
 #include <SDL3/SDL.h>
 
 #include "platform/TerminalBackend.h"
+#include "terminal/TerminalCell.h"
 
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -22,68 +22,6 @@ struct TerminalSessionTestAccess;
 }
 
 namespace microide::terminal {
-
-// (Include is local to keep TerminalCell trivially copyable; placed here to avoid disturbing
-//  the public include order of consumers that only forward-declare TerminalSession.)
-
-struct TerminalStyle {
-  std::optional<SDL_Color> foreground;
-  std::optional<SDL_Color> background;
-  bool bold = false;
-  bool inverse = false;
-};
-
-struct TerminalCell {
-  // Inline UTF-8 storage. ASCII glyphs use length=1; multi-byte UTF-8 sequences fit in 2..4 bytes.
-  // length=0 marks an empty/uninitialized cell. The cell is now trivially copyable, so terminal
-  // snapshots and scrollback trims become bulk memcpys instead of per-cell std::string moves.
-  // (Round-2 Finding 8.)
-  std::array<char, 4> bytes{};
-  std::uint8_t length = 0;
-  TerminalStyle style;
-
-  std::string_view DisplayText() const {
-    return length == 0 ? std::string_view{} : std::string_view(bytes.data(), length);
-  }
-
-  // Convenience for callers that only care about the ASCII case (tests, scratch fixtures, etc.).
-  // Returns '\0' for empty cells or for cells whose first byte is a UTF-8 lead byte.
-  char ascii_character() const {
-    if (length == 1) {
-      return bytes[0];
-    }
-    return '\0';
-  }
-
-  void SetAscii(char c) {
-    bytes[0] = c;
-    length = 1;
-  }
-
-  void SetUtf8(std::string_view glyph) {
-    const std::size_t copy_len = std::min<std::size_t>(glyph.size(), bytes.size());
-    for (std::size_t i = 0; i < copy_len; ++i) {
-      bytes[i] = glyph[i];
-    }
-    length = static_cast<std::uint8_t>(copy_len);
-  }
-};
-
-struct TerminalLine {
-  std::vector<TerminalCell> cells;
-  bool wrapped_from_previous = false;
-};
-
-struct TerminalCursorSnapshot {
-  std::size_t row = 0;
-  std::size_t column = 0;
-  bool visible = true;
-};
-
-struct TerminalLineRangeSnapshot {
-  std::uint64_t generation = 0;
-  std::vector<TerminalLine> lines;
-};
 
 class TerminalSession {
  public:
@@ -113,6 +51,53 @@ class TerminalSession {
     WheelDown,
   };
 
+  enum class CursorShape {
+    Block,
+    Underline,
+    Bar,
+  };
+
+  // A physical key press carrying its logical key plus active modifiers. The
+  // session encodes it per the negotiated keyboard protocol (legacy xterm or
+  // the Kitty keyboard protocol when an application has enabled it).
+  struct KeyPress {
+    enum class Key {
+      Char,
+      Enter,
+      Escape,
+      Backspace,
+      Tab,
+      Up,
+      Down,
+      Left,
+      Right,
+      Home,
+      End,
+      PageUp,
+      PageDown,
+      Insert,
+      Delete,
+      F1,
+      F2,
+      F3,
+      F4,
+      F5,
+      F6,
+      F7,
+      F8,
+      F9,
+      F10,
+      F11,
+      F12,
+    };
+    Key key = Key::Char;
+    char32_t codepoint = 0;  // Base-layout codepoint for Key::Char.
+    bool shift = false;
+    bool alt = false;
+    bool ctrl = false;
+    bool super = false;
+  };
+
   TerminalSession() = default;
   ~TerminalSession();
 
@@ -129,6 +114,8 @@ class TerminalSession {
   void Resize(std::size_t rows, std::size_t columns);
   void SendBytes(std::string_view bytes);
   void SendKey(Key key);
+  // Encode and send a modified key press. Returns true if it produced output.
+  bool SendKeyPress(const KeyPress& press);
   bool running() const;
   std::size_t LineCount() const;
   std::vector<TerminalLine> SnapshotLines() const;
@@ -147,6 +134,13 @@ class TerminalSession {
   bool cursor_visible() const;
   TerminalCursorSnapshot CursorSnapshot() const;
   bool using_alternate_screen() const;
+  CursorShape cursor_shape() const;
+  bool cursor_blinking() const;
+  // True while the application is mid-frame under synchronized output (DEC mode
+  // 2026). The host coalesces redraws across the frame to avoid tearing.
+  bool synchronized_output_active() const;
+  // Current working directory advertised by the shell via OSC 7 (empty if none).
+  std::filesystem::path reported_working_directory() const;
   bool ConsumeWakeEvent();
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;
@@ -186,7 +180,13 @@ class TerminalSession {
   void AppendOutputLocked(std::string_view data);
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandleOscSequenceLocked(std::string_view sequence);
+  void HandleKittyKeyboardLocked(char prefix, char final, const std::vector<int>& params);
   void HandlePrivateModeLocked(int mode, bool enabled);
+  int QueryPrivateModeStateLocked(int mode) const;
+  bool ConsumeWakeDecisionLocked();
+  void ResetTabStopsLocked();
+  std::size_t NextTabStopLocked(std::size_t column) const;
+  std::size_t PreviousTabStopLocked(std::size_t column) const;
   void SendBytesLocked(std::string_view bytes);
   void EnsureCursorLineExistsLocked();
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
@@ -247,6 +247,18 @@ class TerminalSession {
   bool bracketed_paste_mode_ = false;
   bool focus_event_mode_ = false;
   bool cursor_visible_ = true;
+  bool synchronized_output_ = false;
+  int sync_suppressed_wakes_ = 0;
+  // Kitty keyboard protocol progressive-enhancement flags (0 = legacy mode) and
+  // the push/pop stack maintained by `CSI > flags u` / `CSI < n u`.
+  std::uint8_t kitty_keyboard_flags_ = 0;
+  std::vector<std::uint8_t> kitty_keyboard_stack_;
+  CursorShape cursor_shape_ = CursorShape::Block;
+  bool cursor_blinking_ = true;
+  // Per-column horizontal tab stops. Rebuilt to the default 8-column grid on
+  // resize; mutable via HTS (ESC H) / TBC (CSI g).
+  std::vector<bool> tab_stops_;
+  std::filesystem::path reported_working_directory_;
   std::optional<std::string> pending_clipboard_text_;
   std::string pending_utf8_sequence_;
   std::size_t rows_ = 24;

@@ -33,6 +33,19 @@ void TerminalSession::SendKey(Key key) {
   SendBytes(bytes);
 }
 
+bool TerminalSession::SendKeyPress(const KeyPress& press) {
+  std::string bytes;
+  {
+    std::scoped_lock lock(mutex_);
+    bytes = FormatTerminalKeyPress(application_cursor_keys_mode_, kitty_keyboard_flags_, press);
+  }
+  if (bytes.empty()) {
+    return false;
+  }
+  SendBytes(bytes);
+  return true;
+}
+
 void TerminalSession::PasteText(std::string_view text) {
   if (text.empty()) {
     return;

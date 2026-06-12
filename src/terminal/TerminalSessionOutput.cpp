@@ -51,6 +51,14 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         SaveCursorLocked();
       } else if (byte == '8') {
         RestoreCursorLocked();
+      } else if (byte == 'H') {
+        // HTS — set a horizontal tab stop at the cursor column.
+        if (tab_stops_.empty()) {
+          ResetTabStopsLocked();
+        }
+        if (cursor_column_ < tab_stops_.size()) {
+          tab_stops_[cursor_column_] = true;
+        }
       } else if (byte == 'Z') {
         SendBytesLocked("\x1b[?1;2c");
       } else if (byte == 'D' || byte == 'E') {
@@ -158,11 +166,8 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         break;
       }
       case '\t': {
-        constexpr std::size_t kTerminalTabStop = 8;
-        const std::size_t remainder = cursor_column_ % kTerminalTabStop;
-        const std::size_t spaces =
-            remainder == 0 ? kTerminalTabStop : kTerminalTabStop - remainder;
-        for (std::size_t i = 0; i < spaces; ++i) {
+        const std::size_t target = NextTabStopLocked(cursor_column_);
+        while (cursor_column_ < target) {
           PutCharacterLocked(' ');
         }
         break;

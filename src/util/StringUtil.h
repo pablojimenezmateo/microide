@@ -22,6 +22,14 @@ struct DecodedText {
 
 std::size_t Utf8SequenceLength(unsigned char lead_byte);
 std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset);
+// Decode the first UTF-8 codepoint of `glyph`. Returns U+FFFD on malformed or
+// empty input. Intended for already-grouped single-glyph slices.
+char32_t DecodeUtf8Codepoint(std::string_view glyph);
+// Terminal display column width of a codepoint: 0 for zero-width / combining
+// marks, 2 for East Asian wide / fullwidth / emoji-presentation codepoints, and
+// 1 otherwise. Matches the layout assumptions of common `wcwidth`/unicode-width
+// implementations so grid alignment agrees with TUI applications.
+int CodepointDisplayWidth(char32_t codepoint);
 bool IsUtf8ContinuationByte(unsigned char byte);
 std::size_t PreviousUtf8Boundary(std::string_view text, std::size_t offset);
 std::size_t NextUtf8Boundary(std::string_view text, std::size_t offset);

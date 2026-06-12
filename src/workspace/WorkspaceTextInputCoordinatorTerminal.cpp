@@ -21,6 +21,23 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return true;
   };
 
+  using KeyPress = terminal::TerminalSession::KeyPress;
+  const auto make_key_press = [&](KeyPress::Key key, char32_t codepoint = 0) {
+    KeyPress press;
+    press.key = key;
+    press.codepoint = codepoint;
+    press.shift = (modifiers & SDL_KMOD_SHIFT) != 0;
+    press.alt = (modifiers & SDL_KMOD_ALT) != 0;
+    press.ctrl = (modifiers & SDL_KMOD_CTRL) != 0;
+    press.super = (modifiers & SDL_KMOD_GUI) != 0;
+    return press;
+  };
+  const auto send_key_press = [&](KeyPress::Key key, char32_t codepoint = 0) {
+    follow_terminal_tail();
+    terminal_tab->session.SendKeyPress(make_key_press(key, codepoint));
+    return handled_with_panel_redraw();
+  };
+
   if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C && operations_.terminal_has_selection()) {
     const std::string text = operations_.selected_terminal_text();
     if (!text.empty() && operations_.write_clipboard_text(text)) {
@@ -42,106 +59,79 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return PasteClipboardIntoTerminal();
   }
 
+  // Control combinations that map to C0 control bytes (or CSI-u under Kitty).
   if (modifiers & SDL_KMOD_CTRL) {
-    if (event.key >= SDLK_A && event.key <= SDLK_Z) {
-      const char control = static_cast<char>(1 + (event.key - SDLK_A));
-      follow_terminal_tail();
-      terminal_tab->session.SendBytes(std::string(1, control));
-      return handled_with_panel_redraw();
-    }
-    switch (event.key) {
-      case SDLK_LEFTBRACKET:
-        follow_terminal_tail();
-        terminal_tab->session.SendBytes("\x1b");
-        return handled_with_panel_redraw();
-      case SDLK_BACKSLASH:
-        follow_terminal_tail();
-        terminal_tab->session.SendBytes("\x1c");
-        return handled_with_panel_redraw();
-      case SDLK_RIGHTBRACKET:
-        follow_terminal_tail();
-        terminal_tab->session.SendBytes("\x1d");
-        return handled_with_panel_redraw();
-      case SDLK_SPACE:
-        follow_terminal_tail();
-        terminal_tab->session.SendBytes(std::string(1, '\0'));
-        return handled_with_panel_redraw();
-      default:
-        break;
+    if ((event.key >= SDLK_A && event.key <= SDLK_Z) || event.key == SDLK_LEFTBRACKET ||
+        event.key == SDLK_BACKSLASH || event.key == SDLK_RIGHTBRACKET ||
+        event.key == SDLK_SPACE) {
+      return send_key_press(KeyPress::Key::Char, static_cast<char32_t>(event.key));
     }
   }
 
+  // Alt+printable sends ESC-prefixed text (or CSI-u under Kitty).
   if (modifiers & SDL_KMOD_ALT) {
     const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
     if (input_character != '\0') {
-      std::string bytes(1, '\x1b');
-      bytes.push_back(input_character);
-      follow_terminal_tail();
-      terminal_tab->session.SendBytes(bytes);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Char, static_cast<char32_t>(input_character));
     }
   }
 
   switch (event.key) {
     case SDLK_ESCAPE:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Escape);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Escape);
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       operations_.submit_terminal_pending_input();
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Enter);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Enter);
     case SDLK_BACKSPACE:
       operations_.erase_last_terminal_pending_input_codepoint();
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Backspace);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Backspace);
     case SDLK_TAB:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Tab);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Tab);
     case SDLK_UP:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Up);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Up);
     case SDLK_DOWN:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Down);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Down);
     case SDLK_RIGHT:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Right);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Right);
     case SDLK_LEFT:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Left);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Left);
     case SDLK_HOME:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Home);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Home);
     case SDLK_END:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::End);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::End);
     case SDLK_PAGEUP:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::PageUp);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::PageUp);
     case SDLK_PAGEDOWN:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::PageDown);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::PageDown);
     case SDLK_INSERT:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Insert);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Insert);
     case SDLK_DELETE:
-      follow_terminal_tail();
-      terminal_tab->session.SendKey(terminal::TerminalSession::Key::Delete);
-      return handled_with_panel_redraw();
+      return send_key_press(KeyPress::Key::Delete);
+    case SDLK_F1:
+      return send_key_press(KeyPress::Key::F1);
+    case SDLK_F2:
+      return send_key_press(KeyPress::Key::F2);
+    case SDLK_F3:
+      return send_key_press(KeyPress::Key::F3);
+    case SDLK_F4:
+      return send_key_press(KeyPress::Key::F4);
+    case SDLK_F5:
+      return send_key_press(KeyPress::Key::F5);
+    case SDLK_F6:
+      return send_key_press(KeyPress::Key::F6);
+    case SDLK_F7:
+      return send_key_press(KeyPress::Key::F7);
+    case SDLK_F8:
+      return send_key_press(KeyPress::Key::F8);
+    case SDLK_F9:
+      return send_key_press(KeyPress::Key::F9);
+    case SDLK_F10:
+      return send_key_press(KeyPress::Key::F10);
+    case SDLK_F11:
+      return send_key_press(KeyPress::Key::F11);
+    case SDLK_F12:
+      return send_key_press(KeyPress::Key::F12);
     default:
       break;
   }

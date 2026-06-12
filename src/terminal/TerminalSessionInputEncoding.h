@@ -59,6 +59,15 @@ inline std::string FormatTerminalKeyBytes(bool application_cursor_keys_mode,
   }
 }
 
+// Encode a modified key press. When `kitty_flags` is non-zero the Kitty
+// keyboard protocol is active and keys the legacy encoding cannot disambiguate
+// (modified Enter/Tab/Backspace/Escape, control letters) are emitted in CSI-u
+// form; otherwise the standard xterm encoding (with CSI `1;mod` / `n;mod~`
+// modifier parameters and SS3/CSI application-cursor handling) is used.
+std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
+                                   std::uint8_t kitty_flags,
+                                   const TerminalSession::KeyPress& press);
+
 inline std::string FormatTerminalPasteBytes(bool bracketed_paste_mode, std::string_view text) {
   if (!bracketed_paste_mode) {
     return std::string(text);
