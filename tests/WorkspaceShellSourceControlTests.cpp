@@ -532,6 +532,37 @@ void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
          "stage shortcut should move the row into the staged section");
 }
 
+void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path changed = root / "changed.cpp";
+  WriteFile(changed, "int changed() { return 1; }\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "stage failure fixture", "stage failure fixture");
+  WriteFile(changed, "int changed() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "stage-failure fixture should expose the single changed row");
+
+  // Remove the repository so the staging git command fails deterministically
+  // while the sidebar still believes the entry is stageable (the silent-failure
+  // scenario this guards).
+  std::filesystem::remove_all(root / ".git");
+
+  Expect(!WorkspaceShellTestAccess::StageGitSidebarEntry(shell, 0),
+         "staging must report failure when the underlying git command cannot run");
+  const std::string feedback = WorkspaceShellTestAccess::CommandPromptStatusText(shell);
+  Expect(feedback.find("Failed to stage") != std::string::npos,
+         "a failed stage must surface feedback to the user instead of failing silently");
+  Expect(feedback.find("changed.cpp") != std::string::npos,
+         "stage-failure feedback should name the affected file");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -555,6 +586,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarDiscardRequiresConfirmation);
   AddTest(tests, "WorkspaceShell/GitSidebarKeyboardStageShortcut",
           TestWorkspaceShellGitSidebarKeyboardStageShortcut);
+  AddTest(tests, "WorkspaceShell/GitStageFailureSurfacesFeedback",
+          TestWorkspaceShellGitStageFailureSurfacesFeedback);
 }
 
 }  // namespace microide::tests

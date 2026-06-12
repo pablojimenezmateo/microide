@@ -35,6 +35,21 @@ void SidebarCoordinator::ReportDisabledGitAction(const GitSidebarActionId action
   }
 }
 
+void SidebarCoordinator::ReportGitOperationFailure(const std::string_view verb,
+                                                   const GitSidebarEntry& entry) const {
+  if (operations_.set_command_feedback == nullptr) {
+    return;
+  }
+  const std::filesystem::path& shown =
+      entry.relative_path.empty() ? entry.path : entry.relative_path;
+  std::string name = shown.generic_string();
+  if (name.empty()) {
+    name = "selection";
+  }
+  operations_.set_command_feedback("Failed to " + std::string(verb) + " " + name +
+                                   " (see git output)");
+}
+
 void SidebarCoordinator::MoveGitSelection(int delta) {
   if (MoveSelectionIndex(state_.sidebar.git.entries, &state_.sidebar.git.selected_index, delta)) {
     RevealSelectedGitLine();
@@ -349,6 +364,7 @@ bool SidebarCoordinator::StageGitEntry(const std::size_t entry_index) {
     return false;
   }
   if (!project::GitStagePath(project_root_, entry->path)) {
+    ReportGitOperationFailure("stage", *entry);
     return false;
   }
   operations_.invalidate_editor_blame_path(entry->path);
@@ -368,6 +384,7 @@ bool SidebarCoordinator::UnstageGitEntry(const std::size_t entry_index) {
     return false;
   }
   if (!project::GitUnstagePath(project_root_, entry->path)) {
+    ReportGitOperationFailure("unstage", *entry);
     return false;
   }
   operations_.invalidate_editor_blame_path(entry->path);
@@ -393,6 +410,7 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index) {
     return false;
   }
   if (!project::GitDiscardPath(project_root_, entry->path)) {
+    ReportGitOperationFailure("discard", *entry);
     return false;
   }
   operations_.invalidate_editor_blame_path(entry->path);
