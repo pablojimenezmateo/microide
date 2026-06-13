@@ -47,9 +47,7 @@ bool QuerySupportsLiteralReplace(std::string_view query) {
 }
 
 bool UsesCaseSensitiveLiteralMatch(std::string_view query) {
-  return std::any_of(query.begin(), query.end(), [](unsigned char c) {
-    return std::isupper(c);
-  });
+  return util::QueryHasUppercaseAscii(query);
 }
 
 std::size_t ReplaceLiteralMatchesInText(std::string& content,
@@ -196,10 +194,7 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
   std::string lowered_line;
   for (std::size_t line_index = 0; line_index < lines.size(); ++line_index) {
     const std::string& line = lines[line_index];
-    lowered_line.resize(line.size());
-    std::transform(line.begin(), line.end(), lowered_line.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
+    util::ToLowerAsciiInto(line, lowered_line);
     std::size_t offset = lowered_line.find(lowered_query);
     while (offset != std::string::npos) {
       matches.push_back(editor::SelectionRange{

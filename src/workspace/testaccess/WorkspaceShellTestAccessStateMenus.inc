@@ -331,6 +331,9 @@
   static int SidebarScrollRow(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.scroll_row;
   }
+  static void SetSidebarScrollRow(WorkspaceShell& shell, int scroll_row) {
+    shell.context_.current_project_state.sidebar.scroll_row = scroll_row;
+  }
   static std::size_t ProjectCount(const WorkspaceShell& shell) { return shell.context_.project_catalog.entries.size(); }
   static std::size_t ActiveProjectIndex(const WorkspaceShell& shell) {
     return shell.context_.project_catalog.active_index;
@@ -378,6 +381,9 @@
   }
   static std::size_t BufferSearchSelectedIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.buffer_search.selected_index;
+  }
+  static std::size_t ProjectSearchSelectedIndex(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.selected_index;
   }
   static bool BufferSearchSurfaceFocused(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::BufferSearch;

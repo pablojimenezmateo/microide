@@ -57,14 +57,16 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         operations_.move_project_search_selection(1);
         return true;
       case SDLK_HOME:
+        // Route through move-selection (clamped) so the reveal-into-view logic runs.
         if (!state_.overlay.workflow.project_search.results.empty()) {
-          state_.overlay.workflow.project_search.selected_index = 0;
+          operations_.move_project_search_selection(
+              -static_cast<int>(state_.overlay.workflow.project_search.results.size()));
         }
         return true;
       case SDLK_END:
         if (!state_.overlay.workflow.project_search.results.empty()) {
-          state_.overlay.workflow.project_search.selected_index =
-              state_.overlay.workflow.project_search.results.size() - 1;
+          operations_.move_project_search_selection(
+              static_cast<int>(state_.overlay.workflow.project_search.results.size()));
         }
         return true;
       case SDLK_PAGEUP:
@@ -80,6 +82,17 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           operations_.refresh_project_search();
         }
         return true;
+      case SDLK_C:
+        // Toggle "count all matches" (exact total vs. fast early-stop). The option
+        // lives on the search state and a rerun applies it, so this needs no
+        // dedicated shell entry point.
+        if (input_character == 'c') {
+          auto& options = state_.overlay.workflow.project_search.options;
+          options.count_all_matches = !options.count_all_matches;
+          operations_.refresh_project_search();
+          return true;
+        }
+        return false;
       case SDLK_EQUALS:
         operations_.begin_project_search_edit(ProjectSearchEditField::Replace);
         return true;

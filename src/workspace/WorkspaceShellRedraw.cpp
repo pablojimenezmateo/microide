@@ -769,6 +769,14 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
     }
     context_.current_project_state.directory_tree.Refresh();
     context_.current_project_state.file_finder.InvalidateIndexCache();
+    // A changed file set makes cached project-search results stale (e.g. a match
+    // in a since-deleted file). Drop the cache marker so re-opening Search
+    // re-runs against the new file set, and refresh live if Search is active.
+    context_.current_project_state.overlay.workflow.project_search.searched_query.clear();
+    if (ActiveSidebarMode() == SidebarMode::Search &&
+        !context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
+      RefreshProjectSearch();
+    }
     if (context_.current_project_state.overlay.visible &&
         context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
       context_.current_project_state.file_finder.Refresh();

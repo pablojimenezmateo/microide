@@ -417,7 +417,56 @@ void TestWorkspaceShellBufferSearchSeedsFromSelection() {
 
 }  // namespace
 
+void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  std::string content;
+  for (int i = 0; i < 90; ++i) {
+    content += "needle here\n";
+  }
+  WriteFile(root / "many.txt", content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  WaitForProjectSearch(shell);
+  const std::size_t result_count = WorkspaceShellTestAccess::ProjectSearchResults(shell).size();
+  Expect(result_count >= 60,
+         "scroll fixture should produce enough results to overflow the visible sidebar");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) == 0,
+         "a fresh search should start scrolled to the top");
+
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+
+  // End navigates to the last result and scrolls it into view.
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE),
+         "End should be handled by the focused search sidebar");
+  Expect(WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == result_count - 1,
+         "End should select the last result");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > 0,
+         "navigating to the last result should reveal it (scroll follows the selection)");
+
+  // The user can now scroll back up past the (still-selected) last row, and a
+  // non-navigation event must not force the selection back into view.
+  WorkspaceShellTestAccess::SetSidebarScrollRow(shell, 0);
+  WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) == 0,
+         "scrolling away from the selected entry should be preserved");
+
+  // Home navigates back to the first result and reveals it at the top.
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE),
+         "Home should be handled by the focused search sidebar");
+  Expect(WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == 0,
+         "Home should select the first result");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) == 0,
+         "navigating to the first result should reveal it at the top");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",
+          TestWorkspaceShellProjectSearchSidebarScrollPastSelection);
   AddTest(tests, "WorkspaceShell/ProjectSearchHiddenToggleReruns",
           TestWorkspaceShellProjectSearchHiddenToggleReruns);
   AddTest(tests, "WorkspaceShell/ProjectSearchPatternModeToggleReruns",

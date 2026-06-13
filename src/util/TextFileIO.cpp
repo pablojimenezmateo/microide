@@ -1,5 +1,6 @@
 #include "util/TextFileIO.h"
 
+#include <cstring>
 #include <fstream>
 #include <system_error>
 
@@ -26,6 +27,35 @@ std::optional<std::string> ReadTextFile(const std::filesystem::path& path) {
     }
   }
   return content;
+}
+
+bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file) {
+    return false;
+  }
+  file.seekg(0, std::ios::end);
+  const std::streamoff size = file.tellg();
+  if (size < 0) {
+    return false;
+  }
+  file.seekg(0, std::ios::beg);
+
+  // resize() keeps any capacity the caller already allocated, so reused buffers
+  // only grow toward the largest file rather than reallocating per file.
+  out.resize(static_cast<std::size_t>(size));
+  if (size > 0) {
+    file.read(out.data(), static_cast<std::streamsize>(size));
+    if (!file) {
+      return false;
+    }
+    // Any embedded NUL means the file is binary; skip it. memchr bails at the
+    // first NUL, so binaries with an early NUL cost only one scan up to it.
+    if (std::memchr(out.data(), '\0', out.size()) != nullptr) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text) {
