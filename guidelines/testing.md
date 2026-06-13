@@ -26,6 +26,19 @@ ctest --test-dir build --output-on-failure
 ./build/microide/microide_tests TextViewport
 ```
 
+Logging wrapper (tees build+test output to `/tmp/microide-<target>.log` so results
+can be read back without rerunning — prefer this for full suite and sanitizer runs):
+
+```bash
+tools/run-checks.sh tests   # -> /tmp/microide-tests.log
+tools/run-checks.sh asan    # -> /tmp/microide-asan.log
+tools/run-checks.sh ubsan   # -> /tmp/microide-ubsan.log
+tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log
+tools/run-checks.sh all
+```
+
+After a run, read `/tmp/microide-<target>.log` instead of rebuilding and rerunning.
+
 Sanitizer and fuzzing commands:
 
 ```bash

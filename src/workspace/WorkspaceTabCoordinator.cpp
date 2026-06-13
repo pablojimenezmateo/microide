@@ -98,6 +98,14 @@ bool TabCoordinator::Save(std::size_t index) {
     if (!compare_tab.right_editable || !compare_tab.right_viewport.dirty()) {
       return true;
     }
+    if (compare_tab.right_viewport.DetectDiskConflict() !=
+        editor::TextViewport::DiskConflict::None) {
+      if (operations_.request_external_change_banner) {
+        operations_.request_external_change_banner(
+            compare_tab.right_viewport.path().lexically_normal());
+      }
+      return false;
+    }
     if (!compare_tab.right_viewport.Save()) {
       return false;
     }
@@ -111,6 +119,14 @@ bool TabCoordinator::Save(std::size_t index) {
     auto& merge_tab = state_.open_tabs[index].merge.value();
     if (!merge_tab.result_viewport.dirty()) {
       return true;
+    }
+    if (merge_tab.result_viewport.DetectDiskConflict() !=
+        editor::TextViewport::DiskConflict::None) {
+      if (operations_.request_external_change_banner) {
+        operations_.request_external_change_banner(
+            merge_tab.result_viewport.path().lexically_normal());
+      }
+      return false;
     }
     if (!merge_tab.result_viewport.Save()) {
       return false;
@@ -145,6 +161,16 @@ bool TabCoordinator::Save(std::size_t index) {
     open_paths.insert(candidate->path().lexically_normal());
     if (!candidate->dirty()) {
       continue;
+    }
+    // Refuse to overwrite a file that changed on disk since we loaded/last saved
+    // it. Surface the external-change banner instead so the user can choose to
+    // Reload, Overwrite, or Keep. Checked before formatters run so we don't
+    // mutate the buffer for a save we're about to abort.
+    if (candidate->DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
+      if (operations_.request_external_change_banner) {
+        operations_.request_external_change_banner(candidate->path().lexically_normal());
+      }
+      return false;
     }
     if (operations_.prepare_editor_view_for_save &&
         !operations_.prepare_editor_view_for_save(candidate->path(), *candidate, nullptr)) {

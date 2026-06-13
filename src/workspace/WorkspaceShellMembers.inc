@@ -529,9 +529,8 @@
   void ApplyProjectChangeBatch(const project::ProjectChangeBatch& batch);
   void MarkCompareTabsStaleForPath(const std::filesystem::path& path);
   void InvalidateMergeTabsForPath(const std::filesystem::path& path);
-  void PromptExternalFileChanges(const std::set<std::filesystem::path>& paths);
+  void ActivateEditorBannerAction(EditorBannerAction action, const std::filesystem::path& path);
   void ClearDiagnosticsForPath(const std::filesystem::path& path);
-  void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   void RequestGitSidebarRefresh(GitSidebarRefreshScope scope = GitSidebarRefreshScope::Full);
   void MaybeRequestTreeGitBadgesAfterFirstPaint();
   void RequestAutomaticGitSidebarRefresh();
@@ -653,6 +652,7 @@
   std::vector<EditorPaneLayout> ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
   std::vector<EditorSplitDividerLayout> ComputeEditorSplitDividerLayouts(
       const SDL_FRect& editor_surface) const;
+  SDL_FRect EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const;
   ScrollSurfaceLayout ComputeEditorScrollLayout(const SDL_FRect& rect,
                                                 const editor::TextViewport& viewport,
                                                 const editor::EditorViewMetrics& metrics) const;

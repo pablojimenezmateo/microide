@@ -23,18 +23,6 @@ bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeo
   return false;
 }
 
-bool WaitForDirtyPrompt(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (std::chrono::steady_clock::now() < deadline) {
-    if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
-      return true;
-    }
-    WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  return WorkspaceShellTestAccess::DirtyPromptVisible(shell);
-}
-
 void TestWorkspaceShellExternalChangeReloadsCleanBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -60,7 +48,31 @@ void TestWorkspaceShellExternalChangeReloadsCleanBuffer() {
          "clean buffers should reload from disk after an external change");
 }
 
-void TestWorkspaceShellExternalChangePromptsDirtyBuffer() {
+// Drains any pending project-change events so the watcher baseline is settled.
+void DrainProjectChanges(WorkspaceShell& shell) {
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+}
+
+bool WaitForExternalChangeBanner(WorkspaceShell& shell,
+                                 const std::filesystem::path& path,
+                                 std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (WorkspaceShellTestAccess::HasExternalChangeBanner(shell, path)) {
+      return true;
+    }
+    WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return WorkspaceShellTestAccess::HasExternalChangeBanner(shell, path);
+}
+
+void TestWorkspaceShellExternalChangeBannerForDirtyBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path file_path = root / "notes.txt";
@@ -72,21 +84,166 @@ void TestWorkspaceShellExternalChangePromptsDirtyBuffer() {
          "dirty external-change fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
-  for (int attempt = 0; attempt < 20; ++attempt) {
-    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
-      break;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  DrainProjectChanges(shell);
 
   WriteFile(file_path, "on disk\n");
-  Expect(WaitForDirtyPrompt(shell, std::chrono::seconds(1)),
-         "dirty buffers should show an external-change prompt");
-  Expect(WorkspaceShellTestAccess::DirtyPromptMessage(shell).find("on disk") != std::string::npos ||
-             WorkspaceShellTestAccess::DirtyPromptMessage(shell).find("Reload") != std::string::npos,
-         "external-change prompt should describe the disk conflict");
+  Expect(WaitForExternalChangeBanner(shell, file_path, std::chrono::seconds(1)),
+         "dirty buffers should raise a non-blocking external-change banner");
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "external changes should no longer raise a blocking modal prompt");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0].starts_with("dirty "),
-         "dirty buffers should keep in-memory edits until the user reloads");
+         "dirty buffers should keep in-memory edits until the user acts");
+}
+
+void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "self-write fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("mine ");
+  DrainProjectChanges(shell);
+
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "saving a buffer with no external change should succeed");
+  // Pump the watcher: its echo of our own write must be recognized by signature
+  // and produce no banner (neither external-change nor reloaded notice).
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
+         "the editor's own save must not raise any banner");
+  Expect(ReadFile(file_path) == "mine original\n",
+         "the saved file should contain the in-memory edits");
+}
+
+void TestWorkspaceShellSaveTimeConflictGuardBlocksClobber() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "conflict-guard fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  DrainProjectChanges(shell);
+
+  // External writer changes the file. We deliberately do NOT pump the watcher,
+  // simulating a missed event; the save-time guard must still refuse to clobber.
+  WriteFile(file_path, "newer on disk\n");
+  Expect(!WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "save must fail when the file changed on disk since load");
+  Expect(ReadFile(file_path) == "newer on disk\n",
+         "the save-time guard must not overwrite the newer on-disk content");
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "a blocked save should raise the external-change banner");
+}
+
+void TestWorkspaceShellBannerOverwriteWritesInMemoryEdits() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "overwrite fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  DrainProjectChanges(shell);
+  WriteFile(file_path, "newer on disk\n");
+  Expect(WaitForExternalChangeBanner(shell, file_path, std::chrono::seconds(1)),
+         "overwrite fixture should reach the external-change banner");
+
+  WorkspaceShellTestAccess::EditorBannerOverwrite(shell, file_path);
+  Expect(ReadFile(file_path) == "dirty original\n",
+         "Overwrite should write the in-memory edits over the disk content");
+  Expect(WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
+         "Overwrite should clear the banner");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "Overwrite should leave the buffer clean after saving");
+}
+
+void TestWorkspaceShellBannerReloadReplacesBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "reload fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  DrainProjectChanges(shell);
+  WriteFile(file_path, "newer on disk\n");
+  Expect(WaitForExternalChangeBanner(shell, file_path, std::chrono::seconds(1)),
+         "reload fixture should reach the external-change banner");
+
+  WorkspaceShellTestAccess::EditorBannerReload(shell, file_path);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "newer on disk",
+         "Reload should replace the buffer with the on-disk content");
+  Expect(WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
+         "Reload should clear the banner");
+}
+
+void TestWorkspaceShellBannerKeepPreservesBoth() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "keep fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  DrainProjectChanges(shell);
+  WriteFile(file_path, "newer on disk\n");
+  Expect(WaitForExternalChangeBanner(shell, file_path, std::chrono::seconds(1)),
+         "keep fixture should reach the external-change banner");
+
+  WorkspaceShellTestAccess::EditorBannerKeep(shell, file_path);
+  Expect(WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
+         "Keep should dismiss the banner");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0].starts_with("dirty "),
+         "Keep should preserve the in-memory edits");
+  Expect(ReadFile(file_path) == "newer on disk\n",
+         "Keep should leave the on-disk content untouched");
+}
+
+void TestWorkspaceShellCleanReloadRaisesNotice() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "clean\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "clean-notice fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  DrainProjectChanges(shell);
+
+  WriteFile(file_path, "clean updated\n");
+  Expect(WaitForProjectReload(shell, std::chrono::seconds(1)),
+         "external change to a clean buffer should trigger a reload");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "clean updated",
+         "clean buffers should silently reload from disk");
+  Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
+         "a silent clean reload should surface a passive reloaded-from-disk notice");
 }
 
 void TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale() {
@@ -120,8 +277,20 @@ void TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale() {
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ExternalRepoChange/ReloadsCleanBuffer",
           TestWorkspaceShellExternalChangeReloadsCleanBuffer);
-  AddTest(tests, "ExternalRepoChange/PromptsDirtyBuffer",
-          TestWorkspaceShellExternalChangePromptsDirtyBuffer);
+  AddTest(tests, "ExternalRepoChange/BannerForDirtyBuffer",
+          TestWorkspaceShellExternalChangeBannerForDirtyBuffer);
+  AddTest(tests, "ExternalRepoChange/SelfWriteDoesNotRaiseBanner",
+          TestWorkspaceShellSelfWriteDoesNotRaiseBanner);
+  AddTest(tests, "ExternalRepoChange/SaveTimeConflictGuardBlocksClobber",
+          TestWorkspaceShellSaveTimeConflictGuardBlocksClobber);
+  AddTest(tests, "ExternalRepoChange/BannerOverwriteWritesInMemoryEdits",
+          TestWorkspaceShellBannerOverwriteWritesInMemoryEdits);
+  AddTest(tests, "ExternalRepoChange/BannerReloadReplacesBuffer",
+          TestWorkspaceShellBannerReloadReplacesBuffer);
+  AddTest(tests, "ExternalRepoChange/BannerKeepPreservesBoth",
+          TestWorkspaceShellBannerKeepPreservesBoth);
+  AddTest(tests, "ExternalRepoChange/CleanReloadRaisesNotice",
+          TestWorkspaceShellCleanReloadRaisesNotice);
   AddTest(tests, "ExternalRepoChange/MarksGitSnapshotStaleOnHeadChange",
           TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale);
 }

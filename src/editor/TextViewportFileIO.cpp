@@ -69,7 +69,27 @@ bool TextViewport::Save() {
 
   document_->mixed_line_endings = false;
   document_->dirty = false;
+  // Record the just-written file's identity so (a) a save-time conflict check
+  // sees a matching signature next time and (b) the watcher's echo of our own
+  // write is recognized and suppressed instead of forcing a redundant reload.
+  document_->disk_signature = util::StatFileSignature(document_->path);
   return true;
+}
+
+TextViewport::DiskConflict TextViewport::DetectDiskConflict() const {
+  // No baseline (untitled/new buffer, or never sampled): never block a save.
+  if (!document_->disk_signature.exists || document_->path.empty()) {
+    return DiskConflict::None;
+  }
+  const util::FileSignature current = util::StatFileSignature(document_->path);
+  if (current.error) {
+    return DiskConflict::StatError;
+  }
+  if (!current.exists) {
+    return DiskConflict::Vanished;
+  }
+  return current.SameContentAs(document_->disk_signature) ? DiskConflict::None
+                                                          : DiskConflict::Changed;
 }
 
 void TextViewport::LoadContent(std::string_view content,

@@ -261,6 +261,41 @@ void TestTextViewportSaveAppliesNormalization() {
          "saved file should be trimmed and end with a single newline");
 }
 
+void TestTextViewportDetectsDiskConflict() {
+  using DiskConflict = TextViewport::DiskConflict;
+  TemporaryDirectory tmp;
+  std::filesystem::path path = tmp.path() / "conflict.txt";
+  WriteFile(path, "one\ntwo\n");
+
+  TextViewport viewport;
+  Expect(viewport.OpenFile(path), "OpenFile should succeed");
+  Expect(viewport.DetectDiskConflict() == DiskConflict::None,
+         "a freshly opened file should report no conflict");
+
+  // External rewrite changes size, so mtime+size diverges from the load record.
+  WriteFile(path, "one\ntwo\nthree\n");
+  Expect(viewport.DetectDiskConflict() == DiskConflict::Changed,
+         "an external rewrite should be detected as a disk conflict");
+
+  // Saving recaptures the signature, clearing the conflict.
+  Expect(viewport.Save(), "Save should succeed");
+  Expect(viewport.DetectDiskConflict() == DiskConflict::None,
+         "saving should re-baseline the on-disk signature");
+
+  // Deleting the file is a Vanished conflict.
+  std::filesystem::remove(path);
+  Expect(viewport.DetectDiskConflict() == DiskConflict::Vanished,
+         "a deleted file should be detected as vanished");
+}
+
+void TestTextViewportUntitledHasNoDiskConflict() {
+  TextViewport viewport;
+  viewport.SetUntitledBuffer();
+  viewport.InsertText("hello");
+  Expect(viewport.DetectDiskConflict() == TextViewport::DiskConflict::None,
+         "an untitled buffer should never report a disk conflict");
+}
+
 void TestSaveNormalizationTrim() {
   std::vector<std::string> lines = {"foo  ", "bar\t", "baz"};
   Expect(microide::editor::TrimTrailingWhitespace(lines),
@@ -1018,6 +1053,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestTextViewportSaveAppliesNormalization);
   AddTest(tests, "EditorEssentials/Save/EnsureFinalNewline",
           TestSaveNormalizationEnsureFinalNewline);
+  AddTest(tests, "EditorEssentials/Save/DetectsDiskConflict",
+          TestTextViewportDetectsDiskConflict);
+  AddTest(tests, "EditorEssentials/Save/UntitledHasNoDiskConflict",
+          TestTextViewportUntitledHasNoDiskConflict);
   AddTest(tests, "EditorEssentials/IndentDetect/SpacesMajority",
           TestIndentDetectSpacesMajority);
   AddTest(tests, "EditorEssentials/IndentDetect/TabsMajority",

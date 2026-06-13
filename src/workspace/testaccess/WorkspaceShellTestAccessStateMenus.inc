@@ -33,6 +33,38 @@
   static std::string DirtyPromptMessage(const WorkspaceShell& shell) {
     return shell.DirtyPromptMessage();
   }
+  static bool HasExternalChangeBanner(const WorkspaceShell& shell,
+                                      const std::filesystem::path& path) {
+    const std::filesystem::path normalized = path.lexically_normal();
+    for (const EditorBannerState& banner : shell.context_.current_project_state.editor_banners) {
+      if (banner.kind == EditorBannerState::Kind::ExternalChange && banner.path == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
+  static bool HasReloadedNoticeBanner(const WorkspaceShell& shell,
+                                      const std::filesystem::path& path) {
+    const std::filesystem::path normalized = path.lexically_normal();
+    for (const EditorBannerState& banner : shell.context_.current_project_state.editor_banners) {
+      if (banner.kind == EditorBannerState::Kind::ReloadedNotice && banner.path == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
+  static std::size_t EditorBannerCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.editor_banners.size();
+  }
+  static void EditorBannerReload(WorkspaceShell& shell, const std::filesystem::path& path) {
+    shell.ActivateEditorBannerAction(EditorBannerAction::Reload, path);
+  }
+  static void EditorBannerOverwrite(WorkspaceShell& shell, const std::filesystem::path& path) {
+    shell.ActivateEditorBannerAction(EditorBannerAction::Overwrite, path);
+  }
+  static void EditorBannerKeep(WorkspaceShell& shell, const std::filesystem::path& path) {
+    shell.ActivateEditorBannerAction(EditorBannerAction::Keep, path);
+  }
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface_visible;
   }

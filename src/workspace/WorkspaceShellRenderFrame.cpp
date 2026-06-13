@@ -534,6 +534,50 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   } else if (active_merge_tab != nullptr) {
     RenderMergeScrollbars(renderer, layout.editor_surface);
   }
+
+  if (frame_vm.editor_banner.has_value()) {
+    const EditorBannerViewModel& banner_vm = *frame_vm.editor_banner;
+    const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
+    DrawFilledRect(renderer, strip, theme_.chrome_background);
+    DrawFilledRect(renderer,
+                   MakeRect(strip.x, strip.y + strip.h - kWorkspaceDividerThickness, strip.w,
+                            kWorkspaceDividerThickness),
+                   theme_.border);
+    DrawFilledRect(renderer, MakeRect(strip.x, strip.y, 3.0f, strip.h), theme_.accent);
+
+    const EditorBannerButtonLayout buttons =
+        ComputeEditorBannerButtonRects(strip, banner_vm.has_actions);
+    const float message_right = banner_vm.has_actions ? buttons.reload.x : buttons.dismiss.x;
+    const SDL_FRect message_rect = MakeRect(strip.x + 12.0f, strip.y,
+                                            std::max(0.0f, message_right - strip.x - 20.0f), strip.h);
+    const SDL_Rect clip{static_cast<int>(message_rect.x), static_cast<int>(message_rect.y),
+                        static_cast<int>(message_rect.w), static_cast<int>(message_rect.h)};
+    SDL_SetRenderClipRect(renderer, &clip);
+    DrawVCenteredTextOn(text_renderer_, renderer, message_rect, 0.0f, theme_.text_secondary,
+                        theme_.chrome_background, banner_vm.message);
+    SDL_SetRenderClipRect(renderer, nullptr);
+
+    const auto draw_banner_button = [&](const SDL_FRect& rect, std::string_view label,
+                                        ButtonTone tone) {
+      if (rect.w <= 0.0f) {
+        return;
+      }
+      DrawButtonCentered(text_renderer_, renderer, theme_, rect, label, tone,
+                         ButtonVisualState{
+                             .enabled = true,
+                             .hovered = last_mouse_position_valid_ &&
+                                        Contains(rect, last_mouse_x_, last_mouse_y_),
+                             .active = false,
+                         });
+    };
+    if (banner_vm.has_actions) {
+      draw_banner_button(buttons.reload, "Reload", ButtonTone::Neutral);
+      draw_banner_button(buttons.overwrite, "Overwrite", ButtonTone::Destructive);
+      draw_banner_button(buttons.keep, "Keep", ButtonTone::Neutral);
+    }
+    draw_banner_button(buttons.dismiss, "x", ButtonTone::Neutral);
+  }
+
   if (project_state.surface.focus == FocusTarget::Editor) {
     DrawSurfaceFocusRing(renderer, layout.editor_surface);
   }

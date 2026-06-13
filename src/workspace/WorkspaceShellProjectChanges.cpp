@@ -4,6 +4,7 @@
 
 #include "project/ProjectChangeNormalizer.h"
 #include "util/PerformanceTrace.h"
+#include "util/TextFileIO.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
@@ -55,21 +56,35 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
         ClearDiagnosticsForPath(normalized_path);
         break;
       case project::ProjectFileChangeKind::Created:
-      case project::ProjectFileChangeKind::Modified:
+      case project::ProjectFileChangeKind::Modified: {
+        EditorTabService editor_tabs = MakeEditorTabService();
+        // Suppress the watcher's echo of our own save: if every open view on this
+        // path already records the current on-disk signature, nothing changed
+        // underneath us and the save path already refreshed blame/compare.
+        const util::FileSignature signature = util::StatFileSignature(normalized_path);
+        if (editor_tabs.DiskSignatureMatchesOpenView(normalized_path, signature)) {
+          break;
+        }
         InvalidateEditorBlamePath(normalized_path);
         InvalidateMergeTabsForPath(normalized_path);
         refresh_compare_paths.insert(normalized_path);
-        {
-          EditorTabService editor_tabs = MakeEditorTabService();
-          PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
-          if (MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
-                  .HasDirtyEditorTabsForPath(normalized_path, nullptr)) {
-            dirty_external_paths.insert(normalized_path);
-          } else {
-            ReloadCleanEditorTabsForPath(normalized_path);
+        PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+        if (MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+                .HasDirtyEditorTabsForPath(normalized_path, nullptr)) {
+          dirty_external_paths.insert(normalized_path);
+        } else {
+          // Reload silently and, only when an open clean buffer was actually
+          // refreshed, surface a passive "reloaded from disk" notice.
+          const bool had_open_buffer = CountOpenBufferViews(normalized_path) > 0;
+          ReloadCleanEditorTabsForPath(normalized_path);
+          if (had_open_buffer) {
+            SetEditorBanner(context_.current_project_state,
+                            EditorBannerState::Kind::ReloadedNotice, normalized_path);
+            RequestEditorSurfaceRedraw();
           }
         }
         break;
+      }
     }
   }
 
@@ -77,8 +92,11 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     MarkCompareTabsStaleForPath(path);
   }
 
+  for (const std::filesystem::path& path : dirty_external_paths) {
+    SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ExternalChange, path);
+  }
   if (!dirty_external_paths.empty()) {
-    PromptExternalFileChanges(dirty_external_paths);
+    RequestEditorSurfaceRedraw();
   }
 
   if (batch.tree_rescan_requested) {
@@ -127,42 +145,6 @@ void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& pa
       }
     }
   }
-}
-
-void WorkspaceShell::PromptExternalFileChanges(
-    const std::set<std::filesystem::path>& paths) {
-  if (paths.empty() || context_.prompts.dirty_visible) {
-    return;
-  }
-
-  const std::filesystem::path path = *paths.begin();
-  const std::filesystem::path normalized_path = path.lexically_normal();
-  std::vector<std::size_t> dirty_tabs;
-  for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
-    if (!TabIsDirty(i)) {
-      continue;
-    }
-    const TabEntry& tab = context_.current_project_state.open_tabs[i];
-    if (tab.kind == TabEntry::Kind::Editor && tab.path.lexically_normal() == normalized_path) {
-      dirty_tabs.push_back(i);
-      continue;
-    }
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-        tab.compare->right_path.lexically_normal() == normalized_path) {
-      dirty_tabs.push_back(i);
-      continue;
-    }
-    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-        tab.merge->output_path.lexically_normal() == normalized_path) {
-      dirty_tabs.push_back(i);
-    }
-  }
-  if (dirty_tabs.empty()) {
-    return;
-  }
-
-  MakePromptSurfaceService().ShowDirtyPathPrompt(DirtyPromptState::Kind::ExternalFileChange,
-                                                 std::move(dirty_tabs), dirty_tabs.size(), path);
 }
 
 void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& path) {

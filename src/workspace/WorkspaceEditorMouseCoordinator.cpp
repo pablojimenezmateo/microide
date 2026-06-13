@@ -90,6 +90,31 @@ EditorMouseCoordinator::EditorMouseCoordinator(ProjectWorkspaceState& state,
 bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                               const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleButtonDown");
+
+  // Non-blocking external-change banner occupies the top strip of the editor
+  // surface, above the panes. Intercept its clicks before pane dispatch.
+  if (const EditorBannerState* banner = ActiveEditorBannerForTab(state_); banner != nullptr) {
+    const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
+    if (Contains(strip, event.button.x, event.button.y)) {
+      const bool has_actions = banner->kind == EditorBannerState::Kind::ExternalChange;
+      const EditorBannerButtonLayout buttons = ComputeEditorBannerButtonRects(strip, has_actions);
+      const std::filesystem::path path = banner->path;
+      state_.surface.focus = FocusTarget::Editor;
+      if (operations_.editor_banner_action) {
+        if (has_actions && Contains(buttons.reload, event.button.x, event.button.y)) {
+          operations_.editor_banner_action(EditorBannerAction::Reload, path);
+        } else if (has_actions && Contains(buttons.overwrite, event.button.x, event.button.y)) {
+          operations_.editor_banner_action(EditorBannerAction::Overwrite, path);
+        } else if (Contains(buttons.dismiss, event.button.x, event.button.y) ||
+                   (has_actions && Contains(buttons.keep, event.button.x, event.button.y))) {
+          operations_.editor_banner_action(EditorBannerAction::Keep, path);
+        }
+      }
+      // Consume any click on the strip so it does not fall through to content.
+      return true;
+    }
+  }
+
   const auto dividers = operations_.compute_editor_split_divider_layouts(layout.editor_surface);
   const auto divider_it = std::find_if(
       dividers.begin(), dividers.end(),
@@ -519,6 +544,10 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
               [this](std::string_view id) { return GetSettingValue(id); },
           .ensure_active_folding_model_fresh =
               [this]() { return EnsureActiveFoldingModelFresh(); },
+          .editor_banner_action =
+              [this](EditorBannerAction action, const std::filesystem::path& path) {
+                ActivateEditorBannerAction(action, path);
+              },
       });
 }
 

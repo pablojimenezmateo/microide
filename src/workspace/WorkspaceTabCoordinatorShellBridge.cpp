@@ -96,6 +96,12 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
+          .request_external_change_banner =
+              [this](const std::filesystem::path& path) {
+                SetEditorBanner(context_.current_project_state,
+                                EditorBannerState::Kind::ExternalChange, path);
+                RequestEditorSurfaceRedraw();
+              },
       });
 }
 
@@ -263,10 +269,6 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndicesForProject(
 
 void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
   MakeEditorTabService().ReloadCleanEditorTabsForPath(path);
-}
-
-void WorkspaceShell::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
-  MakeEditorTabService().ReloadEditorTabsForPathFromDisk(path);
 }
 
 bool WorkspaceShell::OpenUntitledTab() {

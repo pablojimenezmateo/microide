@@ -46,6 +46,7 @@ These are implemented and should not be treated as open migration work:
   shared `util/StringUtil.*` layer across viewport, renderer, terminal, and workspace helpers
 - single-line shell text inputs now share one insertion, caret, composition, and tail-truncation path across prompts, command input, overlays, and sidebar search fields, while read-only viewport-backed text surfaces still participate in shared selection and copy actions
 - editor undo and redo now store changed line ranges plus view state instead of full-buffer snapshots, and editor file open/save now reuses the shared text-file helper instead of inline stream assembly
+- document saves are durable (temp-file `fsync` via shared `util/DurableFile`, matching the persisted-state writer) and guarded against silent clobbering: each open buffer records an on-disk signature (mtime+size) at load/save, and a save whose file changed underneath it is refused and surfaced as a non-blocking external-change banner (Reload / Overwrite / Keep) instead of the old blocking modal; clean buffers reload silently with a passive "reloaded from disk" notice, and the watcher's echo of the editor's own write is suppressed by signature
 - filesystem tree with `.gitignore` handling, git markers (async after first paint on project
   open), refresh, and trash-backed create/rename/delete flows
 - host-owned app-directory, trash or recycle-bin, open-URL, reveal-path, and bundled-asset

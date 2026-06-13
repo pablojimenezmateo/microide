@@ -274,6 +274,17 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeEditorSplitNodeRect(
   return compute_rect(compute_rect, editor_tab->split_root.get(), editor_surface, 0);
 }
 
+SDL_FRect WorkspaceShell::EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const {
+  if (ActiveEditorBannerForTab(context_.current_project_state) == nullptr) {
+    return editor_surface;
+  }
+  const SDL_FRect strip = ComputeEditorBannerStripRect(editor_surface);
+  SDL_FRect content = editor_surface;
+  content.y += strip.h;
+  content.h = std::max(0.0f, content.h - strip.h);
+  return content;
+}
+
 std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneLayouts(
     const SDL_FRect& editor_surface) const {
   std::vector<EditorPaneLayout> panes;
@@ -282,8 +293,8 @@ std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneL
     return panes;
   }
 
-  CollectEditorPaneLayouts(*editor_tab, editor_tab->split_root.get(), editor_surface, panes,
-                           nullptr, nullptr);
+  CollectEditorPaneLayouts(*editor_tab, editor_tab->split_root.get(),
+                           EditorSurfaceBelowBanner(editor_surface), panes, nullptr, nullptr);
   return panes;
 }
 
@@ -297,8 +308,9 @@ WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface
 
   std::vector<std::size_t> path;
   std::vector<EditorPaneLayout> ignored_panes;
-  CollectEditorPaneLayouts(*editor_tab, editor_tab->split_root.get(), editor_surface, ignored_panes,
-                           &dividers, &path);
+  CollectEditorPaneLayouts(*editor_tab, editor_tab->split_root.get(),
+                           EditorSurfaceBelowBanner(editor_surface), ignored_panes, &dividers,
+                           &path);
   return dividers;
 }
 

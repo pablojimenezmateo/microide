@@ -37,6 +37,9 @@ class EditorTabService {
   bool CycleEditorSplit(int delta);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
+  bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
+  bool DiskSignatureMatchesOpenView(const std::filesystem::path& path,
+                                    const util::FileSignature& signature) const;
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,

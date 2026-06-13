@@ -28,6 +28,11 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
                                       int sticky_max_depth,
                                       std::vector<std::size_t>& out_opener_lines);
 
+struct EditorBannerViewModel {
+  bool has_actions = false;  // ExternalChange => Reload/Overwrite/Keep; Notice => dismiss only
+  std::string message;       // prebuilt here so render TUs never materialize it
+};
+
 struct FrameSurfaceViewModel {
   struct CompareSurfaceViewModel {
     TabEntry::Kind kind = TabEntry::Kind::Editor;
@@ -37,6 +42,7 @@ struct FrameSurfaceViewModel {
   bool sidebar_visible = false;
   bool bottom_panel_visible = false;
   std::optional<CompareSurfaceViewModel> compare_surface;
+  std::optional<EditorBannerViewModel> editor_banner;
   ProjectWorkspaceState* project_state = nullptr;
 };
 

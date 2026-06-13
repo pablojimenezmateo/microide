@@ -398,6 +398,37 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog) 
   };
 }
 
+SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface) {
+  const float height = std::min(kWorkspaceEditorBannerHeight, editor_surface.h);
+  return MakeRect(editor_surface.x, editor_surface.y, editor_surface.w, height);
+}
+
+EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip, bool has_actions) {
+  constexpr float kButtonHeight = 20.0f;
+  constexpr float kButtonGap = 6.0f;
+  constexpr float kEdgePad = 8.0f;
+  constexpr float kDismissSize = 18.0f;
+  const float y = strip.y + (strip.h - kButtonHeight) * 0.5f;
+
+  EditorBannerButtonLayout layout;
+  layout.dismiss = MakeRect(strip.x + strip.w - kEdgePad - kDismissSize,
+                            strip.y + (strip.h - kDismissSize) * 0.5f, kDismissSize, kDismissSize);
+  if (!has_actions) {
+    return layout;
+  }
+
+  constexpr float kReloadWidth = 64.0f;
+  constexpr float kOverwriteWidth = 78.0f;
+  constexpr float kKeepWidth = 54.0f;
+  float x = layout.dismiss.x - kButtonGap - kKeepWidth;
+  layout.keep = MakeRect(x, y, kKeepWidth, kButtonHeight);
+  x -= kButtonGap + kOverwriteWidth;
+  layout.overwrite = MakeRect(x, y, kOverwriteWidth, kButtonHeight);
+  x -= kButtonGap + kReloadWidth;
+  layout.reload = MakeRect(x, y, kReloadWidth, kButtonHeight);
+  return layout;
+}
+
 SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full) {
   const float width = std::min(kPromptSurfaceWidth, full.w - 32.0f);
   const float height = std::min(kPromptSurfaceHeight, full.h - 32.0f);

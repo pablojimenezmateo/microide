@@ -212,6 +212,21 @@ struct WelcomeSurfaceState {
   editor::TextViewport viewport;
 };
 
+// A non-blocking strip shown at the top of an editor pane whose file changed on
+// disk. `ExternalChange` is actionable (Reload / Overwrite / Keep) and appears
+// when the in-memory buffer has unsaved edits; `ReloadedNotice` is informational
+// and appears when a clean buffer was silently refreshed from disk.
+struct EditorBannerState {
+  enum class Kind {
+    ExternalChange,
+    ReloadedNotice,
+  };
+  Kind kind = Kind::ExternalChange;
+  std::filesystem::path path;  // normalized absolute path the banner pertains to
+};
+
+enum class EditorBannerAction { Reload, Overwrite, Keep };
+
 struct ProjectWorkspaceState {
   std::filesystem::path root;
   bool initialized = false;
@@ -238,7 +253,17 @@ struct ProjectWorkspaceState {
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<SidebarViewPolicy> sidebar_policies;
   compare::BranchReviewStateService branch_review;
+  // At most one banner per path; rendered for the active editor tab whose file
+  // matches. Empty in the common case (no external changes pending).
+  std::vector<EditorBannerState> editor_banners;
 };
+
+// Banner state helpers (free functions; keep WorkspaceShell thin). Defined in
+// WorkspaceShellEditorBanner.cpp.
+const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state);
+void SetEditorBanner(ProjectWorkspaceState& state, EditorBannerState::Kind kind,
+                     const std::filesystem::path& path);
+bool DismissEditorBannerForPath(ProjectWorkspaceState& state, const std::filesystem::path& path);
 
 struct ProjectCatalogState {
   std::vector<std::unique_ptr<ProjectWorkspaceState>> entries;

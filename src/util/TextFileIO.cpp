@@ -1,8 +1,11 @@
 #include "util/TextFileIO.h"
 
+#include <cstddef>
 #include <cstring>
 #include <fstream>
 #include <system_error>
+
+#include "util/DurableFile.h"
 
 namespace microide::util {
 
@@ -58,6 +61,38 @@ bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out) 
   return true;
 }
 
+FileSignature StatFileSignature(const std::filesystem::path& path) {
+  FileSignature signature;
+  if (path.empty()) {
+    return signature;  // exists=false, error=false
+  }
+
+  std::error_code error;
+  const auto mtime = std::filesystem::last_write_time(path, error);
+  if (error) {
+    if (error == std::errc::no_such_file_or_directory) {
+      return signature;  // absent, not an error
+    }
+    signature.error = true;
+    return signature;
+  }
+
+  std::error_code size_error;
+  const std::uintmax_t size = std::filesystem::file_size(path, size_error);
+  if (size_error) {
+    if (size_error == std::errc::no_such_file_or_directory) {
+      return signature;  // vanished between the two stats
+    }
+    signature.error = true;
+    return signature;
+  }
+
+  signature.exists = true;
+  signature.mtime_ticks = static_cast<std::uint64_t>(mtime.time_since_epoch().count());
+  signature.size = size;
+  return signature;
+}
+
 bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text) {
   if (path.empty()) {
     return false;
@@ -73,27 +108,19 @@ bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view
   std::filesystem::remove(temp_path, error);
   error.clear();
 
-  {
-    std::ofstream file(temp_path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-      return false;
-    }
-    file.write(text.data(), static_cast<std::streamsize>(text.size()));
-    file.flush();
-    if (!file) {
-      file.close();
-      std::filesystem::remove(temp_path, error);
-      return false;
-    }
+  // Durably write the temp file (fsync of contents) before swapping it into
+  // place. The parent directory is intentionally NOT fsynced: it is the slow
+  // half on networked filesystems and we keep document saves on the fast path
+  // per the project's speed-first priority. The temp fsync still guarantees the
+  // saved bytes survive a crash once the rename lands.
+  const std::span<const std::byte> bytes(reinterpret_cast<const std::byte*>(text.data()),
+                                         text.size());
+  if (!util::WriteFileBytesDurable(temp_path, bytes)) {
+    std::filesystem::remove(temp_path, error);
+    return false;
   }
 
-  std::filesystem::rename(temp_path, path, error);
-  if (error) {
-    std::filesystem::remove(path, error);
-    error.clear();
-    std::filesystem::rename(temp_path, path, error);
-  }
-  if (error) {
+  if (!util::RenameReplacing(temp_path, path)) {
     std::filesystem::remove(temp_path, error);
     return false;
   }

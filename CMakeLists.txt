@@ -260,6 +260,7 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalMouseEncoder.cpp
   src/terminal/TerminalOscClipboard.cpp
   src/terminal/TerminalProcessControl.cpp
+  src/util/DurableFile.cpp
   src/util/JsonValue.cpp
   src/util/Parse.cpp
   src/util/PerformanceCounters.cpp
@@ -311,8 +312,10 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceDiffTabCoordinator.cpp
   src/workspace/WorkspaceDirtyPromptCoordinator.cpp
   src/workspace/PromptSurfaceService.cpp
+  src/workspace/WorkspaceEditorBanner.cpp
   src/workspace/WorkspaceShellEditor.cpp
   src/workspace/WorkspaceShellEditorSplits.cpp
+  src/workspace/WorkspaceTabExternalChangeOps.cpp
   src/workspace/WorkspaceShellInteraction.cpp
   src/workspace/WorkspaceShellMenu.cpp
   src/workspace/WorkspaceShellMouse.cpp
@@ -673,6 +676,7 @@ if(MICROIDE_FUZZ)
     src/persistence/PersistedRecord.cpp
     src/persistence/PersistedRecordReader.cpp
     src/persistence/PersistedRecordWriter.cpp
+    src/util/DurableFile.cpp
     tests/fuzz/PersistedRecordReaderFuzz.cpp
   )
   microide_configure_fuzz_target(PersistedRecordReaderFuzz)
@@ -781,6 +785,7 @@ add_executable(microide_diff_bench
   src/util/Parse.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
+  src/util/DurableFile.cpp
   src/util/TextFileIO.cpp
   tools/CompareBench.cpp
 )
@@ -799,6 +804,7 @@ add_executable(microide_search_bench
   src/app/BackgroundTaskCounter.cpp
   src/util/PerformanceCounters.cpp
   src/util/StringUtil.cpp
+  src/util/DurableFile.cpp
   src/util/TextFileIO.cpp
   src/project/IgnoreMatcher.cpp
   src/project/ProjectFileScanner.cpp

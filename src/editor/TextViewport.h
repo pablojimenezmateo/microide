@@ -19,6 +19,7 @@
 #include "editor/TextLayoutCache.h"
 #include "editor/TextViewportUndoHistory.h"
 #include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 
 namespace microide::editor {
 
@@ -138,6 +139,21 @@ class TextViewport {
 
   const std::filesystem::path& path() const { return document_->path; }
   const std::vector<std::string>& lines() const { return document_->lines; }
+
+  // On-disk identity recorded at the last load/save. `disk_signature().exists`
+  // is false for untitled buffers and files that were absent when last sampled.
+  const util::FileSignature& disk_signature() const { return document_->disk_signature; }
+  bool HasDiskSignature() const { return document_->disk_signature.exists; }
+
+  // Result of comparing the file on disk *now* against the signature we recorded
+  // at load/last-save. Used by coordinators to avoid clobbering external edits.
+  enum class DiskConflict {
+    None,      // no recorded signature, or disk still matches what we last saw
+    Changed,   // file exists but its mtime/size differs from our record
+    Vanished,  // file was present at load/save but is now gone
+    StatError,  // the stat itself failed; treat conservatively as a conflict
+  };
+  DiskConflict DetectDiskConflict() const;
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;
@@ -268,6 +284,10 @@ class TextViewport {
     std::uint64_t syntax_revision = 0;
     std::uint64_t layout_shape_revision = 0;
     std::uint64_t presentation_revision = 0;
+    // On-disk identity captured at load and after each successful save. Used to
+    // detect that the file changed underneath us (external editor, VCS checkout)
+    // and to recognize our own writes when the file watcher echoes them back.
+    util::FileSignature disk_signature;
   };
 
   // WrappedRowLayout is now owned by TextLayoutCache; keep the alias so the
