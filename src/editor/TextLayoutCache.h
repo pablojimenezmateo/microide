@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "editor/TextLayout.h"
@@ -32,6 +33,10 @@ class TextLayoutCache {
     std::size_t line_index = 0;
     std::size_t visual_start = 0;
     std::size_t visual_end = 0;
+    // Hanging-indent: visual columns of leading whitespace the renderer should
+    // prepend before this row's content. Zero for first rows of a line, for
+    // the trivial path, and for the fold-but-no-wrap path.
+    std::size_t indent = 0;
   };
 
   struct Stats {
@@ -57,19 +62,25 @@ class TextLayoutCache {
   void EnsureWrappedRowLayouts(const std::vector<std::string>& lines,
                                std::size_t tab_size,
                                std::size_t visible_columns,
-                               std::size_t horizontal_scroll,
                                bool soft_wrap,
                                const FoldingModel* folding_model,
                                std::uint64_t layout_shape_revision) const;
 
   // Trivial-mode-aware accessors. EnsureWrappedRowLayouts() must have been
-  // called for the current input set before any of these are used.
+  // called for the current input set before any of these are used. The
+  // trivial and fold-but-no-wrap paths synthesize the row span from the
+  // live `horizontal_scroll` / `visible_columns` passed here.
   WrappedRow WrappedRowAt(std::size_t visual_row_index,
-                          std::size_t lines_size,
                           std::size_t horizontal_scroll,
                           std::size_t visible_columns) const;
   std::size_t WrappedRowCount(std::size_t lines_size) const;
   std::size_t WrappedLineRowOffset(std::size_t line_index) const;
+  // Inclusive [first_row, last_row] range of wrapped rows belonging to
+  // `line_index`. Precondition: a non-trivial table with offsets is built
+  // (callers check wrapped_row_layouts_trivial()/has_wrapped_line_row_offsets
+  // first). Never returns last_row < first_row.
+  std::pair<std::size_t, std::size_t> WrappedRowRangeForLine(std::size_t line_index,
+                                                             std::size_t lines_size) const;
   bool wrapped_row_layouts_trivial() const { return wrapped_row_layouts_trivial_; }
 
   // ---- max visual columns cache -----------------------------------------
@@ -162,6 +173,11 @@ class TextLayoutCache {
   mutable const FoldingModel* wrapped_row_layouts_folding_model_ = nullptr;
   mutable std::size_t wrapped_row_layouts_fold_revision_ = 0;
   mutable bool wrapped_row_layouts_trivial_ = false;
+  // Fold-but-no-soft-wrap: the table records line visibility/order only; each
+  // row's visual span is synthesized from the live horizontal_scroll in
+  // WrappedRowAt rather than baked at build time (so a horizontal scroll does
+  // not stale the cached spans nor force an O(lines) rebuild).
+  mutable bool wrapped_row_layouts_fold_no_wrap_ = false;
 #ifndef NDEBUG
   mutable std::size_t wrapped_row_layout_build_count_ = 0;
 #endif

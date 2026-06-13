@@ -607,6 +607,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     const float y = metrics.first_line_y + static_cast<float>(row) * metrics.line_height;
     const std::size_t row_visual_origin =
         soft_wrap ? row_meta.visual_start : viewport.horizontal_scroll();
+    // Hanging indent: continuation rows shift their whole content (text, carets,
+    // highlights, guides, whitespace markers) right by `indent` cells. Zero for
+    // first rows and non-wrapped rows, so this is a no-op there.
+    const float row_text_x =
+        metrics.text_x + static_cast<float>(row_meta.indent) * text_renderer.CharWidth();
     const bool selected = line_index == cursor_line;
     const bool active_search_line =
         active_search_match.has_value() &&
@@ -673,7 +678,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           row_desc.fills.push_back(DecoratedTextFill{
               .rect =
                   SDL_FRect{
-                      metrics.text_x +
+                      row_text_x +
                           static_cast<float>(visible_start - row_start_visual) *
                               text_renderer.CharWidth(),
                       y - 1.0f,
@@ -719,7 +724,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         row_desc.fills.push_back(DecoratedTextFill{
             .rect =
                 SDL_FRect{
-                    metrics.text_x +
+                    row_text_x +
                         static_cast<float>(visible_start - row_start_visual_occ) *
                             text_renderer.CharWidth(),
                     y - 1.0f,
@@ -751,7 +756,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         row_desc.fills.push_back(DecoratedTextFill{
             .rect =
                 SDL_FRect{
-                    metrics.text_x +
+                    row_text_x +
                         static_cast<float>(visible_start - row_start_visual) *
                             text_renderer.CharWidth(),
                     y - 1.0f,
@@ -775,7 +780,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         row_desc.fills.push_back(DecoratedTextFill{
             .rect =
                 SDL_FRect{
-                    metrics.text_x +
+                    row_text_x +
                         static_cast<float>(cell_visual - row_start_visual) *
                             text_renderer.CharWidth(),
                     y - 1.0f,
@@ -801,7 +806,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         row_desc.fills.push_back(DecoratedTextFill{
             .rect =
                 SDL_FRect{
-                    metrics.text_x +
+                    row_text_x +
                         static_cast<float>(guide.column - row_start_visual) *
                             text_renderer.CharWidth(),
                     y - 1.0f,
@@ -832,8 +837,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             continue;
           }
           const float cell_x =
-              metrics.text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
-                                   char_width;
+              row_text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
+                               char_width;
           if (!glyph.is_tab_rule) {
             row_desc.fills.push_back(DecoratedTextFill{
                 .rect =
@@ -875,7 +880,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           if (cell_start < row_start_visual) continue;
           if (visual_col > row_end_visual) continue;
           const float cell_x =
-              metrics.text_x +
+              row_text_x +
               static_cast<float>(cell_start - row_start_visual) * char_width;
           if (c == ' ') {
             row_desc.fills.push_back(DecoratedTextFill{
@@ -911,10 +916,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::HighlightedLineTokens");
       token_kinds = &viewport.HighlightedLineTokens(line_index);
     }
-    AppendLayoutSyntaxTextRuns(row_desc, text_renderer, theme, metrics.text_x, y, layout,
+    AppendLayoutSyntaxTextRuns(row_desc, text_renderer, theme, row_text_x, y, layout,
                                selected ? theme.text_primary : theme.text_secondary,
                                *token_kinds);
-    AppendDiagnosticUnderlines(row_desc, text_renderer, theme, metrics.text_x, y,
+    AppendDiagnosticUnderlines(row_desc, text_renderer, theme, row_text_x, y,
                                metrics.line_height, lines[line_index], line_index,
                                row_meta.visual_start, row_meta.visual_end - row_meta.visual_start,
                                viewport.tab_size(), diagnostics);
@@ -946,7 +951,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (draw_caret && selected && layout.caret_visible) {
-      const float caret_x = metrics.text_x +
+      const float caret_x = row_text_x +
                             static_cast<float>(layout.caret_column) * text_renderer.CharWidth();
       const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};
       SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
@@ -972,7 +977,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           continue;
         }
         const float caret_x =
-            metrics.text_x +
+            row_text_x +
             static_cast<float>(visual_column - row_start_visual_sc) *
                 text_renderer.CharWidth();
         const SDL_FRect caret =

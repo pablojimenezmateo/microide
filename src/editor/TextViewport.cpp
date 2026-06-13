@@ -202,9 +202,7 @@ LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
 }
 
 TextViewport::WrappedRowLayout TextViewport::WrappedRowAt(std::size_t visual_row_index) const {
-  return layout_cache_.WrappedRowAt(
-      visual_row_index, document_ != nullptr ? document_->lines.size() : 0, horizontal_scroll_,
-      visible_columns_);
+  return layout_cache_.WrappedRowAt(visual_row_index, horizontal_scroll_, visible_columns_);
 }
 
 std::size_t TextViewport::WrappedRowCount() const {
@@ -251,6 +249,7 @@ TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t 
       .line_index = row.line_index,
       .visual_start = row.visual_start,
       .visual_end = row.visual_end,
+      .indent = row.indent,
   };
 }
 
@@ -267,8 +266,11 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
       std::min<std::size_t>(std::max(0, visual_row), row_count - 1);
   const WrappedRowLayout layout = WrappedRowAt(clamped_row);
   const std::size_t width = layout.visual_end - layout.visual_start;
-  const std::size_t local_max = width;
-  const std::size_t clamped_local = std::min<std::size_t>(std::max(0, visual_col), local_max);
+  // Continuation rows render their content shifted right by `indent` cells, so
+  // subtract that gutter before mapping the click to a content column.
+  const std::size_t hit_col = static_cast<std::size_t>(std::max(0, visual_col));
+  const std::size_t local = hit_col > layout.indent ? hit_col - layout.indent : 0;
+  const std::size_t clamped_local = std::min<std::size_t>(local, width);
   const std::size_t target_visual = layout.visual_start + clamped_local;
   return LogicalPosition{
       .line = layout.line_index,
@@ -904,9 +906,8 @@ void TextViewport::EnsureWrappedRowLayouts() const {
   if (!document_) {
     return;
   }
-  layout_cache_.EnsureWrappedRowLayouts(document_->lines, tab_size_, visible_columns_,
-                                        horizontal_scroll_, soft_wrap_, folding_model_,
-                                        document_->layout_shape_revision);
+  layout_cache_.EnsureWrappedRowLayouts(document_->lines, tab_size_, visible_columns_, soft_wrap_,
+                                        folding_model_, document_->layout_shape_revision);
 }
 
 std::vector<std::string> TextViewport::SliceLines(const std::vector<std::string>& lines,

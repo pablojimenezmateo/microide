@@ -898,6 +898,57 @@ void TestTextViewportSoftWrapForcesHorizontalScrollToZero() {
          "soft wrap should reject new horizontal scrolling while wrap is enabled");
 }
 
+void TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows() {
+  // Regression: caret row resolution must use the builder's actual word-wrapped
+  // spans, not uniform caret_visual / wrap_columns division. At wrap 12 this
+  // sentence wraps to spans [0,12) [12,16) [16,26) [26,36); visual column 20
+  // lives in row 2, but the old division landed on row 1.
+  TextViewport viewport;
+  viewport.LoadContent("hello brave new wonderful world here\n",
+                       "/tmp/soft-wrap-nonuniform.txt");
+  viewport.SetViewportSize(10, 12);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 20);
+
+  Expect(viewport.cursor_visual_row() == 2,
+         "a caret inside a word-wrapped row resolves via its real span, not uniform division");
+  Expect(viewport.VisibleWrappedRowLayout(2).caret_visible,
+         "the rendered caret should land on the row whose span actually owns the caret column");
+  Expect(!viewport.VisibleWrappedRowLayout(1).caret_visible,
+         "the caret should not also render on the uniformly-divided wrong row");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 30,
+         "moving down preserves the preferred column relative to the correct non-uniform row");
+  Expect(viewport.cursor_visual_row() == 3,
+         "downward motion advances by one real visual row");
+}
+
+void TestTextViewportSoftWrapHangingIndentAlignsContinuationRows() {
+  // Four leading spaces become the hanging indent for continuation rows. At
+  // wrap 12 the indent is min(4, 12/2) = 4.
+  TextViewport viewport;
+  viewport.LoadContent("    aaaa bbbb cccc dddd eeee\n",
+                       "/tmp/soft-wrap-hanging-indent.txt");
+  viewport.SetViewportSize(10, 12);
+  viewport.SetSoftWrap(true);
+
+  const auto row0 = viewport.WrappedVisualRowLayout(0);
+  const auto row1 = viewport.WrappedVisualRowLayout(1);
+  Expect(row0.indent == 0, "the first row of a wrapped line carries no hanging indent");
+  Expect(row1.indent == 4,
+         "continuation rows expose the line's leading-whitespace visual width as hanging indent");
+  Expect(row1.indent + (row1.visual_end - row1.visual_start) <= 12,
+         "continuation rows pack against the width reduced by the hanging indent");
+
+  const TextPosition gutter_hit = viewport.LogicalPositionForVisualHit(1, 2);
+  Expect(gutter_hit == TextPosition{0, row1.visual_start},
+         "a click in a continuation row's indent gutter resolves to the row's first column");
+  const TextPosition content_hit = viewport.LogicalPositionForVisualHit(1, 6);
+  Expect(content_hit == TextPosition{0, row1.visual_start + 2},
+         "continuation-row hit-testing subtracts the hanging indent before mapping the column");
+}
+
 FoldingModel::ComputeOptions DefaultFoldOptions() {
   FoldingModel::ComputeOptions options;
   options.bracket_pairs = {{'{', '}'}};
@@ -926,6 +977,36 @@ void TestTextViewportCollapsedFoldHidesBodyRows() {
          "collapsed fold should hide the folded body and closer from visual rows");
   Expect(row2.line_index == 5,
          "collapsed fold should leave the trailing empty line visible after the folded block");
+}
+
+void TestTextViewportCollapsedFoldRowSpansTrackHorizontalScroll() {
+  // Regression: with a collapsed fold and soft wrap off, a row's visible span
+  // must reflect the live horizontal scroll. The fold-but-no-wrap path used to
+  // bake horizontal_scroll into the cached span without keying on it, so the
+  // span went stale after scrolling and highlights clipped to the wrong window.
+  TextViewport viewport;
+  viewport.LoadContent(
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nvoid f() {\n  a();\n  b();\n}\nx();\n",
+      "/tmp/fold-hscroll.cpp");
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+         "fold compute should complete for the horizontal-scroll fixture");
+  Expect(folding_model.Collapse(1), "function fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+  viewport.SetViewportSize(10, 8);
+
+  Expect(viewport.VisualRowCount() < 7,
+         "collapsing the function should hide its body rows");
+
+  viewport.SetHorizontalScroll(5);
+  const auto first = viewport.WrappedVisualRowLayout(0);
+  Expect(first.line_index == 0 && first.visual_start == 5 && first.visual_end == 13,
+         "a fold-but-no-wrap row span should reflect the current horizontal scroll");
+
+  viewport.SetHorizontalScroll(9);
+  const auto scrolled = viewport.WrappedVisualRowLayout(0);
+  Expect(scrolled.visual_start == 9 && scrolled.visual_end == 17,
+         "the span should update with the live horizontal scroll, not return a stale baked value");
 }
 
 void TestTextViewportCollapsedFoldVerticalMotionSkipsHiddenLines() {
@@ -1561,8 +1642,14 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapPrefersWhitespaceBoundaries);
   AddTest(tests, "TextViewport/SoftWrapHardBreaksInsideLongWords",
           TestTextViewportSoftWrapHardBreaksInsideLongWords);
+  AddTest(tests, "TextViewport/SoftWrapVerticalMotionFollowsNonUniformRows",
+          TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows);
+  AddTest(tests, "TextViewport/SoftWrapHangingIndentAlignsContinuationRows",
+          TestTextViewportSoftWrapHangingIndentAlignsContinuationRows);
   AddTest(tests, "TextViewport/CollapsedFoldHidesBodyRows",
           TestTextViewportCollapsedFoldHidesBodyRows);
+  AddTest(tests, "TextViewport/CollapsedFoldRowSpansTrackHorizontalScroll",
+          TestTextViewportCollapsedFoldRowSpansTrackHorizontalScroll);
   AddTest(tests, "TextViewport/CollapsedFoldVerticalMotionSkipsHiddenLines",
           TestTextViewportCollapsedFoldVerticalMotionSkipsHiddenLines);
   AddTest(tests, "TextViewport/CollapsedFoldPageMovesByVisibleRows",

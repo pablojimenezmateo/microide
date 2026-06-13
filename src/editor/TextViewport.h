@@ -60,6 +60,9 @@ class TextViewport {
     std::size_t line_index = 0;
     std::size_t visual_start = 0;
     std::size_t visual_end = 0;
+    // Hanging-indent: visual columns the renderer should prepend before this
+    // continuation row's content (0 for first rows of a line).
+    std::size_t indent = 0;
   };
 
   TextViewport();
