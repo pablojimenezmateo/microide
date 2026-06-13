@@ -95,6 +95,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::PasteClipboard),
       MenuItem(ActionId::SelectAll),
       MenuSeparator(),
+      MenuItem(ActionId::AddCursorAtNextMatch, "Add Cursor at Next Match", "Ctrl+D"),
+      MenuItem(ActionId::AddCursorAtAllMatches, "Add Cursor at All Matches", "Ctrl+Shift+L"),
+      MenuSeparator(),
       MenuItem(ActionId::ToggleLineComment, "Toggle Line Comment", "Ctrl+/"),
       MenuItem(ActionId::ToggleBlockComment, "Toggle Block Comment", "Shift+Alt+A"),
       MenuItem(ActionId::JumpToMatchingBracket, "Jump to Matching Bracket", "Ctrl+Shift+\\"),
@@ -118,8 +121,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::Completion),
       MenuItem(ActionId::InsertSnippet),
       MenuItem(ActionId::CodeActions),
-      MenuItem(ActionId::GoToDefinition),
-      MenuItem(ActionId::FindReferences),
   });
   static const auto kEditorContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Undo),
@@ -141,16 +142,6 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),
       MenuSeparator(),
       MenuItem(ActionId::Wrap, "Word Wrap", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleStatusBar, "Status Bar", {}, {}, 0, true),
-      MenuSeparator(),
-      MenuItem(ActionId::ToggleEditorFolding, "Code Folding", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorStickyScroll, "Sticky Scroll", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorIndentGuides, "Indent Guides", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorRenderWhitespace, "Render Whitespace", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorBracketMatchHighlight, "Bracket Match Highlight", {}, {}, 0,
-               true),
-      MenuItem(ActionId::ToggleEditorOccurrencesHighlight, "Occurrences Highlight", {}, {}, 0,
-               true),
       MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}},
                1),
@@ -159,22 +150,10 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
                std::array<std::string_view, 2>{"reset", {}}, 1),
   });
-  static const auto kSelectionItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::SelectAll),
-      MenuItem(ActionId::CutSelection),
-      MenuItem(ActionId::CopySelection),
-      MenuItem(ActionId::CopySelectionWithContext),
-      MenuItem(ActionId::PasteClipboard),
-      MenuSeparator(),
-      MenuItem(ActionId::AddCursorAtNextMatch, "Add Cursor at Next Match", "Ctrl+D"),
-      MenuItem(ActionId::AddCursorAtAllMatches, "Add Cursor at All Matches", "Ctrl+Shift+L"),
-      MenuItem(ActionId::ToggleEditorAddCursorAtMatch, "Add Cursor Action", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorOccurrencesHighlight, "Highlight Occurrences", {}, {}, 0,
-               true),
-      MenuItem(ActionId::ToggleEditorSearchCaseSensitive, "Case-Sensitive Search Seeds", {}, {}, 0,
-               true),
-  });
   static const auto kGoItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::Search, "Find in Buffer", "Ctrl+F"),
+      MenuItem(ActionId::ReplaceInBuffer, "Replace in Buffer", "Ctrl+H"),
+      MenuSeparator(),
       MenuItem(ActionId::Files, "Go to File…"),
       MenuItem(ActionId::ProjectSearch, "Search in Project…"),
       MenuSeparator(),
@@ -195,41 +174,11 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::Term, "New Terminal"),
       MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
   });
-  static const auto kPreferencesItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),
-      MenuItem(ActionId::ToggleLayoutMode, "Compact mode", {}, {}, 0, true),
-      MenuSeparator(),
-      MenuItem(ActionId::ToggleEditorAutoClosePairs, "Auto-Close Pairs", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorSurround, "Surround Selection", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorSmartIndent, "Smart Indent", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorAutoDetectIndent, "Auto-Detect Indent on Open", {}, {}, 0,
-               true),
-      MenuSeparator(),
-      MenuItem(ActionId::ToggleEditorToggleComment, "Toggle Comment Action", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorLineOps, "Line Move/Duplicate/Delete", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorSortLines, "Sort Lines Action", {}, {}, 0, true),
-      MenuItem(ActionId::ToggleEditorSnippets, "Snippets", {}, {}, 0, true),
-      MenuSeparator(),
-      MenuItem(ActionId::ToggleEditorSaveTrim, "Trim Trailing Whitespace on Save", {}, {}, 0,
-               true),
-      MenuItem(ActionId::ToggleEditorSaveEnsureNewline, "Ensure Final Newline on Save", {}, {}, 0,
-               true),
-      MenuSeparator(),
-      MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}}, 1),
-      MenuItem(ActionId::UiScale, "Zoom Out", "Ctrl+-", std::array<std::string_view, 2>{"down", {}}, 1),
-      MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
-               std::array<std::string_view, 2>{"reset", {}}, 1),
-      MenuSeparator(),
-      MenuItem(ActionId::PluginsReload, "Reload Plugins"),
-  });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),
+      MenuItem(ActionId::PluginsReload, "Reload Plugins"),
+      MenuSeparator(),
       MenuItem(ActionId::OpenHelpAbout, "Help"),
-  });
-  static const auto kSearchItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::Search),
-      MenuItem(ActionId::ReplaceInBuffer),
-      MenuItem(ActionId::Files),
-      MenuItem(ActionId::ProjectSearch),
   });
   static const auto kTerminalContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopySelection),
@@ -251,15 +200,12 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kMenus = std::to_array<MenuSpec>({
       MenuSpec{MenuId::File, "File", kFileItems},
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
-      MenuSpec{MenuId::Selection, "Selection", kSelectionItems},
       MenuSpec{MenuId::View, "View", kViewItems},
       MenuSpec{MenuId::Go, "Go", kGoItems},
       MenuSpec{MenuId::Git, "Git", kGitItems},
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::GitOutgoingBase, "Outgoing Base", {}},
-      MenuSpec{MenuId::Search, "Search", kSearchItems},
       MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
-      MenuSpec{MenuId::Preferences, "Preferences", kPreferencesItems},
       MenuSpec{MenuId::Help, "Help", kHelpItems},
       MenuSpec{MenuId::EditorContext, "Editor", kEditorContextItems},
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
@@ -337,7 +283,7 @@ MenuId ParseMenuId(std::string_view name) {
   if (name == "file") return MenuId::File;
   if (name == "edit") return MenuId::Edit;
   if (name == "view") return MenuId::View;
-  if (name == "search") return MenuId::Search;
+  if (name == "go") return MenuId::Go;
   if (name == "terminal") return MenuId::Terminal;
   return MenuId::None;
 }
