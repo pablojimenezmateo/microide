@@ -182,6 +182,16 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },
+          .settings_query_editor =
+              [this]() -> editor::SingleLineEditor* {
+                return &settings_overlay_service_.QueryEditor();
+              },
+          .refresh_settings_overlay =
+              [this]() {
+                settings_overlay_service_.SyncQueryFromEditor();
+                RefreshSettingsOverlayCatalog();
+                RequestOverlayRedraw();
+              },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .refresh_compare_tab_derived_state =

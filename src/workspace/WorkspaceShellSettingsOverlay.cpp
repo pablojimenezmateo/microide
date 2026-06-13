@@ -1,6 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 
 #include "workspace/WorkspaceStartupOptions.h"
@@ -321,6 +322,93 @@ void WorkspaceShell::ApplyLiveSettings() {
   }
 }
 
+bool WorkspaceShell::ResetSettingValue(std::string_view id) {
+  const auto info = FindSettingInfo(id, plugin_runtime_.Host());
+  if (!info.has_value()) {
+    return false;
+  }
+  // Apply the spec default so live editor/UI state reverts, then drop the stored
+  // override so the row reads as "default" again (resettable becomes false).
+  std::string default_value;
+  if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+    default_value = SerializeSettingValue(DefaultSettingValue(*spec));
+  } else {
+    default_value = SerializeSettingValue(info->default_value);
+  }
+  SetSettingValue(id, default_value);
+
+  auto erase_from = [&](std::vector<std::pair<std::string, std::string>>& settings) {
+    settings.erase(std::remove_if(settings.begin(), settings.end(),
+                                  [&](const auto& entry) { return entry.first == id; }),
+                   settings.end());
+  };
+  if (info->scope == SettingScope::User) {
+    erase_from(context_.user_settings);
+    MakePersistenceCoordinator().SaveUserConfig();
+  } else {
+    erase_from(context_.current_project_state.settings);
+    MakePersistenceCoordinator().SaveConfigState();
+  }
+  ApplyLiveSettings();
+  MarkLayoutDirty();
+  RequestWindowRedraw();
+  return true;
+}
+
+void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
+  const SettingStepDirection direction =
+      forward ? SettingStepDirection::Forward : SettingStepDirection::Backward;
+  if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+    const std::string current =
+        GetSettingValue(id).value_or(SerializeSettingValue(DefaultSettingValue(*spec)));
+    SetSettingValue(id, NextSettingValue(*spec, current, direction));
+    return;
+  }
+  // Plugin-contributed setting without a built-in spec: support generic Bool /
+  // Enum cycling; otherwise it is display-only.
+  const auto info = FindSettingInfo(id, plugin_runtime_.Host());
+  if (!info.has_value()) {
+    return;
+  }
+  const std::string current =
+      GetSettingValue(id).value_or(SerializeSettingValue(info->default_value));
+  if (info->type == SettingType::Bool) {
+    const bool on = current == "true" || current == "1" || current == "on";
+    SetSettingValue(id, on ? "false" : "true");
+    return;
+  }
+  if (info->type == SettingType::Enum && !info->enum_values.empty()) {
+    const auto& values = info->enum_values;
+    std::size_t index = 0;
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (values[i] == current) {
+        index = i;
+        break;
+      }
+    }
+    const std::size_t next = forward ? (index + 1) % values.size()
+                                     : (index + values.size() - 1) % values.size();
+    SetSettingValue(id, values[next]);
+  }
+}
+
+void WorkspaceShell::EnsureSettingsSelectionVisible() {
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const SettingsOverlayViewModel vm =
+      RenderViewModelBuilder(context_).BuildSettingsOverlay(*layout_state, settings_overlay_service_);
+  const int selected = settings_overlay_service_.SelectedRow();
+  int scroll = settings_overlay_service_.ScrollRow();
+  if (selected < scroll) {
+    scroll = selected;
+  } else if (selected >= scroll + vm.visible_rows) {
+    scroll = selected - vm.visible_rows + 1;
+  }
+  settings_overlay_service_.SetScrollRow(std::clamp(scroll, 0, vm.max_scroll));
+}
+
 void WorkspaceShell::OpenSettingsOverlay() {
   settings_overlay_service_.OpenSettings();
   RefreshSettingsOverlayCatalog();
@@ -337,6 +425,9 @@ void WorkspaceShell::OpenHelpAboutOverlay() {
 
 void WorkspaceShell::CloseSettingsOverlay() {
   settings_overlay_service_.Close();
+  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar) {
+    context_.interaction_state.drag_target = DragTarget::None;
+  }
   InvalidateCursorKindFingerprint();
   RequestOverlayRedraw();
 }
@@ -349,42 +440,87 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
 
   const SettingsOverlayViewModel vm =
       RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
-  if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_RIGHT) {
-    if (!Contains(vm.rect, event.button.x, event.button.y)) {
-      CloseSettingsOverlay();
-    }
-    return true;
-  }
-  if (!Contains(vm.rect, event.button.x, event.button.y)) {
+  const float mx = event.button.x;
+  const float my = event.button.y;
+
+  // Any click outside the surface dismisses the modal.
+  if (!Contains(vm.rect, mx, my)) {
     CloseSettingsOverlay();
     return true;
   }
 
-  const float row_height = 24.0f;
-  float list_top = vm.rect.y + 42.0f;
-  if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
-    list_top += 16.0f;
+  const bool left = event.button.button == SDL_BUTTON_LEFT;
+  const bool right = event.button.button == SDL_BUTTON_RIGHT;
+  if (!left && !right) {
+    return true;  // consume other buttons inside the modal
   }
-  const float list_bottom = vm.rect.y + vm.rect.h - 10.0f;
-  if (event.button.y < list_top || event.button.y > list_bottom) {
+  if (vm.mode != SettingsOverlayMode::Settings) {
+    return true;  // Help / About is read-only
+  }
+
+  // Scrollbar: clicking the track jumps and begins a drag (tracked via motion).
+  if (left && vm.scrollbar.has_value() && Contains(vm.scrollbar->track, mx, my)) {
+    context_.interaction_state.drag_target = DragTarget::SettingsScrollbar;
+    context_.interaction_state.drag_scrollbar_offset =
+        Contains(vm.scrollbar->thumb, mx, my) ? my - vm.scrollbar->thumb.y
+                                              : vm.scrollbar->thumb.h * 0.5f;
+    settings_overlay_service_.SetScrollRow(std::clamp(
+        static_cast<int>(std::lround(ScrollUnitsForPointer(
+            *vm.scrollbar, my, context_.interaction_state.drag_scrollbar_offset))),
+        0, vm.max_scroll));
+    RequestOverlayRedraw();
     return true;
   }
-  const std::size_t row =
-      static_cast<std::size_t>(std::max(0.0f, event.button.y - list_top) / row_height) +
-      static_cast<std::size_t>(settings_overlay_service_.ScrollRow());
 
-  if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings &&
-      row < settings_overlay_service_.SettingsRows().size()) {
-    const auto& picked = settings_overlay_service_.SettingsRows()[row];
-    if (const SettingSpec* spec = FindBuiltinSettingSpec(picked.id); spec != nullptr) {
-      const SettingStepDirection direction =
-          event.button.button == SDL_BUTTON_RIGHT ? SettingStepDirection::Backward
-                                                  : SettingStepDirection::Forward;
-      SetSettingValue(picked.id, NextSettingValue(*spec, picked.value, direction));
+  // Filter box: focus it so typing filters.
+  if (Contains(vm.filter_rect, mx, my)) {
+    settings_overlay_service_.SetFocusedPane(SettingsPane::Filter);
+    InvalidateCursorKindFingerprint();
+    RequestOverlayRedraw();
+    return true;
+  }
+
+  // Left rail: pick a category.
+  for (std::size_t i = 0; i < vm.categories.size(); ++i) {
+    if (Contains(vm.categories[i].rect, mx, my)) {
+      settings_overlay_service_.SetFocusedPane(SettingsPane::Categories);
+      settings_overlay_service_.SetSelectedCategory(static_cast<int>(i));
       RefreshSettingsOverlayCatalog();
+      RequestOverlayRedraw();
       return true;
     }
   }
+
+  // Value rows: controls, reset, or row selection.
+  for (const SettingsRowViewModel& row : vm.rows) {
+    if (!Contains(row.row_rect, mx, my)) {
+      continue;
+    }
+    settings_overlay_service_.SetFocusedPane(SettingsPane::Values);
+    settings_overlay_service_.SetSelectedRow(row.row_in_category);
+
+    if (row.resettable && Contains(row.reset_rect, mx, my)) {
+      ResetSettingValue(row.id);
+    } else if (Contains(row.control.checkbox_rect, mx, my)) {
+      StepSetting(row.id, true);  // checkbox toggle (forward == toggle for Bool)
+    } else if (Contains(row.control.dec_rect, mx, my)) {
+      StepSetting(row.id, false);
+    } else if (Contains(row.control.inc_rect, mx, my)) {
+      StepSetting(row.id, true);
+    } else if (Contains(row.control.value_rect, mx, my)) {
+      // Segmented value cycles on click; the stepper value field only selects.
+      if (row.control.kind == SettingsControlKind::Segmented) {
+        StepSetting(row.id, left);
+      }
+    } else if (right) {
+      // Right-click anywhere on a row steps backward as a power-user shortcut.
+      StepSetting(row.id, false);
+    }
+    RefreshSettingsOverlayCatalog();
+    RequestOverlayRedraw();
+    return true;
+  }
+
   return true;
 }
 

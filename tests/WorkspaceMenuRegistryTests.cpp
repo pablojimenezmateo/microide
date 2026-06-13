@@ -79,10 +79,12 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
          "Preferences menu should expose the settings overlay");
   Expect(MenuContainsLabel(MenuId::Preferences, "Compact mode"),
          "Preferences menu should expose compact mode as a stateful option");
-  Expect(MenuContainsLabel(MenuId::Help, "Keyboard Shortcuts"),
-         "Help menu should expose keyboard shortcuts");
-  Expect(MenuContainsLabel(MenuId::Help, "About microide"),
-         "Help menu should expose About microide");
+  Expect(MenuContainsLabel(MenuId::Help, "Help"),
+         "Help menu should expose a single combined Help item");
+  Expect(!MenuContainsLabel(MenuId::Help, "Keyboard Shortcuts"),
+         "Help menu should no longer expose a separate Keyboard Shortcuts item");
+  Expect(!MenuContainsLabel(MenuId::Help, "About microide"),
+         "Help menu should no longer expose a separate About microide item");
 }
 
 }  // namespace

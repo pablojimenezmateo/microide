@@ -301,9 +301,6 @@
     }
     return std::nullopt;
   }
-  static std::string SettingsOverlayInputHintLabel(const WorkspaceShell& shell) {
-    return shell.SettingsOverlayInputHintLabel();
-  }
   static void RefreshStatusBar(WorkspaceShell& shell) { shell.RefreshStatusBar(); }
   static void SetStatusBarGitSnapshot(WorkspaceShell& shell,
                                       bool repo_available,
@@ -470,7 +467,13 @@
   }
   static SDL_FRect SettingsOverlayRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return ComputeOverlaySurfaceRect(layout.editor_area);
+    return ComputeSettingsOverlaySurfaceRect(layout.editor_area);
+  }
+  static int SettingsOverlayScrollRow(const WorkspaceShell& shell) {
+    return shell.settings_overlay_service_.ScrollRow();
+  }
+  static void SetSettingsOverlayCategory(WorkspaceShell& shell, int category) {
+    shell.settings_overlay_service_.SetSelectedCategory(category);
   }
   static void SetTransientDragTargetSidebarDivider(WorkspaceShell& shell) {
     shell.context_.interaction_state.drag_target = WorkspaceShell::DragTarget::SidebarDivider;

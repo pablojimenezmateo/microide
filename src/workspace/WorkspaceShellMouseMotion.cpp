@@ -56,6 +56,24 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
   }
 
+  // Settings scrollbar drag tracks the pointer regardless of where it moves.
+  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar) {
+    if (settings_overlay_service_.Visible() &&
+        settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
+      const SettingsOverlayViewModel vm =
+          RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
+      if (vm.scrollbar.has_value()) {
+        settings_overlay_service_.SetScrollRow(std::clamp(
+            static_cast<int>(std::lround(ScrollUnitsForPointer(
+                *vm.scrollbar, static_cast<float>(event.motion.y),
+                context_.interaction_state.drag_scrollbar_offset))),
+            0, vm.max_scroll));
+      }
+    }
+    ensure_redraw([this]() { RequestOverlayRedraw(); });
+    return true;
+  }
+
   if (context_.prompts.surface_visible) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     ensure_redraw([this]() { RequestPromptRedraw(); });
@@ -547,13 +565,19 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   // the editor or sidebar underneath. Scrolling tracks whole entries.
   if (settings_overlay_service_.Visible()) {
     if (vertical_ticks != 0) {
-      const SDL_FRect overlay_rect = ComputeOverlaySurfaceRect(layout.editor_area);
+      const SDL_FRect overlay_rect = ComputeSettingsOverlaySurfaceRect(layout.editor_area);
       if (Contains(overlay_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
-        // The render pass resolves the true max scroll from the list geometry
-        // (variable-height help rows, fixed-height settings rows + headers).
-        settings_overlay_service_.SetScrollRow(std::clamp(
-            settings_overlay_service_.ScrollRow() - vertical_ticks, 0,
-            settings_overlay_max_scroll_row_));
+        // Settings rows are fixed-height, so the view model resolves the exact max
+        // scroll; Help/About rows vary, so its bound is published from the render
+        // pass into settings_overlay_max_scroll_row_.
+        int max_scroll = settings_overlay_max_scroll_row_;
+        if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
+          max_scroll = RenderViewModelBuilder(context_)
+                           .BuildSettingsOverlay(layout, settings_overlay_service_)
+                           .max_scroll;
+        }
+        settings_overlay_service_.SetScrollRow(
+            std::clamp(settings_overlay_service_.ScrollRow() - vertical_ticks, 0, max_scroll));
       }
     }
     ensure_redraw([this]() { RequestOverlayRedraw(); });

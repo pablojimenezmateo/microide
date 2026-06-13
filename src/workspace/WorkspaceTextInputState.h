@@ -20,6 +20,7 @@ enum class TextInputSurface {
   CommitSubject,
   CommitBody,
   Terminal,
+  SettingsQuery,
 };
 
 struct TextCompositionState {

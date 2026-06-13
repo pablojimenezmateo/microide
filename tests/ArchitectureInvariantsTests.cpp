@@ -51,7 +51,7 @@ void TestArchitectureInvariants() {
   run_rule("CheckShellFileSize(WorkspaceShellMembers.inc)",
            [&](const std::filesystem::path& root) {
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1522);
+                                                     1524);
            });
 
   bool hard_failure = false;

@@ -836,6 +836,21 @@ SDL_FRect ComputePickerOverlaySurfaceRect(const SDL_FRect& editor_area) {
                   final_height);
 }
 
+SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area) {
+  // The settings surface is a two-pane editor (category list + value pane), so it
+  // is the largest modal: wide enough for a left rail plus roomy controls, tall
+  // enough to show many rows without constant scrolling.
+  const float overlay_width =
+      std::clamp(editor_area.w * 0.72f, kOverlayMinWidth, kOverlayMaxWidth);
+  const float overlay_height =
+      std::clamp(editor_area.h * 0.66f, kOverlayMinHeight, kOverlayMaxHeight);
+  const float final_width = std::min(overlay_width, std::max(420.0f, editor_area.w - 56.0f));
+  const float final_height = std::min(overlay_height, std::max(220.0f, editor_area.h - 48.0f));
+  return MakeRect(editor_area.x + (editor_area.w - final_width) * 0.5f,
+                  editor_area.y + (editor_area.h - final_height) * 0.14f, final_width,
+                  final_height);
+}
+
 namespace {
 constexpr float kFindWidgetMargin = 12.0f;
 constexpr float kFindWidgetPad = 8.0f;

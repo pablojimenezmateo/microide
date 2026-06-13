@@ -57,14 +57,94 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     }
     return handled;
   }
-  // Settings / Help is a modal overlay: while it is visible it owns all keyboard input
-  // so keystrokes cannot leak into (and edit) the surface underneath. Escape closes it;
-  // every other key is swallowed. Mouse interaction is handled separately.
+  // Settings / Help is a modal overlay: while it is visible it owns all keyboard
+  // input so keystrokes cannot leak into (and edit) the surface underneath. The
+  // two-pane Settings view is fully keyboard navigable; Help/About is read-only.
+  // Every key is consumed regardless so nothing reaches the editor below.
   if (operations_.settings_overlay_visible()) {
+    const auto overlay_redraw = [&]() {
+      ensure_redraw([this]() { operations_.request_overlay_redraw(); });
+    };
     if (event.key == SDLK_ESCAPE) {
       operations_.close_settings_overlay();
       ensure_redraw([this]() { operations_.request_window_redraw(); });
+      return true;
     }
+    if (!operations_.settings_overlay_is_settings_mode()) {
+      return true;  // Help / About: read-only apart from Escape.
+    }
+    if (event.key == SDLK_TAB) {
+      operations_.settings_cycle_focus((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
+      overlay_redraw();
+      return true;
+    }
+    constexpr int kFilterPane = 0;
+    constexpr int kCategoryPane = 1;
+    constexpr int kValuePane = 2;
+    const int pane = operations_.settings_focused_pane();
+    if (pane == kFilterPane) {
+      if (event.key == SDLK_DOWN || event.key == SDLK_UP) {
+        operations_.settings_focus_pane(kValuePane);
+        operations_.settings_move_row(event.key == SDLK_DOWN ? 1 : -1);
+      } else {
+        operations_.text_input_handle_single_line_key_down(event, modifiers);
+      }
+      overlay_redraw();
+      return true;
+    }
+    if (pane == kCategoryPane) {
+      switch (event.key) {
+        case SDLK_DOWN:
+          operations_.settings_move_category(1);
+          break;
+        case SDLK_UP:
+          operations_.settings_move_category(-1);
+          break;
+        case SDLK_RIGHT:
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+          operations_.settings_focus_pane(kValuePane);
+          break;
+        case SDLK_LEFT:
+          operations_.settings_focus_pane(kFilterPane);
+          break;
+        default:
+          break;
+      }
+      overlay_redraw();
+      return true;
+    }
+    // Value pane.
+    switch (event.key) {
+      case SDLK_DOWN:
+        operations_.settings_move_row(1);
+        break;
+      case SDLK_UP:
+        operations_.settings_move_row(-1);
+        break;
+      case SDLK_RIGHT:
+      case SDLK_EQUALS:
+      case SDLK_PLUS:
+      case SDLK_KP_PLUS:
+        operations_.settings_step_selected(1);
+        break;
+      case SDLK_LEFT:
+      case SDLK_MINUS:
+      case SDLK_KP_MINUS:
+        operations_.settings_step_selected(-1);
+        break;
+      case SDLK_SPACE:
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        operations_.settings_toggle_or_activate_selected();
+        break;
+      case SDLK_DELETE:
+        operations_.settings_reset_selected();
+        break;
+      default:
+        break;
+    }
+    overlay_redraw();
     return true;
   }
   if (operations_.text_input_composition_consumes_key(event.key, modifiers)) {
@@ -445,6 +525,56 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .settings_overlay_visible = [this]() { return settings_overlay_service_.Visible(); },
           .close_settings_overlay = [this]() { CloseSettingsOverlay(); },
+          .settings_overlay_is_settings_mode =
+              [this]() {
+                return settings_overlay_service_.Mode() == SettingsOverlayMode::Settings;
+              },
+          .settings_focused_pane =
+              [this]() { return static_cast<int>(settings_overlay_service_.FocusedPane()); },
+          .settings_focus_pane =
+              [this](int pane) {
+                settings_overlay_service_.SetFocusedPane(static_cast<SettingsPane>(pane));
+                InvalidateCursorKindFingerprint();
+              },
+          .settings_cycle_focus =
+              [this](int delta) {
+                settings_overlay_service_.CycleFocusedPane(delta);
+                InvalidateCursorKindFingerprint();
+              },
+          .settings_move_category =
+              [this](int delta) {
+                settings_overlay_service_.MoveCategory(delta);
+                EnsureSettingsSelectionVisible();
+              },
+          .settings_move_row =
+              [this](int delta) {
+                settings_overlay_service_.MoveRow(delta);
+                EnsureSettingsSelectionVisible();
+              },
+          .settings_step_selected =
+              [this](int direction) {
+                if (const SettingsOverlayRow* row = settings_overlay_service_.SelectedSettingRow();
+                    row != nullptr) {
+                  StepSetting(row->id, direction >= 0);
+                  RefreshSettingsOverlayCatalog();
+                }
+              },
+          .settings_toggle_or_activate_selected =
+              [this]() {
+                if (const SettingsOverlayRow* row = settings_overlay_service_.SelectedSettingRow();
+                    row != nullptr) {
+                  StepSetting(row->id, true);
+                  RefreshSettingsOverlayCatalog();
+                }
+              },
+          .settings_reset_selected =
+              [this]() {
+                if (const SettingsOverlayRow* row = settings_overlay_service_.SelectedSettingRow();
+                    row != nullptr && row->resettable) {
+                  ResetSettingValue(row->id);
+                  RefreshSettingsOverlayCatalog();
+                }
+              },
           .close_sidebar = [this]() { CloseSidebar(); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .activate_overlay_selection =

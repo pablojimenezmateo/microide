@@ -1148,13 +1148,15 @@
   void RefreshStatusBar();
   void ApplyLiveSettings();
   bool SetSettingValue(std::string_view id, std::string value);
+  bool ResetSettingValue(std::string_view id);
   void RefreshSettingsOverlayCatalog();
   void OpenSettingsOverlay();
   void OpenHelpAboutOverlay();
   void CloseSettingsOverlay();
-  std::string SettingsOverlayInputHintLabel() const;
   void RenderSettingsOverlay(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   bool HandleSettingsOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  void StepSetting(std::string_view id, bool forward);
+  void EnsureSettingsSelectionVisible();
   bool HandleStatusBarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void RenderPromptSurface(
       SDL_Renderer* renderer,

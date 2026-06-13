@@ -175,6 +175,113 @@ void TestSettingsOverlayGroupsEditorEssentialsToggles() {
          "non-essentials toggles should keep an empty group so they fall outside the essentials block");
 }
 
+void TestSettingsCategoryLabelHelper() {
+  using microide::workspace::SettingsCategoryLabel;
+  Expect(SettingsCategoryLabel("") == "General",
+         "an empty group should map to the General category");
+  Expect(SettingsCategoryLabel("Editor → Essentials → Block Structure") == "Editor",
+         "a grouped setting should map to its top-level segment");
+  Expect(SettingsCategoryLabel("UI") == "UI",
+         "a single-segment group should map to itself");
+}
+
+void TestSettingsOverlayDerivesCategories() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  const auto& categories = service.Categories();
+  Expect(!categories.empty(), "settings overlay should derive at least one category");
+  Expect(categories.front() == "General",
+         "General (ungrouped settings) should be the first category");
+  Expect(std::find(categories.begin(), categories.end(), "Editor") != categories.end(),
+         "grouped Editor settings should produce an Editor category");
+  // No duplicate categories.
+  for (std::size_t i = 0; i < categories.size(); ++i) {
+    for (std::size_t j = i + 1; j < categories.size(); ++j) {
+      Expect(categories[i] != categories[j], "category list should not contain duplicates");
+    }
+  }
+}
+
+void TestSettingsOverlayCategorySelectionResolvesRows() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  const auto& categories = service.Categories();
+  const auto editor_it = std::find(categories.begin(), categories.end(), "Editor");
+  Expect(editor_it != categories.end(), "Editor category should exist for this fixture");
+  const int editor_index = static_cast<int>(std::distance(categories.begin(), editor_it));
+  service.SetSelectedCategory(editor_index);
+
+  const std::size_t count = service.RowCountInSelectedCategory();
+  Expect(count > 0, "Editor category should resolve at least one row");
+  for (int i = 0; i < static_cast<int>(count); ++i) {
+    const auto* row = service.RowAtVisibleIndex(editor_index, i);
+    Expect(row != nullptr, "every in-range visible index should resolve a row");
+    Expect(microide::workspace::SettingsCategoryLabel(row->group) == "Editor",
+           "rows resolved for the Editor category should all belong to it");
+  }
+  Expect(service.RowAtVisibleIndex(editor_index, static_cast<int>(count)) == nullptr,
+         "an out-of-range visible index should resolve to nullptr");
+}
+
+void TestSettingsOverlayFilterReclampsSelection() {
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  service.SetSelectedCategory(static_cast<int>(service.Categories().size()) - 1);
+
+  // A query that matches nothing should empty the category list and reset selection.
+  service.QueryEditor().SetText("zzz-no-such-setting-zzz");
+  service.SyncQueryFromEditor();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  Expect(service.Categories().empty(), "a non-matching filter should leave no categories");
+  Expect(service.SelectedCategory() == 0 && service.SelectedRow() == 0,
+         "selection should reset when the filter empties the catalog");
+  Expect(service.SelectedSettingRow() == nullptr,
+         "no setting should be selected when the catalog is empty");
+
+  // Clearing the filter restores rows and keeps selection in range.
+  service.QueryEditor().SetText("");
+  service.SyncQueryFromEditor();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  Expect(!service.Categories().empty(), "clearing the filter should restore categories");
+  Expect(service.SelectedCategory() >= 0 &&
+             service.SelectedCategory() < static_cast<int>(service.Categories().size()),
+         "selected category should stay in range after clearing the filter");
+}
+
+void TestSettingsOverlayRowControlMetadata() {
+  using microide::workspace::SettingsControlKind;
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(microide::workspace::AllSettingInfos(microide::plugin::PluginHost{}),
+                              {}, {});
+  const auto find_row = [&](std::string_view id) {
+    return std::find_if(service.SettingsRows().begin(), service.SettingsRows().end(),
+                        [&](const auto& row) { return row.id == id; });
+  };
+
+  const auto scale_it = find_row("ui.scale");
+  Expect(scale_it != service.SettingsRows().end(), "ui.scale should be present");
+  Expect(scale_it->type == SettingType::Float, "ui.scale should be a float setting");
+  Expect(scale_it->control_kind == SettingsControlKind::Stepper,
+         "float settings should use a stepper control");
+  Expect(scale_it->value_display.find('.') == std::string::npos ||
+             scale_it->value_display.back() != '0',
+         "float value_display should be compacted (no trailing zeros)");
+
+  const auto soft_tabs_it = find_row("editor.soft_tabs");
+  Expect(soft_tabs_it != service.SettingsRows().end(), "editor.soft_tabs should be present");
+  Expect(soft_tabs_it->control_kind == SettingsControlKind::Checkbox,
+         "bool settings should use a checkbox control");
+}
+
 }  // namespace
 
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
@@ -190,6 +297,16 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayFiltersAndPreservesScopes);
   AddTest(tests, "WorkspaceSettingsOverlay/GroupsEditorEssentialsToggles",
           TestSettingsOverlayGroupsEditorEssentialsToggles);
+  AddTest(tests, "WorkspaceSettingsOverlay/CategoryLabelHelper",
+          TestSettingsCategoryLabelHelper);
+  AddTest(tests, "WorkspaceSettingsOverlay/DerivesCategories",
+          TestSettingsOverlayDerivesCategories);
+  AddTest(tests, "WorkspaceSettingsOverlay/CategorySelectionResolvesRows",
+          TestSettingsOverlayCategorySelectionResolvesRows);
+  AddTest(tests, "WorkspaceSettingsOverlay/FilterReclampsSelection",
+          TestSettingsOverlayFilterReclampsSelection);
+  AddTest(tests, "WorkspaceSettingsOverlay/RowControlMetadata",
+          TestSettingsOverlayRowControlMetadata);
 }
 
 }  // namespace microide::tests

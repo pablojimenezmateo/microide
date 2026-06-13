@@ -60,6 +60,17 @@ class KeyInputCoordinator {
     std::function<void(bool)> dismiss_overlay;
     std::function<bool()> settings_overlay_visible;
     std::function<void()> close_settings_overlay;
+    // Settings two-pane keyboard navigation. Panes are encoded as ints to keep
+    // this header free of the SettingsOverlayService enum (0=Filter,1=Categories,2=Values).
+    std::function<bool()> settings_overlay_is_settings_mode;
+    std::function<int()> settings_focused_pane;
+    std::function<void(int)> settings_focus_pane;
+    std::function<void(int)> settings_cycle_focus;
+    std::function<void(int)> settings_move_category;
+    std::function<void(int)> settings_move_row;
+    std::function<void(int)> settings_step_selected;
+    std::function<void()> settings_toggle_or_activate_selected;
+    std::function<void()> settings_reset_selected;
     std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;

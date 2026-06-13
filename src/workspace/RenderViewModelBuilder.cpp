@@ -702,27 +702,158 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   return vm;
 }
 
+namespace {
+
+// Settings two-pane metrics. All control geometry uses fixed slots so the view
+// model can be built without a text renderer (the builder cannot measure text).
+constexpr float kSettingsPad = 12.0f;
+constexpr float kSettingsHeaderH = 38.0f;
+constexpr float kSettingsFilterH = 26.0f;
+constexpr float kSettingsCatRowH = 28.0f;
+constexpr float kSettingsValueRowH = 46.0f;
+constexpr float kSettingsScrollbarMargin = 14.0f;
+constexpr float kSettingsBtnW = 24.0f;
+constexpr float kSettingsBtnH = 22.0f;
+constexpr float kSettingsValueSlotW = 100.0f;
+constexpr float kSettingsSegW = 132.0f;
+constexpr float kSettingsResetW = 22.0f;
+constexpr float kSettingsCheckBox = 18.0f;
+constexpr float kSettingsControlGap = 6.0f;
+
+bool SettingBoolIsOn(std::string_view value) {
+  return !(value == "false" || value == "0" || value == "off" || value.empty());
+}
+
+}  // namespace
+
 SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     const WorkspaceLayout& layout,
     const SettingsOverlayService& service) const {
   SettingsOverlayViewModel vm;
   vm.visible = service.Visible();
   vm.mode = service.Mode();
-  vm.rect = ComputeOverlaySurfaceRect(layout.editor_area);
+  vm.rect = ComputeSettingsOverlaySurfaceRect(layout.editor_area);
+  vm.header_rect = MakeRect(vm.rect.x, vm.rect.y, vm.rect.w, kSettingsHeaderH);
   vm.scroll_row = service.ScrollRow();
+  vm.focused_pane = service.FocusedPane();
   vm.query = service.Query();
+  vm.query_empty = service.Query().empty();
   if (!vm.visible) {
     return vm;
   }
-  switch (vm.mode) {
-    case SettingsOverlayMode::Settings:
-      vm.title = "Settings";
-      vm.settings_rows = service.SettingsRows();
+
+  if (vm.mode == SettingsOverlayMode::HelpAbout) {
+    vm.title = "Help / About";
+    vm.help_rows = service.HelpRows();
+    return vm;
+  }
+
+  vm.title = "Settings";
+  vm.filter_placeholder = "Type to filter settings…";
+
+  // Header carries the title; a full-width filter bar sits just below it.
+  vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
+                            vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
+  const float content_top = vm.filter_rect.y + vm.filter_rect.h + 8.0f;
+  const float content_bottom = vm.rect.y + vm.rect.h - kSettingsPad;
+  const float content_height = std::max(0.0f, content_bottom - content_top);
+  const float left_w = std::clamp(vm.rect.w * 0.26f, 150.0f, 240.0f);
+  vm.left_pane_rect = MakeRect(vm.rect.x, content_top, left_w, content_height);
+  vm.right_pane_rect =
+      MakeRect(vm.rect.x + left_w, content_top, vm.rect.w - left_w, content_height);
+
+  // Left pane: one clickable rect per category.
+  const std::vector<std::string>& categories = service.Categories();
+  vm.categories.reserve(categories.size());
+  for (std::size_t i = 0; i < categories.size(); ++i) {
+    SettingsCategoryViewModel cat;
+    cat.label = categories[i];
+    cat.rect = MakeRect(vm.left_pane_rect.x, vm.left_pane_rect.y +
+                                                 static_cast<float>(i) * kSettingsCatRowH,
+                        vm.left_pane_rect.w, kSettingsCatRowH);
+    cat.selected = static_cast<int>(i) == service.SelectedCategory();
+    vm.categories.push_back(cat);
+  }
+
+  // Right pane: rows of the selected category, fixed height, scrolled.
+  std::vector<const SettingsOverlayRow*> cat_rows;
+  for (int i = 0;; ++i) {
+    const SettingsOverlayRow* row = service.RowAtVisibleIndex(service.SelectedCategory(), i);
+    if (row == nullptr) {
       break;
-    case SettingsOverlayMode::HelpAbout:
-      vm.title = "Help / About";
-      vm.help_rows = service.HelpRows();
-      break;
+    }
+    cat_rows.push_back(row);
+  }
+  const int total = static_cast<int>(cat_rows.size());
+  vm.visible_rows = std::max(1, static_cast<int>(content_height / kSettingsValueRowH));
+  vm.max_scroll = std::max(0, total - vm.visible_rows);
+  const int scroll = std::clamp(vm.scroll_row, 0, vm.max_scroll);
+  vm.scroll_row = scroll;
+  if (vm.max_scroll > 0) {
+    vm.scrollbar = MakeVerticalScrollbarGeometry(
+        vm.right_pane_rect, static_cast<float>(total), static_cast<float>(vm.visible_rows),
+        static_cast<float>(scroll), false);
+  }
+  const int first = scroll;
+  const int last = std::min(total, scroll + vm.visible_rows);
+  vm.rows.reserve(static_cast<std::size_t>(std::max(0, last - first)));
+  for (int i = first; i < last; ++i) {
+    const SettingsOverlayRow& row = *cat_rows[static_cast<std::size_t>(i)];
+    SettingsRowViewModel rvm;
+    rvm.id = row.id;
+    rvm.label = row.label;
+    rvm.description = row.description;
+    rvm.scope_label = row.scope_label;
+    rvm.row_in_category = i;
+    rvm.selected = i == service.SelectedRow();
+    rvm.resettable = row.resettable;
+
+    const float row_y =
+        vm.right_pane_rect.y + static_cast<float>(i - scroll) * kSettingsValueRowH;
+    rvm.row_rect = MakeRect(vm.right_pane_rect.x,
+                            row_y,
+                            vm.right_pane_rect.w - kSettingsScrollbarMargin,
+                            kSettingsValueRowH);
+
+    const float content_right = rvm.row_rect.x + rvm.row_rect.w - kSettingsPad;
+    const float cy = rvm.row_rect.y + (kSettingsValueRowH - kSettingsBtnH) * 0.5f;
+    float leftmost = content_right;
+
+    SettingsControlViewModel& control = rvm.control;
+    control.kind = row.control_kind;
+    control.display_value = row.value_display;
+    switch (row.control_kind) {
+      case SettingsControlKind::Checkbox: {
+        const float box_y = rvm.row_rect.y + (kSettingsValueRowH - kSettingsCheckBox) * 0.5f;
+        control.checkbox_rect =
+            MakeRect(content_right - kSettingsCheckBox, box_y, kSettingsCheckBox, kSettingsCheckBox);
+        control.checkbox_on = SettingBoolIsOn(row.value);
+        leftmost = control.checkbox_rect.x;
+        break;
+      }
+      case SettingsControlKind::Segmented: {
+        control.value_rect = MakeRect(content_right - kSettingsSegW, cy, kSettingsSegW, kSettingsBtnH);
+        leftmost = control.value_rect.x;
+        break;
+      }
+      case SettingsControlKind::Stepper: {
+        control.inc_rect = MakeRect(content_right - kSettingsBtnW, cy, kSettingsBtnW, kSettingsBtnH);
+        control.value_rect =
+            MakeRect(control.inc_rect.x - kSettingsValueSlotW, cy, kSettingsValueSlotW, kSettingsBtnH);
+        control.dec_rect =
+            MakeRect(control.value_rect.x - kSettingsBtnW, cy, kSettingsBtnW, kSettingsBtnH);
+        leftmost = control.dec_rect.x;
+        break;
+      }
+      case SettingsControlKind::None:
+        break;
+    }
+
+    if (row.resettable) {
+      rvm.reset_rect =
+          MakeRect(leftmost - kSettingsControlGap - kSettingsResetW, cy, kSettingsResetW, kSettingsBtnH);
+    }
+    vm.rows.push_back(rvm);
   }
   return vm;
 }
