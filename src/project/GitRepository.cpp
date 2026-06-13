@@ -86,7 +86,7 @@ std::vector<GitWorkingTreeEntry> GitRepository::GetWorkingTreeEntries() const {
 std::vector<GitCommitEntry> GitRepository::GetFileHistory(
     const std::filesystem::path& relative_path) const {
   const auto result = Execute({"log", "--follow", "--no-color",
-                               "--pretty=format:%H%x09%h%x09%s", "--",
+                               "--pretty=format:%H%x09%h%x09%an%x09%ar%x09%s", "--",
                                relative_path.generic_string()});
   if (!result.success()) {
     return {};

@@ -56,6 +56,10 @@ bool CompareMergeService::OpenPickerForPath(const std::filesystem::path& path,
   return interactions_.OpenPickerForPath(path, commit_spec);
 }
 
+void CompareMergeService::OpenOutgoingBasePicker() {
+  interactions_.OpenOutgoingBasePicker();
+}
+
 void CompareMergeService::RefreshPicker() {
   interactions_.RefreshPicker();
 }

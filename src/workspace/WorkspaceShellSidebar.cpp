@@ -493,11 +493,4 @@ void WorkspaceShell::SetGitOutgoingBaseChoice(OutgoingBaseChoice choice) {
   ConsumeGitSidebarRefresh();
 }
 
-void WorkspaceShell::OpenGitOutgoingBasePrompt() {
-  OpenPromptSurface(PromptSurfaceState::Action::SetGitOutgoingBaseRef,
-                    PromptSurfaceState::Kind::TextInput,
-                    context_.current_project_state.root,
-                    context_.current_project_state.sidebar.git.outgoing_base_choice.custom_ref);
-}
-
 }  // namespace microide::workspace

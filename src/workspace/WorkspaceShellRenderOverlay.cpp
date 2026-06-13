@@ -144,37 +144,75 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                        label);
     }
   } else if (overlay_vm.mode == OverlayMode::CommitPicker) {
+    const ComparePickerState& picker = overlay_state.workflow.compare_picker;
+    // Two-column picker row: precomputed primary label on the left, muted
+    // secondary metadata right-aligned. A leading accent bar marks the selection.
+    const auto draw_picker_row = [&](int row_index, int selected_index,
+                                     std::string_view primary, std::string_view secondary) {
+      const bool selected = row_index == selected_index;
+      SDL_FRect row = ScrollableListRowRect(overlay_list_layout, row_index);
+      DrawSelectableRowBackground(renderer, theme_, row, theme_.surface_raised, selected, selected);
+      const SDL_Color row_bg = selected ? theme_.row_highlight : theme_.surface_raised;
+      if (selected) {
+        DrawFilledRect(renderer, MakeRect(row.x, row.y + 2.0f, 3.0f, row.h - 4.0f), theme_.accent);
+      }
+      float secondary_width = 0.0f;
+      if (!secondary.empty()) {
+        secondary_width = text_renderer_.MeasureWidth(secondary) + 12.0f;
+        DrawVCenteredTextOn(
+            text_renderer_, renderer,
+            MakeRect(row.x + row.w - secondary_width, row.y, secondary_width, row.h), 0.0f,
+            theme_.text_muted, row_bg, secondary);
+      }
+      const float primary_width = std::max(20.0f, row.w - 12.0f - secondary_width);
+      DrawVCenteredTextOn(text_renderer_, renderer,
+                          MakeRect(row.x + 10.0f, row.y, primary_width, row.h), 0.0f,
+                          selected ? theme_.text_primary : theme_.text_secondary, row_bg,
+                          TruncateLabel(primary, primary_width));
+    };
+
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,
-               theme_.text_primary, theme_.chrome_background, "Compare against commit");
-    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 44.0f,
-               theme_.text_muted, theme_.overlay_background,
-               overlay_state.workflow.compare_picker.path.filename().string());
-    const std::string cp_fallback =
-        "> " + overlay_state.workflow.compare_picker.query.text();
-    DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 62.0f),
+               theme_.text_primary, theme_.chrome_background,
+               picker.title.empty() ? std::string_view("Compare against") : picker.title);
+    if (!picker.context_label.empty()) {
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 30.0f,
+                 theme_.text_muted, theme_.overlay_background,
+                 TruncateLabel(picker.context_label, overlay.w - kOverlayInset * 2.0f));
+    }
+    const std::string cp_fallback = "> " + picker.query.text();
+    DrawTextFieldFrame(renderer, theme_, overlay_field_rect(overlay.y + 52.0f),
                        current_surface == TextInputSurface::CommitPicker);
     DrawSingleLineTextTail(
-        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 62.0f),
+        renderer, overlay.x + kOverlayInset, overlay_field_text_y(overlay.y + 52.0f),
         std::max(1.0f, overlay.w - kOverlayInset * 2.0f), theme_.text_secondary,
         theme_.surface_background,
         overlay_display_text(TextInputSurface::CommitPicker, cp_fallback));
+    DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 78.0f,
+               theme_.text_muted, theme_.overlay_background,
+               picker.summary_line.empty() ? std::string_view("0 of 0") : picker.summary_line);
+    constexpr std::string_view kPickerHint = "↑↓ select · Enter choose · Esc cancel";
+    const float hint_x =
+        overlay.x + overlay.w - kOverlayInset - text_renderer_.MeasureWidth(kPickerHint);
+    DrawTextOn(text_renderer_, renderer, hint_x, overlay.y + 78.0f, theme_.text_disabled,
+               theme_.overlay_background, kPickerHint);
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = overlay_vm.scroll_row + row;
-      if (item_index >= static_cast<int>(overlay_state.workflow.compare_picker.matches.size())) {
+      if (item_index >= static_cast<int>(picker.matches.size())) {
         break;
       }
-      const auto& commit =
-          overlay_state.workflow.compare_picker.matches[static_cast<std::size_t>(item_index)];
-      draw_overlay_row(
-          row,
-          static_cast<int>(overlay_state.workflow.compare_picker.selected_index) -
-              overlay_vm.scroll_row,
-          commit.short_hash + "  " + commit.subject);
+      const auto& item = picker.matches[static_cast<std::size_t>(item_index)];
+      draw_picker_row(row, static_cast<int>(picker.selected_index) - overlay_vm.scroll_row,
+                      item.primary_label, item.secondary_label);
     }
-    if (overlay_state.workflow.compare_picker.matches.empty()) {
-      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 92.0f,
-                 theme_.text_muted, theme_.overlay_background, FormatEmptyState("matching commits"));
+    if (picker.matches.empty()) {
+      DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset,
+                 overlay_list_layout.list_rect.y + 6.0f, theme_.text_muted,
+                 theme_.overlay_background, FormatEmptyState("matching refs"));
     }
+    draw_vertical_scrollbar(overlay_list_layout.list_rect,
+                            static_cast<float>(picker.matches.size()),
+                            overlay_list_layout.visible_units,
+                            static_cast<float>(overlay_vm.scroll_row));
   } else if (overlay_vm.mode == OverlayMode::Completion) {
     if (!overlay_state.workflow.completion.error.empty()) {
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,

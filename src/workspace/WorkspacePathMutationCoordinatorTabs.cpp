@@ -337,7 +337,7 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
       PathEqualsOrWithin(state.overlay.workflow.compare_picker.path, path)) {
     state.overlay.workflow.compare_picker.path.clear();
     state.overlay.workflow.compare_picker.query.SetText("");
-    state.overlay.workflow.compare_picker.commits.clear();
+    state.overlay.workflow.compare_picker.items.clear();
     state.overlay.workflow.compare_picker.matches.clear();
     if (state.overlay.visible && state.overlay.mode == OverlayMode::CommitPicker) {
       // Hide via the focus-safe helper so input does not strand on the dismissed

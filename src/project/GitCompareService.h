@@ -14,10 +14,17 @@ struct GitCommitEntry {
   std::string hash;
   std::string short_hash;
   std::string subject;
+  std::string author;         // short author name (%an)
+  std::string relative_date;  // human relative date (%ar), e.g. "2 days ago"
 };
 
 std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& root,
                                                   const std::filesystem::path& absolute_path);
+
+// Repo-wide commit log on HEAD, newest first, capped at `limit`. Used by the
+// ref/commit picker so the outgoing-base flow can offer recent commits.
+std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path& root,
+                                                    std::size_t limit);
 
 struct GitFileContentAtCommit {
   bool exists = false;
@@ -39,6 +46,11 @@ struct GitBranchFileEntry {
 };
 
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root);
+
+// Local + remote branches, most-recently-committed first, with short labels
+// ("main", "origin/main"). Symbolic refs like origin/HEAD are skipped.
+std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root);
+
 std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
                                                               std::string_view base_ref);
 // Parses the NUL-delimited output of `git diff --name-status -z --find-renames`.

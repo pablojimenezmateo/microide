@@ -724,6 +724,7 @@
   void OpenComparePicker();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
+  void OpenOutgoingBaseRefPicker();
   SidebarMode SidebarModeForViewId(std::string_view view_id) const;
   SidebarMode ActiveSidebarMode() const;
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
@@ -888,7 +889,6 @@
   bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
-  void OpenGitOutgoingBasePrompt();
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   std::optional<EditorHoverTarget> EditorHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> DiagnosticHoverTargetAtPosition(float x, float y) const;

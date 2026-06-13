@@ -19,6 +19,39 @@
 
 namespace microide::workspace {
 
+namespace {
+
+// Builds a picker row for a commit. Display strings are composed here (not in the
+// render TU) so painting only reads precomputed labels.
+GitPickerItem MakeCommitPickerItem(const project::GitCommitEntry& commit) {
+  GitPickerItem item;
+  item.kind = GitPickerItem::Kind::Commit;
+  item.ref = commit.hash;
+  item.apply_label = commit.short_hash;
+  item.primary_label = commit.short_hash + "  " + commit.subject;
+  if (!commit.author.empty() && !commit.relative_date.empty()) {
+    item.secondary_label = commit.author + " · " + commit.relative_date;
+  } else if (!commit.relative_date.empty()) {
+    item.secondary_label = commit.relative_date;
+  } else {
+    item.secondary_label = commit.author;
+  }
+  item.commit = commit;
+  return item;
+}
+
+GitPickerItem MakeBranchPickerItem(const project::GitBranchReference& branch) {
+  GitPickerItem item;
+  item.kind = GitPickerItem::Kind::Branch;
+  item.ref = branch.ref;
+  item.apply_label = branch.label;
+  item.primary_label = branch.label;
+  item.secondary_label = "branch";
+  return item;
+}
+
+}  // namespace
+
 CompareInteractionCoordinator::CompareInteractionCoordinator(ProjectWorkspaceState& state,
                                                              Operations operations)
     : state_(state), operations_(std::move(operations)) {}
@@ -48,22 +81,31 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
     return false;
   }
 
-  state_.overlay.workflow.compare_picker.path = path.lexically_normal();
-  state_.overlay.workflow.compare_picker.query.SetText("");
-  state_.overlay.workflow.compare_picker.commits =
-      project::CollectGitFileHistory(state_.root, state_.overlay.workflow.compare_picker.path);
+  auto& picker = state_.overlay.workflow.compare_picker;
+  picker.purpose = ComparePickerPurpose::CompareFileHistory;
+  picker.path = path.lexically_normal();
+  picker.title = "Compare against";
+  picker.context_label = picker.path.filename().string();
+  picker.query.SetText("");
+  picker.items.clear();
+  for (const auto& commit : project::CollectGitFileHistory(state_.root, picker.path)) {
+    picker.items.push_back(MakeCommitPickerItem(commit));
+  }
   RefreshPicker();
-  if (state_.overlay.workflow.compare_picker.matches.empty()) {
+  if (picker.matches.empty()) {
     return false;
   }
 
   if (!commit_spec.empty()) {
     const std::string lowered_commit_spec = ToLower(commit_spec);
     std::vector<std::size_t> matching_indices;
-    for (std::size_t i = 0; i < state_.overlay.workflow.compare_picker.matches.size(); ++i) {
-      const auto& commit = state_.overlay.workflow.compare_picker.matches[i];
-      const std::string lowered_hash = ToLower(commit.hash);
-      const std::string lowered_short_hash = ToLower(commit.short_hash);
+    for (std::size_t i = 0; i < picker.matches.size(); ++i) {
+      const auto& item = picker.matches[i];
+      if (item.kind != GitPickerItem::Kind::Commit) {
+        continue;
+      }
+      const std::string lowered_hash = ToLower(item.commit.hash);
+      const std::string lowered_short_hash = ToLower(item.commit.short_hash);
       if (StartsWith(lowered_hash, lowered_commit_spec) ||
           StartsWith(lowered_short_hash, lowered_commit_spec)) {
         matching_indices.push_back(i);
@@ -74,7 +116,7 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
       return false;
     }
 
-    state_.overlay.workflow.compare_picker.selected_index = matching_indices.front();
+    picker.selected_index = matching_indices.front();
     OpenSelectedCommit();
     return true;
   }
@@ -83,20 +125,48 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
   return true;
 }
 
-void CompareInteractionCoordinator::RefreshPicker() {
-  state_.overlay.workflow.compare_picker.matches.clear();
-  state_.overlay.workflow.compare_picker.selected_index = 0;
+void CompareInteractionCoordinator::OpenOutgoingBasePicker() {
+  if (state_.root.empty()) {
+    return;
+  }
 
-  const std::string lowered_query = ToLower(state_.overlay.workflow.compare_picker.query.text());
-  for (const auto& commit : state_.overlay.workflow.compare_picker.commits) {
+  auto& picker = state_.overlay.workflow.compare_picker;
+  picker.purpose = ComparePickerPurpose::OutgoingBaseRef;
+  picker.path.clear();
+  picker.title = "Choose outgoing base";
+  const std::string& branch = state_.sidebar.git.branch_label;
+  picker.context_label =
+      branch.empty() ? std::string("Compare outgoing changes against…") : branch;
+  picker.query.SetText("");
+  picker.items.clear();
+  for (const auto& branch_ref : project::CollectGitBranches(state_.root)) {
+    picker.items.push_back(MakeBranchPickerItem(branch_ref));
+  }
+  for (const auto& commit : project::CollectGitRecentCommits(state_.root, 50)) {
+    picker.items.push_back(MakeCommitPickerItem(commit));
+  }
+  RefreshPicker();
+  operations_.show_compare_picker_overlay();
+}
+
+void CompareInteractionCoordinator::RefreshPicker() {
+  auto& picker = state_.overlay.workflow.compare_picker;
+  picker.matches.clear();
+  picker.selected_index = 0;
+
+  const std::string lowered_query = ToLower(picker.query.text());
+  for (const auto& item : picker.items) {
     if (!lowered_query.empty()) {
-      const std::string text = ToLower(commit.short_hash + " " + commit.subject);
+      const std::string text =
+          ToLower(item.primary_label + " " + item.secondary_label + " " + item.ref);
       if (text.find(lowered_query) == std::string::npos) {
         continue;
       }
     }
-    state_.overlay.workflow.compare_picker.matches.push_back(commit);
+    picker.matches.push_back(item);
   }
+  picker.summary_line = std::to_string(picker.matches.size()) + " of " +
+                        std::to_string(picker.items.size());
   operations_.reset_overlay_scroll();
   operations_.request_overlay_redraw();
 }
@@ -114,14 +184,20 @@ void CompareInteractionCoordinator::MovePickerSelection(int delta) {
 }
 
 void CompareInteractionCoordinator::OpenSelectedCommit() {
-  if (state_.overlay.workflow.compare_picker.matches.empty() ||
-      state_.overlay.workflow.compare_picker.selected_index >=
-          state_.overlay.workflow.compare_picker.matches.size()) {
+  auto& picker = state_.overlay.workflow.compare_picker;
+  if (picker.matches.empty() || picker.selected_index >= picker.matches.size()) {
     return;
   }
 
-  operations_.open_comparison(
-      state_.overlay.workflow.compare_picker.matches[state_.overlay.workflow.compare_picker.selected_index]);
+  const GitPickerItem& item = picker.matches[picker.selected_index];
+  if (picker.purpose == ComparePickerPurpose::OutgoingBaseRef) {
+    if (operations_.set_outgoing_base_ref) {
+      operations_.set_outgoing_base_ref(item.ref, item.apply_label);
+    }
+    return;
+  }
+
+  operations_.open_comparison(item.commit);
 }
 
 void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {

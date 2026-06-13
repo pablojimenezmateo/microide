@@ -358,7 +358,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
 
       if (overlay_mode == OverlayMode::CommitPicker) {
-        return y >= overlay.y + 58.0f && y < overlay.y + 78.0f ? CursorKind::Text
+        // Matches the picker query field y (overlay.y + 52) in WorkspaceShellRenderOverlay.cpp.
+        return y >= overlay.y + 48.0f && y < overlay.y + 68.0f ? CursorKind::Text
                                                                 : CursorKind::Default;
       }
       if (overlay_mode == OverlayMode::Completion || overlay_mode == OverlayMode::CodeActions) {

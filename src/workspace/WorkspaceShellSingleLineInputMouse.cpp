@@ -203,7 +203,8 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::CommitPicker: {
-        const SDL_FRect r = overlay_field_rect(overlay.y + 62.0f);
+        // Keep in sync with the picker query field y in WorkspaceShellRenderOverlay.cpp.
+        const SDL_FRect r = overlay_field_rect(overlay.y + 52.0f);
         if (Contains(r, x, y)) {
           return FilledHit(TextInputSurface::CommitPicker, r, "> ",
                            &state.overlay.workflow.compare_picker.query);
@@ -459,7 +460,8 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
           break;
         case TextInputSurface::CommitPicker:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, overlay_field_rect(overlay.y + 62.0f), "> ",
+            // Keep in sync with the picker query field y in WorkspaceShellRenderOverlay.cpp.
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + 52.0f), "> ",
                             &proj.overlay.workflow.compare_picker.query);
           }
           break;

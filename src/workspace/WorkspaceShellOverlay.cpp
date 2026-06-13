@@ -115,9 +115,12 @@ float WorkspaceShell::OverlayListStartOffset() const {
     case OverlayMode::CodeActions:
       // Caret-anchored popups render header-less, so the list starts near the top.
       return 8.0f;
+    case OverlayMode::CommitPicker:
+      // Picker carries a richer header (title + context subtitle + query field +
+      // result/hint line) so the list starts lower than the search overlays.
+      return 108.0f;
     case OverlayMode::BufferSearch:
     case OverlayMode::ProjectSearch:
-    case OverlayMode::CommitPicker:
     default:
       return 86.0f;
   }

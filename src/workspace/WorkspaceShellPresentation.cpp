@@ -133,6 +133,9 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
     return ComputeFindWidgetRect(FindWidgetAnchorRect(editor_area),
                                  overlay.mode == OverlayMode::BufferReplace);
   }
+  if (overlay.mode == OverlayMode::CommitPicker) {
+    return ComputePickerOverlaySurfaceRect(editor_area);
+  }
   return ComputeOverlaySurfaceRect(editor_area);
 }
 

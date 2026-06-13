@@ -90,6 +90,13 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .open_comparison =
               [this](const project::GitCommitEntry& commit) { OpenComparison(commit); },
+          .set_outgoing_base_ref =
+              [this](const std::string& ref, const std::string& /*label*/) {
+                SetGitOutgoingBaseChoice(OutgoingBaseChoice{
+                    .kind = OutgoingBaseChoice::Kind::SpecificRef,
+                    .custom_ref = ref,
+                });
+              },
           .active_compare_tab = [this]() { return ActiveCompareTab(); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
@@ -254,6 +261,10 @@ void WorkspaceShell::OpenComparePicker() {
 bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
                                               std::string_view commit_spec) {
   return MakeCompareMergeService().OpenPickerForPath(path, commit_spec);
+}
+
+void WorkspaceShell::OpenOutgoingBaseRefPicker() {
+  MakeCompareMergeService().OpenOutgoingBasePicker();
 }
 
 void WorkspaceShell::RefreshComparePicker() {

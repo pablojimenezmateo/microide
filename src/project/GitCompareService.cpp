@@ -118,6 +118,54 @@ std::vector<GitCommitEntry> CollectGitFileHistory(const std::filesystem::path& r
   return repo.GetFileHistory(*relative);
 }
 
+std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path& root,
+                                                    std::size_t limit) {
+  const GitRepository repo(root);
+  if (limit == 0 || !repo.IsValid() || !repo.HasHeadCommit()) {
+    return {};
+  }
+  const auto result = repo.Execute(std::vector<std::string>{
+      "log", "--no-color", "-n", std::to_string(limit),
+      "--pretty=format:%H%x09%h%x09%an%x09%ar%x09%s", "HEAD"});
+  if (!result.success()) {
+    return {};
+  }
+  return GitPorcelainParser::ParseLog(result.output);
+}
+
+std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root) {
+  const GitRepository repo(root);
+  if (!repo.IsValid()) {
+    return {};
+  }
+  const auto result = repo.Execute(std::vector<std::string>{
+      "for-each-ref", "--format=%(refname)", "--sort=-committerdate", "refs/heads",
+      "refs/remotes"});
+  if (!result.success()) {
+    return {};
+  }
+
+  std::vector<GitBranchReference> branches;
+  std::istringstream stream(result.output);
+  std::string line;
+  while (std::getline(stream, line)) {
+    const std::string ref = TrimTrailingWhitespace(line);
+    if (ref.empty()) {
+      continue;
+    }
+    std::string label = ShortRefLabel(ref);
+    // Skip symbolic remote heads (e.g. origin/HEAD -> origin/main) so the list
+    // shows real branches only.
+    const bool is_symbolic_head =
+        label.size() >= 5 && label.compare(label.size() - 5, 5, "/HEAD") == 0;
+    if (label.empty() || label == "origin/HEAD" || is_symbolic_head) {
+      continue;
+    }
+    branches.push_back(GitBranchReference{.ref = label, .label = std::move(label)});
+  }
+  return branches;
+}
+
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
                                                           const std::filesystem::path& absolute_path,
                                                           const std::string& hash) {

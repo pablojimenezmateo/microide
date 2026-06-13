@@ -18,8 +18,10 @@ namespace {
 using microide::compare::BuildCompareModel;
 using microide::compare::CompareModel;
 using microide::compare::CompareRowKind;
+using microide::project::CollectGitBranches;
 using microide::project::CollectGitBranchOutgoingFiles;
 using microide::project::CollectGitFileHistory;
+using microide::project::CollectGitRecentCommits;
 using microide::project::CollectGitWorkingTreeEntries;
 using microide::project::GitDiscardAll;
 using microide::project::GitDiscardPath;
@@ -275,6 +277,44 @@ void TestGitOutgoingBaseChoiceResolution() {
          "specific-ref outgoing base should pass the custom ref through unchanged");
 }
 
+void TestGitBranchAndRecentCommitCollection() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "README.md", "hello\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "first commit", "first commit");
+  WriteFile(repo_path / "README.md", "hello world\n");
+  CommitAll(repo_path, "second commit", "second commit");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "feature/topic"},
+                           "git checkout feature branch");
+
+  const auto branches = CollectGitBranches(repo_path);
+  bool saw_main = false;
+  bool saw_feature = false;
+  for (const auto& branch : branches) {
+    Expect(branch.label.find("/HEAD") == std::string::npos,
+           "branch collection should skip symbolic HEAD refs");
+    if (branch.label == "main") {
+      saw_main = true;
+    }
+    if (branch.label == "feature/topic") {
+      saw_feature = true;
+    }
+  }
+  Expect(saw_main && saw_feature,
+         "branch collection should list both local branches by short label");
+
+  const auto recent = CollectGitRecentCommits(repo_path, 10);
+  Expect(recent.size() == 2, "recent commit collection should return both commits on HEAD");
+  Expect(recent[0].subject == "second commit",
+         "recent commit collection should list newest commit first");
+  Expect(!recent[0].short_hash.empty() && !recent[0].relative_date.empty(),
+         "recent commit collection should populate short hash and relative date");
+
+  const auto capped = CollectGitRecentCommits(repo_path, 1);
+  Expect(capped.size() == 1, "recent commit collection should honor the limit");
+}
+
 void TestGitResolvePrBaseReferenceFromGhMergeBase() {
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
@@ -479,19 +519,24 @@ void TestGitPorcelainParserWorkingTreeEntries() {
 }
 
 void TestGitPorcelainParserLog() {
+  // Format: <hash>\t<short>\t<author>\t<relative_date>\t<subject> (subject last,
+  // so it may contain tabs).
   const std::string output =
-      "0123456789abcdef\t0123456\tfirst subject\n"
+      "0123456789abcdef\t0123456\tAda\t2 days ago\tfirst subject\n"
       "malformed line\n"
       "\n"
-      "fedcba9876543210\tfedcba9\tsecond subject\n";
+      "fedcba9876543210\tfedcba9\tGrace\t3 weeks ago\tsecond\tsubject\n";
 
   const auto commits = GitPorcelainParser::ParseLog(output);
   Expect(commits.size() == 2, "log parser should skip malformed lines");
   Expect(commits[0].hash == "0123456789abcdef", "first parsed commit hash mismatch");
   Expect(commits[0].short_hash == "0123456", "first parsed short hash mismatch");
+  Expect(commits[0].author == "Ada", "first parsed author mismatch");
+  Expect(commits[0].relative_date == "2 days ago", "first parsed relative date mismatch");
   Expect(commits[0].subject == "first subject", "first parsed subject mismatch");
   Expect(commits[1].hash == "fedcba9876543210", "second parsed commit hash mismatch");
-  Expect(commits[1].subject == "second subject", "second parsed subject mismatch");
+  Expect(commits[1].subject == "second\tsubject",
+         "second parsed subject should preserve embedded tabs");
 }
 
 // Git-independent regression for the `-z` name-status parser. The prior parser
@@ -561,6 +606,7 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/WorkingTreeStatusAndActions", TestGitWorkingTreeStatusAndActions);
   AddTest(tests, "Git/OutgoingBranchFiles", TestGitOutgoingBranchFiles);
   AddTest(tests, "Git/OutgoingBaseChoiceResolution", TestGitOutgoingBaseChoiceResolution);
+  AddTest(tests, "Git/BranchAndRecentCommitCollection", TestGitBranchAndRecentCommitCollection);
   AddTest(tests, "Git/ResolvePrBaseReferenceFromGhMergeBase",
           TestGitResolvePrBaseReferenceFromGhMergeBase);
   AddTest(tests, "Git/BulkStageAndDiscard", TestGitBulkStageAndDiscard);

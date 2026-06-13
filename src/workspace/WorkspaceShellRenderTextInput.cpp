@@ -296,7 +296,8 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
                                             available_width);
           break;
         case TextInputSurface::CommitPicker:
-          text_y = overlay_field_text_y(overlay.y + 62.0f);
+          // Keep in sync with the picker query field y in WorkspaceShellRenderOverlay.cpp.
+          text_y = overlay_field_text_y(overlay.y + 52.0f);
           vm = ComputeSingleLineViewMetrics(*text_input_vm.commit_picker_query, "> ",
                                             available_width);
           break;

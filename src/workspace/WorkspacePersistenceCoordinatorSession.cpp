@@ -51,7 +51,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.overlay.visible = false;
     state.panel.command_mode = false;
     state.overlay.workflow.compare_picker.matches.clear();
-    state.overlay.workflow.compare_picker.commits.clear();
+    state.overlay.workflow.compare_picker.items.clear();
     state.overlay.workflow.compare_picker.selected_index = 0;
   }
 

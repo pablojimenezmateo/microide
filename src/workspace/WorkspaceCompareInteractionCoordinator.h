@@ -17,6 +17,9 @@ class CompareInteractionCoordinator {
     std::function<void()> request_overlay_redraw;
     std::function<void()> reveal_compare_picker_selection;
     std::function<void(const project::GitCommitEntry&)> open_comparison;
+    // Sets the sidebar outgoing-comparison base to the picked ref (branch name or
+    // commit hash) with a user-facing label.
+    std::function<void(const std::string& ref, const std::string& label)> set_outgoing_base_ref;
     std::function<CompareTabState*()> active_compare_tab;
     std::function<MergeTabState*()> active_merge_tab;
     std::function<void(const std::filesystem::path&)> open_file;
@@ -58,6 +61,7 @@ class CompareInteractionCoordinator {
   void OpenPicker();
   bool OpenPickerForPath(const std::filesystem::path& path,
                          std::string_view commit_spec = {});
+  void OpenOutgoingBasePicker();
   void RefreshPicker();
   void MovePickerSelection(int delta);
   void OpenSelectedCommit();

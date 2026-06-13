@@ -338,23 +338,27 @@ void TestWorkspaceShellGitOutgoingBaseButtonOpensMenuAndPrompt() {
   const auto labels =
       WorkspaceShellTestAccess::VisiblePopupMenuLabels(shell, WorkspaceShell::MenuId::GitOutgoingBase);
   Expect(labels.size() == 3 && labels[0] == "Auto (base branch)" &&
-             labels[1] == "Previous commit (HEAD~1)" && labels[2] == "Specific ref...",
+             labels[1] == "Previous commit (HEAD~1)" && labels[2] == "Branch or commit...",
          "outgoing base menu should expose the three base-selection choices");
 
-  const auto specific_ref_rect = WorkspaceShellTestAccess::PopupMenuItemRect(
-      shell, WorkspaceShell::MenuId::GitOutgoingBase, "Specific ref...");
-  Expect(specific_ref_rect.has_value(),
-         "outgoing base menu should expose the specific-ref prompt entry");
-  Expect(SendMouseDown(shell, specific_ref_rect->x + specific_ref_rect->w * 0.5f,
-                       specific_ref_rect->y + specific_ref_rect->h * 0.5f, SDL_BUTTON_LEFT),
-         "clicking the specific-ref outgoing base entry should be handled");
+  const auto pick_ref_rect = WorkspaceShellTestAccess::PopupMenuItemRect(
+      shell, WorkspaceShell::MenuId::GitOutgoingBase, "Branch or commit...");
+  Expect(pick_ref_rect.has_value(),
+         "outgoing base menu should expose the branch/commit picker entry");
+  Expect(SendMouseDown(shell, pick_ref_rect->x + pick_ref_rect->w * 0.5f,
+                       pick_ref_rect->y + pick_ref_rect->h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the branch/commit outgoing base entry should be handled");
 
-  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
-         "specific-ref outgoing base entry should open the prompt surface");
-  Expect(WorkspaceShellTestAccess::PromptSurfaceTitle(shell) == "Outgoing Base Ref",
-         "specific-ref outgoing base prompt should use the dedicated title");
-  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell) == "origin/release/2026-04",
-         "specific-ref outgoing base prompt should prefill the saved custom ref");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+                 WorkspaceShell::OverlayMode::CommitPicker,
+         "branch/commit outgoing base entry should open the commit picker overlay");
+  const auto& picker =
+      WorkspaceShellTestAccess::CurrentProjectState(shell).overlay.workflow.compare_picker;
+  Expect(picker.purpose == microide::workspace::ComparePickerPurpose::OutgoingBaseRef,
+         "outgoing base picker should run in the outgoing-base purpose");
+  Expect(!picker.items.empty(),
+         "outgoing base picker should list at least the current branch / recent commit");
 }
 
 void TestWorkspaceShellGitSidebarKeepsOutgoingRowsWhenFilesAlsoHaveWorkingTreeChanges() {

@@ -822,6 +822,20 @@ SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {
                   final_height);
 }
 
+SDL_FRect ComputePickerOverlaySurfaceRect(const SDL_FRect& editor_area) {
+  // The ref/commit picker is a denser, taller modal than the search overlays: it
+  // carries a header block plus two-column rows, so it gets more width and height.
+  const float overlay_width =
+      std::clamp(editor_area.w * 0.66f, kOverlayMinWidth, kOverlayMaxWidth);
+  const float overlay_height =
+      std::clamp(editor_area.h * 0.60f, kOverlayMinHeight, kOverlayMaxHeight);
+  const float final_width = std::min(overlay_width, std::max(260.0f, editor_area.w - 56.0f));
+  const float final_height = std::min(overlay_height, std::max(160.0f, editor_area.h - 48.0f));
+  return MakeRect(editor_area.x + (editor_area.w - final_width) * 0.5f,
+                  editor_area.y + (editor_area.h - final_height) * 0.18f, final_width,
+                  final_height);
+}
+
 namespace {
 constexpr float kFindWidgetMargin = 12.0f;
 constexpr float kFindWidgetPad = 8.0f;

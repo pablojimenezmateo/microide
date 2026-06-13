@@ -107,11 +107,32 @@ struct ProjectSearchState {
   std::string error;
 };
 
+// One selectable row in the ref/commit picker. Display strings are precomputed
+// when the list is built (in the coordinator) so the render TU only draws them.
+struct GitPickerItem {
+  enum class Kind { Commit, Branch };
+  Kind kind = Kind::Commit;
+  std::string ref;              // commit hash, or short branch name
+  std::string apply_label;      // user-facing label applied on selection (short_hash / branch)
+  std::string primary_label;    // left column text
+  std::string secondary_label;  // right column text (muted)
+  project::GitCommitEntry commit;  // populated when kind == Commit (for open_comparison)
+};
+
+// What selecting an item does. CompareFileHistory opens a diff of the picked
+// commit against the working tree; OutgoingBaseRef sets the sidebar's outgoing
+// comparison base to the picked branch/commit.
+enum class ComparePickerPurpose { CompareFileHistory, OutgoingBaseRef };
+
 struct ComparePickerState {
-  std::filesystem::path path;
+  ComparePickerPurpose purpose = ComparePickerPurpose::CompareFileHistory;
+  std::filesystem::path path;   // file being compared (CompareFileHistory only)
+  std::string title;            // header title, e.g. "Compare against"
+  std::string context_label;    // subtitle: filename or branch context
+  std::string summary_line;     // "<matches> of <total>" precomputed in RefreshPicker
   editor::SingleLineEditor query;
-  std::vector<project::GitCommitEntry> commits;
-  std::vector<project::GitCommitEntry> matches;
+  std::vector<GitPickerItem> items;
+  std::vector<GitPickerItem> matches;
   std::size_t selected_index = 0;
 };
 

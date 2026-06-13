@@ -1,6 +1,7 @@
 #include "project/GitPorcelainParser.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <sstream>
 
@@ -184,6 +185,8 @@ std::vector<GitWorkingTreeEntry> GitPorcelainParser::ParseWorkingTreeEntries(std
 }
 
 std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output) {
+  // Expected line layout (tab-separated, subject last so it may contain tabs):
+  //   <hash>\t<short_hash>\t<author>\t<relative_date>\t<subject>
   std::vector<GitCommitEntry> commits;
   std::istringstream stream(std::string{output});
   std::string line;
@@ -191,16 +194,27 @@ std::vector<GitCommitEntry> GitPorcelainParser::ParseLog(std::string_view output
     if (line.empty()) {
       continue;
     }
-    std::size_t first_tab = line.find('\t');
-    std::size_t second_tab = first_tab == std::string::npos ? std::string::npos
-                                                            : line.find('\t', first_tab + 1);
-    if (first_tab == std::string::npos || second_tab == std::string::npos) {
+    std::array<std::size_t, 4> tabs{};
+    std::size_t search = 0;
+    bool well_formed = true;
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+      const std::size_t pos = line.find('\t', search);
+      if (pos == std::string::npos) {
+        well_formed = false;
+        break;
+      }
+      tabs[i] = pos;
+      search = pos + 1;
+    }
+    if (!well_formed) {
       continue;
     }
     commits.push_back(GitCommitEntry{
-        .hash = line.substr(0, first_tab),
-        .short_hash = line.substr(first_tab + 1, second_tab - first_tab - 1),
-        .subject = line.substr(second_tab + 1),
+        .hash = line.substr(0, tabs[0]),
+        .short_hash = line.substr(tabs[0] + 1, tabs[1] - tabs[0] - 1),
+        .subject = line.substr(tabs[3] + 1),
+        .author = line.substr(tabs[1] + 1, tabs[2] - tabs[1] - 1),
+        .relative_date = line.substr(tabs[2] + 1, tabs[3] - tabs[2] - 1),
     });
   }
   return commits;

@@ -173,7 +173,7 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
         },
         MenuItemSpec{
             .action = ActionId::Colorscheme,
-            .label = "Specific ref...",
+            .label = "Branch or commit...",
             .accelerator = {},
             .args = {},
             .arg_count = 0,
@@ -264,7 +264,7 @@ bool WorkspaceShell::ExecuteCustomMenuItem(MenuId id, std::size_t item_index) {
       });
       return true;
     case 2:
-      OpenGitOutgoingBasePrompt();
+      OpenOutgoingBaseRefPicker();
       return true;
     default:
       return false;

@@ -388,7 +388,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       for (std::size_t i = 0; i < git_vm.summary_lines.size(); ++i) {
         const std::string& summary = git_vm.summary_lines[i];
         const SDL_Color color = summary == git_vm.error_banner ? theme_.diff_deleted
-                                : i == 0 ? theme_.text_secondary
+                                : i == 0 ? theme_.text_primary
                                          : summary == git_vm.stale_banner ? theme_.text_secondary
                                                                           : theme_.text_muted;
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y, color,
@@ -534,6 +534,12 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
 
       if (line.kind == GitSidebarLine::Kind::Header) {
+        // Section band: a subtle raised strip with a hairline divider on top so the
+        // Conflicts / Staged / Unstaged / Untracked / Outgoing groups read as distinct
+        // blocks instead of a flat run of text.
+        DrawFilledRect(renderer, row_rect, theme_.surface_raised);
+        DrawFilledRect(renderer, MakeRect(row_rect.x, row_rect.y, row_rect.w, 1.0f),
+                       theme_.border);
         float label_width = row_rect.w - 8.0f;
         if (line.section == GitSidebarEntry::Section::Outgoing) {
           if (const auto button_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
@@ -557,8 +563,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                 std::max(0.0f, button_rect->x - row_rect.x - 8.0f);
           }
         }
-        DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 4.0f, theme_.text_secondary,
-                            theme_.surface_background,
+        DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 8.0f, theme_.text_secondary,
+                            theme_.surface_raised,
                             TruncateLabel(line.label, label_width));
         continue;
       }
@@ -610,11 +616,10 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const float tree_x = row_rect.x + 6.0f + depth_offset;
       const float label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
 
-      const char git_marker = GitMarker(row_vm != nullptr ? row_vm->status : entry.status);
+      const project::GitFileStatus row_status = row_vm != nullptr ? row_vm->status : entry.status;
+      const char git_marker = GitMarker(row_status);
       const std::string_view marker_text =
           git_marker == ' ' ? std::string_view{} : std::string_view(&git_marker, 1);
-      const float marker_width =
-          marker_text.empty() ? 0.0f : text_renderer_.MeasureWidth(marker_text);
       const GitSidebarEntryActionLayout actions =
           ComputeGitSidebarEntryActionLayout(row_rect, entry);
       float right_edge = actions.content_right_edge;
@@ -646,18 +651,21 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive, row_actions.discard);
       }
 
+      // Leading status badge: a bright, status-colored M/A/D/U/! glyph in a fixed slot
+      // before the filename. This carries the per-file git state with color instead of a
+      // dim letter tucked at the right edge, which is what made the panel read as a wall
+      // of text. No background chip — a saturated glyph on the row reads cleanly and avoids
+      // the contrast/coverage problems of a small filled box behind the letter.
+      const SDL_Color row_background =
+          selected ? theme_.row_highlight : theme_.surface_background;
+      constexpr float kBadgeSlot = 18.0f;
+      float name_x = label_x;
       if (!marker_text.empty()) {
-        const SDL_Color marker_color =
-            selected ? theme_.text_primary
-                     : render::BlendColors(
-                           GitMarkerColor(theme_, row_vm != nullptr ? row_vm->status : entry.status),
-                           theme_.text_secondary, 0.35f);
-        DrawVCenteredTextOn(
-            text_renderer_, renderer,
-            MakeRect(right_edge - marker_width, row_rect.y, marker_width, row_rect.h), 0.0f,
-            marker_color,
-            selected ? theme_.row_highlight : theme_.surface_background, marker_text);
-        right_edge -= marker_width + 8.0f;
+        const SDL_Color badge_color = selected ? theme_.text_primary : GitMarkerColor(theme_, row_status);
+        DrawCenteredTextOn(text_renderer_, renderer,
+                           MakeRect(label_x, row_rect.y, kBadgeSlot, row_rect.h), badge_color,
+                           row_background, marker_text);
+        name_x = label_x + kBadgeSlot;
       }
 
       std::string primary_label = line.label.empty() ? entry.relative_path.filename().string() : line.label;
@@ -665,11 +673,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         primary_label = "[" + row_vm->review_marker_label + "] " + primary_label;
       }
       const std::string secondary_label;
-      const SDL_Color row_background =
-          selected ? theme_.row_highlight : theme_.surface_background;
       const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
       const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
-      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, label_x, right_edge,
+      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, name_x, right_edge,
                                   primary_color, secondary_color, row_background, primary_label,
                                   secondary_label, 1.0f);
     }
