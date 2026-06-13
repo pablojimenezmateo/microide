@@ -1902,17 +1902,17 @@ void TestViewMenuToggleReflectsBackingSetting() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.enabled", "true"),
-         "menu-checked fixture should set editor.fold.enabled to true");
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word"),
+         "menu-checked fixture should set editor.wrap to word");
   Expect(WorkspaceShellTestAccess::MenuItemCheckedByLabel(shell, WorkspaceShell::MenuId::View,
-                                                         "Code Folding") == true,
-         "Code Folding entry should report checked=true when its setting is on");
+                                                         "Word Wrap") == true,
+         "Word Wrap entry should report checked=true when its setting is on");
 
-  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.fold.enabled", "false"),
-         "menu-checked fixture should flip editor.fold.enabled to false");
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "off"),
+         "menu-checked fixture should flip editor.wrap to off");
   Expect(WorkspaceShellTestAccess::MenuItemCheckedByLabel(shell, WorkspaceShell::MenuId::View,
-                                                         "Code Folding") == false,
-         "Code Folding entry should report checked=false when its setting is off");
+                                                         "Word Wrap") == false,
+         "Word Wrap entry should report checked=false when its setting is off");
 }
 
 void TestEditorTabStripOverflowControlsScrollAndCount() {

@@ -20,18 +20,15 @@ enum class MenuId {
   None,
   File,
   Edit,
-  Selection,
   View,
   Go,
   Git,
   SidebarMode,
   GitOutgoingBase,
-  Search,
   EditorContext,
   EditorTabContext,
   Project,
   Terminal,
-  Preferences,
   Help,
   TerminalContext,
   TerminalTabContext,
@@ -72,7 +69,7 @@ std::string LspDrivenMenuActionLabel(ActionId id,
                                      std::string_view ready_label,
                                      const LspClient::ReadinessSnapshot& snapshot);
 
-// Map a plugin menu string ("file", "edit", "view", "search") to a MenuId.
+// Map a plugin menu string ("file", "edit", "view", "go", "terminal") to a MenuId.
 // Returns MenuId::None for unrecognised values.
 MenuId ParseMenuId(std::string_view name);
 
