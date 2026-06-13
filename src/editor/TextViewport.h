@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "editor/EditTypes.h"
+#include "editor/HighlightPrefetch.h"
 #include "editor/LanguageContractView.h"
 #include "editor/FoldingModel.h"
 #include "editor/SyntaxHighlighter.h"
@@ -217,6 +218,17 @@ class TextViewport {
   // ranges (e.g. the folding bracket scanner) use this to avoid thrashing the
   // LRU on lines that may be far outside the visible region.
   std::span<const SyntaxTokenKind> HighlightedLineTokensIfCached(std::size_t line_index) const;
+  // Background highlight prefetch. These let a worker thread tokenize ahead of
+  // the viewport without touching live viewport state: BuildHighlightPrefetchRequest
+  // captures an immutable snapshot on the main thread, the worker turns it into a
+  // HighlightPrefetchResult, and InstallPrefetchedHighlights folds that result
+  // back into the cache on the main thread (dropping it if the document changed
+  // underneath). The synchronous HighlightedLineTokens path remains the
+  // source of truth; prefetch only pre-populates the LRU so misses are rarer.
+  bool HasHighlightPrefetchGap(std::size_t start_line, std::size_t count) const;
+  HighlightPrefetchRequest BuildHighlightPrefetchRequest(std::size_t start_line,
+                                                         std::size_t count) const;
+  void InstallPrefetchedHighlights(const HighlightPrefetchResult& result);
   bool syntax_highlighting_enabled() const { return !document_->placeholder; }
   TextViewportCacheStats CacheStats() const;
   void ResetCacheStats() const;

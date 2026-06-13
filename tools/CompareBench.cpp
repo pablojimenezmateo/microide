@@ -216,9 +216,7 @@ CompareSyntaxBenchData TokenizeCompareRows(const std::filesystem::path& path,
     const auto& row = model.rows[index];
     const bool reuse_tokens =
         row.kind == microide::compare::CompareRowKind::Unchanged && row.left_line > 0 &&
-        row.right_line > 0 && row.left_text == row.right_text &&
-        left_state.definition_id == right_state.definition_id &&
-        left_state.region_id == right_state.region_id;
+        row.right_line > 0 && row.left_text == row.right_text && left_state == right_state;
     if (reuse_tokens) {
       auto highlighted =
           microide::editor::SyntaxHighlighter::HighlightLine(row.left_text, path, left_state);

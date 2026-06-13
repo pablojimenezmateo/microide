@@ -271,7 +271,7 @@ class WorkspaceActionContext {
   void Redo();
   std::string CopySelectionText() const;
   std::optional<std::string> LastTerminalCommandText() const;
-  std::optional<std::string> SelectionTextWithContext() const;
+  std::optional<std::string> SelectionTextWithContext();
   void CutSelection();
   void PasteClipboard();
 

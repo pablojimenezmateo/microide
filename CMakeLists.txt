@@ -142,6 +142,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/FoldingModel.cpp
+  src/editor/HighlightPrefetchService.cpp
   src/editor/IndentDetect.cpp
   src/editor/IndentGuides.cpp
   src/editor/RuntimeSyntaxRegistry.cpp

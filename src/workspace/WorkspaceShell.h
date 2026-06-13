@@ -20,6 +20,7 @@
 #include "compare/CompareModel.h"
 #include "compare/MergeModel.h"
 #include "editor/EditorViewRenderer.h"
+#include "editor/HighlightPrefetchService.h"
 #include "editor/TextViewport.h"
 #include "plugin/PluginHost.h"
 #include "platform/FileIndexWatcher.h"

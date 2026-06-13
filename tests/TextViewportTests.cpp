@@ -3,11 +3,16 @@
 #include "editor/SyntaxDefinitionLoader.h"
 #include "editor/FoldingModel.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "editor/HighlightPrefetchService.h"
+#include "editor/SyntaxHighlighter.h"
 #include "editor/TextViewport.h"
 #include "util/PerformanceCounters.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -1237,6 +1242,147 @@ void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
          "plugin region syntax definitions should highlight string spans");
 }
 
+void TestSyntaxHighlightNestedRegionResumesParentScope() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path syntax_dir = temp_dir.path() / "syntax";
+  WriteFile(syntax_dir / "nest.lua",
+            R"LUA(return {
+  filetype = "nest",
+  files = { "\\.nest$" },
+  rules = {
+    {
+      start = "\\(",
+      ["end"] = "\\)",
+      group = "comment",
+      rules = {
+        { start = "\\[", ["end"] = "\\]", group = "string" }
+      }
+    }
+  }
+}
+)LUA");
+
+  std::vector<std::string> loader_errors;
+  const auto definitions =
+      microide::editor::runtime_syntax::LoadDefinitionsFromDirectories({syntax_dir}, &loader_errors);
+  Expect(loader_errors.empty(), "nested-region syntax should load");
+  std::vector<std::string> reload_errors;
+  microide::editor::runtime_syntax::ReloadDefinitions(definitions, &reload_errors);
+  Expect(reload_errors.empty(), "nested-region syntax should reload");
+
+  using microide::editor::SyntaxHighlighter;
+  using microide::editor::SyntaxState;
+  const std::filesystem::path path = "/tmp/regions.nest";
+
+  SyntaxState state = SyntaxHighlighter::InitialState(path, {});
+  // AdvanceState must agree with HighlightLine's end_state at every step.
+  const auto step = [&](std::string_view text) {
+    const auto highlighted = SyntaxHighlighter::HighlightLine(text, path, state);
+    Expect(SyntaxHighlighter::AdvanceState(text, path, state) == highlighted.end_state,
+           "AdvanceState should match HighlightLine end_state for nested regions");
+    state = highlighted.end_state;
+    return highlighted;
+  };
+
+  step("(outer");
+  Expect(state.region_depth == 1, "entering the outer region pushes one stack frame");
+
+  step("[inner");
+  Expect(state.region_depth == 2, "entering the nested region pushes a second stack frame");
+
+  const auto fully_inside = step("still");
+  Expect(state.region_depth == 2,
+         "a line wholly inside the nested region keeps both stack frames");
+  Expect(std::all_of(fully_inside.tokens.begin(), fully_inside.tokens.end(),
+                     [](SyntaxTokenKind kind) { return kind == SyntaxTokenKind::String; }),
+         "a line wholly inside the nested string region stays string-colored");
+
+  const auto closes_inner = step("]tail");
+  Expect(state.region_depth == 1,
+         "closing the nested region returns to the parent region, not the top level");
+  Expect(closes_inner.tokens.size() == 5 &&
+             closes_inner.tokens[1] == SyntaxTokenKind::Comment &&
+             closes_inner.tokens[4] == SyntaxTokenKind::Comment,
+         "text after the nested region closes should color as the enclosing parent region");
+
+  step(")done");
+  Expect(state.region_depth == 0, "closing the outer region returns to the top level");
+}
+
+void TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness() {
+  std::string content;
+  for (int i = 0; i < 60; ++i) {
+    content += "int value" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/prefetch.cpp");
+  TextViewport reference;
+  reference.LoadContent(content, "/tmp/prefetch-ref.cpp");
+
+  // A range well below the viewport top is not in the LRU yet.
+  Expect(viewport.HasHighlightPrefetchGap(40, 8), "uncached lines should report a prefetch gap");
+
+  const auto request = viewport.BuildHighlightPrefetchRequest(40, 8);
+  Expect(request.lines.size() == 8, "request should snapshot exactly the requested line range");
+  Expect(request.content_revision == viewport.content_revision(),
+         "request should capture the live content revision");
+
+  const auto result = microide::editor::ComputeHighlightPrefetch(request);
+  Expect(result.tokens.size() == 8 && result.end_states.size() == 8,
+         "compute should tokenize every snapshot line");
+
+  viewport.InstallPrefetchedHighlights(result);
+  Expect(!viewport.HasHighlightPrefetchGap(40, 8),
+         "installing prefetched highlights should fill the cache gap");
+  Expect(viewport.HighlightedLineTokens(42) == reference.HighlightedLineTokens(42),
+         "prefetched tokens must match a synchronous highlight of the same line");
+
+  // A result whose revision no longer matches the document must be discarded.
+  auto stale = microide::editor::ComputeHighlightPrefetch(
+      viewport.BuildHighlightPrefetchRequest(10, 4));
+  stale.content_revision = viewport.content_revision() + 1;
+  Expect(viewport.HasHighlightPrefetchGap(10, 4), "the line-10 region should start uncached");
+  viewport.InstallPrefetchedHighlights(stale);
+  Expect(viewport.HasHighlightPrefetchGap(10, 4),
+         "a stale-revision prefetch result should be dropped, leaving the gap intact");
+}
+
+void TestHighlightPrefetchServiceTokenizesOnWorkerThread() {
+  std::string content;
+  for (int i = 0; i < 40; ++i) {
+    content += "int v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/prefetch-service.cpp");
+
+  microide::editor::HighlightPrefetchService service;
+  std::atomic<int> wakes{0};
+  service.SetWakeCallback([&]() { wakes.fetch_add(1); });
+
+  Expect(viewport.HasHighlightPrefetchGap(30, 6), "the target range should start uncached");
+  service.Request(viewport.BuildHighlightPrefetchRequest(30, 6));
+
+  std::vector<microide::editor::HighlightPrefetchResult> results;
+  for (int attempt = 0; attempt < 400 && results.empty(); ++attempt) {
+    results = service.DrainResults();
+    if (results.empty()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  service.Shutdown();
+
+  Expect(results.size() == 1, "the worker should produce exactly one result");
+  Expect(wakes.load() >= 1, "the worker should fire the wake callback");
+  viewport.InstallPrefetchedHighlights(results.front());
+  Expect(!viewport.HasHighlightPrefetchGap(30, 6),
+         "installing the worker result should fill the cache gap");
+}
+
 void TestTextViewportOccurrenceSeedSpanUsesWordUnderCaret() {
   TextViewport viewport;
   viewport.LoadContent("aaa name bbb name\n", "/tmp/oc-caret.txt");
@@ -1688,6 +1834,12 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
+  AddTest(tests, "TextViewport/SyntaxHighlightNestedRegionResumesParentScope",
+          TestSyntaxHighlightNestedRegionResumesParentScope);
+  AddTest(tests, "TextViewport/HighlightPrefetchInstallPopulatesCacheAndRespectsStaleness",
+          TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness);
+  AddTest(tests, "TextViewport/HighlightPrefetchServiceTokenizesOnWorkerThread",
+          TestHighlightPrefetchServiceTokenizesOnWorkerThread);
   AddTest(tests, "TextViewport/Tiers/ContentEditBumpsContentAndPresentationOnly",
           TestTextViewportContentEditBumpsContentAndPresentationOnly);
   AddTest(tests, "TextViewport/Tiers/SyntaxConfigBumpsSyntaxAndPresentationOnly",

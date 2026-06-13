@@ -133,6 +133,11 @@ int Application::Run() {
       full_redraw_pending = false;
       dirty_rects.clear();
       redraw_reason = "event";
+
+      // After a frame settles, ask the background worker to tokenize a band
+      // around the (possibly newly scrolled) editor viewport so later frames
+      // hit the highlight cache instead of tokenizing on the render path.
+      workspace_shell_.RequestActiveHighlightPrefetch();
     }
 
     SDL_Event event;

@@ -120,7 +120,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_terminal_tab != nullptr &&
              operations_.last_terminal_command_text().has_value();
     case ActionId::CopySelectionWithContext:
-      return active_viewport != nullptr && active_viewport->has_selection();
+      return active_viewport != nullptr;
     case ActionId::CopySelection:
       return active_viewport != nullptr ||
              active_single_line_selection ||

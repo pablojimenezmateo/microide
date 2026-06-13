@@ -208,6 +208,21 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   } else {
     plugin_async_process_event_type_ = 0;
   }
+
+  highlight_prefetch_event_type_ = SDL_RegisterEvents(1);
+  if (highlight_prefetch_event_type_ == static_cast<Uint32>(-1)) {
+    highlight_prefetch_event_type_ = 0;
+  }
+  // The worker fires this from its own thread once a result is queued; the wake
+  // only nudges the main loop to drain (the event carries no payload).
+  highlight_prefetch_service_.SetWakeCallback([event_type = highlight_prefetch_event_type_]() {
+    if (event_type == 0) {
+      return;
+    }
+    SDL_Event event{};
+    event.type = event_type;
+    SDL_PushEvent(&event);
+  });
 }
 
 void WorkspaceShell::DestroyLifecycleCursors() {
@@ -297,7 +312,11 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
               },
           .shutdown_plugin_runtime = [this]() { plugin_runtime_.Shutdown(); },
           .save_user_config = [this]() { MakePersistenceCoordinator().SaveUserConfig(); },
-          .stop_git_blame_service = [this]() { git_blame_service_.Stop(); },
+          .stop_git_blame_service =
+              [this]() {
+                git_blame_service_.Stop();
+                highlight_prefetch_service_.Shutdown();
+              },
           .persist_active_project =
               [this]() {
                 if (HasActiveProjectCatalogEntry()) {

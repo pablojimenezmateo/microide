@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <string_view>
 
 #include "editor/TextLayout.h"
 
@@ -61,6 +62,11 @@ TextViewportUndoHistory::Entry BuildAggregateFromLineSlice(
   return aggregate;
 }
 
+struct ResultCaret {
+  TextPosition position;
+  bool is_primary = false;
+};
+
 }  // namespace
 
 bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
@@ -89,32 +95,44 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
-  TextPosition primary_after = primary_before;
-  std::vector<TextPosition> updated_secondary_carets;
-  updated_secondary_carets.reserve(carets.size());
+  // Identify the primary by its index in the sorted/deduped vector rather than
+  // by value-equality on the clamped position: a secondary caret can clamp onto
+  // the primary's position, which would otherwise misattribute or drop a caret.
+  const std::size_t primary_index = static_cast<std::size_t>(
+      std::lower_bound(carets.begin(), carets.end(), primary_before, detail::PositionLess) -
+      carets.begin());
+  std::vector<ResultCaret> results;
+  results.reserve(carets.size());
 
-  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
-    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
-    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
+  for (std::size_t i = carets.size(); i-- > 0;) {
+    const bool is_primary = (i == primary_index);
+    const std::size_t line = std::min(carets[i].line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], carets[i].column);
     const std::string replacement =
         text == "\n" ? "\n" + AutoIndentForNewline(line, column) : std::string(text);
-    const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(
-        SelectionRange{TextPosition{line, column}, TextPosition{line, column}}, replacement);
+    const SelectionRange removed{TextPosition{line, column}, TextPosition{line, column}};
+    const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(removed, replacement);
     if (!entry.has_value()) {
-      if (!(line == primary_before.line && column == primary_before.column)) {
-        updated_secondary_carets.push_back(TextPosition{line, column});
-      }
+      results.push_back(ResultCaret{TextPosition{line, column}, is_primary});
       continue;
     }
     ApplyHistoryEntry(*entry, true);
-    const TextPosition updated_position{
-        entry->after_state.cursor_line,
-        entry->after_state.cursor_column,
-    };
-    if (line == primary_before.line && column == primary_before.column) {
-      primary_after = updated_position;
+    for (ResultCaret& result : results) {
+      result.position =
+          detail::RemapPositionAfterReplace(result.position, removed.start, removed.end, replacement);
+    }
+    results.push_back(ResultCaret{
+        TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column}, is_primary});
+  }
+
+  TextPosition primary_after = primary_before;
+  std::vector<TextPosition> updated_secondary_carets;
+  updated_secondary_carets.reserve(results.size());
+  for (const ResultCaret& result : results) {
+    if (result.is_primary) {
+      primary_after = result.position;
     } else {
-      updated_secondary_carets.push_back(updated_position);
+      updated_secondary_carets.push_back(result.position);
     }
   }
 
@@ -186,48 +204,57 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
-  TextPosition primary_after = primary_before;
-  std::vector<TextPosition> updated_secondary_carets;
-  updated_secondary_carets.reserve(carets.size());
+  const std::size_t primary_index = static_cast<std::size_t>(
+      std::lower_bound(carets.begin(), carets.end(), primary_before, detail::PositionLess) -
+      carets.begin());
+  std::vector<ResultCaret> results;
+  results.reserve(carets.size());
   bool changed = false;
 
-  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
-    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
-    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
-    std::optional<HistoryEntry> entry;
+  for (std::size_t i = carets.size(); i-- > 0;) {
+    const bool is_primary = (i == primary_index);
+    const std::size_t line = std::min(carets[i].line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], carets[i].column);
+    std::optional<SelectionRange> removed;
     if (column > 0) {
       const std::size_t erase_start =
           TextLayout::PreviousTextColumn(document_->lines[line], column);
-      entry = BuildRangeHistoryEntry(
-          SelectionRange{TextPosition{line, erase_start}, TextPosition{line, column}}, "");
+      removed = SelectionRange{TextPosition{line, erase_start}, TextPosition{line, column}};
     } else if (line > 0) {
-      entry = BuildRangeHistoryEntry(SelectionRange{
-                                         TextPosition{line - 1, document_->lines[line - 1].size()},
-                                         TextPosition{line, 0},
-                                     },
-                                     "");
+      removed = SelectionRange{
+          TextPosition{line - 1, document_->lines[line - 1].size()},
+          TextPosition{line, 0},
+      };
     }
+    std::optional<HistoryEntry> entry =
+        removed.has_value() ? BuildRangeHistoryEntry(*removed, "") : std::nullopt;
     if (!entry.has_value()) {
-      if (!(line == primary_before.line && column == primary_before.column)) {
-        updated_secondary_carets.push_back(TextPosition{line, column});
-      }
+      results.push_back(ResultCaret{TextPosition{line, column}, is_primary});
       continue;
     }
     changed = true;
     ApplyHistoryEntry(*entry, true);
-    const TextPosition updated_position{
-        entry->after_state.cursor_line,
-        entry->after_state.cursor_column,
-    };
-    if (line == primary_before.line && column == primary_before.column) {
-      primary_after = updated_position;
-    } else {
-      updated_secondary_carets.push_back(updated_position);
+    for (ResultCaret& result : results) {
+      result.position =
+          detail::RemapPositionAfterReplace(result.position, removed->start, removed->end, "");
     }
+    results.push_back(ResultCaret{
+        TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column}, is_primary});
   }
 
   if (!changed) {
     return false;
+  }
+
+  TextPosition primary_after = primary_before;
+  std::vector<TextPosition> updated_secondary_carets;
+  updated_secondary_carets.reserve(results.size());
+  for (const ResultCaret& result : results) {
+    if (result.is_primary) {
+      primary_after = result.position;
+    } else {
+      updated_secondary_carets.push_back(result.position);
+    }
   }
 
   cursor_line_ = primary_after.line;
@@ -298,45 +325,54 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
-  TextPosition primary_after = primary_before;
-  std::vector<TextPosition> updated_secondary_carets;
-  updated_secondary_carets.reserve(carets.size());
+  const std::size_t primary_index = static_cast<std::size_t>(
+      std::lower_bound(carets.begin(), carets.end(), primary_before, detail::PositionLess) -
+      carets.begin());
+  std::vector<ResultCaret> results;
+  results.reserve(carets.size());
   bool changed = false;
 
-  for (auto it = carets.rbegin(); it != carets.rend(); ++it) {
-    const std::size_t line = std::min(it->line, document_->lines.size() - 1);
-    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], it->column);
-    std::optional<HistoryEntry> entry;
+  for (std::size_t i = carets.size(); i-- > 0;) {
+    const bool is_primary = (i == primary_index);
+    const std::size_t line = std::min(carets[i].line, document_->lines.size() - 1);
+    const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], carets[i].column);
+    std::optional<SelectionRange> removed;
     if (column < document_->lines[line].size()) {
       const std::size_t erase_end =
           TextLayout::NextTextColumn(document_->lines[line], column);
-      entry = BuildRangeHistoryEntry(
-          SelectionRange{TextPosition{line, column}, TextPosition{line, erase_end}}, "");
+      removed = SelectionRange{TextPosition{line, column}, TextPosition{line, erase_end}};
     } else if (line + 1 < document_->lines.size()) {
-      entry = BuildRangeHistoryEntry(
-          SelectionRange{TextPosition{line, column}, TextPosition{line + 1, 0}}, "");
+      removed = SelectionRange{TextPosition{line, column}, TextPosition{line + 1, 0}};
     }
+    std::optional<HistoryEntry> entry =
+        removed.has_value() ? BuildRangeHistoryEntry(*removed, "") : std::nullopt;
     if (!entry.has_value()) {
-      if (!(line == primary_before.line && column == primary_before.column)) {
-        updated_secondary_carets.push_back(TextPosition{line, column});
-      }
+      results.push_back(ResultCaret{TextPosition{line, column}, is_primary});
       continue;
     }
     changed = true;
     ApplyHistoryEntry(*entry, true);
-    const TextPosition updated_position{
-        entry->after_state.cursor_line,
-        entry->after_state.cursor_column,
-    };
-    if (line == primary_before.line && column == primary_before.column) {
-      primary_after = updated_position;
-    } else {
-      updated_secondary_carets.push_back(updated_position);
+    for (ResultCaret& result : results) {
+      result.position =
+          detail::RemapPositionAfterReplace(result.position, removed->start, removed->end, "");
     }
+    results.push_back(ResultCaret{
+        TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column}, is_primary});
   }
 
   if (!changed) {
     return false;
+  }
+
+  TextPosition primary_after = primary_before;
+  std::vector<TextPosition> updated_secondary_carets;
+  updated_secondary_carets.reserve(results.size());
+  for (const ResultCaret& result : results) {
+    if (result.is_primary) {
+      primary_after = result.position;
+    } else {
+      updated_secondary_carets.push_back(result.position);
+    }
   }
 
   cursor_line_ = primary_after.line;

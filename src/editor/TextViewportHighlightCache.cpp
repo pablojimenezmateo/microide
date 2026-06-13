@@ -200,6 +200,80 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
   }
 }
 
+bool TextViewport::HasHighlightPrefetchGap(std::size_t start_line, std::size_t count) const {
+  if (!syntax_highlighting_enabled() || document_->lines.empty() || count == 0) {
+    return false;
+  }
+  const std::size_t end = std::min(document_->lines.size(), start_line + count);
+  for (std::size_t line = start_line; line < end; ++line) {
+    if (highlight_cache_.find(line) == highlight_cache_.end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+HighlightPrefetchRequest TextViewport::BuildHighlightPrefetchRequest(std::size_t start_line,
+                                                                     std::size_t count) const {
+  HighlightPrefetchRequest request;
+  request.viewport = this;
+  request.path = document_->path;
+  request.content_revision = document_->content_revision;
+  request.syntax_revision = document_->syntax_revision;
+  request.start_line = start_line;
+  if (!syntax_highlighting_enabled() || document_->lines.empty() ||
+      start_line >= document_->lines.size() || count == 0) {
+    return request;
+  }
+  // Resume state for the first snapshot line, computed against the (main-thread)
+  // checkpoint chain so the worker need not replay from line 0.
+  request.start_state = HighlightStateBeforeLine(start_line);
+  const std::size_t end = std::min(document_->lines.size(), start_line + count);
+  request.lines.reserve(end - start_line);
+  for (std::size_t line = start_line; line < end; ++line) {
+    request.lines.push_back(document_->lines[line]);
+  }
+  return request;
+}
+
+void TextViewport::InstallPrefetchedHighlights(const HighlightPrefetchResult& result) {
+  if (!syntax_highlighting_enabled() || document_->lines.empty()) {
+    return;
+  }
+  // Discard stale results: the document changed (or syntax config changed)
+  // since the snapshot was taken, so the precomputed tokens no longer apply.
+  if (result.content_revision != document_->content_revision ||
+      result.syntax_revision != document_->syntax_revision) {
+    return;
+  }
+  EnsureHighlightCaches();
+  const std::size_t line_count = result.tokens.size();
+  for (std::size_t offset = 0; offset < line_count; ++offset) {
+    const std::size_t line = result.start_line + offset;
+    if (line >= document_->lines.size()) {
+      break;
+    }
+    // content_revision bumps on any edit, so a matching revision means every
+    // snapshot line is still current; just fold the precomputed data in.
+    if (offset < result.end_states.size() && line < line_highlight_states_.size()) {
+      line_highlight_states_[line] = result.end_states[offset];
+      if (line >= line_highlight_states_valid_through_) {
+        line_highlight_states_valid_through_ = line + 1;
+      }
+    }
+    if (highlight_cache_.find(line) != highlight_cache_.end()) {
+      continue;
+    }
+    if (highlight_cache_.size() >= kHighlightCacheLimit) {
+      highlight_cache_.erase(highlight_cache_order_.front());
+      highlight_cache_order_.pop_front();
+      util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
+    }
+    highlight_cache_.emplace(line, result.tokens[offset]);
+    highlight_cache_order_.push_back(line);
+  }
+}
+
 SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const {
   util::PerformanceTrace::Scope perf_scope("TextViewport::HighlightStateBeforeLine");
   EnsureHighlightCaches();

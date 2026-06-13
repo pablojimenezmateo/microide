@@ -5,8 +5,11 @@
 // public editor API. The `detail` namespace and the .h naming both signal
 // "do not include this from anywhere outside src/editor/TextViewport*.cpp".
 
+#include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "editor/TextViewport.h"
@@ -74,6 +77,50 @@ inline std::string TextBetweenLines(const std::vector<std::string>& lines,
   }
   out += lines[b.line].substr(0, b.column);
   return out;
+}
+
+// Maps a caret position forward across one applied edit that replaced the
+// (normalized) range [removed_start, removed_end) with `replacement`. The
+// multi-caret pipelines walk carets high-to-low, so a caret recorded earlier
+// always sits at or after a later (lower) edit; remapping keeps positions
+// correct when several carets share a line (without it, the higher carets are
+// left stale by the byte/line counts inserted below them).
+inline TextPosition RemapPositionAfterReplace(TextPosition position,
+                                              TextPosition removed_start,
+                                              TextPosition removed_end,
+                                              std::string_view replacement) {
+  std::size_t inserted_newlines = 0;
+  std::size_t last_segment_cols = 0;
+  for (const char ch : replacement) {
+    if (ch == '\n') {
+      ++inserted_newlines;
+      last_segment_cols = 0;
+    } else {
+      ++last_segment_cols;
+    }
+  }
+
+  // Positions strictly before the end of the removed range are unaffected.
+  if (PositionLess(position, removed_end)) {
+    return position;
+  }
+
+  if (position.line == removed_end.line) {
+    TextPosition result;
+    result.line = removed_start.line + inserted_newlines;
+    const std::size_t tail = position.column - removed_end.column;
+    result.column = inserted_newlines == 0
+                        ? removed_start.column + last_segment_cols + tail
+                        : last_segment_cols + tail;
+    return result;
+  }
+
+  const std::ptrdiff_t line_delta =
+      static_cast<std::ptrdiff_t>(inserted_newlines) -
+      static_cast<std::ptrdiff_t>(removed_end.line - removed_start.line);
+  TextPosition result = position;
+  result.line = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(position.line) + line_delta);
+  return result;
 }
 
 }  // namespace microide::editor::detail

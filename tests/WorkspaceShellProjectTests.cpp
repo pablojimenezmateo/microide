@@ -1944,8 +1944,66 @@ void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
 
   Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
          "copy with context action should execute");
-  Expect(clipboard_text == "src/main.cpp:2-3\nint value = 1;\n  return value;",
-         "copy with context should prepend the relative path and selected line range");
+  Expect(clipboard_text ==
+             "// context: int main() {\nsrc/main.cpp:2-3\nint value = 1;\n  return value;",
+         "copy with context should prepend the enclosing opener, relative path and line range");
+}
+
+void TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source_dir = root / "src";
+  const std::filesystem::path source = source_dir / "main.cpp";
+  std::filesystem::create_directories(source_dir);
+  WriteFile(source, "int main() {\n  int value = 1;\n  return value;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  // No selection: the current (non-blank) line is copied with the enclosing
+  // opener context.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 5);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
+         "copy with context should execute without a selection");
+  Expect(clipboard_text == "// context: int main() {\nsrc/main.cpp:2\n  int value = 1;",
+         "copy with context without a selection should copy the current line plus context");
+}
+
+void TestWorkspaceShellCopySelectionWithContextOnBlankLineExpandsToEnclosingFold() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source_dir = root / "src";
+  const std::filesystem::path source = source_dir / "main.cpp";
+  std::filesystem::create_directories(source_dir);
+  WriteFile(source, "int main() {\n\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  // Blank line inside the function body: expand to the enclosing brace fold.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
+         "copy with context should execute on a blank line");
+  Expect(clipboard_text == "src/main.cpp:1-4\nint main() {\n\n  return 0;\n}",
+         "copy with context on a blank line should expand to the enclosing fold range");
 }
 
 void TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu() {
@@ -3058,6 +3116,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHiddenIgnoredDirectoryUsesSameLazyExpansionRules);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
+  AddTest(tests, "WorkspaceShell/CopySelectionWithContextWithoutSelectionCopiesCurrentLine",
+          TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine);
+  AddTest(tests, "WorkspaceShell/CopySelectionWithContextOnBlankLineExpandsToEnclosingFold",
+          TestWorkspaceShellCopySelectionWithContextOnBlankLineExpandsToEnclosingFold);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensSymbolAwareContextMenu",
           TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu);
   AddTest(tests, "WorkspaceShell/ClickingInactiveEditorPaneActivatesSplit",

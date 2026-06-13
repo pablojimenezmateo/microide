@@ -94,10 +94,7 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
     const bool reuse_tokens =
         compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
         compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
-        compare_tab.left_current_syntax_state.definition_id ==
-            compare_tab.right_current_syntax_state.definition_id &&
-        compare_tab.left_current_syntax_state.region_id ==
-            compare_tab.right_current_syntax_state.region_id;
+        compare_tab.left_current_syntax_state == compare_tab.right_current_syntax_state;
     if (reuse_tokens) {
       editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
           compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state);
