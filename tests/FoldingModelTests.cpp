@@ -190,7 +190,7 @@ void TestIncrementalBracketScanReusesPrefixAndCollapseState() {
          "collapse state should remap across incremental bracket recompute");
 }
 
-void TestEnsureFoldsForVisibleRangeBoundsInitialResolve() {
+void TestEnsureFoldsForVisibleRangeResolvesWithinBudgetWindow() {
   std::vector<std::string> lines;
   lines.reserve(256);
   for (int i = 0; i < 128; ++i) {
@@ -209,8 +209,73 @@ void TestEnsureFoldsForVisibleRangeBoundsInitialResolve() {
                                           /*visible_end_line=*/15,
                                           /*max_lines=*/2000),
          "visible-range resolve should finish for a small first viewport");
-  Expect(!model.FoldStartingAt(128).has_value(),
-         "first viewport resolve should not walk far fold openers outside the visible prefix");
+  // The whole 195-line file fits inside the 2000-line per-frame budget, so a
+  // fold opener below the look-ahead must still resolve on the first viewport
+  // (its closer is well within the budget window).
+  const auto far = model.FoldStartingAt(128);
+  Expect(far.has_value() && far->closer_line == 130 && far->source == FoldSource::Bracket,
+         "first viewport resolve should walk the whole budget window, not just the look-ahead");
+}
+
+// Regression for the reported bug: a method whose opener is on a visible line
+// but whose closer sits many lines below the viewport bottom must still get a
+// fold range on the first frame (closer within budget).
+void TestEnsureFoldsForVisibleRangeResolvesVisibleOpenerWithDistantCloser() {
+  std::vector<std::string> lines;
+  lines.reserve(128);
+  for (int i = 0; i < 5; ++i) {
+    lines.push_back("// preamble");
+  }
+  lines.push_back("void method() {");  // opener at line 5
+  for (int i = 0; i < 100; ++i) {
+    lines.push_back("  step();");
+  }
+  lines.push_back("}");  // closer at line 106
+
+  FoldingModel model;
+  Expect(model.EnsureFoldsForVisibleRange(lines, DefaultCStyleOptions(),
+                                          /*visible_start_line=*/0,
+                                          /*visible_end_line=*/20,
+                                          /*max_lines=*/2000),
+         "visible-range resolve should finish");
+  const auto fold = model.FoldStartingAt(5);
+  Expect(fold.has_value() && fold->closer_line == 106 && fold->source == FoldSource::Bracket,
+         "visible opener with closer far below the viewport must fold on the first frame");
+}
+
+// The budget guard must still bound work on huge files: an opener whose closer
+// is beyond the budget from the scan origin should NOT resolve on the first
+// frame, but must resolve once the viewport scrolls near it.
+void TestEnsureFoldsForVisibleRangeBudgetGuardOnHugeFile() {
+  std::vector<std::string> lines;
+  lines.reserve(5200);
+  lines.push_back("namespace n {");  // opener at line 0
+  for (int i = 0; i < 5000; ++i) {
+    lines.push_back("  int v = 0;");
+  }
+  lines.push_back("}");  // closer at line 5001
+  for (int i = 0; i < 100; ++i) {
+    lines.push_back("// tail");
+  }
+
+  FoldingModel model;
+  Expect(model.EnsureFoldsForVisibleRange(lines, DefaultCStyleOptions(),
+                                          /*visible_start_line=*/0,
+                                          /*visible_end_line=*/20,
+                                          /*max_lines=*/2000),
+         "visible-range resolve should finish for the first viewport");
+  Expect(!model.FoldStartingAt(0).has_value(),
+         "closer beyond the budget window must not resolve on the first frame (perf guard)");
+
+  // Scroll near the closer; the extended scan resolves it.
+  Expect(model.EnsureFoldsForVisibleRange(lines, DefaultCStyleOptions(),
+                                          /*visible_start_line=*/4980,
+                                          /*visible_end_line=*/5001,
+                                          /*max_lines=*/2000),
+         "scrolled visible-range resolve should finish");
+  const auto fold = model.FoldStartingAt(0);
+  Expect(fold.has_value() && fold->closer_line == 5001,
+         "scrolling near the closer must resolve the far opener");
 }
 
 void TestEnsureFoldsForVisibleRangeExtendsOnScroll() {
@@ -498,8 +563,12 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestToggleFoldHidesInteriorLines);
   AddTest(tests, "EditorFolding/Incremental/ReusesPrefixAndCollapse",
           TestIncrementalBracketScanReusesPrefixAndCollapseState);
-  AddTest(tests, "EditorFolding/VisibleRange/BoundsInitialResolve",
-          TestEnsureFoldsForVisibleRangeBoundsInitialResolve);
+  AddTest(tests, "EditorFolding/VisibleRange/ResolvesWithinBudgetWindow",
+          TestEnsureFoldsForVisibleRangeResolvesWithinBudgetWindow);
+  AddTest(tests, "EditorFolding/VisibleRange/ResolvesVisibleOpenerWithDistantCloser",
+          TestEnsureFoldsForVisibleRangeResolvesVisibleOpenerWithDistantCloser);
+  AddTest(tests, "EditorFolding/VisibleRange/BudgetGuardOnHugeFile",
+          TestEnsureFoldsForVisibleRangeBudgetGuardOnHugeFile);
   AddTest(tests, "EditorFolding/VisibleRange/ExtendsOnScroll",
           TestEnsureFoldsForVisibleRangeExtendsOnScroll);
   AddTest(tests, "EditorFolding/IndexedLookup/CollapsedBeforeAndAfterViewportDoNotHideViewport",
