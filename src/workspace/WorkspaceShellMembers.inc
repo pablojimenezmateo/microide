@@ -832,6 +832,8 @@
   SDL_FRect TreeSidebarCollapseButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const;
+  SDL_FRect GitSidebarCommitButtonRect(const SDL_FRect& sidebar_rect) const;
+  bool CanOpenGitCommitButton() const;
   SDL_FRect GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarStageAllButtonRect(const SDL_FRect& sidebar_rect) const;
   SDL_FRect GitSidebarDiscardAllButtonRect(const SDL_FRect& sidebar_rect) const;
@@ -880,6 +882,7 @@
   bool OpenCommitWorkflow();
   void CloseCommitWorkflow();
   bool CommitWorkflowOpen() const;
+  bool RequestCommitWorkflowCommit();
   float GitSidebarCommitWorkflowHeight() const;
   bool DiscardAllGitSidebarEntries();
   bool StageGitSidebarEntry(std::size_t entry_index);

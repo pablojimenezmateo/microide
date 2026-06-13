@@ -49,6 +49,7 @@ struct CommitWorkflowState {
   // these cached rects (kept divergence-free by being written from the single render path).
   SDL_FRect subject_field_rect{};
   SDL_FRect body_field_rect{};
+  SDL_FRect commit_button_rect{};
   SDL_FRect caret_rect{};
   int body_visible_rows = 0;
 };

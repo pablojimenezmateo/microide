@@ -604,6 +604,14 @@ bool WorkspaceShell::CanStageAllGitSidebarEntries() const {
   return const_cast<WorkspaceShell*>(this)->MakeSidebarService().CanStageAllGitEntries();
 }
 
+bool WorkspaceShell::CanOpenGitCommitButton() const {
+  const GitSidebarViewModel view_model =
+      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
+                               context_.current_project_state.root,
+                               context_.current_project_state.branch_review);
+  return view_model.show_commit_button && view_model.commit_ready;
+}
+
 bool WorkspaceShell::CanDiscardAllGitSidebarEntries() const {
   return const_cast<WorkspaceShell*>(this)->MakeSidebarService().CanDiscardAllGitEntries();
 }

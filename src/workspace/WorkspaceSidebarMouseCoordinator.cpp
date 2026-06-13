@@ -134,6 +134,16 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
                event.button.y)) {
     return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
   }
+  if (operations_.can_open_git_commit_button() &&
+      Contains(operations_.git_sidebar_commit_button_rect(layout.sidebar), event.button.x,
+               event.button.y)) {
+    return operations_.open_git_commit_workflow();
+  }
+  if (auto& workflow = state_.sidebar.git.commit_workflow;
+      workflow.open && workflow.commit_button_rect.w > 0.0f &&
+      Contains(workflow.commit_button_rect, event.button.x, event.button.y)) {
+    return operations_.confirm_commit_workflow();
+  }
   if (const auto button_rect = operations_.git_sidebar_outgoing_base_button_rect(layout.sidebar);
       button_rect.has_value() && Contains(*button_rect, event.button.x, event.button.y)) {
     operations_.open_anchored_menu(MenuId::GitOutgoingBase, *button_rect);

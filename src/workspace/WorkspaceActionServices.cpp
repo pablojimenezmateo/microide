@@ -361,6 +361,8 @@ void WorkspaceActionContext::OpenHeadComparison(const std::filesystem::path& pat
       .hash = "HEAD",
       .short_hash = "HEAD",
       .subject = "HEAD",
+      .author = {},
+      .relative_date = {},
   });
 }
 

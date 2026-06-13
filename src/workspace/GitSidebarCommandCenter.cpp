@@ -124,13 +124,9 @@ std::string GitSidebarWorkflowSummaryLine(const GitSidebarState& git_state,
     AppendUnsigned(line, counts.untracked);
     line += counts.untracked == 1 ? " untracked" : " untracked";
   }
-  if (counts.outgoing > 0) {
-    if (!line.empty()) {
-      line += "  ·  ";
-    }
-    AppendUnsigned(line, counts.outgoing);
-    line += counts.outgoing == 1 ? " outgoing" : " outgoing";
-  }
+  // Outgoing is intentionally excluded: it has its own section with a count, so
+  // surfacing it again in the working-tree summary is redundant. A tree with only
+  // outgoing commits reads as clean here, which is accurate.
   if (line.empty()) {
     line = "Working tree clean.";
   }
@@ -425,10 +421,22 @@ GitSidebarViewModel BuildGitSidebarViewModel(
   const bool commit_ready = git_state.repo_available && counts.conflicts == 0 && counts.staged > 0 &&
                             !git_state.commit_workflow.open &&
                             !git_state.commit_workflow.operation_in_flight;
+  view_model.show_commit_button = git_state.repo_available && !git_state.commit_workflow.open;
+  view_model.commit_ready = commit_ready;
+  if (!commit_ready) {
+    if (git_state.commit_workflow.operation_in_flight) {
+      view_model.commit_blocked_reason = "committing…";
+    } else if (counts.conflicts > 0) {
+      view_model.commit_blocked_reason = "resolve conflicts";
+    } else if (counts.staged == 0) {
+      view_model.commit_blocked_reason = "nothing staged";
+    }
+  }
 
-  view_model.summary_lines.push_back(
-      BuildGitBranchSummaryLine(git_state.branch_label, git_state.upstream_label, git_state.ahead,
-                                git_state.behind, git_state.repo_available));
+  // The branch / upstream / ahead-behind line is intentionally omitted here: it is
+  // already shown in the status bar at the bottom of the window, so repeating it at
+  // the top of the panel is redundant. Only banners (stale snapshot, refresh error)
+  // remain in summary_lines.
   if (!view_model.stale_banner.empty()) {
     view_model.summary_lines.push_back(view_model.stale_banner);
   }

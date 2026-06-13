@@ -45,6 +45,11 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
           .git_sidebar_stage_all_button_rect =
               [this](const SDL_FRect& rect) { return GitSidebarStageAllButtonRect(rect); },
           .stage_all_git_sidebar_entries = [this]() { return StageAllGitSidebarEntries(); },
+          .can_open_git_commit_button = [this]() { return CanOpenGitCommitButton(); },
+          .git_sidebar_commit_button_rect =
+              [this](const SDL_FRect& rect) { return GitSidebarCommitButtonRect(rect); },
+          .open_git_commit_workflow = [this]() { return OpenCommitWorkflow(); },
+          .confirm_commit_workflow = [this]() { return RequestCommitWorkflowCommit(); },
           .can_discard_all_git_sidebar_entries =
               [this]() { return CanDiscardAllGitSidebarEntries(); },
           .git_sidebar_discard_all_button_rect =

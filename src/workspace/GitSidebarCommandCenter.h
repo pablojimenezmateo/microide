@@ -73,6 +73,12 @@ struct GitSidebarViewModel {
   std::string selection_action_line;
   std::string stale_banner;
   std::string error_banner;
+  // Commit-button state for the panel header. commit_ready drives the enabled state;
+  // commit_blocked_reason is a short label shown beside a disabled button (empty when
+  // ready). show_commit_button is false when there is no repo or the inline draft is open.
+  bool show_commit_button = false;
+  bool commit_ready = false;
+  std::string commit_blocked_reason;
   bool refreshing = false;
   std::vector<GitSidebarSectionViewModel> sections;
 };

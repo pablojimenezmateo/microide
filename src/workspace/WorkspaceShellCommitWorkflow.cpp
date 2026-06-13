@@ -1,17 +1,10 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/CommitWorkflowLayout.h"
 #include "workspace/CommitWorkflowService.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 
 namespace microide::workspace {
-
-namespace {
-
-// Tall enough to hold the framed subject field plus a multi-line body edit area (and the
-// pre-check/status lines beneath). The body shows several lines and scrolls internally.
-constexpr float kCommitWorkflowPanelHeight = 268.0f;
-
-}  // namespace
 
 void WorkspaceShell::InitializeCommitWorkflowService() {
   commit_workflow_service_.SetCallbacks(CommitWorkflowService::Callbacks{
@@ -86,14 +79,29 @@ void WorkspaceShell::CloseCommitWorkflow() {
 }
 
 float WorkspaceShell::GitSidebarCommitWorkflowHeight() const {
-  if (!context_.current_project_state.sidebar.git.commit_workflow.open) {
+  const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+  if (!workflow.open) {
     return 0.0f;
   }
-  return kCommitWorkflowPanelHeight;
+  // Reserve exactly what the sidebar render path draws (subject/body fields, pre-check and
+  // status lines, confirm button). Field heights track the live line height, and the check
+  // count varies, so this is computed rather than a fixed constant. The field_x/field_w args
+  // don't affect total_height, so passing 0/0 is fine here.
+  constexpr int kBodyRows = 4;
+  return ComputeCommitWorkflowLayout(0.0f, 0.0f, 0.0f, text_renderer_.LineHeight(), kBodyRows,
+                                     workflow.checks.size(), !workflow.status_message.empty())
+      .total_height;
 }
 
 bool WorkspaceShell::CommitWorkflowOpen() const {
   return context_.current_project_state.sidebar.git.commit_workflow.open;
+}
+
+bool WorkspaceShell::RequestCommitWorkflowCommit() {
+  InitializeCommitWorkflowService();
+  return commit_workflow_service_.RequestCommit(
+      context_.current_project_state.sidebar.git.commit_workflow,
+      project::CommitOperationKind::Create);
 }
 
 }  // namespace microide::workspace

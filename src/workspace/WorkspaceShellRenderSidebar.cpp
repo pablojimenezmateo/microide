@@ -4,6 +4,8 @@
 #include <cmath>
 #include <string>
 
+#include "workspace/CommitWorkflowLayout.h"
+#include "workspace/CommitWorkflowService.h"
 #include "workspace/CommitWorkflowState.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
@@ -33,25 +35,6 @@ std::string_view BuildProjectSearchResultLabel(std::size_t line,
   label += "  ";
   label += snippet;
   return label;
-}
-
-std::string CompactCommitSummaryLabel(std::string_view commit_summary) {
-  constexpr std::string_view kDelimiter = "  |  ";
-  const std::size_t first_delimiter = commit_summary.find(kDelimiter);
-  if (first_delimiter == std::string_view::npos) {
-    return std::string(commit_summary);
-  }
-  const std::string_view prefix = commit_summary.substr(0, first_delimiter);
-  const std::size_t remainder_start = first_delimiter + kDelimiter.size();
-  const std::size_t second_delimiter = commit_summary.find(kDelimiter, remainder_start);
-  const std::size_t remainder_end =
-      second_delimiter == std::string_view::npos ? commit_summary.size() : second_delimiter;
-  const std::string_view remainder =
-      commit_summary.substr(remainder_start, remainder_end - remainder_start);
-  if (prefix.find("Commit blocked") == 0 && !remainder.empty()) {
-    return std::string(prefix) + " - " + std::string(remainder);
-  }
-  return std::string(prefix);
 }
 
 // Renders the multi-line commit body edit area (visible lines, selection, caret) and clamps
@@ -166,6 +149,25 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                        Contains(button_rect, last_mouse_x_, last_mouse_y_),
             .active = false,
         });
+  };
+
+  // Leading git status badge shared by the file (Tree) sidebar and the Source Control
+  // (Git) sidebar so both trees show the colored M/A/D/U/! marker at the START of the
+  // row in a fixed slot. Returns the x where the row label/name should begin.
+  constexpr float kGitBadgeSlot = 18.0f;
+  const auto draw_leading_git_badge = [&](const SDL_FRect& row_rect, float label_x,
+                                          project::GitFileStatus status, bool selected,
+                                          const SDL_Color& row_background) -> float {
+    const char marker = GitMarker(status);
+    if (marker == ' ') {
+      return label_x;
+    }
+    const std::string_view marker_text(&marker, 1);
+    DrawCenteredTextOn(text_renderer_, renderer,
+                       MakeRect(label_x, row_rect.y, kGitBadgeSlot, row_rect.h),
+                       selected ? theme_.text_primary : GitMarkerColor(theme_, status),
+                       row_background, marker_text);
+    return label_x + kGitBadgeSlot;
   };
 
   const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
@@ -377,49 +379,48 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         });
 
     float summary_y = GitSidebarActionRowRect(layout.sidebar).y +
-                      GitSidebarActionRowRect(layout.sidebar).h + 6.0f;
+                      GitSidebarActionRowRect(layout.sidebar).h + 10.0f;
     if (sidebar_vm.git_sidebar.has_value()) {
       const GitSidebarViewModel& git_vm = *sidebar_vm.git_sidebar;
       const float text_width = layout.sidebar.w - kSidebarInset * 2.0f;
-      const bool sidebar_focus_details =
-          project_state.surface.focus == FocusTarget::Sidebar &&
-          sidebar_mode == SidebarMode::Git;
+      // Must match the constants in WorkspaceShellSidebar.cpp so the file list starts
+      // exactly below the rendered summary block.
+      constexpr float kSummaryLineHeight = 17.0f;
+      constexpr float kCommitButtonHeight = 22.0f;
+      constexpr float kCommitButtonGap = 8.0f;
       float detail_y = summary_y;
-      for (std::size_t i = 0; i < git_vm.summary_lines.size(); ++i) {
-        const std::string& summary = git_vm.summary_lines[i];
-        const SDL_Color color = summary == git_vm.error_banner ? theme_.diff_deleted
-                                : i == 0 ? theme_.text_primary
-                                         : summary == git_vm.stale_banner ? theme_.text_secondary
-                                                                          : theme_.text_muted;
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y, color,
-                   theme_.surface_background, TruncateLabel(summary, text_width));
-        detail_y += 14.0f;
-      }
-      if (!git_vm.workflow_summary_line.empty()) {
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y,
-                   theme_.text_secondary, theme_.surface_background,
-                   TruncateLabel(git_vm.workflow_summary_line, text_width));
-        detail_y += 14.0f;
-      }
-      if (!git_vm.commit_summary_line.empty()) {
-        const std::string commit_line = CompactCommitSummaryLabel(git_vm.commit_summary_line);
-        const SDL_Color commit_color =
-            commit_line.find("blocked") != std::string::npos ? theme_.diff_deleted
-                                                             : theme_.text_secondary;
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y,
-                   commit_color, theme_.surface_background,
-                   TruncateLabel(commit_line, text_width));
-        detail_y += 14.0f;
-      }
-      if (sidebar_focus_details && !git_vm.selection_summary_line.empty()) {
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y,
-                   theme_.text_primary, theme_.surface_background,
-                   TruncateLabel(git_vm.selection_summary_line, text_width));
-        detail_y += 14.0f;
+      // The commit-readiness line is replaced by a Commit button (the discoverable way
+      // to open the inline commit draft). While the draft is open we instead show the
+      // commit hint. The redundant staged/unstaged/outgoing counts are gone — they are
+      // already on each section header.
+      if (git_vm.show_commit_button) {
+        const SDL_FRect commit_rect = GitSidebarCommitButtonRect(layout.sidebar);
+        draw_action_button(commit_rect, "Commit", git_vm.commit_ready, ButtonTone::Accent);
+        if (!git_vm.commit_ready && !git_vm.commit_blocked_reason.empty()) {
+          const float reason_x = commit_rect.x + commit_rect.w + 8.0f;
+          DrawVCenteredTextOn(
+              text_renderer_, renderer,
+              MakeRect(reason_x, commit_rect.y,
+                       std::max(0.0f, layout.sidebar.x + layout.sidebar.w - kSidebarInset - reason_x),
+                       commit_rect.h),
+              0.0f, theme_.text_muted, theme_.surface_background,
+              TruncateLabel(git_vm.commit_blocked_reason, text_width));
+        }
+        detail_y += kCommitButtonHeight + kCommitButtonGap;
+      } else if (!git_vm.commit_summary_line.empty()) {
         DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y,
                    theme_.text_muted, theme_.surface_background,
-                   "Ctrl+E for row actions");
-        detail_y += 14.0f;
+                   TruncateLabel(git_vm.commit_summary_line, text_width));
+        detail_y += kSummaryLineHeight;
+      }
+      // summary_lines now carries only banners (stale snapshot / refresh error); the
+      // branch line lives in the status bar.
+      for (const std::string& summary : git_vm.summary_lines) {
+        const SDL_Color color = summary == git_vm.error_banner ? theme_.diff_deleted
+                                                               : theme_.text_secondary;
+        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, detail_y, color,
+                   theme_.surface_background, TruncateLabel(summary, text_width));
+        detail_y += kSummaryLineHeight;
       }
       summary_y = detail_y;
     } else {
@@ -443,19 +444,22 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           panel_focused && workflow.focus_field == CommitWorkflowFocusField::Body;
       const bool caret_on = CaretVisibleNow();
       workflow.caret_rect = SDL_FRect{};
-      float panel_y = summary_y + 4.0f;
-      DrawTextOn(text_renderer_, renderer, field_x, panel_y, theme_.text_primary,
+      const int body_rows = 4;
+      // Single source of truth for the panel geometry; GitSidebarCommitWorkflowHeight reserves
+      // exactly CommitWorkflowLayout::total_height so the file list starts flush below.
+      const CommitWorkflowLayout panel = ComputeCommitWorkflowLayout(
+          summary_y + 4.0f, field_x, field_w, line_height, body_rows, workflow.checks.size(),
+          !workflow.status_message.empty());
+
+      DrawTextOn(text_renderer_, renderer, field_x, panel.staged_summary_y, theme_.text_primary,
                  theme_.surface_background,
                  TruncateLabel(workflow.staged_summary_line, field_w));
-      panel_y += 14.0f;
 
       // --- Subject: a framed single-line input. ComputeSingleLineViewMetrics gives the
       //     in-field horizontal scroll, caret x, and visible selection slice. ---
-      DrawTextOn(text_renderer_, renderer, field_x, panel_y, theme_.text_muted,
+      DrawTextOn(text_renderer_, renderer, field_x, panel.subject_label_y, theme_.text_muted,
                  theme_.surface_background, "Subject:");
-      panel_y += 16.0f;
-      const SDL_FRect subject_field =
-          MakeRect(field_x, panel_y, field_w, line_height + 6.0f);
+      const SDL_FRect subject_field = panel.subject_field;
       workflow.subject_field_rect = subject_field;
       DrawTextFieldFrame(renderer, theme_, subject_field, subject_focused);
       const float subject_text_x = subject_field.x + 6.0f;
@@ -487,36 +491,38 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           }
         }
       }
-      panel_y += subject_field.h + 6.0f;
 
       // --- Body: a framed multi-line edit area with its own caret/selection + scroll. ---
-      DrawTextOn(text_renderer_, renderer, field_x, panel_y, theme_.text_muted,
+      DrawTextOn(text_renderer_, renderer, field_x, panel.body_label_y, theme_.text_muted,
                  theme_.surface_background, "Body:");
-      panel_y += 16.0f;
-      const int body_rows = 4;
-      const SDL_FRect body_field =
-          MakeRect(field_x, panel_y, field_w, line_height * static_cast<float>(body_rows) + 6.0f);
+      const SDL_FRect body_field = panel.body_field;
       workflow.body_field_rect = body_field;
       workflow.body_visible_rows = body_rows;
       DrawTextFieldFrame(renderer, theme_, body_field, body_focused);
       RenderCommitBodyField(text_renderer_, theme_, renderer, workflow.body, body_field, body_rows,
                             body_focused, caret_on, &workflow.caret_rect);
-      panel_y += body_field.h + 6.0f;
 
+      float check_y = panel.checks_y;
       for (const project::CommitPreCheck& check : workflow.checks) {
         const SDL_Color color = check.severity == project::CommitPreCheckSeverity::Blocking
                                     ? theme_.text_primary
                                     : theme_.text_muted;
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y, color,
+        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, check_y, color,
                    theme_.surface_background,
                    TruncateLabel(check.message, layout.sidebar.w - kSidebarInset * 2.0f));
-        panel_y += 12.0f;
+        check_y += 14.0f;
       }
       if (!workflow.status_message.empty()) {
-        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel_y,
+        DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset, panel.status_y,
                    theme_.text_muted, theme_.surface_background,
                    TruncateLabel(workflow.status_message, layout.sidebar.w - kSidebarInset * 2.0f));
       }
+
+      // Confirm button: the discoverable way to commit the staged changes (mirrors the
+      // Ctrl+Enter shortcut). Enabled only when the draft can actually be committed.
+      workflow.commit_button_rect = panel.commit_button;
+      draw_action_button(panel.commit_button, "Commit",
+                         commit_workflow_service_.CanExecuteCommit(workflow), ButtonTone::Accent);
     }
 
     const auto lines = BuildGitSidebarLines();
@@ -617,9 +623,6 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const float label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
 
       const project::GitFileStatus row_status = row_vm != nullptr ? row_vm->status : entry.status;
-      const char git_marker = GitMarker(row_status);
-      const std::string_view marker_text =
-          git_marker == ' ' ? std::string_view{} : std::string_view(&git_marker, 1);
       const GitSidebarEntryActionLayout actions =
           ComputeGitSidebarEntryActionLayout(row_rect, entry);
       float right_edge = actions.content_right_edge;
@@ -651,22 +654,12 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive, row_actions.discard);
       }
 
-      // Leading status badge: a bright, status-colored M/A/D/U/! glyph in a fixed slot
-      // before the filename. This carries the per-file git state with color instead of a
-      // dim letter tucked at the right edge, which is what made the panel read as a wall
-      // of text. No background chip — a saturated glyph on the row reads cleanly and avoids
-      // the contrast/coverage problems of a small filled box behind the letter.
+      // Leading status badge before the filename (see draw_leading_git_badge): a bright,
+      // status-colored M/A/D/U/! glyph, matching the file tree.
       const SDL_Color row_background =
           selected ? theme_.row_highlight : theme_.surface_background;
-      constexpr float kBadgeSlot = 18.0f;
-      float name_x = label_x;
-      if (!marker_text.empty()) {
-        const SDL_Color badge_color = selected ? theme_.text_primary : GitMarkerColor(theme_, row_status);
-        DrawCenteredTextOn(text_renderer_, renderer,
-                           MakeRect(label_x, row_rect.y, kBadgeSlot, row_rect.h), badge_color,
-                           row_background, marker_text);
-        name_x = label_x + kBadgeSlot;
-      }
+      const float name_x =
+          draw_leading_git_badge(row_rect, label_x, row_status, selected, row_background);
 
       std::string primary_label = line.label.empty() ? entry.relative_path.filename().string() : line.label;
       if (row_vm != nullptr && !row_vm->review_marker_label.empty()) {
@@ -780,6 +773,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           has_git_marker ? std::string_view(&git_marker, 1) : std::string_view{};
       const float marker_width =
           has_git_marker ? text_renderer_.MeasureWidth(git_marker_text) : 0.0f;
+      // The file tree keeps the status marker at the RIGHT edge: a leading badge would
+      // shove directory names out of alignment with their chevrons, which reads badly.
+      // Source Control (a flat per-file list) uses the leading badge instead.
       const float marker_x = row_rect.x + row_rect.w - marker_width - 8.0f;
       const float label_width =
           has_git_marker ? std::max(20.0f, marker_x - label_x - 8.0f)

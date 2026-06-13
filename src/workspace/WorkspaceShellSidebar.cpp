@@ -26,7 +26,12 @@ constexpr float kGitSidebarListGap = 8.0f;
 constexpr float kTreeSidebarActionRowTop = 34.0f;
 constexpr float kTreeSidebarActionButtonHeight = 18.0f;
 constexpr float kTreeSidebarListGap = 8.0f;
-constexpr float kGitSidebarSummaryLineHeight = 14.0f;
+// Must match kSummaryLineHeight in WorkspaceShellRenderSidebar.cpp.
+constexpr float kGitSidebarSummaryLineHeight = 17.0f;
+// Commit button row (panel header) — height plus the gap below it. Must match the
+// values used in WorkspaceShellRenderSidebar.cpp / GitSidebarSummaryHeight.
+constexpr float kGitSidebarCommitButtonHeight = 22.0f;
+constexpr float kGitSidebarCommitButtonGap = 8.0f;
 constexpr float kGitSidebarEntryButtonGap = 4.0f;
 constexpr float kGitSidebarEntryButtonHoverPadding = 4.0f;
 constexpr float kGitSidebarHeaderMenuButtonSize = 16.0f;
@@ -65,6 +70,18 @@ SDL_FRect WorkspaceShell::GitSidebarRefreshButtonRect(const SDL_FRect& sidebar_r
       std::max(0.0f, (row_rect.w - kGitSidebarActionGap * 2.0f) / 3.0f);
   return MakeRect(row_rect.x + (button_width + kGitSidebarActionGap) * 2.0f, row_rect.y,
                   button_width, row_rect.h);
+}
+
+SDL_FRect WorkspaceShell::GitSidebarCommitButtonRect(const SDL_FRect& sidebar_rect) const {
+  const SDL_FRect row_rect = GitSidebarActionRowRect(sidebar_rect);
+  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+  // Positioned as the first element of the summary block (kept in sync with the render
+  // start offset of action-row-bottom + 10).
+  const float button_width = std::min(row_rect.w, 96.0f);
+  return MakeRect(row_rect.x, row_rect.y + row_rect.h + 10.0f, button_width,
+                  kGitSidebarCommitButtonHeight);
 }
 
 SDL_FRect WorkspaceShell::GitSidebarActionRowRect(const SDL_FRect& sidebar_rect) const {
@@ -149,23 +166,18 @@ float WorkspaceShell::GitSidebarSummaryHeight() const {
       BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
                                context_.current_project_state.root,
                                context_.current_project_state.branch_review);
-  const bool sidebar_focus_details =
-      context_.current_project_state.surface.focus == FocusTarget::Sidebar &&
-      ActiveSidebarMode() == SidebarMode::Git;
 
   float height = 0.0f;
-  // Keep list offset in sync with the compact grouped summary block.
+  // Keep list offset in sync with the compact grouped summary block. summary_lines
+  // carries only banners now; the branch line moved to the status bar, the per-selection
+  // line and the redundant staged/unstaged counts were removed. The commit-readiness
+  // line is replaced by the Commit button (or a hint while the draft is open).
+  if (view_model.show_commit_button) {
+    height += kGitSidebarCommitButtonHeight + kGitSidebarCommitButtonGap;
+  } else if (!view_model.commit_summary_line.empty()) {
+    height += kGitSidebarSummaryLineHeight;
+  }
   height += static_cast<float>(view_model.summary_lines.size()) * kGitSidebarSummaryLineHeight;
-  if (!view_model.workflow_summary_line.empty()) {
-    height += kGitSidebarSummaryLineHeight;
-  }
-  if (!view_model.commit_summary_line.empty()) {
-    height += kGitSidebarSummaryLineHeight;
-  }
-  if (sidebar_focus_details && !view_model.selection_summary_line.empty()) {
-    height += kGitSidebarSummaryLineHeight;
-    height += kGitSidebarSummaryLineHeight;  // "Ctrl+E for row actions and shortcuts"
-  }
   return height;
 }
 

@@ -75,6 +75,8 @@ bool PersistenceCoordinator::RestoreSessionState() {
           .hash = persisted_tab.compare_commit_hash,
           .short_hash = persisted_tab.compare_commit_short_hash,
           .subject = {},
+          .author = {},
+          .relative_date = {},
       };
       std::optional<TabEntry> compare_tab;
       if (!persisted_tab.compare_right_ref.empty()) {
