@@ -386,6 +386,21 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
     }
   }
 
+  std::optional<EditorBannerViewModel> editor_banner;
+  if (const EditorBannerState* banner = ActiveEditorBannerForTab(context_.current_project_state);
+      banner != nullptr) {
+    const std::string name = banner->path.filename().string();
+    EditorBannerViewModel view_model;
+    if (banner->kind == EditorBannerState::Kind::ExternalChange) {
+      view_model.has_actions = true;
+      view_model.message = name + " changed on disk - reload, overwrite, or keep editing?";
+    } else {
+      view_model.has_actions = false;
+      view_model.message = "Reloaded " + name + " from disk";
+    }
+    editor_banner = std::move(view_model);
+  }
+
   return FrameSurfaceViewModel{
       .layout = layout,
       .sidebar_visible = context_.current_project_state.sidebar.visible,
@@ -393,6 +408,7 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
                               context_.current_project_state.panel.content !=
                                   PanelContentKind::None,
       .compare_surface = compare_surface,
+      .editor_banner = std::move(editor_banner),
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }

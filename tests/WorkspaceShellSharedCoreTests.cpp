@@ -188,6 +188,16 @@ void TestWorkspaceSharedAtomicTextWrite() {
   Expect(!std::filesystem::exists(nested.string() + ".tmp"),
          "atomic text writer should not leave a sibling temp file behind");
 
+  // StatFileSignature should report the durable file's identity and track size.
+  const microide::util::FileSignature sig = microide::util::StatFileSignature(nested);
+  Expect(sig.exists && !sig.error, "signature of a written file should exist without error");
+  Expect(sig.size == std::string("second\n").size(),
+         "signature size should match the written payload length");
+  const microide::util::FileSignature missing =
+      microide::util::StatFileSignature(temp_root / "does-not-exist");
+  Expect(!missing.exists && !missing.error,
+         "signature of an absent file should report absent, not error");
+
   std::filesystem::remove_all(temp_root);
 }
 

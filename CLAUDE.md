@@ -61,6 +61,19 @@ Run the full automated test suite with:
 ctest --test-dir build --output-on-failure
 ```
 
+Prefer the logging wrapper, which tees all build+test output to a deterministic
+file under `/tmp` so results can be read back without rerunning:
+
+```bash
+tools/run-checks.sh tests   # -> /tmp/microide-tests.log
+tools/run-checks.sh asan    # -> /tmp/microide-asan.log
+tools/run-checks.sh ubsan   # -> /tmp/microide-ubsan.log
+tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log  (needs vm.mmap_rnd_bits=28)
+tools/run-checks.sh all     # all four in sequence
+```
+
+After a run, READ `/tmp/microide-<target>.log` instead of rebuilding and rerunning.
+
 Run focused tests with one or more substring filters:
 
 ```bash

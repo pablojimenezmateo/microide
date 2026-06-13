@@ -38,6 +38,8 @@ class EditorMouseCoordinator {
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::string>(std::string_view id)> get_setting_value;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
+    // Dispatches a non-blocking external-change banner action (Reload/Overwrite/Keep).
+    std::function<void(EditorBannerAction, const std::filesystem::path&)> editor_banner_action;
   };
 
   EditorMouseCoordinator(ProjectWorkspaceState& state,

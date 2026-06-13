@@ -6,6 +6,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 
 namespace microide::editor {
 
@@ -731,6 +732,10 @@ void TextViewport::ResetState(std::vector<std::string> lines,
   undo_history_.Clear();
   document_->placeholder = placeholder;
   document_->dirty = dirty;
+  // Capture the file's on-disk identity as our conflict-detection baseline. For
+  // untitled buffers (empty path) this records "absent", so first saves are
+  // never treated as conflicts.
+  document_->disk_signature = util::StatFileSignature(path);
   InvalidateVisualColumnCache();
   // ResetState replaces every line; classify as a content edit so the
   // content tier reflects the change and dependent caches are dropped.

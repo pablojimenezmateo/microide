@@ -68,10 +68,6 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
 }
 
 std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
-  if (context_.prompts.dirty.kind == DirtyPromptState::Kind::ExternalFileChange) {
-    return {"Reload", "Keep", "Cancel"};
-  }
-
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::Quit ||
       context_.prompts.dirty.kind == DirtyPromptState::Kind::CloseTabs ||
       context_.prompts.dirty.kind == DirtyPromptState::Kind::CloseProject ||
@@ -103,9 +99,6 @@ std::string WorkspaceShell::DirtyPromptTitle() const {
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::DeletePath) {
     return "Unsaved changes before delete";
   }
-  if (context_.prompts.dirty.kind == DirtyPromptState::Kind::ExternalFileChange) {
-    return "File changed on disk";
-  }
   return "Unsaved changes";
 }
 
@@ -131,16 +124,6 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
                ? "Save the dirty tab before closing the selected tabs?"
                : "Save the " + std::to_string(context_.prompts.dirty.dirty_count) +
                      " dirty tabs before closing the selected tabs?";
-  }
-
-  if (context_.prompts.dirty.kind == DirtyPromptState::Kind::ExternalFileChange) {
-    const std::filesystem::path path = context_.prompts.dirty.path;
-    const std::string label =
-        path.empty() ? "this file"
-                     : (path == context_.current_project_state.root
-                            ? ProjectLabel()
-                            : RelativePathLabel(context_.current_project_state.root, path));
-    return "Reload " + label + " from disk or keep the in-memory edits?";
   }
 
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::RenamePath ||

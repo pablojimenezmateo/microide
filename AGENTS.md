@@ -184,6 +184,7 @@ durable invariant moves.
 
 - Every meaningful bug fix should add or tighten regression coverage.
 - Run targeted builds and tests for the changed area before committing.
+- Prefer `tools/run-checks.sh {tests|asan|ubsan|tsan|all}`, which tees build+test output to `/tmp/microide-<target>.log`; read that file instead of rerunning.
 - Run sanitizer variants (`microide-asan`, `microide-ubsan`, `microide-tsan`) for memory/thread-sensitive changes.
 - TSAN runs require `sudo sysctl vm.mmap_rnd_bits=28` on Linux before test execution.
 - Extend and run relevant fuzz targets in `tests/fuzz/` when changing persistence, parser, regex, or blame decode paths.

@@ -91,6 +91,15 @@ void EditorTabService::ReloadEditorTabsForPathFromDisk(const std::filesystem::pa
   coordinator_.ReloadEditorTabsForPathFromDisk(path);
 }
 
+bool EditorTabService::OverwriteEditorTabsForPath(const std::filesystem::path& path) {
+  return coordinator_.OverwriteEditorTabsForPath(path);
+}
+
+bool EditorTabService::DiskSignatureMatchesOpenView(const std::filesystem::path& path,
+                                                    const util::FileSignature& signature) const {
+  return coordinator_.DiskSignatureMatchesOpenView(path, signature);
+}
+
 bool EditorTabService::OpenUntitled() {
   return coordinator_.OpenUntitled();
 }

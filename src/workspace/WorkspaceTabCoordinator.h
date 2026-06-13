@@ -39,6 +39,10 @@ class TabCoordinator {
     std::function<void()> request_editor_surface_redraw;
     std::function<void()> request_automatic_git_sidebar_refresh;
     std::function<void(std::size_t)> activate_tab;
+    // Raised when a save is refused because the file changed on disk since the
+    // buffer was loaded/last saved. The host surfaces the external-change banner
+    // so the user can Reload / Overwrite / Keep instead of silently clobbering.
+    std::function<void(const std::filesystem::path&)> request_external_change_banner;
   };
 
   TabCoordinator(ProjectCatalogState& project_catalog,
@@ -66,6 +70,15 @@ class TabCoordinator {
   bool CycleEditorSplit(int delta);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
+  // Force-saves every dirty editor view on `path`, bypassing the save-time
+  // disk-conflict guard (the user explicitly chose to overwrite). Returns true
+  // if at least one view was saved.
+  bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
+  // True if every open editor view on `path` recorded a disk signature equal to
+  // `signature` (i.e. the on-disk change was our own write). Used to suppress the
+  // redundant self-write reload. False when no view matches the path.
+  bool DiskSignatureMatchesOpenView(const std::filesystem::path& path,
+                                    const util::FileSignature& signature) const;
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
