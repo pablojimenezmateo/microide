@@ -869,7 +869,7 @@ void TestWorkspaceShellProjectTabBadgeColorStableAcrossSwitch() {
          "inactive project tab badge should remain stable after reactivation");
 }
 
-void TestWorkspaceShellSidebarDropdownOffersChatView() {
+void TestWorkspaceShellSidebarModeTabsPresent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "main.txt";
@@ -880,21 +880,17 @@ void TestWorkspaceShellSidebarDropdownOffersChatView() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
-  const float click_x = button_rect.x + button_rect.w * 0.5f;
-  const float click_y = button_rect.y + button_rect.h * 0.5f;
-  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
-         "clicking the sidebar mode control should open the sidebar menu");
-  Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
-         "clicking the sidebar mode control should open the sidebar menu");
-
-  const auto labels = WorkspaceShellTestAccess::SidebarModeMenuLabels(shell);
-  Expect(std::find(labels.begin(), labels.end(), "Chat") == labels.end(),
-         "the sidebar dropdown should omit chat after AI capability removal");
-  Expect(std::find(labels.begin(), labels.end(), "Problems") == labels.end(),
-         "the sidebar dropdown should omit the Problems entry");
-  Expect(std::find(labels.begin(), labels.end(), "Tests") == labels.end(),
-         "the sidebar dropdown should omit the Tests entry");
+  // The header row exposes the three primary view tabs, laid out left-to-right, and no overflow
+  // button when no plugin views are registered.
+  const SDL_FRect tree_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "tree");
+  const SDL_FRect search_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "search");
+  const SDL_FRect git_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "git");
+  Expect(tree_tab.w > 0.0f && search_tab.w > 0.0f && git_tab.w > 0.0f,
+         "Project, Search, and Source Control tabs should all be present");
+  Expect(tree_tab.x < search_tab.x && search_tab.x < git_tab.x,
+         "mode tabs should be laid out in Project / Search / Source Control order");
+  Expect(WorkspaceShellTestAccess::SidebarModeOverflowRect(shell).w <= 0.0f,
+         "no overflow button should appear without plugin-contributed views");
 }
 
 void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
@@ -2104,8 +2100,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabsShowBadges);
   AddTest(tests, "WorkspaceShell/ProjectTabBadgeColorStableAcrossSwitch",
           TestWorkspaceShellProjectTabBadgeColorStableAcrossSwitch);
-  AddTest(tests, "WorkspaceShell/SidebarDropdownOffersChatView",
-          TestWorkspaceShellSidebarDropdownOffersChatView);
+  AddTest(tests, "WorkspaceShell/SidebarModeTabsPresent",
+          TestWorkspaceShellSidebarModeTabsPresent);
   AddTest(tests, "WorkspaceShell/TabTooltipRendersAboveSidebar",
           TestWorkspaceShellTabTooltipRendersAboveSidebar);
   AddTest(tests, "WorkspaceShell/GitSidebarTooltipUsesSharedCompactCard",

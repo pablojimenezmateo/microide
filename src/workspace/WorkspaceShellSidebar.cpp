@@ -19,6 +19,20 @@ namespace {
 constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
+// Mode-switch tab row (replaces the old dropdown) at the top of the sidebar header.
+constexpr float kSidebarModeRowTop = 4.0f;
+constexpr float kSidebarModeRowHeight = 20.0f;
+constexpr float kSidebarModeTabGap = 4.0f;
+constexpr float kSidebarModeIconSlot = 16.0f;       // icon cell width within a tab
+constexpr float kSidebarModeIconLabelGap = 5.0f;    // icon -> label spacing
+constexpr float kSidebarModeLabelPadding = 10.0f;   // leading + trailing label padding
+constexpr float kSidebarModeOverflowWidth = 24.0f;  // "⋯" overflow button
+
+// Static label for a builtin sidebar mode (tab labels are always builtin views).
+std::string_view BuiltinSidebarModeLabel(SidebarMode mode) {
+  const SidebarViewSpec* view = FindBuiltinSidebarView(mode);
+  return view != nullptr ? view->label : std::string_view{};
+}
 constexpr float kGitSidebarActionRowTop = 34.0f;
 constexpr float kGitSidebarActionButtonHeight = 18.0f;
 constexpr float kGitSidebarActionGap = 6.0f;
@@ -281,36 +295,91 @@ SDL_FRect WorkspaceShell::TreeSidebarRefreshButtonRect(const SDL_FRect& sidebar_
                   button_width, kTreeSidebarActionButtonHeight);
 }
 
-std::string WorkspaceShell::SidebarModeControlLabel() const {
-  if (const std::optional<SidebarViewInfo> view =
-          FindSidebarView(context_.current_project_state.sidebar.view_id, plugin_runtime_.Host());
-      view.has_value()) {
-    return std::string(view->label);
+SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rect) const {
+  SidebarModeRowLayout layout;
+  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
+    return layout;
   }
-  if (const SidebarViewSpec* view = FindBuiltinSidebarView(ActiveSidebarMode());
-      view != nullptr) {
-    return std::string(view->label);
+
+  const float left = sidebar_rect.x + kSidebarInset;
+  const float top = sidebar_rect.y + kSidebarModeRowTop;
+  const float right = sidebar_rect.x + sidebar_rect.w - kSidebarInset;
+  layout.row_rect = MakeRect(left, top, std::max(0.0f, right - left), kSidebarModeRowHeight);
+  if (layout.row_rect.w <= 0.0f) {
+    return layout;
   }
-  return "Project";
+
+  // Primary tabs are the builtin Project / Search / Source Control views, honoring the user's
+  // hidden/order policy. Any non-hidden plugin view spills into the overflow menu.
+  const auto& policies = context_.current_project_state.sidebar_policies;
+  for (const SidebarViewInfo& view : OrderedSidebarViews(plugin_runtime_.Host(), policies)) {
+    if (view.id == "tree" || view.id == "search" || view.id == "git") {
+      if (layout.tab_count < static_cast<int>(layout.tabs.size())) {
+        layout.tabs[static_cast<std::size_t>(layout.tab_count++)] =
+            SidebarModeTab{.id = view.id, .mode = view.mode, .rect = {}};
+      }
+    } else if (view.id != "chat" && view.id != "problems" && view.id != "tests") {
+      layout.has_overflow = true;
+    }
+  }
+  if (layout.tab_count == 0) {
+    return layout;
+  }
+
+  const float overflow_w =
+      layout.has_overflow ? kSidebarModeOverflowWidth + kSidebarModeTabGap : 0.0f;
+  const float avail = std::max(0.0f, layout.row_rect.w - overflow_w);
+  const float gaps = kSidebarModeTabGap * static_cast<float>(layout.tab_count - 1);
+
+  // Choose icon+label when the labelled row fits, else collapse to equal icon-only cells.
+  float labelled_total = gaps;
+  for (int i = 0; i < layout.tab_count; ++i) {
+    labelled_total += kSidebarModeIconSlot + kSidebarModeIconLabelGap +
+                      text_renderer_.MeasureWidth(BuiltinSidebarModeLabel(layout.tabs[i].mode)) +
+                      kSidebarModeLabelPadding;
+  }
+  layout.icon_only = labelled_total > avail;
+
+  float x = layout.row_rect.x;
+  for (int i = 0; i < layout.tab_count; ++i) {
+    float w = 0.0f;
+    if (layout.icon_only) {
+      w = std::max(kSidebarModeIconSlot, (avail - gaps) / static_cast<float>(layout.tab_count));
+    } else {
+      w = kSidebarModeIconSlot + kSidebarModeIconLabelGap +
+          text_renderer_.MeasureWidth(BuiltinSidebarModeLabel(layout.tabs[i].mode)) +
+          kSidebarModeLabelPadding;
+    }
+    layout.tabs[static_cast<std::size_t>(i)].rect = MakeRect(x, layout.row_rect.y, w,
+                                                             layout.row_rect.h);
+    x += w + kSidebarModeTabGap;
+  }
+  if (layout.has_overflow) {
+    layout.overflow_rect =
+        MakeRect(layout.row_rect.x + layout.row_rect.w - kSidebarModeOverflowWidth,
+                 layout.row_rect.y, kSidebarModeOverflowWidth, layout.row_rect.h);
+  }
+  return layout;
 }
 
-SDL_FRect WorkspaceShell::SidebarModeControlRect(const SDL_FRect& sidebar_rect) const {
-  if (sidebar_rect.w <= 0.0f || sidebar_rect.h <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+std::string WorkspaceShell::HoveredSidebarModeTooltipLabel(const SDL_FRect& sidebar_rect) const {
+  if (!last_mouse_position_valid_ || !context_.current_project_state.sidebar.visible ||
+      MenuSurfaceCapturingMouse()) {
+    return {};
   }
-
-  const std::string label = SidebarModeControlLabel();
-  const float left = sidebar_rect.x + 10.0f;
-  const float reserved_right = 10.0f;
-  const float max_width =
-      std::max(0.0f, sidebar_rect.w - (left - sidebar_rect.x) - reserved_right - 6.0f);
-  const float desired_width =
-      std::clamp(text_renderer_.MeasureWidth(label) + 30.0f, 92.0f, std::max(92.0f, max_width));
-  const float width = std::min(desired_width, max_width);
-  if (width <= 0.0f) {
-    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  const SidebarModeRowLayout row = SidebarModeRow(sidebar_rect);
+  if (!row.icon_only) {
+    return {};  // labels are already visible
   }
-  return MakeRect(left, sidebar_rect.y + 4.0f, width, 18.0f);
+  for (int i = 0; i < row.tab_count; ++i) {
+    if (Contains(row.tabs[static_cast<std::size_t>(i)].rect, last_mouse_x_, last_mouse_y_)) {
+      return std::string(BuiltinSidebarModeLabel(row.tabs[static_cast<std::size_t>(i)].mode));
+    }
+  }
+  if (row.has_overflow && Contains(row.overflow_rect, last_mouse_x_, last_mouse_y_)) {
+    return "More views";
+  }
+  return {};
 }
 
 std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const {

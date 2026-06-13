@@ -817,8 +817,8 @@
   void ShowGitSidebar();
   void ShowTestsSidebar();
   bool ShowPluginSidebar(std::string_view id, bool temporary = false);
-  std::string SidebarModeControlLabel() const;
-  SDL_FRect SidebarModeControlRect(const SDL_FRect& sidebar_rect) const;
+  SidebarModeRowLayout SidebarModeRow(const SDL_FRect& sidebar_rect) const;
+  std::string HoveredSidebarModeTooltipLabel(const SDL_FRect& sidebar_rect) const;
   void CloseSidebar();
   void ToggleSidebar();
   void RestorePreviousSidebar();

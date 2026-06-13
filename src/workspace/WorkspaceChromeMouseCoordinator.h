@@ -18,7 +18,8 @@ class ChromeMouseCoordinator {
   struct Operations {
     std::function<void()> close_menu_bar;
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
-    std::function<SDL_FRect(const SDL_FRect&)> sidebar_mode_control_rect;
+    std::function<SidebarModeRowLayout(const SDL_FRect&)> sidebar_mode_row;
+    std::function<void(std::string_view)> activate_sidebar_view;
     std::function<void()> request_chrome_redraw;
     std::function<void(const SDL_FRect&)> request_redraw_rect;
     std::function<std::vector<WorkspaceShell::VisibleMenuBarItem>(const SDL_FRect&)>

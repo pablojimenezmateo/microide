@@ -1433,17 +1433,27 @@ return ide.plugin({
          "sidebar mode menu fixture should open the project");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
-  const float click_x = button_rect.x + button_rect.w * 0.5f;
-  const float click_y = button_rect.y + button_rect.h * 0.5f;
+  // A plugin-contributed view spills into the mode-row overflow ("⋯") button, which opens the
+  // existing sidebar-mode menu.
+  const SDL_FRect overflow_rect = WorkspaceShellTestAccess::SidebarModeOverflowRect(shell);
+  Expect(overflow_rect.w > 0.0f,
+         "a loaded plugin sidebar should produce a mode-row overflow button");
+  const float click_x = overflow_rect.x + overflow_rect.w * 0.5f;
+  const float click_y = overflow_rect.y + overflow_rect.h * 0.5f;
   Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
-         "clicking the sidebar mode control should open the sidebar menu");
+         "clicking the mode-row overflow should open the sidebar menu");
   Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
-         "clicking the sidebar mode control should open the anchored sidebar menu");
+         "clicking the mode-row overflow should open the anchored sidebar menu");
 
   const auto labels = WorkspaceShellTestAccess::SidebarModeMenuLabels(shell);
   Expect(std::find(labels.begin(), labels.end(), "Example Sidebar") != labels.end(),
          "sidebar mode menu should list loaded plugin sidebars by label");
+  Expect(std::find(labels.begin(), labels.end(), "Chat") == labels.end(),
+         "the sidebar mode menu should omit the chat view");
+  Expect(std::find(labels.begin(), labels.end(), "Problems") == labels.end(),
+         "the sidebar mode menu should omit the Problems entry");
+  Expect(std::find(labels.begin(), labels.end(), "Tests") == labels.end(),
+         "the sidebar mode menu should omit the Tests entry");
 
   const auto example_rect =
       WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Example Sidebar");

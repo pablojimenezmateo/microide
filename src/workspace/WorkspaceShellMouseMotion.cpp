@@ -110,9 +110,15 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return std::nullopt;
     }
 
-    const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
-    if (Contains(sidebar_mode_rect, x, y)) {
-      return sidebar_mode_rect;
+    const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
+    for (int i = 0; i < mode_row.tab_count; ++i) {
+      const SDL_FRect tab_rect = mode_row.tabs[static_cast<std::size_t>(i)].rect;
+      if (Contains(tab_rect, x, y)) {
+        return tab_rect;
+      }
+    }
+    if (mode_row.has_overflow && Contains(mode_row.overflow_rect, x, y)) {
+      return mode_row.overflow_rect;
     }
 
     switch (ActiveSidebarMode()) {

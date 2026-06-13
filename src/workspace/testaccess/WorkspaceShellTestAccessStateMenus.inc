@@ -222,7 +222,23 @@
   }
   static SDL_FRect SidebarModeButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.SidebarModeControlRect(layout.sidebar);
+    const SidebarModeRowLayout row = shell.SidebarModeRow(layout.sidebar);
+    return row.tab_count > 0 ? row.tabs[0].rect : SDL_FRect{};
+  }
+  static SDL_FRect SidebarModeTabRect(WorkspaceShell& shell, std::string_view view_id) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const SidebarModeRowLayout row = shell.SidebarModeRow(layout.sidebar);
+    for (int i = 0; i < row.tab_count; ++i) {
+      if (row.tabs[static_cast<std::size_t>(i)].id == view_id) {
+        return row.tabs[static_cast<std::size_t>(i)].rect;
+      }
+    }
+    return SDL_FRect{};
+  }
+  static SDL_FRect SidebarModeOverflowRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const SidebarModeRowLayout row = shell.SidebarModeRow(layout.sidebar);
+    return row.has_overflow ? row.overflow_rect : SDL_FRect{};
   }
   static SDL_FRect SearchSidebarModeButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

@@ -2,10 +2,12 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -36,6 +38,26 @@ enum class SidebarMode {
   Git,
   Tests,
   Plugin,
+};
+
+// One clickable mode tab in the sidebar header row. `id` points at a builtin view's static
+// label/id storage, so it is allocation-free to copy.
+struct SidebarModeTab {
+  std::string_view id;
+  SidebarMode mode = SidebarMode::None;
+  SDL_FRect rect{};
+};
+
+// Geometry of the sidebar header mode-switch row: up to three primary tabs (Project / Search /
+// Source Control) plus an optional overflow button for plugin-contributed views. Built without
+// heap allocation so it can be recomputed cheaply on the render / hit-test / hover paths.
+struct SidebarModeRowLayout {
+  std::array<SidebarModeTab, 3> tabs{};
+  int tab_count = 0;
+  bool has_overflow = false;
+  SDL_FRect overflow_rect{};
+  bool icon_only = false;  // labels don't fit -> render icons only, name shown on hover
+  SDL_FRect row_rect{};    // whole header band, for pointer-cursor / hover hit-testing
 };
 
 enum class GitSidebarRefreshScope {

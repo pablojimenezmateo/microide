@@ -370,6 +370,73 @@ inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
   SDL_RenderLine(renderer, cx, cy - 4.0f, cx, cy + 4.0f);
 }
 
+// Small filled dot used as a node marker in line-art glyphs.
+inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color color) {
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const SDL_FRect dot{std::floor(cx) - 1.0f, std::floor(cy) - 1.0f, 2.0f, 2.0f};
+  SDL_RenderFillRect(renderer, &dot);
+}
+
+// Sidebar mode-tab icons (line art, sized to match the existing glyphs above).
+inline void DrawFolderGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  const SDL_FRect body{cx - 5.0f, cy - 2.0f, 10.0f, 7.0f};
+  SDL_RenderRect(renderer, &body);
+  // Folder tab on the top-left edge.
+  SDL_RenderLine(renderer, cx - 5.0f, cy - 2.0f, cx - 3.0f, cy - 4.0f);
+  SDL_RenderLine(renderer, cx - 3.0f, cy - 4.0f, cx, cy - 4.0f);
+  SDL_RenderLine(renderer, cx, cy - 4.0f, cx, cy - 2.0f);
+}
+
+inline void DrawSearchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  // Diamond lens (rounder than a square) plus a diagonal handle.
+  const float lx = cx - 1.0f;
+  const float ly = cy - 1.0f;
+  SDL_RenderLine(renderer, lx, ly - 4.0f, lx + 4.0f, ly);
+  SDL_RenderLine(renderer, lx + 4.0f, ly, lx, ly + 4.0f);
+  SDL_RenderLine(renderer, lx, ly + 4.0f, lx - 4.0f, ly);
+  SDL_RenderLine(renderer, lx - 4.0f, ly, lx, ly - 4.0f);
+  SDL_RenderLine(renderer, lx + 2.0f, ly + 2.0f, cx + 5.0f, cy + 5.0f);
+}
+
+inline void DrawBranchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  const float trunk_x = cx - 3.0f;
+  // Trunk with two nodes, and a branch that forks up to a third node.
+  SDL_RenderLine(renderer, trunk_x, cy - 5.0f, trunk_x, cy + 5.0f);
+  SDL_RenderLine(renderer, trunk_x, cy + 1.0f, cx + 3.0f, cy - 3.0f);
+  DrawGlyphDot(renderer, trunk_x, cy - 5.0f, color);
+  DrawGlyphDot(renderer, trunk_x, cy + 5.0f, color);
+  DrawGlyphDot(renderer, cx + 3.0f, cy - 4.0f, color);
+}
+
+inline void DrawEllipsisGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  DrawGlyphDot(renderer, cx - 4.0f, cy, color);
+  DrawGlyphDot(renderer, cx, cy, color);
+  DrawGlyphDot(renderer, cx + 4.0f, cy, color);
+}
+
 inline void DrawHoverableCloseGlyph(SDL_Renderer* renderer,
                                     const SDL_FRect& rect,
                                     bool hovered,

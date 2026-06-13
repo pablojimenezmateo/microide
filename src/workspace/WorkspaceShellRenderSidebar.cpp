@@ -9,6 +9,7 @@
 #include "workspace/CommitWorkflowState.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
+#include "workspace/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
 
@@ -170,27 +171,57 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     return label_x + kGitBadgeSlot;
   };
 
-  const SDL_FRect sidebar_mode_rect = SidebarModeControlRect(layout.sidebar);
-  const bool sidebar_mode_hovered =
-      last_mouse_position_valid_ && Contains(sidebar_mode_rect, last_mouse_x_, last_mouse_y_);
+  // Mode-switch tab row (Project / Search / Source Control + optional overflow), replacing the
+  // old dropdown. Single-click switches view; the row collapses to icon-only when narrow.
+  const std::string_view active_view_id = project_state.sidebar.view_id;
+  const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
   const bool sidebar_mode_open =
       context_.menu_state.menu_bar_open && context_.menu_state.active_menu_id == MenuId::SidebarMode &&
       context_.menu_state.active_menu_anchor_rect.has_value();
-  DrawFilledRect(renderer, sidebar_mode_rect,
-                 sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
-                                                          : theme_.surface_raised);
-  DrawRect(renderer, sidebar_mode_rect,
-           sidebar_mode_open ? theme_.accent
-                             : sidebar_mode_hovered ? theme_.text_secondary : theme_.border);
-  DrawVCenteredTextOn(text_renderer_, renderer, sidebar_mode_rect, 8.0f,
-                      sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary
-                                                                : theme_.text_secondary,
-                      sidebar_mode_open || sidebar_mode_hovered ? theme_.row_highlight
-                                                                : theme_.surface_raised,
-                      SidebarModeControlLabel());
-  DrawChevron(renderer, sidebar_mode_rect.x + sidebar_mode_rect.w - 18.0f,
-              sidebar_mode_rect.y + sidebar_mode_rect.h * 0.5f, true,
-              sidebar_mode_open || sidebar_mode_hovered ? theme_.text_primary : theme_.text_muted);
+  const auto draw_mode_glyph = [&](SidebarMode mode, const SDL_FRect& icon_rect, SDL_Color color) {
+    switch (mode) {
+      case SidebarMode::Tree: DrawFolderGlyph(renderer, icon_rect, color); break;
+      case SidebarMode::Search: DrawSearchGlyph(renderer, icon_rect, color); break;
+      case SidebarMode::Git: DrawBranchGlyph(renderer, icon_rect, color); break;
+      default: break;
+    }
+  };
+  for (int i = 0; i < mode_row.tab_count; ++i) {
+    const SidebarModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
+    const bool active = tab.id == active_view_id;
+    const bool hovered =
+        last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_);
+    const ButtonColors colors = ResolveButtonColors(
+        theme_, ButtonTone::Neutral,
+        ButtonVisualState{.enabled = true, .hovered = hovered, .active = active});
+    DrawFilledRect(renderer, tab.rect, colors.fill);
+    DrawRect(renderer, tab.rect, colors.border);
+    if (mode_row.icon_only) {
+      draw_mode_glyph(tab.mode, tab.rect, colors.text);
+    } else {
+      const SDL_FRect icon_rect = MakeRect(tab.rect.x + 4.0f, tab.rect.y, 16.0f, tab.rect.h);
+      draw_mode_glyph(tab.mode, icon_rect, colors.text);
+      const float label_x = icon_rect.x + icon_rect.w + 1.0f;
+      const SidebarViewSpec* spec = FindBuiltinSidebarView(tab.mode);
+      const std::string_view tab_label = spec != nullptr ? spec->label : std::string_view{};
+      DrawVCenteredTextOn(
+          text_renderer_, renderer,
+          MakeRect(label_x, tab.rect.y, std::max(0.0f, tab.rect.x + tab.rect.w - label_x - 4.0f),
+                   tab.rect.h),
+          0.0f, colors.text, colors.fill, tab_label);
+    }
+  }
+  if (mode_row.has_overflow) {
+    const bool hovered =
+        last_mouse_position_valid_ && Contains(mode_row.overflow_rect, last_mouse_x_, last_mouse_y_);
+    const bool active = sidebar_mode_open || FindBuiltinSidebarView(active_view_id) == nullptr;
+    const ButtonColors colors = ResolveButtonColors(
+        theme_, ButtonTone::Neutral,
+        ButtonVisualState{.enabled = true, .hovered = hovered, .active = active});
+    DrawFilledRect(renderer, mode_row.overflow_rect, colors.fill);
+    DrawRect(renderer, mode_row.overflow_rect, colors.border);
+    DrawEllipsisGlyph(renderer, mode_row.overflow_rect, colors.text);
+  }
 
   const SidebarMode sidebar_mode = sidebar_vm.mode;
   if (sidebar_mode == SidebarMode::Search) {
@@ -728,21 +759,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                        project_state.directory_tree.CanCollapseAll());
     draw_action_button(refresh_rect, compact_tree_header ? "R" : "Refresh", true);
 
-    if (!compact_tree_header) {
-      const std::string tree_root_label = ProjectLabel();
-      const float root_label_left = sidebar_mode_rect.x + sidebar_mode_rect.w + 10.0f;
-      // Project actions now render on a second row, so first-row label width
-      // should not reserve horizontal space for those buttons anymore.
-      const float root_label_right = layout.sidebar.x + layout.sidebar.w - kSidebarInset;
-      const float root_label_max_width = std::max(0.0f, root_label_right - root_label_left);
-      const std::string root_label = TruncateLabel(tree_root_label, root_label_max_width);
-      if (!root_label.empty()) {
-        DrawCenteredTextOn(text_renderer_, renderer,
-                           MakeRect(root_label_left, layout.sidebar.y + 4.0f, root_label_max_width,
-                                    18.0f),
-                           theme_.chrome_text_secondary, theme_.chrome_background, root_label);
-      }
-    }
+    // The project name no longer renders here — the mode tab row owns the header, and the
+    // project name is already shown on the editor tab.
 
     const auto& entries = project_state.directory_tree.entries();
     const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
@@ -833,6 +851,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
   draw_sidebar_tooltip(HoveredGitSidebarTooltipLabel(layout.sidebar));
   draw_sidebar_tooltip(HoveredSidebarSearchTooltipLabel(layout.sidebar));
+  draw_sidebar_tooltip(HoveredSidebarModeTooltipLabel(layout.sidebar));
 }
 
 }  // namespace microide::workspace

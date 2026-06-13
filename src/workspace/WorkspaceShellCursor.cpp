@@ -427,7 +427,13 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
     const SidebarMode sidebar_mode = ActiveSidebarMode();
-    if (Contains(SidebarModeControlRect(layout.sidebar), x, y)) {
+    const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
+    for (int i = 0; i < mode_row.tab_count; ++i) {
+      if (Contains(mode_row.tabs[static_cast<std::size_t>(i)].rect, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    if (mode_row.has_overflow && Contains(mode_row.overflow_rect, x, y)) {
       return CursorKind::Pointer;
     }
     if (sidebar_mode == SidebarMode::Search) {

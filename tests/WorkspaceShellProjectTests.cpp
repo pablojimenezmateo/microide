@@ -2337,7 +2337,7 @@ void TestWorkspaceShellTextInputSurfaceTracksEditorOverlayAndPrompt() {
          "prompt input should override the underlying overlay or editor text-input surface");
 }
 
-void TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu() {
+void TestWorkspaceShellSidebarModeTabsSwitchView() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "README.md", "hello\n");
@@ -2346,21 +2346,32 @@ void TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  const SDL_FRect button_rect = WorkspaceShellTestAccess::SidebarModeButtonRect(shell);
-  const float click_x = button_rect.x + button_rect.w * 0.5f;
-  const float click_y = button_rect.y + button_rect.h * 0.5f;
+  // With no plugin views, the header row shows three primary tabs and no overflow.
+  Expect(WorkspaceShellTestAccess::SidebarModeOverflowRect(shell).w <= 0.0f,
+         "with no plugin views the mode row should not show an overflow button");
 
-  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
-         "clicking the sidebar mode control should be handled");
-  Expect(WorkspaceShellTestAccess::SidebarModeMenuOpen(shell),
-         "clicking the sidebar mode control should open its anchored menu");
-  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
-         "opening the sidebar mode menu should keep sidebar focus");
+  const auto click_tab = [&](std::string_view id) {
+    const SDL_FRect tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, id);
+    Expect(tab.w > 0.0f, "each primary view should expose a clickable mode tab");
+    return SendMouseDown(shell, tab.x + tab.w * 0.5f, tab.y + tab.h * 0.5f, SDL_BUTTON_LEFT);
+  };
 
-  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
-         "clicking the active sidebar mode control again should be handled");
+  // A single click on a tab switches directly to that view (no intermediate menu).
+  Expect(click_tab("git"), "clicking the Source Control tab should be handled");
   Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell),
-         "clicking the active sidebar mode control again should close the anchored menu");
+         "switching views via a tab should not open any menu");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Git,
+         "clicking the Source Control tab should activate Git mode");
+  Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
+         "switching views via a tab should keep sidebar focus");
+
+  Expect(click_tab("search"), "clicking the Search tab should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Search,
+         "clicking the Search tab should activate Search mode");
+
+  Expect(click_tab("tree"), "clicking the Project tab should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Tree,
+         "clicking the Project tab should activate Tree mode");
 }
 
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {
@@ -3056,8 +3067,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TextInputSurfaceTracksEditorOverlayAndPrompt",
           TestWorkspaceShellTextInputSurfaceTracksEditorOverlayAndPrompt);
-  AddTest(tests, "WorkspaceShell/SidebarModeButtonTogglesAnchoredMenu",
-          TestWorkspaceShellSidebarModeButtonTogglesAnchoredMenu);
+  AddTest(tests, "WorkspaceShell/SidebarModeTabsSwitchView",
+          TestWorkspaceShellSidebarModeTabsSwitchView);
   AddTest(tests, "WorkspaceShell/ProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog",
           TestWorkspaceShellProjectOpenExistingRootSwitchesWithoutDuplicatingCatalog);
   AddTest(tests, "WorkspaceShell/ProjectOpenFailureRestoresPreviousActiveProject",

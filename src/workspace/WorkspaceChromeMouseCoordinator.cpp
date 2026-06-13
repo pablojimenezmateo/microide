@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "util/PerformanceTrace.h"
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 
@@ -52,13 +53,22 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && state_.sidebar.visible) {
-    const SDL_FRect sidebar_mode_rect = operations_.sidebar_mode_control_rect(layout.sidebar);
-    if (Contains(sidebar_mode_rect, event.button.x, event.button.y)) {
+    const SidebarModeRowLayout mode_row = operations_.sidebar_mode_row(layout.sidebar);
+    for (int i = 0; i < mode_row.tab_count; ++i) {
+      const SidebarModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
+      if (Contains(tab.rect, event.button.x, event.button.y)) {
+        operations_.activate_sidebar_view(tab.id);
+        state_.surface.focus = FocusTarget::Sidebar;
+        operations_.request_chrome_redraw();
+        return true;
+      }
+    }
+    if (mode_row.has_overflow && Contains(mode_row.overflow_rect, event.button.x, event.button.y)) {
       if (menu_state_.menu_bar_open && menu_state_.active_menu_id == MenuId::SidebarMode &&
           menu_state_.active_menu_anchor_rect.has_value()) {
         operations_.close_menu_bar();
       } else {
-        operations_.open_anchored_menu(MenuId::SidebarMode, sidebar_mode_rect);
+        operations_.open_anchored_menu(MenuId::SidebarMode, mode_row.overflow_rect);
       }
       state_.surface.focus = FocusTarget::Sidebar;
       operations_.request_chrome_redraw();
@@ -574,8 +584,12 @@ ChromeMouseCoordinator WorkspaceShell::MakeChromeMouseCoordinator() {
               [this](MenuId id, const SDL_FRect& anchor_rect) {
                 MakeMenuCoordinator().OpenAnchoredMenu(id, anchor_rect);
               },
-          .sidebar_mode_control_rect =
-              [this](const SDL_FRect& rect) { return SidebarModeControlRect(rect); },
+          .sidebar_mode_row = [this](const SDL_FRect& rect) { return SidebarModeRow(rect); },
+          .activate_sidebar_view =
+              [this](std::string_view id) {
+                ActionCoordinator(MakeActionContext())
+                    .Execute(ActionId::SidebarShow, {std::string(id)}, ActionSource::Menu);
+              },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_redraw_rect = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
           .compute_visible_menu_bar_items =
