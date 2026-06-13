@@ -24,6 +24,17 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::None;
   }
 
+  // The settings overlay is a host-owned modal layered above everything else. It
+  // only claims text input when its filter pane holds focus, mirroring the
+  // "focused-only" rule the buffer-search surfaces use below.
+  if (settings_overlay_service_.Visible()) {
+    if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings &&
+        settings_overlay_service_.FocusedPane() == SettingsPane::Filter) {
+      return TextInputSurface::SettingsQuery;
+    }
+    return TextInputSurface::None;
+  }
+
   if (context_.prompts.surface_visible) {
     return context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput
                ? TextInputSurface::PromptInput

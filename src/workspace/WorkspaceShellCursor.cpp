@@ -230,26 +230,24 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   const WorkspaceLayout layout = *layout_state;
 
   if (settings_overlay_service_.Visible()) {
-    const SDL_FRect settings_rect = ComputeOverlaySurfaceRect(layout.editor_area);
-    if (!Contains(settings_rect, x, y)) {
+    const SettingsOverlayViewModel vm =
+        RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_);
+    if (!Contains(vm.rect, x, y)) {
       return CursorKind::Default;
     }
-    constexpr float kRowHeight = 24.0f;
-    float list_top = settings_rect.y + 42.0f;
-    if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings) {
-      list_top += 16.0f;
+    if (vm.mode != SettingsOverlayMode::Settings) {
+      return CursorKind::Default;
     }
-    const float list_bottom = settings_rect.y + settings_rect.h - 10.0f;
-    if (y >= list_top && y <= list_bottom) {
-      const std::size_t row =
-          static_cast<std::size_t>(std::max(0.0f, y - list_top) / kRowHeight) +
-          static_cast<std::size_t>(settings_overlay_service_.ScrollRow());
-      if (settings_overlay_service_.Mode() == SettingsOverlayMode::Settings &&
-          row < settings_overlay_service_.SettingsRows().size()) {
+    if (Contains(vm.filter_rect, x, y)) {
+      return CursorKind::Text;
+    }
+    for (const SettingsCategoryViewModel& cat : vm.categories) {
+      if (Contains(cat.rect, x, y)) {
         return CursorKind::Pointer;
       }
-      if (settings_overlay_service_.Mode() == SettingsOverlayMode::HelpAbout &&
-          row < settings_overlay_service_.HelpRows().size()) {
+    }
+    for (const SettingsRowViewModel& row : vm.rows) {
+      if (Contains(row.row_rect, x, y)) {
         return CursorKind::Pointer;
       }
     }

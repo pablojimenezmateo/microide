@@ -87,6 +87,7 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::SettingsQuery:
       operations_.request_overlay_redraw();
       break;
     case TextInputSurface::Editor:
@@ -115,6 +116,8 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
       return &state_.overlay.workflow.project_search.query;
     case TextInputSurface::FileFinder:
       return &state_.file_finder.query_state();
+    case TextInputSurface::SettingsQuery:
+      return operations_.settings_query_editor ? operations_.settings_query_editor() : nullptr;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
       return &state_.overlay.workflow.project_search.edit_buffer;
@@ -180,6 +183,13 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       if (text_changed) {
         state_.file_finder.Refresh();
         operations_.reset_overlay_scroll();
+      } else {
+        operations_.request_overlay_redraw();
+      }
+      break;
+    case TextInputSurface::SettingsQuery:
+      if (text_changed && operations_.refresh_settings_overlay) {
+        operations_.refresh_settings_overlay();
       } else {
         operations_.request_overlay_redraw();
       }
@@ -273,6 +283,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::SettingsQuery:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:

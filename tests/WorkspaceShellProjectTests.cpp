@@ -1769,13 +1769,28 @@ void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
          "Escape should close the settings overlay");
 }
 
-void TestWorkspaceShellSettingsOverlayHintUsesNoteLabel() {
+void TestWorkspaceShellSettingsOverlayWheelScrolls() {
   WorkspaceShell shell;
-  const std::string hint = WorkspaceShellTestAccess::SettingsOverlayInputHintLabel(shell);
-  Expect(hint.find("Note:") == 0,
-         "settings overlay guidance text should use a neutral note label");
-  Expect(hint.find("Tip:") == std::string::npos,
-         "settings overlay baseline behavior guidance should not be labeled as a tip");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
+         "settings overlay fixture should open the overlay");
+  // The default "General" category holds more settings than fit at this size.
+  WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
+  const SDL_FRect rect = WorkspaceShellTestAccess::SettingsOverlayRect(shell);
+  const float wheel_x = rect.x + rect.w * 0.7f;  // over the value pane
+  const float wheel_y = rect.y + rect.h * 0.6f;
+
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) == 0,
+         "settings overlay should start unscrolled");
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -4),
+         "wheel over the settings overlay should be handled");
+  const int scrolled = WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell);
+  Expect(scrolled > 0, "scrolling down should advance the settings scroll row");
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, 4),
+         "wheel up over the settings overlay should be handled");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) < scrolled,
+         "scrolling up should reduce the settings scroll row");
 }
 
 void TestWorkspaceShellHelpAboutOmitsAuthCommands() {
@@ -3029,8 +3044,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
   AddTest(tests, "WorkspaceShell/SettingsOverlayTrapsKeyboardInput",
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
-  AddTest(tests, "WorkspaceShell/SettingsOverlayHintUsesNoteLabel",
-          TestWorkspaceShellSettingsOverlayHintUsesNoteLabel);
+  AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",
+          TestWorkspaceShellSettingsOverlayWheelScrolls);
   AddTest(tests, "WorkspaceShell/HelpAboutOmitsAuthCommands",
           TestWorkspaceShellHelpAboutOmitsAuthCommands);
   AddTest(tests, "WorkspaceShell/HelpAboutShowsBoundKeyChords",

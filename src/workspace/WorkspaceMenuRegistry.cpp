@@ -223,8 +223,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::PluginsReload, "Reload Plugins"),
   });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::OpenKeyboardShortcuts, "Keyboard Shortcuts"),
-      MenuItem(ActionId::OpenHelpAbout, "About microide"),
+      MenuItem(ActionId::OpenHelpAbout, "Help"),
   });
   static const auto kSearchItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Search),

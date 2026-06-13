@@ -366,6 +366,11 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (event.button.button != SDL_BUTTON_LEFT) {
     return false;
   }
+  if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar) {
+    context_.interaction_state.drag_target = DragTarget::None;
+    ensure_redraw([this]() { RequestOverlayRedraw(); });
+    return true;
+  }
   if (context_.interaction_state.drag_target == DragTarget::SingleLineSelection) {
     const TextInputSurface surface = context_.interaction_state.single_line_drag_surface;
     context_.interaction_state.drag_target = DragTarget::None;

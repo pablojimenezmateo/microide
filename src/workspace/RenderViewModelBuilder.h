@@ -120,15 +120,57 @@ struct StatusBarViewModel {
   std::vector<StatusBarSegmentViewModel> right_segments;
 };
 
+struct SettingsCategoryViewModel {
+  std::string_view label;  // view into service-owned category string
+  SDL_FRect rect{};        // clickable row rect in the left pane
+  bool selected = false;
+};
+
+struct SettingsControlViewModel {
+  SettingsControlKind kind = SettingsControlKind::None;
+  bool checkbox_on = false;        // Checkbox
+  std::string_view display_value;  // Stepper/Segmented value text
+  // Hit rects; a rect with w == 0 is absent.
+  SDL_FRect checkbox_rect{};
+  SDL_FRect dec_rect{};
+  SDL_FRect inc_rect{};
+  SDL_FRect value_rect{};
+};
+
+struct SettingsRowViewModel {
+  std::string_view id;               // view into service-owned setting id
+  std::string_view label;            // view into service-owned row strings
+  std::string_view description;
+  std::string_view scope_label;      // "User" / "Project"
+  std::string_view group_subheader;  // full group path; non-empty only on first row of a sub-group
+  SettingsControlViewModel control;
+  SDL_FRect row_rect{};    // full clickable row rect (row select)
+  SDL_FRect reset_rect{};  // reset affordance; w == 0 when not resettable
+  int row_in_category = 0;
+  bool selected = false;
+  bool resettable = false;
+};
+
 struct SettingsOverlayViewModel {
   bool visible = false;
   SettingsOverlayMode mode = SettingsOverlayMode::Settings;
   SDL_FRect rect{};
+  SDL_FRect header_rect{};
+  SDL_FRect filter_rect{};
+  SDL_FRect left_pane_rect{};
+  SDL_FRect right_pane_rect{};
   int scroll_row = 0;
-  std::string title;
-  std::string query;
-  std::vector<SettingsOverlayRow> settings_rows;
-  std::vector<HelpAboutRow> help_rows;
+  int max_scroll = 0;
+  int visible_rows = 0;  // value rows that fit in the right pane
+  std::optional<ScrollbarGeometry> scrollbar;  // right-pane scrollbar (Settings mode)
+  SettingsPane focused_pane = SettingsPane::Filter;
+  std::string_view title;
+  std::string_view query;             // view into the service-owned filter text
+  std::string_view filter_placeholder;
+  bool query_empty = true;
+  std::vector<SettingsCategoryViewModel> categories;
+  std::vector<SettingsRowViewModel> rows;  // rows of the selected category only
+  std::vector<HelpAboutRow> help_rows;     // unchanged Help/About path
 };
 
 class RenderViewModelBuilder {

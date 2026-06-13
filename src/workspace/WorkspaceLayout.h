@@ -450,6 +450,7 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
     float y);
 SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area);
 SDL_FRect ComputePickerOverlaySurfaceRect(const SDL_FRect& editor_area);
+SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area);
 
 // Geometry of the floating (non-modal) find / find-replace widget anchored at the
 // top-right of the editor area. These sub-rects are the single source of truth

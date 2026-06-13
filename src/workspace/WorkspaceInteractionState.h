@@ -25,6 +25,7 @@ enum class DragTarget {
   EditorSplitDivider,
   CompareVerticalScrollbar,
   CompareHorizontalScrollbar,
+  SettingsScrollbar,
   SingleLineSelection,
 };
 
