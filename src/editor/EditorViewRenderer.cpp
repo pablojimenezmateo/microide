@@ -25,27 +25,39 @@ float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t 
   return std::max(48.0f, text_renderer.MeasureWidth(std::string_view{buf, end}) + 18.0f);
 }
 
+// Draws the single fold control: a small square button with a `+` glyph when
+// the region is collapsed (click to expand) and a `−` glyph when expanded
+// (click to collapse). A filled background plus a 1px border make it read as a
+// clickable button, and the 2px-thick glyph keeps it legible at gutter scale.
+// This is the only fold-marker draw path; both the scrolled rows and the
+// sticky header route through here so the control looks identical everywhere.
 void DrawFoldGutterMarker(SDL_Renderer* renderer,
-                          SDL_Color color,
+                          SDL_Color glyph,
+                          SDL_Color background,
+                          SDL_Color border,
                           const SDL_FRect& rect,
                           bool collapsed) {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  SDL_SetRenderDrawColor(renderer, background.r, background.g, background.b, background.a);
+  SDL_RenderFillRect(renderer, &rect);
+  SDL_SetRenderDrawColor(renderer, border.r, border.g, border.b, border.a);
   SDL_RenderRect(renderer, &rect);
 
-  const float mid_y = std::floor(rect.y + rect.h * 0.5f);
+  SDL_SetRenderDrawColor(renderer, glyph.r, glyph.g, glyph.b, glyph.a);
+  const float thickness = std::max(2.0f, std::floor(rect.h * 0.18f));
+  const float mid_y = std::floor(rect.y + (rect.h - thickness) * 0.5f);
   const SDL_FRect horizontal =
-      SDL_FRect{rect.x + 2.0f, mid_y, std::max(1.0f, rect.w - 4.0f), 1.0f};
+      SDL_FRect{rect.x + 2.0f, mid_y, std::max(1.0f, rect.w - 4.0f), thickness};
   SDL_RenderFillRect(renderer, &horizontal);
   if (!collapsed) {
     return;
   }
 
-  const float mid_x = std::floor(rect.x + rect.w * 0.5f);
+  const float mid_x = std::floor(rect.x + (rect.w - thickness) * 0.5f);
   const SDL_FRect vertical =
-      SDL_FRect{mid_x, rect.y + 2.0f, 1.0f, std::max(1.0f, rect.h - 4.0f)};
+      SDL_FRect{mid_x, rect.y + 2.0f, thickness, std::max(1.0f, rect.h - 4.0f)};
   SDL_RenderFillRect(renderer, &vertical);
 }
 
@@ -565,25 +577,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
       if (folding_model != nullptr && (!soft_wrap || row_meta.visual_start == 0) &&
           folding_model->FoldStartingAt(line_index).has_value()) {
-        const bool collapsed = folding_model->IsCollapsedAtOpener(line_index);
-        const float mark_size = std::max(4.0f, std::min(8.0f, metrics.line_height - 6.0f));
-        const float mark_x = gutter.x + gutter.w - 4.0f - mark_size;
-        const float mark_y = y + (metrics.line_height - mark_size) * 0.5f;
-        const SDL_FRect mark_rect = SDL_FRect{mark_x, mark_y, mark_size, mark_size};
-        const SDL_Color color = selected ? theme.text_primary : theme.text_secondary;
-        SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-        if (collapsed) {
-          SDL_RenderFillRect(renderer, &mark_rect);
-        } else {
-          SDL_FRect top = SDL_FRect{mark_x, mark_y, mark_size, 1.0f};
-          SDL_FRect bottom = SDL_FRect{mark_x, mark_y + mark_size - 1.0f, mark_size, 1.0f};
-          SDL_FRect left = SDL_FRect{mark_x, mark_y, 1.0f, mark_size};
-          SDL_FRect right = SDL_FRect{mark_x + mark_size - 1.0f, mark_y, 1.0f, mark_size};
-          SDL_RenderFillRect(renderer, &top);
-          SDL_RenderFillRect(renderer, &bottom);
-          SDL_RenderFillRect(renderer, &left);
-          SDL_RenderFillRect(renderer, &right);
-        }
+        DrawFoldGutterMarker(renderer,
+                             selected ? theme.current_line_number : theme.line_number,
+                             theme.row_highlight, theme.border,
+                             FoldGutterMarkerRect(gutter.x, gutter.w, y, metrics.line_height),
+                             folding_model->IsCollapsedAtOpener(line_index));
       }
     }
     SDL_SetRenderDrawColor(renderer, theme.border.r, theme.border.g, theme.border.b, theme.border.a);
@@ -931,9 +929,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
     if (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&
         (*fold_gutter_marks)[fold_gutter_mark_index].visual_row_index == visual_row_index) {
-      const SDL_Color marker_color =
-          selected ? theme.current_line_number : theme.line_number;
-      DrawFoldGutterMarker(renderer, marker_color,
+      DrawFoldGutterMarker(renderer,
+                           selected ? theme.current_line_number : theme.line_number,
+                           theme.row_highlight, theme.border,
                            FoldGutterMarkerRect(gutter.x, gutter.w, y, metrics.line_height),
                            (*fold_gutter_marks)[fold_gutter_mark_index].collapsed);
       ++fold_gutter_mark_index;
@@ -945,31 +943,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                  selected ? theme.current_line_number : theme.line_number,
                                  selected ? theme.row_highlight : theme.gutter_background,
                                  std::string_view{line_number_buf, end});
-    }
-
-    if (folding_model != nullptr && (!soft_wrap || row_meta.visual_start == 0) &&
-        folding_model->FoldStartingAt(line_index).has_value()) {
-      const bool collapsed = folding_model->IsCollapsedAtOpener(line_index);
-      const float mark_size = std::max(4.0f, std::min(8.0f, metrics.line_height - 6.0f));
-      const float mark_x = gutter.x + gutter.w - 4.0f - mark_size;
-      const float mark_y = y + (metrics.line_height - mark_size) * 0.5f;
-      const SDL_FRect mark_rect = SDL_FRect{mark_x, mark_y, mark_size, mark_size};
-      const SDL_Color color = selected ? theme.text_primary : theme.text_secondary;
-      SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
-      if (collapsed) {
-        SDL_RenderFillRect(renderer, &mark_rect);
-      } else {
-        // Outlined marker: paint a 1px border so the expanded state is visually
-        // distinct from the collapsed (filled) state without a separate glyph.
-        SDL_FRect top = SDL_FRect{mark_x, mark_y, mark_size, 1.0f};
-        SDL_FRect bottom = SDL_FRect{mark_x, mark_y + mark_size - 1.0f, mark_size, 1.0f};
-        SDL_FRect left = SDL_FRect{mark_x, mark_y, 1.0f, mark_size};
-        SDL_FRect right = SDL_FRect{mark_x + mark_size - 1.0f, mark_y, 1.0f, mark_size};
-        SDL_RenderFillRect(renderer, &top);
-        SDL_RenderFillRect(renderer, &bottom);
-        SDL_RenderFillRect(renderer, &left);
-        SDL_RenderFillRect(renderer, &right);
-      }
     }
 
     if (draw_caret && selected && layout.caret_visible) {

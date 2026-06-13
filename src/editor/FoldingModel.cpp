@@ -396,7 +396,12 @@ bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
       collapsed_count_ = 0;
     }
     complete_ = complete_ && bracket_scan_complete && scan_end >= line_count;
-    resolved_prefix_line_count_ = scan_end;
+    // Record how far the scan actually resolved. When the budget cut the scan
+    // short (`!complete_`, only possible for a finite `max_lines`) the scan may
+    // not have visited every line in `[0, scan_end)`, so cap the claim at the
+    // budget; overstating would let the visible-range fast path skip a rescan
+    // that is still needed. When complete the full `scan_end` is resolved.
+    resolved_prefix_line_count_ = complete_ ? scan_end : std::min(scan_end, max_lines);
     ++revision_;
     return complete_;
   };
@@ -479,11 +484,21 @@ bool FoldingModel::EnsureFoldsForVisibleRange(
     return true;
   }
 
-  const std::size_t work_budget = max_lines == 0 ? target_end : std::max(max_lines, target_end);
-  ComputeWithBudget(lines, options, work_budget, incremental_resume_line, target_end,
+  // The bracket scanner only emits a fold once it reaches the matching closer,
+  // so an opener on a visible line whose `}` sits past the look-ahead would
+  // never get a marker. Extend the scan past the look-ahead to a full budget
+  // window so any construct whose closer is within `max_lines` of the scan
+  // origin resolves immediately. The work budget always covers `scan_end` (as
+  // the old `max(max_lines, target_end)` did) so a deep viewport still reaches
+  // its own region; on a huge file the look-ahead bound keeps the per-frame
+  // span finite and far-below openers keep resolving on scroll.
+  // `resolved_prefix_line_count_` is owned by ComputeWithBudget.
+  const std::size_t budget = max_lines == 0 ? line_count : max_lines;
+  const std::size_t scan_end = std::min(line_count, std::max(target_end, budget));
+  const std::size_t work_budget = max_lines == 0 ? line_count : std::max(max_lines, scan_end);
+  ComputeWithBudget(lines, options, work_budget, incremental_resume_line, scan_end,
                     syntax_viewport);
   dirty_ = false;
-  resolved_prefix_line_count_ = target_end;
   return true;
 }
 
