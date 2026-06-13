@@ -340,17 +340,21 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) con
   if (!soft_wrap_) {
     return base_row;
   }
-  const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns_);
+  // Resolve the caret's visual row by locating, among the rows that actually
+  // belong to this line, the one whose [visual_start, visual_end) span owns the
+  // caret's visual column. The builder wraps at whitespace, so spans are
+  // non-uniform — integer division by the wrap width would land on the wrong
+  // row whenever a line breaks before its column limit.
   const std::size_t caret_visual =
       TextLayout::VisualColumnForTextColumn(document_->lines[caret.line], caret.column, tab_size_);
-  const std::size_t row_in_line = caret_visual / wrap_columns;
-  const std::size_t line_visual_width = TextLayout::VisualColumnForTextColumn(
-      document_->lines[caret.line], document_->lines[caret.line].size(), tab_size_);
-  const std::size_t rows_for_line =
-      std::max<std::size_t>(1, (line_visual_width + wrap_columns - 1) / wrap_columns);
-  const std::size_t clamped_in_line = std::min(row_in_line, rows_for_line - 1);
-  const std::size_t total_rows = layout_cache_.wrapped_row_layouts_size();
-  return std::min(base_row + clamped_in_line, total_rows == 0 ? 0 : total_rows - 1);
+  const auto [first_row, last_row] =
+      layout_cache_.WrappedRowRangeForLine(caret.line, document_->lines.size());
+  for (std::size_t row = first_row; row < last_row; ++row) {
+    if (caret_visual < WrappedRowAt(row).visual_end) {
+      return row;
+    }
+  }
+  return last_row;
 }
 
 std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const {

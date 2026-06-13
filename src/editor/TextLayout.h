@@ -67,7 +67,8 @@ class TextLayout {
                                                    std::size_t row_end_visual,
                                                    std::size_t source_column);
 
- private:
+  // Visual column after advancing past `character` from `visual_column`. Tabs advance to the next
+  // multiple of `tab_size`; every other byte advances by one cell.
   static std::size_t AdvanceVisualColumn(std::size_t visual_column,
                                          char character,
                                          std::size_t tab_size);
