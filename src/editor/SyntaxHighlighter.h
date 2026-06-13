@@ -21,9 +21,33 @@ enum class SyntaxTokenKind {
   Operator,
 };
 
+// Per-line carry state for the highlighter. `region_stack` holds the chain of
+// open multi-line regions (outermost at index 0, innermost at depth-1) so a
+// region nested inside another resumes against its real parent when the inner
+// one closes — a single innermost id would drop the parent. The stack is a
+// fixed inline array to keep SyntaxState a small, trivially-copyable POD: it is
+// stored per line and per checkpoint, so heap allocation here would be costly.
+// Nesting beyond kMaxRegionDepth degrades gracefully (deeper regions are not
+// pushed) rather than allocating.
 struct SyntaxState {
+  static constexpr std::size_t kMaxRegionDepth = 8;
+
   std::uint32_t definition_id = 0;
-  std::uint32_t region_id = 0;
+  std::uint8_t region_depth = 0;
+  std::uint32_t region_stack[kMaxRegionDepth] = {};
+
+  bool operator==(const SyntaxState& other) const {
+    if (definition_id != other.definition_id || region_depth != other.region_depth) {
+      return false;
+    }
+    for (std::size_t i = 0; i < region_depth; ++i) {
+      if (region_stack[i] != other.region_stack[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  bool operator!=(const SyntaxState& other) const { return !(*this == other); }
 };
 
 struct HighlightedLine {

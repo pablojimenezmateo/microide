@@ -115,6 +115,8 @@
   IdleWaitState CurrentIdleWaitState() const;
   std::optional<Uint32> NextAnimationDelayMs() const;
   bool ConsumePostRenderFullRedrawRequest();
+  // Background highlight prefetch around the active viewport; no-ops when cached.
+  void RequestActiveHighlightPrefetch();
   void OnFramePresented();
   std::optional<SDL_FRect> CurrentCaretDirtyRect() const;
   RenderInvalidation ConsumePendingRenderInvalidation();
@@ -513,6 +515,7 @@
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
   void DestroyLifecycleCursors();
+  void ConsumeHighlightPrefetchResults();  // installs worker prefetch results (main thread)
   void RebindProjectState(ProjectWorkspaceState& state);
   void ResetCurrentProjectStateStorage();
   void ResetTransientInteractionState();
@@ -1036,7 +1039,7 @@
   std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;
   std::optional<std::string> ReadPrimarySelectionText() const;
-  std::optional<std::string> SelectionTextWithContext() const;
+  std::optional<std::string> SelectionTextWithContext();
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
   std::size_t CountOpenBufferViews(const std::filesystem::path& path) const;
@@ -1438,9 +1441,11 @@
   Uint32 project_open_dialog_event_type_ = 0;
   Uint32 lsp_event_type_ = 0;
   Uint32 plugin_async_process_event_type_ = 0;
+  Uint32 highlight_prefetch_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;
   bool pending_tree_git_badge_refresh_after_paint_ = false;
   project::GitBlameService git_blame_service_;
+  editor::HighlightPrefetchService highlight_prefetch_service_;
   EditorBlameOverlayService editor_blame_overlay_service_;
   std::optional<EditorHoverTarget> active_editor_hover_target_;
   bool editor_hover_refresh_pending_ = false;

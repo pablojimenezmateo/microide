@@ -146,6 +146,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .project_file_event_type = shell->project_file_event_type_,
           .lsp_event_type = shell->lsp_event_type_,
           .plugin_async_process_event_type = shell->plugin_async_process_event_type_,
+          .highlight_prefetch_event_type = shell->highlight_prefetch_event_type_,
       },
       WorkspaceEventDispatcher::State{
           .window_has_input_focus = shell->context_.interaction_state.window_has_input_focus,
@@ -174,6 +175,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->RequestFocusedEditorRedraw(); },
           .consume_git_sidebar_refresh =
               [shell]() { shell->ConsumeGitSidebarRefresh(); },
+          .consume_highlight_prefetch_results =
+              [shell]() { shell->ConsumeHighlightPrefetchResults(); },
           .consume_lsp_callbacks =
               [shell]() { shell->ConsumeLspCallbacks(); },
           .consume_plugin_async_process_callbacks =

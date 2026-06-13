@@ -107,6 +107,13 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     operations_.consume_terminal_session_updates();
     return finish(true);
   }
+  if (runtime_.highlight_prefetch_event_type != 0 &&
+      event.type == runtime_.highlight_prefetch_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::HighlightPrefetchEvent");
+    operations_.consume_highlight_prefetch_results();
+    operations_.request_focused_editor_redraw();
+    return finish(true);
+  }
 
   operations_.sync_text_input_surface(nullptr);
 

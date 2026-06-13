@@ -98,6 +98,141 @@ void TestMultiCaretPageUpAcrossCollapsedFoldUsesVisibleRows() {
          "secondary caret should continue paging up onto line0");
 }
 
+void TestSoftWrapMultiCaretInsertAppliesAtEveryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nabcdefghijk\nqrstuvwxyzabcdefgh\n",
+                       "/tmp/mc-softwrap-insert.txt");
+  viewport.SetViewportSize(/*visible_lines=*/10, /*visible_columns=*/8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 7);
+  viewport.SetSecondaryCarets({{1, 3}, {2, 5}});
+
+  viewport.InsertText("X");
+
+  Expect(viewport.lines()[0] == "abcdefgXhijklmnopqrst",
+         "primary caret on a wrapped line should receive the insertion");
+  Expect(viewport.lines()[1] == "abcXdefghijk",
+         "secondary caret on a short wrapped line should receive the insertion");
+  Expect(viewport.lines()[2] == "qrstuXvwxyzabcdefgh",
+         "secondary caret on a wrapped line should receive the insertion");
+  Expect(viewport.secondary_carets().size() == 2,
+         "inserting across wrapped multi-carets should preserve every secondary caret");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 8,
+         "the primary caret should advance past its own insertion");
+
+  Expect(viewport.Undo(), "soft-wrap multi-caret insert should undo as one step");
+  Expect(viewport.lines()[0] == "abcdefghijklmnopqrst" &&
+             viewport.lines()[1] == "abcdefghijk" &&
+             viewport.lines()[2] == "qrstuvwxyzabcdefgh",
+         "undo should atomically restore every wrapped line");
+}
+
+void TestSoftWrapMultiCaretBackspaceErasesAtEveryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nabcdefghijk\nqrstuvwxyzabcdefgh\n",
+                       "/tmp/mc-softwrap-backspace.txt");
+  viewport.SetViewportSize(/*visible_lines=*/10, /*visible_columns=*/8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 7);
+  viewport.SetSecondaryCarets({{1, 3}, {2, 5}});
+
+  viewport.Backspace();
+
+  Expect(viewport.lines()[0] == "abcdefhijklmnopqrst",
+         "primary caret should erase the column before it on a wrapped line");
+  Expect(viewport.lines()[1] == "abdefghijk",
+         "secondary caret should erase the column before it on a short wrapped line");
+  Expect(viewport.lines()[2] == "qrstvwxyzabcdefgh",
+         "secondary caret should erase the column before it on a wrapped line");
+  Expect(viewport.secondary_carets().size() == 2,
+         "backspacing across wrapped multi-carets should preserve every secondary caret");
+}
+
+void TestSoftWrapMultiCaretDeleteForwardErasesAtEveryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnopqrst\nabcdefghijk\nqrstuvwxyzabcdefgh\n",
+                       "/tmp/mc-softwrap-delete.txt");
+  viewport.SetViewportSize(/*visible_lines=*/10, /*visible_columns=*/8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 7);
+  viewport.SetSecondaryCarets({{1, 3}, {2, 5}});
+
+  viewport.DeleteForward();
+
+  Expect(viewport.lines()[0] == "abcdefgijklmnopqrst",
+         "primary caret should delete the column at it on a wrapped line");
+  Expect(viewport.lines()[1] == "abcefghijk",
+         "secondary caret should delete the column at it on a short wrapped line");
+  Expect(viewport.lines()[2] == "qrstuwxyzabcdefgh",
+         "secondary caret should delete the column at it on a wrapped line");
+  Expect(viewport.secondary_carets().size() == 2,
+         "delete-forward across wrapped multi-carets should preserve every secondary caret");
+}
+
+// The primary caret is identified by its index in the collected caret vector,
+// not by value-equality on its clamped position. Inserting with multiple carets
+// on the primary's own line must keep the primary as the active cursor and apply
+// exactly one insertion per caret.
+void TestMultiCaretInsertPreservesPrimaryAmongSameLineCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\n", "/tmp/mc-sameline-insert.txt");
+  viewport.MoveCursorTo(0, 5);
+  viewport.SetSecondaryCarets({{0, 1}, {0, 3}});
+
+  viewport.InsertText("X");
+
+  Expect(viewport.lines()[0] == "aXbcXdeXf",
+         "each caret on the shared line should receive exactly one insertion");
+  Expect(viewport.secondary_carets().size() == 2,
+         "both secondary carets should survive a same-line multi-caret insert");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 8,
+         "the primary caret should remain the active cursor and advance past its insertion");
+  // Lower insertions shift the higher carets right; positions must not be stale.
+  Expect(viewport.secondary_carets()[0] == TextPosition{0, 2} &&
+             viewport.secondary_carets()[1] == TextPosition{0, 5},
+         "each same-line caret should sit just after its own insertion");
+}
+
+void TestMultiCaretMultiCharInsertShiftsSameLineCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\n", "/tmp/mc-sameline-multichar.txt");
+  viewport.MoveCursorTo(0, 5);
+  viewport.SetSecondaryCarets({{0, 1}, {0, 3}});
+
+  // A multi-character insert routes through ApplyMultiCaretInsert.
+  viewport.InsertText("YZ");
+
+  Expect(viewport.lines()[0] == "aYZbcYZdeYZf",
+         "each same-line caret should receive the full multi-character insertion");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 11,
+         "the primary caret should advance past its multi-character insertion accounting for "
+         "lower insertions");
+  Expect(viewport.secondary_carets().size() == 2 &&
+             viewport.secondary_carets()[0] == TextPosition{0, 3} &&
+             viewport.secondary_carets()[1] == TextPosition{0, 7},
+         "lower multi-character insertions should shift higher same-line carets");
+}
+
+void TestMultiCaretBackspaceShiftsSameLineCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefgh\n", "/tmp/mc-sameline-backspace.txt");
+  viewport.MoveCursorTo(0, 6);
+  viewport.SetSecondaryCarets({{0, 2}, {0, 4}});
+
+  viewport.Backspace();
+
+  // Erase the column before each caret: 'a[b]cdefgh' style at cols 2,4,6 → remove
+  // chars at 1,3,5 ('b','d','f').
+  Expect(viewport.lines()[0] == "acegh",
+         "each same-line caret should erase exactly the column before it");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 3,
+         "the primary caret should track its erase after lower erases shift it left");
+  Expect(viewport.secondary_carets().size() == 2 &&
+             viewport.secondary_carets()[0] == TextPosition{0, 1} &&
+             viewport.secondary_carets()[1] == TextPosition{0, 2},
+         "lower same-line erases should shift higher carets left without losing any");
+}
+
 }  // namespace
 
 void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
@@ -125,6 +260,18 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretPageUpAcrossCollapsedFoldUsesVisibleRows);
   AddTest(tests, "EditorMultiCaret/PlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine",
           TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine);
+  AddTest(tests, "EditorMultiCaret/SoftWrapMultiCaretInsertAppliesAtEveryCaret",
+          TestSoftWrapMultiCaretInsertAppliesAtEveryCaret);
+  AddTest(tests, "EditorMultiCaret/SoftWrapMultiCaretBackspaceErasesAtEveryCaret",
+          TestSoftWrapMultiCaretBackspaceErasesAtEveryCaret);
+  AddTest(tests, "EditorMultiCaret/SoftWrapMultiCaretDeleteForwardErasesAtEveryCaret",
+          TestSoftWrapMultiCaretDeleteForwardErasesAtEveryCaret);
+  AddTest(tests, "EditorMultiCaret/MultiCaretInsertPreservesPrimaryAmongSameLineCarets",
+          TestMultiCaretInsertPreservesPrimaryAmongSameLineCarets);
+  AddTest(tests, "EditorMultiCaret/MultiCaretMultiCharInsertShiftsSameLineCarets",
+          TestMultiCaretMultiCharInsertShiftsSameLineCarets);
+  AddTest(tests, "EditorMultiCaret/MultiCaretBackspaceShiftsSameLineCarets",
+          TestMultiCaretBackspaceShiftsSameLineCarets);
 }
 
 }  // namespace microide::tests

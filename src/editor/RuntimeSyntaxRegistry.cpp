@@ -4,13 +4,16 @@
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "editor/HighlightPrefetch.h"
 #include "editor/RuntimeSyntaxData.h"
 #include "util/PerformanceTrace.h"
 #include "util/RegexUtil.h"
@@ -647,97 +650,75 @@ std::optional<RegionStartMatch> FindEarliestRegionStart(const Registry& registry
   return best_match;
 }
 
-std::size_t HighlightRegion(const Registry& registry,
-                            std::uint32_t definition_id,
-                            std::uint32_t region_id,
-                            std::string_view line,
-                            std::size_t cursor,
-                            std::vector<SyntaxTokenKind>& tokens,
-                            SyntaxState* end_state);
-
-std::size_t HighlightTopLevel(const Registry& registry,
-                              std::uint32_t definition_id,
-                              std::string_view line,
-                              std::size_t cursor,
-                              std::vector<SyntaxTokenKind>& tokens,
-                              SyntaxState* end_state) {
+// Highlights one line, maintaining an explicit stack of open multi-line
+// regions instead of relying on C++ recursion. This unifies the old
+// HighlightTopLevel/HighlightRegion twins and — crucially — carries the full
+// region nesting across line boundaries: when an inner region closes mid-line
+// control returns to its real parent rather than to the top level. `end_state`
+// receives the definition id plus the region stack still open at end-of-line.
+void HighlightLineScoped(const Registry& registry,
+                         std::uint32_t definition_id,
+                         const std::uint32_t* initial_stack,
+                         std::uint8_t initial_depth,
+                         std::string_view line,
+                         std::vector<SyntaxTokenKind>& tokens,
+                         SyntaxState* end_state) {
   const Definition* definition = DefinitionById(registry, definition_id);
-  if (definition == nullptr) {
-    if (end_state != nullptr) {
-      *end_state = SyntaxState{definition_id, 0};
-    }
-    return line.size();
+
+  std::uint32_t stack[SyntaxState::kMaxRegionDepth] = {};
+  std::size_t depth = std::min<std::size_t>(initial_depth, SyntaxState::kMaxRegionDepth);
+  for (std::size_t i = 0; i < depth; ++i) {
+    stack[i] = initial_stack[i];
   }
 
-  while (cursor < line.size()) {
-    const std::string_view tail = line.substr(cursor);
-    const auto next_region = FindEarliestRegionStart(registry, *definition, 0, tail, tail.size());
-    const std::size_t segment_end =
-        next_region.has_value() ? cursor + next_region->match.start : line.size();
-    ApplyPatternRules(registry, *definition, 0, line.substr(cursor, segment_end - cursor), cursor,
-                      tokens, SyntaxTokenKind::Plain);
-
-    if (!next_region.has_value()) {
-      if (end_state != nullptr) {
-        *end_state = SyntaxState{definition_id, 0};
-      }
-      return line.size();
+  const auto write_state = [&]() {
+    if (end_state == nullptr) {
+      return;
     }
+    *end_state = SyntaxState{};
+    end_state->definition_id = definition_id;
+    end_state->region_depth = static_cast<std::uint8_t>(depth);
+    for (std::size_t i = 0; i < depth; ++i) {
+      end_state->region_stack[i] = stack[i];
+    }
+  };
 
-    const Rule* region = RuleByRegionId(registry, next_region->region_id);
-    if (region == nullptr) {
+  std::size_t cursor = 0;
+  while (cursor <= line.size()) {
+    const std::uint32_t region_id = depth == 0 ? 0u : stack[depth - 1];
+    const Rule* region = region_id == 0 ? nullptr : RuleByRegionId(registry, region_id);
+    if (region_id != 0 && region == nullptr) {
+      // Dangling region id (e.g. after a definition reload): drop it and resume
+      // in the parent scope rather than spinning.
+      --depth;
+      continue;
+    }
+    if (region_id == 0 && cursor >= line.size()) {
       break;
     }
 
-    MarkRange(tokens, cursor + next_region->match.start, cursor + next_region->match.end,
-              region->limit_group);
-    cursor += next_region->match.end;
-    cursor = HighlightRegion(registry, definition_id, next_region->region_id, line, cursor, tokens,
-                             end_state);
-    if (end_state != nullptr && end_state->region_id != 0) {
-      return cursor;
-    }
-  }
-
-  if (end_state != nullptr) {
-    *end_state = SyntaxState{definition_id, 0};
-  }
-  return line.size();
-}
-
-std::size_t HighlightRegion(const Registry& registry,
-                            std::uint32_t definition_id,
-                            std::uint32_t region_id,
-                            std::string_view line,
-                            std::size_t cursor,
-                            std::vector<SyntaxTokenKind>& tokens,
-                            SyntaxState* end_state) {
-  const Rule* region = RuleByRegionId(registry, region_id);
-  if (region == nullptr) {
-    if (end_state != nullptr) {
-      *end_state = SyntaxState{definition_id, 0};
-    }
-    return cursor;
-  }
-
-  while (cursor <= line.size()) {
     const std::string_view tail = line.substr(cursor);
-    const std::optional<MatchRange> end_match =
-        FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr, true);
+    std::optional<MatchRange> end_match;
+    if (region != nullptr) {
+      end_match =
+          FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr, true);
+    }
     const bool closes_immediately = end_match.has_value() && end_match->start == 0;
-    const std::size_t search_limit = end_match.has_value() ? end_match->start : tail.size();
-    const Definition* definition = DefinitionById(registry, definition_id);
-    const auto next_region = closes_immediately || definition == nullptr
-                                 ? std::optional<RegionStartMatch>{}
-                                 : FindEarliestRegionStart(registry, *definition, region_id, tail,
-                                                           search_limit);
+    const std::size_t search_limit =
+        region != nullptr && end_match.has_value() ? end_match->start : tail.size();
+    const std::optional<RegionStartMatch> next_region =
+        (closes_immediately || definition == nullptr)
+            ? std::optional<RegionStartMatch>{}
+            : FindEarliestRegionStart(registry, *definition, region_id, tail, search_limit);
     const std::size_t segment_end =
         next_region.has_value() ? next_region->match.start : search_limit;
 
+    const SyntaxTokenKind base_kind =
+        region != nullptr ? region->group : SyntaxTokenKind::Plain;
     if (definition != nullptr) {
       ApplyPatternRules(registry, *definition, region_id, tail.substr(0, segment_end), cursor,
-                        tokens, region->group);
-    } else if (region->group != SyntaxTokenKind::Plain) {
+                        tokens, base_kind);
+    } else if (region != nullptr && region->group != SyntaxTokenKind::Plain) {
       MarkRange(tokens, cursor, cursor + segment_end, region->group);
     }
 
@@ -746,36 +727,33 @@ std::size_t HighlightRegion(const Registry& registry,
       if (nested_region == nullptr) {
         break;
       }
-
       MarkRange(tokens, cursor + next_region->match.start, cursor + next_region->match.end,
                 nested_region->limit_group);
-      cursor += next_region->match.end;
-      cursor = HighlightRegion(registry, definition_id, next_region->region_id, line, cursor,
-                               tokens, end_state);
-      if (end_state != nullptr && end_state->region_id != 0) {
-        return cursor;
+      const std::size_t advanced = cursor + next_region->match.end;
+      if (depth < SyntaxState::kMaxRegionDepth) {
+        stack[depth++] = next_region->region_id;
+      } else if (advanced == cursor) {
+        // Depth saturated and no forward progress: stop to avoid spinning.
+        break;
       }
+      cursor = advanced;
       continue;
     }
 
-    if (end_match.has_value()) {
+    if (region != nullptr && end_match.has_value()) {
       MarkRange(tokens, cursor + end_match->start, cursor + end_match->end, region->limit_group);
-      if (end_state != nullptr) {
-        *end_state = SyntaxState{definition_id, 0};
-      }
-      return cursor + end_match->end;
+      cursor += end_match->end;
+      --depth;  // region closed: resume in the parent scope
+      continue;
     }
 
-    if (end_state != nullptr) {
-      *end_state = SyntaxState{definition_id, region_id};
-    }
-    return line.size();
+    // No nested start and no closing match on this line: the current scope
+    // continues onto the next line.
+    write_state();
+    return;
   }
 
-  if (end_state != nullptr) {
-    *end_state = SyntaxState{definition_id, 0};
-  }
-  return line.size();
+  write_state();
 }
 
 std::uint32_t DetectDefinitionId(const Registry& registry,
@@ -1018,13 +996,25 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
 
 }  // namespace
 
+// Guards registry reassignment in ReloadDefinitions against concurrent reads by
+// the background highlight worker. Main-thread readers (render/compare paths)
+// never run concurrently with a reload — both are on the main thread — so they
+// read lock-free; the worker takes a shared lock for the duration of a batch.
+std::shared_mutex& RegistryMutex() {
+  static std::shared_mutex mutex;
+  return mutex;
+}
+
 RuntimeSyntaxReloadResult ReloadDefinitions(
     const std::vector<RuntimeSyntaxDefinitionData>& definitions,
     std::vector<std::string>* errors) {
   std::vector<std::string> local_errors;
   BuildOutput build = BuildRegistry(definitions, &local_errors);
-  MutableRegistry() = std::move(build.registry);
-  ++MutableRegistryRevision();
+  {
+    std::unique_lock<std::shared_mutex> lock(RegistryMutex());
+    MutableRegistry() = std::move(build.registry);
+    ++MutableRegistryRevision();
+  }
   if (errors != nullptr) {
     *errors = local_errors;
   }
@@ -1051,7 +1041,6 @@ SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std
   const Registry& registry = GetRegistry();
   return SyntaxState{
       .definition_id = DetectDefinitionId(registry, path, &lines, {}),
-      .region_id = 0,
   };
 }
 
@@ -1075,24 +1064,17 @@ HighlightedLine HighlightLine(std::string_view line,
 
   HighlightedLine result;
   result.tokens.assign(line.size(), SyntaxTokenKind::Plain);
-  result.end_state = SyntaxState{definition_id, 0};
+  result.end_state = SyntaxState{};
+  result.end_state.definition_id = definition_id;
   if (line.empty()) {
     return result;
   }
 
-  std::size_t cursor = 0;
-  if (state.region_id != 0 && state.definition_id == definition_id) {
-    cursor = HighlightRegion(registry, definition_id, state.region_id, line, 0, result.tokens,
-                             &result.end_state);
-    if (result.end_state.region_id != 0) {
-      return result;
-    }
-  }
-
-  {
-    util::PerformanceTrace::Scope top_scope("RuntimeSyntaxRegistry::HighlightLine::TopLevel");
-    HighlightTopLevel(registry, definition_id, line, cursor, result.tokens, &result.end_state);
-  }
+  // Resume the previous line's open-region stack only when the definition still
+  // matches; otherwise start fresh at the top level.
+  const bool resume = state.definition_id == definition_id && state.region_depth > 0;
+  HighlightLineScoped(registry, definition_id, resume ? state.region_stack : nullptr,
+                      resume ? state.region_depth : 0, line, result.tokens, &result.end_state);
   return result;
 }
 
@@ -1105,26 +1087,45 @@ SyntaxState AdvanceState(std::string_view line,
   const std::uint32_t definition_id =
       state.definition_id != 0 ? state.definition_id
                                : DetectDefinitionId(registry, path, nullptr, first_line);
-  SyntaxState end_state{definition_id, 0};
+  SyntaxState end_state{};
+  end_state.definition_id = definition_id;
   if (line.empty()) {
     return end_state;
   }
 
   std::vector<SyntaxTokenKind> no_tokens;
-  std::size_t cursor = 0;
-  if (state.region_id != 0 && state.definition_id == definition_id) {
-    cursor = HighlightRegion(registry, definition_id, state.region_id, line, 0, no_tokens,
-                             &end_state);
-    if (end_state.region_id != 0) {
-      return end_state;
-    }
-  }
-
-  {
-    util::PerformanceTrace::Scope top_scope("RuntimeSyntaxRegistry::AdvanceState::TopLevel");
-    HighlightTopLevel(registry, definition_id, line, cursor, no_tokens, &end_state);
-  }
+  const bool resume = state.definition_id == definition_id && state.region_depth > 0;
+  HighlightLineScoped(registry, definition_id, resume ? state.region_stack : nullptr,
+                      resume ? state.region_depth : 0, line, no_tokens, &end_state);
   return end_state;
 }
 
 }  // namespace microide::editor::runtime_syntax
+
+namespace microide::editor {
+
+// Worker-thread entry point for background highlight prefetch. Holds the
+// registry's shared lock for the whole batch so a concurrent plugin reload
+// cannot reassign the registry mid-tokenize. Touches no TextViewport state —
+// only the request's own immutable snapshot and the shared registry.
+HighlightPrefetchResult ComputeHighlightPrefetch(const HighlightPrefetchRequest& request) {
+  HighlightPrefetchResult result;
+  result.viewport = request.viewport;
+  result.content_revision = request.content_revision;
+  result.syntax_revision = request.syntax_revision;
+  result.start_line = request.start_line;
+  result.tokens.reserve(request.lines.size());
+  result.end_states.reserve(request.lines.size());
+
+  std::shared_lock<std::shared_mutex> lock(runtime_syntax::RegistryMutex());
+  SyntaxState state = request.start_state;
+  for (const std::string& line : request.lines) {
+    HighlightedLine highlighted = SyntaxHighlighter::HighlightLine(line, request.path, state);
+    state = highlighted.end_state;
+    result.tokens.push_back(std::move(highlighted.tokens));
+    result.end_states.push_back(state);
+  }
+  return result;
+}
+
+}  // namespace microide::editor

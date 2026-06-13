@@ -128,6 +128,42 @@ void WorkspaceShell::ActivateTab(std::size_t index) {
   MakeEditorTabService().Activate(index);
 }
 
+void WorkspaceShell::RequestActiveHighlightPrefetch() {
+  if (highlight_prefetch_event_type_ == 0) {
+    return;
+  }
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr || !viewport->syntax_highlighting_enabled()) {
+    return;
+  }
+  const std::size_t line_count = viewport->line_count();
+  if (line_count == 0) {
+    return;
+  }
+  // Prefetch the visible band plus a look-ahead window below it so scrolling
+  // down lands on already-tokenized lines instead of stalling the render path.
+  const std::size_t top =
+      std::min(viewport->VisualRowLineIndex(viewport->scroll_line()), line_count - 1);
+  const std::size_t visible = std::max<std::size_t>(viewport->visible_lines(), 1);
+  const std::size_t count = std::min(visible * 3, line_count - top);
+  if (!viewport->HasHighlightPrefetchGap(top, count)) {
+    return;
+  }
+  highlight_prefetch_service_.Request(viewport->BuildHighlightPrefetchRequest(top, count));
+}
+
+void WorkspaceShell::ConsumeHighlightPrefetchResults() {
+  editor::TextViewport* active_viewport = ActiveEditorViewport();
+  for (const auto& result : highlight_prefetch_service_.DrainResults()) {
+    // result.viewport is only an identity token: install only when it still
+    // matches the live active viewport (the install path additionally drops
+    // results whose document revision has moved on).
+    if (active_viewport != nullptr && result.viewport == active_viewport) {
+      active_viewport->InstallPrefetchedHighlights(result);
+    }
+  }
+}
+
 void WorkspaceShell::SyncActiveEditorTab() {
   MakeEditorTabService().SyncActiveEditorTab();
 }

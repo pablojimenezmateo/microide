@@ -711,7 +711,7 @@ std::optional<std::string> WorkspaceActionContext::LastTerminalCommandText() con
   return operations_.last_terminal_command_text();
 }
 
-std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() const {
+std::optional<std::string> WorkspaceActionContext::SelectionTextWithContext() {
   return operations_.selection_text_with_context();
 }
 

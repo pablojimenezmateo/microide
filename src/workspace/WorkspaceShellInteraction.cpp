@@ -1,11 +1,72 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <cctype>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
+
+#include "editor/FoldingModel.h"
+#include "editor/TextViewport.h"
 
 namespace microide::workspace {
+
+namespace {
+
+bool IsBlankOrWhitespace(std::string_view text) {
+  for (const char ch : text) {
+    if (std::isspace(static_cast<unsigned char>(ch)) == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string TrimmedLine(std::string_view text) {
+  std::size_t begin = 0;
+  std::size_t end = text.size();
+  while (begin < end && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
+    ++begin;
+  }
+  while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+    --end;
+  }
+  return std::string(text.substr(begin, end - begin));
+}
+
+std::string JoinLineRange(const std::vector<std::string>& lines,
+                          std::size_t first,
+                          std::size_t last_inclusive) {
+  std::string joined;
+  const std::size_t clamped_last = std::min(last_inclusive, lines.empty() ? 0 : lines.size() - 1);
+  for (std::size_t line = first; line <= clamped_last && line < lines.size(); ++line) {
+    if (line > first) {
+      joined.push_back('\n');
+    }
+    joined += lines[line];
+  }
+  return joined;
+}
+
+// Renders the project-relative label for a buffer path, or an empty string
+// when the path falls outside the project root (or there is no root).
+std::string RelativePathLabel(const std::filesystem::path& path,
+                              const std::filesystem::path& project_root) {
+  if (project_root.empty() || path.empty()) {
+    return {};
+  }
+  const std::filesystem::path relative = path.lexically_relative(project_root);
+  const bool starts_with_parent =
+      relative.begin() != relative.end() && *relative.begin() == std::filesystem::path("..");
+  if (relative.empty() || starts_with_parent) {
+    return {};
+  }
+  return relative.generic_string();
+}
+
+}  // namespace
 
 void WorkspaceShell::MoveFileFinderSelection(int delta) {
   context_.current_project_state.file_finder.MoveSelection(delta);
@@ -186,51 +247,86 @@ void WorkspaceShell::SyncPrimarySelectionWithTerminalSelection() {
   }
 }
 
-std::optional<std::string> WorkspaceShell::SelectionTextWithContext() const {
-  const editor::TextViewport* viewport = ActiveNavigableViewport();
+std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
+  editor::TextViewport* viewport = ActiveNavigableViewport();
   if (viewport == nullptr) {
     return std::nullopt;
   }
 
-  const std::optional<editor::SelectionRange> range = viewport->selection_range();
-  if (!range.has_value()) {
-    return std::nullopt;
-  }
+  // Resolve the copied body and its 0-indexed line span. With a selection we
+  // honour it verbatim; otherwise we fall back to the current line, expanding a
+  // blank line out to its enclosing fold (method/block) so right-clicking an
+  // empty line still yields useful context.
+  std::string body;
+  std::size_t start_line = 0;
+  std::size_t end_line = 0;
 
-  const std::string text = viewport->SelectedText();
-  if (text.empty()) {
-    return std::nullopt;
+  const std::optional<editor::SelectionRange> range = viewport->selection_range();
+  if (range.has_value() && viewport->has_selection()) {
+    body = viewport->SelectedText();
+    if (body.empty()) {
+      return std::nullopt;
+    }
+    start_line = range->start.line;
+    end_line = range->end.line;
+    if (range->end.column == 0 && range->end.line > range->start.line) {
+      --end_line;
+    }
+  } else {
+    const std::vector<std::string>& lines = viewport->lines();
+    const std::size_t cursor = viewport->cursor_line();
+    if (cursor >= lines.size()) {
+      return std::nullopt;
+    }
+    start_line = cursor;
+    end_line = cursor;
+    if (IsBlankOrWhitespace(lines[cursor])) {
+      const editor::FoldingModel* folding_model = EnsureActiveFoldingModelFresh();
+      const std::optional<editor::FoldRange> fold =
+          folding_model != nullptr ? folding_model->InnermostFoldContaining(cursor)
+                                    : std::nullopt;
+      if (fold.has_value()) {
+        start_line = fold->opener_line;
+        end_line = std::min(fold->closer_line, lines.empty() ? 0 : lines.size() - 1);
+      }
+    }
+    body = JoinLineRange(lines, start_line, end_line);
   }
 
   const std::filesystem::path path = viewport->path().lexically_normal();
-  std::string path_label;
-  if (!context_.current_project_state.root.empty() && !path.empty()) {
-    const std::filesystem::path relative =
-        path.lexically_relative(context_.current_project_state.root);
-    const bool starts_with_parent =
-        relative.begin() != relative.end() &&
-        *relative.begin() == std::filesystem::path("..");
-    if (!relative.empty() && !starts_with_parent) {
-      path_label = relative.generic_string();
-    }
-  }
+  std::string path_label = RelativePathLabel(path, context_.current_project_state.root);
   if (path_label.empty()) {
     path_label = path.empty() ? "untitled" : path.string();
   }
 
-  const std::size_t start_line = range->start.line + 1;
-  std::size_t end_line = range->end.line + 1;
-  if (range->end.column == 0 && range->end.line > range->start.line) {
-    end_line = range->end.line;
+  // Prepend the enclosing fold opener (function/method/block header) as a
+  // neutral context comment so the snippet pastes into an LLM with scope.
+  std::string result;
+  if (const editor::FoldingModel* folding_model = EnsureActiveFoldingModelFresh();
+      folding_model != nullptr) {
+    const std::optional<editor::FoldRange> enclosing =
+        folding_model->InnermostFoldContaining(start_line);
+    if (enclosing.has_value() && enclosing->opener_line < start_line &&
+        enclosing->opener_line < viewport->lines().size()) {
+      const std::string opener = TrimmedLine(viewport->lines()[enclosing->opener_line]);
+      if (!opener.empty()) {
+        result += "// context: ";
+        result += opener;
+        result.push_back('\n');
+      }
+    }
   }
 
-  std::string header = path_label + ":" + std::to_string(start_line);
+  result += path_label;
+  result.push_back(':');
+  result += std::to_string(start_line + 1);
   if (end_line > start_line) {
-    header += "-" + std::to_string(end_line);
+    result.push_back('-');
+    result += std::to_string(end_line + 1);
   }
-  header += "\n";
-  header += text;
-  return header;
+  result.push_back('\n');
+  result += body;
+  return result;
 }
 
 }  // namespace microide::workspace
