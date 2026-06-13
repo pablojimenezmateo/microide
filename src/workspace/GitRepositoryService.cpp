@@ -286,7 +286,16 @@ void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
           ScheduleRefresh(std::move(*deferred_follow_up));
           return;
         }
-        if (request.generation != refresh_generation_) {
+        // Best-effort early-out: skip building a snapshot that a newer refresh
+        // has already superseded. Read the generation under the lock — every
+        // other access is mutex-guarded, so an unlocked read here is a data race
+        // (PublishSnapshot still re-checks authoritatively under the lock).
+        bool generation_current = false;
+        {
+          std::lock_guard lock(mutex_);
+          generation_current = request.generation == refresh_generation_;
+        }
+        if (!generation_current) {
           if (wake_callbacks_.decrement_background_task_count_and_wake != nullptr) {
             wake_callbacks_.decrement_background_task_count_and_wake();
           }

@@ -1,3 +1,4 @@
+#include "project/ProjectFileScanner.h"
 #include "project/ProjectSearchService.h"
 
 #include <algorithm>
@@ -6,6 +7,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -18,6 +20,7 @@ using microide::project::ProjectSearchCaseMode;
 using microide::project::ProjectSearchOptions;
 using microide::project::ProjectSearchPatternMode;
 using microide::project::ProjectSearchService;
+using microide::project::SharedPathList;
 
 struct BenchRun {
   double elapsed_ms = 0.0;
@@ -64,12 +67,13 @@ const char* CaseModeLabel(ProjectSearchCaseMode mode) {
 
 BenchRun RunBench(const std::filesystem::path& root,
                   const std::string& query,
-                  const ProjectSearchOptions& options) {
+                  const ProjectSearchOptions& options,
+                  const SharedPathList& indexed_files) {
   ProjectSearchService service;
   BenchRun run;
 
   const auto start_time = std::chrono::steady_clock::now();
-  const std::uint64_t run_id = service.Start(root, query, options);
+  const std::uint64_t run_id = service.Start(root, query, options, indexed_files);
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
   while (std::chrono::steady_clock::now() < deadline) {
     auto update = service.TakePendingUpdate();
@@ -153,10 +157,17 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  // Collect the candidate file list once (outside the timed region) and reuse it
+  // across runs, mirroring how the shell hands the engine a maintained snapshot.
+  const SharedPathList indexed_files =
+      std::make_shared<const std::vector<std::filesystem::path>>(microide::project::CollectProjectFiles(
+          project_root, options.show_hidden ? microide::project::ProjectFileScanMode::IncludeHidden
+                                            : microide::project::ProjectFileScanMode::ExcludeHidden));
+
   std::vector<BenchRun> runs;
   runs.reserve(static_cast<std::size_t>(run_count));
   for (int index = 0; index < run_count; ++index) {
-    BenchRun run = RunBench(project_root, query, options);
+    BenchRun run = RunBench(project_root, query, options, indexed_files);
     if (!run.error.empty()) {
       std::cerr << "run " << (index + 1) << " failed: " << run.error << '\n';
       return 1;

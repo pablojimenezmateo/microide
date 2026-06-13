@@ -284,6 +284,19 @@ std::string ToLowerAscii(std::string_view text) {
   return lowered;
 }
 
+void ToLowerAsciiInto(std::string_view text, std::string& out) {
+  out.resize(text.size());
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    out[i] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
+  }
+}
+
+bool QueryHasUppercaseAscii(std::string_view text) {
+  return std::any_of(text.begin(), text.end(),
+                     [](unsigned char c) { return c >= 'A' && c <= 'Z'; });
+}
+
 std::string CollapseAsciiWhitespace(std::string_view text) {
   std::string collapsed;
   collapsed.reserve(text.size());
@@ -298,6 +311,59 @@ std::string CollapseAsciiWhitespace(std::string_view text) {
       saw_whitespace = false;
     }
     collapsed.push_back(static_cast<char>(c));
+  }
+  return collapsed;
+}
+
+std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
+                                                 std::size_t match_start,
+                                                 std::size_t match_end,
+                                                 std::size_t* out_match_start,
+                                                 std::size_t* out_match_length) {
+  std::string collapsed;
+  collapsed.reserve(text.size());
+  bool saw_whitespace = false;
+  std::size_t mapped_start = std::string::npos;
+  std::size_t mapped_end = std::string::npos;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const unsigned char c = static_cast<unsigned char>(text[i]);
+    if (std::isspace(c)) {
+      saw_whitespace = !collapsed.empty();
+      // A boundary landing on whitespace maps to where the next emitted byte
+      // (or pending space) will sit.
+      if (i == match_start && mapped_start == std::string::npos) {
+        mapped_start = collapsed.size();
+      }
+      if (i == match_end && mapped_end == std::string::npos) {
+        mapped_end = collapsed.size();
+      }
+      continue;
+    }
+    if (saw_whitespace) {
+      collapsed.push_back(' ');
+      saw_whitespace = false;
+    }
+    if (i == match_start && mapped_start == std::string::npos) {
+      mapped_start = collapsed.size();
+    }
+    collapsed.push_back(static_cast<char>(c));
+    if (i + 1 == match_end) {
+      mapped_end = collapsed.size();
+    }
+  }
+  if (mapped_start == std::string::npos) {
+    mapped_start = collapsed.size();
+  }
+  if (mapped_end == std::string::npos || mapped_end < mapped_start) {
+    mapped_end = mapped_start;
+  }
+  mapped_start = std::min(mapped_start, collapsed.size());
+  mapped_end = std::min(mapped_end, collapsed.size());
+  if (out_match_start != nullptr) {
+    *out_match_start = mapped_start;
+  }
+  if (out_match_length != nullptr) {
+    *out_match_length = mapped_end - mapped_start;
   }
   return collapsed;
 }

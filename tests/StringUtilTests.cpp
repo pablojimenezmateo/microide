@@ -95,9 +95,41 @@ void TestCompareModelHandlesCrLfInputViaSharedSplitter() {
          "compare model should preserve the trailing empty row from TextViewport splitting");
 }
 
+void TestStringUtilCollapseWhitespaceTracksMatchRange() {
+  // "  alpha   beta " collapses to "alpha beta"; the match "beta" in the raw
+  // string (bytes 9..13) should map onto the collapsed "beta" (bytes 6..10).
+  const std::string_view raw = "  alpha   beta ";
+  const std::size_t raw_match_start = raw.find("beta");
+  std::size_t start = 99;
+  std::size_t length = 99;
+  const std::string collapsed = microide::util::CollapseAsciiWhitespaceTrackingMatch(
+      raw, raw_match_start, raw_match_start + 4, &start, &length);
+  Expect(collapsed == "alpha beta", "collapse should drop leading/duplicate whitespace");
+  Expect(collapsed.substr(start, length) == "beta",
+         "tracked match range should land on the collapsed match text");
+
+  // Leading-token match maps to offset 0.
+  std::size_t lead_start = 99;
+  std::size_t lead_length = 99;
+  const std::string lead = microide::util::CollapseAsciiWhitespaceTrackingMatch(
+      "alpha beta", 0, 5, &lead_start, &lead_length);
+  Expect(lead_start == 0 && lead.substr(lead_start, lead_length) == "alpha",
+         "leading match should map to the start of the collapsed preview");
+
+  // Out-of-range / empty match degrades to a zero-length range, never OOB.
+  std::size_t empty_start = 99;
+  std::size_t empty_length = 99;
+  const std::string empty = microide::util::CollapseAsciiWhitespaceTrackingMatch(
+      "alpha", 100, 100, &empty_start, &empty_length);
+  Expect(empty == "alpha" && empty_length == 0 && empty_start <= empty.size(),
+         "an out-of-range match should clamp to a safe zero-length highlight");
+}
+
 }  // namespace
 
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "StringUtil/CollapseWhitespaceTracksMatchRange",
+          TestStringUtilCollapseWhitespaceTracksMatchRange);
   AddTest(tests, "StringUtil/Utf8SequenceLengthHandlesAsciiAndEmoji",
           TestStringUtilUtf8SequenceLengthHandlesAsciiAndEmoji);
   AddTest(tests, "StringUtil/Utf8ValidationRejectsBrokenSequences",

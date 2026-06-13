@@ -54,6 +54,22 @@ inline std::string BuildCountStatus(std::string_view prefix,
   return text;
 }
 
+// Builds "Showing <shown> of <total> matches" + suffix. Used when a count-all
+// project search knows the exact total but only displays the first `shown`.
+inline std::string BuildShownOfTotalStatus(std::size_t shown,
+                                           std::size_t total,
+                                           std::string_view suffix) {
+  std::string text;
+  text.reserve(40 + suffix.size());
+  text += "Showing ";
+  AppendUnsigned(text, shown);
+  text += " of ";
+  AppendUnsigned(text, total);
+  text += " matches";
+  text.append(suffix.data(), suffix.size());
+  return text;
+}
+
 // Appends a " (X of Y files)" denominator clause when total > 0. Used by the
 // project search sidebar/overlay to surface progress on large repos so the
 // "Searching N matches" readout has a denominator while the worker is active.

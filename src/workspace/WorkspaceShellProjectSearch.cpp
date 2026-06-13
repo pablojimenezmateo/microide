@@ -3,21 +3,17 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <sstream>
 #include <vector>
 
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "util/PerformanceCounters.h"
+#include "util/TextFileIO.h"
 
 namespace microide::workspace {
 
-namespace {
-
-constexpr std::size_t kMaxProjectSearchResults = 200;
-
-}  // namespace
+using project::kMaxProjectSearchResults;
 
 void WorkspaceShell::RefreshProjectSearch() {
   StopProjectSearch();
@@ -30,6 +26,9 @@ void WorkspaceShell::RefreshProjectSearch() {
   context_.current_project_state.overlay.workflow.project_search.error.clear();
   context_.current_project_state.overlay.workflow.project_search.searched_files = 0;
   context_.current_project_state.overlay.workflow.project_search.total_files = 0;
+  context_.current_project_state.overlay.workflow.project_search.total_matches = 0;
+  // A fresh search resets the selection to the top of the list.
+  context_.current_project_state.sidebar.scroll_row = 0;
 
   if (context_.current_project_state.root.empty() ||
       context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
@@ -67,12 +66,49 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   }
   auto update = *maybe_update;
 
-  auto& shell_results = context_.current_project_state.overlay.workflow.project_search.results;
+  auto& search = context_.current_project_state.overlay.workflow.project_search;
+  auto& shell_results = search.results;
+
+  // Workers publish out of order, so remember which result is selected (by its
+  // stable position identity) and restore it after the re-sort below, keeping the
+  // highlighted row from jumping as later batches stream in.
+  const bool had_selection = search.selected_index < shell_results.size();
+  const std::size_t selected_file_index =
+      had_selection ? shell_results[search.selected_index].file_index : 0;
+  const std::size_t selected_line =
+      had_selection ? shell_results[search.selected_index].line : 0;
+  const std::size_t selected_column =
+      had_selection ? shell_results[search.selected_index].column : 0;
+
   for (auto& result : update.results) {
     if (shell_results.size() >= kMaxProjectSearchResults) {
       break;
     }
     shell_results.push_back(std::move(result));
+  }
+
+  // Restore deterministic, file-grouped display order (the engine streams matches
+  // in whatever order parallel workers find them).
+  std::sort(shell_results.begin(), shell_results.end(),
+            [](const project::ProjectSearchResult& lhs, const project::ProjectSearchResult& rhs) {
+              if (lhs.file_index != rhs.file_index) {
+                return lhs.file_index < rhs.file_index;
+              }
+              if (lhs.line != rhs.line) {
+                return lhs.line < rhs.line;
+              }
+              return lhs.column < rhs.column;
+            });
+
+  if (had_selection) {
+    for (std::size_t i = 0; i < shell_results.size(); ++i) {
+      if (shell_results[i].file_index == selected_file_index &&
+          shell_results[i].line == selected_line &&
+          shell_results[i].column == selected_column) {
+        search.selected_index = i;
+        break;
+      }
+    }
   }
 
   context_.current_project_state.overlay.workflow.project_search.truncated =
@@ -84,6 +120,10 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
         update.searched_files;
     context_.current_project_state.overlay.workflow.project_search.total_files =
         update.total_files;
+  }
+  if (update.total_matches > 0) {
+    context_.current_project_state.overlay.workflow.project_search.total_matches =
+        update.total_matches;
   }
   if (!update.error.empty()) {
     context_.current_project_state.overlay.workflow.project_search.error = std::move(update.error);
@@ -196,7 +236,9 @@ std::string WorkspaceShell::ProjectSearchCaseButtonLabel() const {
 }
 
 std::string WorkspaceShell::ProjectSearchHiddenButtonLabel() const {
-  return context_.current_project_state.overlay.workflow.project_search.options.show_hidden ? "Hide+" : "Hide-";
+  // The button highlights when active; "Hidden" reads as "include hidden files"
+  // far more clearly than the old "Hide+/Hide-" polarity.
+  return "Hidden";
 }
 
 std::string WorkspaceShell::HoveredSidebarSearchTooltipLabel(
@@ -331,19 +373,11 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     const std::filesystem::path absolute_path = context_.current_project_state.root / relative_path;
     const std::filesystem::path normalized_absolute = absolute_path.lexically_normal();
 
-    std::ifstream input(absolute_path, std::ios::binary);
-    if (!input) {
+    std::string updated_content;
+    if (!util::ReadFileForTextSearch(absolute_path, updated_content)) {
       continue;
     }
 
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    std::string content = buffer.str();
-    if (content.find('\0') != std::string::npos) {
-      continue;
-    }
-
-    std::string updated_content = content;
     const std::size_t replacements = ReplaceLiteralMatchesInText(
         updated_content, context_.current_project_state.overlay.workflow.project_search.query.text(),
         context_.current_project_state.overlay.workflow.project_search.replace_text.text(), case_sensitive);
@@ -474,8 +508,21 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
   const int max_index = static_cast<int>(context_.current_project_state.overlay.workflow.project_search.results.size()) - 1;
   context_.current_project_state.overlay.workflow.project_search.selected_index =
       static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
-  if (context_.current_project_state.overlay.visible) {
-    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+    // Pull the selected row into view in the sidebar list (mirrors the
+    // git/problems/tests sidebars' RevealSelected* helpers). Only navigation
+    // moves the scroll; mouse-wheel/scrollbar scrolling is left untouched so the
+    // user can scroll freely past the selection.
+    if (ActiveSidebarMode() == SidebarMode::Search && layout->sidebar.h > 0.0f) {
+      const auto line_map = BuildProjectSearchLineMap();
+      const auto list_layout =
+          ComputeProjectSearchSidebarListLayout(layout->sidebar, line_map.size());
+      const int selected_line = ProjectSearchLineForResult(
+          context_.current_project_state.overlay.workflow.project_search.selected_index);
+      context_.current_project_state.sidebar.scroll_row =
+          RevealScrollableListIndex(list_layout, selected_line);
+    }
+    if (context_.current_project_state.overlay.visible) {
       RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
     }
   }

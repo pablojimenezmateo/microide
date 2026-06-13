@@ -102,6 +102,9 @@ struct ProjectSearchState {
   // advances as the worker visits each file.
   std::size_t searched_files = 0;
   std::size_t total_files = 0;
+  // Exact total match count from a count-all run (0 when unknown — the default
+  // early-stop run cannot count past the display cap).
+  std::size_t total_matches = 0;
   bool running = false;
   bool truncated = false;
   std::string error;

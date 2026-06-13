@@ -14,6 +14,11 @@
 
 namespace microide::project {
 
+// Single source of truth for how many matches the search retains/displays. The
+// worker stops emitting once this many results are collected; the consumer caps
+// its own accumulated list at the same value.
+inline constexpr std::size_t kMaxProjectSearchResults = 200;
+
 enum class ProjectSearchPatternMode {
   Literal,
   Regex,
@@ -29,14 +34,28 @@ struct ProjectSearchOptions {
   ProjectSearchPatternMode pattern_mode = ProjectSearchPatternMode::Literal;
   ProjectSearchCaseMode case_mode = ProjectSearchCaseMode::Smart;
   bool show_hidden = false;
+  // When true the worker keeps scanning after the display cap is reached so it can
+  // report the exact total match count (it still only stores the first
+  // kMaxProjectSearchResults for display). Default false preserves early-stop
+  // speed; the UI exposes this as an opt-in toggle.
+  bool count_all_matches = false;
 };
 
 struct ProjectSearchResult {
   std::filesystem::path relative_path;
   std::string relative_path_string;
+  // Position of `relative_path` in the (sorted) candidate file list. Workers run
+  // in parallel and publish out of order, so consumers sort by
+  // (file_index, line, column) to restore the deterministic, file-grouped order
+  // the UI renders.
+  std::size_t file_index = 0;
   std::size_t line = 0;
   std::size_t column = 0;
   std::string preview;
+  // Byte range of the match within `preview` (whitespace-collapsed space) so the
+  // sidebar can highlight the matched span. Length 0 means "do not highlight".
+  std::size_t match_preview_start = 0;
+  std::size_t match_preview_length = 0;
 };
 
 struct ProjectSearchUpdate {
@@ -48,6 +67,9 @@ struct ProjectSearchUpdate {
   // each file (regardless of whether the file matched).
   std::size_t searched_files = 0;
   std::size_t total_files = 0;
+  // Exact total match count. Only meaningful (non-zero) on the final update of a
+  // count-all search; 0 otherwise (the default early-stop run cannot know it).
+  std::size_t total_matches = 0;
   bool truncated = false;
   bool finished = false;
   std::string error;
@@ -76,6 +98,7 @@ class ProjectSearchService {
   struct SearchCompletion {
     std::string error;
     bool truncated = false;
+    std::size_t total_matches = 0;
   };
 
   void WorkerMain(std::filesystem::path root,

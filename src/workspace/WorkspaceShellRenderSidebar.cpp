@@ -24,6 +24,18 @@ constexpr float kTreeChevronSlotWidth = 12.0f;
 // Reuse a thread-local scratch so the per-result label assembly is allocation-bounded by max label
 // width, not by `results × frames`. The render path only inspects the returned view immediately
 // after this call, so the scratch's lifetime is safe.
+// Number of decimal digits in `value` (>=1). Used to size the "line:col  "
+// prefix when positioning the preview match highlight, without materializing the
+// label string (render TUs must avoid std::to_string).
+std::size_t DecimalDigitCount(std::size_t value) {
+  std::size_t digits = 1;
+  while (value >= 10) {
+    value /= 10;
+    ++digits;
+  }
+  return digits;
+}
+
 std::string_view BuildProjectSearchResultLabel(std::size_t line,
                                                 std::size_t column,
                                                 std::string_view snippet) {
@@ -288,8 +300,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     const std::string match_actions =
         ProjectSearchCanReplaceAll()
-            ? JoinHintSegments({"/ query", "= replace", "r rerun", "R replace all"})
-            : JoinHintSegments({"/ query", "= replace", "r rerun", "R literal mode required"});
+            ? JoinHintSegments({"/ query", "= replace", "r rerun", "R replace all", "c count all"})
+            : JoinHintSegments(
+                  {"/ query", "= replace", "r rerun", "R literal mode required", "c count all"});
     const std::string status_text =
         project_state.overlay.workflow.project_search.editing
             ? (project_state.overlay.workflow.project_search.edit_field ==
@@ -312,10 +325,16 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                              {"/ query", "= replace", "buttons change mode, case, hidden"})
                        : FormatEmptyState("matches") + "  |  " + match_actions)
             : project_state.overlay.workflow.project_search.truncated
-                ? BuildCountStatus(
-                      "Showing first ",
-                      project_state.overlay.workflow.project_search.results.size(),
-                      " matches  |  " + match_actions)
+                ? (project_state.overlay.workflow.project_search.total_matches >
+                           project_state.overlay.workflow.project_search.results.size()
+                       ? BuildShownOfTotalStatus(
+                             project_state.overlay.workflow.project_search.results.size(),
+                             project_state.overlay.workflow.project_search.total_matches,
+                             "  |  " + match_actions)
+                       : BuildCountStatus(
+                             "Showing first ",
+                             project_state.overlay.workflow.project_search.results.size(),
+                             " matches  |  " + match_actions))
                 : BuildCountStatus(
                       "",
                       project_state.overlay.workflow.project_search.results.size(),
@@ -327,10 +346,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
     const auto line_map = BuildProjectSearchLineMap();
     const auto list_layout = ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
-    int scroll_row = list_layout.scroll_row;
-    const int selected_line =
-        ProjectSearchLineForResult(project_state.overlay.workflow.project_search.selected_index);
-    scroll_row = RevealScrollableListIndex(list_layout, selected_line);
+    // Honor the stored (clamped) scroll position so mouse-wheel/scrollbar scrolling
+    // lets the user scroll freely past the selected row. The selected row is pulled
+    // into view only on navigation (see MoveProjectSearchSelection), matching how
+    // the git/problems/tests sidebars behave.
+    const int scroll_row = list_layout.scroll_row;
     project_state.sidebar.scroll_row = scroll_row;
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
@@ -363,6 +383,27 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           project_state.overlay.workflow.project_search.selected_index;
       DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
                                   selected);
+
+      // Highlight the matched span inside the preview with the editor's search
+      // match colour. Positions assume the monospace sidebar font; non-ASCII
+      // previews degrade to a slight horizontal offset.
+      if (result.match_preview_length > 0) {
+        const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+        const std::size_t prefix_chars = DecimalDigitCount(result.line + 1) + 1 +
+                                         DecimalDigitCount(result.column + 1) + 2;
+        const float text_x = row_rect.x + 6.0f;
+        const float text_right = row_rect.x + row_rect.w - 6.0f;
+        const float highlight_x =
+            text_x +
+            static_cast<float>(prefix_chars + result.match_preview_start) * char_width;
+        const float highlight_w = static_cast<float>(result.match_preview_length) * char_width;
+        if (highlight_x < text_right && highlight_w > 0.0f) {
+          FillRect(renderer,
+                   MakeRect(highlight_x, row_rect.y + 2.0f,
+                            std::min(highlight_w, text_right - highlight_x), row_rect.h - 4.0f),
+                   theme_.search_match);
+        }
+      }
 
       const std::string_view label =
           BuildProjectSearchResultLabel(result.line, result.column, result.preview);

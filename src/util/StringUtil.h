@@ -45,9 +45,25 @@ std::string TrimAsciiWhitespace(std::string_view text);
 // Lowercase the ASCII A-Z range, leaving every other byte untouched. Safe for
 // UTF-8 input because the multi-byte sequences never include 'A'..'Z'.
 std::string ToLowerAscii(std::string_view text);
+// Lowercase `text` (ASCII A-Z) into `out`, reusing `out`'s existing capacity so
+// hot per-line loops avoid allocating a fresh string each call.
+void ToLowerAsciiInto(std::string_view text, std::string& out);
+// True if `text` contains any ASCII uppercase letter. Used by smart-case search
+// to decide whether a query should match case-sensitively.
+bool QueryHasUppercaseAscii(std::string_view text);
 // Replace each run of ASCII whitespace with a single space. Leading whitespace
 // is dropped; trailing whitespace, if any, is also dropped.
 std::string CollapseAsciiWhitespace(std::string_view text);
+// Like CollapseAsciiWhitespace, but also maps the source byte range
+// [match_start, match_end) into the collapsed output, writing the mapped range to
+// *out_match_start / *out_match_length (clamped to the collapsed text). Lets a
+// search preview highlight the matched span. Degrades gracefully if a boundary
+// falls inside collapsed whitespace.
+std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
+                                                 std::size_t match_start,
+                                                 std::size_t match_end,
+                                                 std::size_t* out_match_start,
+                                                 std::size_t* out_match_length);
 LineEnding DetectLineEnding(std::string_view text);
 DecodedText DecodeLines(std::string_view content);
 std::string_view LineEndingSeparator(LineEnding line_ending);

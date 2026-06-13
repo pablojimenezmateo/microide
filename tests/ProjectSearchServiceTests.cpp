@@ -25,6 +25,7 @@ struct SearchRunResult {
   bool finished = false;
   std::size_t final_searched_files = 0;
   std::size_t final_total_files = 0;
+  std::size_t total_matches = 0;
 };
 
 SearchRunResult RunProjectSearch(const std::filesystem::path& root,
@@ -57,6 +58,9 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
         result.final_searched_files = update.searched_files;
         result.final_total_files = update.total_files;
       }
+      if (update.total_matches > 0) {
+        result.total_matches = update.total_matches;
+      }
       if (update.finished) {
         result.finished = true;
         break;
@@ -66,6 +70,20 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
   }
 
   service.Stop();
+
+  // The engine streams matches in whatever order its parallel workers find them;
+  // mirror the shell consumer by restoring deterministic (file_index, line,
+  // column) order before assertions inspect the result list.
+  std::sort(result.results.begin(), result.results.end(),
+            [](const ProjectSearchResult& lhs, const ProjectSearchResult& rhs) {
+              if (lhs.file_index != rhs.file_index) {
+                return lhs.file_index < rhs.file_index;
+              }
+              if (lhs.line != rhs.line) {
+                return lhs.line < rhs.line;
+              }
+              return lhs.column < rhs.column;
+            });
   return result;
 }
 
@@ -140,6 +158,19 @@ void TestProjectSearchServiceNormalizesPreviewWhitespace() {
          "preview-normalizing project search should return one literal match");
   Expect(result.results[0].preview == "alpha beta gamma",
          "project search preview should collapse repeated whitespace for render-time reuse");
+  Expect(result.results[0].preview.substr(result.results[0].match_preview_start,
+                                          result.results[0].match_preview_length) == "alpha",
+         "project search should map the match range onto the collapsed preview for highlighting");
+
+  // A match after collapsed whitespace should still map correctly. Use a token
+  // that appears in no other file under this root so the count is unambiguous.
+  WriteFile(root / "indented.txt", "\t\tzeta value\n");
+  const auto indented = RunProjectSearch(root, "zeta");
+  Expect(indented.finished && indented.results.size() == 1,
+         "indented preview search should return one match");
+  Expect(indented.results[0].preview.substr(indented.results[0].match_preview_start,
+                                            indented.results[0].match_preview_length) == "zeta",
+         "match highlight range should account for collapsed leading whitespace");
 }
 
 void TestProjectSearchServiceRegexModeAndInvalidRegex() {
@@ -266,12 +297,44 @@ void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
   Expect(capped.truncated, "large project search should report when the result set is capped");
   Expect(capped.results.size() == 200,
          "large project search should publish the full capped result set");
-  Expect(capped.results.front().relative_path == std::filesystem::path("file00.txt") &&
-             capped.results.front().line == 0 && capped.results.front().column == 0,
-         "large project search should keep the first capped match");
-  Expect(capped.results.back().relative_path == std::filesystem::path("file07.txt") &&
-             capped.results.back().line == 24 && capped.results.back().column == 0,
-         "large project search should keep the last published capped match");
+
+  // Under parallel search the *which* 200 matches are kept is timing-dependent
+  // (workers claim files in racing order), so we no longer assert an exact
+  // first/last match. What must hold: the published set is well-formed and sorted
+  // in (file_index, line, column) order by the consumer-mirroring helper.
+  bool sorted = true;
+  for (std::size_t i = 1; i < capped.results.size(); ++i) {
+    const auto& prev = capped.results[i - 1];
+    const auto& cur = capped.results[i];
+    const bool ordered = prev.file_index < cur.file_index ||
+                         (prev.file_index == cur.file_index &&
+                          (prev.line < cur.line ||
+                           (prev.line == cur.line && prev.column <= cur.column)));
+    if (!ordered) {
+      sorted = false;
+      break;
+    }
+  }
+  Expect(sorted, "capped project search results should be in (file, line, column) order");
+  Expect(capped.results.front().column == 0 && capped.results.back().column == 0,
+         "each capped 'alpha' match should start at column 0");
+
+  // A default (early-stop) run cannot know the true total beyond the cap.
+  Expect(capped.total_matches == 0,
+         "default capped search should not report an exact total match count");
+
+  // Count-all keeps scanning past the cap to report the exact total while still
+  // only storing the first kMaxProjectSearchResults for display.
+  ProjectSearchOptions count_all_options;
+  count_all_options.count_all_matches = true;
+  const auto counted = RunProjectSearch(root, "alpha", count_all_options);
+  Expect(counted.finished, "count-all project search should finish");
+  Expect(counted.error.empty(), "count-all project search should not error");
+  Expect(counted.truncated, "count-all project search should still flag truncation");
+  Expect(counted.results.size() == 200,
+         "count-all project search should still cap the stored/displayed results");
+  Expect(counted.total_matches == 250,
+         "count-all project search should report every match across all files");
 }
 
 void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
