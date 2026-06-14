@@ -50,19 +50,31 @@ bool RowIsChanged(const CompareRow& row) {
   return row.kind != CompareRowKind::Unchanged;
 }
 
-const ComparePresentationCollapsedRunState* FindCollapsedRunState(
-    const std::vector<ComparePresentationCollapsedRunState>& collapsed_runs,
-    std::size_t run_start,
+}  // namespace
+
+ComparePresentationCollapsedRunState* FindCollapsedRunState(
+    std::vector<ComparePresentationCollapsedRunState>& collapsed_runs,
+    std::size_t run_start_model_row,
     std::size_t run_length) {
-  for (const ComparePresentationCollapsedRunState& state : collapsed_runs) {
-    if (state.run_start_model_row == run_start && state.run_length == run_length) {
+  for (ComparePresentationCollapsedRunState& state : collapsed_runs) {
+    if (state.run_start_model_row == run_start_model_row && state.run_length == run_length) {
       return &state;
     }
   }
   return nullptr;
 }
 
-}  // namespace
+const ComparePresentationCollapsedRunState* FindCollapsedRunState(
+    const std::vector<ComparePresentationCollapsedRunState>& collapsed_runs,
+    std::size_t run_start_model_row,
+    std::size_t run_length) {
+  for (const ComparePresentationCollapsedRunState& state : collapsed_runs) {
+    if (state.run_start_model_row == run_start_model_row && state.run_length == run_length) {
+      return &state;
+    }
+  }
+  return nullptr;
+}
 
 ComparePresentationModel BuildComparePresentationModel(
     const CompareModel& model,

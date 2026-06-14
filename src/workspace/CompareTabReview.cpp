@@ -14,18 +14,6 @@ compare::ComparePresentationOptions PresentationOptionsFromTab(const CompareTabS
   };
 }
 
-compare::ComparePresentationCollapsedRunState* FindCollapsedRunState(
-    compare::ComparePresentationCollapseState& collapse_state,
-    std::size_t run_start_model_row,
-    std::size_t run_length) {
-  for (compare::ComparePresentationCollapsedRunState& state : collapse_state.collapsed_runs) {
-    if (state.run_start_model_row == run_start_model_row && state.run_length == run_length) {
-      return &state;
-    }
-  }
-  return nullptr;
-}
-
 std::string CompareReviewHeaderModeLabel(compare::CompareReviewMode mode) {
   switch (mode) {
     case compare::CompareReviewMode::WorkingTree:
@@ -296,8 +284,8 @@ bool ExpandCompareCollapsedContext(CompareTabState& compare_tab,
   const std::size_t collapsed_run_length = row->collapsed_run_length;
   std::size_t revealed_before = 0;
   compare::ComparePresentationCollapsedRunState* collapsed_run_state =
-      FindCollapsedRunState(compare_tab.presentation.collapse_state, collapsed_run_start_model_row,
-                            collapsed_run_length);
+      compare::FindCollapsedRunState(compare_tab.presentation.collapse_state.collapsed_runs,
+                                     collapsed_run_start_model_row, collapsed_run_length);
   if (collapsed_run_state == nullptr) {
     compare_tab.presentation.collapse_state.collapsed_runs.push_back(
         compare::ComparePresentationCollapsedRunState{

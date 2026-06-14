@@ -5,6 +5,7 @@
 
 #include "compare/MergeConflictKind.h"
 #include "editor/SyntaxHighlighter.h"
+#include "util/GitConflictMarkers.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/MergeResolverContext.h"
@@ -48,12 +49,6 @@ std::vector<compare::MergeChoice> PreferredMergeChoices(const compare::MergeHunk
   push_unique(compare::MergeChoice::Both);
   push_unique(compare::MergeChoice::Base);
   return choices;
-}
-
-bool ContainsGitConflictMarkers(std::string_view text) {
-  return text.find("<<<<<<<") != std::string_view::npos &&
-         text.find("=======") != std::string_view::npos &&
-         text.find(">>>>>>>") != std::string_view::npos;
 }
 
 struct ParsedGitConflictBlock {
@@ -643,7 +638,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
   merge_tab.result_viewport.SetPath(merge_tab.output_path);
   if (output_text.has_value()) {
     std::optional<ParsedGitConflictOutput> parsed_output;
-    if (ContainsGitConflictMarkers(*output_text)) {
+    if (util::ContainsCompleteConflictMarkers(*output_text)) {
       parsed_output = ParseGitConflictOutput(merge_tab.model, *output_text);
     }
     const std::string rendered_text =

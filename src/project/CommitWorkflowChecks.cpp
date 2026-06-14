@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "project/GitRepository.h"
+#include "util/GitConflictMarkers.h"
 #include "util/Parse.h"
 
 namespace microide::project {
@@ -140,9 +141,7 @@ bool StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_r
   if (!diff.success()) {
     return false;
   }
-  return diff.output.find("<<<<<<<") != std::string::npos ||
-         diff.output.find(">>>>>>>") != std::string::npos ||
-         diff.output.find("=======") != std::string::npos;
+  return util::ContainsAnyConflictMarker(diff.output);
 }
 
 std::vector<CommitPreCheck> RunCommitPreChecks(
