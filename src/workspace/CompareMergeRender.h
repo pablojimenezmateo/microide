@@ -3,9 +3,13 @@
 #include <array>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string_view>
 
 #include <SDL3/SDL.h>
+
+#include "compare/CompareModel.h"
+#include "editor/DecoratedTextGridRenderer.h"
 
 namespace microide::render {
 struct Theme;
@@ -17,6 +21,23 @@ namespace microide::workspace {
 // Convert `value` to its decimal text representation in `scratch` and return a
 // view into the populated bytes. Returns an empty view if std::to_chars fails.
 std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch);
+
+// Append intra-line word/token diff underlines for the visible window of `text`
+// to `row`. Shared by the compare side panes (and available to merge): clips the
+// changed byte spans to the horizontally-scrolled visible columns and emits a
+// dimmed underline under each changed run. Pixel-identical to the per-surface
+// assembly it replaces — keep the 0.55 alpha dim in sync with the renderer.
+void AppendCompareChangedSpanUnderlines(
+    editor::DecoratedTextRow& row,
+    const render::TextRenderer& text_renderer,
+    float text_x,
+    float y,
+    float line_height,
+    std::string_view text,
+    std::size_t horizontal_scroll,
+    std::size_t visible_columns,
+    std::span<const compare::CompareTextSpan> changed_spans,
+    SDL_Color underline_color);
 
 
 struct CollapsedContextActionRects {
