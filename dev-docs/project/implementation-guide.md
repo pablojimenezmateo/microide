@@ -1,6 +1,6 @@
 # MicroIDE Product Guide
 
-Reviewed on 2026-04-25.
+Reviewed on 2026-06-14.
 
 This file captures the durable product direction for the current C++/SDL3 codebase.
 Keep it shorter than `dev-docs/project/active-work.md`.
@@ -55,13 +55,16 @@ The current SDL shell already includes:
   reveal-path actions, and bundled runtime asset discovery across Linux, macOS, and Windows
 - tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar
-- literal-by-default project search with regex, case-mode, hidden-file controls, and capped-result feedback
+- parallelized literal-by-default project search with regex, case-mode, hidden-file controls, count-all totals, and match highlighting
 - literal replace-in-project tied to literal search mode
 - a standalone project-search benchmark utility for repeatable larger-repo timing runs
-- a git sidebar for working-tree changes, conflicts, outgoing branch files, bulk stage-all, and confirmed discard-all flows
+- a git sidebar for working-tree changes, conflicts, outgoing branch files, bulk stage-all, and confirmed discard-all flows, with an editable commit message and a branch/commit ref picker
 - editor copy-with-context via the Edit menu and right-click editor popup, formatting clipboard text as `relative/path:line` or `relative/path:start-end` plus the selected text
 - editor git blame shadow text for tracked on-disk files, including saved but uncommitted content, kept asynchronous and viewport-scoped behind a dedicated project service with caret-local inline annotations and hover commit details
-- drag reordering for project tabs, file tabs, and terminal tabs, constrained to reinsert within the existing strip instead of spawning detached windows
+- deferred-commit drag reordering with a ghost preview for project tabs, file tabs, and terminal tabs, constrained to reinsert within the existing strip instead of spawning detached windows
+- multi-caret editing with caret position remap across edits and region-stack highlighting
+- soft word wrap with wrap-aware caret motion, hit-testing, and hanging indent
+- durable document writes with a save-time conflict guard and a non-blocking external-change banner (Reload / Overwrite / Keep)
 - terminal copy-with-context from the terminal-tab context menu, formatting clipboard text as the last submitted command plus its rendered output and falling back to the invoked command while an alternate-screen app owns the terminal
 - compare flows against `HEAD`, arbitrary commits, and base-branch outgoing files
 - a PTY-backed terminal panel with tabs, scrollback, selection, clipboard paste shortcuts, alternate-screen support, application cursor-key mode, origin mode, autowrap control, bracketed paste mode, basic device/cursor query replies, and common ANSI scroll-region handling

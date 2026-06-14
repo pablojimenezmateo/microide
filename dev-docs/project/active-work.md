@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-06-09.
+Reviewed on 2026-06-14.
 
 This is the single source of truth for:
 
@@ -38,7 +38,9 @@ These are implemented and should not be treated as open migration work:
   popup-menu rows, strip tabs, and common shell glyphs now route through shared workspace render
   primitives instead of staying fully surface-local
 - project-local workspace state plus app-level restore of open project tabs
-- normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits
+- normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits, with deferred-commit tab drag (ghost preview) consistent across all three tab types
+- decorated-row assembly is unified across editor, compare, and merge surfaces (shared intra-line underline and conflict-marker helpers), keeping the three diff/merge surfaces convergent
+- multi-caret editing with position remap across edits, region-stack highlighting, and copy-with-context
 - editor open/save/reopen, selection, clipboard, undo/redo, line numbers, **word wrap (soft-wrap)** with wrap-aware caret motion and hit-testing, horizontal scrolling when wrap is off, dirty tracking, IME hooks, and project-local preferences (this supersedes any older roadmap note that listed soft wrap as out of scope)
 - syntax-highlight state now uses coarse document checkpoints plus per-line memoized replay, so
   far jumps in large files do not have to rebuild highlight state from file start

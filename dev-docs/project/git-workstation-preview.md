@@ -1,16 +1,17 @@
-# Git Workstation Preview (0.1)
+# Git Workstation (1.x)
 
-MicroIDE is preparing a narrow **Git Workstation Preview**: a native, low-footprint desktop
+MicroIDE's most validated wedge is the **Git Workstation**: a native, low-footprint desktop
 shell focused on local repository inspection, diffing, staging, text conflict resolution, commit,
-and branch review. This document states what the preview promises and what remains out of scope.
+and branch review. Shipped in the 1.x line. This document states what the workstation promises
+and what remains out of scope.
 
 Performance wording follows the project methodology: internal regression baselines and harness
 scenarios — not comparisons to other editors.
 
 ## Supported workflows
 
-| Workflow | Preview expectation |
-|----------|---------------------|
+| Workflow | Supported behavior |
+|----------|--------------------|
 | Open local Git repository | Open project tab on a directory with a Git worktree |
 | Inspect working tree | Git sidebar, directory tree dirty markers, status summaries |
 | View staged / unstaged diffs | Compare tabs (HEAD, index, commits as implemented) |
@@ -30,17 +31,17 @@ scenarios — not comparisons to other editors.
 
 ### Conflict support boundaries
 
-- **Supported in preview:** common line-oriented text conflicts surfaced in merge tabs.
+- **Supported:** common line-oriented text conflicts surfaced in merge tabs.
 - **Recognized but not fully interactive:** binary, submodule, and complex rename/file-directory
   conflicts may appear in summaries without full three-way editing.
 
 ### Branch review persistence
 
-Branch review against a base is in preview scope. **Persistent** reviewed-file or reviewed-hunk
-markers may ship after the preview if core Git/diff/merge/commit paths and safety requirements
-are already met. Do not assume durable review markers in 0.1 unless release notes say otherwise.
+Branch review against a base is supported. **Persistent** reviewed-file or reviewed-hunk
+markers are not yet shipped; they may land once core Git/diff/merge/commit paths and safety
+requirements stay met. Do not assume durable review markers unless release notes say otherwise.
 
-## Unsupported (explicit non-goals for preview)
+## Unsupported (explicit non-goals)
 
 - Hosted PR review, account auth, provider sync
 - Plugin marketplace, remote install, signed plugins
@@ -61,5 +62,5 @@ See [SECURITY.md](../SECURITY.md) and [plugin-trust-model.md](plugin-trust-model
 
 ## Validation
 
-Before tagging a preview release, maintainers run the checklist in
+Before tagging a release, maintainers run the checklist in
 [preview-release-checklist.md](preview-release-checklist.md) and the tested-workflows matrix there.
