@@ -14,6 +14,7 @@
 #include "editor/BracketScanner.h"
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsStore.h"
+#include "editor/RowDecorationBuilder.h"
 #include "editor/EditorViewModel.h"
 #include "editor/FoldingModel.h"
 #include "editor/IndentGuides.h"
@@ -177,6 +178,12 @@ class EditorViewRenderer {
   // row per frame. Cleared between rows; capacity persists across frames.
   mutable DecoratedTextRow scratch_row_;
   mutable DecoratedTextRow sticky_scratch_row_;
+  // Source-column fills (search / occurrence / selection / bracket) and
+  // pre-positioned fills (indent guides / whitespace) marshalled per row and
+  // fed to BuildDecoratedRow. Reused across rows so the hot path stays
+  // allocation-free.
+  mutable std::vector<RowFillSpan> column_fill_scratch_;
+  mutable std::vector<DecoratedTextFill> prepositioned_fill_scratch_;
   mutable std::vector<std::size_t> visible_rows_for_guides_scratch_;
   mutable std::string lowered_search_query_scratch_;
   mutable std::string lowered_line_scratch_;

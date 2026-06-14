@@ -537,25 +537,35 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                         : viewport.VisibleLineLayout(line_index);
 
       DecoratedTextRow& sticky_row = sticky_scratch_row_;
-      sticky_row.fills.clear();
-      sticky_row.runs.clear();
-      sticky_row.underlines.clear();
-      sticky_row.fills.push_back(DecoratedTextFill{
-          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
-          .color = row_background,
-      });
-      const auto layout = row_layout;
+      const std::vector<SyntaxTokenKind>* sticky_tokens = nullptr;
       {
         util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::StickyHighlightedLineTokens");
-        const std::vector<SyntaxTokenKind>& token_kinds = viewport.HighlightedLineTokens(line_index);
-        AppendLayoutSyntaxTextRuns(sticky_row, text_renderer, theme, metrics.text_x, y, layout,
-                                   selected ? theme.text_primary : theme.text_secondary,
-                                   token_kinds);
+        sticky_tokens = &viewport.HighlightedLineTokens(line_index);
       }
-      AppendDiagnosticUnderlines(sticky_row, text_renderer, theme, metrics.text_x, y,
-                                 metrics.line_height, lines[line_index], line_index,
-                                 row_meta.visual_start, row_meta.visual_end - row_meta.visual_start,
-                                 viewport.tab_size(), diagnostics);
+      RowDecorationInput sticky_input;
+      sticky_input.text_x = metrics.text_x;
+      sticky_input.y = y;
+      sticky_input.char_width = text_renderer.CharWidth();
+      sticky_input.line_height = metrics.line_height;
+      sticky_input.row_visual_start = row_meta.visual_start;
+      sticky_input.row_visual_end = row_meta.visual_end;
+      sticky_input.text = &lines[line_index];
+      sticky_input.tokens = sticky_tokens;
+      sticky_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
+      sticky_input.layout = &row_layout;
+      sticky_input.has_background_fill = true;
+      sticky_input.background_fill = DecoratedTextFill{
+          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .color = row_background,
+      };
+      sticky_input.diagnostics = diagnostics;
+      sticky_input.diagnostic_line_index = line_index;
+      sticky_input.diagnostic_horizontal_scroll = row_meta.visual_start;
+      sticky_input.diagnostic_visible_columns = row_meta.visual_end - row_meta.visual_start;
+      sticky_input.tab_size = viewport.tab_size();
+      sticky_input.text_renderer = &text_renderer;
+      sticky_input.theme = &theme;
+      BuildDecoratedRow(sticky_row, sticky_input);
       {
         util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::StickyDecoratedRow");
         kDecoratedRowRenderer.RenderRow(renderer, text_renderer, sticky_row);
@@ -618,16 +628,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         line_index >= active_search_match->start.line &&
         line_index <= active_search_match->end.line;
     const SDL_Color row_background = selected ? theme.row_highlight : theme.editor_background;
-    DecoratedTextRow& row_desc = scratch_row_;
-    row_desc.fills.clear();
-    row_desc.runs.clear();
-    row_desc.underlines.clear();
-    if (selected) {
-      row_desc.fills.push_back(DecoratedTextFill{
-          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
-          .color = theme.row_highlight,
-      });
-    }
+    // Marshal this row's source-column fills and pre-positioned fills, then hand
+    // them to the unified BuildDecoratedRow. The builder resolves source->visual
+    // columns and owns the assembly order (background -> column fills ->
+    // pre-positioned -> syntax -> diagnostics).
+    column_fill_scratch_.clear();
+    prepositioned_fill_scratch_.clear();
 
     if (!lowered_search_query.empty()) {
       const SearchMatchCacheKey cache_key{
@@ -657,43 +663,22 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         cache_it = inserted_it;
       }
 
-      const std::size_t row_start_visual_match = row_visual_origin;
-      const std::size_t row_end_visual_match = row_meta.visual_end;
-      // 2026-05-15 Finding 13: resolve source→visual column via the row's already-built
-      // LayoutLine instead of re-walking the document line per decoration.
+      // Source-column spans; the builder resolves them against `row_layout`.
       for (const auto& [match_start, match_end] : cache_it->second) {
-        const std::size_t start_visual = TextLayout::VisualColumnFromLayoutClipped(
-            row_layout, row_start_visual_match, row_end_visual_match, match_start);
-        const std::size_t end_visual = TextLayout::VisualColumnFromLayoutClipped(
-            row_layout, row_start_visual_match, row_end_visual_match, match_end);
-        const std::size_t row_start_visual = row_start_visual_match;
-        const std::size_t row_end_visual = row_end_visual_match;
-        const std::size_t visible_start = std::max(start_visual, row_start_visual);
-        const std::size_t visible_end = std::min(end_visual, row_end_visual);
-        if (visible_end > visible_start) {
-          const bool is_active_match =
-              active_search_line &&
-              match_start == active_search_match->start.column &&
-              line_index == active_search_match->start.line;
-          row_desc.fills.push_back(DecoratedTextFill{
-              .rect =
-                  SDL_FRect{
-                      row_text_x +
-                          static_cast<float>(visible_start - row_start_visual) *
-                              text_renderer.CharWidth(),
-                      y - 1.0f,
-                      static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
-                      metrics.line_height,
-                  },
-              .color = is_active_match ? theme.search_match_active : theme.search_match,
-          });
-        }
+        const bool is_active_match =
+            active_search_line &&
+            match_start == active_search_match->start.column &&
+            line_index == active_search_match->start.line;
+        column_fill_scratch_.push_back(RowFillSpan{
+            .start_column = match_start,
+            .end_column = match_end,
+            .color = is_active_match ? theme.search_match_active : theme.search_match,
+            .geometry = RowFillSpan::Geometry::kRange,
+        });
       }
     }
 
     if (view_model != nullptr && !view_model->occurrence_ranges.empty()) {
-      const std::size_t row_start_visual_occ = row_visual_origin;
-      const std::size_t row_end_visual_occ = row_meta.visual_end;
       // Round-2 Finding 2: occurrence_ranges is sorted by line_index (see
       // RefillOccurrenceScanCache). Binary-search for this row's slice instead of scanning the
       // full vector per visible row.
@@ -710,29 +695,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         if (occ.start_column >= occ.end_column) {
           continue;
         }
-        const std::size_t match_start = occ.start_column;
-        const std::size_t match_end = occ.end_column;
-        const std::size_t start_visual = TextLayout::VisualColumnFromLayoutClipped(
-            row_layout, row_start_visual_occ, row_end_visual_occ, match_start);
-        const std::size_t end_visual = TextLayout::VisualColumnFromLayoutClipped(
-            row_layout, row_start_visual_occ, row_end_visual_occ, match_end);
-        const std::size_t visible_start = std::max(start_visual, row_start_visual_occ);
-        const std::size_t visible_end = std::min(end_visual, row_end_visual_occ);
-        if (visible_end <= visible_start) {
-          continue;
-        }
-        row_desc.fills.push_back(DecoratedTextFill{
-            .rect =
-                SDL_FRect{
-                    row_text_x +
-                        static_cast<float>(visible_start - row_start_visual_occ) *
-                            text_renderer.CharWidth(),
-                    y - 1.0f,
-                    static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
-                    metrics.line_height,
-                },
-            .color =
-                occ.is_primary_seed ? theme.search_match_active : theme.search_match,
+        column_fill_scratch_.push_back(RowFillSpan{
+            .start_column = occ.start_column,
+            .end_column = occ.end_column,
+            .color = occ.is_primary_seed ? theme.search_match_active : theme.search_match,
+            .geometry = RowFillSpan::Geometry::kRange,
         });
       }
     }
@@ -744,50 +711,23 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           line_index == selection->start.line ? selection->start.column : 0;
       const std::size_t line_end =
           line_index == selection->end.line ? selection->end.column : lines[line_index].size();
-      const std::size_t row_start_visual = row_visual_origin;
-      const std::size_t row_end_visual = row_meta.visual_end;
-      const std::size_t start_visual = TextLayout::VisualColumnFromLayoutClipped(
-          row_layout, row_start_visual, row_end_visual, line_start);
-      const std::size_t end_visual = TextLayout::VisualColumnFromLayoutClipped(
-          row_layout, row_start_visual, row_end_visual, line_end);
-      const std::size_t visible_start = std::max(start_visual, row_start_visual);
-      const std::size_t visible_end = std::min(end_visual, row_end_visual);
-      if (visible_end > visible_start) {
-        row_desc.fills.push_back(DecoratedTextFill{
-            .rect =
-                SDL_FRect{
-                    row_text_x +
-                        static_cast<float>(visible_start - row_start_visual) *
-                            text_renderer.CharWidth(),
-                    y - 1.0f,
-                    static_cast<float>(visible_end - visible_start) * text_renderer.CharWidth(),
-                    metrics.line_height,
-                },
-            .color = theme.selection_fill,
-        });
-      }
+      column_fill_scratch_.push_back(RowFillSpan{
+          .start_column = line_start,
+          .end_column = line_end,
+          .color = theme.selection_fill,
+          .geometry = RowFillSpan::Geometry::kRange,
+      });
     }
 
     if (bracket_match_pair.has_value()) {
       const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
         if (bracket_line != line_index) return;
         if (bracket_column >= lines[line_index].size()) return;
-        const std::size_t row_start_visual = row_visual_origin;
-        const std::size_t row_end_visual = row_meta.visual_end;
-        const std::size_t cell_visual = TextLayout::VisualColumnFromLayoutClipped(
-            row_layout, row_start_visual, row_end_visual, bracket_column);
-        if (cell_visual < row_start_visual || cell_visual >= row_end_visual) return;
-        row_desc.fills.push_back(DecoratedTextFill{
-            .rect =
-                SDL_FRect{
-                    row_text_x +
-                        static_cast<float>(cell_visual - row_start_visual) *
-                            text_renderer.CharWidth(),
-                    y - 1.0f,
-                    text_renderer.CharWidth(),
-                    metrics.line_height,
-                },
+        column_fill_scratch_.push_back(RowFillSpan{
+            .start_column = bracket_column,
+            .end_column = bracket_column + 1,
             .color = theme.bracket_match_background,
+            .geometry = RowFillSpan::Geometry::kSingleCell,
         });
       };
       append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
@@ -803,7 +743,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         if (row < guide.start_row || row > guide.end_row) continue;
         if (guide.column < row_start_visual || guide.column >= row_end_visual) continue;
         const SDL_Color color = guide.active ? theme.text_muted : theme.border;
-        row_desc.fills.push_back(DecoratedTextFill{
+        prepositioned_fill_scratch_.push_back(DecoratedTextFill{
             .rect =
                 SDL_FRect{
                     row_text_x +
@@ -840,7 +780,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
               row_text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
                                char_width;
           if (!glyph.is_tab_rule) {
-            row_desc.fills.push_back(DecoratedTextFill{
+            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
                 .rect =
                     SDL_FRect{
                         cell_x + char_width * 0.5f - 1.0f,
@@ -852,7 +792,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             });
           } else {
             const float cell_w = static_cast<float>(glyph.cell_visual_extent) * char_width;
-            row_desc.fills.push_back(DecoratedTextFill{
+            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
                 .rect =
                     SDL_FRect{
                         cell_x + 2.0f,
@@ -883,7 +823,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
               row_text_x +
               static_cast<float>(cell_start - row_start_visual) * char_width;
           if (c == ' ') {
-            row_desc.fills.push_back(DecoratedTextFill{
+            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
                 .rect =
                     SDL_FRect{
                         cell_x + char_width * 0.5f - 1.0f,
@@ -895,7 +835,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             });
           } else if (c == '\t') {
             const float cell_w = static_cast<float>(cell_width) * char_width;
-            row_desc.fills.push_back(DecoratedTextFill{
+            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
                 .rect =
                     SDL_FRect{
                         cell_x + 2.0f,
@@ -910,19 +850,40 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
     }
 
-    const auto layout = row_layout;
     const std::vector<SyntaxTokenKind>* token_kinds = nullptr;
     {
       util::PerformanceTrace::Scope token_scope("EditorViewRenderer::Render::HighlightedLineTokens");
       token_kinds = &viewport.HighlightedLineTokens(line_index);
     }
-    AppendLayoutSyntaxTextRuns(row_desc, text_renderer, theme, row_text_x, y, layout,
-                               selected ? theme.text_primary : theme.text_secondary,
-                               *token_kinds);
-    AppendDiagnosticUnderlines(row_desc, text_renderer, theme, row_text_x, y,
-                               metrics.line_height, lines[line_index], line_index,
-                               row_meta.visual_start, row_meta.visual_end - row_meta.visual_start,
-                               viewport.tab_size(), diagnostics);
+    DecoratedTextRow& row_desc = scratch_row_;
+    RowDecorationInput row_input;
+    row_input.text_x = row_text_x;
+    row_input.y = y;
+    row_input.char_width = text_renderer.CharWidth();
+    row_input.line_height = metrics.line_height;
+    row_input.row_visual_start = row_visual_origin;
+    row_input.row_visual_end = row_meta.visual_end;
+    row_input.text = &lines[line_index];
+    row_input.tokens = token_kinds;
+    row_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
+    row_input.layout = &row_layout;
+    row_input.has_background_fill = selected;
+    if (selected) {
+      row_input.background_fill = DecoratedTextFill{
+          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .color = theme.row_highlight,
+      };
+    }
+    row_input.column_fills = std::span<const RowFillSpan>(column_fill_scratch_);
+    row_input.prepositioned_fills = std::span<const DecoratedTextFill>(prepositioned_fill_scratch_);
+    row_input.diagnostics = diagnostics;
+    row_input.diagnostic_line_index = line_index;
+    row_input.diagnostic_horizontal_scroll = row_meta.visual_start;
+    row_input.diagnostic_visible_columns = row_meta.visual_end - row_meta.visual_start;
+    row_input.tab_size = viewport.tab_size();
+    row_input.text_renderer = &text_renderer;
+    row_input.theme = &theme;
+    BuildDecoratedRow(row_desc, row_input);
     {
       util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::DecoratedRow");
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
@@ -950,9 +911,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                  std::string_view{line_number_buf, end});
     }
 
-    if (draw_caret && selected && layout.caret_visible) {
+    if (draw_caret && selected && row_layout.caret_visible) {
       const float caret_x = row_text_x +
-                            static_cast<float>(layout.caret_column) * text_renderer.CharWidth();
+                            static_cast<float>(row_layout.caret_column) * text_renderer.CharWidth();
       const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};
       SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
                              theme.cursor.a);

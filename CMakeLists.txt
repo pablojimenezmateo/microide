@@ -145,6 +145,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/HighlightPrefetchService.cpp
   src/editor/IndentDetect.cpp
   src/editor/IndentGuides.cpp
+  src/editor/RowDecorationBuilder.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/ShapingActions.cpp
   src/editor/SingleLineEditor.cpp
@@ -587,6 +588,7 @@ add_executable(microide_tests
   tests/PersistedRecordDumpTests.cpp
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
+  tests/RowDecorationBuilderTests.cpp
   tests/StringUtilTests.cpp
   tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
@@ -753,6 +755,7 @@ add_executable(microide_diff_bench
   src/editor/EditorViewRenderer.cpp
   src/editor/FoldingModel.cpp
   src/editor/IndentGuides.cpp
+  src/editor/RowDecorationBuilder.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
@@ -782,6 +785,7 @@ add_executable(microide_diff_bench
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
+  src/util/GitConflictMarkers.cpp
   src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
   src/util/Parse.cpp

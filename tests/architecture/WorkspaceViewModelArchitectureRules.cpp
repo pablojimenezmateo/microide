@@ -65,7 +65,7 @@ RuleResult CheckViewModelBackReferences(const std::filesystem::path& repo_root) 
 
 RuleResult CheckCompareRenderStructuralGate(const std::filesystem::path& repo_root) {
   RuleResult result;
-  result.label = "compare render structural gate";
+  result.label = "compare/merge render structural gate";
   result.hard_fail = true;
   const std::regex active_compare_pattern(R"(\bActiveTabIsCompare\s*\()");
   const std::regex direct_state_pattern(R"(context_\.current_project_state)");
@@ -75,15 +75,23 @@ RuleResult CheckCompareRenderStructuralGate(const std::filesystem::path& repo_ro
       continue;
     }
     const std::string name = entry.path().filename().string();
-    if (!name.starts_with("WorkspaceShellCompareRender")) {
+    const bool is_compare_render = name.starts_with("WorkspaceShellCompareRender");
+    const bool is_merge_render = name.starts_with("WorkspaceShellMergeRender");
+    if (!is_compare_render && !is_merge_render) {
       continue;
     }
     const std::string text = ReadText(entry.path());
-    AppendViolations(result, entry.path(), text, active_compare_pattern,
-                     "compare render translation units must consume structural view-model gates, "
-                     "not ActiveTabIsCompare()");
+    // Both compare and merge render TUs must receive project state as injected POD
+    // parameters from the frame caller, never reach into context_.current_project_state.
     AppendViolations(result, entry.path(), text, direct_state_pattern,
-                     "compare render translation units must not read context_.current_project_state");
+                     "compare/merge render translation units must not read context_.current_project_state");
+    // ActiveTabIsCompare() is the compare-specific active-tab predicate; merge render
+    // legitimately resolves its tab through ActiveMergeTab(), so only gate compare here.
+    if (is_compare_render) {
+      AppendViolations(result, entry.path(), text, active_compare_pattern,
+                       "compare render translation units must consume structural view-model gates, "
+                       "not ActiveTabIsCompare()");
+    }
   }
   return result;
 }

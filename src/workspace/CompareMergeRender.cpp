@@ -24,61 +24,6 @@ float CollapsedContextButtonWidth(const render::TextRenderer& text_renderer,
 
 }  // namespace
 
-void AppendCompareChangedSpanUnderlines(
-    editor::DecoratedTextRow& row,
-    const render::TextRenderer& text_renderer,
-    float text_x,
-    float y,
-    float line_height,
-    std::string_view text,
-    std::size_t horizontal_scroll,
-    std::size_t visible_columns,
-    std::span<const compare::CompareTextSpan> changed_spans,
-    SDL_Color underline_color) {
-  if (text.empty() || changed_spans.empty()) {
-    return;
-  }
-
-  const editor::VisibleTextWindow window =
-      editor::SliceVisibleColumns(text, horizontal_scroll, visible_columns);
-  if (window.text.empty()) {
-    return;
-  }
-  const std::size_t window_end = window.byte_offset + window.text.size();
-
-  for (const auto& span : changed_spans) {
-    if (span.end <= window.byte_offset) {
-      continue;
-    }
-    if (span.start >= window_end) {
-      break;
-    }
-
-    const std::size_t clipped_start = std::max(span.start, window.byte_offset);
-    const std::size_t clipped_end = std::min(span.end, window_end);
-    if (clipped_end <= clipped_start) {
-      continue;
-    }
-
-    const std::size_t local_start = clipped_start - window.byte_offset;
-    const std::size_t local_end = clipped_end - window.byte_offset;
-    const std::string_view prefix_text(window.text.data(), local_start);
-    const std::string_view changed_text(window.text.data() + local_start, local_end - local_start);
-    const float start_x = text_x + text_renderer.MeasureWidth(prefix_text);
-    const float span_width = text_renderer.MeasureWidth(changed_text);
-    if (span_width <= 0.0f) {
-      continue;
-    }
-    row.underlines.push_back(editor::DecoratedUnderline{
-        .rect = MakeRect(start_x, y + line_height - 2.0f, span_width, 1.0f),
-        .color = SDL_Color{underline_color.r, underline_color.g, underline_color.b,
-                           static_cast<Uint8>(std::clamp(
-                               std::lround(static_cast<double>(underline_color.a) * 0.55), 0l,
-                               255l))},
-    });
-  }
-}
-
 std::string_view FormatLineNumber(std::size_t value, std::array<char, 20>& scratch) {
   const auto [end, ec] = std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
   if (ec != std::errc{}) {

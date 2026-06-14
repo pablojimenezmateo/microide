@@ -311,7 +311,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     RenderCompareSurface(renderer, layout.editor_surface, *active_compare_tab, project_state.root,
                          draw_compare_caret, project_state.diagnostics_store);
   } else if (active_merge_tab != nullptr) {
-    RenderMergeSurface(renderer, layout.editor_surface);
+    const bool draw_merge_caret =
+        project_state.surface.focus == FocusTarget::Editor && CaretVisibleNow();
+    RenderMergeSurface(renderer, layout.editor_surface, project_state.root, draw_merge_caret,
+                       project_state.diagnostics_store);
   } else {
     const auto diagnostics_for_viewport =
         [this, &project_state](const editor::TextViewport& viewport)

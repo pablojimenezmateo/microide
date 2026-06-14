@@ -10,6 +10,7 @@
 
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsRender.h"
+#include "editor/RowDecorationBuilder.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
 #include "render/Theme.h"
@@ -338,18 +339,6 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       }
       text_renderer_.DrawString(renderer, x, y, color, display_text);
     };
-    const auto append_changed_underlines =
-        [&](editor::DecoratedTextRow& row_desc,
-            float x,
-            std::size_t visible_columns,
-            const std::string& text,
-            const std::vector<compare::CompareTextSpan>& changed_spans,
-            SDL_Color underline_color) {
-          AppendCompareChangedSpanUnderlines(row_desc, text_renderer_, x, y, surface.line_height,
-                                             text, compare_tab->horizontal_scroll, visible_columns,
-                                             std::span<const compare::CompareTextSpan>(changed_spans),
-                                             underline_color);
-        };
     const SDL_Color neutral_text_color = selected ? theme_.text_primary : theme_.text_secondary;
     SDL_Color left_color = neutral_text_color;
     SDL_Color right_color = neutral_text_color;
@@ -405,34 +394,47 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
 
     if (compare_row.left_line > 0) {
       std::array<char, 20> line_number_buf;
-      editor::DecoratedTextRow left_row;
-      left_row.fills.push_back(editor::DecoratedTextFill{
-          .rect = MakeRect(surface.left_x, y - 1.0f,
-                           surface.gutter_width + surface.left_width, surface.line_height),
-          .color = left_row_background,
-      });
-      if (compare_row.kind == compare::CompareRowKind::Deleted ||
-          compare_row.kind == compare::CompareRowKind::Modified) {
-        left_row.fills.push_back(editor::DecoratedTextFill{
-            .rect = MakeRect(surface.left_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
-            .color = compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
-                                                                          : theme_.diff_modified,
-        });
-      }
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
           static_cast<std::size_t>(model_index) < compare_tab->left_tokens_by_row.size()
               ? &compare_tab->left_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      editor::AppendVisibleSyntaxTextRuns(
-          left_row, text_renderer_, theme_, surface.left_x + surface.gutter_width, y,
-          compare_row.left_text, compare_tab->horizontal_scroll, surface.left_visible_columns,
-          selected ? theme_.text_primary : left_color, *cached_tokens);
-      append_changed_underlines(
-          left_row, surface.left_x + surface.gutter_width, surface.left_visible_columns,
-          compare_row.left_text,
-          compare::CompareInlineLeftSpans(compare_tab->presentation, compare_tab->model, model_index),
-          compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
-                                                               : theme_.diff_modified);
+      const std::vector<compare::CompareTextSpan> left_changed_spans =
+          compare::CompareInlineLeftSpans(compare_tab->presentation, compare_tab->model, model_index);
+      const bool left_diff_edge = compare_row.kind == compare::CompareRowKind::Deleted ||
+                                  compare_row.kind == compare::CompareRowKind::Modified;
+      editor::RowDecorationInput left_input;
+      left_input.text_x = surface.left_x + surface.gutter_width;
+      left_input.y = y;
+      left_input.char_width = text_renderer_.CharWidth();
+      left_input.line_height = surface.line_height;
+      left_input.row_visual_start = compare_tab->horizontal_scroll;
+      left_input.row_visual_end = compare_tab->horizontal_scroll + surface.left_visible_columns;
+      left_input.text = &compare_row.left_text;
+      left_input.tokens = cached_tokens;
+      left_input.plain_color = selected ? theme_.text_primary : left_color;
+      left_input.has_background_fill = true;
+      left_input.background_fill = editor::DecoratedTextFill{
+          .rect = MakeRect(surface.left_x, y - 1.0f,
+                           surface.gutter_width + surface.left_width, surface.line_height),
+          .color = left_row_background,
+      };
+      left_input.has_edge_stripe = left_diff_edge;
+      if (left_diff_edge) {
+        left_input.edge_stripe_fill = editor::DecoratedTextFill{
+            .rect = MakeRect(surface.left_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
+            .color = compare_row.kind == compare::CompareRowKind::Deleted ? theme_.diff_deleted
+                                                                          : theme_.diff_modified,
+        };
+      }
+      left_input.changed_spans =
+          std::span<const compare::CompareTextSpan>(left_changed_spans);
+      left_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Deleted
+                                          ? theme_.diff_deleted
+                                          : theme_.diff_modified;
+      left_input.text_renderer = &text_renderer_;
+      left_input.theme = &theme_;
+      editor::DecoratedTextRow left_row;
+      editor::BuildDecoratedRow(left_row, left_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
       draw_text(surface.left_x, surface.gutter_width - 4.0f,
                 selected ? theme_.current_line_number : theme_.line_number,
@@ -440,22 +442,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     }
     if (compare_row.right_line > 0) {
       std::array<char, 20> line_number_buf;
-      editor::DecoratedTextRow right_row;
-      right_row.fills.push_back(editor::DecoratedTextFill{
-          .rect = MakeRect(surface.right_x, y - 1.0f,
-                           surface.gutter_width + surface.right_width, surface.line_height),
-          .color = right_row_background,
-      });
-      if (compare_row.kind == compare::CompareRowKind::Added ||
-          compare_row.kind == compare::CompareRowKind::Modified) {
-        right_row.fills.push_back(editor::DecoratedTextFill{
-            .rect = MakeRect(surface.right_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
-            .color = compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
-                                                                        : theme_.diff_modified,
-        });
-      }
       const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
-      // The same right_text is queried for selection start/end and (potentially) the caret
+      // The same right_text is queried for the selection fill and (potentially) the caret
       // visual column below. Build the boundary→visual column table once and reuse it instead
       // of re-walking the line per query.
       std::optional<editor::TextLayout::LineVisualColumnMap> right_visual_map;
@@ -466,6 +454,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         }
         return *right_visual_map;
       };
+      std::array<editor::RowFillSpan, 1> right_column_fills;
+      std::size_t right_column_fill_count = 0;
       if (right_selection.has_value()) {
         // Copy out of the optional so GCC's optimizer sees a definitely-initialized
         // SelectionRange instead of complaining about `*right_selection` storage
@@ -477,47 +467,70 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           const std::size_t line_end =
               right_line_index == sel.end.line ? sel.end.column
                                                : compare_row.right_text.size();
-          const auto& visual_map = ensure_right_visual_map();
-          const std::size_t start_visual = visual_map.VisualColumnFor(line_start);
-          const std::size_t end_visual = visual_map.VisualColumnFor(line_end);
-          const std::size_t visible_start =
-              std::max(start_visual, compare_tab->horizontal_scroll);
-          const std::size_t visible_end =
-              std::min(end_visual,
-                       compare_tab->horizontal_scroll + surface.right_visible_columns);
-          if (visible_end > visible_start) {
-            right_row.fills.push_back(editor::DecoratedTextFill{
-                .rect = MakeRect(
-                    TextGridCursorX(right_interaction, visible_start), y - 1.0f,
-                    static_cast<float>(visible_end - visible_start) * right_interaction.char_width,
-                    surface.line_height),
-                .color = theme_.selection_fill,
-            });
-          }
+          // Resolution happens in the builder against this map; build it now so the
+          // caret below reuses the same table.
+          ensure_right_visual_map();
+          right_column_fills[right_column_fill_count++] = editor::RowFillSpan{
+              .start_column = line_start,
+              .end_column = line_end,
+              .color = theme_.selection_fill,
+              .geometry = editor::RowFillSpan::Geometry::kRange,
+          };
         }
       }
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
           static_cast<std::size_t>(model_index) < compare_tab->right_tokens_by_row.size()
               ? &compare_tab->right_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      editor::AppendVisibleSyntaxTextRuns(
-          right_row, text_renderer_, theme_, right_interaction.text_x, y, compare_row.right_text,
-          compare_tab->horizontal_scroll, surface.right_visible_columns,
-          selected ? theme_.text_primary : right_color, *cached_tokens);
-      append_changed_underlines(
-          right_row, right_interaction.text_x, surface.right_visible_columns,
-          compare_row.right_text,
+      const std::vector<compare::CompareTextSpan> right_changed_spans =
           compare::CompareInlineRightSpans(compare_tab->presentation, compare_tab->model,
-                                           model_index),
-          compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
-                                                             : theme_.diff_modified);
-      if (right_diagnostics != nullptr) {
-        editor::AppendDiagnosticUnderlines(
-            right_row, text_renderer_, theme_, right_interaction.text_x, y, surface.line_height,
-            compare_row.right_text, right_line_index, compare_tab->horizontal_scroll,
-            surface.right_visible_columns, compare_tab->right_viewport.tab_size(),
-            std::span<const editor::PublishedDiagnostic>(*right_diagnostics));
+                                           model_index);
+      const bool right_diff_edge = compare_row.kind == compare::CompareRowKind::Added ||
+                                   compare_row.kind == compare::CompareRowKind::Modified;
+      editor::RowDecorationInput right_input;
+      right_input.text_x = right_interaction.text_x;
+      right_input.y = y;
+      right_input.char_width = right_interaction.char_width;
+      right_input.line_height = surface.line_height;
+      right_input.row_visual_start = compare_tab->horizontal_scroll;
+      right_input.row_visual_end = compare_tab->horizontal_scroll + surface.right_visible_columns;
+      right_input.text = &compare_row.right_text;
+      right_input.tokens = cached_tokens;
+      right_input.plain_color = selected ? theme_.text_primary : right_color;
+      right_input.visual_map = right_visual_map.has_value() ? &*right_visual_map : nullptr;
+      right_input.has_background_fill = true;
+      right_input.background_fill = editor::DecoratedTextFill{
+          .rect = MakeRect(surface.right_x, y - 1.0f,
+                           surface.gutter_width + surface.right_width, surface.line_height),
+          .color = right_row_background,
+      };
+      right_input.has_edge_stripe = right_diff_edge;
+      if (right_diff_edge) {
+        right_input.edge_stripe_fill = editor::DecoratedTextFill{
+            .rect = MakeRect(surface.right_x, y - 1.0f, kDiffEdgeStripeWidth, surface.line_height),
+            .color = compare_row.kind == compare::CompareRowKind::Added ? theme_.diff_added
+                                                                        : theme_.diff_modified,
+        };
       }
+      right_input.column_fills =
+          std::span<const editor::RowFillSpan>(right_column_fills.data(), right_column_fill_count);
+      right_input.changed_spans =
+          std::span<const compare::CompareTextSpan>(right_changed_spans);
+      right_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Added
+                                           ? theme_.diff_added
+                                           : theme_.diff_modified;
+      if (right_diagnostics != nullptr) {
+        right_input.diagnostics =
+            std::span<const editor::PublishedDiagnostic>(*right_diagnostics);
+        right_input.diagnostic_line_index = right_line_index;
+        right_input.diagnostic_horizontal_scroll = compare_tab->horizontal_scroll;
+        right_input.diagnostic_visible_columns = surface.right_visible_columns;
+        right_input.tab_size = compare_tab->right_viewport.tab_size();
+      }
+      right_input.text_renderer = &text_renderer_;
+      right_input.theme = &theme_;
+      editor::DecoratedTextRow right_row;
+      editor::BuildDecoratedRow(right_row, right_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, right_row);
       if (right_diagnostics != nullptr) {
         if (const auto severity = editor::HighestDiagnosticSeverityForLine(

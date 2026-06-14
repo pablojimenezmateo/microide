@@ -47,6 +47,7 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests);
 void RegisterTaskExecutorTests(std::vector<TestCase>& tests);
 void RegisterProjectBackgroundExecutorTests(std::vector<TestCase>& tests);
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests);
+void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests);
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests);
 void RegisterThemeTests(std::vector<TestCase>& tests);
 void RegisterTextRendererTests(std::vector<TestCase>& tests);
@@ -298,6 +299,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterTaskExecutorTests(tests);
   microide::tests::RegisterProjectBackgroundExecutorTests(tests);
   microide::tests::RegisterRenderViewModelBuilderTests(tests);
+  microide::tests::RegisterRowDecorationBuilderTests(tests);
   microide::tests::RegisterTextRendererTests(tests);
   microide::tests::RegisterThemeTests(tests);
   microide::tests::RegisterTextViewportTests(tests);

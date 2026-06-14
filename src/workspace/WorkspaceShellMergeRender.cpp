@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "editor/DecoratedTextGridRenderer.h"
+#include "editor/RowDecorationBuilder.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
 #include "render/Theme.h"
@@ -182,7 +183,11 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
   }
 }
 
-void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect& rect) {
+void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
+                                        const SDL_FRect& rect,
+                                        const std::filesystem::path& project_root,
+                                        bool draw_caret,
+                                        const editor::DiagnosticsStore& diagnostics_store) {
   MergeTabState* merge_tab = ActiveMergeTab();
   if (renderer == nullptr || merge_tab == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
@@ -373,20 +378,30 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
               : (selected_incoming ? theme_.row_highlight : theme_.editor_background);
       const SDL_Color number_color =
           selected_incoming ? theme_.current_line_number : theme_.line_number;
-      editor::DecoratedTextRow incoming_row;
-      incoming_row.fills.push_back(editor::DecoratedTextFill{
-          .rect = MakeRect(surface.left_x, y - 1.0f,
-                           surface.gutter_width + surface.left_width, surface.line_height),
-          .color = background,
-      });
       const std::vector<editor::SyntaxTokenKind>& tokens =
           line_index < merge_tab->incoming_tokens.size() ? merge_tab->incoming_tokens[line_index]
                                                          : kEmptyTokens;
-      editor::AppendVisibleSyntaxTextRuns(
-          incoming_row, text_renderer_, theme_, surface.left_x + surface.gutter_width, y,
-          merge_tab->model.incoming_lines[line_index], merge_tab->horizontal_scroll,
-          surface.visible_columns,
-          selected_incoming ? theme_.text_primary : theme_.text_secondary, tokens);
+      editor::RowDecorationInput incoming_input;
+      incoming_input.text_x = surface.left_x + surface.gutter_width;
+      incoming_input.y = y;
+      incoming_input.char_width = text_renderer_.CharWidth();
+      incoming_input.line_height = surface.line_height;
+      incoming_input.row_visual_start = merge_tab->horizontal_scroll;
+      incoming_input.row_visual_end = merge_tab->horizontal_scroll + surface.visible_columns;
+      incoming_input.text = &merge_tab->model.incoming_lines[line_index];
+      incoming_input.tokens = &tokens;
+      incoming_input.plain_color =
+          selected_incoming ? theme_.text_primary : theme_.text_secondary;
+      incoming_input.has_background_fill = true;
+      incoming_input.background_fill = editor::DecoratedTextFill{
+          .rect = MakeRect(surface.left_x, y - 1.0f,
+                           surface.gutter_width + surface.left_width, surface.line_height),
+          .color = background,
+      };
+      incoming_input.text_renderer = &text_renderer_;
+      incoming_input.theme = &theme_;
+      editor::DecoratedTextRow incoming_row;
+      editor::BuildDecoratedRow(incoming_row, incoming_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, incoming_row);
       text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
                                 FormatLineNumber(line_index + 1, line_number_buf));
@@ -402,20 +417,30 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
               : (selected_current ? theme_.row_highlight : theme_.editor_background);
       const SDL_Color number_color =
           selected_current ? theme_.current_line_number : theme_.line_number;
-      editor::DecoratedTextRow current_row;
-      current_row.fills.push_back(editor::DecoratedTextFill{
-          .rect = MakeRect(surface.right_x, y - 1.0f,
-                           surface.gutter_width + surface.right_width, surface.line_height),
-          .color = background,
-      });
       const std::vector<editor::SyntaxTokenKind>& tokens =
           line_index < merge_tab->current_tokens.size() ? merge_tab->current_tokens[line_index]
                                                         : kEmptyTokens;
-      editor::AppendVisibleSyntaxTextRuns(
-          current_row, text_renderer_, theme_, surface.right_x + surface.gutter_width, y,
-          merge_tab->model.current_lines[line_index], merge_tab->horizontal_scroll,
-          surface.visible_columns,
-          selected_current ? theme_.text_primary : theme_.text_secondary, tokens);
+      editor::RowDecorationInput current_input;
+      current_input.text_x = surface.right_x + surface.gutter_width;
+      current_input.y = y;
+      current_input.char_width = text_renderer_.CharWidth();
+      current_input.line_height = surface.line_height;
+      current_input.row_visual_start = merge_tab->horizontal_scroll;
+      current_input.row_visual_end = merge_tab->horizontal_scroll + surface.visible_columns;
+      current_input.text = &merge_tab->model.current_lines[line_index];
+      current_input.tokens = &tokens;
+      current_input.plain_color =
+          selected_current ? theme_.text_primary : theme_.text_secondary;
+      current_input.has_background_fill = true;
+      current_input.background_fill = editor::DecoratedTextFill{
+          .rect = MakeRect(surface.right_x, y - 1.0f,
+                           surface.gutter_width + surface.right_width, surface.line_height),
+          .color = background,
+      };
+      current_input.text_renderer = &text_renderer_;
+      current_input.theme = &theme_;
+      editor::DecoratedTextRow current_row;
+      editor::BuildDecoratedRow(current_row, current_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, current_row);
       text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
                                 FormatLineNumber(line_index + 1, line_number_buf));
@@ -423,14 +448,14 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
   }
 
   const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
-      editor_blame_overlay_service_.BuildEditorOverlay(context_.current_project_state.root,
+      editor_blame_overlay_service_.BuildEditorOverlay(project_root,
                                                        text_renderer_, git_blame_service_,
                                                        merge_tab->result_viewport,
                                                        interaction.result.rect, 280.0f, 0);
   editor_blame_overlay_service_.SetVisibleOverlay(merge_blame_overlay);
   const auto* merge_diagnostics =
       !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
-          ? context_.current_project_state.diagnostics_store.FindByPath(merge_tab->result_viewport.path())
+          ? diagnostics_store.FindByPath(merge_tab->result_viewport.path())
           : nullptr;
   const auto merge_setting_enabled = [this](std::string_view id, bool default_value) {
     const auto value = GetSettingValue(id);
@@ -447,7 +472,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect&
       merge_setting_enabled("editor.view.render_whitespace", false);
   editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
-                               context_.current_project_state.surface.focus == FocusTarget::Editor && CaretVisibleNow(), "", std::nullopt,
+                               draw_caret, "", std::nullopt,
                                merge_blame_overlay,
                                merge_diagnostics != nullptr
                                    ? std::span<const editor::PublishedDiagnostic>(*merge_diagnostics)

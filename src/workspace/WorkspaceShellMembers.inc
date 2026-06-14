@@ -812,7 +812,11 @@
                             const std::filesystem::path& project_root,
                             bool draw_compare_caret,
                             const editor::DiagnosticsStore& diagnostics_store);
-  void RenderMergeSurface(SDL_Renderer* renderer, const SDL_FRect& rect);
+  void RenderMergeSurface(SDL_Renderer* renderer,
+                          const SDL_FRect& rect,
+                          const std::filesystem::path& project_root,
+                          bool draw_caret,
+                          const editor::DiagnosticsStore& diagnostics_store);
   void ShowSidebarMode(SidebarMode mode, bool temporary = false);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
