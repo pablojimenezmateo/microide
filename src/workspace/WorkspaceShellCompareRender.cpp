@@ -30,6 +30,9 @@ namespace {
 constexpr float kDiffRowTint = 0.17f;
 constexpr float kDiffRowTintSelected = 0.26f;
 constexpr float kDiffEdgeStripeWidth = 3.0f;
+// Line numbers are inset past the edge stripe so the saturated change marker never
+// sits underneath the gutter digits. Stripe width plus a small breathing gap.
+constexpr float kDiffGutterNumberInset = kDiffEdgeStripeWidth + 3.0f;
 
 SDL_Color CompareMarkerColor(const render::Theme& theme, compare::CompareRowKind kind) {
   switch (kind) {
@@ -436,7 +439,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       editor::DecoratedTextRow left_row;
       editor::BuildDecoratedRow(left_row, left_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
-      draw_text(surface.left_x, surface.gutter_width - 4.0f,
+      draw_text(surface.left_x + kDiffGutterNumberInset,
+                surface.gutter_width - 4.0f - kDiffGutterNumberInset,
                 selected ? theme_.current_line_number : theme_.line_number,
                 FormatLineNumber(static_cast<std::size_t>(compare_row.left_line), line_number_buf));
     }
@@ -541,7 +545,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                              *severity);
         }
       }
-      draw_text(surface.right_x, surface.gutter_width - 4.0f,
+      draw_text(surface.right_x + kDiffGutterNumberInset,
+                surface.gutter_width - 4.0f - kDiffGutterNumberInset,
                 selected ? theme_.current_line_number : theme_.line_number,
                 FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
       if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {

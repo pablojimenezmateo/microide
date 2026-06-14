@@ -666,6 +666,47 @@ void TestWorkspaceShellCompareWheelScrollsColumns() {
          "horizontal scrolling the compare surface should advance the visible column");
 }
 
+void TestWorkspaceShellCompareWheelScrollsLeftDominatedColumns() {
+  // Regression: the two panes share one horizontal offset, but it used to be
+  // round-tripped through the editable right viewport, which clamps to the right
+  // document's longest line. When the overflowing content lives only on the left
+  // (a long line shortened/deleted in the working tree), that read-back forced the
+  // shared offset back to 0 and horizontal scrolling appeared completely dead.
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+
+  // Long line at HEAD (left pane), collapsed to a short line in the working tree
+  // (right pane). The right document on its own never overflows the viewport.
+  const std::string base_line =
+      "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789\n";
+  const std::string working_line = "short\n";
+  WriteFile(source, base_line);
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare left-dominated fixture", "compare left-dominated fixture");
+  WriteFile(source, working_line);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 420);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare left-dominated fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(compare.max_visual_columns > surface.visible_columns,
+         "compare left-dominated fixture should overflow horizontally via the left pane");
+
+  const std::size_t before_scroll = compare.horizontal_scroll;
+  const float wheel_x = surface.right_x + 24.0f;
+  const float wheel_y = surface.rows_y + surface.line_height * 0.5f;
+  Expect(SendMouseWheel(shell, wheel_x, wheel_y, 0, -1),
+         "horizontal scrolling a left-dominated compare should be handled");
+  Expect(compare.horizontal_scroll > before_scroll,
+         "left-pane overflow should still advance the shared horizontal offset");
+}
+
 void TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1134,6 +1175,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareWheelScrollsRows);
   AddTest(tests, "WorkspaceShell/CompareWheelScrollsColumns",
           TestWorkspaceShellCompareWheelScrollsColumns);
+  AddTest(tests, "WorkspaceShell/CompareWheelScrollsLeftDominatedColumns",
+          TestWorkspaceShellCompareWheelScrollsLeftDominatedColumns);
   AddTest(tests, "WorkspaceShell/CompareHorizontalNavigationInvalidatesEditablePane",
           TestWorkspaceShellCompareHorizontalNavigationInvalidatesEditablePane);
   AddTest(tests, "WorkspaceShell/CompareSelectionStepInvalidatesRowBand",

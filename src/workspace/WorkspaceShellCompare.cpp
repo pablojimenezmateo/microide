@@ -523,7 +523,16 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
         ComputeCompareSurfaceLayout(layout_state->editor_surface, compare_tab);
     compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(surface_layout.visible_rows),
                                                surface_layout.right_visible_columns);
+    // The two panes scroll horizontally in lock-step off this shared offset. Clamp it
+    // against the longest line across BOTH panes; the editable right viewport would
+    // otherwise bottleneck the shared scroll to its own document, killing horizontal
+    // scrolling whenever the long content lives on the (read-only) left pane.
+    ClampCompareHorizontalScroll(compare_tab, surface_layout.visible_columns);
   }
+  // Push the (combined-clamped) offset into the right viewport for caret geometry and
+  // edit reveal. SetHorizontalScroll re-clamps to the right document internally, but we
+  // intentionally do NOT read that narrower value back as the shared offset. Caret-driven
+  // horizontal reveal flows the other way through SyncCompareSelectionFromViewport.
   compare_tab.right_viewport.SetHorizontalScroll(compare_tab.horizontal_scroll);
   const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
   const std::size_t model_scroll_row =
@@ -531,7 +540,6 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
           ? scroll_row
           : compare::ComparePresentationToModelRow(compare_tab.presentation, scroll_row);
   compare_tab.right_viewport.SetScrollLine(CompareRightLineForRow(compare_tab, model_scroll_row));
-  compare_tab.horizontal_scroll = compare_tab.right_viewport.horizontal_scroll();
 }
 
 void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
