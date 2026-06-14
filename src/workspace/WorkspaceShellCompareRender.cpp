@@ -345,50 +345,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
             const std::string& text,
             const std::vector<compare::CompareTextSpan>& changed_spans,
             SDL_Color underline_color) {
-          if (text.empty() || changed_spans.empty()) {
-            return;
-          }
-
-          const editor::VisibleTextWindow window =
-              editor::SliceVisibleColumns(text, compare_tab->horizontal_scroll, visible_columns);
-          if (window.text.empty()) {
-            return;
-          }
-          const std::size_t window_end = window.byte_offset + window.text.size();
-
-          for (const auto& span : changed_spans) {
-            if (span.end <= window.byte_offset) {
-              continue;
-            }
-            if (span.start >= window_end) {
-              break;
-            }
-
-            const std::size_t clipped_start = std::max(span.start, window.byte_offset);
-            const std::size_t clipped_end = std::min(span.end, window_end);
-            if (clipped_end <= clipped_start) {
-              continue;
-            }
-
-            const std::size_t local_start = clipped_start - window.byte_offset;
-            const std::size_t local_end = clipped_end - window.byte_offset;
-            const std::string_view prefix_text(window.text.data(), local_start);
-            const std::string_view changed_text(window.text.data() + local_start,
-                                                local_end - local_start);
-            const float start_x = x + text_renderer_.MeasureWidth(prefix_text);
-            const float span_width = text_renderer_.MeasureWidth(changed_text);
-            if (span_width <= 0.0f) {
-              continue;
-            }
-            row_desc.underlines.push_back(editor::DecoratedUnderline{
-                .rect = MakeRect(start_x, y + surface.line_height - 2.0f, span_width, 1.0f),
-                .color =
-                    SDL_Color{underline_color.r, underline_color.g, underline_color.b,
-                              static_cast<Uint8>(std::clamp(
-                                  std::lround(static_cast<double>(underline_color.a) * 0.55), 0l,
-                                  255l))},
-            });
-          }
+          AppendCompareChangedSpanUnderlines(row_desc, text_renderer_, x, y, surface.line_height,
+                                             text, compare_tab->horizontal_scroll, visible_columns,
+                                             std::span<const compare::CompareTextSpan>(changed_spans),
+                                             underline_color);
         };
     const SDL_Color neutral_text_color = selected ? theme_.text_primary : theme_.text_secondary;
     SDL_Color left_color = neutral_text_color;

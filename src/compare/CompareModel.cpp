@@ -114,6 +114,27 @@ TokenizedLine TokenizeLine(std::string_view text) {
   return tokenized;
 }
 
+// Sum of significant (non-whitespace) token bytes for `text`, matching
+// TokenizedLine::significant_token_bytes without allocating the token vectors.
+// Used by the line-match weight where only this scalar is needed.
+std::size_t SignificantTokenBytes(std::string_view text) {
+  std::size_t total = 0;
+  for (std::size_t offset = 0; offset < text.size();) {
+    const LineTokenKind kind = ClassifyCodepoint(text, offset);
+    const std::size_t start = offset;
+    offset += util::Utf8SequenceLength(text, offset);
+    if (kind != LineTokenKind::Symbol) {
+      while (offset < text.size() && ClassifyCodepoint(text, offset) == kind) {
+        offset += util::Utf8SequenceLength(text, offset);
+      }
+    }
+    if (kind != LineTokenKind::Whitespace) {
+      total += offset - start;
+    }
+  }
+  return total;
+}
+
 bool TokenEquals(std::string_view left,
                  const LineToken& left_token,
                  std::string_view right,
@@ -162,10 +183,11 @@ std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const Tokeniz
   return at(0, 0);
 }
 
-std::size_t LineMatchWeight(const TokenizedLine& line, std::size_t occurrences) {
+std::size_t LineMatchWeight(std::string_view text,
+                            std::size_t significant_token_bytes,
+                            std::size_t occurrences) {
   const std::size_t informative_bytes =
-      line.significant_token_bytes > 0 ? line.significant_token_bytes
-                                       : (line.text.empty() ? 1 : std::size_t{2});
+      significant_token_bytes > 0 ? significant_token_bytes : (text.empty() ? 1 : std::size_t{2});
   const std::size_t rarity = std::max<std::size_t>(1, occurrences);
   return std::max<std::size_t>(1, (informative_bytes + 8) / rarity);
 }
@@ -208,8 +230,8 @@ bool CanPairAlignedLines(double similarity,
   return similarity >= 0.35;
 }
 
-std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string>& deleted_lines,
-                                              const std::vector<std::string>& inserted_lines,
+std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view>& deleted_lines,
+                                              const std::vector<std::string_view>& inserted_lines,
                                               CompareBuildProfile* profile) {
   const std::size_t left_count = deleted_lines.size();
   const std::size_t right_count = inserted_lines.size();
@@ -672,7 +694,7 @@ void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile) {
   TrimChangedSpansToSharedEdges(row);
 }
 
-void AppendDeleteOps(const std::vector<std::string>& lines,
+void AppendDeleteOps(const std::vector<std::string_view>& lines,
                      std::size_t begin,
                      std::size_t end,
                      std::vector<DiffOp>& ops) {
@@ -681,7 +703,7 @@ void AppendDeleteOps(const std::vector<std::string>& lines,
   }
 }
 
-void AppendInsertOps(const std::vector<std::string>& lines,
+void AppendInsertOps(const std::vector<std::string_view>& lines,
                      std::size_t begin,
                      std::size_t end,
                      std::vector<DiffOp>& ops) {
@@ -690,24 +712,13 @@ void AppendInsertOps(const std::vector<std::string>& lines,
   }
 }
 
-std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string>& left_lines,
-                                      const std::vector<std::string>& right_lines) {
+std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_lines,
+                                      const std::vector<std::string_view>& right_lines) {
   const std::size_t left_count = left_lines.size();
   const std::size_t right_count = right_lines.size();
   std::vector<DiffOp> ops;
   if (left_count == 0 && right_count == 0) {
     return ops;
-  }
-
-  std::vector<TokenizedLine> left_tokenized;
-  left_tokenized.reserve(left_count);
-  for (const auto& line : left_lines) {
-    left_tokenized.push_back(TokenizeLine(line));
-  }
-  std::vector<TokenizedLine> right_tokenized;
-  right_tokenized.reserve(right_count);
-  for (const auto& line : right_lines) {
-    right_tokenized.push_back(TokenizeLine(line));
   }
 
   std::unordered_map<std::string_view, std::size_t> line_occurrences;
@@ -721,7 +732,8 @@ std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string>& left_lines
 
   std::vector<std::size_t> left_match_weight(left_count, 1);
   for (std::size_t i = 0; i < left_count; ++i) {
-    left_match_weight[i] = LineMatchWeight(left_tokenized[i], line_occurrences[left_lines[i]]);
+    left_match_weight[i] = LineMatchWeight(left_lines[i], SignificantTokenBytes(left_lines[i]),
+                                           line_occurrences[left_lines[i]]);
   }
 
   std::vector<std::size_t> dp((left_count + 1) * (right_count + 1), 0);
@@ -766,10 +778,10 @@ std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string>& left_lines
 }
 
 std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
-    const std::vector<std::string>& left_lines,
+    const std::vector<std::string_view>& left_lines,
     std::size_t left_begin,
     std::size_t left_end,
-    const std::vector<std::string>& right_lines,
+    const std::vector<std::string_view>& right_lines,
     std::size_t right_begin,
     std::size_t right_end) {
   struct AnchorInfo {
@@ -839,10 +851,10 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
   return anchors;
 }
 
-void AppendAnchoredFallbackOps(const std::vector<std::string>& left_lines,
+void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
                                std::size_t left_begin,
                                std::size_t left_end,
-                               const std::vector<std::string>& right_lines,
+                               const std::vector<std::string_view>& right_lines,
                                std::size_t right_begin,
                                std::size_t right_end,
                                std::vector<DiffOp>& ops) {
@@ -885,10 +897,10 @@ void AppendAnchoredFallbackOps(const std::vector<std::string>& left_lines,
   const std::size_t middle_left_count = left_suffix - left_begin;
   const std::size_t middle_right_count = right_suffix - right_begin;
   if (!ProductExceeds(middle_left_count + 1, middle_right_count + 1, kMaxLineLcsMatrixCells)) {
-    const std::vector<std::string> left_slice(
+    const std::vector<std::string_view> left_slice(
         left_lines.begin() + static_cast<std::ptrdiff_t>(left_begin),
         left_lines.begin() + static_cast<std::ptrdiff_t>(left_suffix));
-    const std::vector<std::string> right_slice(
+    const std::vector<std::string_view> right_slice(
         right_lines.begin() + static_cast<std::ptrdiff_t>(right_begin),
         right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
     const std::vector<DiffOp> exact_ops = BuildExactLineOps(left_slice, right_slice);
@@ -927,8 +939,8 @@ void AppendAnchoredFallbackOps(const std::vector<std::string>& left_lines,
   }
 }
 
-std::vector<DiffOp> BuildAnchoredFallbackOps(const std::vector<std::string>& left_lines,
-                                             const std::vector<std::string>& right_lines) {
+std::vector<DiffOp> BuildAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
+                                             const std::vector<std::string_view>& right_lines) {
   std::vector<DiffOp> ops;
   ops.reserve(left_lines.size() + right_lines.size());
   AppendAnchoredFallbackOps(left_lines, 0, left_lines.size(), right_lines, 0, right_lines.size(),
@@ -974,14 +986,14 @@ bool LinesEqualForDiff(std::string_view left,
 
 }  // namespace
 
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
-                                     const std::vector<std::string>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
+                                     const std::vector<std::string_view>& right_lines,
                                      LineDiffBuildStats* stats) {
   return BuildLineDiffOps(left_lines, right_lines, CompareBuildOptions{}, stats);
 }
 
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
-                                     const std::vector<std::string>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
+                                     const std::vector<std::string_view>& right_lines,
                                      const CompareBuildOptions& options,
                                      LineDiffBuildStats* stats) {
   std::size_t prefix = 0;
@@ -1004,10 +1016,10 @@ std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
     ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index]});
   }
 
-  const std::vector<std::string> left_middle(left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-                                             left_lines.begin() +
-                                                 static_cast<std::ptrdiff_t>(left_suffix));
-  const std::vector<std::string> right_middle(
+  const std::vector<std::string_view> left_middle(
+      left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
+      left_lines.begin() + static_cast<std::ptrdiff_t>(left_suffix));
+  const std::vector<std::string_view> right_middle(
       right_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
       right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
   if (!left_middle.empty() || !right_middle.empty()) {
@@ -1048,8 +1060,10 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   const Clock::time_point total_start = Clock::now();
 
   const Clock::time_point split_start = Clock::now();
-  const auto left_lines = util::SplitLines(left);
-  const auto right_lines = util::SplitLines(right);
+  // Views into `left`/`right`, which outlive this build. CompareRow materializes
+  // its own owned strings; everything between here and row assembly stays views.
+  const std::vector<std::string_view> left_lines = util::SplitLineViews(left);
+  const std::vector<std::string_view> right_lines = util::SplitLineViews(right);
   profile.split_lines_ns = DurationNs(split_start, Clock::now());
 
   const bool lines_equal = [&]() {
@@ -1071,8 +1085,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
       // whitespace; the right column must still show the right file's actual text,
       // not a copy of the left line.
       model.rows.push_back(CompareRow{
-          .left_text = left_lines[i],
-          .right_text = right_lines[i],
+          .left_text = std::string(left_lines[i]),
+          .right_text = std::string(right_lines[i]),
           .left_line = line_number,
           .right_line = line_number,
           .kind = CompareRowKind::Unchanged,
@@ -1103,10 +1117,10 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
     --right_suffix;
   }
 
-  const std::vector<std::string> left_middle(left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-                                             left_lines.begin() +
-                                                 static_cast<std::ptrdiff_t>(left_suffix));
-  const std::vector<std::string> right_middle(
+  const std::vector<std::string_view> left_middle(
+      left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
+      left_lines.begin() + static_cast<std::ptrdiff_t>(left_suffix));
+  const std::vector<std::string_view> right_middle(
       right_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
       right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
 
@@ -1122,8 +1136,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   int right_line = 1;
   for (std::size_t index = 0; index < prefix; ++index) {
     model.rows.push_back(CompareRow{
-        .left_text = left_lines[index],
-        .right_text = right_lines[index],
+        .left_text = std::string(left_lines[index]),
+        .right_text = std::string(right_lines[index]),
         .left_line = left_line++,
         .right_line = right_line++,
         .kind = CompareRowKind::Unchanged,
@@ -1137,8 +1151,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
     const auto& op = ops[op_index];
     if (op.kind == DiffOpKind::Equal) {
       model.rows.push_back(CompareRow{
-          .left_text = op.text,
-          .right_text = op.text,
+          .left_text = std::string(op.text),
+          .right_text = std::string(op.text),
           .left_line = left_line++,
           .right_line = right_line++,
           .kind = CompareRowKind::Unchanged,
@@ -1150,8 +1164,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
     }
 
     const int hunk_start = static_cast<int>(model.rows.size());
-    std::vector<std::string> deleted_lines;
-    std::vector<std::string> inserted_lines;
+    std::vector<std::string_view> deleted_lines;
+    std::vector<std::string_view> inserted_lines;
     while (op_index < ops.size() && ops[op_index].kind != DiffOpKind::Equal) {
       if (ops[op_index].kind == DiffOpKind::Delete) {
         deleted_lines.push_back(ops[op_index].text);
@@ -1204,8 +1218,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
 
   for (std::size_t index = left_suffix; index < left_lines.size(); ++index) {
     model.rows.push_back(CompareRow{
-        .left_text = left_lines[index],
-        .right_text = right_lines[index - left_suffix + right_suffix],
+        .left_text = std::string(left_lines[index]),
+        .right_text = std::string(right_lines[index - left_suffix + right_suffix]),
         .left_line = left_line++,
         .right_line = right_line++,
         .kind = CompareRowKind::Unchanged,

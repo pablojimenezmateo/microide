@@ -30,7 +30,10 @@ struct TaggedChange {
 
 std::vector<SideChange> BuildSideChanges(const std::vector<std::string>& base_lines,
                                          const std::vector<std::string>& variant_lines) {
-  const std::vector<DiffOp> ops = BuildLineDiffOps(base_lines, variant_lines);
+  // BuildLineDiffOps consumes views; base_lines/variant_lines outlive `ops`.
+  const std::vector<std::string_view> base_views(base_lines.begin(), base_lines.end());
+  const std::vector<std::string_view> variant_views(variant_lines.begin(), variant_lines.end());
+  const std::vector<DiffOp> ops = BuildLineDiffOps(base_views, variant_views);
   std::vector<SideChange> changes;
   int base_line = 0;
   for (std::size_t op_index = 0; op_index < ops.size(); ++op_index) {
@@ -45,7 +48,7 @@ std::vector<SideChange> BuildSideChanges(const std::vector<std::string>& base_li
       if (ops[op_index].kind == DiffOpKind::Delete) {
         ++base_line;
       } else if (ops[op_index].kind == DiffOpKind::Insert) {
-        change.lines.push_back(ops[op_index].text);
+        change.lines.emplace_back(ops[op_index].text);
       }
       ++op_index;
     }

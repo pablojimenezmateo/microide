@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "compare/CompareModel.h"
+#include "util/StringUtil.h"
 
 #include <algorithm>
 #include <sstream>
@@ -591,6 +592,94 @@ void TestCompareContextAwareAlignment() {
   Expect(saw_added_logger_warn, "context-aware diff should keep logger.warn as added");
 }
 
+// Reconstruct one side of the original input from the model rows: every row that
+// carries a line on that side (line number != 0) contributes its text, in order.
+std::vector<std::string> ReconstructSide(const CompareModel& model, bool left) {
+  std::vector<std::string> lines;
+  for (const auto& row : model.rows) {
+    if (left ? (row.left_line != 0) : (row.right_line != 0)) {
+      lines.push_back(left ? row.left_text : row.right_text);
+    }
+  }
+  return lines;
+}
+
+// Core "SHALL NOT degrade by file size" guarantee: regardless of which internal
+// path (exact LCS, anchored fallback, hunk-alignment fallback) runs, the model
+// must reproduce BOTH input sides line-for-line. No truncation, no dropped hunks.
+void TestCompareModelPreservesBothSidesRoundTrip() {
+  const auto check = [](const std::string& left, const std::string& right, const char* label) {
+    const auto model = BuildCompareModel(left, right);
+    const auto expected_left = microide::util::SplitLines(left);
+    const auto expected_right = microide::util::SplitLines(right);
+    Expect(ReconstructSide(model, true) == expected_left,
+           (std::string("left side must round-trip exactly: ") + label).c_str());
+    Expect(ReconstructSide(model, false) == expected_right,
+           (std::string("right side must round-trip exactly: ") + label).c_str());
+  };
+
+  check(ReadFile(FixturePath("diff/simple/left.txt")),
+        ReadFile(FixturePath("diff/simple/right.txt")), "simple fixture");
+  check(ReadFile(FixturePath("diff/code/before.cpp")),
+        ReadFile(FixturePath("diff/code/after.cpp")), "code fixture");
+
+  // Exceeds kMaxLineLcsMatrixCells (250k) and kMaxHunkAlignmentMatrixCells (65k):
+  // forces the anchored line fallback and the hunk-alignment fallback together.
+  {
+    std::string left = "header\n";
+    std::string right = "header\n";
+    for (int i = 0; i < 1500; ++i) {
+      left += "left-" + std::to_string(i) + '\n';
+      right += "right-" + std::to_string(i) + '\n';
+    }
+    left += "footer\n";
+    right += "footer\n";
+    check(left, right, "large bounded fallback");
+  }
+
+  // Interleaved shared anchors inside an oversized region: the anchored fallback
+  // must still place every unique anchor and reproduce the lines around it.
+  {
+    std::string left;
+    std::string right;
+    for (int i = 0; i < 1200; ++i) {
+      const std::string anchor = "ANCHOR_" + std::to_string(i) + "\n";
+      left += anchor + "left_only_" + std::to_string(i) + "\n";
+      right += anchor + "right_only_" + std::to_string(i) + "\n";
+    }
+    check(left, right, "interleaved anchors fallback");
+  }
+}
+
+// When a modified row is long enough to exceed the intra-line LCS guards, the
+// span population skips the fine LCS but must still cover the changed region and
+// stay on UTF-8 boundaries (no crash, no degraded correctness).
+void TestCompareIntralineFallbackCoversChangedRegion() {
+  std::string left;
+  std::string right;
+  // ~600 distinct tokens per side -> (600+1)^2 > kMaxIntralineLcsMatrixCells.
+  for (int i = 0; i < 600; ++i) {
+    left += "tokL" + std::to_string(i) + " ";
+    right += "tokR" + std::to_string(i) + " ";
+  }
+  const auto model = BuildCompareModel(left, right);
+  Expect(model.rows.size() == 1, "single oversized modified line should produce one row");
+  const auto& row = model.rows.front();
+  Expect(row.kind == CompareRowKind::Modified, "oversized line row should be modified");
+  Expect(!row.left_changed_spans.empty() && !row.right_changed_spans.empty(),
+         "intra-line fallback should still report changed spans covering the difference");
+  for (const auto& span : row.left_changed_spans) {
+    Expect(span.start <= span.end && span.end <= row.left_text.size(),
+           "left fallback span must stay within bounds");
+    Expect(IsUtf8Boundary(row.left_text, span.start) && IsUtf8Boundary(row.left_text, span.end),
+           "left fallback span must stay on codepoint boundaries");
+  }
+  for (const auto& span : row.right_changed_spans) {
+    Expect(span.start <= span.end && span.end <= row.right_text.size(),
+           "right fallback span must stay within bounds");
+  }
+}
+
 void TestCompareLargeInputsUseBoundedFallback() {
   std::string left = "header\n";
   std::string right = "header\n";
@@ -753,6 +842,10 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Compare/ImportExpansionKeepsFollowingImportsUnchanged",
           TestCompareImportExpansionKeepsFollowingImportsUnchanged);
   AddTest(tests, "Compare/ContextAwareAlignment", TestCompareContextAwareAlignment);
+  AddTest(tests, "Compare/ModelPreservesBothSidesRoundTrip",
+          TestCompareModelPreservesBothSidesRoundTrip);
+  AddTest(tests, "Compare/IntralineFallbackCoversChangedRegion",
+          TestCompareIntralineFallbackCoversChangedRegion);
   AddTest(tests, "Compare/LargeInputsUseBoundedFallback",
           TestCompareLargeInputsUseBoundedFallback);
   AddTest(tests, "Compare/LargePaddedAssignmentPrefixStaysUnchanged",

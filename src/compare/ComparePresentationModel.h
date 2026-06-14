@@ -44,6 +44,17 @@ struct ComparePresentationCollapseState {
   std::vector<ComparePresentationCollapsedRunState> collapsed_runs;
 };
 
+// Locate the saved expand state for the collapsed run identified by
+// (run_start_model_row, run_length), or nullptr if none has been recorded.
+ComparePresentationCollapsedRunState* FindCollapsedRunState(
+    std::vector<ComparePresentationCollapsedRunState>& collapsed_runs,
+    std::size_t run_start_model_row,
+    std::size_t run_length);
+const ComparePresentationCollapsedRunState* FindCollapsedRunState(
+    const std::vector<ComparePresentationCollapsedRunState>& collapsed_runs,
+    std::size_t run_start_model_row,
+    std::size_t run_length);
+
 struct ComparePresentationOptions {
   bool show_whitespace = false;
   std::size_t context_lines = 3;

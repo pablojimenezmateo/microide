@@ -2,16 +2,11 @@
 
 #include <fstream>
 
+#include "util/GitConflictMarkers.h"
 #include "util/TextFileIO.h"
 
 namespace microide::workspace {
 namespace {
-
-bool ContainsGitConflictMarkers(std::string_view text) {
-  return text.find("<<<<<<<") != std::string_view::npos &&
-         text.find("=======") != std::string_view::npos &&
-         text.find(">>>>>>>") != std::string_view::npos;
-}
 
 std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path) {
   std::error_code error;
@@ -25,19 +20,10 @@ std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& p
   return static_cast<std::uint64_t>(tick.time_since_epoch().count());
 }
 
-std::optional<std::size_t> FirstConflictMarkerLine(const std::vector<std::string>& lines) {
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (lines[i].starts_with("<<<<<<<")) {
-      return i;
-    }
-  }
-  return std::nullopt;
-}
-
 }  // namespace
 
 bool MergeResultContainsConflictMarkers(std::string_view text) {
-  return ContainsGitConflictMarkers(text);
+  return util::ContainsCompleteConflictMarkers(text);
 }
 
 std::size_t CountRemainingMergeConflicts(std::span<const MergeTrackedConflict> conflicts) {
@@ -76,7 +62,7 @@ MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
   }
   const std::string serialized =
       util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
-  if (ContainsGitConflictMarkers(serialized)) {
+  if (util::ContainsCompleteConflictMarkers(serialized)) {
     return MergeResultState::Invalid;
   }
   return MergeResultState::Saved;
@@ -95,8 +81,8 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
 
   const std::string serialized =
       util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
-  if (ContainsGitConflictMarkers(serialized) && !request.allow_conflict_marker_override) {
-    const auto marker_line = FirstConflictMarkerLine(merge_tab.result_viewport.lines());
+  if (util::ContainsCompleteConflictMarkers(serialized) && !request.allow_conflict_marker_override) {
+    const auto marker_line = util::FirstConflictMarkerLine(merge_tab.result_viewport.lines());
     return MergeValidationResult{
         .ok = false,
         .issue = MergeValidationIssue::ConflictMarkers,

@@ -263,6 +263,7 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalProcessControl.cpp
   src/util/DurableFile.cpp
   src/util/JsonValue.cpp
+  src/util/GitConflictMarkers.cpp
   src/util/Parse.cpp
   src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
