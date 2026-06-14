@@ -791,6 +791,39 @@ void TestWorkspaceShellTerminalTabsDragReorderToStart() {
          "dragged terminal tab should stay active after reordering");
 }
 
+void TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  for (int i = 0; i < 8; ++i) {
+    WorkspaceShellTestAccess::AddTerminalTab(shell);
+    TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+    TerminalSessionTestAccess::SetLaunchLabel(
+        WorkspaceShellTestAccess::ActiveTerminalSession(shell),
+        "terminal-session-" + std::to_string(i));
+  }
+  // Narrow window so the eight terminal tabs cannot all fit in the strip.
+  WorkspaceShellTestAccess::SetWindowSize(shell, 520, 600);
+
+  const auto initial_titles = WorkspaceShellTestAccess::BottomPanelTabDisplayTitles(shell);
+  Expect(initial_titles.size() < 8,
+         "a narrow window should leave some terminal tabs hidden (overflow)");
+  Expect(WorkspaceShellTestAccess::BottomPanelTabScrollIndex(shell) == 0,
+         "the bottom-panel tab strip starts unscrolled");
+
+  const SDL_FRect header = WorkspaceShellTestAccess::BottomPanelHeaderRect(shell);
+  Expect(SendMouseWheel(shell, header.x + header.w * 0.5f, header.y + header.h * 0.5f, -2),
+         "a wheel over the bottom-panel header should be handled");
+  Expect(WorkspaceShellTestAccess::BottomPanelTabScrollIndex(shell) > 0,
+         "wheeling over the header should scroll the bottom-panel tab strip into the overflow");
+  const auto scrolled_titles = WorkspaceShellTestAccess::BottomPanelTabDisplayTitles(shell);
+  Expect(scrolled_titles != initial_titles,
+         "scrolling the bottom-panel strip should reveal previously hidden terminal tabs");
+}
+
 void TestWorkspaceShellBottomPanelWheelScrollsTranscript() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -983,6 +1016,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalPasteActionTargetsPanelFocus);
   AddTest(tests, "WorkspaceShell/TerminalTabsDragReorderToStart",
           TestWorkspaceShellTerminalTabsDragReorderToStart);
+  AddTest(tests, "WorkspaceShell/TerminalTabsOverflowReachableViaHeaderWheel",
+          TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel);
   AddTest(tests, "WorkspaceShell/BottomPanelWheelScrollsTranscript",
           TestWorkspaceShellBottomPanelWheelScrollsTranscript);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",

@@ -108,9 +108,15 @@
     shell.context_.disabled_keybinding_ids = std::move(ids);
   }
   static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.active_tab_index; }
+  static const TabDragState& TabDrag(const WorkspaceShell& shell) {
+    return shell.context_.interaction_state.tab_drag;
+  }
   static bool ActiveTabIsCompare(const WorkspaceShell& shell) { return shell.ActiveTabIsCompare(); }
   static std::size_t ActiveTerminalTabIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.active_terminal_tab_index;
+  }
+  static int BottomPanelTabScrollIndex(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.tab_scroll_index;
   }
   static std::vector<std::filesystem::path> ProjectRoots(const WorkspaceShell& shell) {
     std::vector<std::filesystem::path> roots;
@@ -584,6 +590,10 @@
   static bool TerminalTabContextMenuOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.menu_bar_open &&
            shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::TerminalTabContext;
+  }
+  static bool ProjectTabContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open &&
+           shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::ProjectTabContext;
   }
   static bool TerminalContextMenuOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.menu_bar_open &&

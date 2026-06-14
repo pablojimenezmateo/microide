@@ -32,6 +32,7 @@ enum class MenuId {
   Help,
   TerminalContext,
   TerminalTabContext,
+  ProjectTabContext,
 };
 
 enum class TreeContextTargetKind {

@@ -1085,6 +1085,7 @@
   std::optional<std::size_t> FocusedTerminalTabIndex() const;
   void SyncTerminalFocusState();
   bool MoveActiveTerminalTabTo(std::size_t index);
+  bool MoveActiveOutputTabTo(std::size_t index);
   void CloseTerminalTab(std::size_t index);
   void ConsumeTerminalSessionUpdates();
   void ReapExitedTerminalTabs();
@@ -1357,7 +1358,7 @@
     std::string command_name;
   };
   static constexpr std::size_t kMenuSlotCount =
-      static_cast<std::size_t>(MenuId::TerminalTabContext) + 1;
+      static_cast<std::size_t>(MenuId::ProjectTabContext) + 1;
   mutable std::array<std::vector<DynamicMenuEntryStorage>, kMenuSlotCount> dynamic_menu_entries_;
   mutable std::array<std::vector<MenuItemSpec>, kMenuSlotCount> dynamic_menu_items_;
   mutable std::vector<ResolvedKeybinding> resolved_keybindings_cache_;

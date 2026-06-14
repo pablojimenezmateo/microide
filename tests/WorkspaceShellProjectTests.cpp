@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "util/PerformanceCounters.h"
+#include "workspace/TabReorder.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 #include "platform/FileIndexWatcher.h"
 
@@ -2626,6 +2627,158 @@ void TestWorkspaceShellEditorTabsDragReorderBetweenTabs() {
          "tab_strip_geometry_cache_ must invalidate on every reorder");
 }
 
+void TestWorkspaceShellProjectTabRightClickOpensContextMenu() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  WriteFile(root_a / "README.md", "alpha\n");
+  WriteFile(root_b / "README.md", "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false), "project a opens");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false), "project b opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::ProjectTabRect(shell, 0);
+  Expect(SendMouseDown(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f,
+                       SDL_BUTTON_RIGHT),
+         "right-clicking a project tab should be handled");
+  Expect(WorkspaceShellTestAccess::ProjectTabContextMenuOpen(shell),
+         "right-clicking a project tab should open the project tab context menu");
+  Expect(WorkspaceShellTestAccess::ActiveProjectIndex(shell) == 0,
+         "right-clicking a project tab should retarget the active project before menu actions run");
+}
+
+void TestWorkspaceShellEditorTabDragDefersCommitUntilRelease() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "int alpha() { return 1; }\n");
+  WriteFile(file_b, "int beta() { return 2; }\n");
+  WriteFile(file_c, "int gamma() { return 3; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "first tab opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "second tab opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "third tab opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f,
+                       source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "press starts a drag");
+
+  const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
+  const float drop_x = third_rect.x + third_rect.w * 0.75f;
+  const float drop_y = third_rect.y + third_rect.h * 0.5f;
+  Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK), "motion handled");
+
+  // Deferred commit: the underlying open_tabs vector must NOT mutate mid-drag.
+  const auto& mid_tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(mid_tabs.size() == 3 && mid_tabs[0].path == file_a.lexically_normal() &&
+             mid_tabs[1].path == file_b.lexically_normal() &&
+             mid_tabs[2].path == file_c.lexically_normal(),
+         "tab order must stay unchanged while dragging (deferred commit)");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).dragging,
+         "drag should be active mid-gesture");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).reordered,
+         "a target past the last tab should mark a pending reorder");
+
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT), "release commits the reorder");
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(tabs.size() == 3 && tabs[0].path == file_b.lexically_normal() &&
+             tabs[1].path == file_c.lexically_normal() &&
+             tabs[2].path == file_a.lexically_normal(),
+         "release should move the dragged tab to the end in a single commit");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 2,
+         "dragged tab stays active after the deferred commit");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).kind == microide::workspace::TabDragKind::None,
+         "drag state clears after release");
+}
+
+void TestWorkspaceShellEditorTabDragTargetSlotTracksPointer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f,
+                       source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "press starts a drag");
+
+  const SDL_FRect second_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 1);
+  Expect(SendMouseMotion(shell, second_rect.x + 1.0f, second_rect.y + second_rect.h * 0.5f,
+                         SDL_BUTTON_LMASK),
+         "motion into the second tab's left half is handled");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).target_slot == 1,
+         "target slot should track the insertion gap under the pointer");
+
+  const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
+  Expect(SendMouseMotion(shell, third_rect.x + third_rect.w + 20.0f,
+                         third_rect.y + third_rect.h * 0.5f, SDL_BUTTON_LMASK),
+         "motion past the last tab is handled");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).target_slot == 3,
+         "dropping past the last tab should target the trailing slot");
+
+  Expect(SendMouseUp(shell, third_rect.x + third_rect.w + 20.0f, third_rect.y + 1.0f,
+                     SDL_BUTTON_LEFT),
+         "release handled");
+}
+
+void TestWorkspaceShellOutputTabReorderMovesActiveChannel() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetOutputChannelTabs(shell, {"build", "lint", "run"}, "build");
+  Expect(WorkspaceShellTestAccess::MoveActiveOutputTabTo(shell, 2),
+         "reordering the active output channel tab succeeds");
+  Expect(WorkspaceShellTestAccess::OutputChannelTabOrder(shell) ==
+             std::vector<std::string>{"lint", "run", "build"},
+         "the active output channel should move to the requested slot");
+
+  // Dragging an output tab whose channel is not yet pinned should pin it first.
+  WorkspaceShellTestAccess::SetOutputChannelTabs(shell, {"build", "lint"}, "run");
+  Expect(WorkspaceShellTestAccess::MoveActiveOutputTabTo(shell, 0),
+         "reordering an unpinned active output channel succeeds");
+  Expect(WorkspaceShellTestAccess::OutputChannelTabOrder(shell) ==
+             std::vector<std::string>{"run", "build", "lint"},
+         "an unpinned active output channel should be pinned then moved to the slot");
+}
+
+void TestReorderActiveHelperMovesAndGuards() {
+  using microide::workspace::ReorderActive;
+  std::vector<int> v{10, 20, 30, 40};
+  std::size_t active = 0;
+  Expect(ReorderActive(v, active, 2), "moving 0 -> 2 succeeds");
+  Expect((v == std::vector<int>{20, 30, 10, 40}) && active == 2, "element moves down, active follows");
+
+  active = 3;
+  Expect(ReorderActive(v, active, 1), "moving 3 -> 1 succeeds");
+  Expect((v == std::vector<int>{20, 40, 30, 10}) && active == 1, "element moves up, active follows");
+
+  active = 1;
+  Expect(ReorderActive(v, active, 1), "no-op move returns true");
+  Expect((v == std::vector<int>{20, 40, 30, 10}) && active == 1, "no-op leaves vector and active");
+
+  active = 5;
+  Expect(!ReorderActive(v, active, 0), "out-of-range active is rejected");
+  active = 0;
+  Expect(!ReorderActive(v, active, 9), "out-of-range target is rejected");
+}
+
 void TestWorkspaceShellProjectTabWheelScrollsStrip() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -3156,6 +3309,16 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabsDragReorderToEnd);
   AddTest(tests, "WorkspaceShell/EditorTabsDragReorderBetweenTabs",
           TestWorkspaceShellEditorTabsDragReorderBetweenTabs);
+  AddTest(tests, "WorkspaceShell/ProjectTabRightClickOpensContextMenu",
+          TestWorkspaceShellProjectTabRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/EditorTabDragDefersCommitUntilRelease",
+          TestWorkspaceShellEditorTabDragDefersCommitUntilRelease);
+  AddTest(tests, "WorkspaceShell/EditorTabDragTargetSlotTracksPointer",
+          TestWorkspaceShellEditorTabDragTargetSlotTracksPointer);
+  AddTest(tests, "WorkspaceShell/OutputTabReorderMovesActiveChannel",
+          TestWorkspaceShellOutputTabReorderMovesActiveChannel);
+  AddTest(tests, "WorkspaceShell/ReorderActiveHelperMovesAndGuards",
+          TestReorderActiveHelperMovesAndGuards);
   AddTest(tests, "WorkspaceShell/ProjectTabWheelScrollsStrip",
           TestWorkspaceShellProjectTabWheelScrollsStrip);
   AddTest(tests, "WorkspaceShell/EditorTabWheelScrollsStrip",

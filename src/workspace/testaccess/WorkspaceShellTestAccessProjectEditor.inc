@@ -542,6 +542,20 @@
                                                               std::string_view id) {
     return shell.OutputChannelEntries(id);
   }
+  static void SetOutputChannelTabs(WorkspaceShell& shell,
+                                   std::vector<std::string> open_channel_ids,
+                                   std::string active_channel_id) {
+    auto& panel = shell.context_.current_project_state.panel;
+    panel.content = WorkspaceShell::PanelContentKind::Output;
+    panel.output.open_channel_ids = std::move(open_channel_ids);
+    panel.output.channel_id = std::move(active_channel_id);
+  }
+  static const std::vector<std::string>& OutputChannelTabOrder(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.output.open_channel_ids;
+  }
+  static bool MoveActiveOutputTabTo(WorkspaceShell& shell, std::size_t index) {
+    return shell.MoveActiveOutputTabTo(index);
+  }
   static WorkspaceShell::PanelContentKind PanelContent(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.content;
   }

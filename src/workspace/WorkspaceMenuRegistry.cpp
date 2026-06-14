@@ -197,6 +197,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopyLastTerminalCommand),
   });
+  static const auto kProjectTabContextItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::ProjectClose, "Close Project"),
+  });
   static const auto kMenus = std::to_array<MenuSpec>({
       MenuSpec{MenuId::File, "File", kFileItems},
       MenuSpec{MenuId::Edit, "Edit", kEditItems},
@@ -211,6 +214,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
       MenuSpec{MenuId::TerminalContext, "Terminal", kTerminalContextItems},
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
+      MenuSpec{MenuId::ProjectTabContext, "Project", kProjectTabContextItems},
   });
   return kMenus;
 }

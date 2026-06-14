@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "workspace/TabReorder.h"
+
 namespace microide::workspace {
 
 void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
@@ -88,20 +90,10 @@ void WorkspaceShell::SyncTerminalFocusState() {
 }
 
 bool WorkspaceShell::MoveActiveTerminalTabTo(std::size_t index) {
-  if (context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size() || index >= context_.current_project_state.terminal_tabs.size()) {
+  if (!ReorderActive(context_.current_project_state.terminal_tabs,
+                     context_.current_project_state.active_terminal_tab_index, index)) {
     return false;
   }
-  if (context_.current_project_state.active_terminal_tab_index == index) {
-    return true;
-  }
-
-  std::unique_ptr<TerminalTabState> moved_tab =
-      std::move(context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index]);
-  context_.current_project_state.terminal_tabs.erase(
-      context_.current_project_state.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(context_.current_project_state.active_terminal_tab_index));
-  context_.current_project_state.terminal_tabs.insert(context_.current_project_state.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(index),
-                        std::move(moved_tab));
-  context_.current_project_state.active_terminal_tab_index = index;
   context_.current_project_state.surface.focus = FocusTarget::Panel;
   return true;
 }

@@ -141,12 +141,25 @@ TabStripOverflowControls WorkspaceTabStripChrome::ComputeTabOverflowControls(
                                                               context_->current_project_state);
 }
 
+TabStripOverflowControls WorkspaceTabStripChrome::ComputeBottomPanelTabOverflowControls(
+    const SDL_FRect& panel_header,
+    const std::vector<VisibleStripTab>& visible_tabs) const {
+  return tab_strip_service_->ComputeBottomPanelTabOverflowControls(
+      context_->current_project_state, panel_header, layout_mode_service_->CurrentMode(),
+      visible_tabs, output_channels_->Channels());
+}
+
 bool WorkspaceTabStripChrome::ScrollProjectTabStrip(int direction) {
   return tab_strip_service_->ScrollProjectTabStrip(context_->project_catalog, direction);
 }
 
 bool WorkspaceTabStripChrome::ScrollEditorTabStrip(int direction) {
   return tab_strip_service_->ScrollEditorTabStrip(context_->current_project_state, direction);
+}
+
+bool WorkspaceTabStripChrome::ScrollBottomPanelTabStrip(int direction) {
+  return tab_strip_service_->ScrollBottomPanelTabStrip(context_->current_project_state, direction,
+                                                       output_channels_->Channels());
 }
 
 bool WorkspaceTabStripChrome::ActivateBottomPanelTab(std::size_t model_index) {

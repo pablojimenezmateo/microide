@@ -280,6 +280,30 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                   last_mouse_position_valid_ && Contains(new_tab_rect, last_mouse_x_, last_mouse_y_)
                       ? theme_.text_primary
                       : theme_.text_secondary);
+    const auto panel_overflow = tab_strip_service_.ComputeBottomPanelTabOverflowControls(
+        *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
+        visible_panel_tabs, output_channels_.Channels());
+    DrawTabStripOverflowButton(
+        text_renderer_, renderer, theme_, panel_overflow.left_button, /*point_right=*/false,
+        panel_overflow.hidden_left,
+        last_mouse_position_valid_ &&
+            Contains(panel_overflow.left_button, last_mouse_x_, last_mouse_y_));
+    DrawTabStripOverflowButton(
+        text_renderer_, renderer, theme_, panel_overflow.right_button, /*point_right=*/true,
+        panel_overflow.hidden_right,
+        last_mouse_position_valid_ &&
+            Contains(panel_overflow.right_button, last_mouse_x_, last_mouse_y_));
+    if (panel_vm.tab_drag.active) {
+      DrawTabDragFeedback(text_renderer_, renderer, theme_, panel_header, visible_panel_tabs,
+                          panel_vm.tab_drag.source_index, panel_vm.tab_drag.target_slot,
+                          panel_vm.tab_drag.pointer_x, panel_vm.tab_drag.grab_offset_x,
+                          StripTabStyle{
+                              .text_left_padding = 8.0f,
+                              .close_right_reserve = 40.0f,
+                              .accent_edge = StripAccentEdge::Top,
+                          },
+                          panel_tab_palette);
+    }
   } else {
     // Header label is one of: "Command" (default), "Output" (no channel match), or the channel's
     // label/id. Hold via string_view so the constant case allocates nothing per frame.

@@ -204,6 +204,10 @@ struct PanelState {
   PanelContentKind content = PanelContentKind::None;
   bool command_mode = false;
   float height = 156.0f;
+  // Horizontal scroll offset (first visible tab index) for the bottom-panel tab
+  // strip, shared by terminal and output tabs so an overflowed strip stays
+  // reachable via the chevrons or the header wheel.
+  int tab_scroll_index = 0;
   CommandState command;
   OutputPanelState output;
 };
