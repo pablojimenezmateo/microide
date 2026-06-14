@@ -5,8 +5,9 @@ search, and terminal workflows. Single-window, keyboard-first, runs without GPU 
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
-> **Status: experimental.** No tagged releases. No third-party comparative benchmarks. Build from
-> source or package locally. Expect rough edges. Read [Known Limitations](#known-limitations) and
+> **Status: experimental.** Tagged `v1.1.0` (see [CHANGELOG](CHANGELOG.md)), but no signed binaries
+> and no third-party comparative benchmarks. Build from source or package locally. Expect rough
+> edges. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
 
 ## Start Here
@@ -38,10 +39,13 @@ for what is actually measured, and what is not.
 ## Highlights
 
 ### Editing
-- Multi-project tabs, file tabs, nested shared-buffer splits
+- Multi-project tabs, file tabs, nested shared-buffer splits, deferred-commit tab drag with ghost
 - UTF-8 codepoint boundaries, IME preedit, line-ending detection and preservation
+- Multi-caret editing with position remap, region-stack highlighting, and copy-with-context
+- Soft word wrap with hanging indent; long-method fold resolution
 - Syntax highlighting with per-file checkpointed state (fast random jumps in large files)
-- Undo/redo storing line-range patches rather than full-buffer snapshots
+- Undo/redo storing line-range patches rather than full-buffer snapshots; word-level undo coalescing
+- Durable writes with a save-time conflict guard and non-blocking external-change banner
 - Git blame shadow text — asynchronous, viewport-scoped, caret-local annotations with hover commit details
 - Project-local colorscheme, tab size, indent width, and soft-tabs preferences
 - Session restore across restarts
@@ -59,11 +63,12 @@ for what is actually measured, and what is not.
 - Sidebar git view: working-tree changes, staged files, merge conflicts, outgoing branch files
 - Per-file stage (`s`), discard (`x`), bulk stage-all, confirmed discard-all
 - Conflict files open directly in the three-way merge tab
+- Editable commit message; branch/commit ref picker for compare and review
 - Commit picker overlay for compare target selection
 
 ### Search
-- Async project-search sidebar: literal (default) or regex, case control, hidden-file toggle
-- Capped-result feedback; replace-in-project in literal mode
+- Parallelized project-search sidebar: literal (default) or regex, case control, hidden-file toggle
+- Count-all totals with match highlighting; replace-in-project in literal mode
 - File finder overlay with cached index
 - Standalone `microide_search_bench` for repeatable timing
 
@@ -100,8 +105,9 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Experimental Release Status
 
-- No tagged releases and no signed binaries. The supported paths today are: build from source or
-  create a local Debian package from this repository.
+- Tagged `v1.1.0`, but no signed binaries are published. The supported paths today are: build from
+  source or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for
+  what shipped.
 - No screenshot or demo gallery is committed yet. That is deliberate for now: the UI is still
   changing quickly enough that stale marketing images would be less honest than current workflow
   docs.
@@ -165,7 +171,8 @@ Known workflow boundaries in preview:
 Honest list of what this is not, or what is unfinished. Read this before adopting microide for
 serious work.
 
-- **No tagged releases.** Build from source or package locally; no signed binaries are published.
+- **No signed binaries.** Releases are git-tagged (`v1.1.0`), but build from source or package
+  locally; no signed binaries are published.
 - **No comparative benchmarks.** Internal baselines compare microide against itself; the project
   has not been measured against VSCode, Zed, Helix, or any other editor. Claims like "fastest" or
   "lower CPU than X" are not supported here and are not made.
@@ -306,6 +313,7 @@ Full docs: [`dev-docs/performance/perf-harness.md`](dev-docs/performance/perf-ha
 
 ## Companion Docs
 
+- [`CHANGELOG.md`](CHANGELOG.md) — release history
 - [Project site](https://pablojimenezmateo.github.io/microide/) (GitHub Pages; `docs/` in the repo)
 - [`dev-docs/README.md`](dev-docs/README.md) — developer documentation index
 - `dev-docs/project/active-work.md`

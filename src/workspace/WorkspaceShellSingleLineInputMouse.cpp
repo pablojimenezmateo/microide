@@ -363,6 +363,8 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     case TextInputSurface::CommitBody:
       context_.current_project_state.surface.focus = FocusTarget::Sidebar;
       break;
+    case TextInputSurface::SettingsQuery:
+      // The Settings overlay owns its own focus and mouse handling.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -491,6 +493,8 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     }
     case TextInputSurface::CommitBody:
       // The multi-line body manages its own drag selection.
+    case TextInputSurface::SettingsQuery:
+      // The Settings overlay manages its own drag selection.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

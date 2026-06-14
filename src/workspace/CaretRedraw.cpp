@@ -64,6 +64,9 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
       return true;
+    case TextInputSurface::SettingsQuery:
+      // The Settings overlay renders its own static (non-blinking) caret; it does
+      // not participate in the shared caret-blink machinery.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

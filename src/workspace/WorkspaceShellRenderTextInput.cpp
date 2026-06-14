@@ -415,6 +415,8 @@ void WorkspaceShell::RenderSingleLineTextSelection(
     case TextInputSurface::CommitBody:
       // The body is a multi-line field rendered by the sidebar panel, not the shared
       // single-line caret/selection machinery.
+    case TextInputSurface::SettingsQuery:
+      // The Settings overlay renders its own caret/selection.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -472,6 +474,8 @@ void WorkspaceShell::RenderActiveTextInputCaret(
     case TextInputSurface::CommitBody:
       // The body is a multi-line field rendered by the sidebar panel, not the shared
       // single-line caret/selection machinery.
+    case TextInputSurface::SettingsQuery:
+      // The Settings overlay renders its own caret.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

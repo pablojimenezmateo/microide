@@ -1,6 +1,6 @@
 # MicroIDE Roadmap
 
-Reviewed on 2026-05-10.
+Reviewed on 2026-06-14.
 
 This file is the forward-looking plan for the current branch. `dev-docs/project/active-work.md` remains the
 source of truth for shipped baseline and accepted scope cuts.
@@ -28,8 +28,10 @@ It is:
   capability set where microide is most clearly differentiated today: shared decorated-text-grid
   pipeline across editor / compare / merge, three-way merge with whole-side apply, `[`/`]` hunk
   navigation, outgoing-base-branch compare, working-tree-aware merge result reopen, and a
-  standalone `microide_diff_bench`. Cohere docs, regression coverage, and remaining polish around
-  this wedge before broadening scope again.
+  standalone `microide_diff_bench`. As of the 1.1.0 release, the decorated-row convergence,
+  diff speed pass (`string_view` line interning, dead-tokenization removal), and large-file
+  fallback audit have shipped; what remains is end-to-end validation, regression coverage, and
+  polish around this wedge before broadening scope again.
 - validate the shipped foundations (LSP / tasks / tests / SCM) against real workflows
 - harden the remaining host boundaries, especially around `WorkspaceShell` (file decomposition
   is satisfied; ownership decomposition is partial — see `dev-docs/project/known-tech-debt.md` items 15–16)

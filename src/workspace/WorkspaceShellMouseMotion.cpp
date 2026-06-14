@@ -421,17 +421,24 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
             : std::nullopt;
     const std::optional<SDL_FRect> current_status_segment_rect = HoveredStatusBarSegmentRect(
         layout, static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
-    if (previous_status_segment_rect.has_value() != current_status_segment_rect.has_value() ||
-        (previous_status_segment_rect.has_value() &&
-         !rects_equal(*previous_status_segment_rect, *current_status_segment_rect))) {
+    // value_or yields fully-initialized locals so the rect comparison/redraw paths never
+    // touch optional storage GCC cannot prove engaged (the values matter only when the
+    // matching has_value() flag below is true).
+    const bool previous_status_segment_present = previous_status_segment_rect.has_value();
+    const bool current_status_segment_present = current_status_segment_rect.has_value();
+    const SDL_FRect previous_status_segment = previous_status_segment_rect.value_or(SDL_FRect{});
+    const SDL_FRect current_status_segment = current_status_segment_rect.value_or(SDL_FRect{});
+    if (previous_status_segment_present != current_status_segment_present ||
+        (previous_status_segment_present && current_status_segment_present &&
+         !rects_equal(previous_status_segment, current_status_segment))) {
       const auto request_status_redraw = [this](const SDL_FRect& rect) {
         RequestRedrawRect(MakeRect(rect.x - 6.0f, rect.y - 1.0f, rect.w + 12.0f, rect.h + 2.0f));
       };
-      if (previous_status_segment_rect.has_value()) {
-        request_status_redraw(*previous_status_segment_rect);
+      if (previous_status_segment_present) {
+        request_status_redraw(previous_status_segment);
       }
-      if (current_status_segment_rect.has_value()) {
-        request_status_redraw(*current_status_segment_rect);
+      if (current_status_segment_present) {
+        request_status_redraw(current_status_segment);
       }
       status_segment_hover_changed = true;
     }

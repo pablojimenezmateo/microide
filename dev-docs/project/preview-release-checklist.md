@@ -1,6 +1,6 @@
-# Git Workstation Preview — release checklist
+# Release checklist
 
-Use this checklist when cutting a **0.1 Git Workstation Preview** tag. Items assume Linux is the
+Use this checklist when cutting a microide release tag (e.g. `v1.1.0`). Items assume Linux is the
 primary validated host unless release notes state otherwise.
 
 ## Pre-tag engineering
@@ -14,7 +14,8 @@ primary validated host unless release notes state otherwise.
 
 ## Tag and artifacts
 
-- [ ] Git annotated tag `v0.1.0-preview` (or chosen preview version) on the release commit
+- [ ] `CHANGELOG.md` updated with the release version, date, and grouped changes
+- [ ] Git annotated tag `v1.1.0` (or chosen version) on the release commit
 - [ ] Release notes summarizing scope, limitations, and safe-startup flags
 - [ ] SHA256 checksums for distributed Linux x86_64 binary (if published)
 - [ ] Build-from-source instructions (`dev-docs/platform/linux-build.md` or README build section)
