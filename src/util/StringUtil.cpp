@@ -493,6 +493,28 @@ std::vector<std::string> SplitLines(std::string_view content) {
   return DecodeLines(content).lines;
 }
 
+std::vector<std::string_view> SplitLineViews(std::string_view content) {
+  std::vector<std::string_view> lines;
+  std::size_t line_start = 0;
+  for (std::size_t i = 0; i < content.size(); ++i) {
+    if (content[i] != '\r' && content[i] != '\n') {
+      continue;
+    }
+    lines.push_back(content.substr(line_start, i - line_start));
+    if (content[i] == '\r' && i + 1 < content.size() && content[i + 1] == '\n') {
+      ++i;
+    }
+    line_start = i + 1;
+  }
+  if (line_start <= content.size()) {
+    lines.push_back(content.substr(line_start));
+  }
+  if (lines.empty()) {
+    lines.emplace_back();
+  }
+  return lines;
+}
+
 std::string JoinLines(std::span<const std::string> lines, std::string_view separator) {
   if (lines.empty()) {
     return {};

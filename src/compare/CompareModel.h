@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "compare/CompareReviewTypes.h"
@@ -71,7 +72,9 @@ enum class DiffOpKind {
 
 struct DiffOp {
   DiffOpKind kind = DiffOpKind::Equal;
-  std::string text;
+  // View into the caller-owned source buffers passed to the diff routine. Valid
+  // only while those buffers outlive the returned ops.
+  std::string_view text;
 };
 
 struct LineDiffBuildStats {
@@ -87,11 +90,11 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
 CompareBuildResult BuildCompareModelProfiled(const std::string& left,
                                              const std::string& right,
                                              const CompareBuildOptions& options);
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
-                                     const std::vector<std::string>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
+                                     const std::vector<std::string_view>& right_lines,
                                      LineDiffBuildStats* stats = nullptr);
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string>& left_lines,
-                                     const std::vector<std::string>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
+                                     const std::vector<std::string_view>& right_lines,
                                      const CompareBuildOptions& options,
                                      LineDiffBuildStats* stats = nullptr);
 

@@ -70,6 +70,10 @@ std::string_view LineEndingSeparator(LineEnding line_ending);
 std::string LineEndingLabel(LineEnding line_ending);
 LineEnding ParseLineEndingLabel(std::string_view text);
 std::vector<std::string> SplitLines(std::string_view content);
+// Like SplitLines but returns views into `content` instead of owning copies.
+// The returned views are valid only for the lifetime of `content`; callers that
+// outlive the source buffer must copy. Used by allocation-sensitive diff paths.
+std::vector<std::string_view> SplitLineViews(std::string_view content);
 std::string JoinLines(std::span<const std::string> lines, std::string_view separator);
 std::string SerializeLines(std::span<const std::string> lines, LineEnding line_ending);
 
