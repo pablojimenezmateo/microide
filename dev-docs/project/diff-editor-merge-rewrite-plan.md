@@ -13,7 +13,7 @@ When this plan and the spec disagree, **the spec wins**.
 | Compare / merge product behavior | Shipped (tabs, hunks, merge picks, overview lane, lifecycle rules) |
 | Shared row paint primitive | Partial — `editor::DecoratedTextGridRenderer` is shared; compare/merge still have dedicated render TUs |
 | Unified decoration *build* pipeline | **Not done** — editor, compare, and merge still assemble row decorations through parallel paths |
-| File-size diff degradation audit | **Open** — verify no silent fallbacks (see ROADMAP deferred follow-up #3) |
+| File-size diff degradation audit | **Done (2026-06-14)** — no size-based control degradation; see findings below |
 | Published diff/merge latency budgets | Partial — `microide_diff_bench` exists; numeric gates live in `openspec/specs/performance-budgets/spec.md` |
 
 ## Goal
@@ -49,7 +49,7 @@ One decorated text-grid pipeline across **editor**, **compare**, and **merge**:
 
 1. **Decoration build fork** — compare/merge still build row-decoration inputs separately from the editor path instead of one shared builder fed by surface-specific hunk metadata.
 2. **Render TU duplication** — `WorkspaceShellCompareRender` and `WorkspaceShellMergeRender` duplicate editor-adjacent layout math that should shrink once decoration build is unified.
-3. **Large-file correctness audit** — need a focused pass (grep + tests) for file-size thresholds that change diff algorithm, hunk visibility, or merge control availability.
+3. **Large-file correctness audit** — *Closed 2026-06-14.* See Large-file audit findings below.
 4. **Measurement** — warm/cold compare-open and merge-apply expectations should be recorded in `dev-docs/performance/performance-findings.md` once reference numbers exist.
 
 ## Phased Work
@@ -87,6 +87,29 @@ One decorated text-grid pipeline across **editor**, **compare**, and **merge**:
 - Update `dev-docs/performance/performance-findings.md` with shipped wins.
 
 **Exit:** Spec scenarios in `diff-merge-editor` pass without known semantic exceptions; bench evidence in change record.
+
+## Large-file audit findings (2026-06-14)
+
+Closes Gap #3. Conclusion: **no size threshold disables diff controls, hunk
+visibility, or merge resolution.** The only size-driven behavior is diff
+*algorithm* selection, a CPU-for-memory tradeoff the spec explicitly permits.
+
+- Three guards in `src/compare/CompareModel.cpp` switch algorithm only:
+  `kMaxLineLcsMatrixCells` (250k) → patience-anchored recursive fallback
+  (`AppendAnchoredFallbackOps`); `kMaxHunkAlignmentMatrixCells` (65k) →
+  positional 1:1 pairing in `AlignHunkLines`; `kMaxIntralineLcsMatrixCells`
+  (65k) → token→codepoint fallback, then mark-all-changed. Every branch emits
+  all lines by construction — none truncates or drops hunks.
+- `text_hunks_available` (the only flag that disables merge text resolution) is
+  derived from conflict *kind* (binary/submodule/both-deleted) in
+  `MergeConflictKind.cpp`, never from size.
+- All size-driven `std::max(...size())` in the merge/render TUs feed
+  visual-column / row-height geometry, not control availability.
+- Regression coverage added in `tests/CompareModelTests.cpp`:
+  `Compare/ModelPreservesBothSidesRoundTrip` (both sides reproduce line-for-line
+  across exact, anchored, and hunk-alignment fallbacks) and
+  `Compare/IntralineFallbackCoversChangedRegion` (oversized line still yields
+  in-bounds, codepoint-aligned changed spans).
 
 ## Out of Scope (unless promoted)
 
