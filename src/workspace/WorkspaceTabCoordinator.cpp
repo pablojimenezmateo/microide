@@ -13,6 +13,7 @@
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
+#include "workspace/TabReorder.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -868,20 +869,9 @@ void TabCoordinator::Close(std::size_t index) {
   }
 }
 bool TabCoordinator::MoveActiveTo(std::size_t index) {
-  if (state_.active_tab_index >= state_.open_tabs.size() || index >= state_.open_tabs.size()) {
+  if (!ReorderActive(state_.open_tabs, state_.active_tab_index, index)) {
     return false;
   }
-  if (state_.active_tab_index == index) {
-    return true;
-  }
-
-  TabEntry moved_tab = std::move(state_.open_tabs[state_.active_tab_index]);
-  state_.open_tabs.erase(state_.open_tabs.begin() +
-                         static_cast<std::ptrdiff_t>(state_.active_tab_index));
-  state_.open_tabs.insert(state_.open_tabs.begin() + static_cast<std::ptrdiff_t>(index),
-                          std::move(moved_tab));
-
-  state_.active_tab_index = index;
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.request_tab_strip_redraw();

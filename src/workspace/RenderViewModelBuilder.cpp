@@ -631,6 +631,7 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
 }
 
 BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() const {
+  const TabDragState& drag = context_.interaction_state.tab_drag;
   return BottomPanelSurfaceViewModel{
       .command_mode = context_.current_project_state.panel.command_mode,
       .content = context_.current_project_state.panel.content,
@@ -640,6 +641,14 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       .focus = context_.current_project_state.surface.focus,
       .command_state = &context_.current_project_state.panel.command,
       .project_state = &context_.current_project_state,
+      .tab_drag =
+          BottomPanelTabDragViewModel{
+              .active = drag.dragging && drag.kind == TabDragKind::Terminal,
+              .source_index = drag.source_index,
+              .target_slot = drag.target_slot,
+              .pointer_x = drag.pointer_x,
+              .grab_offset_x = drag.grab_offset_x,
+          },
   };
 }
 

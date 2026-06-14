@@ -5,9 +5,12 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cmath>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace microide::workspace::detail {
 
@@ -604,6 +607,111 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
       active ? palette.active_text : palette.inactive_text, background,
       text_renderer.TruncateToWidth(
           label, std::max(8.0f, rect.w - style.close_right_reserve - (text_left_padding - style.text_left_padding))));
+}
+
+// Paints a chevron-glyph button with an optional hidden-tab count badge,
+// matching the look of the workspace tab strip chrome. Used for the
+// click-to-scroll overflow indicators at the strip ends (project, editor, and
+// bottom-panel tab strips).
+inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
+                                       SDL_Renderer* renderer,
+                                       const render::Theme& theme,
+                                       const SDL_FRect& rect,
+                                       bool point_right,
+                                       std::size_t hidden_count,
+                                       bool hovered) {
+  if (rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  const SDL_Color background = hovered ? theme.row_highlight : theme.surface_raised;
+  const SDL_Color foreground = hovered ? theme.text_primary : theme.text_secondary;
+  FillRect(renderer, rect, background);
+  OutlineRect(renderer, rect, theme.border);
+
+  const float cx = rect.x + 9.0f;
+  const float cy = rect.y + rect.h * 0.5f;
+  const float arm = std::max(3.0f, rect.h * 0.22f);
+  SDL_SetRenderDrawColor(renderer, foreground.r, foreground.g, foreground.b, foreground.a);
+  if (point_right) {
+    SDL_RenderLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
+    SDL_RenderLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);
+  } else {
+    SDL_RenderLine(renderer, cx + arm * 0.5f, cy - arm, cx - arm * 0.5f, cy);
+    SDL_RenderLine(renderer, cx - arm * 0.5f, cy, cx + arm * 0.5f, cy + arm);
+  }
+
+  if (hidden_count > 0) {
+    std::array<char, 24> count_buffer{};
+    const auto conv = std::to_chars(count_buffer.data(),
+                                    count_buffer.data() + count_buffer.size(), hidden_count);
+    const std::string_view count_text(count_buffer.data(),
+                                      static_cast<std::size_t>(conv.ptr - count_buffer.data()));
+    const float count_x = rect.x + 15.0f;
+    const float count_right_padding = 2.0f;
+    const SDL_FRect count_rect{count_x, rect.y,
+                               std::max(0.0f, rect.x + rect.w - count_x - count_right_padding),
+                               rect.h};
+    DrawVCenteredTextOn(text_renderer, renderer, count_rect, 0.0f, foreground, background,
+                        count_text);
+  }
+}
+
+// Renders the insertion caret + floating ghost for an in-flight tab drag,
+// shared by every tab strip. `tabs` are the visible tabs (model-space); the
+// caret marks the gap at `target_slot` and the ghost is the tab whose index ==
+// `source_index`, offset to track under the pointer. No allocations: the ghost
+// reuses the visible tab's already-built title string_view.
+inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
+                                SDL_Renderer* renderer,
+                                const render::Theme& theme,
+                                const SDL_FRect& strip,
+                                const std::vector<VisibleStripTab>& tabs,
+                                std::size_t source_index,
+                                std::size_t target_slot,
+                                float pointer_x,
+                                float grab_offset_x,
+                                const StripTabStyle& style,
+                                const StripTabPalette& palette) {
+  if (tabs.empty()) {
+    return;
+  }
+
+  // Insertion caret: the left edge of the tab at `target_slot`, or the trailing
+  // edge of the strip when dropping past the last visible tab.
+  float caret_x = tabs.back().rect.x + tabs.back().rect.w;
+  if (target_slot <= tabs.front().index) {
+    caret_x = tabs.front().rect.x;
+  } else {
+    for (const VisibleStripTab& tab : tabs) {
+      if (tab.index >= target_slot) {
+        caret_x = tab.rect.x;
+        break;
+      }
+    }
+  }
+  caret_x = std::clamp(caret_x, strip.x, strip.x + strip.w);
+  FillRect(renderer, MakeRect(caret_x - 1.0f, strip.y + 2.0f, 2.0f, std::max(2.0f, strip.h - 4.0f)),
+           theme.accent);
+
+  // Floating ghost of the dragged tab (skipped when it scrolled off-screen).
+  const VisibleStripTab* ghost = nullptr;
+  for (const VisibleStripTab& tab : tabs) {
+    if (tab.index == source_index) {
+      ghost = &tab;
+      break;
+    }
+  }
+  if (ghost == nullptr) {
+    return;
+  }
+  const float ghost_x =
+      std::clamp(pointer_x - grab_offset_x, strip.x, strip.x + strip.w - ghost->rect.w);
+  const SDL_FRect ghost_rect = MakeRect(ghost_x, ghost->rect.y, ghost->rect.w, ghost->rect.h);
+  FillRect(renderer, MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h),
+           render::BlendColors(theme.surface_background, SDL_Color{0, 0, 0, 255}, 0.5f));
+  DrawStripTab(text_renderer, renderer, theme, ghost_rect, ghost->display_title, ghost->badge_text,
+               ghost->badge_color, ghost->show_badge, /*active=*/true, style, palette);
+  OutlineRect(renderer, ghost_rect, theme.accent);
 }
 
 inline void DrawMenuRow(const render::TextRenderer& text_renderer,

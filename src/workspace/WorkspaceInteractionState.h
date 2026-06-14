@@ -41,7 +41,18 @@ struct TabDragState {
   float press_x = 0.0f;
   float press_y = 0.0f;
   bool dragging = false;
+  // True once the live pointer would commit to a slot other than the source.
+  // Decides whether mouse-up persists the reorder.
   bool reordered = false;
+  // Deferred-commit drag state. The dragged tab is NOT moved in the model while
+  // dragging; instead we track the pointer and a computed target slot, render a
+  // floating ghost + insertion caret, and commit a single reorder on release.
+  std::size_t source_index = 0;     // active index captured at press
+  float pointer_x = 0.0f;           // live cursor x (drives ghost + slot)
+  float pointer_y = 0.0f;
+  std::size_t target_slot = 0;      // StripInsertionSlot() for pointer_x
+  float ghost_width = 0.0f;         // dragged tab rect width
+  float grab_offset_x = 0.0f;       // press_x - dragged_tab.rect.x
 };
 
 struct InteractionState {

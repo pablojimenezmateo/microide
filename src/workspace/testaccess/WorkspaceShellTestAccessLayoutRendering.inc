@@ -379,6 +379,11 @@
     }
     return labels;
   }
+  static SDL_FRect BottomPanelHeaderRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                    kWorkspaceBottomPanelHeaderHeight);
+  }
   static std::optional<SDL_FRect> BottomPanelTabRectByTitle(WorkspaceShell& shell,
                                                              std::string_view title) {
     const WorkspaceLayout layout = CurrentLayout(shell);

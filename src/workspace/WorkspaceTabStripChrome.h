@@ -68,8 +68,13 @@ class WorkspaceTabStripChrome {
       const SDL_FRect& tab_strip,
       const std::vector<VisibleStripTab>& visible_tabs) const;
 
+  TabStripOverflowControls ComputeBottomPanelTabOverflowControls(
+      const SDL_FRect& panel_header,
+      const std::vector<VisibleStripTab>& visible_tabs) const;
+
   bool ScrollProjectTabStrip(int direction);
   bool ScrollEditorTabStrip(int direction);
+  bool ScrollBottomPanelTabStrip(int direction);
 
   bool ActivateBottomPanelTab(std::size_t model_index);
   bool CloseBottomPanelTab(std::size_t model_index);

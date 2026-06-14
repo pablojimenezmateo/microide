@@ -86,6 +86,16 @@ struct SidebarSurfaceViewModel {
   ProjectWorkspaceState* project_state = nullptr;
 };
 
+// Snapshot of an in-flight bottom-panel tab drag so the render TU can draw the
+// ghost + insertion caret without reading interaction state directly.
+struct BottomPanelTabDragViewModel {
+  bool active = false;
+  std::size_t source_index = 0;
+  std::size_t target_slot = 0;
+  float pointer_x = 0.0f;
+  float grab_offset_x = 0.0f;
+};
+
 struct BottomPanelSurfaceViewModel {
   bool command_mode = false;
   PanelContentKind content = PanelContentKind::None;
@@ -98,6 +108,7 @@ struct BottomPanelSurfaceViewModel {
   // `TabStripService` queries (which take ProjectWorkspaceState by const ref)
   // without reaching into `context_.current_project_state` directly.
   const ProjectWorkspaceState* project_state = nullptr;
+  BottomPanelTabDragViewModel tab_drag;
 };
 
 struct HoverPopupViewModel {

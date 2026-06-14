@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 
+#include "workspace/TabReorder.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/ProjectCatalogService.h"
@@ -162,18 +163,10 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
 }
 
 bool WorkspaceShell::MoveActiveProjectTo(std::size_t index) {
-  if (context_.project_catalog.active_index >= context_.project_catalog.entries.size() || index >= context_.project_catalog.entries.size()) {
+  if (!ReorderActive(context_.project_catalog.entries, context_.project_catalog.active_index,
+                     index)) {
     return false;
   }
-  if (context_.project_catalog.active_index == index) {
-    return true;
-  }
-
-  std::unique_ptr<ProjectWorkspaceState> moved_project =
-      std::move(context_.project_catalog.entries[context_.project_catalog.active_index]);
-  context_.project_catalog.entries.erase(context_.project_catalog.entries.begin() + static_cast<std::ptrdiff_t>(context_.project_catalog.active_index));
-  context_.project_catalog.entries.insert(context_.project_catalog.entries.begin() + static_cast<std::ptrdiff_t>(index), std::move(moved_project));
-  context_.project_catalog.active_index = index;
   tab_strip_chrome_.EnsureActiveProjectVisible();
   return true;
 }

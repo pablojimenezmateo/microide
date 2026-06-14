@@ -23,18 +23,15 @@ class TabMouseCoordinator {
     std::function<void(std::string)> open_terminal;
     std::function<std::vector<WorkspaceShell::VisibleStripTab>(const SDL_FRect&)>
         compute_visible_bottom_panel_tabs;
-    std::function<std::vector<WorkspaceShell::VisibleStripTab>(const SDL_FRect&)>
-        compute_visible_terminal_tabs;
     std::function<bool(std::size_t)> activate_bottom_panel_tab;
     std::function<bool(std::size_t)> close_bottom_panel_tab;
     std::function<bool(std::size_t)> bottom_panel_tab_is_terminal;
-    std::function<TerminalTabState*()> active_terminal_tab;
-    std::function<void(std::size_t)> close_terminal_tab;
     std::function<void()> clear_tab_drag;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<bool(std::size_t)> move_active_project_to;
     std::function<bool(std::size_t)> move_active_tab_to;
     std::function<bool(std::size_t)> move_active_terminal_tab_to;
+    std::function<bool(std::size_t)> move_active_output_tab_to;
     std::function<void()> save_workspace_session;
     std::function<void()> save_session_state;
     std::function<WorkspaceShell::TabStripOverflowControls(
@@ -43,8 +40,12 @@ class TabMouseCoordinator {
     std::function<WorkspaceShell::TabStripOverflowControls(
         const SDL_FRect&, const std::vector<WorkspaceShell::VisibleStripTab>&)>
         compute_tab_overflow_controls;
+    std::function<WorkspaceShell::TabStripOverflowControls(
+        const SDL_FRect&, const std::vector<WorkspaceShell::VisibleStripTab>&)>
+        compute_bottom_panel_tab_overflow_controls;
     std::function<bool(int)> scroll_project_tab_strip;
     std::function<bool(int)> scroll_editor_tab_strip;
+    std::function<bool(int)> scroll_bottom_panel_tab_strip;
   };
 
   TabMouseCoordinator(ProjectCatalogState& project_catalog,
@@ -60,6 +61,20 @@ class TabMouseCoordinator {
                    int vertical_ticks);
 
  private:
+  // Resolved geometry/state for the strip that owns the in-flight drag. Shared
+  // by motion (compute target slot) and commit (single reorder on release).
+  struct DragStrip {
+    SDL_FRect strip{};
+    std::vector<WorkspaceShell::VisibleStripTab> tabs;  // model-space, as rendered
+    std::size_t count = 0;          // reorderable items in the dragged tab's kind
+    std::size_t active = 0;         // active index within that kind list
+    std::size_t model_offset = 0;   // model index where this kind's range begins
+    std::function<bool(std::size_t)> move;  // commit a reorder within the kind list
+    bool valid = false;
+  };
+  DragStrip ResolveDragStrip(const WorkspaceLayout& layout, TabDragKind kind);
+  DragStrip ResolveBottomPanelDragStrip(const WorkspaceLayout& layout);
+  void CommitDrag();
   void PersistReorderedTabs(TabDragKind kind);
 
   ProjectCatalogState& project_catalog_;

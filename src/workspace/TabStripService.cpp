@@ -478,11 +478,22 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
   const float tab_y = panel_header.y + 2.0f;
   const float tab_height = std::max(18.0f, panel_header.h - 2.0f);
   const float gap = 1.0f;
-  const float start_x = panel_header.x;
   const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(layout_mode, panel_header);
-  const float max_tab_x = std::max(start_x, new_tab_rect.x - 8.0f);
-  return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, 0, tab_y, tab_height,
-                               model_indices, active_model_index, display_titles, tooltip_labels);
+  const float strip_right = std::max(panel_header.x, new_tab_rect.x - 8.0f);
+  const std::size_t scroll_index = static_cast<std::size_t>(
+      std::clamp(state.panel.tab_scroll_index, 0, std::max(0, static_cast<int>(tabs.size()) - 1)));
+  const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
+    const float max_tab_x = std::max(start_x, strip_right - right_overflow_reserve);
+    return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, scroll_index, tab_y, tab_height,
+                                 model_indices, active_model_index, display_titles, tooltip_labels);
+  };
+  auto visible = build_tabs(panel_header.x + kTabStripOverflowReserve, kTabStripOverflowReserve);
+  const bool all_tabs_visible = !visible.empty() && visible.front().index == 0 &&
+                                visible.back().index + 1 == tabs.size();
+  if (all_tabs_visible) {
+    visible = build_tabs(panel_header.x, 0.0f);
+  }
+  return visible;
 }
 
 std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
@@ -535,6 +546,29 @@ bool TabStripService::BottomPanelTabIsTerminal(
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
   const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs(state, channels);
   return model_index < tabs.size() && tabs[model_index].kind == BottomPanelTabKind::Terminal;
+}
+
+TabStripOverflowControls TabStripService::ComputeBottomPanelTabOverflowControls(
+    const ProjectWorkspaceState& state,
+    const SDL_FRect& panel_header,
+    LayoutMode layout_mode,
+    const std::vector<VisibleStripTab>& visible_tabs,
+    std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
+  const std::size_t total = BuildBottomPanelTabs(state, channels).size();
+  // Constrain the chevrons to the band left of the new-tab button so the right
+  // chevron never overlaps it.
+  const SDL_FRect new_tab_rect = BottomPanelTerminalNewTabRect(layout_mode, panel_header);
+  const SDL_FRect band = MakeRect(panel_header.x, panel_header.y,
+                                  std::max(0.0f, new_tab_rect.x - panel_header.x), panel_header.h);
+  return BuildOverflowControls(band, visible_tabs, total);
+}
+
+bool TabStripService::ScrollBottomPanelTabStrip(
+    ProjectWorkspaceState& state,
+    int direction,
+    std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
+  const std::size_t total = BuildBottomPanelTabs(state, channels).size();
+  return ScrollTabIndex(state.panel.tab_scroll_index, direction, total);
 }
 
 SDL_FRect TabStripService::BottomPanelTerminalNewTabRect(LayoutMode mode,

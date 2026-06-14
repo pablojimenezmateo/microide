@@ -1,6 +1,9 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <string>
+
+#include "workspace/TabReorder.h"
 
 namespace microide::workspace {
 
@@ -20,6 +23,22 @@ void WorkspaceShell::EnsureOutputChannelTabOpen(std::string_view channel_id) {
   if (std::find(tabs.begin(), tabs.end(), channel_id) == tabs.end()) {
     tabs.emplace_back(channel_id);
   }
+}
+
+bool WorkspaceShell::MoveActiveOutputTabTo(std::size_t index) {
+  auto& tabs = context_.current_project_state.panel.output.open_channel_ids;
+  const std::string& active_id = context_.current_project_state.panel.output.channel_id;
+  if (active_id.empty()) {
+    return false;
+  }
+  // Dragging an output tab pins it: ensure the active channel is in the open
+  // list so reordering has a stable target, then move it within the list.
+  if (std::find(tabs.begin(), tabs.end(), active_id) == tabs.end()) {
+    tabs.push_back(active_id);
+  }
+  const auto it = std::find(tabs.begin(), tabs.end(), active_id);
+  std::size_t active_index = static_cast<std::size_t>(it - tabs.begin());
+  return ReorderActive(tabs, active_index, index);
 }
 
 void WorkspaceShell::CloseOutputChannelTab(std::string_view channel_id) {

@@ -13,56 +13,6 @@ namespace microide::workspace {
 
 using namespace detail;
 
-namespace {
-
-// Paints a chevron-glyph button with an optional hidden-tab count badge,
-// matching the look of the workspace tab strip chrome. Used for the
-// click-to-scroll overflow indicators at the strip ends.
-void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer,
-                                SDL_Renderer* renderer,
-                                const render::Theme& theme,
-                                const SDL_FRect& rect,
-                                bool point_right,
-                                std::size_t hidden_count,
-                                bool hovered) {
-  if (rect.w <= 0.0f || rect.h <= 0.0f) {
-    return;
-  }
-  const SDL_Color background = hovered ? theme.row_highlight : theme.surface_raised;
-  const SDL_Color foreground = hovered ? theme.text_primary : theme.text_secondary;
-  render::FillRect(renderer, rect, background);
-  render::OutlineRect(renderer, rect, theme.border);
-
-  const float cx = rect.x + 9.0f;
-  const float cy = rect.y + rect.h * 0.5f;
-  const float arm = std::max(3.0f, rect.h * 0.22f);
-  SDL_SetRenderDrawColor(renderer, foreground.r, foreground.g, foreground.b, foreground.a);
-  if (point_right) {
-    SDL_RenderLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
-    SDL_RenderLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);
-  } else {
-    SDL_RenderLine(renderer, cx + arm * 0.5f, cy - arm, cx - arm * 0.5f, cy);
-    SDL_RenderLine(renderer, cx - arm * 0.5f, cy, cx + arm * 0.5f, cy + arm);
-  }
-
-  if (hidden_count > 0) {
-    std::array<char, 24> count_buffer{};
-    const auto conv = std::to_chars(count_buffer.data(),
-                                    count_buffer.data() + count_buffer.size(), hidden_count);
-    const std::string_view count_text(count_buffer.data(),
-                                      static_cast<std::size_t>(conv.ptr - count_buffer.data()));
-    const float count_x = rect.x + 15.0f;
-    const float count_right_padding = 2.0f;
-    const SDL_FRect count_rect{
-        count_x, rect.y,
-        std::max(0.0f, rect.x + rect.w - count_x - count_right_padding), rect.h};
-    DrawVCenteredTextOn(text_renderer, renderer, count_rect, 0.0f, foreground, background,
-                        count_text);
-  }
-}
-
-}  // namespace
-
 std::string WorkspaceShell::HoveredProjectTabTooltipLabel(const SDL_FRect& project_tab_strip) const {
   if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse() ||
       !Contains(project_tab_strip, last_mouse_x_, last_mouse_y_)) {
@@ -194,6 +144,20 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                    Contains(project_overflow.right_button, last_mouse_x_,
                                             last_mouse_y_));
   }
+  if (const TabDragState& drag = context_.interaction_state.tab_drag;
+      drag.dragging && drag.kind == TabDragKind::Project) {
+    DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.project_tab_strip,
+                        visible_project_tabs, drag.source_index, drag.target_slot, drag.pointer_x,
+                        drag.grab_offset_x,
+                        StripTabStyle{
+                            .text_left_padding = 10.0f,
+                            .badge_size = 16.0f,
+                            .badge_gap = 8.0f,
+                            .close_right_reserve = 46.0f,
+                            .accent_edge = StripAccentEdge::Top,
+                        },
+                        chrome_tab_palette);
+  }
 
   std::vector<VisibleStripTab> visible_tabs;
   if (HasActiveProjectCatalogEntry()) {
@@ -235,6 +199,17 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                last_mouse_position_valid_ &&
                                    Contains(tab_overflow.right_button, last_mouse_x_,
                                             last_mouse_y_));
+    if (const TabDragState& drag = context_.interaction_state.tab_drag;
+        drag.dragging && drag.kind == TabDragKind::Editor) {
+      DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.tab_strip, visible_tabs,
+                          drag.source_index, drag.target_slot, drag.pointer_x, drag.grab_offset_x,
+                          StripTabStyle{
+                              .text_left_padding = 10.0f,
+                              .close_right_reserve = 46.0f,
+                              .accent_edge = StripAccentEdge::Top,
+                          },
+                          chrome_tab_palette);
+    }
   }
 
   const auto status_items = ComputeVisibleStatusItems(layout.breadcrumb);

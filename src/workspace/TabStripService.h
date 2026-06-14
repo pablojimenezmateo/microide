@@ -116,6 +116,15 @@ class TabStripService {
   bool BottomPanelTabIsTerminal(const ProjectWorkspaceState& state,
                                 std::size_t model_index,
                                 std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
+  TabStripOverflowControls ComputeBottomPanelTabOverflowControls(
+      const ProjectWorkspaceState& state,
+      const SDL_FRect& panel_header,
+      LayoutMode layout_mode,
+      const std::vector<VisibleStripTab>& visible_tabs,
+      std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
+  bool ScrollBottomPanelTabStrip(ProjectWorkspaceState& state,
+                                 int direction,
+                                 std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
   SDL_FRect BottomPanelTerminalNewTabRect(LayoutMode mode, const SDL_FRect& panel_header) const;
 
  private:
