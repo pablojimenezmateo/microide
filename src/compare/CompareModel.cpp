@@ -114,6 +114,27 @@ TokenizedLine TokenizeLine(std::string_view text) {
   return tokenized;
 }
 
+// Sum of significant (non-whitespace) token bytes for `text`, matching
+// TokenizedLine::significant_token_bytes without allocating the token vectors.
+// Used by the line-match weight where only this scalar is needed.
+std::size_t SignificantTokenBytes(std::string_view text) {
+  std::size_t total = 0;
+  for (std::size_t offset = 0; offset < text.size();) {
+    const LineTokenKind kind = ClassifyCodepoint(text, offset);
+    const std::size_t start = offset;
+    offset += util::Utf8SequenceLength(text, offset);
+    if (kind != LineTokenKind::Symbol) {
+      while (offset < text.size() && ClassifyCodepoint(text, offset) == kind) {
+        offset += util::Utf8SequenceLength(text, offset);
+      }
+    }
+    if (kind != LineTokenKind::Whitespace) {
+      total += offset - start;
+    }
+  }
+  return total;
+}
+
 bool TokenEquals(std::string_view left,
                  const LineToken& left_token,
                  std::string_view right,
@@ -162,10 +183,11 @@ std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const Tokeniz
   return at(0, 0);
 }
 
-std::size_t LineMatchWeight(const TokenizedLine& line, std::size_t occurrences) {
+std::size_t LineMatchWeight(std::string_view text,
+                            std::size_t significant_token_bytes,
+                            std::size_t occurrences) {
   const std::size_t informative_bytes =
-      line.significant_token_bytes > 0 ? line.significant_token_bytes
-                                       : (line.text.empty() ? 1 : std::size_t{2});
+      significant_token_bytes > 0 ? significant_token_bytes : (text.empty() ? 1 : std::size_t{2});
   const std::size_t rarity = std::max<std::size_t>(1, occurrences);
   return std::max<std::size_t>(1, (informative_bytes + 8) / rarity);
 }
@@ -699,17 +721,6 @@ std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_
     return ops;
   }
 
-  std::vector<TokenizedLine> left_tokenized;
-  left_tokenized.reserve(left_count);
-  for (const auto& line : left_lines) {
-    left_tokenized.push_back(TokenizeLine(line));
-  }
-  std::vector<TokenizedLine> right_tokenized;
-  right_tokenized.reserve(right_count);
-  for (const auto& line : right_lines) {
-    right_tokenized.push_back(TokenizeLine(line));
-  }
-
   std::unordered_map<std::string_view, std::size_t> line_occurrences;
   line_occurrences.reserve(left_count + right_count);
   for (const auto& line : left_lines) {
@@ -721,7 +732,8 @@ std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_
 
   std::vector<std::size_t> left_match_weight(left_count, 1);
   for (std::size_t i = 0; i < left_count; ++i) {
-    left_match_weight[i] = LineMatchWeight(left_tokenized[i], line_occurrences[left_lines[i]]);
+    left_match_weight[i] = LineMatchWeight(left_lines[i], SignificantTokenBytes(left_lines[i]),
+                                           line_occurrences[left_lines[i]]);
   }
 
   std::vector<std::size_t> dp((left_count + 1) * (right_count + 1), 0);
