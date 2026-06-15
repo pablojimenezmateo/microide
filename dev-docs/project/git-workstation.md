@@ -63,4 +63,4 @@ See [SECURITY.md](../SECURITY.md) and [plugin-trust-model.md](plugin-trust-model
 ## Validation
 
 Before tagging a release, maintainers run the checklist in
-[preview-release-checklist.md](preview-release-checklist.md) and the tested-workflows matrix there.
+[release-checklist.md](release-checklist.md) and the tested-workflows matrix there.

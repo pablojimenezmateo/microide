@@ -3,8 +3,8 @@
 All notable changes to microide are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project aims to follow semantic versioning. microide remains **experimental**
-(see [README](README.md)); versions track meaningful shipped work rather than stability promises.
+and this project aims to follow semantic versioning. microide is a stable, actively developed
+project (see [README](README.md)); versions track meaningful shipped work.
 
 ## [1.1.1] - 2026-06-15
 

@@ -1,23 +1,23 @@
 ## Purpose
 
-Define the narrow Git Workstation Preview release scope, safe startup flags, and explicit
+Define the narrow Git Workstation release scope, safe startup flags, and explicit
 unsupported-workflow boundaries.
 
 ## Requirements
 
-### Requirement: Preview Scope Is Narrow And Explicit
-The Git Workstation Preview SHALL document support for opening a local Git repository, inspecting working-tree state, viewing staged and unstaged diffs, staging and unstaging files and hunks, resolving common text conflicts, committing staged changes, and reviewing a branch against a base. Unsupported workflows SHALL be listed explicitly.
+### Requirement: Release Scope Is Narrow And Explicit
+The Git Workstation SHALL document support for opening a local Git repository, inspecting working-tree state, viewing staged and unstaged diffs, staging and unstaging files and hunks, resolving common text conflicts, committing staged changes, and reviewing a branch against a base. Unsupported workflows SHALL be listed explicitly.
 
-#### Scenario: User reads preview scope
-- **WHEN** a user opens preview release documentation
+#### Scenario: User reads release scope
+- **WHEN** a user opens release documentation
 - **THEN** the documentation SHALL list supported and unsupported workflows without claiming MicroIDE is a complete IDE
 
 #### Scenario: Unsupported hosted review
-- **WHEN** preview documentation mentions branch review
-- **THEN** it SHALL state that hosted PR review, account auth, and network review sync are not part of the preview
+- **WHEN** release documentation mentions branch review
+- **THEN** it SHALL state that hosted PR review, account auth, and network review sync are not part of the workstation scope
 
 #### Scenario: Conflict-class support boundaries are explicit
-- **WHEN** preview documentation describes merge support
+- **WHEN** release documentation describes merge support
 - **THEN** it SHALL explicitly identify fully supported common text conflicts versus recognized summary-only conflict classes such as binary, submodule, or complex rename/file-directory conflicts
 
 ### Requirement: Plugins Can Be Disabled At Startup
@@ -45,23 +45,23 @@ When plugins are disabled by startup flag or safe mode, MicroIDE SHALL surface a
 - **WHEN** MicroIDE is running in safe mode
 - **THEN** the UI SHALL visibly indicate that safe mode or plugins-disabled mode is active
 
-### Requirement: Preview Release Artifacts Are Reviewable
-A Git Workstation Preview release SHALL include a tagged version, release notes, checksums for distributed binaries, screenshot gallery or equivalent visual walkthrough, short demo or scripted walkthrough, known limitations, tested workflows list, crash/data-loss reporting instructions, and build-from-source instructions.
+### Requirement: Release Artifacts Are Reviewable
+A Git Workstation release SHALL include a tagged version, release notes, checksums for distributed binaries, screenshot gallery or equivalent visual walkthrough, short demo or scripted walkthrough, known limitations, tested workflows list, crash/data-loss reporting instructions, and build-from-source instructions.
 
-#### Scenario: Preview tag is published
-- **WHEN** the preview release is cut
+#### Scenario: Release tag is published
+- **WHEN** the release is cut
 - **THEN** the tag, checksums, release notes, tested workflows, and known limitations SHALL be available from the repository
 
-### Requirement: Preview Claims Avoid Comparative Marketing
-Preview documentation SHALL describe MicroIDE as native, low-footprint, responsive, and methodology-measured. It SHALL NOT claim to be fastest or compare CPU/memory use against other editors unless a future approved methodology adds comparative benchmarks.
+### Requirement: Release Claims Avoid Comparative Marketing
+Release documentation SHALL describe MicroIDE as native, low-footprint, responsive, and methodology-measured. It SHALL NOT claim to be fastest or compare CPU/memory use against other editors unless a future approved methodology adds comparative benchmarks.
 
 #### Scenario: Release notes describe performance
 - **WHEN** release notes mention performance
 - **THEN** they SHALL reference internal regression baselines or supported workflows rather than claiming superiority over another editor
 
-### Requirement: Branch Review Persistence Is Optional For Preview
-Preview scope SHALL require branch review against a base, but persistent reviewed-file or reviewed-hunk state MAY ship after preview if core Git/diff/merge/commit workflows and safety requirements are already met.
+### Requirement: Branch Review Persistence Is Optional
+Release scope SHALL require branch review against a base, but persistent reviewed-file or reviewed-hunk state MAY ship later if core Git/diff/merge/commit workflows and safety requirements are already met.
 
-#### Scenario: Preview ships without persistent reviewed markers
+#### Scenario: Release ships without persistent reviewed markers
 - **WHEN** branch review mode is available and reviewed-state persistence is deferred
-- **THEN** preview documentation SHALL list persistent review markers as a post-preview enhancement rather than a shipped workflow guarantee
+- **THEN** release documentation SHALL list persistent review markers as a later enhancement rather than a shipped workflow guarantee

@@ -7,7 +7,7 @@ top-level [`docs/`](../docs/) directory is reserved for the public [GitHub Pages
 
 | Path | Contents |
 |------|----------|
-| [`project/`](project/) | Active work, implementation guide, tech debt, editor essentials, preview notes |
+| [`project/`](project/) | Active work, implementation guide, tech debt, editor essentials, release notes |
 | [`performance/`](performance/) | Perf harness, tracing, profiling, findings; [`investigations/`](performance/investigations/) for historical deep dives |
 | [`platform/`](platform/) | Linux build, host bring-up, platform audit |
 | [`plugins/`](plugins/) | Plugin runtime research |

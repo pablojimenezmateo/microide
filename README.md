@@ -5,15 +5,15 @@ search, and terminal workflows. Single-window, keyboard-first, runs without GPU 
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
-> **Status: experimental.** Tagged `v1.1.1` (see [CHANGELOG](CHANGELOG.md)), but no signed binaries
-> and no third-party comparative benchmarks. Build from source or package locally. Expect rough
-> edges. Read [Known Limitations](#known-limitations) and
+> **Status: stable.** Tagged `v1.1.1` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
+> No signed binaries or third-party comparative benchmarks yet — build from source or package
+> locally. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
 
 ## Start Here
 
 - [What microide is](#about)
-- [Status: experimental](#experimental-release-status)
+- [Release status](#release-status)
 - [Current UI preview](#current-ui-preview)
 - [What works today](#what-works-today)
 - [Build or package locally](#build)
@@ -103,20 +103,18 @@ but are less proven outside the developer's own machine.
 Current validation flow is still intentionally narrow and practical:
 `open repo -> inspect changes -> diff files -> resolve merge conflict -> stage/commit`.
 
-## Experimental Release Status
+## Release Status
 
-- Tagged `v1.1.1`, but no signed binaries are published. The supported paths today are: build from
+- Tagged `v1.1.1`. No signed binaries are published yet; the supported paths today are: build from
   source or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for
   what shipped.
-- No screenshot or demo gallery is committed yet. That is deliberate for now: the UI is still
-  changing quickly enough that stale marketing images would be less honest than current workflow
-  docs.
+- No screenshot or demo gallery is committed yet. That is deliberate for now: workflow docs track
+  the current UI more honestly than a marketing gallery would.
 
 ## Current UI Preview
 
-- Screenshot/demos are intentionally pending while the UI is still unstable.
-- When the shell visuals and layout settle, this section will include a captioned screenshot:
-  "Current experimental UI; layout and visuals are not stable."
+- Screenshots/demos are pending.
+- This section will include a captioned screenshot of the current UI once one is committed.
 
 ## What Works Today
 
@@ -159,12 +157,12 @@ Current validated flow:
 7. On commit failure, read status/output feedback, fix the issue, and retry without losing draft
    text.
 
-Known workflow boundaries in preview:
+Known workflow boundaries:
 
 - Binary, submodule, and some complex rename/file-directory conflicts are recognized but not fully
   interactive in the three-way merge UI.
 - Patch staging for hunk/selected-lines can fail when the diff is stale; refresh and retry.
-- Branch review markers are preview scope and should not be treated as a durable review database.
+- Branch review markers should not be treated as a durable review database.
 
 ## Known Limitations
 
@@ -185,7 +183,7 @@ serious work.
   carets are not yet exposed.
 - **No sandbox for plugins.** Plugins are trusted local code. See
   [Security & Trust Model](#security--trust-model).
-- **Preview-safe startup only.** `--disable-plugins` and `--safe-mode` skip user-scope plugins
+- **Recovery-mode startup only.** `--disable-plugins` and `--safe-mode` skip user-scope plugins
   and (for safe mode) workspace/session restore. These are recovery/trust aids, not a sandbox.
   Opening a repository still does not load plugin code from that repository; only user-installed
   plugins under `~/.config/microide/plugins/` run when plugins are enabled.
@@ -240,7 +238,7 @@ trust into `~/.config/microide/plugins/`.
 - The `plugins-reload` command picks up changes; there is no per-plugin disable in the UI yet
   beyond editing user config or starting with `--disable-plugins` / `--safe-mode`.
 - Project-local plugin loading remains out of scope. See [SECURITY.md](SECURITY.md) and
-  [dev-docs/project/git-workstation-preview.md](dev-docs/project/git-workstation-preview.md) for preview scope.
+  [dev-docs/project/git-workstation.md](dev-docs/project/git-workstation.md) for supported scope.
 
 **Out of scope.** A meaningful plugin sandbox (capability-scoped APIs, restricted Lua standard
 library, per-plugin allowlists) is not planned for the immediate roadmap. If a plugin marketplace
@@ -559,8 +557,8 @@ See `dev-docs/performance/startup-tracing.md` and `dev-docs/performance/runtime-
 
 ## Plugin Runtime
 
-- Safe startup (preview): `microide --disable-plugins` or `microide --safe-mode [project-path]` —
-  see [SECURITY.md](SECURITY.md) and [dev-docs/project/git-workstation-preview.md](dev-docs/project/git-workstation-preview.md)
+- Safe startup: `microide --disable-plugins` or `microide --safe-mode [project-path]` —
+  see [SECURITY.md](SECURITY.md) and [dev-docs/project/git-workstation.md](dev-docs/project/git-workstation.md)
 - User plugins: `~/.config/microide/plugins/<plugin-id>/init.lua`
 - Repo examples: `plugins/` (copy or symlink into the user plugin directory)
 - Entry point: `return require("microide").plugin({...})`
