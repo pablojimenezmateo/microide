@@ -27,22 +27,46 @@ void LspManager::SetWakeEventType(Uint32 event_type) {
   wake_event_type_ = event_type;
 }
 
-void LspManager::RegisterServer(const std::string& language_id,
+LspManager::ServerEntry* LspManager::ResolveEntry(const std::string& language_id) {
+  auto alias_it = alias_.find(language_id);
+  if (alias_it == alias_.end()) {
+    return nullptr;
+  }
+  auto it = servers_.find(alias_it->second);
+  return it == servers_.end() ? nullptr : &it->second;
+}
+
+const LspManager::ServerEntry* LspManager::ResolveEntry(const std::string& language_id) const {
+  auto alias_it = alias_.find(language_id);
+  if (alias_it == alias_.end()) {
+    return nullptr;
+  }
+  auto it = servers_.find(alias_it->second);
+  return it == servers_.end() ? nullptr : &it->second;
+}
+
+void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
                                 const std::vector<std::string>& command,
                                 const std::string& root_uri,
                                 const std::string& cwd,
                                 bool eager_start,
                                 const util::JsonValue& initialization_options,
                                 const util::JsonValue& settings) {
-  auto it = servers_.find(language_id);
+  if (language_ids.empty()) {
+    return;
+  }
+  // Canonical key is the first language id; every id aliases to it.
+  const std::string& key = language_ids.front();
+  auto it = servers_.find(key);
   if (it != servers_.end()) {
     ServerEntry& existing = it->second;
-    if (existing.command == command && existing.root_uri == root_uri && existing.cwd == cwd &&
+    if (existing.language_ids == language_ids && existing.command == command &&
+        existing.root_uri == root_uri && existing.cwd == cwd &&
         util::SerializeJson(existing.initialization_options) ==
             util::SerializeJson(initialization_options) &&
         util::SerializeJson(existing.settings) == util::SerializeJson(settings)) {
       if (eager_start) {
-        (void)GetServer(language_id);
+        (void)EnsureStarted(existing);
       }
       return;
     }
@@ -51,21 +75,33 @@ void LspManager::RegisterServer(const std::string& language_id,
       retiring_clients_.push_back(std::move(existing.client));
     }
   }
-  ServerEntry& entry = servers_[language_id];
+  ServerEntry& entry = servers_[key];
   entry = ServerEntry{};
+  entry.language_ids = language_ids;
   entry.command = command;
   entry.root_uri = root_uri;
   entry.cwd = cwd;
   entry.initialization_options = initialization_options;
   entry.settings = settings;
+  for (const std::string& id : language_ids) {
+    alias_[id] = key;
+  }
   if (eager_start) {
-    (void)GetServer(language_id);
+    (void)EnsureStarted(entry);
   }
 }
 
 void LspManager::BeginShutdownServersNotIn(const std::unordered_set<std::string>& language_ids) {
   for (auto it = servers_.begin(); it != servers_.end();) {
-    if (language_ids.contains(it->first)) {
+    // Keep a server if any language id it serves is still active.
+    bool keep = false;
+    for (const std::string& id : it->second.language_ids) {
+      if (language_ids.contains(id)) {
+        keep = true;
+        break;
+      }
+    }
+    if (keep) {
       ++it;
       continue;
     }
@@ -75,16 +111,18 @@ void LspManager::BeginShutdownServersNotIn(const std::unordered_set<std::string>
     }
     it = servers_.erase(it);
   }
+  // Drop alias entries that no longer point at a live server.
+  for (auto alias_it = alias_.begin(); alias_it != alias_.end();) {
+    if (servers_.find(alias_it->second) == servers_.end()) {
+      alias_it = alias_.erase(alias_it);
+    } else {
+      ++alias_it;
+    }
+  }
   CollectRetiredClients();
 }
 
-LspClient* LspManager::GetServer(const std::string& language_id) {
-  auto it = servers_.find(language_id);
-  if (it == servers_.end()) {
-    return nullptr;
-  }
-
-  ServerEntry& entry = it->second;
+LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
   if (entry.test_install && entry.client != nullptr) {
     return entry.client.get();
   }
@@ -93,7 +131,10 @@ LspClient* LspManager::GetServer(const std::string& language_id) {
     entry.last_error.clear();
     entry.client = std::make_unique<LspClient>();
     entry.client->SetWakeEventType(wake_event_type_);
-    if (!entry.client->Start(entry.command, entry.root_uri, language_id, entry.cwd,
+    // The label is only used for tracing; use the canonical language id.
+    const std::string& label =
+        entry.language_ids.empty() ? std::string() : entry.language_ids.front();
+    if (!entry.client->Start(entry.command, entry.root_uri, label, entry.cwd,
                              entry.initialization_options, entry.settings)) {
       entry.last_error = entry.client->LastError();
       if (entry.last_error.empty()) {
@@ -115,19 +156,24 @@ LspClient* LspManager::GetServer(const std::string& language_id) {
   return nullptr;
 }
 
+LspClient* LspManager::GetServer(const std::string& language_id) {
+  ServerEntry* entry = ResolveEntry(language_id);
+  return entry == nullptr ? nullptr : EnsureStarted(*entry);
+}
+
 LspClient* LspManager::FindStartedServer(const std::string& language_id) {
-  auto it = servers_.find(language_id);
-  if (it == servers_.end() || it->second.client == nullptr) {
+  ServerEntry* entry = ResolveEntry(language_id);
+  if (entry == nullptr || entry->client == nullptr) {
     return nullptr;
   }
-  if (it->second.test_install) {
-    return it->second.client.get();
+  if (entry->test_install) {
+    return entry->client.get();
   }
-  return it->second.client->IsRunning() ? it->second.client.get() : nullptr;
+  return entry->client->IsRunning() ? entry->client.get() : nullptr;
 }
 
 bool LspManager::HasServer(const std::string& language_id) const {
-  return servers_.find(language_id) != servers_.end();
+  return ResolveEntry(language_id) != nullptr;
 }
 
 bool LspManager::HasRegisteredServers() const {
@@ -150,19 +196,13 @@ void LspManager::DrainCallbacks() {
 }
 
 bool LspManager::IsServerRunning(const std::string& language_id) const {
-  auto it = servers_.find(language_id);
-  if (it == servers_.end()) {
-    return false;
-  }
-  return it->second.client != nullptr && it->second.client->IsRunning();
+  const ServerEntry* entry = ResolveEntry(language_id);
+  return entry != nullptr && entry->client != nullptr && entry->client->IsRunning();
 }
 
 std::string LspManager::LastServerError(const std::string& language_id) const {
-  const auto it = servers_.find(language_id);
-  if (it == servers_.end()) {
-    return {};
-  }
-  return it->second.last_error;
+  const ServerEntry* entry = ResolveEntry(language_id);
+  return entry == nullptr ? std::string{} : entry->last_error;
 }
 
 void LspManager::BeginShutdownAll() {
@@ -173,6 +213,7 @@ void LspManager::BeginShutdownAll() {
     }
   }
   servers_.clear();
+  alias_.clear();
   CollectRetiredClients();
 }
 
@@ -186,12 +227,25 @@ void LspManager::ShutdownAll() {
   retiring_clients_.clear();
 }
 
-void LspManager::InstallTestClientForTesting(const std::string& language_id,
+void LspManager::InstallTestClientForTesting(const std::vector<std::string>& language_ids,
                                               std::unique_ptr<LspClient> client) {
-  ServerEntry& entry = servers_[language_id];
+  if (language_ids.empty()) {
+    return;
+  }
+  const std::string& key = language_ids.front();
+  ServerEntry& entry = servers_[key];
   entry = ServerEntry{};
+  entry.language_ids = language_ids;
   entry.client = std::move(client);
   entry.test_install = true;
+  for (const std::string& id : language_ids) {
+    alias_[id] = key;
+  }
+}
+
+void LspManager::InstallTestClientForTesting(const std::string& language_id,
+                                              std::unique_ptr<LspClient> client) {
+  InstallTestClientForTesting(std::vector<std::string>{language_id}, std::move(client));
 }
 
 void LspManager::CollectRetiredClients() {

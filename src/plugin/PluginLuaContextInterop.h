@@ -9,6 +9,7 @@ namespace microide::plugin::lua_context_interop {
 #if MICROIDE_HAS_LUA_PLUGINS
 struct ApiFns {
   lua_CFunction log;
+  lua_CFunction notify;
   lua_CFunction commands_add;
   lua_CFunction workspace_project_root;
   lua_CFunction workspace_open_file;

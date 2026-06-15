@@ -1,6 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 #include "plugin/PluginHost.h"
 
@@ -10,7 +14,29 @@
 
 namespace microide::plugin::lua_interop {
 
+// Identifier validation shared by command/sidebar/provider registration and by
+// plugin-id validation during load. Pure std; usable regardless of Lua support.
+bool IsValidIdentifier(std::string_view value);
+
 #if MICROIDE_HAS_LUA_PLUGINS
+// Centralized Lua-table field readers. None of these raise a Lua error (they use
+// only lua_getfield/lua_tostring/lua_pop/luaL_ref), so they are safe to call while
+// C++ locals are live — no longjmp over destructors. Each leaves the stack balanced.
+//
+// ReadStringField returns "" when the field is absent or not a string (matches the
+// provider-query call sites that branch on emptiness). ReadOptionalStringField
+// returns nullopt instead, so registration parsers can detect missing required
+// fields. table_index may be relative (e.g. -1) or absolute; it must address the
+// table at call time.
+std::string ReadStringField(lua_State* state, int table_index, const char* field);
+std::optional<std::string> ReadOptionalStringField(lua_State* state,
+                                                   int table_index,
+                                                   const char* field);
+int ReadFunctionRefField(lua_State* state, int table_index, const char* field);
+std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
+                                                             int table_index,
+                                                             const char* field);
+
 // Restores the Lua stack to its construction-time height on scope exit. Provider
 // interop calls push a function + arguments before a protected call; when the call
 // is skipped (e.g. the plugin lookup returns null so PCall never runs) those slots

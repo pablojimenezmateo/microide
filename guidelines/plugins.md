@@ -14,17 +14,25 @@ Purpose: define the durable plugin-extension rules for `microide`.
 
 Plugins may contribute capabilities such as:
 
-- commands
+- commands (may return a string to surface as host command-prompt feedback)
 - sidebar providers
 - diagnostics
 - hover providers
+- transient notifications via `microide.notify(level, message)` (host-owned toast
+  surface; `level` is info/warning/error)
 - settings metadata
 - status items
 - formatters
 - save participants
 - completions
 - code actions
-- language servers
+- language servers via `ctx.lsp.add{ id, command, ... }`. Declare the languages
+  served with `language_ids = { "c", "c++", "objective-c" }` (a single
+  `language_id` string is also accepted and folds into a one-element list). All
+  ids in one registration share a **single** subprocess via `LspManager`
+  aliasing, so e.g. one clangd serves C/C++/Objective-C. The host sends each
+  file's detected filetype as the LSP `languageId`. Optional `initialization_options`
+  and `settings` are JSON-string fields forwarded to the server.
 - tasks
 - tools
 - test providers
@@ -121,6 +129,11 @@ Do not expose `WorkspaceShell` wholesale to plugins.
 - The host should own asset watching and reload bookkeeping.
 - Plugin lifecycle hooks should stay simple and predictable.
 - If reload is supported, define what state is preserved, what state is rebuilt, and what side effects are replayed.
+- Per-plugin enable/disable is host-owned: disabled plugin ids persist in user config
+  (`PersistedUserConfigState::disabled_plugin_ids`) and are applied via
+  `PluginHost::SetDisabledPlugins` before each reload. Disabled plugins load only far
+  enough to learn their id (so the Settings "Plugins" pane can list and re-enable them),
+  then skip setup and lifecycle entirely.
 
 ## Sync And Async Policy
 

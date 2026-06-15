@@ -6,6 +6,7 @@
 
 #include "editor/EditorViewModel.h"
 #include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/NotificationService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/SettingsOverlayService.h"
@@ -31,6 +32,15 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
 struct EditorBannerViewModel {
   bool has_actions = false;  // ExternalChange => Reload/Overwrite/Keep; Notice => dismiss only
   std::string message;       // prebuilt here so render TUs never materialize it
+};
+
+struct NotificationEntryViewModel {
+  NotificationService::Tone tone = NotificationService::Tone::Info;
+  std::string message;  // prebuilt here so render TUs never materialize strings
+};
+
+struct NotificationsViewModel {
+  std::vector<NotificationEntryViewModel> entries;  // oldest first; render bottom-up
 };
 
 struct FrameSurfaceViewModel {
@@ -223,6 +233,7 @@ class RenderViewModelBuilder {
   HoverTargetsViewModel BuildHoverTargets() const;
   StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
                                     const class StatusBarService& service) const;
+  NotificationsViewModel BuildNotifications(const NotificationService& service) const;
   SettingsOverlayViewModel BuildSettingsOverlay(
       const WorkspaceLayout& layout,
       const class SettingsOverlayService& service) const;

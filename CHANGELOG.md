@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide remains **experimental**
 (see [README](README.md)); versions track meaningful shipped work rather than stability promises.
 
+## [1.1.1] - 2026-06-15
+
+Incremental release building on 1.1.0: a centralized LSP backbone with more bundled language
+servers, host-owned notifications, plugin enable/disable persistence, and shell polish.
+
+### LSP
+- Centralize the JSON-RPC codec, extract a dedicated `LspService`, and route all server traffic
+  through a single I/O thread.
+- Add clangd and .NET server enablers plus bundled `cpp-lsp` and `dotnet-lsp` plugins; refresh the
+  `typescript-lsp` plugin.
+
+### Notifications
+- Add a host-owned `NotificationService` for transient, auto-dismissing toast messages that
+  built-in code and plugins can post; the shell schedules a single wake at the next expiry rather
+  than polling.
+
+### Plugins
+- Decompose provider registration into focused registration parsers and query interop (remove
+  `PluginLuaProviderRegistrationInterop`).
+- Persist per-plugin enable/disable state (`disabled_plugin_ids`) across sessions, surfaced in the
+  Settings overlay.
+
+### UI & Shell
+- Settings: opaque selection highlight so the editor no longer ghosts through the overlay.
+
 ## [1.1.0] - 2026-06-14
 
 First tagged release. Builds on the 1.0.0 baseline with editor, diff/merge, git, search, save,

@@ -116,7 +116,8 @@ bool ExecuteCommand(
     const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     const std::function<void(lua_State*)>& push_plugin_context,
-    std::string* error_message);
+    std::string* error_message,
+    std::string* feedback = nullptr);
 
 bool RunSaveParticipants(
     const std::filesystem::path& path,

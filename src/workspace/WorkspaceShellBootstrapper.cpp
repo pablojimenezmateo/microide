@@ -71,13 +71,15 @@ CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
           .execute_plugin_command =
               [this](const std::string& command, const std::vector<std::string>& args) {
                 CommandPromptCoordinator::PluginCommandResult result;
-                const std::size_t message_count_before = plugin_runtime_.Host().Messages().size();
                 std::string plugin_error;
-                result.handled = plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error);
+                std::string plugin_feedback;
+                result.handled = plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error,
+                                                                       &plugin_feedback);
                 if (result.handled) {
-                  if (plugin_runtime_.Host().Messages().size() > message_count_before) {
-                    result.feedback = plugin_runtime_.Host().Messages().back();
-                  }
+                  // Prefer the command's own returned message; otherwise confirm it ran so the
+                  // user always gets feedback, not silence.
+                  result.feedback = !plugin_feedback.empty() ? std::move(plugin_feedback)
+                                                             : "ran " + command;
                   return result;
                 }
                 result.error = std::move(plugin_error);

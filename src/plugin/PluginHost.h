@@ -115,7 +115,10 @@ class PluginHost {
 
   struct ContributedLanguageServer {
     std::string id;
-    std::string language_id;
+    // One server process serves every language id in this list (e.g. clangd
+    // covers c / c++ / objective-c). The host shares a single subprocess across
+    // them via LspManager aliasing.
+    std::vector<std::string> language_ids;
     std::vector<std::string> command;
     std::string plugin_id;
     // Forwarded verbatim as LSP `initializationOptions` (object) or Null.
@@ -311,6 +314,17 @@ class PluginHost {
     std::function<void(const std::string&)> log_sink;
     std::function<std::optional<std::string>(std::string_view)> get_setting;
     std::function<void()> request_status_redraw;
+    // Post a transient, auto-dismissing notification ("toast"). level is one of
+    // "info"/"warning"/"error" (host maps unknown values to info).
+    std::function<void(const std::string& level, const std::string& message)> show_notification;
+  };
+
+  // One discovered plugin, for the host-owned plugin-management UI. Disabled plugins
+  // are still listed (so they can be re-enabled) but their setup never runs.
+  struct LoadedPlugin {
+    std::string id;
+    std::filesystem::path root;
+    bool enabled = true;
   };
 
   PluginHost();
@@ -326,13 +340,17 @@ class PluginHost {
   int PendingAsyncProcessCount() const;
   bool enabled() const;
   void SetStartupPluginsEnabled(bool enabled);
+  // Plugin ids whose setup should be skipped on the next Reload. They still appear in
+  // LoadedPlugins() as disabled so the UI can re-enable them.
+  void SetDisabledPlugins(std::vector<std::string> disabled_ids);
   bool Reload(const std::filesystem::path& project_root);
   void Shutdown();
   void OnBufferOpen(const std::filesystem::path& path);
   void OnBufferSave(const std::filesystem::path& path);
   bool ExecuteCommand(std::string_view name,
                       const std::vector<std::string>& args,
-                      std::string* error_message = nullptr);
+                      std::string* error_message = nullptr,
+                      std::string* feedback = nullptr);
   const std::vector<std::string>& CommandNames() const;
   const std::vector<SidebarProviderInfo>& SidebarProviders() const;
   const SidebarProviderInfo* FindSidebarProvider(std::string_view id) const;
@@ -417,6 +435,8 @@ class PluginHost {
   void ClearMessages();
   std::string ReloadSummary() const;
   std::size_t LoadedPluginCount() const;
+  // All discovered plugins (enabled and disabled), sorted by id, for the plugin UI.
+  std::vector<LoadedPlugin> LoadedPlugins() const;
 
  private:
   struct Impl;

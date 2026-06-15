@@ -89,7 +89,8 @@ void SettingsOverlayService::SyncQueryFromEditor() {
 void SettingsOverlayService::RebuildSettingsRows(
     const std::vector<SettingInfo>& settings,
     const std::vector<std::pair<std::string, std::string>>& user_settings,
-    const std::vector<std::pair<std::string, std::string>>& project_settings) {
+    const std::vector<std::pair<std::string, std::string>>& project_settings,
+    const std::vector<SettingsOverlayRow>& extra_rows) {
   settings_rows_.clear();
   settings_rows_.reserve(settings.size());
   for (const SettingInfo& setting : settings) {
@@ -130,6 +131,14 @@ void SettingsOverlayService::RebuildSettingsRows(
     row.resettable = stored != nullptr;
     row.editable = true;
     settings_rows_.push_back(std::move(row));
+  }
+
+  // Append host-built extra rows (e.g. the per-plugin enable toggles), honoring the
+  // same query filter so they show up in their own category alongside settings.
+  for (const SettingsOverlayRow& row : extra_rows) {
+    if (RowMatchesQuery(row.label, row.id)) {
+      settings_rows_.push_back(row);
+    }
   }
 
   // Derive the left-pane category list from the filtered rows: "General" first

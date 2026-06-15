@@ -20,6 +20,7 @@ void TestPersistedRecordDumpPrintsHeaderRecordsAndDecodedSummary() {
       .ui_scale = 1.75f,
       .settings = {{"theme", "sunrise"}},
       .disabled_keybinding_ids = {"terminal.focus"},
+      .disabled_plugin_ids = {},
   };
 
   std::vector<std::byte> body;

@@ -666,6 +666,19 @@ HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets() const {
   };
 }
 
+NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
+    const NotificationService& service) const {
+  NotificationsViewModel vm;
+  vm.entries.reserve(service.Active().size());
+  for (const NotificationService::Notification& notification : service.Active()) {
+    vm.entries.push_back(NotificationEntryViewModel{
+        .tone = notification.tone,
+        .message = notification.message,
+    });
+  }
+  return vm;
+}
+
 StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout& layout,
                                                           const StatusBarService& service) const {
   StatusBarViewModel vm;

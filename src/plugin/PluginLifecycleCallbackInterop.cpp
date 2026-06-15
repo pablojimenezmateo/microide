@@ -145,6 +145,8 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                         clear_plugin_diagnostics,
                     const std::function<void(runtime_types::PluginInstance*)>&
                         destroy_plugin_state,
+                    const std::function<bool(const std::string&)>& is_plugin_disabled,
+                    const std::function<void(const runtime_types::PluginInstance&)>& record_disabled,
                     std::string* error_message) {
   if (plugins == nullptr) {
     if (error_message != nullptr) {
@@ -172,6 +174,16 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
   if (!load_plugin_descriptor(&plugin, error_message)) {
     destroy_plugin_state(&plugin);
     return false;
+  }
+
+  // Disabled plugins load only far enough to learn their id, then stop: no duplicate
+  // check, no setup, no lifecycle. They are recorded for the UI and torn down.
+  if (is_plugin_disabled && is_plugin_disabled(plugin.id)) {
+    if (record_disabled) {
+      record_disabled(plugin);
+    }
+    destroy_plugin_state(&plugin);
+    return true;
   }
 
   const auto duplicate = std::find_if(plugins->begin(), plugins->end(),

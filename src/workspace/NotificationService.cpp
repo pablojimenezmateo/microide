@@ -1,0 +1,56 @@
+#include "workspace/NotificationService.h"
+
+#include <algorithm>
+#include <utility>
+
+namespace microide::workspace {
+
+NotificationService::Tone NotificationService::ToneFromLevel(std::string_view level) {
+  if (level == "error" || level == "err") {
+    return Tone::Error;
+  }
+  if (level == "warning" || level == "warn") {
+    return Tone::Warning;
+  }
+  return Tone::Info;
+}
+
+void NotificationService::Show(Tone tone, std::string message, std::uint64_t now_ms) {
+  if (message.empty()) {
+    return;
+  }
+  notifications_.push_back(Notification{
+      .tone = tone,
+      .message = std::move(message),
+      .expiry_ms = now_ms + DurationMs(),
+  });
+  if (notifications_.size() > MaxVisible()) {
+    notifications_.erase(notifications_.begin(),
+                         notifications_.begin() +
+                             static_cast<std::ptrdiff_t>(notifications_.size() - MaxVisible()));
+  }
+}
+
+bool NotificationService::ExpireDue(std::uint64_t now_ms) {
+  const std::size_t before = notifications_.size();
+  notifications_.erase(
+      std::remove_if(notifications_.begin(), notifications_.end(),
+                     [now_ms](const Notification& notification) {
+                       return notification.expiry_ms <= now_ms;
+                     }),
+      notifications_.end());
+  return notifications_.size() != before;
+}
+
+std::optional<std::uint64_t> NotificationService::NextExpiryDelayMs(std::uint64_t now_ms) const {
+  if (notifications_.empty()) {
+    return std::nullopt;
+  }
+  std::uint64_t earliest = notifications_.front().expiry_ms;
+  for (const Notification& notification : notifications_) {
+    earliest = std::min(earliest, notification.expiry_ms);
+  }
+  return earliest <= now_ms ? 0 : earliest - now_ms;
+}
+
+}  // namespace microide::workspace

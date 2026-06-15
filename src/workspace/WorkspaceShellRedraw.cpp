@@ -718,6 +718,13 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = project_delay_ms;
     }
   }
+  if (const auto toast_delay = notification_service_.NextExpiryDelayMs(SDL_GetTicks());
+      toast_delay.has_value()) {
+    const Uint32 toast_delay_ms = static_cast<Uint32>(*toast_delay);
+    if (!next_delay.has_value() || toast_delay_ms < *next_delay) {
+      next_delay = toast_delay_ms;
+    }
+  }
   return next_delay;
 }
 
@@ -799,6 +806,15 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleScheduledWake");
+  if (notification_service_.ExpireDue(SDL_GetTicks())) {
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = true,
+            .rects = {},
+        },
+    };
+  }
   if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
     return EventResult{
         .handled = true,

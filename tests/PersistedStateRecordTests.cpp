@@ -33,6 +33,7 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
       .ui_scale = 1.5f,
       .settings = {{"theme", "solarized"}, {"diagnostics.inline", "true"}},
       .disabled_keybinding_ids = {"terminal.focus", "sidebar.toggle"},
+      .disabled_plugin_ids = {"eslint", "prettier"},
   };
   std::vector<std::byte> encoded_user;
   Expect(EncodeUserConfigRecord(user, &encoded_user), "user config record encode should succeed");
@@ -44,6 +45,10 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
   Expect(decoded_user.disabled_keybinding_ids.size() == 2 &&
              decoded_user.disabled_keybinding_ids[0] == "terminal.focus",
          "user config disabled keybindings should round-trip");
+  Expect(decoded_user.disabled_plugin_ids.size() == 2 &&
+             decoded_user.disabled_plugin_ids[0] == "eslint" &&
+             decoded_user.disabled_plugin_ids[1] == "prettier",
+         "user config disabled plugins should round-trip");
 
   PersistedProjectConfigState project{
       .editor_tab_size = 8,
@@ -191,6 +196,7 @@ void TestPersistedStateRecordDecodersSkipUnknownTags() {
       .ui_scale = 1.25f,
       .settings = {{"theme", "day"}},
       .disabled_keybinding_ids = {},
+      .disabled_plugin_ids = {},
   };
   std::vector<std::byte> encoded;
   Expect(EncodeUserConfigRecord(user, &encoded), "user encode should succeed");

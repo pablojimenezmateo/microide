@@ -49,19 +49,12 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
           continue;
         }
         PluginHost::CompletionCandidate candidate;
-        auto read_string = [&](const char* field) -> std::string {
-          lua_getfield(state, -1, field);
-          std::string value =
-              lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-          lua_pop(state, 1);
-          return value;
-        };
-        candidate.label = read_string("label");
-        candidate.detail = read_string("detail");
-        candidate.documentation = read_string("documentation");
-        candidate.insert_text = read_string("insert_text");
+        candidate.label = lua_interop::ReadStringField(state, -1, "label");
+        candidate.detail = lua_interop::ReadStringField(state, -1, "detail");
+        candidate.documentation = lua_interop::ReadStringField(state, -1, "documentation");
+        candidate.insert_text = lua_interop::ReadStringField(state, -1, "insert_text");
         if (candidate.insert_text.empty()) {
-          candidate.insert_text = read_string("insertText");
+          candidate.insert_text = lua_interop::ReadStringField(state, -1, "insertText");
         }
         if (candidate.insert_text.empty()) {
           candidate.insert_text = candidate.label;
@@ -128,15 +121,8 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
           continue;
         }
         PluginHost::CodeActionCandidate action;
-        auto read_string = [&](const char* field) -> std::string {
-          lua_getfield(state, -1, field);
-          std::string value =
-              lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-          lua_pop(state, 1);
-          return value;
-        };
-        action.title = read_string("title");
-        action.command = read_string("command");
+        action.title = lua_interop::ReadStringField(state, -1, "title");
+        action.command = lua_interop::ReadStringField(state, -1, "command");
         lua_getfield(state, -1, "arguments");
         if (lua_istable(state, -1)) {
           for (lua_Integer arg_index = 1;; ++arg_index) {
@@ -212,22 +198,15 @@ bool DiscoverTests(
         continue;
       }
       PluginHost::TestCase test;
-      auto read_string = [&](const char* field) -> std::string {
-        lua_getfield(state, -1, field);
-        std::string value =
-            lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-        lua_pop(state, 1);
-        return value;
-      };
-      test.id = read_string("id");
-      test.label = read_string("label");
-      const std::string file = read_string("file");
+      test.id = lua_interop::ReadStringField(state, -1, "id");
+      test.label = lua_interop::ReadStringField(state, -1, "label");
+      const std::string file = lua_interop::ReadStringField(state, -1, "file");
       if (!file.empty()) {
         test.file = resolve_runtime_path(current_project_root, std::filesystem::path(file));
       } else {
         test.file = path.lexically_normal();
       }
-      test.parent_id = read_string("parent_id");
+      test.parent_id = lua_interop::ReadStringField(state, -1, "parent_id");
       lua_getfield(state, -1, "line");
       if (lua_isinteger(state, -1)) {
         test.line = static_cast<int>(lua_tointeger(state, -1));
@@ -294,16 +273,9 @@ bool RunTests(
         continue;
       }
       PluginHost::TestRunResult result;
-      auto read_string = [&](const char* field) -> std::string {
-        lua_getfield(state, -1, field);
-        std::string value =
-            lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-        lua_pop(state, 1);
-        return value;
-      };
-      result.test_id = read_string("test_id");
-      result.state = read_string("state");
-      result.message = read_string("message");
+      result.test_id = lua_interop::ReadStringField(state, -1, "test_id");
+      result.state = lua_interop::ReadStringField(state, -1, "state");
+      result.message = lua_interop::ReadStringField(state, -1, "message");
       lua_getfield(state, -1, "duration_ms");
       if (lua_isinteger(state, -1)) {
         result.duration_ms = static_cast<int>(lua_tointeger(state, -1));
@@ -352,15 +324,8 @@ bool SnapshotScm(
   }
 
   if (lua_istable(state, -1)) {
-    auto read_string = [&](const char* field) -> std::string {
-      lua_getfield(state, -1, field);
-      std::string value =
-          lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-      lua_pop(state, 1);
-      return value;
-    };
-    snapshot->base_ref = read_string("base_ref");
-    snapshot->base_label = read_string("base_label");
+    snapshot->base_ref = lua_interop::ReadStringField(state, -1, "base_ref");
+    snapshot->base_label = lua_interop::ReadStringField(state, -1, "base_label");
     lua_getfield(state, -1, "supports_mutations");
     snapshot->supports_mutations = lua_toboolean(state, -1) != 0;
     lua_pop(state, 1);
@@ -378,19 +343,12 @@ bool SnapshotScm(
           continue;
         }
         PluginHost::ScmEntry entry;
-        auto read_entry_string = [&](const char* field) -> std::string {
-          lua_getfield(state, -1, field);
-          std::string value =
-              lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-          lua_pop(state, 1);
-          return value;
-        };
-        const std::string file_path = read_entry_string("path");
-        const std::string relative_path = read_entry_string("relative_path");
+        const std::string file_path = lua_interop::ReadStringField(state, -1, "path");
+        const std::string relative_path = lua_interop::ReadStringField(state, -1, "relative_path");
         entry.path = resolve_runtime_path(current_project_root, std::filesystem::path(file_path));
         entry.relative_path = relative_path.empty() ? std::filesystem::path{}
                                                     : std::filesystem::path(relative_path);
-        entry.status = read_entry_string("status");
+        entry.status = lua_interop::ReadStringField(state, -1, "status");
         lua_getfield(state, -1, "conflicted");
         entry.conflicted = lua_toboolean(state, -1) != 0;
         lua_pop(state, 1);
@@ -458,22 +416,15 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
           continue;
         }
         PluginHost::AnnotationLine line;
-        auto read_string = [&](const char* field) -> std::string {
-          lua_getfield(state, -1, field);
-          std::string value =
-              lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-          lua_pop(state, 1);
-          return value;
-        };
         lua_getfield(state, -1, "line");
         if (lua_isinteger(state, -1)) {
           line.line = static_cast<std::size_t>(std::max<lua_Integer>(0, lua_tointeger(state, -1)));
         }
         lua_pop(state, 1);
-        line.text = read_string("text");
-        line.author = read_string("author");
-        line.summary = read_string("summary");
-        line.date = read_string("date");
+        line.text = lua_interop::ReadStringField(state, -1, "text");
+        line.author = lua_interop::ReadStringField(state, -1, "author");
+        line.summary = lua_interop::ReadStringField(state, -1, "summary");
+        line.date = lua_interop::ReadStringField(state, -1, "date");
         if (!line.text.empty()) {
           lines.push_back(std::move(line));
         }
@@ -528,16 +479,9 @@ bool LoginAuthProvider(
     return false;
   }
   if (lua_istable(state, -1)) {
-    auto read_string = [&](const char* field) -> std::string {
-      lua_getfield(state, -1, field);
-      std::string value =
-          lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-      lua_pop(state, 1);
-      return value;
-    };
-    session->id = read_string("id");
-    session->account = read_string("account");
-    session->access_token = read_string("access_token");
+    session->id = lua_interop::ReadStringField(state, -1, "id");
+    session->account = lua_interop::ReadStringField(state, -1, "account");
+    session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
     lua_getfield(state, -1, "scopes");
     if (lua_istable(state, -1)) {
       for (lua_Integer i = 1;; ++i) {
@@ -595,19 +539,12 @@ bool RefreshAuthSession(
     return false;
   }
   if (lua_istable(state, -1)) {
-    auto read_string = [&](const char* field) -> std::string {
-      lua_getfield(state, -1, field);
-      std::string value =
-          lua_isstring(state, -1) ? std::string(lua_tostring(state, -1)) : std::string{};
-      lua_pop(state, 1);
-      return value;
-    };
-    session->id = read_string("id");
+    session->id = lua_interop::ReadStringField(state, -1, "id");
     if (session->id.empty()) {
       session->id = std::string(session_id);
     }
-    session->account = read_string("account");
-    session->access_token = read_string("access_token");
+    session->account = lua_interop::ReadStringField(state, -1, "account");
+    session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
     lua_getfield(state, -1, "scopes");
     if (lua_istable(state, -1)) {
       for (lua_Integer i = 1;; ++i) {
@@ -712,7 +649,11 @@ bool ExecuteCommand(
     const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     const std::function<void(lua_State*)>& push_plugin_context,
-    std::string* error_message) {
+    std::string* error_message,
+    std::string* feedback) {
+  if (feedback != nullptr) {
+    feedback->clear();
+  }
   const auto it = commands.find(std::string(name));
   if (it == commands.end()) {
     if (error_message != nullptr) {
@@ -733,11 +674,19 @@ bool ExecuteCommand(
   }
 
   std::string call_error;
-  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 0, &call_error)) {
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(2, 1, &call_error)) {
     if (error_message != nullptr) {
       *error_message = "plugin command '" + std::string(name) + "' failed: " + call_error;
     }
     return false;
+  }
+  // A command may return a string (or {message = "..."}) to surface as host feedback.
+  if (feedback != nullptr) {
+    if (lua_isstring(state, -1)) {
+      *feedback = lua_tostring(state, -1);
+    } else if (lua_istable(state, -1)) {
+      *feedback = lua_interop::ReadStringField(state, -1, "message");
+    }
   }
   if (error_message != nullptr) {
     error_message->clear();

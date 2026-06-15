@@ -23,9 +23,10 @@ void PushAddOnlyModule(lua_State* state,
 }  // namespace
 
 void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) {
-  lua_createtable(state, 0, 11);
+  lua_createtable(state, 0, 12);
 
   PushBoundFn(state, host_upvalue, fns.log, "log");
+  PushBoundFn(state, host_upvalue, fns.notify, "notify");
 
   PushAddOnlyModule(state, host_upvalue, "commands", fns.commands_add);
 

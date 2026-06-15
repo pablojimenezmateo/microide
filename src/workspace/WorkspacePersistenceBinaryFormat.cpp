@@ -26,6 +26,12 @@ bool EncodeUserConfigRecord(const PersistedUserConfigState& state, std::vector<s
       return false;
     }
   }
+  for (const auto& id : state.disabled_plugin_ids) {
+    if (!AppendRecord(UserConfigTag::DisabledPlugin,
+                      [&](PrimitiveWriter& w) { return w.WriteString(id); }, out)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -63,6 +69,14 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                      return false;
                    }
                    state->disabled_keybinding_ids.push_back(std::move(id));
+                   return true;
+                 }
+                 case UserConfigTag::DisabledPlugin: {
+                   std::string id;
+                   if (!reader.ReadString(&id) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->disabled_plugin_ids.push_back(std::move(id));
                    return true;
                  }
                }

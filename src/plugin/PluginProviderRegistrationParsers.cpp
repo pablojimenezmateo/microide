@@ -4,56 +4,16 @@
 
 #include <optional>
 
+#include "plugin/PluginLuaInterop.h"
+
 namespace microide::plugin::registration_parsers {
 namespace {
 
-std::optional<std::string> ReadStringField(lua_State* state,
-                                           int table_index,
-                                           const char* field) {
-  lua_getfield(state, table_index, field);
-  if (!lua_isstring(state, -1)) {
-    lua_pop(state, 1);
-    return std::nullopt;
-  }
-  std::string value = lua_tostring(state, -1);
-  lua_pop(state, 1);
-  return value;
-}
-
-std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
-                                                              int table_index,
-                                                              const char* field) {
-  lua_getfield(state, table_index, field);
-  if (!lua_istable(state, -1)) {
-    lua_pop(state, 1);
-    return std::nullopt;
-  }
-  std::vector<std::string> values;
-  for (lua_Integer i = 1;; ++i) {
-    lua_geti(state, -1, i);
-    if (lua_isnil(state, -1)) {
-      lua_pop(state, 1);
-      break;
-    }
-    if (!lua_isstring(state, -1)) {
-      lua_pop(state, 2);
-      return std::nullopt;
-    }
-    values.emplace_back(lua_tostring(state, -1));
-    lua_pop(state, 1);
-  }
-  lua_pop(state, 1);
-  return values;
-}
-
-int ReadFunctionRefField(lua_State* state, int table_index, const char* field) {
-  lua_getfield(state, table_index, field);
-  if (!lua_isfunction(state, -1)) {
-    lua_pop(state, 1);
-    return LUA_NOREF;
-  }
-  return luaL_ref(state, LUA_REGISTRYINDEX);
-}
+// Field readers are centralized in lua_interop; ReadStringField here is the
+// optional-returning variant so parsers can detect missing required fields.
+using lua_interop::ReadFunctionRefField;
+using lua_interop::ReadStringArrayField;
+constexpr auto& ReadStringField = lua_interop::ReadOptionalStringField;
 
 }  // namespace
 
@@ -63,12 +23,22 @@ bool ParseLanguageServerRegistration(lua_State* state,
                                      std::string* error_message) {
   if (out == nullptr) return false;
   auto id_opt = ReadStringField(state, 1, "id");
-  auto language_id_opt = ReadStringField(state, 1, "language_id");
   auto command_opt = ReadStringArrayField(state, 1, "command");
-  if (!id_opt || !language_id_opt || !command_opt || command_opt->empty()) return false;
+  // Accept either a `language_ids` array (one process serves several languages)
+  // or a single `language_id` string; the latter folds into a one-element list.
+  std::vector<std::string> language_ids;
+  if (auto ids = ReadStringArrayField(state, 1, "language_ids")) {
+    language_ids = std::move(*ids);
+  }
+  if (language_ids.empty()) {
+    if (auto single = ReadStringField(state, 1, "language_id")) {
+      if (!single->empty()) language_ids.push_back(std::move(*single));
+    }
+  }
+  if (!id_opt || language_ids.empty() || !command_opt || command_opt->empty()) return false;
   out->contributed = PluginHost::ContributedLanguageServer{
       .id = plugin_id + "." + *id_opt,
-      .language_id = std::move(*language_id_opt),
+      .language_ids = std::move(language_ids),
       .command = std::move(*command_opt),
       .plugin_id = plugin_id,
       .initialization_options = {},

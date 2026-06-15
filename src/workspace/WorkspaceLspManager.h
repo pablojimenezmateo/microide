@@ -22,10 +22,13 @@ class LspManager {
   // Set SDL event type used to wake the main loop when responses arrive.
   void SetWakeEventType(Uint32 event_type);
 
-  // Register a server command for a language.
+  // Register a server command for one or more languages. Every language id in
+  // `language_ids` resolves to the same subprocess (e.g. clangd serving
+  // c / c++ / objective-c), so a mixed-language project spawns one process.
   // If eager_start is true, the server will be started in the background immediately.
   // initialization_options / settings are forwarded to LspClient::Start.
-  void RegisterServer(const std::string& language_id, const std::vector<std::string>& command,
+  void RegisterServer(const std::vector<std::string>& language_ids,
+                      const std::vector<std::string>& command,
                       const std::string& root_uri,
                       const std::string& cwd = {},
                       bool eager_start = true,
@@ -57,10 +60,15 @@ class LspManager {
   void ShutdownAll();
 
   // Unit tests only: install a client without a language-server subprocess.
+  // Every language id resolves to the supplied client (aliasing coverage).
+  void InstallTestClientForTesting(const std::vector<std::string>& language_ids,
+                                   std::unique_ptr<LspClient> client);
   void InstallTestClientForTesting(const std::string& language_id, std::unique_ptr<LspClient> client);
 
  private:
   struct ServerEntry {
+    // Every language id this single subprocess answers for.
+    std::vector<std::string> language_ids;
     std::vector<std::string> command;
     std::string root_uri;
     std::string cwd;
@@ -72,9 +80,17 @@ class LspManager {
   };
 
   Uint32 wake_event_type_ = 0;
+  // Keyed by canonical server key (the registration's first language id).
   std::unordered_map<std::string, ServerEntry> servers_;
+  // Maps every declared language id to its canonical server key.
+  std::unordered_map<std::string, std::string> alias_;
   std::vector<std::unique_ptr<LspClient>> retiring_clients_;
 
+  // Resolve a language id to its server entry, or nullptr if none.
+  ServerEntry* ResolveEntry(const std::string& language_id);
+  const ServerEntry* ResolveEntry(const std::string& language_id) const;
+  // Start (if needed) and return the running client for an entry, else nullptr.
+  LspClient* EnsureStarted(ServerEntry& entry);
   void CollectRetiredClients();
 };
 

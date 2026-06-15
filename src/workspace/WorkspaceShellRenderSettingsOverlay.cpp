@@ -229,6 +229,9 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   const bool values_focused = vm.focused_pane == SettingsPane::Values;
   const float pane_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
   const float line_height = text_renderer_.LineHeight();
+  // Clear the whole rows area first so switching to a category with fewer rows (e.g.
+  // the single-row "Plugins" pane) does not leave the previous category's text behind.
+  DrawFilledRect(renderer, vm.right_pane_rect, theme_.surface_background);
   for (const SettingsRowViewModel& row : vm.rows) {
     if (row.row_rect.y + row.row_rect.h > pane_bottom + 0.5f ||
         row.row_rect.y < vm.right_pane_rect.y - 0.5f) {

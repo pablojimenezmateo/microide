@@ -1151,6 +1151,7 @@
                                 std::size_t terminal_line_count);
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderNotifications(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RefreshStatusBar();
   void ApplyLiveSettings();
   bool SetSettingValue(std::string_view id, std::string value);
@@ -1162,6 +1163,7 @@
   void RenderSettingsOverlay(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   bool HandleSettingsOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void StepSetting(std::string_view id, bool forward);
+  void TogglePluginEnabled(std::string_view plugin_id);
   void EnsureSettingsSelectionVisible();
   bool HandleStatusBarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   void RenderPromptSurface(
@@ -1418,6 +1420,7 @@
   WorkspaceTabStripChrome tab_strip_chrome_;
   StatusBarService status_bar_service_;
   StatusBarModelService status_bar_model_service_;
+  NotificationService notification_service_;
   SettingsOverlayService settings_overlay_service_;
   // Settings/Help overlay max scroll row, resolved by the const render pass (it
   // owns the list geometry) and consumed by the wheel handler to clamp scrolling.

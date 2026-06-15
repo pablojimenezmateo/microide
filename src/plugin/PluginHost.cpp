@@ -25,6 +25,7 @@
 #include "platform/Subprocess.h"
 #include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginAsyncCallbackInterop.h"
+#include "plugin/PluginContributionInterop.h"
 #include "plugin/PluginDataDirectoryInterop.h"
 #include "plugin/PluginBufferLifecycleInterop.h"
 #include "plugin/PluginHoverQueryInterop.h"
@@ -37,8 +38,9 @@
 #include "plugin/PluginLifecycleResetInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "plugin/PluginProcessInterop.h"
-#include "plugin/PluginLuaProviderRegistrationInterop.h"
 #include "plugin/PluginProviderQueryInterop.h"
+#include "plugin/PluginRegistrationParsers.h"
+#include "plugin/PluginRegistryInterop.h"
 #include "plugin/PluginProjectLifecycleInterop.h"
 #include "plugin/PluginRuntimeApiInterop.h"
 #include "plugin/PluginSidebarHoverInterop.h"
@@ -81,10 +83,19 @@ struct PluginHost::Impl {
   using AsyncProcessState = runtime_types::AsyncProcessState;
   std::shared_ptr<AsyncProcessState> async_process_state = std::make_shared<AsyncProcessState>();
   std::vector<PluginInstance> plugins;
+  // Plugin ids the user has disabled: their setup is skipped on Reload. disabled_plugin_meta
+  // records {id, root} for the ones actually skipped this reload so the UI can list them.
+  std::vector<std::string> disabled_plugins;
+  std::vector<PluginHost::LoadedPlugin> disabled_plugin_meta;
   std::unordered_map<std::string, PluginCommand> commands;
   std::vector<std::string> command_names;
   std::unordered_map<std::string, SidebarProvider> sidebars;
   std::vector<SidebarProviderInfo> sidebar_providers;
+  // Ordered views are sorted projections of the maps above. Registration only
+  // flips these dirty bits (O(1)); the const accessors rebuild lazily on the next
+  // read, so a plugin registering N commands sorts once instead of N times.
+  bool command_names_dirty = false;
+  bool sidebar_providers_dirty = false;
   std::unordered_map<std::string, HoverProvider> hovers;
   std::vector<std::string> hover_provider_order;
   std::vector<PluginHost::ContributedMenuEntry> menu_entries;
@@ -139,12 +150,14 @@ struct PluginHost::Impl {
     if (plugins.size() != 1) {
       reload_summary += "s";
     }
-    reload_summary += " and " + std::to_string(command_names.size()) + " command";
-    if (command_names.size() != 1) {
+    // Read the maps, not the ordered views: the latter rebuild lazily and may be
+    // dirty here, but their element counts always match the source maps.
+    reload_summary += " and " + std::to_string(commands.size()) + " command";
+    if (commands.size() != 1) {
       reload_summary += "s";
     }
-    reload_summary += " and " + std::to_string(sidebar_providers.size()) + " sidebar";
-    if (sidebar_providers.size() != 1) {
+    reload_summary += " and " + std::to_string(sidebars.size()) + " sidebar";
+    if (sidebars.size() != 1) {
       reload_summary += "s";
     }
     reload_summary += " and " + std::to_string(hover_provider_order.size()) + " hover provider";

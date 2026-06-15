@@ -43,6 +43,7 @@ PluginHost::Callbacks MakePluginHostCallbacks() {
       .log_sink = {},
       .get_setting = {},
       .request_status_redraw = {},
+      .show_notification = {},
   };
 }
 
@@ -1237,6 +1238,11 @@ return ide.plugin({
       language_id = "markdown",
       command = { "python3", "fake-lsp.py" }
     })
+    ctx.lsp.add({
+      id = "clike",
+      language_ids = { "c", "c++", "objective-c" },
+      command = { "clangd" }
+    })
   end
 })
 )");
@@ -1247,13 +1253,19 @@ return ide.plugin({
   host.SetCallbacks(MakePluginHostCallbacks());
 
   Expect(host.Reload(project_root), "phase5 lsp plugin should reload successfully");
-  Expect(host.ContributedLanguageServers().size() == 1,
-         "ctx.lsp.add should register one language server");
-  Expect(host.ContributedLanguageServers().front().id == "phase5-lsp.markdown" &&
-             host.ContributedLanguageServers().front().language_id == "markdown" &&
-             host.ContributedLanguageServers().front().command.size() == 2 &&
-             host.ContributedLanguageServers().front().command.front() == "python3",
-         "language server contributions should preserve ids, language ids, and commands");
+  Expect(host.ContributedLanguageServers().size() == 2,
+         "ctx.lsp.add should register both language servers");
+  const auto& markdown_server = host.ContributedLanguageServers().front();
+  Expect(markdown_server.id == "phase5-lsp.markdown" &&
+             markdown_server.language_ids == std::vector<std::string>{"markdown"} &&
+             markdown_server.command.size() == 2 && markdown_server.command.front() == "python3",
+         "a single language_id should fold into a one-element language_ids list");
+  const auto& clike_server = host.ContributedLanguageServers().back();
+  Expect(clike_server.id == "phase5-lsp.clike" &&
+             clike_server.language_ids ==
+                 std::vector<std::string>{"c", "c++", "objective-c"} &&
+             clike_server.command == std::vector<std::string>{"clangd"},
+         "a language_ids array should be preserved in order for one shared server");
 }
 
 void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
@@ -1279,13 +1291,43 @@ void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
          "repo typescript-lsp plugin should contribute one language server");
 
   const auto& server = host.ContributedLanguageServers().front();
-  Expect(server.id == "typescript-lsp.typescript" && server.language_id == "typescript",
+  Expect(server.id == "typescript-lsp.typescript" &&
+             server.language_ids == std::vector<std::string>{"typescript"},
          "repo typescript-lsp plugin should preserve its ids");
   Expect(server.command.size() == 2 &&
              server.command.front() ==
                  (project_root / "node_modules" / ".bin" / "typescript-language-server").generic_string() &&
              server.command.back() == "--stdio",
          "repo typescript-lsp plugin should use an absolute project-local language server path");
+}
+
+void TestRepoCppLspPluginRegistersClangdForCLikeLanguages() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "cpp plugin fixture\n");
+
+  CopyRepoPlugin(global_plugins, "cpp-lsp");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "repo cpp-lsp plugin should reload successfully");
+  Expect(host.ContributedLanguageServers().size() == 1,
+         "repo cpp-lsp plugin should contribute one shared language server");
+
+  const auto& server = host.ContributedLanguageServers().front();
+  Expect(server.id == "cpp-lsp.clangd" &&
+             server.language_ids == std::vector<std::string>{"c", "c++", "objective-c"},
+         "repo cpp-lsp plugin should register clangd for c / c++ / objective-c as one server");
+  Expect(!server.command.empty() && server.command.front() == "clangd",
+         "repo cpp-lsp plugin should launch the clangd binary by default");
 }
 
 void TestPluginHostCancelsAsyncCallbacksOnReload() {
@@ -1557,6 +1599,199 @@ return ide.plugin({
          "the Lua stack must remain intact across deferred-raise error paths");
 }
 
+// Locks the batched ordered-view rebuild: registration only flips a dirty bit, so a
+// plugin registering several commands out of order must still expose a single fully
+// sorted, deduplicated CommandNames() view after load, merged across plugins.
+void TestPluginHostBatchedCommandRegistrationSortsOnce() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "batch fixture\n");
+
+  WritePluginInit(
+      global_plugins, "batch-one",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "batch.one",
+  setup = function(ctx)
+    ctx.commands.add("batch.zeta", function() end)
+    ctx.commands.add("batch.alpha", function() end)
+    ctx.commands.add("batch.mid", function() end)
+  end,
+})
+)");
+  WritePluginInit(
+      global_plugins, "batch-two",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "batch.two",
+  setup = function(ctx)
+    ctx.commands.add("batch.beta", function() end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "plugin reload should succeed for batch fixture");
+
+  const std::vector<std::string>& names = host.CommandNames();
+  const std::vector<std::string> expected = {"batch.alpha", "batch.beta", "batch.mid", "batch.zeta"};
+  Expect(names.size() == expected.size(),
+         "batched registration should expose every command exactly once");
+  Expect(names == expected,
+         "command names should be globally sorted and deduplicated across plugins");
+  Expect(std::is_sorted(names.begin(), names.end()),
+         "command names view must remain sorted after lazy rebuild");
+
+  // A second read without intervening registration must return the identical view
+  // (the dirty flag is cleared after the first rebuild).
+  Expect(host.CommandNames() == expected, "repeated reads must return a stable sorted view");
+}
+
+// A plugin command that returns a string should surface it as host feedback; one
+// that returns nothing leaves feedback empty (the host then synthesizes a default).
+void TestPluginHostCommandReturnsFeedback() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "feedback fixture\n");
+
+  WritePluginInit(
+      global_plugins, "feedback-sample",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "feedback.sample",
+  setup = function(ctx)
+    ctx.commands.add("feedback.echo", function(ctx, args)
+      return "echoed " .. table.concat(args, ",")
+    end)
+    ctx.commands.add("feedback.silent", function() end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "plugin reload should succeed for feedback fixture");
+
+  std::string error;
+  std::string feedback;
+  Expect(host.ExecuteCommand("feedback.echo", {"a", "b"}, &error, &feedback),
+         "returning command should execute");
+  Expect(feedback == "echoed a,b",
+         "command string return value should be surfaced as feedback");
+
+  feedback = "stale";
+  Expect(host.ExecuteCommand("feedback.silent", {}, &error, &feedback),
+         "silent command should execute");
+  Expect(feedback.empty(), "a command returning nothing should leave feedback empty");
+}
+
+// microide.notify(level, message) should route to the host show_notification callback.
+void TestPluginHostNotifyInvokesCallback() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "notify fixture\n");
+
+  WritePluginInit(
+      global_plugins, "notify-sample",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "notify.sample",
+  setup = function(ctx)
+    ctx.notify("warning", "heads up")
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  std::vector<std::pair<std::string, std::string>> notifications;
+  PluginHost host;
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.show_notification = [&](const std::string& level, const std::string& message) {
+    notifications.emplace_back(level, message);
+  };
+  host.SetCallbacks(std::move(callbacks));
+  Expect(host.Reload(project_root), "plugin reload should succeed for notify fixture");
+
+  Expect(notifications.size() == 1, "ctx.notify should invoke the host callback exactly once");
+  Expect(notifications.front().first == "warning" && notifications.front().second == "heads up",
+         "ctx.notify should forward the level and message verbatim");
+}
+
+// A disabled plugin id should skip setup (no commands) but still be listed as disabled,
+// and re-enabling it should load it on the next reload.
+void TestPluginHostDisabledPluginsSkipSetupButRemainListed() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "disable fixture\n");
+
+  WritePluginInit(global_plugins, "alpha-sample",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "alpha.sample",
+  setup = function(ctx) ctx.commands.add("alpha.cmd", function() end) end,
+})
+)");
+  WritePluginInit(global_plugins, "beta-sample",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "beta.sample",
+  setup = function(ctx) ctx.commands.add("beta.cmd", function() end) end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  host.SetDisabledPlugins({"beta.sample"});
+  Expect(host.Reload(project_root), "reload should succeed with one plugin disabled");
+  Expect(host.LoadedPluginCount() == 1, "only the enabled plugin should be fully loaded");
+  Expect(std::find(host.CommandNames().begin(), host.CommandNames().end(), "alpha.cmd") !=
+             host.CommandNames().end(),
+         "the enabled plugin's command should be registered");
+  Expect(std::find(host.CommandNames().begin(), host.CommandNames().end(), "beta.cmd") ==
+             host.CommandNames().end(),
+         "the disabled plugin's command must not be registered");
+
+  const std::vector<PluginHost::LoadedPlugin> listed = host.LoadedPlugins();
+  Expect(listed.size() == 2, "both plugins should be listed (enabled and disabled)");
+  Expect(listed[0].id == "alpha.sample" && listed[0].enabled,
+         "alpha should be listed first and enabled");
+  Expect(listed[1].id == "beta.sample" && !listed[1].enabled,
+         "beta should be listed as disabled");
+
+  host.SetDisabledPlugins({});
+  Expect(host.Reload(project_root), "reload should succeed after re-enabling");
+  Expect(host.LoadedPluginCount() == 2, "re-enabling should load both plugins");
+  Expect(std::find(host.CommandNames().begin(), host.CommandNames().end(), "beta.cmd") !=
+             host.CommandNames().end(),
+         "re-enabled plugin's command should register after reload");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -1595,8 +1830,16 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
   AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",
           TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary);
+  AddTest(tests, "PluginHost/RepoCppLspPluginRegistersClangdForCLikeLanguages",
+          TestRepoCppLspPluginRegistersClangdForCLikeLanguages);
   AddTest(tests, "PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState",
           TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState);
+  AddTest(tests, "PluginHost/BatchedCommandRegistrationSortsOnce",
+          TestPluginHostBatchedCommandRegistrationSortsOnce);
+  AddTest(tests, "PluginHost/CommandReturnsFeedback", TestPluginHostCommandReturnsFeedback);
+  AddTest(tests, "PluginHost/NotifyInvokesCallback", TestPluginHostNotifyInvokesCallback);
+  AddTest(tests, "PluginHost/DisabledPluginsSkipSetupButRemainListed",
+          TestPluginHostDisabledPluginsSkipSetupButRemainListed);
 }
 
 }  // namespace microide::tests

@@ -1,8 +1,72 @@
 #include "plugin/PluginLuaInterop.h"
 
+#include <algorithm>
+#include <cctype>
+
 namespace microide::plugin::lua_interop {
 
+bool IsValidIdentifier(std::string_view value) {
+  if (value.empty()) {
+    return false;
+  }
+  return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+    return std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_';
+  });
+}
+
 #if MICROIDE_HAS_LUA_PLUGINS
+std::optional<std::string> ReadOptionalStringField(lua_State* state,
+                                                   int table_index,
+                                                   const char* field) {
+  lua_getfield(state, table_index, field);
+  if (!lua_isstring(state, -1)) {
+    lua_pop(state, 1);
+    return std::nullopt;
+  }
+  std::string value = lua_tostring(state, -1);
+  lua_pop(state, 1);
+  return value;
+}
+
+std::string ReadStringField(lua_State* state, int table_index, const char* field) {
+  return ReadOptionalStringField(state, table_index, field).value_or(std::string{});
+}
+
+int ReadFunctionRefField(lua_State* state, int table_index, const char* field) {
+  lua_getfield(state, table_index, field);
+  if (!lua_isfunction(state, -1)) {
+    lua_pop(state, 1);
+    return LUA_NOREF;
+  }
+  return luaL_ref(state, LUA_REGISTRYINDEX);
+}
+
+std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
+                                                             int table_index,
+                                                             const char* field) {
+  lua_getfield(state, table_index, field);
+  if (!lua_istable(state, -1)) {
+    lua_pop(state, 1);
+    return std::nullopt;
+  }
+  std::vector<std::string> values;
+  for (lua_Integer i = 1;; ++i) {
+    lua_geti(state, -1, i);
+    if (lua_isnil(state, -1)) {
+      lua_pop(state, 1);
+      break;
+    }
+    if (!lua_isstring(state, -1)) {
+      lua_pop(state, 2);
+      return std::nullopt;
+    }
+    values.emplace_back(lua_tostring(state, -1));
+    lua_pop(state, 1);
+  }
+  lua_pop(state, 1);
+  return values;
+}
+
 void PushPosition(lua_State* state, std::size_t line, std::size_t column) {
   lua_createtable(state, 0, 2);
   lua_pushinteger(state, static_cast<lua_Integer>(line));
