@@ -244,6 +244,7 @@ void ApplyProjectAccent(render::Theme& theme, SDL_Color accent) {
   theme.row_highlight = blend(theme.editor_background, accent, 0.10f);
   const SDL_Color selection = blend(theme.editor_background, accent, 0.30f);
   theme.selection_fill = SDL_Color{selection.r, selection.g, selection.b, 0xa8};
+  theme.selection_strong = render::CompositeOver(theme.selection_fill, theme.surface_background);
   const SDL_Color search_match = blend(theme.editor_background, accent, 0.30f);
   theme.search_match = SDL_Color{search_match.r, search_match.g, search_match.b, 0x8f};
   const SDL_Color search_match_active = blend(theme.editor_background, accent, 0.42f);

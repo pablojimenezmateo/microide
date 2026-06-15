@@ -61,6 +61,22 @@ SDL_Color BlendColors(SDL_Color base, SDL_Color tint, float amount) {
   };
 }
 
+SDL_Color CompositeOver(SDL_Color foreground, SDL_Color background) {
+  const float alpha = static_cast<float>(foreground.a) / 255.0f;
+  const auto over = [&](Uint8 fg, Uint8 bg) -> Uint8 {
+    return static_cast<Uint8>(
+        std::clamp(std::lround(static_cast<float>(fg) * alpha +
+                               static_cast<float>(bg) * (1.0f - alpha)),
+                   0l, 255l));
+  };
+  return SDL_Color{
+      over(foreground.r, background.r),
+      over(foreground.g, background.g),
+      over(foreground.b, background.b),
+      0xff,
+  };
+}
+
 namespace {
 
 struct ThemeStyle {
@@ -583,6 +599,7 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
                      1.7f);
   theme.row_highlight = row_highlight;
   theme.selection_fill = WithAlpha(selection, 0xb4);
+  theme.selection_strong = CompositeOver(theme.selection_fill, theme.surface_background);
   theme.search_match = WithAlpha(search_match, 0x8f);
   theme.search_match_active =
       WithAlpha(Lighten(search_match, IsLight(search_match) ? 0.04f : 0.12f), 0xc8);
@@ -623,7 +640,7 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
 }  // namespace
 
 Theme MakeDefaultTheme() {
-  return Theme{
+  Theme theme{
       .window_background = SDL_Color{0x08, 0x0b, 0x11, 0xff},
       .chrome_background = SDL_Color{0x15, 0x19, 0x22, 0xff},
       .chrome_active = SDL_Color{0x1d, 0x24, 0x31, 0xff},
@@ -667,6 +684,8 @@ Theme MakeDefaultTheme() {
       .diagnostic_info = SDL_Color{0x7a, 0xb0, 0xff, 0xff},
       .diagnostic_hint = SDL_Color{0x8d, 0xdf, 0x9f, 0xff},
   };
+  theme.selection_strong = CompositeOver(theme.selection_fill, theme.surface_background);
+  return theme;
 }
 
 std::filesystem::path FindThemeDirectory() {
