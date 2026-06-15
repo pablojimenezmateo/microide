@@ -106,6 +106,13 @@ void ExpectReadableDecorationUnderlays(const render::Theme& theme, std::string_v
   ExpectContrastAtLeast(prefix + " comments over active occurrence", theme.syntax_comment,
                         active_occurrence, 2.9f);
   ExpectContrastAtLeast(prefix + " comments over selection", theme.syntax_comment, selection, 2.9f);
+
+  // selection_strong is the opaque highlight used on solid panels (e.g. the
+  // Settings overlay), so nothing behind it may ghost through and primary text
+  // must stay readable on top of it.
+  Expect(theme.selection_strong.a == 0xff, prefix + " selection_strong is opaque");
+  ExpectContrastAtLeast(prefix + " primary text over selection_strong", theme.text_primary,
+                        theme.selection_strong, 4.5f);
 }
 
 void ExpectDefaultThemeDecorationUnderlaysStayReadable() {

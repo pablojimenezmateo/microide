@@ -212,7 +212,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       if (cat.rect.y + cat.rect.h > pane_bottom + 0.5f) {
         break;
       }
-      const SDL_Color background = cat.selected ? theme_.selection_fill : theme_.surface_background;
+      const SDL_Color background = cat.selected ? theme_.selection_strong : theme_.surface_background;
       if (cat.selected) {
         DrawFilledRect(renderer, cat.rect, background);
         if (pane_focused) {
@@ -234,7 +234,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
         row.row_rect.y < vm.right_pane_rect.y - 0.5f) {
       continue;
     }
-    const SDL_Color background = row.selected ? theme_.selection_fill : theme_.surface_background;
+    const SDL_Color background = row.selected ? theme_.selection_strong : theme_.surface_background;
     if (row.selected) {
       DrawFilledRect(renderer, row.row_rect, background);
       if (values_focused) {

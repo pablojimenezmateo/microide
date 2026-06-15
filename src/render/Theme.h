@@ -31,6 +31,7 @@ struct Theme {
   SDL_Color text_disabled;
   SDL_Color row_highlight;
   SDL_Color selection_fill;
+  SDL_Color selection_strong;  // opaque selection fill for highlights over solid panels
   SDL_Color search_match;
   SDL_Color search_match_active;
   SDL_Color bracket_match_background;
@@ -59,6 +60,8 @@ float RelativeLuminance(SDL_Color color);
 float Contrast(SDL_Color c1, SDL_Color c2);
 // Linear interpolation between two RGBA colors. `amount` is clamped to [0, 1].
 SDL_Color BlendColors(SDL_Color base, SDL_Color tint, float amount);
+// Alpha-over composite of `foreground` onto `background`; result is opaque.
+SDL_Color CompositeOver(SDL_Color foreground, SDL_Color background);
 std::filesystem::path FindThemeDirectory();
 std::vector<std::string> ListAvailableThemeNames(
     const std::filesystem::path& theme_directory = {});
