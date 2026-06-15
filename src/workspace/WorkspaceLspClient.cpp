@@ -18,7 +18,8 @@ void LspClient::SetWakeEventType(Uint32 event_type) {
 bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,
                       const std::string& language_id, const std::string& cwd,
                       const util::JsonValue& initialization_options,
-                      const util::JsonValue& settings) {
+                      const util::JsonValue& settings,
+                      const platform::SubprocessSandbox& sandbox) {
   util::StartupTrace::Scope trace_scope("LspClient::Start");
   impl_->last_error.clear();
   impl_->initialization_options = initialization_options;
@@ -32,7 +33,7 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
 
   {
     util::StartupTrace::Scope start_proc_scope("LspClient::Start::StartProcess");
-    if (!impl_->proc.Start(command, cwd)) {
+    if (!impl_->proc.Start(command, cwd, sandbox)) {
       impl_->last_error = "failed to start language server process";
       {
         std::lock_guard lock(impl_->mutex);

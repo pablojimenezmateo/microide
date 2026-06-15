@@ -15,11 +15,12 @@ and seccomp. This narrows plugin trust but does not fully isolate the Lua state.
   filesystem access is contained to the project root (and an optional per-plugin data dir),
   process execution is default-deny with an optional `argv[0]` allowlist, and spawnable
   contributions (formatters / language servers / tasks) are rejected at load without `process.exec`.
-  On Linux, permitted `ctx.process.run` children are confined with Landlock (writes limited to the
-  project + data dir) and an optional seccomp IPv4/IPv6 socket block.
+  On Linux, permitted `ctx.process.run` children **and** contributed language-server processes are
+  confined with Landlock (writes limited to the project + data dir) and an optional seccomp
+  IPv4/IPv6 socket block.
 - **Not full isolation.** There is no first-run capability prompt, no signature/marketplace trust,
-  no kernel confinement of the long-lived LSP subprocess path, and the Lua state still runs
-  in-process. A plugin granted `process.exec` can still run tools that read your project.
+  and the Lua state still runs in-process. A plugin granted `process.exec` can still run tools that
+  read your project.
 - **No plugin marketplace or remote install** in current scope.
 
 See [guidelines/plugin-trust-model.md](guidelines/plugin-trust-model.md) for the full model.
@@ -72,8 +73,8 @@ or `MICROIDE_PERF_TRACE` were enabled.
 ## Known limitations
 
 - Per-plugin capability sandbox enforced (fs containment, default-deny process, Linux
-  Landlock/seccomp confinement of spawned children); but no first-run capability prompt, plugin
-  signing, marketplace trust, kernel confinement of contributed language servers, or out-of-process
-  isolation of the Lua state
+  Landlock/seccomp confinement of both `ctx.process.run` children and contributed language servers);
+  but no first-run capability prompt, plugin signing, marketplace trust, or out-of-process isolation
+  of the Lua state
 - No signed release binaries yet (build from source; verify checksums when published)
 - Comparative performance claims against other editors are not made; internal baselines only

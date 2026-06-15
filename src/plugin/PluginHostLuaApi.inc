@@ -59,6 +59,25 @@
     };
   }
 
+  // Resolves the kernel-confinement descriptor for a process-spawning contribution from the
+  // calling plugin's project root, data dir, and network capability. Mirrors the live
+  // process.run sandbox so contributed servers/formatters are confined the same way.
+  static platform::SubprocessSandbox MakeContributionSandbox(const std::filesystem::path& project_root,
+                                                             const PluginInstance* plugin) {
+    platform::SubprocessSandbox sandbox;
+    sandbox.enabled = true;
+    sandbox.allow_network = plugin != nullptr ? plugin->capabilities.network : false;
+    if (!project_root.empty()) {
+      sandbox.read_roots.push_back(project_root);
+      sandbox.write_roots.push_back(project_root);
+    }
+    if (plugin != nullptr && !plugin->data_dir.empty()) {
+      sandbox.read_roots.push_back(plugin->data_dir);
+      sandbox.write_roots.push_back(plugin->data_dir);
+    }
+    return sandbox;
+  }
+
   // Allowlist gate for a contributed argv (formatter / language server / task). Mirrors the
   // live process.run allowlist: an empty allowlist permits anything; otherwise command[0] must
   // match an entry by exact string or basename. An empty command is left to the registration
@@ -413,6 +432,10 @@
             host->language_servers.pop_back();
             *error_message = "language server program not in capabilities.process.allow";
             return false;
+          }
+          if (!host->language_servers.empty()) {
+            host->language_servers.back().sandbox =
+                MakeContributionSandbox(host->current_project_root, plugin);
           }
           return true;
         });

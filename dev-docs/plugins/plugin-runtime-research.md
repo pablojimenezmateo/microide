@@ -971,15 +971,18 @@ the summary:
   rejected at registration when `process.exec` is absent.
 - a new `ctx.workspace.data_dir()` exposes the plugin's writable scratch dir so data-scope plugins
   (e.g. the eslint report file) no longer write to `/tmp`, which the sandbox denies.
-- on Linux, permitted `ctx.process.run`/`run_async` children are confined with Landlock (writes
-  limited to project + data dir, system stays readable/executable), an optional seccomp
-  IPv4/IPv6-socket block when `network = false`, and `setrlimit` hooks
-  (`src/platform/SubprocessSandbox.cpp`, applied between fork and exec in
-  `src/platform/Subprocess.cpp`). The layer is fail-open defense-in-depth behind the in-process
-  gate.
+- on Linux, permitted `ctx.process.run`/`run_async` children **and** contributed language-server
+  processes are confined with Landlock (writes limited to project + data dir, system stays
+  readable/executable), an optional seccomp IPv4/IPv6-socket block when `network = false`, and
+  `setrlimit` hooks (`src/platform/SubprocessSandbox.cpp`, applied between fork and exec in both
+  `src/platform/Subprocess.cpp` and `src/platform/AsyncSubprocess.cpp`). The LSP sandbox is resolved
+  at registration (`PluginHostLuaApi.inc::MakeContributionSandbox`) and threaded through
+  `ContributedLanguageServer` → `LspManager::RegisterServer` → `LspClient::Start` →
+  `AsyncSubprocess::Start`. The layer is fail-open defense-in-depth behind the in-process gate.
 
-Not included: first-run capability prompts, signing/marketplace trust, kernel confinement of the
-long-lived contributed-LSP `AsyncSubprocess` path, and out-of-process isolation of the Lua state.
+Not included: first-run capability prompts, signing/marketplace trust, per-server capability
+overrides (a confined language server cannot reach home-directory caches), and out-of-process
+isolation of the Lua state.
 
 ## Final Recommendation
 

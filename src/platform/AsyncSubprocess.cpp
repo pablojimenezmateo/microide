@@ -118,7 +118,8 @@ AsyncSubprocess& AsyncSubprocess::operator=(AsyncSubprocess&& other) noexcept {
 
 #if defined(__unix__) || defined(__APPLE__)
 
-bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd) {
+bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd,
+                            const SubprocessSandbox& sandbox) {
   std::lock_guard lock(impl_->state_mutex);
   if (argv.empty() || impl_->running.load(std::memory_order_acquire)) {
     return false;
@@ -164,6 +165,7 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
         _exit(127);
       }
     }
+    ApplyChildSandbox(sandbox);
 
     std::vector<char*> raw_argv;
     raw_argv.reserve(argv.size() + 1);
@@ -537,7 +539,9 @@ std::wstring BuildCommandLine(const std::vector<std::string>& argv) {
 
 }  // namespace
 
-bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd) {
+bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd,
+                            const SubprocessSandbox& /*sandbox*/) {
+  // Windows: kernel confinement is Linux-only; the contribution is still gated in-process.
   if (argv.empty() || impl_->running) {
     return false;
   }
@@ -731,7 +735,10 @@ int AsyncSubprocess::stdout_fd() const { return -1; }
 
 #else  // non-POSIX stubs
 
-bool AsyncSubprocess::Start(const std::vector<std::string>&, const std::string&) { return false; }
+bool AsyncSubprocess::Start(const std::vector<std::string>&, const std::string&,
+                            const SubprocessSandbox&) {
+  return false;
+}
 bool AsyncSubprocess::IsRunning() const { return false; }
 bool AsyncSubprocess::Write(std::string_view) { return false; }
 std::optional<std::string> AsyncSubprocess::Read(std::size_t, int) { return std::nullopt; }

@@ -1985,10 +1985,62 @@ return ide.plugin({
   Expect(has_message("data-read:scratch"), "reading back from the data dir should return the content");
 }
 
+// A contributed language server should carry a resolved kernel-confinement descriptor: enabled,
+// with the project root among its write roots, and network blocked unless the plugin declared it.
+// This locks the registration-time wiring that threads the sandbox down to AsyncSubprocess::Start.
+void TestPluginHostLanguageServerSandboxResolved() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "lsp sandbox fixture\n");
+
+  WritePluginInit(
+      global_plugins, "lsp-sandbox",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "lsp.sandbox",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "markdown", language_id = "markdown", command = { "true" } })
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "lsp sandbox plugin should load");
+
+  Expect(host.ContributedLanguageServers().size() == 1,
+         "the language server should register with process.exec granted");
+  const platform::SubprocessSandbox& sandbox = host.ContributedLanguageServers().front().sandbox;
+  Expect(sandbox.enabled, "the contributed language server should carry an enabled sandbox");
+  Expect(!sandbox.allow_network,
+         "network should be blocked for a server whose plugin did not declare it");
+  const auto contains_project_root = [&](const std::vector<std::filesystem::path>& roots) {
+    for (const std::filesystem::path& root : roots) {
+      if (root == project_root) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(contains_project_root(sandbox.write_roots),
+         "the project root should be writable inside the server sandbox");
+  Expect(contains_project_root(sandbox.read_roots),
+         "the project root should be readable inside the server sandbox");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/FilesystemSandbox", TestPluginHostFilesystemSandbox);
+  AddTest(tests, "PluginHost/LanguageServerSandboxResolved",
+          TestPluginHostLanguageServerSandboxResolved);
   AddTest(tests, "PluginHost/ProcessAndContributionCapabilities",
           TestPluginHostProcessAndContributionCapabilities);
   AddTest(tests, "PluginHost/LoadsPluginsAndDispatchesLifecycle",

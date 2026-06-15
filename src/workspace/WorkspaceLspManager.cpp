@@ -51,7 +51,8 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
                                 const std::string& cwd,
                                 bool eager_start,
                                 const util::JsonValue& initialization_options,
-                                const util::JsonValue& settings) {
+                                const util::JsonValue& settings,
+                                const platform::SubprocessSandbox& sandbox) {
   if (language_ids.empty()) {
     return;
   }
@@ -83,6 +84,7 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
   entry.cwd = cwd;
   entry.initialization_options = initialization_options;
   entry.settings = settings;
+  entry.sandbox = sandbox;
   for (const std::string& id : language_ids) {
     alias_[id] = key;
   }
@@ -135,7 +137,7 @@ LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
     const std::string& label =
         entry.language_ids.empty() ? std::string() : entry.language_ids.front();
     if (!entry.client->Start(entry.command, entry.root_uri, label, entry.cwd,
-                             entry.initialization_options, entry.settings)) {
+                             entry.initialization_options, entry.settings, entry.sandbox)) {
       entry.last_error = entry.client->LastError();
       if (entry.last_error.empty()) {
         entry.last_error = "language server failed to start";

@@ -229,10 +229,11 @@ Plugins declare a `capabilities` table in their `init.lua` descriptor, which the
   no `io`/`os` — with `package.path` pinned to the plugin directory and `package.cpath`/`loadlib`
   disabled, so plugins cannot `require` arbitrary modules or load native libraries.
 
-This is real enforcement, not just documentation. What it does **not** do: first-run capability
-prompts, signature/marketplace trust, kernel confinement of the long-lived LSP subprocess path, or
-isolating the Lua state itself out of process. A plugin you grant `process.exec` can still run tools
-that read your whole project. Only install plugins you trust into `~/.config/microide/plugins/`.
+This is real enforcement, not just documentation. On Linux the kernel confinement applies to both
+`ctx.process.run` children and contributed language-server processes. What it does **not** do:
+first-run capability prompts, signature/marketplace trust, or isolating the Lua state itself out of
+process. A plugin you grant `process.exec` can still run tools that read your whole project. Only
+install plugins you trust into `~/.config/microide/plugins/`.
 
 **Recommendations:**
 

@@ -118,7 +118,8 @@ class LspClient {
   bool Start(const std::vector<std::string>& command, const std::string& root_uri,
              const std::string& language_id, const std::string& cwd = {},
              const util::JsonValue& initialization_options = {},
-             const util::JsonValue& settings = {});
+             const util::JsonValue& settings = {},
+             const platform::SubprocessSandbox& sandbox = {});
 
   // True while the server process is running.
   bool IsRunning() const;

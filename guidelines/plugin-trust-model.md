@@ -121,14 +121,15 @@ formatters, tasks): a plugin that declares one without `process.exec` is rejecte
 clear error. A refused `process.run` raises a Lua error and records a diagnostic naming the missing
 capability. The process `cwd` is also contained to the project/data roots.
 
-On Linux, permitted `ctx.process.run` / `run_async` children are additionally confined in-kernel:
-Landlock limits writes to the project root and the plugin data dir (the wider system stays
-readable/executable so tools still run), and when `network = false` a seccomp filter blocks
-IPv4/IPv6 sockets (AF_UNIX/local IPC still works). This layer is best-effort defense-in-depth: on a
-kernel without Landlock/seccomp it degrades to the in-process gate above. **Contributed language
-servers (the long-lived LSP path) are gated at registration but are not yet kernel-confined.** A
+On Linux, permitted `ctx.process.run` / `run_async` children **and** contributed language-server
+processes are confined in-kernel: Landlock limits writes to the project root and the plugin data dir
+(the wider system stays readable/executable so tools still run), and when `network = false` a
+seccomp filter blocks IPv4/IPv6 sockets (AF_UNIX/local IPC still works). This layer is best-effort
+defense-in-depth: on a kernel without Landlock/seccomp it degrades to the in-process gate above. A
 plugin that declares `process.exec` and runs `{"sh", "-c", "..."}` still gets a shell — but one
-whose writes are confined to the project and whose network may be blocked.
+whose writes are confined to the project and whose network may be blocked. (Note: a language server
+that needs to read or write outside the project — e.g. a package cache under `~/.nuget` or
+`~/.cache` — may be restricted; the system directories and `/tmp` remain available.)
 
 ### Editor and project state
 
@@ -188,10 +189,9 @@ These are absent today. None of them are on the roadmap unless a separate phase 
 - **No isolation of the Lua state itself.** Capability enforcement happens at the host-API
   boundary and (for subprocesses) in the kernel; the `lua_State` still runs in the editor process,
   so a memory-safety bug in the host bindings is not contained by this model.
-- **No kernel confinement for contributed language servers.** The long-lived LSP subprocess path
-  is gated at registration (`process.exec` required) but does not yet apply Landlock/seccomp.
 - **No kernel confinement off Linux.** macOS/Windows get the in-process capability gate (fs
-  containment, process gate, allowlist) plus portable `setrlimit`, but not Landlock/seccomp.
+  containment, process gate, allowlist) plus portable `setrlimit`, but not Landlock/seccomp. On
+  Linux, both `ctx.process.run` children and contributed language-server processes are confined.
 - **No marketplace, no remote install, no auto-update.** Plugins are placed by the user in
   `~/.config/microide/plugins/`.
 
@@ -215,8 +215,7 @@ Explicit scope decision:
   `package.cpath`, and Linux Landlock + seccomp + `setrlimit` confinement of plugin-spawned
   children.
 - **Still out of scope:** first-run capability prompts, code signing / signed-manifest trust,
-  marketplace trust, kernel confinement of contributed language servers, and full out-of-process
-  isolation of the Lua state itself.
+  marketplace trust, and full out-of-process isolation of the Lua state itself.
 - **Git Workstation** startup trust controls remain available:
   - `--disable-plugins` — skip user-scope plugins and plugin syntax loading
   - `--safe-mode` — implies plugin disabling, skips workspace/session restore, empty shell unless
@@ -242,7 +241,8 @@ The following would be reasonable to add only if microide ever pursues plugin di
 
 - first-run capability prompts that ask the user to approve a declared capability set
 - a signed-manifest format and signature verification
-- kernel confinement of the contributed language-server (LSP) subprocess path
+- per-server capability overrides (e.g. granting a language server broader filesystem access than
+  the default project/data confinement when it legitimately needs a home-directory cache)
 - isolating each plugin in its own Lua state in a separate sandboxed process with explicit
   message-passing seams
 
