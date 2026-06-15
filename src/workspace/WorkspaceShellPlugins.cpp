@@ -227,6 +227,14 @@ WorkspaceShell::WorkspaceShell() {
           [this]() {
             RequestChromeRedraw();
           },
+      .show_notification =
+          [this](const std::string& level, const std::string& message) {
+            notification_service_.Show(NotificationService::ToneFromLevel(level), message,
+                                       SDL_GetTicks());
+            // A full redraw is fine here: notifications are infrequent, event-driven
+            // posts (never per-frame polling), so this never spins the CPU.
+            RequestFullRedraw();
+          },
   });
 }
 
@@ -273,11 +281,13 @@ void WorkspaceShell::RebuildPhase3Registries() {
     });
   }
   for (const auto& language_server : host.ContributedLanguageServers()) {
-    if (language_server.command.empty()) {
+    if (language_server.command.empty() || language_server.language_ids.empty()) {
       continue;
     }
-    active_language_servers.insert(language_server.language_id);
-    CurrentLspManager().RegisterServer(language_server.language_id, language_server.command,
+    for (const auto& language_id : language_server.language_ids) {
+      active_language_servers.insert(language_id);
+    }
+    CurrentLspManager().RegisterServer(language_server.language_ids, language_server.command,
                                        "file://" + context_.current_project_state.root.generic_string(),
                                        context_.current_project_state.root.generic_string(),
                                        false, language_server.initialization_options,
@@ -332,6 +342,8 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
   if (startup_options_.plugins_disabled()) {
     request.syntax_definitions = false;
   }
+  // Apply the user's per-plugin disable set before reloading so disabled plugins skip setup.
+  plugin_runtime_.Host().SetDisabledPlugins(context_.disabled_plugin_ids);
   bool clean_reload;
   {
     util::StartupTrace::Scope plugin_scope("PluginRuntime::Reload");

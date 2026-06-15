@@ -21,7 +21,6 @@ bool RegisterCommand(lua_State* state,
                      std::string_view command_name,
                      int function_index,
                      std::unordered_map<std::string, runtime_types::PluginCommand>* commands,
-                     std::vector<std::string>* command_names,
                      std::string* error_message);
 
 void RebuildCommandNames(const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
@@ -31,7 +30,6 @@ bool RegisterSidebar(lua_State* state,
                      const runtime_types::PluginInstance* plugin,
                      int table_index,
                      std::unordered_map<std::string, runtime_types::SidebarProvider>* sidebars,
-                     std::vector<PluginHost::SidebarProviderInfo>* sidebar_providers,
                      std::string* error_message);
 
 void RebuildSidebarProviders(

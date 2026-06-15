@@ -3,19 +3,13 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
-#include <cctype>
+
+#include "plugin/PluginLuaInterop.h"
 
 namespace microide::plugin::registry_interop {
 namespace {
 
-bool IsValidIdentifier(std::string_view value) {
-  if (value.empty()) {
-    return false;
-  }
-  return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
-    return std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_';
-  });
-}
+using lua_interop::IsValidIdentifier;
 
 void RebuildCommandNamesImpl(
     const std::unordered_map<std::string, runtime_types::PluginCommand>& commands,
@@ -67,7 +61,6 @@ bool RegisterCommand(lua_State* state,
                      std::string_view command_name,
                      int function_index,
                      std::unordered_map<std::string, runtime_types::PluginCommand>* commands,
-                     std::vector<std::string>* command_names,
                      std::string* error_message) {
   if (plugin == nullptr) {
     if (error_message != nullptr) {
@@ -107,7 +100,6 @@ bool RegisterCommand(lua_State* state,
                         .state = state,
                         .function_ref = function_ref,
                     });
-  RebuildCommandNamesImpl(*commands, command_names);
   return true;
 }
 
@@ -115,7 +107,6 @@ bool RegisterSidebar(lua_State* state,
                      const runtime_types::PluginInstance* plugin,
                      int table_index,
                      std::unordered_map<std::string, runtime_types::SidebarProvider>* sidebars,
-                     std::vector<PluginHost::SidebarProviderInfo>* sidebar_providers,
                      std::string* error_message) {
   if (plugin == nullptr) {
     if (error_message != nullptr) {
@@ -199,7 +190,6 @@ bool RegisterSidebar(lua_State* state,
                             .snapshot_ref = snapshot_ref,
                             .confirm_ref = confirm_ref,
                         });
-  RebuildSidebarProvidersImpl(*sidebars, sidebar_providers);
   return true;
 }
 

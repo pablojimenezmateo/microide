@@ -22,6 +22,7 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
       project_root.empty() ? std::filesystem::path{} : project_root.lexically_normal();
   impl_->DrainAsyncProcessWorkers();
   impl_->TearDownPlugins();
+  impl_->disabled_plugin_meta.clear();
   impl_->current_project_root = next_project_root;
 
   for (const auto& plugin_root : impl_->DiscoverPluginRoots()) {
@@ -120,7 +121,11 @@ void PluginHost::OnBufferSave(const std::filesystem::path& path) {
 
 bool PluginHost::ExecuteCommand(std::string_view name,
                                 const std::vector<std::string>& args,
-                                std::string* error_message) {
+                                std::string* error_message,
+                                std::string* feedback) {
+  if (feedback != nullptr) {
+    feedback->clear();
+  }
   if (!impl_->enabled()) {
     if (error_message != nullptr) {
       error_message->clear();
@@ -132,7 +137,7 @@ bool PluginHost::ExecuteCommand(std::string_view name,
   return provider_query_interop::ExecuteCommand(
       name, args, impl_->commands,
       [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](lua_State* state) { impl_->PushPluginContext(state); }, error_message);
+      [this](lua_State* state) { impl_->PushPluginContext(state); }, error_message, feedback);
 #else
   (void)name;
   (void)args;
@@ -144,10 +149,24 @@ bool PluginHost::ExecuteCommand(std::string_view name,
 }
 
 const std::vector<std::string>& PluginHost::CommandNames() const {
+#if MICROIDE_HAS_LUA_PLUGINS
+  // Lazy rebuild: registration only marks the ordered view dirty, so the sort runs
+  // at most once per batch of registrations, on the first read after a change.
+  if (impl_->command_names_dirty) {
+    registry_interop::RebuildCommandNames(impl_->commands, &impl_->command_names);
+    impl_->command_names_dirty = false;
+  }
+#endif
   return impl_->command_names;
 }
 
 const std::vector<PluginHost::SidebarProviderInfo>& PluginHost::SidebarProviders() const {
+#if MICROIDE_HAS_LUA_PLUGINS
+  if (impl_->sidebar_providers_dirty) {
+    registry_interop::RebuildSidebarProviders(impl_->sidebars, &impl_->sidebar_providers);
+    impl_->sidebar_providers_dirty = false;
+  }
+#endif
   return impl_->sidebar_providers;
 }
 
@@ -674,6 +693,24 @@ std::string PluginHost::ReloadSummary() const {
 
 std::size_t PluginHost::LoadedPluginCount() const {
   return impl_->plugins.size();
+}
+
+void PluginHost::SetDisabledPlugins(std::vector<std::string> disabled_ids) {
+  impl_->disabled_plugins = std::move(disabled_ids);
+}
+
+std::vector<PluginHost::LoadedPlugin> PluginHost::LoadedPlugins() const {
+  std::vector<LoadedPlugin> result;
+  result.reserve(impl_->plugins.size() + impl_->disabled_plugin_meta.size());
+  for (const auto& plugin : impl_->plugins) {
+    result.push_back(LoadedPlugin{.id = plugin.id, .root = plugin.root, .enabled = true});
+  }
+  for (const auto& meta : impl_->disabled_plugin_meta) {
+    result.push_back(meta);
+  }
+  std::sort(result.begin(), result.end(),
+            [](const LoadedPlugin& a, const LoadedPlugin& b) { return a.id < b.id; });
+  return result;
 }
 
 }  // namespace microide::plugin

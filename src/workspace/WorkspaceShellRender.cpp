@@ -140,6 +140,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   RenderTextComposition(renderer, active_text_input_visual);
   UpdateTextInputArea(renderer, render_window, active_text_input_visual);
   RenderDirtyPromptSurface(renderer, layout);
+  RenderNotifications(renderer, layout);
 
   if (menu_hover_trace && context_.menu_state.menu_bar_open) {
     const double elapsed_ms =

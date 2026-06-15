@@ -72,6 +72,7 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedTerminalTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests);
+void RegisterNotificationServiceTests(std::vector<TestCase>& tests);
 void RegisterContributionRegistryTests(std::vector<TestCase>& tests);
 void RegisterPhase3Tests(std::vector<TestCase>& tests);
 void RegisterPhase4Tests(std::vector<TestCase>& tests);
@@ -308,6 +309,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceMenuRegistryTests(tests);
   microide::tests::RegisterWorkspaceSettingsRegistryTests(tests);
   microide::tests::RegisterWorkspaceStatusBarTests(tests);
+  microide::tests::RegisterNotificationServiceTests(tests);
   microide::tests::RegisterWorkspaceShellChromeTests(tests);
   microide::tests::RegisterWorkspaceShellEditorBlameTests(tests);
   microide::tests::RegisterWorkspaceShellPluginTests(tests);

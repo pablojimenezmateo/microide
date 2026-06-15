@@ -70,6 +70,7 @@ struct PersistedUserConfigState {
   float ui_scale = 1.0f;
   std::vector<std::pair<std::string, std::string>> settings;  // id → serialised value
   std::vector<std::string> disabled_keybinding_ids;
+  std::vector<std::string> disabled_plugin_ids;
 };
 
 struct PersistedSidebarViewPolicy {

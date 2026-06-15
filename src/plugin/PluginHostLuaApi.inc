@@ -108,15 +108,26 @@
     return 0;
   }
 
+  static int LuaNotify(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const char* level = luaL_checkstring(state, 1);
+    const char* message = luaL_checkstring(state, 2);
+    if (host != nullptr && host->callbacks.show_notification) {
+      host->callbacks.show_notification(level, message);
+    }
+    return 0;
+  }
+
   static int LuaCommandsAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const char* name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
     {
       std::string error_message;
-      if (host != nullptr && lua_provider_registration_interop::RegisterCommand(
+      if (host != nullptr && registry_interop::RegisterCommand(
                                  state, host->FindPluginByState(state), host->callbacks, name, 2,
-                                 &host->commands, &host->command_names, &error_message)) {
+                                 &host->commands, &error_message)) {
+        host->command_names_dirty = true;
         return 0;
       }
       lua_error_util::PushMessage(state, error_message, "failed to register plugin command");
@@ -129,9 +140,10 @@
     luaL_checktype(state, 1, LUA_TTABLE);
     {
       std::string error_message;
-      if (host != nullptr && lua_provider_registration_interop::RegisterSidebar(
+      if (host != nullptr && registry_interop::RegisterSidebar(
                                  state, host->FindPluginByState(state), 1, &host->sidebars,
-                                 &host->sidebar_providers, &error_message)) {
+                                 &error_message)) {
+        host->sidebar_providers_dirty = true;
         return 0;
       }
       lua_error_util::PushMessage(state, error_message, "failed to register plugin sidebar");
@@ -144,7 +156,7 @@
     luaL_checktype(state, 1, LUA_TTABLE);
     {
       std::string error_message;
-      if (host != nullptr && lua_provider_registration_interop::RegisterHoverProvider(
+      if (host != nullptr && registry_interop::RegisterHoverProvider(
                                  state, host->FindPluginByState(state), 1, &host->hovers,
                                  &host->hover_provider_order, &error_message)) {
         return 0;
@@ -158,8 +170,14 @@
     return RegisterHostTableContribution(
         state, "failed to register menu entry",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterMenuEntry(
-              state, plugin, &host->menu_entries, error_message);
+          registration_parsers::MenuEntryRegistration registration;
+          if (!registration_parsers::ParseMenuEntryRegistration(
+                  state, plugin != nullptr ? plugin->id : std::string{}, &registration,
+                  error_message)) {
+            return false;
+          }
+          return registry_interop::RegisterMenuEntry(
+              plugin, std::move(registration.contributed), &host->menu_entries, error_message);
         });
   }
 
@@ -167,8 +185,14 @@
     return RegisterHostTableContribution(
         state, "failed to register keybinding",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterKeybinding(
-              state, plugin, &host->keybindings, error_message);
+          registration_parsers::KeybindingRegistration registration;
+          if (!registration_parsers::ParseKeybindingRegistration(
+                  state, plugin != nullptr ? plugin->id : std::string{}, &registration,
+                  error_message)) {
+            return false;
+          }
+          return registry_interop::RegisterKeybinding(
+              plugin, std::move(registration.contributed), &host->keybindings, error_message);
         });
   }
 
@@ -176,8 +200,14 @@
     return RegisterHostTableContribution(
         state, "failed to declare setting",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterSetting(
-              state, plugin, &host->settings, error_message);
+          registration_parsers::SettingRegistration registration;
+          if (!registration_parsers::ParseSettingRegistration(
+                  state, plugin != nullptr ? plugin->id : std::string{}, &registration,
+                  error_message)) {
+            return false;
+          }
+          return registry_interop::RegisterSetting(
+              plugin, std::move(registration.contributed), &host->settings, error_message);
         });
   }
 
@@ -201,8 +231,15 @@
     return RegisterHostTableContribution(
         state, "failed to register status item",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterStatusItem(
-              state, plugin, &host->status_items, &host->status_item_order, error_message);
+          registration_parsers::StatusItemRegistration registration;
+          if (!registration_parsers::ParseStatusItemRegistration(
+                  state, plugin != nullptr ? plugin->id : std::string{}, &registration,
+                  error_message)) {
+            return false;
+          }
+          return registry_interop::RegisterStatusItem(
+              plugin, std::move(registration.contributed), &host->status_items,
+              &host->status_item_order, error_message);
         });
   }
 
@@ -213,9 +250,11 @@
     if (host == nullptr) {
       return 0;
     }
-    lua_provider_registration_interop::UpdateStatusItem(
-        state, host->FindPluginByState(state), id, &host->status_items,
-        &host->status_item_order, host->callbacks.request_status_redraw);
+    if (registry_interop::UpdateStatusItem(state, host->FindPluginByState(state), id,
+                                           &host->status_items, &host->status_item_order) &&
+        host->callbacks.request_status_redraw) {
+      host->callbacks.request_status_redraw();
+    }
     return 0;
   }
 
@@ -224,7 +263,7 @@
         state, "formatter registration requires an active plugin state",
         "failed to parse formatter registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterFormatter(
+          return contribution_interop::RegisterFormatter(
               state, plugin->id, &host->formatters, error_message);
         });
   }
@@ -234,7 +273,7 @@
         state, "save participant registration requires an active plugin state",
         "failed to parse save participant registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterSaveParticipant(
+          return contribution_interop::RegisterSaveParticipant(
               state, plugin->id, &host->save_participants, &host->save_participant_runtimes,
               error_message);
         });
@@ -245,7 +284,7 @@
         state, "completion registration requires an active plugin state",
         "failed to parse completion registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterCompletion(
+          return contribution_interop::RegisterCompletion(
               state, plugin->id, &host->completions, &host->completion_runtimes, error_message);
         });
   }
@@ -255,7 +294,7 @@
         state, "code action registration requires an active plugin state",
         "failed to parse code action registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterCodeAction(
+          return contribution_interop::RegisterCodeAction(
               state, plugin->id, &host->code_actions, &host->code_action_runtimes, error_message);
         });
   }
@@ -265,7 +304,7 @@
         state, "task registration requires an active plugin state",
         "failed to parse task registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterTask(
+          return contribution_interop::RegisterTask(
               state, plugin->id, &host->tasks, error_message);
         });
   }
@@ -275,7 +314,7 @@
         state, "language server registration requires an active plugin state",
         "failed to parse language server registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterLanguageServer(
+          return contribution_interop::RegisterLanguageServer(
               state, plugin->id, &host->language_servers, error_message);
         });
   }
@@ -285,7 +324,7 @@
         state, "tool registration requires an active plugin state",
         "failed to parse tool registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterTool(
+          return contribution_interop::RegisterTool(
               state, plugin->id, &host->tools, error_message);
         });
   }
@@ -295,7 +334,7 @@
         state, "test provider registration requires an active plugin state",
         "failed to parse test provider registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterTestProvider(
+          return contribution_interop::RegisterTestProvider(
               state, plugin->id, &host->test_providers, &host->test_provider_runtimes,
               error_message);
         });
@@ -306,9 +345,18 @@
         state, "scm provider registration requires an active plugin state",
         "failed to parse scm provider registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterScmProvider(
-              state, plugin->id, &host->scm_providers, &host->scm_provider_runtimes,
-              error_message);
+          if (lua_istable(state, 1)) {
+            return contribution_interop::RegisterScmProvider(
+                state, plugin->id, &host->scm_providers, &host->scm_provider_runtimes,
+                error_message);
+          }
+          // Shorthand form: register_scm_provider("id", "label").
+          host->scm_providers.push_back(PluginHost::ContributedScmProvider{
+              .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
+              .label = std::string(luaL_checkstring(state, 2)),
+              .plugin_id = plugin->id,
+          });
+          return true;
         });
   }
 
@@ -317,7 +365,7 @@
         state, "annotation provider registration requires an active plugin state",
         "failed to parse annotation provider registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterAnnotationProvider(
+          return contribution_interop::RegisterAnnotationProvider(
               state, plugin->id, &host->annotation_providers, &host->annotation_provider_runtimes,
               error_message);
         });
@@ -328,9 +376,18 @@
         state, "auth provider registration requires an active plugin state",
         "failed to parse auth provider registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterAuthProvider(
-              state, plugin->id, &host->auth_providers, &host->auth_provider_runtimes,
-              error_message);
+          if (lua_istable(state, 1)) {
+            return contribution_interop::RegisterAuthProvider(
+                state, plugin->id, &host->auth_providers, &host->auth_provider_runtimes,
+                error_message);
+          }
+          // Shorthand form: register_auth_provider("id", "label").
+          host->auth_providers.push_back(PluginHost::ContributedAuthProvider{
+              .id = plugin->id + "." + std::string(luaL_checkstring(state, 1)),
+              .label = std::string(luaL_checkstring(state, 2)),
+              .plugin_id = plugin->id,
+          });
+          return true;
         });
   }
 
@@ -339,7 +396,7 @@
         state, "bracket set registration requires an active plugin state",
         "failed to parse bracket set registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterBracketSet(
+          return contribution_interop::RegisterBracketSet(
               state, plugin->id, &host->bracket_sets, error_message);
         });
   }
@@ -349,7 +406,7 @@
         state, "comment markers registration requires an active plugin state",
         "failed to parse comment markers registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterCommentMarkers(
+          return contribution_interop::RegisterCommentMarkers(
               state, plugin->id, &host->comment_markers, error_message);
         });
   }
@@ -359,7 +416,7 @@
         state, "indent rules registration requires an active plugin state",
         "failed to parse indent rules registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterIndentRules(
+          return contribution_interop::RegisterIndentRules(
               state, plugin->id, &host->indent_rules, error_message);
         });
   }
@@ -369,7 +426,7 @@
         state, "snippet registration requires an active plugin state",
         "failed to parse snippet registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return lua_provider_registration_interop::RegisterSnippet(
+          return contribution_interop::RegisterSnippet(
               state, plugin->id, &host->snippets, error_message);
         });
   }
@@ -468,6 +525,7 @@
         state, this,
         lua_context_interop::ApiFns{
             .log = &LuaLog,
+            .notify = &LuaNotify,
             .commands_add = &LuaCommandsAdd,
             .workspace_project_root = &LuaWorkspaceProjectRoot,
             .workspace_open_file = &LuaWorkspaceOpenFile,
@@ -660,6 +718,15 @@
         },
         [this](lua_State* state) { UnregisterContributionsForState(state); },
         [this](const PluginInstance* plugin) { ClearPluginDiagnostics(plugin); },
-        [this](PluginInstance* plugin) { DestroyPluginState(plugin); }, error_message);
+        [this](PluginInstance* plugin) { DestroyPluginState(plugin); },
+        [this](const std::string& id) {
+          return std::find(disabled_plugins.begin(), disabled_plugins.end(), id) !=
+                 disabled_plugins.end();
+        },
+        [this](const PluginInstance& plugin) {
+          disabled_plugin_meta.push_back(
+              PluginHost::LoadedPlugin{.id = plugin.id, .root = plugin.root, .enabled = false});
+        },
+        error_message);
   }
 #endif

@@ -19,6 +19,7 @@ struct WorkspaceContext {
   TextInputState text_input;
   std::vector<std::pair<std::string, std::string>> user_settings;
   std::vector<std::string> disabled_keybinding_ids;
+  std::vector<std::string> disabled_plugin_ids;
 
   WorkspaceContext() { RebindProjectState(current_project_state); }
 

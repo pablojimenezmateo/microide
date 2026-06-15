@@ -77,7 +77,8 @@ class SettingsOverlayService {
 
   void RebuildSettingsRows(const std::vector<SettingInfo>& settings,
                            const std::vector<std::pair<std::string, std::string>>& user_settings,
-                           const std::vector<std::pair<std::string, std::string>>& project_settings);
+                           const std::vector<std::pair<std::string, std::string>>& project_settings,
+                           const std::vector<SettingsOverlayRow>& extra_rows = {});
   void RebuildHelpRows(std::vector<HelpAboutRow> rows);
 
   const std::vector<SettingsOverlayRow>& SettingsRows() const { return settings_rows_; }

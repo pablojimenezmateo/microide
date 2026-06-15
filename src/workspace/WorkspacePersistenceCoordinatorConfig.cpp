@@ -181,6 +181,7 @@ bool PersistenceCoordinator::RestoreUserConfig() {
       .ui_scale = ui_scale_,
       .settings = {},
       .disabled_keybinding_ids = {},
+      .disabled_plugin_ids = {},
   };
   if (!operations_.persistence_service->LoadUserConfig(config_path, &state)) {
     return false;
@@ -188,6 +189,7 @@ bool PersistenceCoordinator::RestoreUserConfig() {
 
   context_.user_settings.clear();
   context_.disabled_keybinding_ids = state.disabled_keybinding_ids;
+  context_.disabled_plugin_ids = state.disabled_plugin_ids;
   for (const auto& [id, value] : state.settings) {
     SetStoredSetting(context_.user_settings, id, value);
   }
@@ -210,6 +212,7 @@ void PersistenceCoordinator::SaveUserConfig() const {
       .ui_scale = ui_scale_,
       .settings = context_.user_settings,
       .disabled_keybinding_ids = context_.disabled_keybinding_ids,
+      .disabled_plugin_ids = context_.disabled_plugin_ids,
   };
   operations_.persistence_service->SaveUserConfig(config_path, state);
 }

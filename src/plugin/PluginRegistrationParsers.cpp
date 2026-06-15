@@ -4,56 +4,16 @@
 
 #include <optional>
 
+#include "plugin/PluginLuaInterop.h"
+
 namespace microide::plugin::registration_parsers {
 namespace {
 
-std::optional<std::string> ReadStringField(lua_State* state,
-                                           int table_index,
-                                           const char* field) {
-  lua_getfield(state, table_index, field);
-  if (!lua_isstring(state, -1)) {
-    lua_pop(state, 1);
-    return std::nullopt;
-  }
-  std::string value = lua_tostring(state, -1);
-  lua_pop(state, 1);
-  return value;
-}
-
-int ReadFunctionRefField(lua_State* state, int table_index, const char* field) {
-  lua_getfield(state, table_index, field);
-  if (!lua_isfunction(state, -1)) {
-    lua_pop(state, 1);
-    return LUA_NOREF;
-  }
-  return luaL_ref(state, LUA_REGISTRYINDEX);
-}
-
-std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
-                                                              int table_index,
-                                                              const char* field) {
-  lua_getfield(state, table_index, field);
-  if (!lua_istable(state, -1)) {
-    lua_pop(state, 1);
-    return std::nullopt;
-  }
-  std::vector<std::string> values;
-  for (lua_Integer i = 1;; ++i) {
-    lua_geti(state, -1, i);
-    if (lua_isnil(state, -1)) {
-      lua_pop(state, 1);
-      break;
-    }
-    if (!lua_isstring(state, -1)) {
-      lua_pop(state, 2);
-      return std::nullopt;
-    }
-    values.emplace_back(lua_tostring(state, -1));
-    lua_pop(state, 1);
-  }
-  lua_pop(state, 1);
-  return values;
-}
+// Field readers are centralized in lua_interop; ReadStringField here is the
+// optional-returning variant so parsers can detect missing required fields.
+using lua_interop::ReadFunctionRefField;
+using lua_interop::ReadStringArrayField;
+constexpr auto& ReadStringField = lua_interop::ReadOptionalStringField;
 
 }  // namespace
 

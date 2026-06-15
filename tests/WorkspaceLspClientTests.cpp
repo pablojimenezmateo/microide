@@ -2,6 +2,7 @@
 
 #include "util/JsonValue.h"
 #include "workspace/WorkspaceLspClient.h"
+#include "workspace/WorkspaceLspManager.h"
 
 #include <chrono>
 #include <thread>
@@ -602,6 +603,32 @@ while True:
   client.Shutdown();
 }
 
+void TestLspManagerSharesOneSubprocessAcrossLanguageIds() {
+  microide::workspace::LspManager manager;
+
+  // One fake client installed for three language ids: clangd-style aliasing.
+  auto client = std::make_unique<LspClient>();
+  LspClient* const raw = client.get();
+  manager.InstallTestClientForTesting({"c", "c++", "objective-c"}, std::move(client));
+
+  Expect(manager.HasServer("c") && manager.HasServer("c++") && manager.HasServer("objective-c"),
+         "every aliased language id should report a registered server");
+  Expect(!manager.HasServer("csharp"), "unrelated language ids should not resolve");
+
+  Expect(manager.GetServer("c") == raw && manager.GetServer("c++") == raw &&
+             manager.GetServer("objective-c") == raw,
+         "all aliased language ids should resolve to the same single client");
+
+  // BeginShutdownServersNotIn keeps the shared server when ANY of its ids is active.
+  manager.BeginShutdownServersNotIn({"c++"});
+  Expect(manager.HasServer("c") && manager.HasServer("c++") && manager.HasServer("objective-c"),
+         "a shared server stays alive while any of its language ids is active");
+
+  manager.BeginShutdownServersNotIn({"csharp"});
+  Expect(!manager.HasServer("c") && !manager.HasServer("c++") && !manager.HasServer("objective-c"),
+         "a shared server is retired once none of its language ids is active");
+}
+
 }  // namespace
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
@@ -621,6 +648,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientDidOpenQueuedBeforeInitializeStillDeliversFullText);
   AddTest(tests, "WorkspaceLspClient/AnswersServerRequestsAndAdvertisesEnablers",
           TestWorkspaceLspClientAnswersServerRequestsAndAdvertisesEnablers);
+  AddTest(tests, "WorkspaceLspClient/LspManagerSharesOneSubprocessAcrossLanguageIds",
+          TestLspManagerSharesOneSubprocessAcrossLanguageIds);
 }
 
 }  // namespace microide::tests

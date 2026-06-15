@@ -2,24 +2,14 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
-#include <algorithm>
-#include <cctype>
-
 #include "plugin/LuaErrorMessage.h"
 #include "plugin/LuaRuntime.h"
+#include "plugin/PluginLuaInterop.h"
 
 namespace microide::plugin::lifecycle_load_interop {
 namespace {
 
-bool IsValidIdentifier(std::string_view value) {
-  if (value.empty()) {
-    return false;
-  }
-  return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
-    return std::isalnum(ch) || ch == '.' || ch == '-' || ch == '_';
-  });
-}
-
+using lua_interop::IsValidIdentifier;
 using microide::plugin::LuaErrorString;
 
 void ConfigurePackage(lua_State* state,

@@ -86,7 +86,7 @@ return ide.plugin({
 
     ctx.lsp.add({
       id = "typescript",
-      language_id = "typescript",
+      language_ids = { "typescript" },
       command = command,
     })
   end,

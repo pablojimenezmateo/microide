@@ -68,6 +68,8 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
                         clear_plugin_diagnostics,
                     const std::function<void(runtime_types::PluginInstance*)>&
                         destroy_plugin_state,
+                    const std::function<bool(const std::string&)>& is_plugin_disabled,
+                    const std::function<void(const runtime_types::PluginInstance&)>& record_disabled,
                     std::string* error_message);
 #endif
 

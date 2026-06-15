@@ -28,6 +28,7 @@ enum class UserConfigTag : std::uint16_t {
   UiScale = 2,
   Setting = 3,
   DisabledKeybinding = 4,
+  DisabledPlugin = 5,
 };
 
 enum class ProjectConfigTag : std::uint16_t {

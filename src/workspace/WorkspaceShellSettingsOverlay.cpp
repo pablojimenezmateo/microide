@@ -21,7 +21,54 @@
 
 namespace microide::workspace {
 
+// Synthetic settings-row id prefix for per-plugin enable toggles ("plugin.toggle:<id>").
+constexpr const char* kPluginToggleRowPrefix = "plugin.toggle:";
+
 namespace {
+
+// One synthetic Checkbox row per discovered plugin, for the Settings "Plugins" pane.
+// When no plugins are installed, a single display-only row keeps the section visible so
+// the capability stays discoverable.
+std::vector<SettingsOverlayRow> BuildPluginToggleRows(const plugin::PluginHost& host) {
+  std::vector<SettingsOverlayRow> rows;
+  const std::vector<plugin::PluginHost::LoadedPlugin> plugins = host.LoadedPlugins();
+  if (plugins.empty()) {
+    SettingsOverlayRow row;
+    // Note: id does NOT use kPluginToggleRowPrefix, so it is never treated as a toggle.
+    row.id = "plugin.empty";
+    row.label = "No plugins installed";
+    row.value_display = "—";
+    row.description = "Install plugins into ~/.config/microide/plugins/<plugin-id>/init.lua.";
+    row.detail = "User / plugin";
+    row.scope_label = "User";
+    row.group = "Plugins";
+    row.type = SettingType::String;
+    row.scope = SettingScope::User;
+    row.control_kind = SettingsControlKind::None;
+    row.resettable = false;
+    row.editable = false;
+    rows.push_back(std::move(row));
+    return rows;
+  }
+  for (const plugin::PluginHost::LoadedPlugin& plugin : plugins) {
+    SettingsOverlayRow row;
+    row.id = std::string(kPluginToggleRowPrefix) + plugin.id;
+    row.label = plugin.id;
+    row.value = plugin.enabled ? "true" : "false";
+    row.value_display = row.value;
+    row.description = plugin.enabled ? "Plugin is enabled." : "Plugin is disabled.";
+    row.detail = "User / plugin";
+    row.scope_label = "User";
+    row.group = "Plugins";
+    row.type = SettingType::Bool;
+    row.scope = SettingScope::User;
+    row.control_kind = SettingsControlKind::Checkbox;
+    row.resettable = false;
+    row.editable = true;
+    rows.push_back(std::move(row));
+  }
+  return rows;
+}
 
 void UpsertSetting(std::vector<std::pair<std::string, std::string>>& settings,
                    std::string id,
@@ -264,8 +311,23 @@ void WorkspaceShell::RefreshSettingsOverlayCatalog() {
   }
   settings_overlay_service_.RebuildSettingsRows(AllSettingInfos(plugin_runtime_.Host()),
                                                 context_.user_settings,
-                                                context_.current_project_state.settings);
+                                                context_.current_project_state.settings,
+                                                BuildPluginToggleRows(plugin_runtime_.Host()));
   settings_overlay_service_.RebuildHelpRows(BuildHelpRows(startup_options_, ResolvedKeybindings()));
+}
+
+void WorkspaceShell::TogglePluginEnabled(std::string_view plugin_id) {
+  auto& disabled = context_.disabled_plugin_ids;
+  const auto it = std::find(disabled.begin(), disabled.end(), plugin_id);
+  if (it == disabled.end()) {
+    disabled.emplace_back(plugin_id);  // was enabled -> now disabled
+  } else {
+    disabled.erase(it);  // was disabled -> now enabled
+  }
+  MakePersistenceCoordinator().SaveUserConfig();
+  ReloadPluginsForCurrentProject(PluginReloadRequest{});
+  RefreshSettingsOverlayCatalog();
+  RequestWindowRedraw();
 }
 
 void WorkspaceShell::ApplyLiveSettings() {
@@ -356,6 +418,11 @@ bool WorkspaceShell::ResetSettingValue(std::string_view id) {
 }
 
 void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
+  // Plugin enable/disable toggles are synthetic rows, not real settings.
+  if (id.rfind(kPluginToggleRowPrefix, 0) == 0) {
+    TogglePluginEnabled(id.substr(std::string_view(kPluginToggleRowPrefix).size()));
+    return;
+  }
   const SettingStepDirection direction =
       forward ? SettingStepDirection::Forward : SettingStepDirection::Backward;
   if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {

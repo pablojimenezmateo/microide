@@ -63,6 +63,7 @@
 #include "workspace/LayoutModeService.h"
 #include "workspace/GitRepositoryService.h"
 #include "workspace/CommitWorkflowService.h"
+#include "workspace/NotificationService.h"
 #include "workspace/PatchApplyService.h"
 #include "workspace/PersistenceService.h"
 #include "workspace/SettingsOverlayService.h"

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(microide VERSION 1.1.0 LANGUAGES CXX)
+project(microide VERSION 1.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -192,7 +192,6 @@ set(MICROIDE_CORE_SOURCES
   src/persistence/PersistedRecordReader.cpp
   src/persistence/PersistedRecordWriter.cpp
   src/plugin/PluginLuaInterop.cpp
-  src/plugin/PluginLuaProviderRegistrationInterop.cpp
   src/plugin/PluginLuaBufferProjectInterop.cpp
   src/plugin/PluginLuaContextInterop.cpp
   src/plugin/PluginContributionInterop.cpp
@@ -387,6 +386,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellMerge.cpp
   src/workspace/WorkspaceShellMergeState.cpp
   src/workspace/WorkspaceShellMergeRender.cpp
+  src/workspace/NotificationService.cpp
   src/workspace/WorkspaceSidebarCoordinator.cpp
   src/workspace/SidebarService.cpp
   src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp
@@ -615,6 +615,7 @@ add_executable(microide_tests
   tests/WorkspaceShellSearchTests.cpp
   tests/WorkspaceShellSessionTests.cpp
   tests/WorkspaceShellSourceControlTests.cpp
+  tests/NotificationServiceTests.cpp
   tests/WorkspaceStatusBarTests.cpp
   tests/WorkspaceShellSharedCoreTests.cpp
   tests/WorkspaceShellSharedLayoutTests.cpp
