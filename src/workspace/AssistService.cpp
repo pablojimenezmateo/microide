@@ -8,12 +8,12 @@
 #include <utility>
 #include <vector>
 
-#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SnippetEngine.h"
 #include "util/JsonValue.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/FileUri.h"
+#include "workspace/LanguageDetection.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
@@ -21,10 +21,6 @@ namespace {
 
 std::string_view LineAtOrEmpty(const std::vector<std::string>& lines, std::size_t index) {
   return index < lines.size() ? std::string_view(lines[index]) : std::string_view{};
-}
-
-std::string DetectActiveLanguageId(const editor::TextViewport& viewport) {
-  return editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
 }
 
 std::string LspUnavailableMessage(const LspManager& manager,
@@ -100,7 +96,7 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
     return false;
   }
 
-  const std::string language_id = DetectActiveLanguageId(*viewport);
+  const std::string language_id = DetectViewportLanguageId(*viewport);
   std::string provider_error;
   const auto items = plugin_runtime_->Host().QueryCompletions(language_id, viewport->path(),
                                                               viewport->cursor_line() + 1,
@@ -272,7 +268,7 @@ bool AssistService::ShowInsertSnippetOverlay(std::string* error_message) {
     }
     return false;
   }
-  const std::string language_id = DetectActiveLanguageId(*viewport);
+  const std::string language_id = DetectViewportLanguageId(*viewport);
   const LanguageContract* contract = language_contract_->Find(language_id);
   if (contract == nullptr || contract->snippets.empty()) {
     if (error_message != nullptr) {
@@ -421,7 +417,7 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message) {
     return false;
   }
 
-  const std::string language_id = DetectActiveLanguageId(*viewport);
+  const std::string language_id = DetectViewportLanguageId(*viewport);
   const std::optional<editor::SelectionRange> selection = viewport->selection_range();
   const editor::SelectionRange range = selection.value_or(editor::SelectionRange{
       .start = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},

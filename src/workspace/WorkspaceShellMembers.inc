@@ -1047,7 +1047,7 @@
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
   std::size_t CountOpenBufferViews(const std::filesystem::path& path) const;
-  std::string ActiveLanguageIdForProvider() const;
+  // Thin forwarders to lsp_service_ (see src/workspace/LspService.*).
   bool HasActiveCompletionProvider() const;
   bool HasActiveCodeActionProvider() const;
   bool HasActiveDefinitionProvider() const;
@@ -1058,10 +1058,8 @@
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
   std::string ActiveLspStatusText(bool ensure_started = true);
-  std::string ActiveLspStatusTooltip(bool ensure_started = true);
   void BeginTrackedLspRequest();
   void FinishTrackedLspRequest();
-  void ExpireTrackedLspRequestIfNeeded();
   LspClient* LspClientForViewport(const editor::TextViewport& viewport,
                                   std::string* language_id = nullptr);
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport,
@@ -1425,6 +1423,7 @@
   // owns the list geometry) and consumed by the wheel handler to clamp scrolling.
   mutable int settings_overlay_max_scroll_row_ = 0;
   AssistService assist_service_;
+  LspService lsp_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {
     std::filesystem::path project_root;

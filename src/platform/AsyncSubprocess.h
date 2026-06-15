@@ -47,6 +47,10 @@ class AsyncSubprocess {
   // pid of the child, or -1 if not running.
   int pid() const;
 
+  // Raw stdout read fd (POSIX), for callers that want to poll() it alongside
+  // their own wakeup fd in a single I/O loop. Returns -1 off POSIX or if closed.
+  int stdout_fd() const;
+
   // exit code of the child once it has exited, or nullopt while still running/unknown.
   std::optional<int> exit_code() const;
 

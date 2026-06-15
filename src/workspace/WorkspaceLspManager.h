@@ -24,10 +24,13 @@ class LspManager {
 
   // Register a server command for a language.
   // If eager_start is true, the server will be started in the background immediately.
+  // initialization_options / settings are forwarded to LspClient::Start.
   void RegisterServer(const std::string& language_id, const std::vector<std::string>& command,
                       const std::string& root_uri,
                       const std::string& cwd = {},
-                      bool eager_start = true);
+                      bool eager_start = true,
+                      const util::JsonValue& initialization_options = {},
+                      const util::JsonValue& settings = {});
   void BeginShutdownServersNotIn(const std::unordered_set<std::string>& language_ids);
 
   // Get or start server for language; returns nullptr if not registered or failed to start.
@@ -62,6 +65,8 @@ class LspManager {
     std::string root_uri;
     std::string cwd;
     std::string last_error;
+    util::JsonValue initialization_options;
+    util::JsonValue settings;
     std::unique_ptr<LspClient> client;
     bool test_install = false;
   };

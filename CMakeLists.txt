@@ -421,6 +421,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/SettingsOverlayService.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
+  src/workspace/LspProtocol.cpp
+  src/workspace/LspService.cpp
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspManager.cpp
@@ -550,6 +552,7 @@ add_executable(microide_tests
   tests/CommitWorkflowTests.cpp
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
+  tests/LspProtocolTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
   tests/MergeConflictResolutionTests.cpp

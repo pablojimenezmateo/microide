@@ -16,9 +16,13 @@ void LspClient::SetWakeEventType(Uint32 event_type) {
 }
 
 bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,
-                      const std::string& language_id, const std::string& cwd) {
+                      const std::string& language_id, const std::string& cwd,
+                      const util::JsonValue& initialization_options,
+                      const util::JsonValue& settings) {
   util::StartupTrace::Scope trace_scope("LspClient::Start");
   impl_->last_error.clear();
+  impl_->initialization_options = initialization_options;
+  impl_->settings = settings;
   {
     std::lock_guard lock(impl_->mutex);
     impl_->readiness_snapshot.state = ReadinessSnapshot::State::Starting;
@@ -136,6 +140,11 @@ void LspClient::SetDiagnosticsCallback(OnPublishDiagnostics callback) {
   impl_->diagnostics_callback = std::move(callback);
 }
 
+bool LspClient::HasDiagnosticsCallback() const {
+  std::lock_guard lock(impl_->mutex);
+  return static_cast<bool>(impl_->diagnostics_callback);
+}
+
 void LspClient::DrainCallbacks() {
   util::StartupTrace::Scope trace_scope("LspClient::DrainCallbacks");
   std::vector<std::function<void()>> cbs;
@@ -206,18 +215,8 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
   text_doc["uri"] = JsonValue(uri);
   text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
 
-  JsonObject start_obj;
-  start_obj["line"] = JsonValue(static_cast<std::int64_t>(changed_range.start.line));
-  start_obj["character"] = JsonValue(static_cast<std::int64_t>(changed_range.start.character));
-  JsonObject end_obj;
-  end_obj["line"] = JsonValue(static_cast<std::int64_t>(changed_range.end.line));
-  end_obj["character"] = JsonValue(static_cast<std::int64_t>(changed_range.end.character));
-  JsonObject range_obj;
-  range_obj["start"] = JsonValue(std::move(start_obj));
-  range_obj["end"] = JsonValue(std::move(end_obj));
-
   JsonObject change;
-  change["range"] = JsonValue(std::move(range_obj));
+  change["range"] = lsp_protocol::MakeRange(changed_range);
   change["text"] = JsonValue(new_text);
 
   JsonArray changes;

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "util/JsonValue.h"
 
 namespace microide::plugin {
 
@@ -117,6 +118,10 @@ class PluginHost {
     std::string language_id;
     std::vector<std::string> command;
     std::string plugin_id;
+    // Forwarded verbatim as LSP `initializationOptions` (object) or Null.
+    util::JsonValue initialization_options;
+    // Answers server `workspace/configuration` requests (object) or Null.
+    util::JsonValue settings;
   };
 
   struct ContributedTask {
