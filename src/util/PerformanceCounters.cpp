@@ -57,6 +57,7 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "workspace.wake_reason_caret_blink",
     "workspace.wake_reason_none",
     "terminal.scrollback_lines_allocated",
+    "terminal.escape_sequences_aborted",
 };
 
 std::size_t ToIndex(PerfCounterId id) {

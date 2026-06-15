@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "compare/CompareModel.h"
+#include "util/Hex.h"
 #include "util/StringUtil.h"
 
 #include <vector>
@@ -125,9 +126,127 @@ void TestStringUtilCollapseWhitespaceTracksMatchRange() {
          "an out-of-range match should clamp to a safe zero-length highlight");
 }
 
+void TestStringUtilAppendUtf8EncodesAllSequenceLengths() {
+  std::string out;
+  microide::util::AppendUtf8(out, U'A');           // U+0041, 1 byte
+  microide::util::AppendUtf8(out, char32_t{0x00E9});   // é, 2 bytes
+  microide::util::AppendUtf8(out, char32_t{0x20AC});   // €, 3 bytes
+  microide::util::AppendUtf8(out, char32_t{0x1F600});  // 😀, 4 bytes
+  const std::string expected = {
+      'A',
+      static_cast<char>(0xC3), static_cast<char>(0xA9),
+      static_cast<char>(0xE2), static_cast<char>(0x82), static_cast<char>(0xAC),
+      static_cast<char>(0xF0), static_cast<char>(0x9F), static_cast<char>(0x98),
+      static_cast<char>(0x80)};
+  Expect(out == expected,
+         "AppendUtf8 should encode 1-, 2-, 3-, and 4-byte sequences");
+  Expect(microide::util::IsValidUtf8(out),
+         "AppendUtf8 output should be valid UTF-8");
+
+  // Round-trips against the decoder for an astral (4-byte) codepoint.
+  std::string astral;
+  microide::util::AppendUtf8(astral, char32_t{0x1F600});
+  Expect(microide::util::DecodeUtf8Codepoint(astral) == char32_t{0x1F600},
+         "AppendUtf8 should round-trip through DecodeUtf8Codepoint");
+}
+
+void TestStringUtilIsAllAsciiDigits() {
+  Expect(microide::util::IsAllAsciiDigits("0123456789"),
+         "all-digit strings should be recognized");
+  Expect(!microide::util::IsAllAsciiDigits(""),
+         "empty input is not all-digits");
+  Expect(!microide::util::IsAllAsciiDigits("12a3"),
+         "embedded letters should disqualify");
+  Expect(!microide::util::IsAllAsciiDigits(" 12"),
+         "leading whitespace should disqualify");
+}
+
+void TestStringUtilSplitAsciiWhitespace() {
+  const auto parts = microide::util::SplitAsciiWhitespace("  alpha\tbeta   gamma  ");
+  Expect(parts.size() == 3, "split should drop leading/trailing/duplicate whitespace runs");
+  Expect(parts[0] == "alpha" && parts[1] == "beta" && parts[2] == "gamma",
+         "split should preserve token contents across mixed whitespace");
+  Expect(microide::util::SplitAsciiWhitespace("   ").empty(),
+         "whitespace-only input should yield no tokens");
+  Expect(microide::util::SplitAsciiWhitespace("").empty(),
+         "empty input should yield no tokens");
+}
+
+void TestStringUtilDecodeLinesSinglePassRegression() {
+  // Trailing newline keeps a final empty line; line ending detection must agree
+  // with the dominant style after the single-pass rewrite.
+  const auto lf = microide::util::DecodeLines("a\nb\n");
+  Expect(lf.lines.size() == 3 && lf.lines[0] == "a" && lf.lines[1] == "b" && lf.lines[2].empty(),
+         "LF decode should keep the trailing empty row");
+  Expect(lf.line_ending == LineEnding::LF && !lf.mixed_line_endings,
+         "pure LF input should report LF and no mixing");
+
+  const auto crlf = microide::util::DecodeLines("a\r\nb");
+  Expect(crlf.lines.size() == 2 && crlf.lines[0] == "a" && crlf.lines[1] == "b",
+         "CRLF decode should split without a trailing empty row when input lacks one");
+  Expect(crlf.line_ending == LineEnding::CRLF && !crlf.mixed_line_endings,
+         "pure CRLF input should report CRLF and no mixing");
+
+  const auto empty = microide::util::DecodeLines("");
+  Expect(empty.lines.size() == 1 && empty.lines[0].empty(),
+         "empty input should yield a single empty line");
+  Expect(empty.line_ending == LineEnding::LF,
+         "empty input should default to LF");
+}
+
+void TestHexDigitAndByteParsing() {
+  Expect(microide::util::HexDigitValue('0') == 0 && microide::util::HexDigitValue('9') == 9,
+         "decimal hex digits map to their value");
+  Expect(microide::util::HexDigitValue('a') == 10 && microide::util::HexDigitValue('F') == 15,
+         "lower- and upper-case hex letters map correctly");
+  Expect(microide::util::HexDigitValue('g') == -1 && microide::util::HexDigitValue(' ') == -1,
+         "non-hex characters return -1");
+  Expect(microide::util::ParseHexByte('4', '1') == static_cast<std::uint8_t>(0x41),
+         "two hex digits combine into a byte");
+  Expect(!microide::util::ParseHexByte('z', '1').has_value(),
+         "an invalid high nibble rejects the byte");
+}
+
+void TestDecodeHexColor() {
+  const auto white = microide::util::DecodeHexColor("#ffffff");
+  Expect(white.has_value() && (*white)[0] == 0xFF && (*white)[1] == 0xFF && (*white)[2] == 0xFF,
+         "#ffffff decodes to all-255 components");
+  const auto mixed = microide::util::DecodeHexColor("#1F2a3B");
+  Expect(mixed.has_value() && (*mixed)[0] == 0x1F && (*mixed)[1] == 0x2A && (*mixed)[2] == 0x3B,
+         "mixed-case hex colour decodes case-insensitively");
+  Expect(!microide::util::DecodeHexColor("1f2a3b").has_value(),
+         "missing leading '#' rejects the colour");
+  Expect(!microide::util::DecodeHexColor("#1f2a3").has_value(),
+         "short colour strings are rejected");
+  Expect(!microide::util::DecodeHexColor("#1f2a3g").has_value(),
+         "non-hex digits reject the colour");
+}
+
+void TestPercentDecode() {
+  Expect(microide::util::PercentDecode("/a%20b") == "/a b",
+         "percent escapes decode to their byte");
+  Expect(microide::util::PercentDecode("x%2F") == "x/",
+         "a trailing %XX at the end of the string still decodes");
+  Expect(microide::util::PercentDecode("100%") == "100%",
+         "a lone trailing '%' is left verbatim");
+  Expect(microide::util::PercentDecode("%zz") == "%zz",
+         "invalid escape digits are left verbatim");
+  Expect(microide::util::PercentDecode("plain") == "plain",
+         "input without escapes is returned unchanged");
+}
+
 }  // namespace
 
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "StringUtil/AppendUtf8EncodesAllSequenceLengths",
+          TestStringUtilAppendUtf8EncodesAllSequenceLengths);
+  AddTest(tests, "StringUtil/IsAllAsciiDigits", TestStringUtilIsAllAsciiDigits);
+  AddTest(tests, "StringUtil/SplitAsciiWhitespace", TestStringUtilSplitAsciiWhitespace);
+  AddTest(tests, "StringUtil/DecodeLinesSinglePassRegression",
+          TestStringUtilDecodeLinesSinglePassRegression);
+  AddTest(tests, "Hex/DigitAndByteParsing", TestHexDigitAndByteParsing);
+  AddTest(tests, "Hex/DecodeHexColor", TestDecodeHexColor);
+  AddTest(tests, "Hex/PercentDecode", TestPercentDecode);
   AddTest(tests, "StringUtil/CollapseWhitespaceTracksMatchRange",
           TestStringUtilCollapseWhitespaceTracksMatchRange);
   AddTest(tests, "StringUtil/Utf8SequenceLengthHandlesAsciiAndEmoji",

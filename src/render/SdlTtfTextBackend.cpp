@@ -183,7 +183,7 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
     return;
   }
 
-  CacheEntry* entry = ResolveEntry(text, color, nullptr);
+  CacheEntry* entry = ResolveEntry(text, color);
   if (entry == nullptr || entry->texture == nullptr) {
     return;
   }
@@ -197,16 +197,6 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
       static_cast<float>(entry->height) / scale_y,
   };
   SDL_RenderTexture(renderer_, entry->texture, nullptr, &destination);
-}
-
-void SdlTtfTextBackend::DrawStringOn(SDL_Renderer* renderer,
-                                     float x,
-                                     float y,
-                                     SDL_Color color,
-                                     SDL_Color background,
-                                     std::string_view text) {
-  (void) background;
-  DrawString(renderer, x, y, color, text);
 }
 
 void SdlTtfTextBackend::ClearCache() {
@@ -454,36 +444,20 @@ std::size_t SdlTtfTextBackend::CacheKeyHash::operator()(const CacheKeyView& key)
       (static_cast<std::uint32_t>(key.color.b) << 8) |
       static_cast<std::uint32_t>(key.color.a);
   h = mix(h, packed_foreground);
-  h = mix(h, key.has_background ? 1u : 0u);
-  if (key.has_background) {
-    const std::uint32_t packed_background =
-        (static_cast<std::uint32_t>(key.background.r) << 24) |
-        (static_cast<std::uint32_t>(key.background.g) << 16) |
-        (static_cast<std::uint32_t>(key.background.b) << 8) |
-        static_cast<std::uint32_t>(key.background.a);
-    h = mix(h, packed_background);
-  }
   return h;
 }
 
 bool SdlTtfTextBackend::CacheKeyEqual::operator()(const CacheKeyView& lhs,
                                                   const CacheKeyView& rhs) const noexcept {
   return lhs.text == rhs.text && lhs.color.r == rhs.color.r && lhs.color.g == rhs.color.g &&
-         lhs.color.b == rhs.color.b && lhs.color.a == rhs.color.a &&
-         lhs.has_background == rhs.has_background &&
-         (!lhs.has_background ||
-          (lhs.background.r == rhs.background.r && lhs.background.g == rhs.background.g &&
-           lhs.background.b == rhs.background.b && lhs.background.a == rhs.background.a));
+         lhs.color.b == rhs.color.b && lhs.color.a == rhs.color.a;
 }
 
 SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view text,
-                                                               SDL_Color color,
-                                                               const SDL_Color* background) {
+                                                               SDL_Color color) {
   const CacheKeyView key_view{
       .text = text,
       .color = color,
-      .has_background = background != nullptr,
-      .background = background == nullptr ? SDL_Color{} : *background,
   };
   if (auto it = cache_.find(key_view); it != cache_.end()) {
     util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheHits);
@@ -524,8 +498,6 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   CacheKey key{
       .text = std::string(text),
       .color = color,
-      .has_background = background != nullptr,
-      .background = background == nullptr ? SDL_Color{} : *background,
   };
   auto [map_it, inserted] = cache_.emplace(std::move(key), std::move(entry));
   if (!inserted) {

@@ -250,6 +250,9 @@ set(MICROIDE_CORE_SOURCES
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
+  src/render/AnsiPalette.cpp
+  src/render/ColorMath.cpp
+  src/render/ThemeFile.cpp
   src/terminal/TerminalSession.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalSessionOutput.cpp
@@ -449,6 +452,8 @@ add_executable(microide
   src/app/AppStartupOptions.cpp
   src/app/Application.cpp
   src/app/DirtyRegionPolicy.cpp
+  src/app/RedrawTraceAccumulator.cpp
+  src/app/SceneTexturePresenter.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
 )
@@ -530,6 +535,7 @@ endif()
 
 add_executable(microide_tests
   src/app/DirtyRegionPolicy.cpp
+  src/app/RedrawTraceAccumulator.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   ${MICROIDE_CORE_SOURCES}
   tests/ApplicationTests.cpp
@@ -702,6 +708,13 @@ if(MICROIDE_FUZZ)
     tests/fuzz/GitBlameParserFuzz.cpp
   )
   microide_configure_fuzz_target(GitBlameParserFuzz)
+
+  add_executable(TerminalCsiParserFuzz
+    src/util/Parse.cpp
+    src/terminal/TerminalCsiParser.cpp
+    tests/fuzz/TerminalCsiParserFuzz.cpp
+  )
+  microide_configure_fuzz_target(TerminalCsiParserFuzz)
 endif()
 
 if(MICROIDE_PERF_HARNESS_BUILD)
@@ -791,6 +804,9 @@ add_executable(microide_diff_bench
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
+  src/render/AnsiPalette.cpp
+  src/render/ColorMath.cpp
+  src/render/ThemeFile.cpp
   src/util/GitConflictMarkers.cpp
   src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp

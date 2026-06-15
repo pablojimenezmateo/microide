@@ -7,6 +7,8 @@
 #include "terminal/TerminalOscClipboard.h"
 #include "terminal/TerminalProcessControl.h"
 #include "platform/TerminalBackend.h"
+#include "util/Hex.h"
+#include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
@@ -94,27 +96,7 @@ std::string DecodeOsc7Path(std::string_view payload) {
     }
     path = path.substr(slash);
   }
-  const auto hex_value = [](char c) -> int {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-  };
-  std::string out;
-  out.reserve(path.size());
-  for (std::size_t i = 0; i < path.size(); ++i) {
-    if (path[i] == '%' && i + 2 < path.size()) {
-      const int hi = hex_value(path[i + 1]);
-      const int lo = hex_value(path[i + 2]);
-      if (hi >= 0 && lo >= 0) {
-        out.push_back(static_cast<char>(hi * 16 + lo));
-        i += 2;
-        continue;
-      }
-    }
-    out.push_back(path[i]);
-  }
-  return out;
+  return util::PercentDecode(path);
 }
 
 void ApplySgrParameters(TerminalStyle& style, std::string_view body) {
@@ -664,7 +646,8 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
     const std::size_t inner = payload.find(';');
     if (inner != std::string_view::npos &&
         payload.find('?', inner) != std::string_view::npos) {
-      const int index = std::atoi(std::string(payload.substr(0, inner)).c_str());
+      const int index = static_cast<int>(std::clamp<std::int64_t>(
+          util::ParseInt64(payload.substr(0, inner)).value_or(0), 0, 255));
       SendBytesLocked("\x1b]4;" + std::to_string(index) + ";" +
                       FormatOscRgbReply(Ansi256Color(index)) + "\x1b\\");
     }

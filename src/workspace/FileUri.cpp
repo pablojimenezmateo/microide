@@ -4,6 +4,8 @@
 #include <iomanip>
 #include <sstream>
 
+#include "util/Hex.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -45,26 +47,7 @@ std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
     encoded.remove_prefix(std::string_view("localhost").size());
   }
 
-  std::string decoded;
-  decoded.reserve(encoded.size());
-  for (std::size_t i = 0; i < encoded.size(); ++i) {
-    if (encoded[i] == '%' && i + 2 < encoded.size()) {
-      const auto hex_value = [](char ch) -> int {
-        if (ch >= '0' && ch <= '9') return ch - '0';
-        if (ch >= 'a' && ch <= 'f') return 10 + (ch - 'a');
-        if (ch >= 'A' && ch <= 'F') return 10 + (ch - 'A');
-        return -1;
-      };
-      const int hi = hex_value(encoded[i + 1]);
-      const int lo = hex_value(encoded[i + 2]);
-      if (hi >= 0 && lo >= 0) {
-        decoded.push_back(static_cast<char>((hi << 4) | lo));
-        i += 2;
-        continue;
-      }
-    }
-    decoded.push_back(encoded[i]);
-  }
+  std::string decoded = util::PercentDecode(encoded);
   if (decoded.empty()) {
     return std::nullopt;
   }

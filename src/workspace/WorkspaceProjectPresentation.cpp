@@ -10,6 +10,8 @@
 #include <sstream>
 
 #include "platform/AppDirectories.h"
+#include "util/Hex.h"
+#include "util/StringUtil.h"
 #include "workspace/PersistenceService.h"
 #include "workspace/WorkspacePathUtils.h"
 
@@ -163,35 +165,11 @@ std::string BuildMergeBreadcrumbLabel(const std::filesystem::path& project_root,
 }
 
 std::optional<SDL_Color> ParseProjectColor(std::string_view text) {
-  std::size_t start = 0;
-  while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start])) != 0) {
-    ++start;
+  const std::string token = util::TrimAsciiWhitespace(text);
+  if (const auto rgb = util::DecodeHexColor(token)) {
+    return SDL_Color{(*rgb)[0], (*rgb)[1], (*rgb)[2], 0xff};
   }
-  std::size_t end = text.size();
-  while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
-    --end;
-  }
-  const std::string token(text.substr(start, end - start));
-  if (token.size() != 7 || token.front() != '#') {
-    return std::nullopt;
-  }
-  const auto parse_pair = [&](std::size_t offset) -> std::optional<Uint8> {
-    const std::string pair = token.substr(offset, 2);
-    char* end_ptr = nullptr;
-    const long value = std::strtol(pair.c_str(), &end_ptr, 16);
-    if (end_ptr == nullptr || *end_ptr != '\0' || value < 0 || value > 255) {
-      return std::nullopt;
-    }
-    return static_cast<Uint8>(value);
-  };
-
-  const auto red = parse_pair(1);
-  const auto green = parse_pair(3);
-  const auto blue = parse_pair(5);
-  if (!red.has_value() || !green.has_value() || !blue.has_value()) {
-    return std::nullopt;
-  }
-  return SDL_Color{*red, *green, *blue, 0xff};
+  return std::nullopt;
 }
 
 std::string FormatProjectColor(SDL_Color color) {

@@ -23,6 +23,23 @@
 
 namespace microide::terminal {
 
+namespace {
+
+// Upper bound on a single CSI/OSC/string-payload escape sequence. A stream that
+// opens an escape and never terminates it (a runaway or hostile program) would
+// otherwise grow escape_sequence_buffer_ without limit and swallow all
+// subsequent output. On overflow we abandon the sequence and resume normal text.
+constexpr std::size_t kMaxEscapeSequenceLength = 8192;
+
+}  // namespace
+
+void TerminalSession::AbandonEscapeSequenceLocked() {
+  util::AddPerformanceCounter(util::PerfCounterId::TerminalEscapeSequencesAborted);
+  escape_sequence_buffer_.clear();
+  escape_mode_ = EscapeMode::None;
+  osc_escape_pending_ = false;
+}
+
 void TerminalSession::AppendOutputLocked(std::string_view data) {
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
@@ -45,6 +62,14 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
           byte == '.' || byte == '/') {
         escape_sequence_buffer_.assign(1, static_cast<char>(byte));
         escape_mode_ = EscapeMode::CharsetDesignate;
+        continue;
+      }
+      // DCS (P), SOS (X), PM (^), APC (_): consume the string payload up to its
+      // String Terminator instead of letting it fall through and print as text.
+      if (byte == 'P' || byte == 'X' || byte == '^' || byte == '_') {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::StringPayload;
+        osc_escape_pending_ = false;
         continue;
       }
       if (byte == '7') {
@@ -96,6 +121,8 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         HandleEscapeSequenceLocked(escape_sequence_buffer_);
         escape_sequence_buffer_.clear();
         escape_mode_ = EscapeMode::None;
+      } else if (escape_sequence_buffer_.size() > kMaxEscapeSequenceLength) {
+        AbandonEscapeSequenceLocked();
       }
       continue;
     }
@@ -121,13 +148,47 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         osc_escape_pending_ = true;
         continue;
       }
+      if (escape_sequence_buffer_.size() > kMaxEscapeSequenceLength) {
+        AbandonEscapeSequenceLocked();
+        continue;
+      }
+      escape_sequence_buffer_.push_back(static_cast<char>(byte));
+      continue;
+    }
+
+    if (escape_mode_ == EscapeMode::StringPayload) {
+      // DCS/SOS/PM/APC payload: discard everything up to the ST (ESC \) or BEL.
+      if (osc_escape_pending_) {
+        if (byte == '\\') {
+          escape_sequence_buffer_.clear();
+          escape_mode_ = EscapeMode::None;
+          osc_escape_pending_ = false;
+          continue;
+        }
+        osc_escape_pending_ = false;
+      }
+      if (byte == '\a') {
+        escape_sequence_buffer_.clear();
+        escape_mode_ = EscapeMode::None;
+        continue;
+      }
+      if (byte == '\x1b') {
+        osc_escape_pending_ = true;
+        continue;
+      }
+      // Count discarded bytes via the buffer so an unterminated payload can't
+      // trap the parser forever.
+      if (escape_sequence_buffer_.size() > kMaxEscapeSequenceLength) {
+        AbandonEscapeSequenceLocked();
+        continue;
+      }
       escape_sequence_buffer_.push_back(static_cast<char>(byte));
       continue;
     }
 
     if (byte == '\x1b') {
       if (!pending_utf8_sequence_.empty()) {
-        PutGlyphLocked("\xEF\xBF\xBD");
+        PutGlyphLocked(util::kUtf8ReplacementChar);
         pending_utf8_sequence_.clear();
       }
       escape_mode_ = EscapeMode::AfterEscape;
@@ -137,7 +198,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     }
 
     if (!pending_utf8_sequence_.empty() && byte < 0x80) {
-      PutGlyphLocked("\xEF\xBF\xBD");
+      PutGlyphLocked(util::kUtf8ReplacementChar);
       pending_utf8_sequence_.clear();
     }
 
@@ -183,7 +244,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
             if (pending_utf8_sequence_.empty()) {
               const std::size_t sequence_length = util::Utf8SequenceLength(byte);
               if (sequence_length == 0) {
-                PutGlyphLocked("\xEF\xBF\xBD");
+                PutGlyphLocked(util::kUtf8ReplacementChar);
                 break;
               }
               pending_utf8_sequence_.assign(1, static_cast<char>(byte));
@@ -195,7 +256,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
             }
 
             if (!util::IsUtf8ContinuationByte(byte)) {
-              PutGlyphLocked("\xEF\xBF\xBD");
+              PutGlyphLocked(util::kUtf8ReplacementChar);
               pending_utf8_sequence_.clear();
               continue;
             }

@@ -34,33 +34,24 @@ class SdlTtfTextBackend final : public TextRendererBackend {
                   float y,
                   SDL_Color color,
                   std::string_view text) override;
- void DrawStringOn(SDL_Renderer* renderer,
-                    float x,
-                    float y,
-                    SDL_Color color,
-                    SDL_Color background,
-                    std::string_view text) override;
+  // DrawStringOn is intentionally not overridden: this backend does not paint a
+  // glyph background, so the base-class default (which ignores `background` and
+  // forwards to DrawString) is exactly the desired behaviour.
 
  private:
   struct CacheKeyView {
     std::string_view text;
     SDL_Color color{};
-    bool has_background = false;
-    SDL_Color background{};
   };
 
   struct CacheKey {
     std::string text;
     SDL_Color color{};
-    bool has_background = false;
-    SDL_Color background{};
 
     operator CacheKeyView() const noexcept {
       return CacheKeyView{
           .text = text,
           .color = color,
-          .has_background = has_background,
-          .background = background,
       };
     }
   };
@@ -115,9 +106,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void ClearAsciiGlyphSurfaces();
   SDL_Surface* ResolveAsciiGlyphSurface(char ch, SDL_Color color);
   static std::uint64_t PackAsciiGlyphCacheKey(char ch, SDL_Color color);
-  CacheEntry* ResolveEntry(std::string_view text,
-                           SDL_Color color,
-                           const SDL_Color* background);
+  CacheEntry* ResolveEntry(std::string_view text, SDL_Color color);
 
   SDL_Renderer* renderer_ = nullptr;
   TTF_Font* font_ = nullptr;
