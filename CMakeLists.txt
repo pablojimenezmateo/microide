@@ -185,6 +185,7 @@ set(MICROIDE_CORE_SOURCES
   src/platform/HostPlatform.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
+  src/platform/SubprocessSandbox.cpp
   src/platform/TerminalBackend.cpp
   src/platform/Trash.cpp
   src/persistence/PersistedRecord.cpp
@@ -776,6 +777,7 @@ add_executable(microide_diff_bench
   src/compare/CompareModel.cpp
   src/platform/RuntimePaths.cpp
   src/platform/Subprocess.cpp
+  src/platform/SubprocessSandbox.cpp
   src/platform/Filesystem.cpp
   src/project/GitCompareService.cpp
   src/project/GitCommandUtil.cpp

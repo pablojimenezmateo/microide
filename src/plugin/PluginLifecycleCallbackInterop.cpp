@@ -157,6 +157,8 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
   runtime_types::PluginInstance plugin{
       .id = {},
       .root = plugin_root.lexically_normal(),
+      .data_dir = {},
+      .capabilities = {},
       .runtime = nullptr,
       .state = nullptr,
       .setup_ref = LUA_NOREF,

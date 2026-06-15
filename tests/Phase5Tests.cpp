@@ -305,6 +305,7 @@ while True:
       std::string(R"lua(local ide = require("microide")
 return ide.plugin({
   id = "phase5-lsp",
+  capabilities = { process = { exec = true } },
   setup = function(ctx)
     ctx.commands.add("phase5-lsp.echo", function(ctx, args)
       ctx.log("lsp-action:" .. table.concat(args, ":"))
@@ -524,6 +525,7 @@ while True:
       std::string(R"lua(local ide = require("microide")
 return ide.plugin({
   id = "phase5-lsp-merge",
+  capabilities = { process = { exec = true } },
   on_buffer_open = function(ctx, buffer)
     ctx.log("buffer-open:" .. buffer.relative_path)
   end,
@@ -650,6 +652,7 @@ while True:
       std::string(R"lua(local ide = require("microide")
 return ide.plugin({
   id = "phase5-delayed-didopen",
+  capabilities = { process = { exec = true } },
   setup = function(ctx)
     ctx.lsp.add({
       id = "markdown",

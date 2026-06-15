@@ -2,7 +2,10 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
+#include <array>
+#include <cstddef>
 #include <optional>
+#include <span>
 #include <system_error>
 
 #include "plugin/PluginPathInterop.h"
@@ -11,7 +14,42 @@
 namespace microide::plugin::workspace_interop {
 namespace {
 
+using path_interop::ContainPath;
 using path_interop::ResolveRuntimePath;
+
+// Builds the set of roots a plugin may reach for a given access level: always the project
+// root, plus the plugin's data directory when the level grants data access. Empty roots are
+// preserved in the array and skipped by ContainPath.
+std::array<std::filesystem::path, 2> AllowedRoots(const PluginFsContext& fs, FsAccess level) {
+  std::array<std::filesystem::path, 2> roots;
+  roots[0] = fs.project_root;
+  if (level == FsAccess::kProjectAndData) {
+    roots[1] = fs.data_dir;
+  }
+  return roots;
+}
+
+// Resolves `raw_path` against the project root and contains it within the roots permitted by
+// `level`. Returns nullopt (and marks `denied`) when the level is kNone or the path escapes.
+std::optional<std::filesystem::path> ResolveContained(const PluginFsContext& fs,
+                                                      FsAccess level,
+                                                      const char* raw_path,
+                                                      bool* denied) {
+  if (level == FsAccess::kNone) {
+    if (denied != nullptr) {
+      *denied = true;
+    }
+    return std::nullopt;
+  }
+  const std::filesystem::path resolved =
+      ResolveRuntimePath(fs.project_root, std::filesystem::path(raw_path));
+  const std::array<std::filesystem::path, 2> roots = AllowedRoots(fs, level);
+  std::optional<std::filesystem::path> contained = ContainPath(std::span(roots), resolved);
+  if (!contained.has_value() && denied != nullptr) {
+    *denied = true;
+  }
+  return contained;
+}
 
 void PushBufferTable(lua_State* state,
                      const std::filesystem::path& current_project_root,
@@ -96,11 +134,15 @@ int LuaWorkspaceActiveBuffer(lua_State* state,
   return 1;
 }
 
-int LuaFilesReadText(lua_State* state, const std::filesystem::path& current_project_root) {
+int LuaFilesReadText(lua_State* state, const PluginFsContext& fs, bool* denied) {
   const char* raw_path = luaL_checkstring(state, 1);
-  const std::filesystem::path path =
-      ResolveRuntimePath(current_project_root, std::filesystem::path(raw_path));
-  const std::optional<std::string> text = util::ReadTextFile(path);
+  const std::optional<std::filesystem::path> path =
+      ResolveContained(fs, fs.caps.fs_read, raw_path, denied);
+  if (!path.has_value()) {
+    lua_pushnil(state);
+    return 1;
+  }
+  const std::optional<std::string> text = util::ReadTextFile(*path);
   if (!text.has_value()) {
     lua_pushnil(state);
     return 1;
@@ -109,23 +151,31 @@ int LuaFilesReadText(lua_State* state, const std::filesystem::path& current_proj
   return 1;
 }
 
-int LuaFilesWriteText(lua_State* state, const std::filesystem::path& current_project_root) {
+int LuaFilesWriteText(lua_State* state, const PluginFsContext& fs, bool* denied) {
   const char* raw_path = luaL_checkstring(state, 1);
   size_t text_length = 0;
   const char* text = luaL_checklstring(state, 2, &text_length);
-  const std::filesystem::path path =
-      ResolveRuntimePath(current_project_root, std::filesystem::path(raw_path));
-  lua_pushboolean(state,
-                  util::WriteTextFileAtomically(path, std::string_view(text, text_length)) ? 1 : 0);
+  const std::optional<std::filesystem::path> path =
+      ResolveContained(fs, fs.caps.fs_write, raw_path, denied);
+  if (!path.has_value()) {
+    lua_pushboolean(state, 0);
+    return 1;
+  }
+  lua_pushboolean(
+      state, util::WriteTextFileAtomically(*path, std::string_view(text, text_length)) ? 1 : 0);
   return 1;
 }
 
-int LuaFilesExists(lua_State* state, const std::filesystem::path& current_project_root) {
+int LuaFilesExists(lua_State* state, const PluginFsContext& fs, bool* denied) {
   const char* raw_path = luaL_checkstring(state, 1);
+  const std::optional<std::filesystem::path> path =
+      ResolveContained(fs, fs.caps.fs_read, raw_path, denied);
+  if (!path.has_value()) {
+    lua_pushboolean(state, 0);
+    return 1;
+  }
   std::error_code error;
-  const std::filesystem::path path =
-      ResolveRuntimePath(current_project_root, std::filesystem::path(raw_path));
-  lua_pushboolean(state, std::filesystem::exists(path, error) && !error ? 1 : 0);
+  lua_pushboolean(state, std::filesystem::exists(*path, error) && !error ? 1 : 0);
   return 1;
 }
 

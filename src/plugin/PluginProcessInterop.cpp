@@ -3,6 +3,9 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include <array>
+#include <span>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -17,6 +20,7 @@
 namespace microide::plugin::process_interop {
 namespace {
 
+using path_interop::ContainPath;
 using path_interop::ResolveRuntimePath;
 
 // Native form of the `process.run` arguments. Holds every heap-backed object the
@@ -108,13 +112,81 @@ const char* ParseProcessRunArgs(lua_State* state,
   return nullptr;
 }
 
+// True when argv[0] satisfies the plugin's allowlist. An empty allowlist (with exec granted)
+// permits any binary; otherwise argv[0] must match an entry exactly (e.g. an absolute path) or
+// by basename, so a plugin allowing "eslint" accepts both "eslint" and "/usr/bin/eslint".
+bool ProgramAllowed(const PluginCapabilities& caps, const std::vector<std::string>& argv) {
+  if (caps.process_allowlist.empty()) {
+    return true;
+  }
+  if (argv.empty()) {
+    return false;
+  }
+  const std::string base = std::filesystem::path(argv[0]).filename().string();
+  for (const std::string& allowed : caps.process_allowlist) {
+    if (allowed == argv[0] || allowed == base) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A spawned process may only be cwd'd inside the plugin's project root or data directory. An
+// empty cwd means "inherit the host's working directory" and is left untouched.
+bool CwdContained(const PluginFsContext& fs, const std::filesystem::path& cwd) {
+  if (cwd.empty()) {
+    return true;
+  }
+  const std::array<std::filesystem::path, 2> roots{fs.project_root, fs.data_dir};
+  return ContainPath(std::span(roots), cwd).has_value();
+}
+
+// Builds the kernel-confinement descriptor for a plugin-spawned child: writes are limited to the
+// project root and the plugin data dir, and IPv4/IPv6 sockets are blocked unless the plugin
+// declared the network capability. The wider system stays readable/executable so the tool can run.
+platform::SubprocessSandbox MakeSandbox(const PluginFsContext& fs) {
+  platform::SubprocessSandbox sandbox;
+  sandbox.enabled = true;
+  sandbox.allow_network = fs.caps.network;
+  if (!fs.project_root.empty()) {
+    sandbox.read_roots.push_back(fs.project_root);
+    sandbox.write_roots.push_back(fs.project_root);
+  }
+  if (!fs.data_dir.empty()) {
+    sandbox.read_roots.push_back(fs.data_dir);
+    sandbox.write_roots.push_back(fs.data_dir);
+  }
+  return sandbox;
+}
+
+// Returns nullptr when the parsed call is permitted, or a static error-message literal to be
+// raised. Holds no heap state of its own so the caller can raise after `parsed` destructs.
+const char* CheckProcessCapability(const PluginFsContext& fs, const ProcessRunArgs& parsed) {
+  if (!fs.caps.process_exec) {
+    return "process execution not permitted; declare capabilities.process.exec";
+  }
+  if (parsed.argv.empty()) {
+    return "process argv must not be empty";
+  }
+  if (!ProgramAllowed(fs.caps, parsed.argv)) {
+    return "process program not in plugin allowlist (capabilities.process.allow)";
+  }
+  if (!CwdContained(fs, parsed.cwd)) {
+    return "process cwd escapes plugin filesystem scope";
+  }
+  return nullptr;
+}
+
 }  // namespace
 
-int LuaProcessRun(lua_State* state, const std::filesystem::path& current_project_root) {
+int LuaProcessRun(lua_State* state, const PluginFsContext& fs) {
   const char* error = nullptr;
   {
     ProcessRunArgs parsed;
-    error = ParseProcessRunArgs(state, current_project_root, &parsed);
+    error = ParseProcessRunArgs(state, fs.project_root, &parsed);
+    if (error == nullptr) {
+      error = CheckProcessCapability(fs, parsed);
+    }
     if (error == nullptr) {
       const platform::SubprocessResult result = platform::RunSubprocess(
           parsed.argv, platform::SubprocessOptions{
@@ -123,6 +195,7 @@ int LuaProcessRun(lua_State* state, const std::filesystem::path& current_project
                            .environment_overrides = std::move(parsed.environment_overrides),
                            .capture_stdout = true,
                            .capture_stderr = true,
+                           .sandbox = MakeSandbox(fs),
                        });
       lua_createtable(state, 0, 4);
       lua_pushinteger(state, result.exit_code);
@@ -141,7 +214,7 @@ int LuaProcessRun(lua_State* state, const std::filesystem::path& current_project
 }
 
 int LuaProcessRunAsync(lua_State* state,
-                       const std::filesystem::path& current_project_root,
+                       const PluginFsContext& fs,
                        std::shared_ptr<runtime_types::AsyncProcessState> async_process_state) {
   if (lua_type(state, 3) != LUA_TFUNCTION) {
     lua_error_util::PushMessage(state, "process.run_async requires a callback function");
@@ -151,7 +224,10 @@ int LuaProcessRunAsync(lua_State* state,
   const char* error = nullptr;
   {
     ProcessRunArgs parsed;
-    error = ParseProcessRunArgs(state, current_project_root, &parsed);
+    error = ParseProcessRunArgs(state, fs.project_root, &parsed);
+    if (error == nullptr) {
+      error = CheckProcessCapability(fs, parsed);
+    }
     if (error != nullptr) {
       // fall through to the raise below once `parsed` destructs.
     } else if (!async_process_state) {
@@ -173,6 +249,7 @@ int LuaProcessRunAsync(lua_State* state,
           .environment_overrides = std::move(parsed.environment_overrides),
           .capture_stdout = true,
           .capture_stderr = true,
+          .sandbox = MakeSandbox(fs),
       };
 
       async_process_state->in_flight.fetch_add(1, std::memory_order_relaxed);

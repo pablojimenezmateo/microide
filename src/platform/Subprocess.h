@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "platform/SubprocessSandbox.h"
+
 namespace microide::platform {
 
 struct SubprocessEnvironmentOverride {
@@ -19,6 +21,9 @@ struct SubprocessOptions {
   bool capture_stdout = true;
   bool capture_stderr = true;
   bool silence_stderr = false;
+  // Optional kernel-level confinement applied in the forked child before exec. Disabled by
+  // default so host-internal subprocesses (git, ripgrep, …) are unaffected; plugin spawns opt in.
+  SubprocessSandbox sandbox{};
 };
 
 struct SubprocessResult {

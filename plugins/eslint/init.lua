@@ -72,10 +72,17 @@ local function sanitize_path_fragment(path)
 end
 
 local function eslint_report_path(ctx, relative_path)
+  -- Write the report into the plugin's sandboxed data dir rather than /tmp: the capability
+  -- sandbox confines plugin file access (and spawned-process writes) to the project root and
+  -- this data directory, so /tmp is no longer readable/writable from the plugin.
+  local data_dir = ctx.workspace.data_dir()
+  if type(data_dir) ~= "string" or data_dir == "" then
+    data_dir = "."
+  end
   local project_root = ctx.workspace.project_root()
   local project_safe = sanitize_path_fragment(project_root ~= "" and project_root or "project")
   local relative_safe = sanitize_path_fragment(relative_path)
-  return "/tmp/microide-eslint-" .. project_safe .. "-" .. relative_safe .. ".json"
+  return data_dir .. "/eslint-" .. project_safe .. "-" .. relative_safe .. ".json"
 end
 
 local function first_line(text)
@@ -582,6 +589,14 @@ end
 
 return ide.plugin({
   id = "eslint",
+
+  -- Reads project sources and writes lint reports into the plugin data dir ("data" scope grants
+  -- both the project tree and the data dir), and spawns eslint/tsc/yarn/npx, so it needs process
+  -- execution. No allowlist: the binary varies (project-local node_modules/.bin, bash, yarn, npx).
+  capabilities = {
+    fs = { read = "data", write = "data" },
+    process = { exec = true },
+  },
 
   setup = function(ctx)
     ctx.commands.add("eslint.run", function(ctx, args)

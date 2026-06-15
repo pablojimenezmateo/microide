@@ -45,6 +45,12 @@ end
 return ide.plugin({
   id = "prettier",
 
+  -- Contributes a formatter, which the host spawns, so process execution must be granted.
+  -- Default project-scoped filesystem access is enough (only ctx.files.exists on the project).
+  capabilities = {
+    process = { exec = true },
+  },
+
   setup = function(ctx)
     declare_settings(ctx)
 
