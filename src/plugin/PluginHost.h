@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "platform/SubprocessSandbox.h"
 #include "util/JsonValue.h"
 
 namespace microide::plugin {
@@ -125,6 +126,9 @@ class PluginHost {
     util::JsonValue initialization_options;
     // Answers server `workspace/configuration` requests (object) or Null.
     util::JsonValue settings;
+    // Kernel-confinement descriptor resolved at registration from the plugin's project root,
+    // data dir, and network capability; applied to the spawned server child on Linux.
+    platform::SubprocessSandbox sandbox;
   };
 
   struct ContributedTask {

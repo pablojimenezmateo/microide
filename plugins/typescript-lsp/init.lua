@@ -77,6 +77,12 @@ end
 return ide.plugin({
   id = "typescript-lsp",
 
+  -- Contributes a language server, which the host launches as a subprocess, so it needs the
+  -- process execution capability. Filesystem access stays at the project-scoped default.
+  capabilities = {
+    process = { exec = true },
+  },
+
   setup = function(ctx)
     declare_settings(ctx)
 

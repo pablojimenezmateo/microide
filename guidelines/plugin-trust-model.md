@@ -1,13 +1,37 @@
 # Plugin Trust Model
 
-Reviewed on 2026-05-21.
+Reviewed on 2026-05-21. Capability sandboxing added 2026-06-15.
 
 This document describes what plugins can do, what they cannot do, and what microide does and does
 not enforce. It is the authoritative reference for trust-related claims about the plugin runtime.
 
-The short version: **plugins are trusted local code that runs with the same privileges as your
-microide process.** Only install plugins you trust into your user config directory. Opening a
-project no longer auto-loads plugin code shipped inside that repository.
+The short version: **plugins run in-process but under an enforced per-plugin capability sandbox.**
+Filesystem access through the host API is contained to the active project (and an optional
+per-plugin data directory); process execution is default-deny and must be declared. On Linux,
+plugin-spawned processes are additionally confined with Landlock (writes limited to the project +
+data dir) and an optional seccomp network block. This narrows — but does not eliminate — the trust
+you place in a plugin: a declared-process plugin can still run tools that read your project and the
+system. Only install plugins you trust into your user config directory. Opening a project does not
+auto-load plugin code shipped inside that repository.
+
+Capabilities are declared in the plugin's `init.lua` descriptor table:
+
+```lua
+return ide.plugin({
+  id = "my-plugin",
+  capabilities = {
+    fs = { read = "project", write = "project" },  -- "none" | "project" | "data"
+    process = { exec = true, allow = { "eslint", "prettier" } },
+    network = false,
+  },
+  setup = function(ctx) ... end,
+})
+```
+
+Defaults when `capabilities` (or a sub-field) is omitted: `fs.read`/`fs.write` = `project`,
+`process.exec` = `false`, `network` = `false`. `"data"` grants the project tree **and** the
+plugin's writable data directory (`ctx.workspace.data_dir()`). An empty `process.allow` with
+`exec = true` permits any binary; a non-empty list restricts `argv[0]` by basename or absolute path.
 
 For the broader architecture see `dev-docs/plugins/plugin-runtime-research.md`. For the README summary see the
 "Security & Trust Model" section of `README.md`. This file should win on disagreements.
@@ -62,16 +86,22 @@ paths.
 The host API is what plugins actually use to do interesting things. It does grant the capabilities
 that plain Lua does not. The relevant surface, by capability:
 
-### Filesystem (project-scoped)
+### Filesystem (capability-contained)
 
 - `ctx.files.read_text(path)` — read a file, resolved relative to the project root
 - `ctx.files.write_text(path, contents)` — write a file, project-relative
 - `ctx.files.exists(path)` — existence check, project-relative
+- `ctx.workspace.data_dir()` — the plugin's writable scratch directory (data-scope only)
 
-Paths are resolved against the active project root. Absolute paths are honored when passed.
-There is no allowlist or denylist on which files inside the project can be read or written;
-`.microide/`, `.git/`, dotfiles, and parent traversal via `..` are not specifically blocked at
-this layer.
+Paths are resolved against the active project root, then **contained**: the resolved path must
+stay inside the roots the plugin's `fs` capability permits (the project root, plus the data dir for
+`"data"` scope). Absolute paths outside those roots, and `..` traversal that escapes them, are
+refused — `read_text`/`exists` return `nil`/`false` and `write_text` returns `false`, and a denial
+diagnostic naming the missing capability is written to the plugin's output channel. Containment
+runs a cheap lexical check first, then `weakly_canonical` to defeat symlink-escape on paths that
+exist. `fs.read`/`fs.write` may also be set to `"none"` to deny file access entirely. Within the
+permitted roots there is still no per-file denylist: `.microide/`, `.git/`, and dotfiles under the
+project are readable/writable.
 
 ### Process execution
 
@@ -84,8 +114,22 @@ this layer.
 - Contributed formatters (`ctx.formatters.add(...)`) and tasks (`ctx.tasks.add(...)`) likewise
   declare an argv that the host runs.
 
-A plugin that calls `ctx.process.run({"sh", "-c", "..."})` has full shell access. There is no
-capability gate, no per-plugin allowlist of binaries, no prompt.
+Process execution is **default-deny**. A plugin must declare `capabilities.process.exec = true`
+before `ctx.process.run` / `run_async` will spawn anything, and may further restrict `argv[0]` with
+`capabilities.process.allow`. The same gate applies to spawnable contributions (language servers,
+formatters, tasks): a plugin that declares one without `process.exec` is rejected at load with a
+clear error. A refused `process.run` raises a Lua error and records a diagnostic naming the missing
+capability. The process `cwd` is also contained to the project/data roots.
+
+On Linux, permitted `ctx.process.run` / `run_async` children **and** contributed language-server
+processes are confined in-kernel: Landlock limits writes to the project root and the plugin data dir
+(the wider system stays readable/executable so tools still run), and when `network = false` a
+seccomp filter blocks IPv4/IPv6 sockets (AF_UNIX/local IPC still works). This layer is best-effort
+defense-in-depth: on a kernel without Landlock/seccomp it degrades to the in-process gate above. A
+plugin that declares `process.exec` and runs `{"sh", "-c", "..."}` still gets a shell — but one
+whose writes are confined to the project and whose network may be blocked. (Note: a language server
+that needs to read or write outside the project — e.g. a package cache under `~/.nuget` or
+`~/.cache` — may be restricted; the system directories and `/tmp` remain available.)
 
 ### Editor and project state
 
@@ -123,11 +167,15 @@ These are real boundaries, not aspirational ones:
   modify your repo.
 - **They cannot directly access `WorkspaceShell`.** This is policy + lint-enforced. They go
   through narrow registries.
+- **They cannot read or write outside their declared filesystem scope.** Host-API file access is
+  contained to the project root (and the data dir for data scope); escapes are refused.
+- **They cannot run subprocesses unless they declare `process.exec`** (optionally allowlisted), and
+  on Linux those subprocesses cannot write outside the project/data roots.
 - **The Lua state is per-plugin, not shared.** Each loaded plugin gets its own `lua_State`, so
-  plain Lua globals do not leak between plugins. This is a small correctness boundary, not a
-  sandbox: every plugin still runs in-process and still receives host APIs that can read files,
-  launch subprocesses, and affect the active project. Plugins also still run sequentially (no
-  plugin background threading except via `ctx.process.run_async`'s host-managed wake).
+  plain Lua globals do not leak between plugins. `package.path` is pinned to the plugin's own
+  directory and `package.cpath` / `loadlib` are disabled, so a plugin cannot `require` arbitrary
+  modules or load native libraries. Plugins still run in-process and sequentially (no plugin
+  background threading except via `ctx.process.run_async`'s host-managed wake).
 
 ## What microide does not do
 
@@ -136,13 +184,14 @@ These are absent today. None of them are on the roadmap unless a separate phase 
 - **No code signing or signature verification.** Plugins are plain files on disk.
 - **No allowlist of permitted plugins.** User-scope plugins load automatically from the config
   directory.
-- **No capability prompt.** The host never asks "this plugin wants to run a subprocess, allow?"
-- **No per-plugin filesystem namespacing.** A plugin reading `~/.ssh/id_rsa` through
-  `ctx.files.read_text` is not blocked at the API layer (it requires an absolute path; the API
-  does not refuse one).
-- **No restricted-mode `require`.** `package.path` and `package.cpath` are not pinned to a
-  microide-controlled directory.
-- **No process isolation.** The Lua state runs in-process with the editor.
+- **No capability prompt.** Capabilities are declared in the manifest and enforced, but the host
+  does not interactively ask the user to approve them on first run.
+- **No isolation of the Lua state itself.** Capability enforcement happens at the host-API
+  boundary and (for subprocesses) in the kernel; the `lua_State` still runs in the editor process,
+  so a memory-safety bug in the host bindings is not contained by this model.
+- **No kernel confinement off Linux.** macOS/Windows get the in-process capability gate (fs
+  containment, process gate, allowlist) plus portable `setrlimit`, but not Landlock/seccomp. On
+  Linux, both `ctx.process.run` children and contributed language-server processes are confined.
 - **No marketplace, no remote install, no auto-update.** Plugins are placed by the user in
   `~/.config/microide/plugins/`.
 
@@ -150,24 +199,29 @@ These are absent today. None of them are on the roadmap unless a separate phase 
 
 For users:
 
-- Treat user-installed plugins as equivalent to running arbitrary local code with your editor
-  privileges.
+- The capability sandbox reduces, but does not eliminate, plugin trust. A plugin with
+  `process.exec` can still run tools that read your whole project and the system; treat such
+  plugins as you would the tools they invoke.
 - Only copy or symlink plugins into `~/.config/microide/plugins/` when you trust their source.
 - Opening a repository no longer executes plugin code from `.microide/plugins/` inside that repo.
-- The `plugins-reload` command picks up plugin file changes between sessions; there is no
-  "all-plugins-disabled" run mode in the UI today.
+- The `plugins-reload` command picks up plugin file changes between sessions. `--disable-plugins`
+  / `--safe-mode` turn plugins off entirely.
 
 Explicit scope decision:
 
-- Full plugin security-system hardening remains out of scope: plugin sandboxing / process
-  isolation, first-run capability prompts, signing, marketplace trust, and project-local plugin
-  directories.
-- **Git Workstation** adds minimal startup trust controls only:
+- **Implemented (2026-06-15):** per-plugin capability declarations enforced at the fs/process
+  chokepoints (default-deny process/network, project-scoped fs), path containment, a process
+  allowlist, registration-time gating of spawnable contributions, restricted `package.path` /
+  `package.cpath`, and Linux Landlock + seccomp + `setrlimit` confinement of plugin-spawned
+  children.
+- **Still out of scope:** first-run capability prompts, code signing / signed-manifest trust,
+  marketplace trust, and full out-of-process isolation of the Lua state itself.
+- **Git Workstation** startup trust controls remain available:
   - `--disable-plugins` — skip user-scope plugins and plugin syntax loading
   - `--safe-mode` — implies plugin disabling, skips workspace/session restore, empty shell unless
     a project path is passed; visible in status bar and Help/About
-- These flags are not a sandbox. For untrusted repositories, still prefer external isolation
-  (VM/container) in addition to safe-mode when appropriate.
+- For fully untrusted repositories, still prefer external isolation (VM/container) in addition to
+  the capability sandbox and safe-mode when appropriate.
 
 See [SECURITY.md](../SECURITY.md) and [git-workstation.md](../dev-docs/project/git-workstation.md).
 
@@ -185,9 +239,11 @@ For plugin authors:
 The following would be reasonable to add only if microide ever pursues plugin distribution beyond
 "hand-placed local files." They are not planned now:
 
-- per-plugin capability declarations and prompts on first run
-- restricted `package.path` / `package.cpath` pinned to plugin install dir
-- a signed-manifest format
-- isolating each plugin in its own Lua state with explicit message-passing seams
+- first-run capability prompts that ask the user to approve a declared capability set
+- a signed-manifest format and signature verification
+- per-server capability overrides (e.g. granting a language server broader filesystem access than
+  the default project/data confinement when it legitimately needs a home-directory cache)
+- isolating each plugin in its own Lua state in a separate sandboxed process with explicit
+  message-passing seams
 
 If you want to track any of these, open an OpenSpec change rather than adding partial measures.

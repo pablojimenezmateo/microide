@@ -181,7 +181,9 @@ serious work.
   single- and multi-line ranges when carets are set up with `AddSecondaryCaretWithRange`
   or add-at-match promotion; mouse-driven multi-line block selections on secondary
   carets are not yet exposed.
-- **No sandbox for plugins.** Plugins are trusted local code. See
+- **Capability-sandboxed plugins, not full isolation.** Plugin filesystem/process access is
+  enforced per-plugin (default-deny process, project-scoped fs, Linux kernel confinement of
+  spawned children), but the Lua state still runs in-process. See
   [Security & Trust Model](#security--trust-model).
 - **Recovery-mode startup only.** `--disable-plugins` and `--safe-mode` skip user-scope plugins
   and (for safe mode) workspace/session restore. These are recovery/trust aids, not a sandbox.
@@ -202,41 +204,44 @@ If you find a bug or a limitation that is not listed, that itself is a bug — p
 
 ## Security & Trust Model
 
-microide is a local desktop application. It does not, today, implement any meaningful sandbox
-for plugins or for code it executes on your behalf. Treat it accordingly.
+microide is a local desktop application that runs with your user privileges. Plugins run in-process
+but under an enforced per-plugin capability sandbox; that narrows, but does not eliminate, the trust
+you place in them. Treat it accordingly.
 
-**Plugins are trusted local code.** When you open a project, microide loads Lua plugins only from:
+**Plugins are capability-sandboxed local code.** When you open a project, microide loads Lua plugins
+only from:
 
 - `~/.config/microide/plugins/<plugin-id>/init.lua` — user-scope plugins
 
 Project-local directories such as `<project-root>/.microide/plugins/` are ignored. That prevents
 cloned repositories from executing plugin code just because you opened them.
 
-User-scope plugins run with the same privileges as your microide process. Through the host
-API a plugin can:
+Plugins declare a `capabilities` table in their `init.lua` descriptor, which the host enforces:
 
-- read and write project-relative files (`ctx.files.read_text` / `write_text` / `exists`)
-- run arbitrary subprocesses with argv, cwd, stdin, and environment overrides
-  (`ctx.process.run`, `ctx.process.run_async`)
-- register language servers whose argv is then launched by the host
-- contribute diagnostics, sidebars, status items, code actions, and save participants that fire
-  on every save
+- **Filesystem** (`ctx.files.*`) is contained to the active project root (and, for `"data"` scope,
+  the plugin's `ctx.workspace.data_dir()`). Absolute paths and `..` escapes outside those roots are
+  refused. Default: project-scoped read+write.
+- **Process execution** (`ctx.process.run` / `run_async`, and contributed formatters / language
+  servers / tasks) is **default-deny**: a plugin must declare `process.exec`, optionally with an
+  `argv[0]` allowlist. On Linux, permitted children are confined with Landlock (writes limited to
+  the project + data dir) and an optional seccomp network block.
+- **The Lua runtime** uses a narrow stdlib (`base`, `table`, `string`, `math`, `utf8`, `package`) —
+  no `io`/`os` — with `package.path` pinned to the plugin directory and `package.cpath`/`loadlib`
+  disabled, so plugins cannot `require` arbitrary modules or load native libraries.
 
-There is **no allowlist, no signature check, no capability prompt, and no per-plugin
-namespacing of filesystem access**. The embedded Lua runtime is configured with a narrow
-stdlib subset (`base`, `table`, `string`, `math`, `utf8`, `package`) — it does not expose
-`io` or `os`, so plain Lua cannot directly open arbitrary files or shell out. The host API,
-however, gives plugins exactly those capabilities through `ctx.files.*` and `ctx.process.run`,
-and `package` still permits `require` plus Lua-module path resolution. Only install plugins you
-trust into `~/.config/microide/plugins/`.
+This is real enforcement, not just documentation. On Linux the kernel confinement applies to both
+`ctx.process.run` children and contributed language-server processes. What it does **not** do:
+first-run capability prompts, signature/marketplace trust, or isolating the Lua state itself out of
+process. A plugin you grant `process.exec` can still run tools that read your whole project. Only
+install plugins you trust into `~/.config/microide/plugins/`.
 
-**Recommendations until that changes:**
+**Recommendations:**
 
-- Treat user-installed plugins as equivalent to running arbitrary local code with your editor
-  privileges.
+- A plugin with `process.exec` is roughly as trusted as the tools it invokes; review its
+  `capabilities` and `init.lua` before installing.
 - Only copy or symlink plugins into `~/.config/microide/plugins/` when you trust their source.
-- The `plugins-reload` command picks up changes; there is no per-plugin disable in the UI yet
-  beyond editing user config or starting with `--disable-plugins` / `--safe-mode`.
+- The `plugins-reload` command picks up changes; `--disable-plugins` / `--safe-mode` turn plugins
+  off entirely.
 - Project-local plugin loading remains out of scope. See [SECURITY.md](SECURITY.md) and
   [dev-docs/project/git-workstation.md](dev-docs/project/git-workstation.md) for supported scope.
 

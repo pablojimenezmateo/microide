@@ -952,6 +952,38 @@ Implemented on 2026-04-17 in a repo-owned dogfooding pass:
 
 - none for the current manual-install Lua runtime; further plugin work should start from a concrete next plugin rather than widening the host API speculatively
 
+### Phase 6: Capability Sandboxing
+
+Implemented on 2026-06-15. This pass turned "plugins are trusted in-process code" into an enforced
+per-plugin capability model. The authoritative description is `guidelines/plugin-trust-model.md`;
+the summary:
+
+- plugins declare a `capabilities` table in their `init.lua` descriptor (`fs.read`/`fs.write` =
+  `none`/`project`/`data`, `process.exec` + `process.allow`, `network`); parsed in
+  `PluginLifecycleLoadInterop.cpp::LoadPluginDescriptor` into `PluginCapabilities`
+  (`src/plugin/PluginCapabilities.h`) stored on each `PluginInstance`. Defaults are project-scoped
+  fs and default-deny process/network.
+- filesystem access through `ctx.files.*` is contained to the permitted roots by
+  `path_interop::ContainPath` (lexical check + `weakly_canonical` symlink check); escapes return
+  falsy and emit a denial diagnostic on the plugin's output channel.
+- `ctx.process.run` / `run_async` enforce the exec flag, an `argv[0]` allowlist, and cwd
+  containment before spawning; spawnable contributions (formatter / language server / task) are
+  rejected at registration when `process.exec` is absent.
+- a new `ctx.workspace.data_dir()` exposes the plugin's writable scratch dir so data-scope plugins
+  (e.g. the eslint report file) no longer write to `/tmp`, which the sandbox denies.
+- on Linux, permitted `ctx.process.run`/`run_async` children **and** contributed language-server
+  processes are confined with Landlock (writes limited to project + data dir, system stays
+  readable/executable), an optional seccomp IPv4/IPv6-socket block when `network = false`, and
+  `setrlimit` hooks (`src/platform/SubprocessSandbox.cpp`, applied between fork and exec in both
+  `src/platform/Subprocess.cpp` and `src/platform/AsyncSubprocess.cpp`). The LSP sandbox is resolved
+  at registration (`PluginHostLuaApi.inc::MakeContributionSandbox`) and threaded through
+  `ContributedLanguageServer` → `LspManager::RegisterServer` → `LspClient::Start` →
+  `AsyncSubprocess::Start`. The layer is fail-open defense-in-depth behind the in-process gate.
+
+Not included: first-run capability prompts, signing/marketplace trust, per-server capability
+overrides (a confined language server cannot reach home-directory caches), and out-of-process
+isolation of the Lua state.
+
 ## Final Recommendation
 
 The clean path for `microide` is not to "embed Lua and expose the shell".

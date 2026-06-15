@@ -50,6 +50,12 @@ end
 return ide.plugin({
   id = "dotnet-lsp",
 
+  -- Contributes the csharp-ls language server, which the host launches as a subprocess, so it
+  -- needs the process execution capability. Filesystem access stays at the project-scoped default.
+  capabilities = {
+    process = { exec = true },
+  },
+
   setup = function(ctx)
     declare_settings(ctx)
 

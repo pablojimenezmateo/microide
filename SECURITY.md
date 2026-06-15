@@ -1,7 +1,9 @@
 # Security
 
-MicroIDE is a local desktop application. It runs with your user privileges and does not sandbox
-plugins or subprocesses launched through the host API.
+MicroIDE is a local desktop application that runs with your user privileges. Plugins run in-process
+but under an enforced per-plugin capability sandbox: filesystem access is contained to the project,
+process execution is default-deny, and on Linux plugin-spawned children are confined with Landlock
+and seccomp. This narrows plugin trust but does not fully isolate the Lua state.
 
 ## Trust model (summary)
 
@@ -9,9 +11,16 @@ plugins or subprocesses launched through the host API.
   (or the platform-equivalent config directory). Directories such as
   `<project-root>/.microide/plugins/` in a cloned repository are **ignored** so opening a repo does
   not execute plugin code from that tree.
-- **Plugins are trusted local code.** The host API exposes project file I/O, subprocess launch,
-  LSP registration, diagnostics, sidebars, and save participants. There is no signature check,
-  capability prompt, or per-plugin filesystem allowlist today.
+- **Capability-sandboxed plugins.** Plugins declare a `capabilities` table that the host enforces:
+  filesystem access is contained to the project root (and an optional per-plugin data dir),
+  process execution is default-deny with an optional `argv[0]` allowlist, and spawnable
+  contributions (formatters / language servers / tasks) are rejected at load without `process.exec`.
+  On Linux, permitted `ctx.process.run` children **and** contributed language-server processes are
+  confined with Landlock (writes limited to the project + data dir) and an optional seccomp
+  IPv4/IPv6 socket block.
+- **Not full isolation.** There is no first-run capability prompt, no signature/marketplace trust,
+  and the Lua state still runs in-process. A plugin granted `process.exec` can still run tools that
+  read your project.
 - **No plugin marketplace or remote install** in current scope.
 
 See [guidelines/plugin-trust-model.md](guidelines/plugin-trust-model.md) for the full model.
@@ -32,8 +41,9 @@ microide --safe-mode /path/to/repo
 microide --disable-plugins
 ```
 
-These flags are **not** a sandbox. They reduce moving parts at startup; they do not isolate network,
-filesystem, or subprocess access from built-in features or from code you run outside MicroIDE.
+These flags disable plugins entirely; they are distinct from the per-plugin capability sandbox,
+which applies whenever plugins are enabled. Neither isolates built-in features or code you run
+outside MicroIDE.
 
 ## Reporting security issues
 
@@ -62,6 +72,9 @@ or `MICROIDE_PERF_TRACE` were enabled.
 
 ## Known limitations
 
-- No plugin sandbox, signing, or marketplace trust layer
+- Per-plugin capability sandbox enforced (fs containment, default-deny process, Linux
+  Landlock/seccomp confinement of both `ctx.process.run` children and contributed language servers);
+  but no first-run capability prompt, plugin signing, marketplace trust, or out-of-process isolation
+  of the Lua state
 - No signed release binaries yet (build from source; verify checksums when published)
 - Comparative performance claims against other editors are not made; internal baselines only

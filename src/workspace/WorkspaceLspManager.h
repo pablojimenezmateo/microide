@@ -33,7 +33,8 @@ class LspManager {
                       const std::string& cwd = {},
                       bool eager_start = true,
                       const util::JsonValue& initialization_options = {},
-                      const util::JsonValue& settings = {});
+                      const util::JsonValue& settings = {},
+                      const platform::SubprocessSandbox& sandbox = {});
   void BeginShutdownServersNotIn(const std::unordered_set<std::string>& language_ids);
 
   // Get or start server for language; returns nullptr if not registered or failed to start.
@@ -75,6 +76,9 @@ class LspManager {
     std::string last_error;
     util::JsonValue initialization_options;
     util::JsonValue settings;
+    // Kernel-confinement descriptor for plugin-contributed servers; default-disabled (no-op) for
+    // test-installed clients and any non-plugin registration.
+    platform::SubprocessSandbox sandbox;
     std::unique_ptr<LspClient> client;
     bool test_install = false;
   };

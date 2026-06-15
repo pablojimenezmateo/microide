@@ -14,6 +14,7 @@ struct ApiFns {
   lua_CFunction workspace_project_root;
   lua_CFunction workspace_open_file;
   lua_CFunction workspace_active_buffer;
+  lua_CFunction workspace_data_dir;
   lua_CFunction files_read_text;
   lua_CFunction files_write_text;
   lua_CFunction files_exists;

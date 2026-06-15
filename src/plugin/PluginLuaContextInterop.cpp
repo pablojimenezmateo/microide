@@ -30,10 +30,11 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
 
   PushAddOnlyModule(state, host_upvalue, "commands", fns.commands_add);
 
-  lua_createtable(state, 0, 3);
+  lua_createtable(state, 0, 4);
   PushBoundFn(state, host_upvalue, fns.workspace_project_root, "project_root");
   PushBoundFn(state, host_upvalue, fns.workspace_open_file, "open_file");
   PushBoundFn(state, host_upvalue, fns.workspace_active_buffer, "active_buffer");
+  PushBoundFn(state, host_upvalue, fns.workspace_data_dir, "data_dir");
   lua_setfield(state, -2, "workspace");
 
   lua_createtable(state, 0, 3);

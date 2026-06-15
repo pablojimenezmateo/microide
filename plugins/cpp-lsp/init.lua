@@ -49,6 +49,12 @@ end
 return ide.plugin({
   id = "cpp-lsp",
 
+  -- Contributes the clangd language server, which the host launches as a subprocess, so it needs
+  -- the process execution capability. Filesystem access stays at the project-scoped default.
+  capabilities = {
+    process = { exec = true },
+  },
+
   setup = function(ctx)
     declare_settings(ctx)
 

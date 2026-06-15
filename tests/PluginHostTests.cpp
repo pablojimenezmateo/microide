@@ -591,6 +591,7 @@ void TestPluginHostPhase2Apis() {
       R"WIN(local ide = require("microide")
 return ide.plugin({
   id = "phase2",
+  capabilities = { process = { exec = true } },
   setup = function(ctx)
     ctx.sidebar.add({
       id = "problems",
@@ -637,6 +638,7 @@ return ide.plugin({
       R"WIN(local ide = require("microide")
 return ide.plugin({
   id = "phase2",
+  capabilities = { process = { exec = true } },
   setup = function(ctx)
     ctx.sidebar.add({
       id = "problems",
@@ -1232,6 +1234,7 @@ void TestPluginHostPhase5LspApis() {
       R"(local ide = require("microide")
 return ide.plugin({
   id = "phase5-lsp",
+  capabilities = { process = { exec = true } },
   setup = function(ctx)
     ctx.lsp.add({
       id = "markdown",
@@ -1347,6 +1350,7 @@ void TestPluginHostCancelsAsyncCallbacksOnReload() {
       R"(local ide = require("microide")
 return ide.plugin({
   id = "async.reload",
+  capabilities = { process = { exec = true } },
   on_buffer_open = function(ctx, buffer)
     ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
@@ -1401,6 +1405,7 @@ void TestPluginHostCancelsAsyncCallbacksOnShutdown() {
       R"(local ide = require("microide")
 return ide.plugin({
   id = "async.shutdown",
+  capabilities = { process = { exec = true } },
   on_buffer_open = function(ctx, buffer)
     ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
@@ -1457,6 +1462,7 @@ void TestPluginHostRapidReloadDrainsAsyncWorkers() {
       R"(local ide = require("microide")
 return ide.plugin({
   id = "rapid.reload",
+  capabilities = { process = { exec = true } },
   on_buffer_open = function(ctx, buffer)
     ctx.process.run_async({"sh", "-lc", "sleep 0.3; printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
@@ -1536,6 +1542,7 @@ void TestPluginHostProcessRunReportsArgumentErrorsWithoutCorruptingState() {
       R"(local ide = require("microide")
 return ide.plugin({
   id = "proc.errors",
+  capabilities = { process = { exec = true } },
   setup = function(ctx)
     ctx.commands.add("proc.bad-argv", function(ctx, args)
       ctx.process.run({ {} })
@@ -1792,9 +1799,250 @@ return ide.plugin({
          "re-enabled plugin's command should register after reload");
 }
 
+// Default-posture plugin (no capabilities declared): filesystem access is project-scoped and
+// process execution is denied. Reads/writes inside the project succeed; absolute paths and `..`
+// escapes are refused (falsy result + a denial diagnostic), and process.run raises.
+void TestPluginHostFilesystemSandbox() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "sandbox fixture\n");
+  WriteFile(temp_dir.path() / "secret.txt", "top secret\n");
+
+  WritePluginInit(
+      global_plugins, "fs-sandbox",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "fs.sandbox",
+  setup = function(ctx)
+    ctx.commands.add("probe.fs", function(ctx, args)
+      ctx.log("read-project:" .. tostring(ctx.files.read_text("README.md") ~= nil))
+      ctx.log("read-escape:" .. tostring(ctx.files.read_text("../secret.txt")))
+      ctx.log("read-absolute:" .. tostring(ctx.files.read_text("/etc/hostname")))
+      ctx.log("write-project:" .. tostring(ctx.files.write_text("out.txt", "x")))
+      ctx.log("write-escape:" .. tostring(ctx.files.write_text("../evil.txt", "x")))
+    end)
+    ctx.commands.add("probe.proc", function(ctx, args)
+      ctx.process.run({"true"})
+    end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "fs sandbox plugin should load");
+
+  std::string error;
+  Expect(host.ExecuteCommand("probe.fs", {}, &error), "fs probe command should execute");
+
+  const auto has_message = [&](std::string_view needle) {
+    for (const std::string& message : host.Messages()) {
+      if (message.find(needle) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(has_message("read-project:true"), "reading a project file should be permitted");
+  Expect(has_message("read-escape:nil"), "reading via .. escape should be denied (nil)");
+  Expect(has_message("read-absolute:nil"), "reading an absolute system path should be denied (nil)");
+  Expect(has_message("write-project:true"), "writing inside the project should be permitted");
+  Expect(has_message("write-escape:false"), "writing via .. escape should be denied (false)");
+  Expect(std::filesystem::exists(project_root / "out.txt"),
+         "the permitted write should reach disk inside the project");
+  Expect(!std::filesystem::exists(temp_dir.path() / "evil.txt"),
+         "the denied write must not escape the project");
+  Expect(has_message("denied files.read_text"), "a denial diagnostic should name the refused read");
+  Expect(has_message("denied files.write_text"), "a denial diagnostic should name the refused write");
+
+  error.clear();
+  Expect(!host.ExecuteCommand("probe.proc", {}, &error),
+         "process.run without the process capability must fail the command");
+  Expect(error.find("process execution not permitted") != std::string::npos,
+         "the process denial should name the missing capability");
+}
+
+// Process capability gate: with process.exec granted and an allowlist, allowed binaries run while
+// disallowed ones are refused. A spawnable contribution (formatter) declared without process.exec
+// is rejected at registration. A data-scope plugin can write into ctx.workspace.data_dir().
+void TestPluginHostProcessAndContributionCapabilities() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path data_home = temp_dir.path() / "data";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "capability fixture\n");
+
+  // process.exec with an allowlist of {"true"}: "true" runs, "false" is refused by the allowlist.
+  WritePluginInit(
+      global_plugins, "proc-grant",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "proc.grant",
+  capabilities = { process = { exec = true, allow = { "true" } } },
+  setup = function(ctx)
+    ctx.commands.add("grant.allowed", function(ctx, args)
+      ctx.log("allowed-exit:" .. tostring(ctx.process.run({"true"}).exit_code))
+    end)
+    ctx.commands.add("grant.denied", function(ctx, args)
+      ctx.process.run({"false"})
+    end)
+  end,
+})
+)");
+
+  // Formatter contribution without process.exec must be rejected at registration.
+  WritePluginInit(
+      global_plugins, "fmt-nogrant",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "fmt.nogrant",
+  setup = function(ctx)
+    ctx.formatters.add({
+      id = "todo",
+      language_id = "todo",
+      label = "TODO",
+      command = { "cat" },
+    })
+  end,
+})
+)");
+
+  // Data-scope plugin writes into its sandboxed data dir via ctx.workspace.data_dir().
+  WritePluginInit(
+      global_plugins, "data-writer",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "data.writer",
+  capabilities = { fs = { read = "data", write = "data" } },
+  setup = function(ctx)
+    ctx.commands.add("data.roundtrip", function(ctx, args)
+      local dir = ctx.workspace.data_dir()
+      ctx.log("data-dir:" .. tostring(dir ~= nil))
+      local wrote = ctx.files.write_text(dir .. "/scratch.txt", "scratch")
+      ctx.log("data-write:" .. tostring(wrote))
+      ctx.log("data-read:" .. tostring(ctx.files.read_text(dir .. "/scratch.txt")))
+    end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  ScopedEnvVar data_env("XDG_DATA_HOME", data_home.string());
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  // Reload returns false here precisely because the fmt.nogrant plugin's setup is rejected; the
+  // other (valid) plugins still load, which the assertions below confirm.
+  Expect(!host.Reload(project_root),
+         "reload should report the rejected-formatter error while loading the valid plugins");
+
+  const auto has_message = [&](std::string_view needle) {
+    for (const std::string& message : host.Messages()) {
+      if (message.find(needle) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const auto has_error = [&](std::string_view needle) {
+    for (const std::string& message : host.Errors()) {
+      if (message.find(needle) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Deferred contribution gate: the formatter declared without process.exec is rejected.
+  Expect(host.ContributedFormatters().empty(),
+         "a formatter declared without process.exec must not register");
+  Expect(has_error("process.exec"), "the rejected formatter should report the missing capability");
+
+  std::string error;
+  Expect(host.ExecuteCommand("grant.allowed", {}, &error),
+         "an allowlisted binary should run under the process capability");
+  Expect(has_message("allowed-exit:0"), "the allowlisted binary should exit successfully");
+
+  error.clear();
+  Expect(!host.ExecuteCommand("grant.denied", {}, &error),
+         "a binary outside the allowlist must be refused");
+  Expect(error.find("allowlist") != std::string::npos,
+         "the allowlist denial should name the allowlist");
+
+  error.clear();
+  Expect(host.ExecuteCommand("data.roundtrip", {}, &error), "data roundtrip command should execute");
+  Expect(has_message("data-dir:true"), "data_dir() should return a path for a data-scope plugin");
+  Expect(has_message("data-write:true"), "writing into the data dir should be permitted");
+  Expect(has_message("data-read:scratch"), "reading back from the data dir should return the content");
+}
+
+// A contributed language server should carry a resolved kernel-confinement descriptor: enabled,
+// with the project root among its write roots, and network blocked unless the plugin declared it.
+// This locks the registration-time wiring that threads the sandbox down to AsyncSubprocess::Start.
+void TestPluginHostLanguageServerSandboxResolved() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "lsp sandbox fixture\n");
+
+  WritePluginInit(
+      global_plugins, "lsp-sandbox",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "lsp.sandbox",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "markdown", language_id = "markdown", command = { "true" } })
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "lsp sandbox plugin should load");
+
+  Expect(host.ContributedLanguageServers().size() == 1,
+         "the language server should register with process.exec granted");
+  const platform::SubprocessSandbox& sandbox = host.ContributedLanguageServers().front().sandbox;
+  Expect(sandbox.enabled, "the contributed language server should carry an enabled sandbox");
+  Expect(!sandbox.allow_network,
+         "network should be blocked for a server whose plugin did not declare it");
+  const auto contains_project_root = [&](const std::vector<std::filesystem::path>& roots) {
+    for (const std::filesystem::path& root : roots) {
+      if (root == project_root) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(contains_project_root(sandbox.write_roots),
+         "the project root should be writable inside the server sandbox");
+  Expect(contains_project_root(sandbox.read_roots),
+         "the project root should be readable inside the server sandbox");
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginHost/FilesystemSandbox", TestPluginHostFilesystemSandbox);
+  AddTest(tests, "PluginHost/LanguageServerSandboxResolved",
+          TestPluginHostLanguageServerSandboxResolved);
+  AddTest(tests, "PluginHost/ProcessAndContributionCapabilities",
+          TestPluginHostProcessAndContributionCapabilities);
   AddTest(tests, "PluginHost/LoadsPluginsAndDispatchesLifecycle",
           TestPluginHostLoadsPluginsAndDispatchesLifecycle);
   AddTest(tests, "PluginHost/IgnoresProjectLocalPlugins",

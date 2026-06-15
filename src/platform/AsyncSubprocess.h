@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "platform/SubprocessSandbox.h"
+
 namespace microide::platform {
 
 // A long-running subprocess with bidirectional stdin/stdout communication.
@@ -20,8 +22,10 @@ class AsyncSubprocess {
   AsyncSubprocess(AsyncSubprocess&&) noexcept;
   AsyncSubprocess& operator=(AsyncSubprocess&&) noexcept;
 
-  // Launch the process. Returns false on failure.
-  bool Start(const std::vector<std::string>& argv, const std::string& cwd = {});
+  // Launch the process. Returns false on failure. When `sandbox.enabled`, the child is confined
+  // (Linux Landlock/seccomp/setrlimit) between fork and exec — used for plugin-contributed servers.
+  bool Start(const std::vector<std::string>& argv, const std::string& cwd = {},
+             const SubprocessSandbox& sandbox = {});
 
   // True while the child process is believed to be alive.
   bool IsRunning() const;

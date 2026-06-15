@@ -291,7 +291,7 @@ void WorkspaceShell::RebuildPhase3Registries() {
                                        "file://" + context_.current_project_state.root.generic_string(),
                                        context_.current_project_state.root.generic_string(),
                                        false, language_server.initialization_options,
-                                       language_server.settings);
+                                       language_server.settings, language_server.sandbox);
   }
   CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
   for (const auto& tool : host.ContributedTools()) {

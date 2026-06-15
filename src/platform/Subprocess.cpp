@@ -449,6 +449,7 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
       }
     }
     ApplyEnvironmentOverrides(options.environment_overrides);
+    ApplyChildSandbox(options.sandbox);
 
     std::vector<char*> raw_argv;
     raw_argv.reserve(argv.size() + 1);

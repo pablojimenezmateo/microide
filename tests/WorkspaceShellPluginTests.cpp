@@ -412,6 +412,7 @@ void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
       "local ide = require(\"microide\")\n"
       "return ide.plugin({\n"
       "  id = \"save-pipeline\",\n"
+      "  capabilities = { process = { exec = true } },\n"
       "  setup = function(ctx)\n"
       "    ctx.save_participants.add(\"rename-alpha\", function(buffer)\n"
       "      return {\n"
@@ -520,6 +521,7 @@ void TestWorkspaceShellSavePipelineFormatterFailureLeavesBufferUnchanged() {
       "local ide = require(\"microide\")\n"
       "return ide.plugin({\n"
       "  id = \"save-pipeline-fail\",\n"
+      "  capabilities = { process = { exec = true } },\n"
       "  setup = function(ctx)\n"
       "    ctx.formatters.add({\n"
       "      id = \"todo-fail\",\n"
@@ -584,6 +586,7 @@ void TestWorkspaceShellSavePipelineOverlappingSavesCoalesceCorrectly() {
       "local ide = require(\"microide\")\n"
       "return ide.plugin({\n"
       "  id = \"save-pipeline-overlap\",\n"
+      "  capabilities = { process = { exec = true } },\n"
       "  setup = function(ctx)\n"
       "    ctx.formatters.add({\n"
       "      id = \"todo-slow-uppercase\",\n"
@@ -2137,6 +2140,7 @@ void TestWorkspaceShellProjectSwitchCancelsPluginWakePolling() {
       R"(local ide = require("microide")
 return ide.plugin({
   id = "switch-async",
+  capabilities = { process = { exec = true } },
   on_project_open = function(ctx, project)
     if project.name ~= "project-a" then
       return

@@ -30,6 +30,85 @@
     static const PluginHost::Callbacks kEmpty;
     return kEmpty;
   }
+  static const std::filesystem::path& EmptyDataDir() {
+    static const std::filesystem::path kEmpty;
+    return kEmpty;
+  }
+  // Capability set used when no calling plugin can be resolved (null host/plugin). Denying
+  // everything is the safe posture: a real plugin always carries its own declared capabilities,
+  // which default to project-scoped fs and no process/network.
+  static const PluginCapabilities& DenyAllCaps() {
+    static const PluginCapabilities kDeny{
+        .fs_read = FsAccess::kNone,
+        .fs_write = FsAccess::kNone,
+        .process_exec = false,
+        .process_allowlist = {},
+        .network = false,
+    };
+    return kDeny;
+  }
+
+  // Builds the non-owning filesystem/process scope for the calling plugin. The result holds
+  // only references (to host/plugin members or the static fallbacks above), so it is safe to
+  // hand to a delegated interop call that may raise a Lua error (a C longjmp).
+  static PluginFsContext MakeFsContext(Impl* host, const PluginInstance* plugin) {
+    return PluginFsContext{
+        host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        plugin != nullptr ? plugin->data_dir : EmptyDataDir(),
+        plugin != nullptr ? plugin->capabilities : DenyAllCaps(),
+    };
+  }
+
+  // Resolves the kernel-confinement descriptor for a process-spawning contribution from the
+  // calling plugin's project root, data dir, and network capability. Mirrors the live
+  // process.run sandbox so contributed servers/formatters are confined the same way.
+  static platform::SubprocessSandbox MakeContributionSandbox(const std::filesystem::path& project_root,
+                                                             const PluginInstance* plugin) {
+    platform::SubprocessSandbox sandbox;
+    sandbox.enabled = true;
+    sandbox.allow_network = plugin != nullptr ? plugin->capabilities.network : false;
+    if (!project_root.empty()) {
+      sandbox.read_roots.push_back(project_root);
+      sandbox.write_roots.push_back(project_root);
+    }
+    if (plugin != nullptr && !plugin->data_dir.empty()) {
+      sandbox.read_roots.push_back(plugin->data_dir);
+      sandbox.write_roots.push_back(plugin->data_dir);
+    }
+    return sandbox;
+  }
+
+  // Allowlist gate for a contributed argv (formatter / language server / task). Mirrors the
+  // live process.run allowlist: an empty allowlist permits anything; otherwise command[0] must
+  // match an entry by exact string or basename. An empty command is left to the registration
+  // parser to reject and is not treated as an allowlist violation here.
+  static bool CommandAllowed(const PluginCapabilities& caps,
+                             const std::vector<std::string>& command) {
+    if (caps.process_allowlist.empty() || command.empty()) {
+      return true;
+    }
+    const std::string base = std::filesystem::path(command[0]).filename().string();
+    for (const std::string& allowed : caps.process_allowlist) {
+      if (allowed == command[0] || allowed == base) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Surfaces a denied/failed process call on the plugin's output channel. Fully destructs its
+  // std::string before returning so the caller may immediately lua_error (longjmp) with nothing
+  // live on the stack.
+  static void RecordProcessPendingError(Impl* host,
+                                        const PluginInstance* plugin,
+                                        lua_State* state) {
+    if (host == nullptr) {
+      return;
+    }
+    const char* message = lua_tostring(state, -1);
+    host->RecordMessage(host->FormatPluginPrefix(plugin) + ": " +
+                        std::string(message != nullptr ? message : "process error"));
+  }
 
   template <typename RegisterFn>
   static int RegisterTableContribution(lua_State* state,
@@ -263,8 +342,21 @@
         state, "formatter registration requires an active plugin state",
         "failed to parse formatter registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return contribution_interop::RegisterFormatter(
-              state, plugin->id, &host->formatters, error_message);
+          if (!plugin->capabilities.process_exec) {
+            *error_message = "formatter requires capabilities.process.exec";
+            return false;
+          }
+          if (!contribution_interop::RegisterFormatter(
+                  state, plugin->id, &host->formatters, error_message)) {
+            return false;
+          }
+          if (!host->formatters.empty() &&
+              !CommandAllowed(plugin->capabilities, host->formatters.back().command)) {
+            host->formatters.pop_back();
+            *error_message = "formatter program not in capabilities.process.allow";
+            return false;
+          }
+          return true;
         });
   }
 
@@ -304,8 +396,21 @@
         state, "task registration requires an active plugin state",
         "failed to parse task registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return contribution_interop::RegisterTask(
-              state, plugin->id, &host->tasks, error_message);
+          if (!plugin->capabilities.process_exec) {
+            *error_message = "task requires capabilities.process.exec";
+            return false;
+          }
+          if (!contribution_interop::RegisterTask(
+                  state, plugin->id, &host->tasks, error_message)) {
+            return false;
+          }
+          if (!host->tasks.empty() &&
+              !CommandAllowed(plugin->capabilities, host->tasks.back().command)) {
+            host->tasks.pop_back();
+            *error_message = "task program not in capabilities.process.allow";
+            return false;
+          }
+          return true;
         });
   }
 
@@ -314,8 +419,25 @@
         state, "language server registration requires an active plugin state",
         "failed to parse language server registration",
         [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
-          return contribution_interop::RegisterLanguageServer(
-              state, plugin->id, &host->language_servers, error_message);
+          if (!plugin->capabilities.process_exec) {
+            *error_message = "language server requires capabilities.process.exec";
+            return false;
+          }
+          if (!contribution_interop::RegisterLanguageServer(
+                  state, plugin->id, &host->language_servers, error_message)) {
+            return false;
+          }
+          if (!host->language_servers.empty() &&
+              !CommandAllowed(plugin->capabilities, host->language_servers.back().command)) {
+            host->language_servers.pop_back();
+            *error_message = "language server program not in capabilities.process.allow";
+            return false;
+          }
+          if (!host->language_servers.empty()) {
+            host->language_servers.back().sandbox =
+                MakeContributionSandbox(host->current_project_root, plugin);
+          }
+          return true;
         });
   }
 
@@ -451,40 +573,88 @@
         host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
+  // Returns the calling plugin's writable scratch directory (created on demand), or nil when no
+  // plugin can be resolved. Plugins that declare data-scope fs access use this for report files
+  // and caches instead of writing to /tmp, which the sandbox denies. Building the path string and
+  // creating the directory happen before anything that could raise, so no longjmp crosses them.
+  static int LuaWorkspaceDataDir(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    if (plugin == nullptr || plugin->data_dir.empty()) {
+      lua_pushnil(state);
+      return 1;
+    }
+    std::error_code create_error;
+    std::filesystem::create_directories(plugin->data_dir, create_error);
+    const std::string path = plugin->data_dir.generic_string();
+    lua_pushlstring(state, path.c_str(), path.size());
+    return 1;
+  }
+
+  // Filesystem helpers resolve the calling plugin so MakeFsContext can carry its capabilities
+  // and data dir. On a refused access the interop pushes the falsy result and sets `denied`,
+  // letting us surface a diagnostic on the plugin's output channel without raising.
   static int LuaFilesReadText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    return workspace_interop::LuaFilesReadText(
-        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    bool denied = false;
+    const int rc = workspace_interop::LuaFilesReadText(state, MakeFsContext(host, plugin), &denied);
+    if (denied && host != nullptr) {
+      host->RecordMessage(host->FormatPluginPrefix(plugin) +
+                          ": denied files.read_text (path outside fs scope or capabilities.fs.read)");
+    }
+    return rc;
   }
 
   static int LuaFilesWriteText(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    return workspace_interop::LuaFilesWriteText(
-        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    bool denied = false;
+    const int rc = workspace_interop::LuaFilesWriteText(state, MakeFsContext(host, plugin), &denied);
+    if (denied && host != nullptr) {
+      host->RecordMessage(host->FormatPluginPrefix(plugin) +
+                          ": denied files.write_text (path outside fs scope or capabilities.fs.write)");
+    }
+    return rc;
   }
 
   static int LuaFilesExists(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    return workspace_interop::LuaFilesExists(
-        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    bool denied = false;
+    const int rc = workspace_interop::LuaFilesExists(state, MakeFsContext(host, plugin), &denied);
+    if (denied && host != nullptr) {
+      host->RecordMessage(host->FormatPluginPrefix(plugin) +
+                          ": denied files.exists (path outside fs scope or capabilities.fs.read)");
+    }
+    return rc;
   }
 
   // The process / diagnostics delegates return lua_error_util::kPendingError instead
-  // of raising, having already pushed the message; we raise here, where the wrapper
-  // frame holds no non-trivial locals to leak across the longjmp.
+  // of raising, having already pushed the message; we record the denial diagnostic and
+  // raise here, where the wrapper frame holds no non-trivial locals to leak across the longjmp.
   static int LuaProcessRun(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
-    const int rc = process_interop::LuaProcessRun(
-        state, host != nullptr ? host->current_project_root : EmptyProjectRoot());
-    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    const int rc = process_interop::LuaProcessRun(state, MakeFsContext(host, plugin));
+    if (rc == lua_error_util::kPendingError) {
+      RecordProcessPendingError(host, plugin, state);
+      return lua_error(state);
+    }
+    return rc;
   }
 
   static int LuaProcessRunAsync(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     const int rc = process_interop::LuaProcessRunAsync(
-        state, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        state, MakeFsContext(host, plugin),
         host != nullptr ? host->async_process_state : nullptr);
-    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
+    if (rc == lua_error_util::kPendingError) {
+      RecordProcessPendingError(host, plugin, state);
+      return lua_error(state);
+    }
+    return rc;
   }
 
   static int LuaDiagnosticsPublish(lua_State* state) {
@@ -530,6 +700,7 @@
             .workspace_project_root = &LuaWorkspaceProjectRoot,
             .workspace_open_file = &LuaWorkspaceOpenFile,
             .workspace_active_buffer = &LuaWorkspaceActiveBuffer,
+            .workspace_data_dir = &LuaWorkspaceDataDir,
             .files_read_text = &LuaFilesReadText,
             .files_write_text = &LuaFilesWriteText,
             .files_exists = &LuaFilesExists,

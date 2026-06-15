@@ -13,6 +13,7 @@
 
 #include "platform/Subprocess.h"
 #include "plugin/LuaRuntime.h"
+#include "plugin/PluginCapabilities.h"
 #include "plugin/PluginHost.h"
 
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -24,6 +25,11 @@ namespace microide::plugin::runtime_types {
 struct PluginInstance {
   std::string id;
   std::filesystem::path root;
+  // Sandbox state, resolved once at load. `data_dir` is the plugin's writable scratch
+  // directory (only reachable when fs caps allow data access); `capabilities` gates the
+  // fs/process chokepoints. Both default to the safe posture when no manifest declares them.
+  std::filesystem::path data_dir;
+  PluginCapabilities capabilities;
 #if MICROIDE_HAS_LUA_PLUGINS
   std::unique_ptr<LuaRuntime> runtime;
   lua_State* state = nullptr;
