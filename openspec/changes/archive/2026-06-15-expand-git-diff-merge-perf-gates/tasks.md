@@ -16,7 +16,7 @@
 
 ## 3. Phase 9C: Baselines And Docs Consolidation
 
-- [ ] 3.1 Capture reference baselines on `perf-runner-v1` for each new scenario. (deferred: use workflow_dispatch `capture_git_workstation_baselines=true` when the self-hosted queue is available)
+- [ ] 3.1 Capture reference baselines on `perf-runner-v1` for each new scenario. (permanently deferred: requires a `workflow_dispatch` with `capture_git_workstation_baselines=true` on a self-hosted `perf-runner-v1` queue, but this repo has no `.github/workflows/` and no such runner. Cannot be completed by a local change; capture only when that CI infra is introduced. See proposal.md § Deferred Work.)
 - [x] 3.2 Commit baseline JSON files with tolerances and rationale where defaults are insufficient.
 - [x] 3.3 Update `dev-docs/performance/perf-harness.md` to list the new Git workstation scenarios and evidence requirements.
 
