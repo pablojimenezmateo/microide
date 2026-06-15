@@ -9,7 +9,7 @@ primary validated host unless release notes state otherwise.
 - [ ] `./build/microide/microide_tests AppStartupOptions` green (startup flags + UI surfacing)
 - [ ] Plugin host tests green (`PluginHost/*`)
 - [ ] Focused workspace Git/compare/merge smoke tests green
-- [ ] Docs links resolve: `SECURITY.md`, `dev-docs/project/git-workstation-preview.md`, `guidelines/plugin-trust-model.md`
+- [ ] Docs links resolve: `SECURITY.md`, `dev-docs/project/git-workstation.md`, `guidelines/plugin-trust-model.md`
 - [ ] No comparative marketing claims in README or release notes (see README performance section)
 
 ## Tag and artifacts
@@ -24,7 +24,7 @@ primary validated host unless release notes state otherwise.
 
 - [ ] Screenshot gallery or equivalent visual walkthrough (Git sidebar, compare, merge, commit)
 - [ ] Short demo or scripted walkthrough (asciinema, video, or step list in release notes)
-- [ ] Known limitations section (copy/adapt from README **Known Limitations** + preview doc)
+- [ ] Known limitations section (copy/adapt from README **Known Limitations** + Git Workstation doc)
 - [ ] Tested workflows matrix (below)
 - [ ] Crash / data-loss reporting instructions (link `SECURITY.md`)
 
@@ -57,4 +57,4 @@ Publish in release notes:
 ## Post-tag
 
 - [ ] Archive OpenSpec change `prepare-git-workstation-preview`
-- [ ] Update `dev-docs/project/active-work.md` preview status if scope shipped
+- [ ] Update `dev-docs/project/active-work.md` release status if scope shipped

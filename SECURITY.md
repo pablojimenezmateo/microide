@@ -16,7 +16,7 @@ plugins or subprocesses launched through the host API.
 
 See [guidelines/plugin-trust-model.md](guidelines/plugin-trust-model.md) for the full model.
 
-## Safe startup flags (Git Workstation Preview)
+## Safe startup flags (Git Workstation)
 
 For recovery or inspection of unfamiliar repositories:
 
@@ -47,9 +47,9 @@ maintainers (project contact on the repository hosting page). Include:
 
 Do not open public issues for undisclosed vulnerabilities until maintainers acknowledge receipt.
 
-## Reporting crashes and data loss (preview)
+## Reporting crashes and data loss
 
-For the Git Workstation Preview, also report:
+For the Git Workstation, also report:
 
 - Whether `--safe-mode` or `--disable-plugins` was used
 - Project path (redact secrets)
@@ -63,5 +63,5 @@ or `MICROIDE_PERF_TRACE` were enabled.
 ## Known limitations
 
 - No plugin sandbox, signing, or marketplace trust layer
-- No signed release binaries in the preview track (build from source; verify checksums when published)
+- No signed release binaries yet (build from source; verify checksums when published)
 - Comparative performance claims against other editors are not made; internal baselines only

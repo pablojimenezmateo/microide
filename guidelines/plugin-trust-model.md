@@ -162,14 +162,14 @@ Explicit scope decision:
 - Full plugin security-system hardening remains out of scope: plugin sandboxing / process
   isolation, first-run capability prompts, signing, marketplace trust, and project-local plugin
   directories.
-- **Git Workstation Preview** adds minimal startup trust controls only:
+- **Git Workstation** adds minimal startup trust controls only:
   - `--disable-plugins` — skip user-scope plugins and plugin syntax loading
   - `--safe-mode` — implies plugin disabling, skips workspace/session restore, empty shell unless
     a project path is passed; visible in status bar and Help/About
 - These flags are not a sandbox. For untrusted repositories, still prefer external isolation
   (VM/container) in addition to safe-mode when appropriate.
 
-See [SECURITY.md](../SECURITY.md) and [git-workstation-preview.md](git-workstation-preview.md).
+See [SECURITY.md](../SECURITY.md) and [git-workstation.md](../dev-docs/project/git-workstation.md).
 
 For plugin authors:
 
