@@ -175,9 +175,17 @@ class TerminalSession {
     Csi,
     Osc,
     CharsetDesignate,
+    // DCS (ESC P), SOS (ESC X), PM (ESC ^), APC (ESC _): string payloads that
+    // run until a String Terminator (ESC \) or BEL. We do not implement these
+    // (Sixel, Kitty graphics, tmux passthrough, DECRQSS, ...), but their
+    // payloads must be consumed and discarded rather than printed to the grid.
+    StringPayload,
   };
 
   void AppendOutputLocked(std::string_view data);
+  // Reset escape-parsing state after an over-length / malformed sequence so the
+  // stream recovers to normal text instead of growing the buffer unbounded.
+  void AbandonEscapeSequenceLocked();
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandleOscSequenceLocked(std::string_view sequence);
   void HandleKittyKeyboardLocked(char prefix, char final, const std::vector<int>& params);

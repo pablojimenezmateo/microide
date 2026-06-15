@@ -928,10 +928,73 @@ void TestTerminalSessionMalformedEscapeLeavesPlainText() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  TerminalSessionTestAccess::AppendOutput(session, "A\x1bXBC");
+  // 'g' is not a recognized escape final (unlike P/X/^/_ which start string
+  // payloads), so it is consumed as a no-op and following text prints normally.
+  TerminalSessionTestAccess::AppendOutput(session, "A\x1bgBC");
 
   ExpectLineText(session.SnapshotLines(), 0, "ABC",
                  "unknown single-byte escapes should not swallow following plain text");
+}
+
+void TestTerminalSessionStringPayloadsDoNotLeakToGrid() {
+  // DCS (ESC P), SOS (ESC X), PM (ESC ^), and APC (ESC _) carry string payloads
+  // terminated by ST (ESC \) or BEL. Their payloads must be discarded, not
+  // printed. Real programs emit these for Sixel, Kitty graphics, tmux
+  // passthrough, DECRQSS, etc.
+  const std::array<std::string, 4> sequences = {
+      std::string("A\x1bPq#0;2;0;0;0\x1b\\B"),   // DCS ... ST
+      std::string("A\x1bX hidden sos \x1b\\B"),    // SOS ... ST
+      std::string("A\x1b^ private message \x1b\\B"),  // PM ... ST
+      std::string("A\x1b_Gi=1,a=q\x07""B"),        // APC ... BEL terminator
+  };
+  for (const std::string& sequence : sequences) {
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    TerminalSessionTestAccess::AppendOutput(session, sequence);
+    ExpectLineText(session.SnapshotLines(), 0, "AB",
+                   "string-payload escapes must not print their payload to the grid");
+  }
+}
+
+void TestTerminalSessionUnterminatedEscapeRecovers() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // An unterminated OSC longer than the internal cap must abandon the sequence
+  // and let later text render rather than swallowing output forever.
+  std::string output = "A\x1b]0;";
+  output.append(20000, 'x');  // never sends ST/BEL; exceeds kMaxEscapeSequenceLength
+  TerminalSessionTestAccess::AppendOutput(session, output);
+  TerminalSessionTestAccess::AppendOutput(session, "DONE");
+
+  const auto lines = session.SnapshotLines();
+  Expect(!lines.empty(), "session should still have a line after a runaway escape");
+  bool found_done = false;
+  for (const microide::terminal::TerminalLine& line : lines) {
+    if (LineText(line).find("DONE") != std::string::npos) {
+      found_done = true;
+      break;
+    }
+  }
+  Expect(found_done, "text after an over-length unterminated escape should still render");
+}
+
+void TestTerminalSessionOverflowCsiParamDoesNotCrash() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  // A parameter that overflows int must clamp instead of invoking std::atoi UB.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[99999999999;99999999999HX");
+  const auto lines = session.SnapshotLines();
+  // Cursor was clamped into range, so the 'X' lands somewhere on the grid.
+  bool found_x = false;
+  for (const microide::terminal::TerminalLine& line : lines) {
+    if (LineText(line).find('X') != std::string::npos) {
+      found_x = true;
+      break;
+    }
+  }
+  Expect(found_x, "an overflowing CSI parameter should clamp and still render following text");
 }
 
 void TestTerminalSessionMouseRoutingRequiresTrackingMode() {
@@ -1125,6 +1188,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionIncompleteOscChunkAcrossAppendCalls);
   AddTest(tests, "TerminalSession/MalformedEscapeLeavesPlainText",
           TestTerminalSessionMalformedEscapeLeavesPlainText);
+  AddTest(tests, "TerminalSession/StringPayloadsDoNotLeakToGrid",
+          TestTerminalSessionStringPayloadsDoNotLeakToGrid);
+  AddTest(tests, "TerminalSession/UnterminatedEscapeRecovers",
+          TestTerminalSessionUnterminatedEscapeRecovers);
+  AddTest(tests, "TerminalSession/OverflowCsiParamDoesNotCrash",
+          TestTerminalSessionOverflowCsiParamDoesNotCrash);
   AddTest(tests, "TerminalSession/MouseRoutingRequiresTrackingMode",
           TestTerminalSessionMouseRoutingRequiresTrackingMode);
   AddTest(tests, "TerminalSession/ResizeClampsCursorAndPreservesBuffer",

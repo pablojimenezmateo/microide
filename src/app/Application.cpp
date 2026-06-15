@@ -15,6 +15,7 @@
 
 #include "app/DirtyRegionPolicy.h"
 #include "app/ApplicationPresentationCache.h"
+#include "app/IdleWaitStrategy.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
@@ -26,15 +27,7 @@ namespace {
 
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
-constexpr Uint64 kRenderTraceLogInterval = 120;
 constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
-// Coalesce scene-texture reallocation during active resize drags. While
-// SDL_EVENT_WINDOW_RESIZED / SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED keep firing,
-// we render through the fallback path (no retained texture) instead of paying
-// a GPU texture alloc per event. After this many nanoseconds without a resize
-// event, the next render rebuilds the scene texture once and resumes the
-// retained-redraw fast path.
-constexpr Uint64 kSceneTextureResizeSettleNs = 150ULL * 1'000'000ULL;
 
 bool EventUsesRenderCoordinates(Uint32 event_type) {
   switch (event_type) {
@@ -143,21 +136,21 @@ int Application::Run() {
     SDL_Event event;
     const workspace::WorkspaceShell::IdleWaitState idle_wait_state =
         workspace_shell_.CurrentIdleWaitState();
+    const IdleWaitDecision idle_wait = ChooseIdleWait(idle_wait_state);
     bool has_event = false;
-    switch (idle_wait_state.hint) {
-      case workspace::WorkspaceShell::IdleHint::Full:
+    switch (idle_wait.mode) {
+      case IdleWaitMode::Poll:
         has_event = SDL_PollEvent(&event);
         break;
-      case workspace::WorkspaceShell::IdleHint::CaretOnly:
-        has_event = SDL_WaitEventTimeout(
-            &event, static_cast<Sint32>(std::max<Uint32>(1, idle_wait_state.caret_remaining_ms)));
+      case IdleWaitMode::WaitTimeout:
+        has_event = SDL_WaitEventTimeout(&event, idle_wait.timeout_ms);
         break;
-      case workspace::WorkspaceShell::IdleHint::Idle:
+      case IdleWaitMode::Wait:
         has_event = SDL_WaitEvent(&event);
         break;
     }
     if (!has_event) {
-      if (idle_wait_state.hint == workspace::WorkspaceShell::IdleHint::Idle) {
+      if (idle_wait.mode == IdleWaitMode::Wait) {
         SDL_Log("SDL_WaitEvent failed: %s", SDL_GetError());
         break;
       }
@@ -315,9 +308,8 @@ bool Application::Initialize() {
 
   initialized_ = true;
   first_render_complete_ = false;
-  redraw_trace_enabled_ = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW");
-  redraw_trace_verbose_enabled_ =
-      util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW_VERBOSE");
+  redraw_trace_.Configure(util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW"),
+                          util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW_VERBOSE"));
   return true;
 }
 
@@ -338,7 +330,7 @@ void Application::Shutdown() {
   if (window_ != nullptr) {
     SDL_StopTextInput(window_);
   }
-  DestroySceneTexture();
+  scene_texture_.Destroy();
   if (renderer_ != nullptr) {
     SDL_DestroyRenderer(renderer_);
     renderer_ = nullptr;
@@ -352,8 +344,12 @@ void Application::Shutdown() {
 
   // All user state has been saved. Exit immediately rather than waiting for
   // destructor chains (terminal sessions, background thread joins, etc.).
-  // The OS reclaims all child processes and resources.
-  std::quick_exit(0);
+  // The OS reclaims all child processes and resources. Tests disable this so
+  // they can drive Initialize()/Shutdown() and verify clean teardown under
+  // sanitizers.
+  if (startup_options_.quick_exit_on_shutdown) {
+    std::quick_exit(0);
+  }
 }
 
 workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event& event) {
@@ -382,7 +378,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
     case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
       presentation_state_dirty_ = true;
-      last_resize_event_ns_ = SDL_GetTicksNS();
+      scene_texture_.NoteResizeEvent(SDL_GetTicksNS());
       UpdateRendererPresentation();
       // A compositor-driven resize can leave the displayed cursor stale (e.g. the
       // resize cursor lingering over a border); force the next update to re-apply.
@@ -420,7 +416,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     return;
   }
 
-  const bool full_redraw_requested = dirty_rects.empty() || !scene_texture_valid_;
+  const bool full_redraw_requested = dirty_rects.empty() || !scene_texture_.valid();
   util::PerformanceTrace::Scope trace_scope(
       full_redraw_requested ? "Application::Render(full)" : "Application::Render(partial)");
   std::optional<util::StartupTrace::Scope> first_render_scope;
@@ -444,8 +440,8 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   const std::size_t merged_clip_count = dirty_region_analysis.merged_clip_rects.size();
   const float dirty_coverage = dirty_region_analysis.coverage;
   const bool promote_partial_to_full =
-      scene_texture_valid_ && ShouldPromotePartialFrameToFull(dirty_region_analysis);
-  const bool full_redraw = dirty_rects.empty() || !scene_texture_valid_ || promote_partial_to_full;
+      scene_texture_.valid() && ShouldPromotePartialFrameToFull(dirty_region_analysis);
+  const bool full_redraw = dirty_rects.empty() || !scene_texture_.valid() || promote_partial_to_full;
   const Uint64 render_start = SDL_GetTicksNS();
   std::size_t rendered_clip_count = 0;
   workspace::WorkspaceShell::FrameToken frame_token;
@@ -460,18 +456,24 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   bool scene_texture_ready = false;
   {
     util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");
-    scene_texture_ready = EnsureSceneTexture(width, height);
+    scene_texture_ready = scene_texture_.Ensure(renderer_, width, height);
   }
   if (scene_texture_ready) {
-    if (!SDL_SetRenderTarget(renderer_, scene_texture_)) {
+    if (!SDL_SetRenderTarget(renderer_, scene_texture_.texture())) {
       SDL_Log("SDL_SetRenderTarget(scene texture) failed: %s", SDL_GetError());
-      DestroySceneTexture();
+      scene_texture_.Destroy();
       {
         util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
         workspace_shell_.RenderClip(frame_token, renderer_, width, height);
       }
       SDL_RenderPresent(renderer_);
-      RecordRenderStats(true, true, false, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
+      redraw_trace_.Record(RedrawFrameStats{.full_redraw_requested = true,
+                                            .full_redraw = true,
+                                            .promoted_partial_to_full = false,
+                                            .dirty_rect_count = 0,
+                                            .rendered_clip_count = 0,
+                                            .reason = "fallback-full",
+                                            .elapsed_ns = SDL_GetTicksNS() - render_start});
       first_render_complete_ = true;
       workspace_shell_.OnFramePresented();
       return;
@@ -487,11 +489,17 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       workspace_shell_.RenderClip(frame_token, renderer_, width, height);
     } else {
       bool rendered_partial = false;
-      const std::string partial_loop_label =
-          "Application::WorkspaceRender(partial-loop " + std::to_string(merged_clip_count) +
-          " coalesced clip rects from " + std::to_string(dirty_rect_count) +
-          " dirty rects)";
-      util::PerformanceTrace::Scope partial_loop_scope(partial_loop_label);
+      // Only materialize the descriptive label when tracing is active; building
+      // it every partial frame would heap-allocate on the render hot path.
+      std::string partial_loop_label;
+      std::string_view partial_loop_label_view = "Application::WorkspaceRender(partial-loop)";
+      if (util::PerformanceTrace::Enabled()) {
+        partial_loop_label =
+            "Application::WorkspaceRender(partial-loop " + std::to_string(merged_clip_count) +
+            " coalesced clip rects from " + std::to_string(dirty_rect_count) + " dirty rects)";
+        partial_loop_label_view = partial_loop_label;
+      }
+      util::PerformanceTrace::Scope partial_loop_scope(partial_loop_label_view);
       for (const SDL_Rect& clip_rect : dirty_region_analysis.merged_clip_rects) {
         SDL_SetRenderClipRect(renderer_, &clip_rect);
         util::PerformanceTrace::Scope partial_scope(
@@ -515,23 +523,34 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     SDL_SetRenderTarget(renderer_, nullptr);
     {
       util::PerformanceTrace::Scope present_scope("Application::PresentRetainedScene");
-      SDL_RenderTexture(renderer_, scene_texture_, nullptr, nullptr);
+      SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
       SDL_RenderPresent(renderer_);
     }
-    scene_texture_valid_ = true;
+    scene_texture_.MarkValid();
     if (!full_redraw && util::PerformanceTrace::Enabled() &&
         rendered_clip_count >= kRenderPerfPartialClipWarnThreshold) {
       SDL_Log(
           "microide perf: partial frame replayed %zu coalesced clip rects from %zu dirty rects",
           rendered_clip_count, dirty_rect_count);
     }
-    RecordRenderStats(full_redraw_requested, full_redraw, promote_partial_to_full, dirty_rect_count,
-                      rendered_clip_count, reason, SDL_GetTicksNS() - render_start);
+    redraw_trace_.Record(RedrawFrameStats{.full_redraw_requested = full_redraw_requested,
+                                          .full_redraw = full_redraw,
+                                          .promoted_partial_to_full = promote_partial_to_full,
+                                          .dirty_rect_count = dirty_rect_count,
+                                          .rendered_clip_count = rendered_clip_count,
+                                          .reason = reason,
+                                          .elapsed_ns = SDL_GetTicksNS() - render_start});
   } else {
     util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
     workspace_shell_.RenderClip(frame_token, renderer_, width, height);
     SDL_RenderPresent(renderer_);
-    RecordRenderStats(true, true, false, 0, 0, "fallback-full", SDL_GetTicksNS() - render_start);
+    redraw_trace_.Record(RedrawFrameStats{.full_redraw_requested = true,
+                                          .full_redraw = true,
+                                          .promoted_partial_to_full = false,
+                                          .dirty_rect_count = 0,
+                                          .rendered_clip_count = 0,
+                                          .reason = "fallback-full",
+                                          .elapsed_ns = SDL_GetTicksNS() - render_start});
   }
   first_render_complete_ = true;
   workspace_shell_.OnFramePresented();
@@ -582,142 +601,6 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     *logical_height = presentation->logical_height;
   }
   return true;
-}
-
-bool Application::EnsureSceneTexture(int logical_width, int logical_height) {
-  if (renderer_ == nullptr || logical_width <= 0 || logical_height <= 0) {
-    return false;
-  }
-
-  int output_width = 0;
-  int output_height = 0;
-  if (!SDL_GetRenderOutputSize(renderer_, &output_width, &output_height) ||
-      output_width <= 0 || output_height <= 0) {
-    DestroySceneTexture();
-    return false;
-  }
-  if (output_width != logical_width || output_height != logical_height) {
-    DestroySceneTexture();
-    return false;
-  }
-
-  if (scene_texture_ != nullptr && scene_texture_width_ == logical_width &&
-      scene_texture_height_ == logical_height) {
-    return true;
-  }
-
-  // Coalesce: while the user is actively dragging the window we'd otherwise
-  // destroy and recreate the full-window render target on every resize event.
-  // Hold off on the realloc and let this frame fall through to the
-  // fallback-full path (which renders directly to the window). Once
-  // kSceneTextureResizeSettleNs elapses without a resize event, the texture
-  // is rebuilt exactly once.
-  if (last_resize_event_ns_ != 0) {
-    const Uint64 now_ns = SDL_GetTicksNS();
-    if (now_ns - last_resize_event_ns_ < kSceneTextureResizeSettleNs) {
-      DestroySceneTexture();
-      return false;
-    }
-    last_resize_event_ns_ = 0;
-  }
-
-  DestroySceneTexture();
-  scene_texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGBA8888,
-                                     SDL_TEXTUREACCESS_TARGET, logical_width, logical_height);
-  if (scene_texture_ == nullptr) {
-    return false;
-  }
-
-  SDL_SetTextureScaleMode(scene_texture_, SDL_SCALEMODE_NEAREST);
-  scene_texture_width_ = logical_width;
-  scene_texture_height_ = logical_height;
-  scene_texture_valid_ = false;
-  return true;
-}
-
-void Application::DestroySceneTexture() {
-  if (scene_texture_ != nullptr) {
-    SDL_DestroyTexture(scene_texture_);
-    scene_texture_ = nullptr;
-  }
-  scene_texture_width_ = 0;
-  scene_texture_height_ = 0;
-  scene_texture_valid_ = false;
-}
-
-void Application::RecordRenderStats(bool full_redraw_requested,
-                                    bool full_redraw,
-                                    bool promoted_partial_to_full,
-                                    std::size_t dirty_rect_count,
-                                    std::size_t rendered_clip_count,
-                                    const char* reason,
-                                    Uint64 elapsed_ns) {
-  if (redraw_trace_verbose_enabled_) {
-    SDL_Log(
-        "microide redraw frame: reason=%s requested=%s rendered=%s promoted=%s dirty=%zu clips=%zu elapsed=%.2f ms",
-        reason != nullptr ? reason : "unknown", full_redraw_requested ? "full" : "partial",
-        full_redraw ? "full" : "partial", promoted_partial_to_full ? "yes" : "no",
-        dirty_rect_count, rendered_clip_count, static_cast<double>(elapsed_ns) / 1'000'000.0);
-  }
-
-  if (!redraw_trace_enabled_) {
-    return;
-  }
-
-  ++redraw_trace_frames_;
-  redraw_trace_total_ns_ += elapsed_ns;
-  redraw_trace_total_dirty_rects_ += dirty_rect_count;
-  redraw_trace_total_rendered_clips_ += rendered_clip_count;
-  redraw_trace_max_dirty_rects_ = std::max(redraw_trace_max_dirty_rects_, dirty_rect_count);
-  redraw_trace_max_rendered_clips_ =
-      std::max(redraw_trace_max_rendered_clips_, rendered_clip_count);
-  if (full_redraw || dirty_rect_count == 0) {
-    ++redraw_trace_full_frames_;
-  } else {
-    ++redraw_trace_partial_frames_;
-  }
-
-  if (redraw_trace_frames_ < kRenderTraceLogInterval) {
-    return;
-  }
-
-  const double average_ms = static_cast<double>(redraw_trace_total_ns_) /
-                            static_cast<double>(redraw_trace_frames_) / 1'000'000.0;
-  const double average_dirty_rects =
-      redraw_trace_frames_ == 0
-          ? 0.0
-          : static_cast<double>(redraw_trace_total_dirty_rects_) /
-                static_cast<double>(redraw_trace_frames_);
-  const double average_rendered_clips =
-      redraw_trace_partial_frames_ == 0
-          ? 0.0
-          : static_cast<double>(redraw_trace_total_rendered_clips_) /
-                static_cast<double>(redraw_trace_partial_frames_);
-  SDL_Log(
-      "microide redraw: %llu frames | %llu full | %llu partial | avg %.2f ms | avg dirty %.2f "
-      "| avg clips %.2f | max dirty %zu | max clips %zu | last=%s",
-          static_cast<unsigned long long>(redraw_trace_frames_),
-          static_cast<unsigned long long>(redraw_trace_full_frames_),
-          static_cast<unsigned long long>(redraw_trace_partial_frames_), average_ms,
-          average_dirty_rects, average_rendered_clips, redraw_trace_max_dirty_rects_,
-          redraw_trace_max_rendered_clips_,
-          reason != nullptr ? reason : "unknown");
-  LogRenderStatsIfNeeded(true);
-}
-
-void Application::LogRenderStatsIfNeeded(bool force) {
-  if (!redraw_trace_enabled_ || (!force && redraw_trace_frames_ < kRenderTraceLogInterval)) {
-    return;
-  }
-
-  redraw_trace_frames_ = 0;
-  redraw_trace_full_frames_ = 0;
-  redraw_trace_partial_frames_ = 0;
-  redraw_trace_total_ns_ = 0;
-  redraw_trace_total_dirty_rects_ = 0;
-  redraw_trace_total_rendered_clips_ = 0;
-  redraw_trace_max_dirty_rects_ = 0;
-  redraw_trace_max_rendered_clips_ = 0;
 }
 
 void Application::ConsumeWindowActions() {

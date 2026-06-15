@@ -6,7 +6,9 @@
 #include <cstring>
 #include <sstream>
 
+#include "util/Hex.h"
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 
 namespace microide::util {
 
@@ -111,31 +113,6 @@ struct Parser {
     return JsonValue(*parsed);
   }
 
-  static unsigned int HexDigit(char c) {
-    if (c >= '0' && c <= '9') return static_cast<unsigned>(c - '0');
-    if (c >= 'a' && c <= 'f') return static_cast<unsigned>(c - 'a' + 10);
-    if (c >= 'A' && c <= 'F') return static_cast<unsigned>(c - 'A' + 10);
-    return 0xFFFF;
-  }
-
-  void AppendUtf8(std::string& out, unsigned int codepoint) {
-    if (codepoint <= 0x7F) {
-      out += static_cast<char>(codepoint);
-    } else if (codepoint <= 0x7FF) {
-      out += static_cast<char>(0xC0 | (codepoint >> 6));
-      out += static_cast<char>(0x80 | (codepoint & 0x3F));
-    } else if (codepoint <= 0xFFFF) {
-      out += static_cast<char>(0xE0 | (codepoint >> 12));
-      out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-      out += static_cast<char>(0x80 | (codepoint & 0x3F));
-    } else {
-      out += static_cast<char>(0xF0 | (codepoint >> 18));
-      out += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
-      out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
-      out += static_cast<char>(0x80 | (codepoint & 0x3F));
-    }
-  }
-
   std::optional<JsonValue> ParseString() {
     if (!Expect('"')) return std::nullopt;
     std::string result;
@@ -161,9 +138,9 @@ struct Parser {
           if (pos + 4 > src.size()) return std::nullopt;
           unsigned int cp = 0;
           for (int i = 0; i < 4; ++i) {
-            const unsigned int d = HexDigit(Advance());
-            if (d > 0xF) return std::nullopt;
-            cp = (cp << 4) | d;
+            const int d = HexDigitValue(Advance());
+            if (d < 0) return std::nullopt;
+            cp = (cp << 4) | static_cast<unsigned int>(d);
           }
           // Surrogate pair
           if (cp >= 0xD800 && cp <= 0xDBFF) {
@@ -173,14 +150,14 @@ struct Parser {
             pos += 2;
             unsigned int lo = 0;
             for (int i = 0; i < 4; ++i) {
-              const unsigned int d = HexDigit(Advance());
-              if (d > 0xF) return std::nullopt;
-              lo = (lo << 4) | d;
+              const int d = HexDigitValue(Advance());
+              if (d < 0) return std::nullopt;
+              lo = (lo << 4) | static_cast<unsigned int>(d);
             }
             if (lo < 0xDC00 || lo > 0xDFFF) return std::nullopt;
             cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
           }
-          AppendUtf8(result, cp);
+          AppendUtf8(result, static_cast<char32_t>(cp));
           break;
         }
         default: return std::nullopt;

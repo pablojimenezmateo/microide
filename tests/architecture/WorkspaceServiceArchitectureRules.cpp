@@ -323,26 +323,26 @@ RuleResult CheckEditorViewRendererUsesScratchRows(const std::filesystem::path& r
   return result;
 }
 
-// Application::EnsureSceneTexture must coalesce reallocation across resize
+// SceneTexturePresenter::Ensure must coalesce reallocation across resize
 // bursts. Without the resize-time check, dragging the window destroyed and
 // recreated the full-window render target on every WINDOW_RESIZED event.
 
 RuleResult CheckApplicationCoalescesResize(const std::filesystem::path& repo_root) {
   RuleResult result;
-  result.label = "Application must coalesce scene-texture realloc during resize bursts";
+  result.label = "Scene texture must coalesce realloc during resize bursts";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/app/Application.cpp";
+  const std::filesystem::path path = repo_root / "src/app/SceneTexturePresenter.cpp";
   if (!std::filesystem::exists(path)) {
     return result;
   }
   const std::string text = ReadText(path);
   if (text.find("last_resize_event_ns_") == std::string::npos ||
-      text.find("kSceneTextureResizeSettleNs") == std::string::npos) {
+      text.find("kResizeSettleNs") == std::string::npos) {
     result.violations.push_back(Violation{
         .path = path,
         .line = 1,
-        .message = "Application::EnsureSceneTexture must guard reallocation behind "
-                   "last_resize_event_ns_ + kSceneTextureResizeSettleNs to coalesce resize bursts",
+        .message = "SceneTexturePresenter::Ensure must guard reallocation behind "
+                   "last_resize_event_ns_ + kResizeSettleNs to coalesce resize bursts",
     });
   }
   return result;

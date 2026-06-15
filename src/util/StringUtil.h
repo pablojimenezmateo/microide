@@ -8,6 +8,9 @@
 
 namespace microide::util {
 
+// UTF-8 encoding of U+FFFD REPLACEMENT CHARACTER, emitted for malformed input.
+inline constexpr std::string_view kUtf8ReplacementChar = "\xEF\xBF\xBD";
+
 enum class LineEnding {
   LF,
   CRLF,
@@ -25,6 +28,9 @@ std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset);
 // Decode the first UTF-8 codepoint of `glyph`. Returns U+FFFD on malformed or
 // empty input. Intended for already-grouped single-glyph slices.
 char32_t DecodeUtf8Codepoint(std::string_view glyph);
+// Append the UTF-8 encoding of `codepoint` to `out`. Codepoints above U+10FFFF
+// are encoded as written (callers are expected to pass valid scalar values).
+void AppendUtf8(std::string& out, char32_t codepoint);
 // Terminal display column width of a codepoint: 0 for zero-width / combining
 // marks, 2 for East Asian wide / fullwidth / emoji-presentation codepoints, and
 // 1 otherwise. Matches the layout assumptions of common `wcwidth`/unicode-width
@@ -51,6 +57,12 @@ void ToLowerAsciiInto(std::string_view text, std::string& out);
 // True if `text` contains any ASCII uppercase letter. Used by smart-case search
 // to decide whether a query should match case-sensitively.
 bool QueryHasUppercaseAscii(std::string_view text);
+// True if `text` is non-empty and every byte is an ASCII digit ('0'..'9').
+bool IsAllAsciiDigits(std::string_view text);
+// Split `text` on runs of ASCII whitespace, returning views into `text`.
+// Leading/trailing whitespace produces no empty tokens. The returned views are
+// valid only for the lifetime of `text`.
+std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text);
 // Replace each run of ASCII whitespace with a single space. Leading whitespace
 // is dropped; trailing whitespace, if any, is also dropped.
 std::string CollapseAsciiWhitespace(std::string_view text);

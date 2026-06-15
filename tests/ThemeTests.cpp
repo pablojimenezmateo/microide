@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
+#include "render/AnsiPalette.h"
 #include "render/Theme.h"
+#include "terminal/TerminalAnsiColors.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
 #include <SDL3/SDL.h>
@@ -8,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -153,9 +156,59 @@ void ExpectClassicDarkThemeAssetLoads() {
                         4.5f);
 }
 
+void ExpectSharedAnsiPaletteParity() {
+  // The terminal palette delegates to render::AnsiPalette; lock that they agree
+  // across the full 16-colour table and representative 256-colour indices so the
+  // shared module can never silently diverge from a re-introduced copy.
+  const auto same = [](SDL_Color a, SDL_Color b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+  };
+  for (int i = 0; i < 8; ++i) {
+    Expect(same(render::BasicAnsiColor(i, false), terminal::BasicAnsiColor(i, false)),
+           "normal ANSI colour " + std::to_string(i) + " should match the terminal palette");
+    Expect(same(render::BasicAnsiColor(i, true), terminal::BasicAnsiColor(i, true)),
+           "bright ANSI colour " + std::to_string(i) + " should match the terminal palette");
+  }
+  for (int index : {0, 7, 15, 16, 100, 231, 232, 255}) {
+    Expect(same(render::Ansi256Color(index), terminal::Ansi256Color(index)),
+           "256-colour index " + std::to_string(index) + " should match the terminal palette");
+  }
+}
+
+void ExpectSelfIncludingThemeLoadsWithoutRecursion() {
+  // A colorscheme that includes itself must terminate via the include-cycle
+  // guard rather than recursing forever, and still apply its own color-links.
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "microide_theme_cycle_test";
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  std::filesystem::create_directories(dir, ec);
+  Expect(!ec, "should be able to create a temp theme directory");
+
+  {
+    std::ofstream out(dir / "loop.microide");
+    out << "include \"loop\"\n";
+    out << "color-link default \"#ffffff,#101010\"\n";
+  }
+
+  render::Theme theme;
+  std::string resolved_name;
+  std::string error;
+  const bool loaded = render::LoadThemeByName("loop", theme, &resolved_name, &error, dir);
+  std::filesystem::remove_all(dir, ec);
+
+  Expect(loaded, "a self-including colorscheme should load: " + error);
+  Expect(resolved_name == "loop", "self-including colorscheme should resolve to its own name");
+  ExpectContrastAtLeast("self-include default text", theme.text_primary, theme.editor_background,
+                        4.5f);
+}
+
 }  // namespace
 
 void RegisterThemeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Theme shared ANSI palette parity", ExpectSharedAnsiPaletteParity);
+  AddTest(tests, "Theme self-including colorscheme loads without recursion",
+          ExpectSelfIncludingThemeLoadsWithoutRecursion);
   AddTest(tests, "Theme default foregrounds preserve readable contrast",
           ExpectReadableDefaultThemeForegrounds);
   AddTest(tests, "Theme default decoration underlays stay readable",

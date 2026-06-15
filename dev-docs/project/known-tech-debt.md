@@ -1154,3 +1154,71 @@ masking an actual hit-test bug.
 
 Validated: full `ctest` green (incl. ArchitectureInvariants), and the compare/cursor/chrome/shared-layout
 suites plus the three new tests green under the ASAN preset.
+
+## 25. 2026-06-15 Deep pass: render / app / util / terminal
+
+These four subsystems had only received narrow single-purpose fixes in prior passes (render
+got the glyph atlas, app the startup-CPU fix, util incidental edits, terminal the emulator
+overhaul). This pass gave them the same dedup / tech-debt / correctness / footprint treatment
+the larger subsystems received. Grouped into four logical efforts.
+
+### Fixed in this pass (with regression coverage)
+
+- **util shared primitives.** New `util/Hex.h` (`HexDigitValue`/`ParseHexByte`/`DecodeHexColor`/
+  `PercentDecode`) replaces four hand-rolled hex/percent decoders across `JsonValue`, `FileUri`,
+  terminal OSC-7, and the theme/project colour parsers (removing the `strtol`/`atoi` in those
+  paths). Added `util::AppendUtf8` + `kUtf8ReplacementChar` (dedup'd JSON's encoder and four
+  terminal replacement-char literals), `SplitAsciiWhitespace`, `IsAllAsciiDigits`, and made
+  `DecodeLines` single-pass. Tests in `StringUtilTests`. Note: the previously-suspected
+  trailing-`%XX` percent-decode off-by-one was a false alarm (`i+2 < size` ≡ `i+3 <= size`); no
+  behaviour change, regression test pins the case.
+- **render theme/text.** Extracted the byte-identical ANSI palette into `render/AnsiPalette`
+  (shared by theme + terminal; parity test locks them). Decomposed `Theme.cpp` into
+  `render/ColorMath` (WCAG/blend primitives) + `render/ThemeFile` (`.microide` parser) + the
+  derivation/discovery left in `Theme.cpp`. Removed the dead background path from
+  `SdlTtfTextBackend`'s texture cache (key fields, `ResolveEntry` param, redundant `DrawStringOn`
+  override). Tests in `ThemeTests` (palette parity, self-include cycle).
+- **app event loop.** Extracted `RedrawTraceAccumulator` (testable bookkeeping) and
+  `SceneTexturePresenter` (RAII texture + resize coalescing) out of `Application`; extracted a
+  pure, tested `ChooseIdleWait` policy; made the partial-redraw trace label lazy (no per-frame
+  heap alloc when tracing off); flag-gated `quick_exit` via `AppStartupOptions`. The resize-
+  coalescing architecture-lint invariant was repointed at `SceneTexturePresenter`. Tests in
+  `ApplicationTests`; render path verified via a live ASAN app run.
+- **terminal escape correctness.** Real bug fixed: DCS/APC/PM/SOS payloads (`ESC P/X/^/_`) leaked
+  onto the grid (Sixel, Kitty graphics, tmux passthrough, DECRQSS); added `EscapeMode::StringPayload`
+  that consumes them to ST/BEL. Bounded the escape buffers (8 KB cap, abandon-on-overflow,
+  `TerminalEscapeSequencesAborted` counter) so an unterminated CSI/OSC can't grow unbounded or
+  swallow output forever. Replaced `std::atoi` (overflow UB) in the CSI/SGR parser and OSC-4 query
+  with clamped `ParseInt64`. New `TerminalSessionTests` (string-payload discard, unterminated
+  recovery, CSI overflow) + self-contained `TerminalCsiParserFuzz` (728k iters clean under ASAN).
+
+Validated: full `ctest` green (incl. ArchitectureInvariants); ASAN and UBSAN presets green;
+CSI-parser fuzzer clean; the app launches and renders.
+
+### Deferred — verified, still open (next pass)
+
+- **`render` glyph-cell atlas (R5a).** The text backend still allocates a per-(string,color)
+  composite surface + texture on cache miss (one texture per unique string, 4096-entry LRU). A
+  single-atlas-texture draw path could cut texture count and miss-path allocation, but it trades
+  one draw call for N per string and could regress draw-call-bound frames. **Measure against
+  `dev-docs/performance/perf-harness.md` scroll/typing scenarios before attempting** — do not
+  commit on intuition.
+- **`terminal` escape-file decomposition (T3).** `TerminalSessionEscape.cpp` (~750 lines) is a flat
+  dispatch monolith (SGR / CSI `switch(final)` / OSC / private-mode). Splitting into
+  `TerminalSessionSgr/Csi/Osc/Modes.cpp` is pure relayout with no behaviour change; deferred
+  because it is high-churn code-movement on a hand-written parser whose only guard is the test
+  suite, the file is under no enforced cap, and the correctness fixes landed without needing it.
+- **`terminal` alt-screen scrollback copy (T5a).** `SaveActiveScreenLocked` does `screen.lines =
+  lines_` — a full deque copy of the primary scrollback on every alternate-screen enter (frequent:
+  vim/less/fzf). Consider move/visible-region-only. **Add a `terminal_alt_screen_toggle` perf
+  scenario and measure before changing.**
+- **Full terminal session-output fuzzer.** This pass added a self-contained `TerminalCsiParserFuzz`
+  (covers the tokenizer touched by T4). A fuzzer driving `AppendOutputLocked` directly (covering
+  the T1/T2 state machine) would have higher ROI but needs the whole terminal + platform + render +
+  SDL stack wired into a standalone target via `TerminalSessionTestAccess`. The T1/T2 paths are
+  covered by targeted unit tests in the meantime.
+- **`app` headless lifecycle test (A2 follow-up).** The `quick_exit_on_shutdown` seam was added so
+  `Initialize()`/`Shutdown()` can run in-process, but a dedicated headless ASAN lifecycle test was
+  not written: the software renderer the tests use cannot exercise the real renderer's render-target
+  texture path, and `Initialize`/`Shutdown` are private. Validated teardown via a live ASAN app run
+  instead. A future test would need a render-target-capable headless renderer or a friend/test seam.

@@ -57,6 +57,24 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph) {
   return codepoint;
 }
 
+void AppendUtf8(std::string& out, char32_t codepoint) {
+  if (codepoint <= 0x7F) {
+    out += static_cast<char>(codepoint);
+  } else if (codepoint <= 0x7FF) {
+    out += static_cast<char>(0xC0 | (codepoint >> 6));
+    out += static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else if (codepoint <= 0xFFFF) {
+    out += static_cast<char>(0xE0 | (codepoint >> 12));
+    out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (codepoint & 0x3F));
+  } else {
+    out += static_cast<char>(0xF0 | (codepoint >> 18));
+    out += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+    out += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+    out += static_cast<char>(0x80 | (codepoint & 0x3F));
+  }
+}
+
 namespace {
 
 struct CodepointRange {
@@ -297,6 +315,31 @@ bool QueryHasUppercaseAscii(std::string_view text) {
                      [](unsigned char c) { return c >= 'A' && c <= 'Z'; });
 }
 
+bool IsAllAsciiDigits(std::string_view text) {
+  return !text.empty() &&
+         std::all_of(text.begin(), text.end(),
+                     [](unsigned char c) { return c >= '0' && c <= '9'; });
+}
+
+std::vector<std::string_view> SplitAsciiWhitespace(std::string_view text) {
+  std::vector<std::string_view> parts;
+  std::size_t index = 0;
+  while (index < text.size()) {
+    while (index < text.size() && std::isspace(static_cast<unsigned char>(text[index])) != 0) {
+      ++index;
+    }
+    if (index >= text.size()) {
+      break;
+    }
+    const std::size_t start = index;
+    while (index < text.size() && std::isspace(static_cast<unsigned char>(text[index])) == 0) {
+      ++index;
+    }
+    parts.push_back(text.substr(start, index - start));
+  }
+  return parts;
+}
+
 std::string CollapseAsciiWhitespace(std::string_view text) {
   std::string collapsed;
   collapsed.reserve(text.size());
@@ -380,58 +423,58 @@ std::string TrimAsciiWhitespace(std::string_view text) {
   return std::string(text.substr(start, end - start));
 }
 
-LineEnding DetectLineEnding(std::string_view text) {
-  std::size_t crlf_count = 0;
-  std::size_t lf_count = 0;
-  std::size_t cr_count = 0;
+namespace {
+
+struct LineEndingCounts {
+  std::size_t crlf = 0;
+  std::size_t lf = 0;
+  std::size_t cr = 0;
+};
+
+LineEndingCounts CountLineEndings(std::string_view text) {
+  LineEndingCounts counts;
   for (std::size_t i = 0; i < text.size(); ++i) {
     if (text[i] == '\r') {
       if (i + 1 < text.size() && text[i + 1] == '\n') {
-        ++crlf_count;
+        ++counts.crlf;
         ++i;
       } else {
-        ++cr_count;
+        ++counts.cr;
       }
     } else if (text[i] == '\n') {
-      ++lf_count;
+      ++counts.lf;
     }
   }
+  return counts;
+}
 
-  if (crlf_count >= lf_count && crlf_count >= cr_count && crlf_count > 0) {
+LineEnding DominantLineEnding(const LineEndingCounts& counts) {
+  if (counts.crlf >= counts.lf && counts.crlf >= counts.cr && counts.crlf > 0) {
     return LineEnding::CRLF;
   }
-  if (lf_count >= cr_count && lf_count > 0) {
+  if (counts.lf >= counts.cr && counts.lf > 0) {
     return LineEnding::LF;
   }
-  if (cr_count > 0) {
+  if (counts.cr > 0) {
     return LineEnding::CR;
   }
   return LineEnding::LF;
 }
 
+}  // namespace
+
+LineEnding DetectLineEnding(std::string_view text) {
+  return DominantLineEnding(CountLineEndings(text));
+}
+
 DecodedText DecodeLines(std::string_view content) {
   DecodedText decoded;
 
-  std::size_t crlf_count = 0;
-  std::size_t lf_count = 0;
-  std::size_t cr_count = 0;
-  for (std::size_t i = 0; i < content.size(); ++i) {
-    if (content[i] == '\r') {
-      if (i + 1 < content.size() && content[i + 1] == '\n') {
-        ++crlf_count;
-        ++i;
-      } else {
-        ++cr_count;
-      }
-    } else if (content[i] == '\n') {
-      ++lf_count;
-    }
-  }
-
+  const LineEndingCounts counts = CountLineEndings(content);
   const std::size_t present_styles =
-      (crlf_count > 0 ? 1 : 0) + (lf_count > 0 ? 1 : 0) + (cr_count > 0 ? 1 : 0);
+      (counts.crlf > 0 ? 1 : 0) + (counts.lf > 0 ? 1 : 0) + (counts.cr > 0 ? 1 : 0);
   decoded.mixed_line_endings = present_styles > 1;
-  decoded.line_ending = DetectLineEnding(content);
+  decoded.line_ending = DominantLineEnding(counts);
 
   std::size_t line_start = 0;
   for (std::size_t i = 0; i < content.size(); ++i) {
