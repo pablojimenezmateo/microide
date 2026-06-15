@@ -31,11 +31,16 @@ void LspManager::RegisterServer(const std::string& language_id,
                                 const std::vector<std::string>& command,
                                 const std::string& root_uri,
                                 const std::string& cwd,
-                                bool eager_start) {
+                                bool eager_start,
+                                const util::JsonValue& initialization_options,
+                                const util::JsonValue& settings) {
   auto it = servers_.find(language_id);
   if (it != servers_.end()) {
     ServerEntry& existing = it->second;
-    if (existing.command == command && existing.root_uri == root_uri && existing.cwd == cwd) {
+    if (existing.command == command && existing.root_uri == root_uri && existing.cwd == cwd &&
+        util::SerializeJson(existing.initialization_options) ==
+            util::SerializeJson(initialization_options) &&
+        util::SerializeJson(existing.settings) == util::SerializeJson(settings)) {
       if (eager_start) {
         (void)GetServer(language_id);
       }
@@ -45,10 +50,14 @@ void LspManager::RegisterServer(const std::string& language_id,
       existing.client->BeginShutdown();
       retiring_clients_.push_back(std::move(existing.client));
     }
-    existing = ServerEntry{command, root_uri, cwd, {}, nullptr};
-  } else {
-    servers_[language_id] = ServerEntry{command, root_uri, cwd, {}, nullptr};
   }
+  ServerEntry& entry = servers_[language_id];
+  entry = ServerEntry{};
+  entry.command = command;
+  entry.root_uri = root_uri;
+  entry.cwd = cwd;
+  entry.initialization_options = initialization_options;
+  entry.settings = settings;
   if (eager_start) {
     (void)GetServer(language_id);
   }
@@ -84,7 +93,8 @@ LspClient* LspManager::GetServer(const std::string& language_id) {
     entry.last_error.clear();
     entry.client = std::make_unique<LspClient>();
     entry.client->SetWakeEventType(wake_event_type_);
-    if (!entry.client->Start(entry.command, entry.root_uri, language_id, entry.cwd)) {
+    if (!entry.client->Start(entry.command, entry.root_uri, language_id, entry.cwd,
+                             entry.initialization_options, entry.settings)) {
       entry.last_error = entry.client->LastError();
       if (entry.last_error.empty()) {
         entry.last_error = "language server failed to start";
@@ -178,8 +188,10 @@ void LspManager::ShutdownAll() {
 
 void LspManager::InstallTestClientForTesting(const std::string& language_id,
                                               std::unique_ptr<LspClient> client) {
-  servers_[language_id] =
-      ServerEntry{{}, "", "", {}, std::move(client), /*test_install=*/true};
+  ServerEntry& entry = servers_[language_id];
+  entry = ServerEntry{};
+  entry.client = std::move(client);
+  entry.test_install = true;
 }
 
 void LspManager::CollectRetiredClients() {

@@ -80,6 +80,15 @@ WorkspaceShell::WorkspaceShell() {
           .close_terminal_tab = [this](std::size_t index) { CloseTerminalTab(index); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
       });
+  lsp_service_.Configure(
+      context_, completion_registry_, code_action_registry_,
+      LspService::Operations{
+          .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
+          .refresh_problems_sidebar = [this]() { RefreshProblemsSidebar(); },
+          .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+      });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
       AssistService::Operations{
@@ -271,7 +280,8 @@ void WorkspaceShell::RebuildPhase3Registries() {
     CurrentLspManager().RegisterServer(language_server.language_id, language_server.command,
                                        "file://" + context_.current_project_state.root.generic_string(),
                                        context_.current_project_state.root.generic_string(),
-                                       false);
+                                       false, language_server.initialization_options,
+                                       language_server.settings);
   }
   CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
   for (const auto& tool : host.ContributedTools()) {

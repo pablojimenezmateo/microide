@@ -458,6 +458,11 @@ std::optional<int> AsyncSubprocess::exit_code() const {
   return impl_ != nullptr ? impl_->exit_code : std::nullopt;
 }
 
+int AsyncSubprocess::stdout_fd() const {
+  std::lock_guard lock(impl_->state_mutex);
+  return impl_->stdout_fd;
+}
+
 #elif defined(_WIN32)
 
 namespace {
@@ -722,6 +727,8 @@ std::optional<int> AsyncSubprocess::exit_code() const {
   return impl_ != nullptr ? impl_->exit_code : std::nullopt;
 }
 
+int AsyncSubprocess::stdout_fd() const { return -1; }
+
 #else  // non-POSIX stubs
 
 bool AsyncSubprocess::Start(const std::vector<std::string>&, const std::string&) { return false; }
@@ -735,6 +742,7 @@ int AsyncSubprocess::pid() const { return -1; }
 std::optional<int> AsyncSubprocess::exit_code() const {
   return impl_ != nullptr ? impl_->exit_code : std::nullopt;
 }
+int AsyncSubprocess::stdout_fd() const { return -1; }
 
 #endif
 

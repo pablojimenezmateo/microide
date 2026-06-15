@@ -111,8 +111,14 @@ class LspClient {
   void SetWakeEventType(Uint32 event_type);
 
   // Start the server and begin asynchronous initialization.
+  // initialization_options is forwarded verbatim as the LSP `initializationOptions`;
+  // settings answers server-initiated `workspace/configuration` requests and is
+  // pushed once via `workspace/didChangeConfiguration` after initialize. Both
+  // should be JSON objects (or Null to omit).
   bool Start(const std::vector<std::string>& command, const std::string& root_uri,
-             const std::string& language_id, const std::string& cwd = {});
+             const std::string& language_id, const std::string& cwd = {},
+             const util::JsonValue& initialization_options = {},
+             const util::JsonValue& settings = {});
 
   // True while the server process is running.
   bool IsRunning() const;
@@ -137,6 +143,9 @@ class LspClient {
 
   // Set callback for publishDiagnostics notifications (called on main thread).
   void SetDiagnosticsCallback(OnPublishDiagnostics callback);
+
+  // True once a diagnostics callback has been installed.
+  bool HasDiagnosticsCallback() const;
 
   // Call from the main thread each frame to dispatch pending callbacks.
   void DrainCallbacks();

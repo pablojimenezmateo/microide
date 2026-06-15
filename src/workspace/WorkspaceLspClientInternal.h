@@ -1,6 +1,7 @@
 #pragma once
 
 #include "workspace/WorkspaceLspClient.h"
+#include "workspace/LspProtocol.h"
 
 #include <algorithm>
 #include <atomic>
@@ -16,6 +17,8 @@
 #include <thread>
 #include <unordered_map>
 #if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <poll.h>
 #include <unistd.h>
 #endif
 
@@ -96,14 +99,22 @@ struct LspClient::Impl {
 
   platform::AsyncSubprocess proc;
   std::mutex mutex;
-  std::mutex send_mutex;
-  std::condition_variable send_cv;
+  std::mutex send_mutex;   // guards the outbound/deferred queues
+  std::mutex write_mutex;  // serializes every proc.Write so stdin is never written by two threads
 
-  // Reader thread state
-  std::thread reader_thread;
-  std::atomic<bool> stop_reader{false};
-  std::thread writer_thread;
-  std::atomic<bool> stop_writer{false};
+  // Single I/O thread state. One thread per server reads stdout and writes stdin;
+  // it blocks in poll() over stdout + a self-pipe wakeup, so it makes no
+  // fixed-cadence idle wakeups and reacts immediately to data or new outbound.
+  // io_buf is filled first by the initialize handshake and then handed to the I/O
+  // thread; keeping it a member preserves any bytes the server pushed right after
+  // the initialize response (e.g. clangd's early registerCapability / progress /
+  // configuration requests) across that handoff.
+  ReadBuf io_buf;
+  std::thread io_thread;
+  std::atomic<bool> stop_io{false};
+  std::mutex wake_mutex;          // guards wake_pipe_ open/close/Wake (brief, non-blocking)
+  int wake_pipe_[2] = {-1, -1};  // [0]=read (polled by I/O thread), [1]=write (Wake())
+  int cached_stdout_fd_ = -1;
 
   // Initialization thread state
   std::thread init_thread;
@@ -137,6 +148,8 @@ struct LspClient::Impl {
   int next_id = 1;
   std::string root_uri;
   std::string language_id;
+  util::JsonValue initialization_options;  // LSP initializationOptions (object or Null)
+  util::JsonValue settings;                // answers workspace/configuration (object or Null)
   std::string last_error;
   std::string last_error_snapshot;
   LspClient::ReadinessSnapshot readiness_snapshot;
@@ -192,44 +205,80 @@ struct LspClient::Impl {
     return rfc;
   }
 
-  bool SendSerializedMessageUnlocked(std::string_view message) {
-    return proc.Write(message);
-  }
-
-  void StartWriterThreadLocked() {
-    if (writer_thread.joinable()) {
+  // Self-pipe wakeup: the I/O thread blocks in poll() over stdout + wake_pipe_[0];
+  // enqueuing outbound work writes a byte here to break the poll immediately.
+  void OpenWakePipe() {
+#if defined(__unix__) || defined(__APPLE__)
+    std::lock_guard lock(wake_mutex);
+    if (wake_pipe_[0] >= 0) {
       return;
     }
-    stop_writer.store(false, std::memory_order_release);
-    writer_thread = std::thread([this]() { WriterMain(); });
-  }
-
-  void StopWriterThread() {
-    stop_writer.store(true, std::memory_order_release);
-    send_cv.notify_all();
-    if (writer_thread.joinable()) {
-      writer_thread.join();
+    int fds[2] = {-1, -1};
+    if (::pipe(fds) != 0) {
+      return;
     }
+    ::fcntl(fds[0], F_SETFL, O_NONBLOCK);
+    ::fcntl(fds[1], F_SETFL, O_NONBLOCK);
+    wake_pipe_[0] = fds[0];
+    wake_pipe_[1] = fds[1];
+#endif
   }
 
-  void WriterMain() {
-    while (true) {
-      QueuedMessage queued;
-      {
-        std::unique_lock lock(send_mutex);
-        send_cv.wait(lock, [this]() {
-          return stop_writer.load(std::memory_order_acquire) || !outbound_messages.empty();
-        });
-        if (stop_writer.load(std::memory_order_acquire) && outbound_messages.empty()) {
-          return;
-        }
-        queued = std::move(outbound_messages.front());
-        outbound_messages.pop_front();
-      }
+  void CloseWakePipe() {
+#if defined(__unix__) || defined(__APPLE__)
+    std::lock_guard lock(wake_mutex);
+    if (wake_pipe_[1] >= 0) {
+      ::close(wake_pipe_[1]);
+      wake_pipe_[1] = -1;
+    }
+    if (wake_pipe_[0] >= 0) {
+      ::close(wake_pipe_[0]);
+      wake_pipe_[0] = -1;
+    }
+#endif
+  }
 
-      std::string message = std::move(queued).TakeSerialized();
-      if (!SendSerializedMessageUnlocked(message)) {
+  void Wake() {
+#if defined(__unix__) || defined(__APPLE__)
+    std::lock_guard lock(wake_mutex);
+    if (wake_pipe_[1] < 0) {
+      return;
+    }
+    const char byte = 1;
+    ssize_t written = ::write(wake_pipe_[1], &byte, 1);
+    (void)written;  // a full pipe already means a wake is pending
+#endif
+  }
+
+  void DrainWakePipe() {
+#if defined(__unix__) || defined(__APPLE__)
+    if (wake_pipe_[0] < 0) {
+      return;
+    }
+    char scratch[64];
+    while (::read(wake_pipe_[0], scratch, sizeof(scratch)) > 0) {
+    }
+#endif
+  }
+
+  // Flush every queued outbound message. Runs only on the I/O thread; holds
+  // write_mutex across the proc.Write calls so it never races a shutdown-time
+  // SendMessageImmediate on stdin. The queue lock is released before writing so a
+  // main-thread enqueue never blocks behind a slow write.
+  void DrainOutbound() {
+    std::deque<QueuedMessage> batch;
+    {
+      std::lock_guard lock(send_mutex);
+      batch.swap(outbound_messages);
+    }
+    if (batch.empty()) {
+      return;
+    }
+    std::lock_guard wlock(write_mutex);
+    for (QueuedMessage& queued : batch) {
+      if (!proc.Write(std::move(queued).TakeSerialized())) {
         SetLastError("failed to send message to language server");
+        stop_io.store(true, std::memory_order_release);
         return;
       }
     }
@@ -240,8 +289,8 @@ struct LspClient::Impl {
       return false;
     }
     const std::string serialized = SerializeMessage(msg);
-    std::lock_guard lock(send_mutex);
-    return SendSerializedMessageUnlocked(serialized);
+    std::lock_guard wlock(write_mutex);
+    return proc.Write(serialized);
   }
 
   bool SendMessageAfterInitialize(const util::JsonValue& msg) {
@@ -278,7 +327,7 @@ struct LspClient::Impl {
         .serialized = {},
         .build_serialized = std::move(build_serialized),
     });
-    send_cv.notify_one();
+    Wake();
     return true;
   }
 
@@ -404,19 +453,70 @@ struct LspClient::Impl {
     SDL_PushEvent(&ev);
   }
 
-  void ReaderMain() {
-    ReadBuf buf;
-    while (!stop_reader.load(std::memory_order_relaxed)) {
-      auto chunk = proc.Read(4096, 50 /*ms*/);
-      if (!chunk) break;
-      if (!chunk->empty()) buf.append(*chunk);
-
-      while (true) {
-        auto msg_opt = TryParseOneMessage(buf);
-        if (!msg_opt) break;
-        DispatchMessage(std::move(*msg_opt));
+  // Wait until stdout has data/EOF or an outbound wake arrives. Returns true when
+  // stdout should be read. On POSIX this is a single poll() over stdout + the wake
+  // pipe, so an idle server makes no fixed-cadence wakeups; elsewhere it degrades
+  // to a short read timeout (no wake fd available).
+  bool WaitStdoutReadable(int timeout_ms) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (cached_stdout_fd_ >= 0) {
+      pollfd fds[2] = {};
+      int nfds = 0;
+      const int out_index = nfds;
+      fds[nfds].fd = cached_stdout_fd_;
+      fds[nfds].events = POLLIN | POLLHUP;
+      ++nfds;
+      int wake_index = -1;
+      if (wake_pipe_[0] >= 0) {
+        wake_index = nfds;
+        fds[nfds].fd = wake_pipe_[0];
+        fds[nfds].events = POLLIN;
+        ++nfds;
       }
+      const int ready = ::poll(fds, nfds, timeout_ms);
+      if (ready <= 0) {
+        return false;  // timeout or EINTR — loop drains outbound and re-polls
+      }
+      if (wake_index >= 0 && (fds[wake_index].revents & POLLIN) != 0) {
+        DrainWakePipe();
+      }
+      const short out_revents = fds[out_index].revents;
+      return (out_revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
     }
+#endif
+    // Fallback: no pollable fd; let Read() block briefly and report data directly.
+    return true;
+  }
+
+  void ParseBufferedMessages() {
+    while (true) {
+      auto msg_opt = TryParseOneMessage(io_buf);
+      if (!msg_opt) break;
+      DispatchMessage(std::move(*msg_opt));
+    }
+  }
+
+  void IoMain() {
+    cached_stdout_fd_ = proc.stdout_fd();
+    const int read_timeout = cached_stdout_fd_ >= 0 ? 0 : 50;
+    while (!stop_io.load(std::memory_order_acquire)) {
+      // Parse anything already buffered first: the initialize handoff can leave
+      // server-pushed messages in io_buf with no *new* stdout data behind them,
+      // and a single read can carry several messages. Dispatch may enqueue replies.
+      ParseBufferedMessages();
+      DrainOutbound();
+      if (stop_io.load(std::memory_order_acquire)) {
+        break;
+      }
+      if (!WaitStdoutReadable(1000)) {
+        continue;  // woke for outbound/timeout — re-parse, re-drain, re-poll
+      }
+      auto chunk = proc.Read(4096, read_timeout);
+      if (!chunk) break;  // EOF / fatal read error
+      if (!chunk->empty()) io_buf.append(*chunk);
+    }
+    ParseBufferedMessages();
+    DrainOutbound();  // final flush (e.g. an exit notification queued during stop)
   }
 
   std::optional<util::JsonValue> TryParseOneMessage(ReadBuf& buf) {
@@ -462,9 +562,79 @@ struct LspClient::Impl {
     return parsed;
   }
 
+  // Reply to a server-initiated request. `id` is echoed verbatim (it may be an
+  // int or a string per JSON-RPC). Server requests only arrive post-initialize,
+  // so these flow through the normal outbound queue.
+  void SendResponseResult(const util::JsonValue& id, util::JsonValue result) {
+    using namespace util;
+    JsonObject msg;
+    msg["jsonrpc"] = JsonValue("2.0");
+    msg["id"] = id;
+    msg["result"] = std::move(result);
+    SendMessageAfterInitialize(JsonValue(std::move(msg)));
+  }
+
+  void SendResponseError(const util::JsonValue& id, int code, std::string message) {
+    using namespace util;
+    JsonObject error;
+    error["code"] = JsonValue(static_cast<std::int64_t>(code));
+    error["message"] = JsonValue(std::move(message));
+    JsonObject msg;
+    msg["jsonrpc"] = JsonValue("2.0");
+    msg["id"] = id;
+    msg["error"] = JsonValue(std::move(error));
+    SendMessageAfterInitialize(JsonValue(std::move(msg)));
+  }
+
+  // Server -> client requests must always get a reply, or chatty servers
+  // (clangd, Roslyn/OmniSharp) log errors or stall.
+  void HandleServerRequest(const util::JsonValue& id, const std::string& method,
+                           const util::JsonValue& params) {
+    using namespace util;
+    if (method == "workspace/configuration") {
+      JsonArray result;
+      if (params["items"].IsArray()) {
+        for (const auto& item : params["items"].AsArray()) {
+          const std::string section =
+              item["section"].IsString() ? item["section"].AsString() : "";
+          JsonValue value;  // Null when we have nothing configured.
+          if (settings.IsObject()) {
+            if (section.empty()) {
+              value = settings;
+            } else if (settings.HasKey(section)) {
+              value = settings[section];
+            }
+          }
+          result.push_back(std::move(value));
+        }
+      }
+      SendResponseResult(id, JsonValue(std::move(result)));
+      return;
+    }
+    // Capabilities are treated as static; accept dynamic (un)registration and
+    // progress-token creation with an empty result.
+    if (method == "client/registerCapability" || method == "client/unregisterCapability" ||
+        method == "window/workDoneProgress/create" || method == "window/showMessageRequest" ||
+        method == "window/showDocument") {
+      SendResponseResult(id, JsonValue(nullptr));
+      return;
+    }
+    if (method == "workspace/applyEdit") {
+      // Host-side edit application is not wired here; report not-applied so the
+      // server can recover rather than wait forever.
+      JsonObject obj;
+      obj["applied"] = JsonValue(false);
+      SendResponseResult(id, JsonValue(std::move(obj)));
+      return;
+    }
+    SendResponseError(id, -32601, "method not found: " + method);
+  }
+
   void DispatchMessage(util::JsonValue msg) {
+    const bool has_method = msg.HasKey("method") && msg["method"].IsString();
+    const bool has_id = msg.HasKey("id") && !msg["id"].IsNull();
     if (shutting_down.load(std::memory_order_acquire)) {
-      if (msg.HasKey("id") && msg["id"].IsInt()) {
+      if (has_id && !has_method && msg["id"].IsInt()) {
         const int id = msg["id"].AsInt();
         std::lock_guard lock(mutex);
         if (id == shutdown_request_id) {
@@ -474,7 +644,11 @@ struct LspClient::Impl {
       }
       return;
     }
-    if (msg.HasKey("id") && msg["id"].IsInt()) {
+    if (has_method && has_id) {
+      HandleServerRequest(msg["id"], msg["method"].AsString(), msg["params"]);
+      return;
+    }
+    if (has_id && !has_method && msg["id"].IsInt()) {
       const int id = msg["id"].AsInt();
       std::function<void(util::JsonValue)> cb;
       {
@@ -501,20 +675,7 @@ struct LspClient::Impl {
         util::StartupTrace::Scope scope("LspClient::DispatchDiagnostics");
         const auto& params = msg["params"];
         const std::string uri = params["uri"].IsString() ? params["uri"].AsString() : "";
-        std::vector<Diagnostic> diags;
-        if (params["diagnostics"].IsArray()) {
-          for (const auto& d : params["diagnostics"].AsArray()) {
-            Diagnostic diag;
-            diag.range.start.line = d["range"]["start"]["line"].AsInt();
-            diag.range.start.character = d["range"]["start"]["character"].AsInt();
-            diag.range.end.line = d["range"]["end"]["line"].AsInt();
-            diag.range.end.character = d["range"]["end"]["character"].AsInt();
-            diag.message = d["message"].IsString() ? d["message"].AsString() : "";
-            diag.severity = d["severity"].AsInt(1);
-            diag.code = d["code"].IsString() ? d["code"].AsString() : "";
-            diags.push_back(std::move(diag));
-          }
-        }
+        std::vector<Diagnostic> diags = lsp_protocol::ParseDiagnostics(params["diagnostics"]);
         std::lock_guard lock(mutex);
         if (diagnostics_callback) {
           auto cb = diagnostics_callback;
@@ -541,6 +702,19 @@ struct LspClient::Impl {
     pending_requests.erase(id);
   }
 
+  // Shared scaffolding for every async request: register the response handler,
+  // send the request, and on send failure clean up and invoke the failure path.
+  // Keeps the per-method code to "build params" + "parse result".
+  void DispatchRequest(const std::string& method, util::JsonValue params,
+                       std::function<void(util::JsonValue)> response_handler,
+                       std::function<void()> on_send_failure) {
+    const int id = RegisterPendingRequest(std::move(response_handler));
+    if (!SendMessageAfterInitialize(MakeRequest(id, method, std::move(params)))) {
+      RemovePendingRequest(id);
+      on_send_failure();
+    }
+  }
+
   void DoInitializeBlocking() {
     util::StartupTrace::Scope trace_scope("LspClient::DoInitializeBlocking");
     initializing.store(true, std::memory_order_release);
@@ -557,17 +731,33 @@ struct LspClient::Impl {
     text_doc_sync["willSave"] = JsonValue(false);
     text_doc_sync["didSave"] = JsonValue(true);
 
+    JsonObject completion_item_caps;
+    completion_item_caps["snippetSupport"] = JsonValue(true);
+    {
+      JsonArray doc_formats;
+      doc_formats.push_back(JsonValue("markdown"));
+      doc_formats.push_back(JsonValue("plaintext"));
+      completion_item_caps["documentationFormat"] = JsonValue(std::move(doc_formats));
+    }
     JsonObject completion_caps;
     completion_caps["dynamicRegistration"] = JsonValue(false);
+    completion_caps["completionItem"] = JsonValue(std::move(completion_item_caps));
 
     JsonObject hover_caps;
     hover_caps["dynamicRegistration"] = JsonValue(false);
+    {
+      JsonArray hover_formats;
+      hover_formats.push_back(JsonValue("markdown"));
+      hover_formats.push_back(JsonValue("plaintext"));
+      hover_caps["contentFormat"] = JsonValue(std::move(hover_formats));
+    }
 
     JsonObject signature_caps;
     signature_caps["dynamicRegistration"] = JsonValue(false);
 
     JsonObject definition_caps;
     definition_caps["dynamicRegistration"] = JsonValue(false);
+    definition_caps["linkSupport"] = JsonValue(true);
 
     JsonObject references_caps;
     references_caps["dynamicRegistration"] = JsonValue(false);
@@ -578,6 +768,18 @@ struct LspClient::Impl {
 
     JsonObject code_action_caps;
     code_action_caps["dynamicRegistration"] = JsonValue(false);
+    {
+      JsonArray kinds;
+      for (const char* kind : {"quickfix", "refactor", "refactor.extract", "refactor.inline",
+                               "refactor.rewrite", "source", "source.organizeImports"}) {
+        kinds.push_back(JsonValue(kind));
+      }
+      JsonObject kind_obj;
+      kind_obj["valueSet"] = JsonValue(std::move(kinds));
+      JsonObject literal;
+      literal["codeActionKind"] = JsonValue(std::move(kind_obj));
+      code_action_caps["codeActionLiteralSupport"] = JsonValue(std::move(literal));
+    }
 
     JsonObject formatting_caps;
     formatting_caps["dynamicRegistration"] = JsonValue(false);
@@ -597,8 +799,26 @@ struct LspClient::Impl {
     text_document_caps["formatting"] = JsonValue(std::move(formatting_caps));
     text_document_caps["documentSymbol"] = JsonValue(std::move(document_symbol_caps));
 
+    JsonObject workspace_caps;
+    workspace_caps["configuration"] = JsonValue(true);
+    workspace_caps["workspaceFolders"] = JsonValue(true);
+    workspace_caps["applyEdit"] = JsonValue(false);
+    {
+      JsonObject did_change_config;
+      did_change_config["dynamicRegistration"] = JsonValue(false);
+      workspace_caps["didChangeConfiguration"] = JsonValue(std::move(did_change_config));
+    }
+
+    JsonObject window_caps;
+    window_caps["workDoneProgress"] = JsonValue(true);
+
     JsonObject caps;
     caps["textDocument"] = JsonValue(std::move(text_document_caps));
+    caps["workspace"] = JsonValue(std::move(workspace_caps));
+    caps["window"] = JsonValue(std::move(window_caps));
+
+    JsonObject client_info;
+    client_info["name"] = JsonValue("microide");
 
     JsonObject init_params;
 #if defined(__unix__) || defined(__APPLE__)
@@ -606,7 +826,21 @@ struct LspClient::Impl {
 #else
     init_params["processId"] = JsonValue(static_cast<std::int64_t>(0));
 #endif
+    init_params["clientInfo"] = JsonValue(std::move(client_info));
     init_params["rootUri"] = JsonValue(root_uri);
+    if (!root_uri.empty()) {
+      JsonObject folder;
+      folder["uri"] = JsonValue(root_uri);
+      const auto slash = root_uri.find_last_of('/');
+      folder["name"] =
+          JsonValue(slash == std::string::npos ? root_uri : root_uri.substr(slash + 1));
+      JsonArray folders;
+      folders.push_back(JsonValue(std::move(folder)));
+      init_params["workspaceFolders"] = JsonValue(std::move(folders));
+    }
+    if (!initialization_options.IsNull()) {
+      init_params["initializationOptions"] = initialization_options;
+    }
     init_params["capabilities"] = JsonValue(std::move(caps));
 
     const int init_id = [&]() {
@@ -622,7 +856,7 @@ struct LspClient::Impl {
       return;
     }
 
-    ReadBuf buf;
+    ReadBuf& buf = io_buf;
     bool got_init = false;
     {
       util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
@@ -679,8 +913,14 @@ struct LspClient::Impl {
 
     {
       std::lock_guard lock(send_mutex);
-      if (!SendSerializedMessageUnlocked(
-              SerializeMessage(MakeNotification("initialized", JsonValue(JsonObject{}))))) {
+      // No I/O thread is running yet, so this is the only writer — write directly.
+      bool sent_initialized = false;
+      {
+        std::lock_guard wlock(write_mutex);
+        sent_initialized = proc.Write(
+            SerializeMessage(MakeNotification("initialized", JsonValue(JsonObject{}))));
+      }
+      if (!sent_initialized) {
         SetLastError("failed to send initialized notification to language server");
         deferred_messages.clear();
         ShutdownProcessOnce();
@@ -688,16 +928,27 @@ struct LspClient::Impl {
         return;
       }
       initialized.store(true, std::memory_order_release);
-      StartWriterThreadLocked();
+      // Push configuration before any queued didOpen so servers that read
+      // settings (clangd, OmniSharp/Roslyn) see them before touching documents.
+      if (settings.IsObject()) {
+        JsonObject config_params;
+        config_params["settings"] = settings;
+        outbound_messages.push_back(QueuedMessage{
+            .serialized = SerializeMessage(MakeNotification(
+                "workspace/didChangeConfiguration", JsonValue(std::move(config_params)))),
+            .build_serialized = {},
+        });
+      }
       for (QueuedMessage& message : deferred_messages) {
         outbound_messages.push_back(std::move(message));
       }
       deferred_messages.clear();
-      send_cv.notify_all();
     }
 
-    stop_reader.store(false);
-    reader_thread = std::thread([this]() { ReaderMain(); });
+    OpenWakePipe();
+    stop_io.store(false, std::memory_order_release);
+    io_thread = std::thread([this]() { IoMain(); });
+    Wake();  // flush the queued config/didOpen without waiting for the first poll
 
     {
       std::lock_guard lock(mutex);
@@ -732,13 +983,19 @@ struct LspClient::Impl {
     }
     if (!initialized.load(std::memory_order_acquire)) {
       TraceLspLifecycle(language_id, proc.pid(), "preinit-cancel");
-      StopWriterThread();
+      stop_io.store(true, std::memory_order_release);
+      Wake();
       ShutdownProcessOnce(0);
       if (init_thread.joinable()) {
         init_thread.join();
       }
+      // The init thread may have just promoted itself to the running state and
+      // launched the I/O thread between our check and here; join it if so.
+      if (io_thread.joinable()) {
+        io_thread.join();
+      }
       ClearDeferredMessages();
-      stop_reader.store(true, std::memory_order_release);
+      CloseWakePipe();
       ResetProtocolState();
       initialized.store(false, std::memory_order_release);
       initializing.store(false, std::memory_order_release);
@@ -752,7 +1009,8 @@ struct LspClient::Impl {
     if (init_thread.joinable()) {
       init_thread.join();
     }
-    StopWriterThread();
+    // Keep the I/O thread running through the handshake below so it can receive
+    // the shutdown response; its writes are serialized with ours via write_mutex.
     ClearDeferredMessages();
 
     using namespace util;
@@ -791,15 +1049,17 @@ struct LspClient::Impl {
     TraceLspLifecycle(language_id, proc.pid(), "graceful-wait",
                       proc.IsRunning() ? "still-running" : "exited");
 
-    stop_reader.store(true, std::memory_order_release);
+    stop_io.store(true, std::memory_order_release);
+    Wake();
     if (proc.IsRunning()) {
       TraceLspLifecycle(language_id, proc.pid(), "forced-shutdown");
       ShutdownProcessOnce(1000);
     }
 
-    if (reader_thread.joinable()) {
-      reader_thread.join();
+    if (io_thread.joinable()) {
+      io_thread.join();
     }
+    CloseWakePipe();
 
     ResetProtocolState();
     initialized.store(false, std::memory_order_release);

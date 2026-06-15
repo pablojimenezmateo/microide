@@ -71,7 +71,21 @@ bool ParseLanguageServerRegistration(lua_State* state,
       .language_id = std::move(*language_id_opt),
       .command = std::move(*command_opt),
       .plugin_id = plugin_id,
+      .initialization_options = {},
+      .settings = {},
   };
+  // initialization_options / settings are accepted as JSON-string fields and
+  // parsed host-side; malformed JSON is ignored (left Null).
+  if (auto json = ReadStringField(state, 1, "initialization_options")) {
+    if (auto parsed = util::ParseJson(*json)) {
+      out->contributed.initialization_options = std::move(*parsed);
+    }
+  }
+  if (auto json = ReadStringField(state, 1, "settings")) {
+    if (auto parsed = util::ParseJson(*json)) {
+      out->contributed.settings = std::move(*parsed);
+    }
+  }
   if (error_message) error_message->clear();
   return true;
 }

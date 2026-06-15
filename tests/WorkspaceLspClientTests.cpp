@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "util/JsonValue.h"
 #include "workspace/WorkspaceLspClient.h"
 
 #include <chrono>
@@ -487,6 +488,120 @@ while True:
   client.Shutdown();
 }
 
+void TestWorkspaceLspClientAnswersServerRequestsAndAdvertisesEnablers() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  const auto init_marker = temp_dir.path() / "init.json";
+  const auto config_marker = temp_dir.path() / "config.json";
+  const auto error_marker = temp_dir.path() / "error.json";
+
+  WriteFile(server_path, std::string(R"py(import json
+import pathlib
+import sys
+
+init_marker = pathlib.Path(sys.argv[1])
+config_marker = pathlib.Path(sys.argv[2])
+error_marker = pathlib.Path(sys.argv[3])
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        init_marker.write_text(json.dumps(msg.get("params", {})), encoding="utf-8")
+        write_message({"jsonrpc": "2.0", "id": msg["id"],
+                       "result": {"capabilities": {"textDocumentSync": 1}}})
+        # Server -> client requests: the client must reply to both.
+        write_message({"jsonrpc": "2.0", "id": 1000, "method": "workspace/configuration",
+                       "params": {"items": [{"section": "clangd"}]}})
+        write_message({"jsonrpc": "2.0", "id": 1001, "method": "some/unknownRequest",
+                       "params": {}})
+    elif method is None and msg.get("id") == 1000:
+        config_marker.write_text(json.dumps(msg), encoding="utf-8")
+    elif method is None and msg.get("id") == 1001:
+        error_marker.write_text(json.dumps(msg), encoding="utf-8")
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  std::optional<util::JsonValue> init_options =
+      util::ParseJson(R"({"clangd":{"arguments":["--background-index"]}})");
+  std::optional<util::JsonValue> settings =
+      util::ParseJson(R"({"clangd":{"fallbackFlags":["-std=c++20"]}})");
+  Expect(init_options.has_value() && settings.has_value(), "fixture JSON should parse");
+
+  LspClient client;
+  const bool started = client.Start(
+      {"python3", server_path.string(), init_marker.string(), config_marker.string(),
+       error_marker.string()},
+      "file:///tmp", "cpp", {}, *init_options, *settings);
+  Expect(started, "server-request fixture should start");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (std::filesystem::exists(init_marker) && std::filesystem::exists(config_marker) &&
+        std::filesystem::exists(error_marker)) {
+      break;
+    }
+    if (!client.IsRunning()) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
+  Expect(std::filesystem::exists(init_marker), "initialize params should be captured");
+  const std::string init_text = ReadFile(init_marker);
+  Expect(init_text.find("snippetSupport") != std::string::npos,
+         "initialize should advertise completion snippetSupport");
+  Expect(init_text.find("--background-index") != std::string::npos,
+         "initialize should forward plugin initializationOptions");
+  Expect(init_text.find("workspaceFolders") != std::string::npos,
+         "initialize should send workspaceFolders");
+
+  Expect(std::filesystem::exists(config_marker), "client should reply to workspace/configuration");
+  const std::string config_text = ReadFile(config_marker);
+  Expect(config_text.find("fallbackFlags") != std::string::npos &&
+             config_text.find("-std=c++20") != std::string::npos,
+         "configuration reply should return the configured settings for the requested section");
+
+  Expect(std::filesystem::exists(error_marker), "client should reply to an unknown server request");
+  const std::string error_text = ReadFile(error_marker);
+  Expect(error_text.find("-32601") != std::string::npos,
+         "unknown server request should get a MethodNotFound error reply");
+
+  client.Shutdown();
+}
+
 }  // namespace
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
@@ -504,6 +619,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientReadinessSnapshotTracksProgress);
   AddTest(tests, "WorkspaceLspClient/DidOpenQueuedBeforeInitializeStillDeliversFullText",
           TestWorkspaceLspClientDidOpenQueuedBeforeInitializeStillDeliversFullText);
+  AddTest(tests, "WorkspaceLspClient/AnswersServerRequestsAndAdvertisesEnablers",
+          TestWorkspaceLspClientAnswersServerRequestsAndAdvertisesEnablers);
 }
 
 }  // namespace microide::tests
