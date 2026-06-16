@@ -20,6 +20,9 @@ namespace {
 
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
+using microide::workspace::ActionId;
+using microide::workspace::TreeContextTargetKind;
+using microide::workspace::WorkspaceTreeContextMenuItems;
 
 bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
   return lhs.x < rhs.x + rhs.w && lhs.x + lhs.w > rhs.x && lhs.y < rhs.y + rhs.h &&
@@ -1336,6 +1339,56 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
          "Copy Absolute Path should copy the active tab path");
 }
 
+void TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path nested_dir = root / "src" / "nested";
+  const std::filesystem::path file = nested_dir / "alpha.cpp";
+  WriteFile(file, "int alpha() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const auto file_items =
+      WorkspaceTreeContextMenuItems(TreeContextTargetKind::File);
+  Expect(std::find_if(file_items.begin(), file_items.end(),
+                      [](const auto& item) {
+                        return item.action == ActionId::ShowInFileExplorer;
+                      }) != file_items.end(),
+         "file tree context menu should expose Show in File Explorer");
+
+  std::filesystem::path revealed;
+  WorkspaceShellTestAccess::SetFileManagerOpener(
+      shell, [&](const std::filesystem::path& dir) {
+        revealed = dir;
+        return true;
+      });
+
+  // File entry: should reveal the file's containing directory.
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(
+      shell, TreeContextTargetKind::File, file);
+  Expect(WorkspaceShellTestAccess::ExecuteShowInFileExplorer(shell),
+         "Show in File Explorer should execute from the tree context menu");
+  Expect(revealed == nested_dir.lexically_normal(),
+         ("Show in File Explorer should open the file's containing directory "
+          "(actual: " +
+          revealed.string() + ")")
+             .c_str());
+
+  // Directory entry: should reveal the directory's parent.
+  revealed.clear();
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(
+      shell, TreeContextTargetKind::Directory, nested_dir);
+  Expect(WorkspaceShellTestAccess::ExecuteShowInFileExplorer(shell),
+         "Show in File Explorer should execute for a directory entry");
+  Expect(revealed == (root / "src").lexically_normal(),
+         ("Show in File Explorer should open the directory's parent "
+          "(actual: " +
+          revealed.string() + ")")
+             .c_str());
+}
+
 void TestWorkspaceShellTabContextActionsCloseAdjacentTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2118,6 +2171,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",
           TestWorkspaceShellTabContextActionsCloseAdjacentTabs);
+  AddTest(tests, "WorkspaceShell/TreeContextMenuShowsInFileExplorerContainingDir",
+          TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir);
 #if MICROIDE_HAS_SDL3_TTF
   AddTest(tests, "WorkspaceShell/SidebarModeRetainedRedrawMatchesFullRender",
           TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender);

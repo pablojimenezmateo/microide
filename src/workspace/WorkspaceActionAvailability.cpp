@@ -179,6 +179,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::IndentWidth:
       return true;
     case ActionId::CopyAbsolutePath:
+    case ActionId::ShowInFileExplorer:
       return !operations_.resolve_tree_action_path(ActionSource::ContextMenu).empty() ||
              !operations_.active_tab_path().empty();
     case ActionId::CopyRelativePath: {

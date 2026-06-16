@@ -140,6 +140,26 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       context_.WriteClipboardText(clipboard_text);
       return DispatchResult::Handled;
     }
+    case ActionId::ShowInFileExplorer: {
+      if (source != ActionSource::ContextMenu) {
+        return DispatchResult::Unhandled;
+      }
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const std::filesystem::path path = context_.ResolveTreeActionPath(source);
+      if (path.empty()) {
+        return DispatchResult::Unhandled;
+      }
+      std::filesystem::path containing = path.parent_path();
+      if (containing.empty()) {
+        containing = path;
+      }
+      if (!context_.RevealPathInFileExplorer(containing)) {
+        return reject("Unable to open file explorer");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Tree: {
       const TreeRootRequest request = BuildTreeRootRequest(args);
       if (request.root.empty() && !context_.HasProjectRoot()) {

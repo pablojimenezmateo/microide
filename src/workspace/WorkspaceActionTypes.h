@@ -41,6 +41,7 @@ enum class ActionId {
   Quit,
   RenamePath,
   Reopen,
+  ShowInFileExplorer,
   Save,
   Search,
   SidebarClose,

@@ -1110,6 +1110,7 @@
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
   bool OpenExternalUrl(std::string_view url) const;
   void OpenExternalUrlPrompt(std::string url);
+  bool RevealPathInFileExplorer(const std::filesystem::path& directory) const;
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
@@ -1461,6 +1462,7 @@
   std::function<std::optional<std::string>()> primary_selection_text_reader_;
   std::function<bool(std::string_view)> primary_selection_text_writer_;
   std::function<bool(std::string_view)> external_url_opener_;
+  std::function<bool(const std::filesystem::path&)> file_manager_opener_;
   SDL_Window* dialog_window_ = nullptr;
   ProjectDialogState project_dialog_state_;
   bool quit_requested_ = false;

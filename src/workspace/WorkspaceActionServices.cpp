@@ -221,6 +221,11 @@ bool WorkspaceActionContext::WritePrimarySelectionText(std::string_view text) co
   return operations_.write_primary_selection_text(text);
 }
 
+bool WorkspaceActionContext::RevealPathInFileExplorer(
+    const std::filesystem::path& directory) const {
+  return operations_.reveal_path_in_file_explorer(directory);
+}
+
 void WorkspaceActionContext::OpenTerminal(std::string command) {
   operations_.open_terminal(std::move(command));
 }
