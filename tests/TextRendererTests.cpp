@@ -5,6 +5,8 @@
 #include "editor/EditorViewRenderer.h"
 #include "editor/FoldingModel.h"
 #include "editor/TextViewport.h"
+#include "platform/RuntimePaths.h"
+#include "render/AsciiGlyphAtlas.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 #include "workspace/RenderViewModelBuilder.h"
@@ -346,6 +348,117 @@ void TestSdlTtfAsciiUiLabelsDoNotIntroduceExtraGlyphGaps() {
   expect_label_matches("resolve", "InputPath");
   expect_label_matches("return ", "inputPath");
   expect_label_matches("if (path.", "isAbsolute(inputPath))");
+}
+
+// Opens a monospace TTF font for atlas tests, mirroring the backend's discovery
+// order (bundled JetBrains Mono first, then common system monospace fonts) and
+// the same hinting/kerning configuration. Returns nullptr if none is available.
+TTF_Font* OpenTestMonospaceFont() {
+  Expect(TTF_Init(), "atlas tests should initialize SDL_ttf");
+  std::vector<std::filesystem::path> candidates;
+  candidates.push_back(platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf"));
+  for (const char* system_candidate : {
+           "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+           "/usr/share/fonts/truetype/liberation2/LiberationMono-Regular.ttf",
+           "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+           "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+       }) {
+    candidates.emplace_back(system_candidate);
+  }
+  for (const auto& candidate : candidates) {
+    if (candidate.empty() || !std::filesystem::exists(candidate)) {
+      continue;
+    }
+    TTF_Font* font = TTF_OpenFont(candidate.string().c_str(), 13.0f);
+    if (font != nullptr) {
+      TTF_SetFontHinting(font, TTF_HINTING_LIGHT_SUBPIXEL);
+      TTF_SetFontKerning(font, false);
+      return font;
+    }
+  }
+  return nullptr;
+}
+
+// The atlas stores one colour-independent (white) coverage bitmap per glyph and
+// tints it via colour modulation when assembling a composite. This proves the
+// tinted atlas blit is byte-identical to rendering the glyph directly at that
+// colour, which is the invariant that lets the per-(char, colour) glyph cache be
+// replaced by a single atlas without changing on-screen pixels.
+void TestAsciiGlyphAtlasMatchesPerColorRendering() {
+  EnsureDummySdlVideo();
+  TTF_Font* font = OpenTestMonospaceFont();
+  Expect(font != nullptr, "atlas pixel-identity test should find a usable monospace font");
+
+  auto atlas = microide::render::AsciiGlyphAtlas::Build(font);
+  Expect(atlas != nullptr, "atlas should build from a usable font");
+
+  const std::vector<SDL_Color> colors = {
+      SDL_Color{0xff, 0xff, 0xff, 0xff},  // white (the atlas's stored colour)
+      SDL_Color{0xff, 0x00, 0x00, 0xff},  // red
+      SDL_Color{0x00, 0xff, 0x00, 0xff},  // green
+      SDL_Color{0x56, 0x9c, 0xd6, 0xff},  // a typical keyword blue
+      SDL_Color{0x80, 0x40, 0x20, 0xff},  // an asymmetric tone that exercises rounding
+  };
+  const std::string sample = "Ag0 {}[]();<>/*-_=+!~\"'`";
+
+  for (const SDL_Color color : colors) {
+    for (const char ch : sample) {
+      SDL_Surface* reference = TTF_RenderText_Blended(font, &ch, 1, color);
+      Expect(reference != nullptr, "reference glyph render should succeed");
+
+      SDL_Surface* actual =
+          SDL_CreateSurface(reference->w, reference->h, SDL_PIXELFORMAT_RGBA32);
+      Expect(actual != nullptr, "atlas blit target surface should allocate");
+      Expect(SDL_FillSurfaceRect(actual, nullptr, 0), "atlas target should clear to transparent");
+
+      Expect(atlas->BlitInto(actual, 0, ch, color),
+             "atlas should cover every printable ASCII glyph in the sample");
+      const std::size_t differences = CountPixelDifferences(actual, reference);
+      Expect(differences == 0,
+             "tinted atlas glyph must be pixel-identical to a direct colour render");
+
+      SDL_DestroySurface(actual);
+      SDL_DestroySurface(reference);
+    }
+  }
+
+  // Translucent colours are intentionally not served by the atlas; the backend
+  // falls back to the whole-string SDL_ttf path for them.
+  SDL_Surface* translucent_target = SDL_CreateSurface(32, atlas->FontHeightPx(), SDL_PIXELFORMAT_RGBA32);
+  Expect(translucent_target != nullptr, "translucent target should allocate");
+  Expect(!atlas->BlitInto(translucent_target, 0, 'A', SDL_Color{0xff, 0xff, 0xff, 0x80}),
+         "atlas must decline translucent colours so the backend uses its exact fallback");
+  SDL_DestroySurface(translucent_target);
+
+  TTF_CloseFont(font);
+}
+
+void TestAsciiGlyphAtlasCoversPrintableRange() {
+  EnsureDummySdlVideo();
+  TTF_Font* font = OpenTestMonospaceFont();
+  Expect(font != nullptr, "atlas coverage test should find a usable monospace font");
+
+  auto atlas = microide::render::AsciiGlyphAtlas::Build(font);
+  Expect(atlas != nullptr, "atlas should build from a usable font");
+
+  SDL_Surface* scratch = SDL_CreateSurface(64, atlas->FontHeightPx(), SDL_PIXELFORMAT_RGBA32);
+  Expect(scratch != nullptr, "coverage test scratch surface should allocate");
+  const SDL_Color color{0xc0, 0xc0, 0xc0, 0xff};
+  for (int code = 0x20; code <= 0x7E; ++code) {
+    const char ch = static_cast<char>(code);
+    Expect(atlas->Covers(ch), "atlas should cover the full printable ASCII range");
+    // Force lazy rasterization of every slot and confirm it succeeds.
+    Expect(SDL_FillSurfaceRect(scratch, nullptr, 0), "coverage scratch should clear");
+    Expect(atlas->BlitInto(scratch, 0, ch, color),
+           "atlas should lazily rasterize and blit every printable glyph");
+  }
+  SDL_DestroySurface(scratch);
+
+  Expect(!atlas->Covers('\t'), "atlas should not claim to cover control characters");
+  Expect(!atlas->Covers(static_cast<char>(0x7F)),
+         "atlas should not claim to cover the delete control code");
+
+  TTF_CloseFont(font);
 }
 
 void TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth() {
@@ -1763,6 +1876,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf blended text keeps transparent corners",
           TestSdlTtfBlendedTextKeepsTransparentCorners);
+  AddTest(tests,
+          "AsciiGlyphAtlas tinted blit matches direct per-color rendering",
+          TestAsciiGlyphAtlasMatchesPerColorRendering);
+  AddTest(tests,
+          "AsciiGlyphAtlas covers the printable ASCII range",
+          TestAsciiGlyphAtlasCoversPrintableRange);
 #endif
 }
 

@@ -26,7 +26,6 @@ constexpr float kFontPointSize = 13.0f;
 // larger than the 2048 used when each entry held a single glyph.
 constexpr std::size_t kMaxCacheEntries = 4096;
 constexpr float kMinPresentationScale = 0.1f;
-constexpr std::size_t kMaxAsciiGlyphSurfaceEntries = 512;
 }  // namespace
 
 std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* renderer) {
@@ -200,7 +199,7 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
 }
 
 void SdlTtfTextBackend::ClearCache() {
-  ClearAsciiGlyphSurfaces();
+  ascii_atlas_.reset();
   for (auto& [_, entry] : cache_) {
     if (entry.texture != nullptr) {
       SDL_DestroyTexture(entry.texture);
@@ -224,64 +223,26 @@ bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
   return true;
 }
 
-void SdlTtfTextBackend::ClearAsciiGlyphSurfaces() {
-  for (auto& [_, entry] : ascii_glyph_surfaces_) {
-    if (entry.surface != nullptr) {
-      SDL_DestroySurface(entry.surface);
-    }
+void SdlTtfTextBackend::EnsureAsciiAtlas() {
+  if (ascii_atlas_ != nullptr || font_ == nullptr) {
+    return;
   }
-  ascii_glyph_surfaces_.clear();
-  ascii_glyph_surface_order_.clear();
-}
-
-std::uint64_t SdlTtfTextBackend::PackAsciiGlyphCacheKey(char ch, SDL_Color color) {
-  return (static_cast<std::uint64_t>(static_cast<unsigned char>(color.r)) << 56) |
-         (static_cast<std::uint64_t>(static_cast<unsigned char>(color.g)) << 48) |
-         (static_cast<std::uint64_t>(static_cast<unsigned char>(color.b)) << 40) |
-         (static_cast<std::uint64_t>(static_cast<unsigned char>(color.a)) << 32) |
-         static_cast<std::uint64_t>(static_cast<unsigned char>(ch));
-}
-
-SDL_Surface* SdlTtfTextBackend::ResolveAsciiGlyphSurface(char ch, SDL_Color color) {
-  if (font_ == nullptr) {
-    return nullptr;
-  }
-  const std::uint64_t key = PackAsciiGlyphCacheKey(ch, color);
-  if (const auto it = ascii_glyph_surfaces_.find(key); it != ascii_glyph_surfaces_.end()) {
-    ascii_glyph_surface_order_.splice(ascii_glyph_surface_order_.end(), ascii_glyph_surface_order_,
-                                      it->second.order);
-    return it->second.surface;
-  }
-
-  SDL_Surface* glyph_surface = TTF_RenderText_Blended(font_, &ch, 1, color);
-  if (glyph_surface == nullptr) {
-    return nullptr;
-  }
-
-  AsciiGlyphSurfaceEntry entry;
-  entry.surface = glyph_surface;
-  ascii_glyph_surface_order_.push_back(key);
-  entry.order = std::prev(ascii_glyph_surface_order_.end());
-  ascii_glyph_surfaces_.emplace(key, std::move(entry));
-
-  while (ascii_glyph_surface_order_.size() > kMaxAsciiGlyphSurfaceEntries) {
-    const std::uint64_t evict_key = ascii_glyph_surface_order_.front();
-    ascii_glyph_surface_order_.pop_front();
-    const auto evict_it = ascii_glyph_surfaces_.find(evict_key);
-    if (evict_it != ascii_glyph_surfaces_.end()) {
-      if (evict_it->second.surface != nullptr) {
-        SDL_DestroySurface(evict_it->second.surface);
-      }
-      ascii_glyph_surfaces_.erase(evict_it);
-    }
-  }
-
-  return glyph_surface;
+  ascii_atlas_ = AsciiGlyphAtlas::Build(font_);
 }
 
 SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text,
                                                            SDL_Color color) {
   if (font_ == nullptr || text.empty()) {
+    return nullptr;
+  }
+  // Only opaque colours go through the atlas. Coverage is colour-independent, so
+  // an opaque tint reproduces the per-colour render exactly; translucent text
+  // falls back to the SDL_ttf whole-string path in ResolveEntry.
+  if (color.a != 255) {
+    return nullptr;
+  }
+  EnsureAsciiAtlas();
+  if (ascii_atlas_ == nullptr) {
     return nullptr;
   }
 
@@ -295,7 +256,7 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
   if (composite == nullptr) {
     return nullptr;
   }
-  // Start transparent. Per-glyph blits supply the visible pixels at exact cell
+  // Start transparent. Atlas blits supply the visible pixels at exact cell
   // positions; spaces and outside-cell gaps remain alpha=0.
   if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
     SDL_DestroySurface(composite);
@@ -307,19 +268,15 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
     if (ch == ' ') {
       continue;
     }
-    SDL_Surface* glyph_surface = ResolveAsciiGlyphSurface(ch, color);
-    if (glyph_surface == nullptr) {
-      continue;
-    }
-    // Tell BlitSurface to use straight copy (BLENDMODE_NONE on the source).
-    // The composite was initialized to fully-transparent zero, so a straight
-    // copy preserves the per-pixel alpha that SDL_ttf produced. Leaving
-    // BlitSurface in its default blend mode can mix the rendered alpha with
-    // the (zero) destination alpha and produces a perceptibly thinner glyph.
-    SDL_SetSurfaceBlendMode(glyph_surface, SDL_BLENDMODE_NONE);
     const int dst_x = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
-    SDL_Rect dst_rect{dst_x, 0, glyph_surface->w, glyph_surface->h};
-    SDL_BlitSurface(glyph_surface, nullptr, composite, &dst_rect);
+    // Atlas blits are straight copies of colour-modulated coverage, preserving
+    // the per-pixel alpha exactly. If a glyph is somehow uncovered, bail so
+    // ResolveEntry falls back to the whole-string SDL_ttf render rather than
+    // caching a composite with a missing glyph.
+    if (!ascii_atlas_->BlitInto(composite, dst_x, ch, color)) {
+      SDL_DestroySurface(composite);
+      return nullptr;
+    }
   }
   return composite;
 }
