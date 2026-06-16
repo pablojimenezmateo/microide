@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [1.2.1] - 2026-06-16
+
+Incremental release building on 1.2.0 with a file-tree convenience action and the standard release
+procedure committed to the repo.
+
+### Editor
+- Add a "Show in File Explorer" file-tree context-menu action.
+
+### Internal
+- Docs: add the mandatory standard release procedure to the release checklist.
+
 ## [1.2.0] - 2026-06-16
 
 Builds on 1.1.1 with a per-plugin capability sandbox, kernel-confined language servers, a
