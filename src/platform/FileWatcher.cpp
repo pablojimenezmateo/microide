@@ -524,36 +524,44 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
                          normalized_roots.end());
 
   TreeTraversalFilter filter;
-  bool capture_snapshot = true;
-  std::unique_ptr<NativeBackend> old_backend;
+  bool defer_initial_snapshot = false;
+  bool has_wake_callback = false;
   {
     std::scoped_lock lock(mutex_);
     filter = entry_filter_;
     roots_ = normalized_roots;
     pending_change_ = false;
-    old_backend = RefreshNativeBackendLocked();
-    capture_snapshot =
-        !defer_initial_snapshot_ || polling_required_ || !static_cast<bool>(wake_callback_);
-    if (!capture_snapshot) {
+    defer_initial_snapshot = defer_initial_snapshot_;
+    has_wake_callback = static_cast<bool>(wake_callback_);
+  }
+
+  // Build the native backend and (optionally) the snapshot WITHOUT holding the
+  // lock so a peer SetRoots/Clear/Poll never blocks on this tree walk.
+  PreparedNativeBackend prepared = PrepareNativeBackend(normalized_roots, filter);
+  const bool capture_snapshot =
+      !defer_initial_snapshot || prepared.polling_required || !has_wake_callback;
+  std::vector<TreeSnapshotEntry> snapshot;
+  if (capture_snapshot) {
+    snapshot = CaptureTreeSnapshot(normalized_roots, filter);
+  }
+
+  std::unique_ptr<NativeBackend> old_backend;
+  {
+    std::scoped_lock lock(mutex_);
+    if (roots_ != normalized_roots) {
+      return;  // superseded while unlocked; discard prepared backend + snapshot
+    }
+    old_backend = InstallPreparedBackendLocked(std::move(prepared));
+    if (capture_snapshot) {
+      snapshot_ = std::move(snapshot);
+      snapshot_valid_ = true;
+    } else {
       snapshot_.clear();
       snapshot_valid_ = false;
-      ResetNextPollAt();
-      return;
     }
+    pending_change_ = false;
+    ResetNextPollAt();
   }
-
-  const std::vector<TreeSnapshotEntry> snapshot =
-      capture_snapshot ? CaptureTreeSnapshot(normalized_roots, filter)
-                       : std::vector<TreeSnapshotEntry>{};
-
-  std::scoped_lock lock(mutex_);
-  if (roots_ != normalized_roots) {
-    return;
-  }
-  snapshot_ = snapshot;
-  snapshot_valid_ = true;
-  pending_change_ = false;
-  ResetNextPollAt();
 }
 
 void FileTreeWatcher::Clear() {
@@ -619,6 +627,7 @@ bool FileTreeWatcher::Poll() {
       return false;
     }
     const std::vector<TreeSnapshotEntry> current_snapshot = CaptureTreeSnapshot(roots, filter);
+    PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
     std::unique_ptr<NativeBackend> old_backend;
     std::scoped_lock lock(mutex_);
     if (roots != roots_) {
@@ -626,7 +635,7 @@ bool FileTreeWatcher::Poll() {
     }
     snapshot_ = current_snapshot;
     snapshot_valid_ = true;
-    old_backend = RefreshNativeBackendLocked();
+    old_backend = InstallPreparedBackendLocked(std::move(prepared));
     ResetNextPollAt();
     return false;
   }
@@ -634,6 +643,7 @@ bool FileTreeWatcher::Poll() {
   const std::vector<TreeSnapshotEntry> current_snapshot = CaptureTreeSnapshot(roots, filter);
   const bool changed = current_snapshot != previous_snapshot;
 
+  PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
   std::unique_ptr<NativeBackend> old_backend;
   std::scoped_lock lock(mutex_);
   if (roots != roots_) {
@@ -641,55 +651,67 @@ bool FileTreeWatcher::Poll() {
   }
   snapshot_ = current_snapshot;
   snapshot_valid_ = true;
-  old_backend = RefreshNativeBackendLocked();
+  old_backend = InstallPreparedBackendLocked(std::move(prepared));
   ResetNextPollAt();
   return changed;
 }
 
-std::unique_ptr<FileTreeWatcher::NativeBackend> FileTreeWatcher::RefreshNativeBackendLocked() {
-  std::unique_ptr<NativeBackend> old_backend = std::move(native_backend_);
-  polling_required_ = true;
+FileTreeWatcher::PreparedNativeBackend FileTreeWatcher::PrepareNativeBackend(
+    const std::vector<std::filesystem::path>& roots, const TreeTraversalFilter& filter) {
+  // Runs WITHOUT mutex_ held: the recursive walk below dominates wall-clock on
+  // large trees and must not block concurrent SetRoots/Clear/Poll callers.
+  PreparedNativeBackend prepared;
 
 #if defined(__linux__) || defined(__APPLE__)
   bool requires_polling = false;
   const std::vector<std::filesystem::path> watch_paths =
-      CollectRecursiveWatchPaths(roots_, entry_filter_, &requires_polling);
+      CollectRecursiveWatchPaths(roots, filter, &requires_polling);
   if (watch_paths.empty()) {
-    polling_required_ = requires_polling || !roots_.empty();
-    return old_backend;
+    prepared.polling_required = requires_polling || !roots.empty();
+    return prepared;
   }
 
   auto backend = std::make_unique<NativeBackend>([this]() { NotifyWake(); });
   if (!backend->Start(watch_paths)) {
-    polling_required_ = true;
-    return old_backend;
+    prepared.polling_required = true;
+    return prepared;
   }
 
-  native_backend_ = std::move(backend);
-  polling_required_ = requires_polling;
-  return old_backend;
+  prepared.backend = std::move(backend);
+  prepared.polling_required = requires_polling;
+  return prepared;
 #elif defined(_WIN32)
   bool requires_polling = false;
   const std::vector<std::filesystem::path> watch_roots =
-      CollectWindowsWatchRoots(roots_, &requires_polling);
+      CollectWindowsWatchRoots(roots, &requires_polling);
   if (watch_roots.empty()) {
-    polling_required_ = requires_polling || !roots_.empty();
-    return old_backend;
+    prepared.polling_required = requires_polling || !roots.empty();
+    return prepared;
   }
 
   auto backend = std::make_unique<NativeBackend>([this]() { NotifyWake(); });
   if (!backend->Start(watch_roots)) {
-    polling_required_ = true;
-    return old_backend;
+    prepared.polling_required = true;
+    return prepared;
   }
 
-  native_backend_ = std::move(backend);
-  polling_required_ = requires_polling;
-  return old_backend;
+  prepared.backend = std::move(backend);
+  prepared.polling_required = requires_polling;
+  return prepared;
 #else
-  polling_required_ = true;
-  return old_backend;
+  (void)roots;
+  (void)filter;
+  prepared.polling_required = true;
+  return prepared;
 #endif
+}
+
+std::unique_ptr<FileTreeWatcher::NativeBackend> FileTreeWatcher::InstallPreparedBackendLocked(
+    PreparedNativeBackend prepared) {
+  std::unique_ptr<NativeBackend> old_backend = std::move(native_backend_);
+  native_backend_ = std::move(prepared.backend);
+  polling_required_ = prepared.polling_required;
+  return old_backend;
 }
 
 void FileTreeWatcher::ResetNextPollAt() {

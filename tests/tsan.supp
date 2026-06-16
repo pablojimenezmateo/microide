@@ -4,3 +4,10 @@
 # is internal to libdbus (not microide code), so we suppress the warning here
 # rather than leaving a flake in the sanitizer matrix.
 deadlock:libdbus-1
+
+# Data races reported inside the Mesa userspace GPU driver (libgallium) when the
+# ApplicationTests drive real GPU rendering across SDL's render threads. The
+# races are internal to the driver (not microide code) and only surface on hosts
+# with hardware/software GL acceleration; suppress them like the libdbus case
+# rather than leaving environment-dependent flakes in the sanitizer matrix.
+race:libgallium

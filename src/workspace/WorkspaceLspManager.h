@@ -66,6 +66,14 @@ class LspManager {
                                    std::unique_ptr<LspClient> client);
   void InstallTestClientForTesting(const std::string& language_id, std::unique_ptr<LspClient> client);
 
+  // Unit tests only: attach a test client to an ALREADY-registered server entry
+  // without touching its registration params (command/root/options). This keeps
+  // RegisterServer idempotent across a plugin reload so the injected client is
+  // retained (warm) rather than torn down. Returns false if no entry resolves
+  // for `language_id`.
+  bool InstallTestClientIntoExistingForTesting(const std::string& language_id,
+                                               std::unique_ptr<LspClient> client);
+
  private:
   struct ServerEntry {
     // Every language id this single subprocess answers for.

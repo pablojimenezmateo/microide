@@ -461,7 +461,7 @@
   const std::vector<ResolvedKeybinding>& ResolvedKeybindings() const;
   std::vector<std::string> OrderedSidebarViewIds() const;
   void NormalizeSidebarViewSelection();
-  void RebuildPhase3Registries();
+  void RebuildPhase3Registries(bool reconcile_language_servers = true);
   void RebuildPhase4Registries();
   std::vector<VisibleStatusItem> ComputeVisibleStatusItems(const SDL_FRect& breadcrumb) const;
   std::string HoveredStatusTooltip(const SDL_FRect& breadcrumb) const;
