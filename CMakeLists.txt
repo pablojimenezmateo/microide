@@ -539,6 +539,8 @@ if(UNIX AND NOT APPLE)
 endif()
 
 add_executable(microide_tests
+  src/app/Application.cpp
+  src/app/SceneTexturePresenter.cpp
   src/app/DirtyRegionPolicy.cpp
   src/app/RedrawTraceAccumulator.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
