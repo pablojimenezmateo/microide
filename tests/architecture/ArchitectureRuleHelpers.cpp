@@ -78,18 +78,13 @@ RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
   result.label = std::string(relative_path) + " size";
   result.hard_fail = true;
   const std::filesystem::path path = repo_root / relative_path;
-  std::ifstream stream(path);
-  std::size_t lines = 0;
-  std::string line;
-  while (std::getline(stream, line)) {
-    ++lines;
-  }
+  const std::size_t lines = CountCodeLinesInFile(path);
   if (lines > limit) {
     result.violations.push_back(Violation{
         .path = path,
         .line = 1,
         .message = std::string(relative_path) + " should stay at or below " +
-                   std::to_string(limit) + " lines",
+                   std::to_string(limit) + " code lines (comments and blank lines excluded)",
     });
   }
   return result;

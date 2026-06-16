@@ -90,6 +90,24 @@ catch (const std::exception&) {
          "scanner should catch nested/multiline try std::sto usage");
 }
 
+void TestCountCodeLinesScanner() {
+  const std::string snippet =
+      "int x = 1;            // counted: code + trailing comment\n"
+      "                      // not counted: comment only\n"
+      "\n"  // not counted: blank
+      "   \t  \n"  // not counted: whitespace only
+      "/* block-only line */\n"  // not counted: comment only
+      "const char* s = \"// not a comment\";\n"  // counted: code around a string
+      "}  // counted: brace with trailing comment\n"
+      "int y = 2;";  // counted: final line without trailing newline
+  Expect(architecture::CountCodeLines(snippet) == 4,
+         "CountCodeLines should count only lines holding real code, excluding "
+         "comment-only and blank lines");
+  Expect(architecture::CountCodeLines("") == 0, "empty input has no code lines");
+  Expect(architecture::CountCodeLines("// only a comment\n") == 0,
+         "a lone comment line counts as zero code lines");
+}
+
 void TestArchitectureInvariantTargetedScannerFixtures() {
   TemporaryDirectory temp_dir;
   const auto& root = temp_dir.path();
@@ -243,6 +261,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
 void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ArchitectureInvariants/SoftChecks", TestArchitectureInvariants);
   AddTest(tests, "ArchitectureInvariants/TryCatchStoScanner", TestTryCatchStoScanner);
+  AddTest(tests, "ArchitectureInvariants/CountCodeLinesScanner", TestCountCodeLinesScanner);
   AddTest(tests, "ArchitectureInvariants/TargetedScannerFixtures",
           TestArchitectureInvariantTargetedScannerFixtures);
 }

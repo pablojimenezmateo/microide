@@ -17,17 +17,13 @@ RuleResult CheckPluginTranslationUnitSize(const std::filesystem::path& repo_root
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
-    std::ifstream stream(entry.path());
-    std::size_t lines = 0;
-    std::string line;
-    while (std::getline(stream, line)) {
-      ++lines;
-    }
+    const std::size_t lines = CountCodeLinesInFile(entry.path());
     if (lines > 800) {
       result.violations.push_back(Violation{
           .path = entry.path(),
           .line = 1,
-          .message = "plugin translation units should stay at or below 800 lines",
+          .message = "plugin translation units should stay at or below 800 code lines "
+                     "(comments and blank lines excluded)",
       });
     }
   }
