@@ -3,6 +3,7 @@
 #include "project/FileIndex.h"
 
 #include <filesystem>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -156,6 +157,37 @@ void TestFileIndexExcludesGitMetadataFromInitialAndIncrementalBatches() {
          "incremental .git metadata update should not change file index version");
 }
 
+void TestFileIndexInitialBatchAbortsWhenCancelled() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "cancel fixture should initialize deferred file index root");
+  const std::uint64_t set_root_version = index.version();
+
+  // A batch large enough to cross the cancel-check stride so the abort path runs.
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  for (int i = 0; i < 10000; ++i) {
+    batch.changes.push_back(MakeCreateChange("src/file_" + std::to_string(i) + ".cpp", 1));
+  }
+
+  Expect(!index.ApplyBatch(batch, []() { return true; }),
+         "a cancelled initial bulk load should report no work applied");
+  Expect(index.version() == set_root_version,
+         "a cancelled initial bulk load must leave the index version unchanged");
+  Expect(index.Snapshot().empty(),
+         "a cancelled initial bulk load must leave the index contents unchanged");
+
+  // The same batch applies normally when the predicate never cancels.
+  Expect(index.ApplyBatch(batch, []() { return false; }),
+         "a non-cancelled initial bulk load should apply");
+  Expect(index.Snapshot().size() == 10000,
+         "a completed initial bulk load should populate every file");
+}
+
 }  // namespace
 
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
@@ -165,6 +197,8 @@ void RegisterFileIndexTests(std::vector<TestCase>& tests) {
           TestFileIndexIncrementalBatchVersionChangesOnlyOnRealMutations);
   AddTest(tests, "FileIndex/ExcludesGitMetadataFromInitialAndIncrementalBatches",
           TestFileIndexExcludesGitMetadataFromInitialAndIncrementalBatches);
+  AddTest(tests, "FileIndex/InitialBatchAbortsWhenCancelled",
+          TestFileIndexInitialBatchAbortsWhenCancelled);
 }
 
 }  // namespace microide::tests

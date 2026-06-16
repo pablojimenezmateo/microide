@@ -184,9 +184,10 @@ durable invariant moves.
 
 - Every meaningful bug fix should add or tighten regression coverage.
 - Run targeted builds and tests for the changed area before committing.
-- Prefer `tools/run-checks.sh {tests|asan|ubsan|tsan|all}`, which tees build+test output to `/tmp/microide-<target>.log`; read that file instead of rerunning.
+- Always run the suite and sanitizers through `tools/run-checks.sh {tests|asan|ubsan|tsan|all}` — never raw `ctest` or the sanitizer binary directly. The wrapper tees build+test output to `/tmp/microide-<target>.log` (read that instead of rerunning) AND sets the sanitizer runtime options, notably `TSAN_OPTIONS=...:suppressions=tests/tsan.supp`. Running `ctest` directly skips the suppressions, so environmental races (Mesa `libgallium` GPU driver via `ApplicationTests`, libdbus) surface as false failures and you waste a second run capturing output.
 - Run sanitizer variants (`microide-asan`, `microide-ubsan`, `microide-tsan`) for memory/thread-sensitive changes.
 - TSAN runs require `sudo sysctl vm.mmap_rnd_bits=28` on Linux before test execution.
+- If a genuinely environmental (non-microide) race or leak appears, add a documented suppression to `tests/tsan.supp` (mirroring the existing `deadlock:libdbus-1` / `race:libgallium` entries) rather than leaving a flake in the matrix.
 - Extend and run relevant fuzz targets in `tests/fuzz/` when changing persistence, parser, regex, or blame decode paths.
 - Redraw comparison tests under SDL dummy video should run serially.
 - Use focused fixtures for git, search, compare, merge, and plugin-adjacent workflows.

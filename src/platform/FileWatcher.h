@@ -38,7 +38,19 @@ class FileTreeWatcher {
  private:
   struct NativeBackend;
 
-  std::unique_ptr<NativeBackend> RefreshNativeBackendLocked();
+  // Result of building a native backend for a root set. The recursive directory
+  // walk required to enumerate watch targets is expensive on large trees, so it
+  // is computed WITHOUT holding mutex_ (see PrepareNativeBackend) and only swapped
+  // in under the lock (InstallPreparedBackendLocked). This keeps concurrent
+  // SetRoots/Clear/Poll callers from blocking on a peer's tree walk.
+  struct PreparedNativeBackend {
+    std::unique_ptr<NativeBackend> backend;
+    bool polling_required = true;
+  };
+
+  PreparedNativeBackend PrepareNativeBackend(const std::vector<std::filesystem::path>& roots,
+                                             const TreeTraversalFilter& filter);
+  std::unique_ptr<NativeBackend> InstallPreparedBackendLocked(PreparedNativeBackend prepared);
   void ResetNextPollAt();
   void NotifyWake();
 

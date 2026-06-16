@@ -238,7 +238,7 @@ WorkspaceShell::WorkspaceShell() {
   });
 }
 
-void WorkspaceShell::RebuildPhase3Registries() {
+void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
   formatter_registry_ = FormatterRegistry{};
   save_participant_registry_ = SaveParticipantRegistry{};
   completion_registry_ = CompletionRegistry{};
@@ -280,20 +280,26 @@ void WorkspaceShell::RebuildPhase3Registries() {
         .language_id = code_action.language_id,
     });
   }
-  for (const auto& language_server : host.ContributedLanguageServers()) {
-    if (language_server.command.empty() || language_server.language_ids.empty()) {
-      continue;
+  // Skipped on project reactivation: the host has no contributed servers there
+  // (it was torn down on switch-away and intentionally not reloaded), so an empty
+  // contributed set would make BeginShutdownServersNotIn tear down the project's
+  // persisted, warm language servers. See RefreshPluginSurfacesForReactivation.
+  if (reconcile_language_servers) {
+    for (const auto& language_server : host.ContributedLanguageServers()) {
+      if (language_server.command.empty() || language_server.language_ids.empty()) {
+        continue;
+      }
+      for (const auto& language_id : language_server.language_ids) {
+        active_language_servers.insert(language_id);
+      }
+      CurrentLspManager().RegisterServer(language_server.language_ids, language_server.command,
+                                         "file://" + context_.current_project_state.root.generic_string(),
+                                         context_.current_project_state.root.generic_string(),
+                                         false, language_server.initialization_options,
+                                         language_server.settings, language_server.sandbox);
     }
-    for (const auto& language_id : language_server.language_ids) {
-      active_language_servers.insert(language_id);
-    }
-    CurrentLspManager().RegisterServer(language_server.language_ids, language_server.command,
-                                       "file://" + context_.current_project_state.root.generic_string(),
-                                       context_.current_project_state.root.generic_string(),
-                                       false, language_server.initialization_options,
-                                       language_server.settings, language_server.sandbox);
+    CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
   }
-  CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
   for (const auto& tool : host.ContributedTools()) {
     tool_registry_.Register(ToolSpec{
         .id = tool.id,
@@ -418,7 +424,16 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
 void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
   util::PerformanceTrace::Scope perf_scope(
       "WorkspaceShell::RefreshPluginSurfacesForReactivation");
-  RebuildPhase3Registries();
+  // Reactivating an already-initialised project deliberately does NOT reload the
+  // plugin host (kept fast/warm by 8136af6e). The shared host was torn down on
+  // switch-away, so it has no contributed language servers right now. The
+  // project's own LspManager, however, was moved into the catalog with its warm
+  // servers intact and moved back here. Reconciling the LSP registry against the
+  // empty host would make BeginShutdownServersNotIn({}) shut down and erase those
+  // warm servers -> "No LSP server". Skip LSP reconciliation so the persisted
+  // servers survive untouched. The shell-global registries (formatters,
+  // completions, etc.) still rebuild to clear the previous project's leftovers.
+  RebuildPhase3Registries(/*reconcile_language_servers=*/false);
   RebuildPhase4Registries();
   NormalizeSidebarViewSelection();
   RefreshPluginSidebar();

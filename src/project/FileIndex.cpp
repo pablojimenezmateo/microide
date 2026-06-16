@@ -122,13 +122,24 @@ void FileIndex::Refresh() {
   EnsureFresh(ProjectFileScanMode::ExcludeHidden);
 }
 
-bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch) {
+bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
+                           const std::function<bool()>& is_cancelled) {
   util::PerformanceTrace::Scope perf_scope("FileIndex::ApplyBatch");
   if (batch.is_initial) {
     util::PerformanceTrace::Scope initial_scope("FileIndex::ApplyBatch::InitialBulkLoad");
+    // Poll the cancellation predicate periodically (not every iteration) so an
+    // abandoned load bails promptly without per-entry overhead.
+    constexpr std::size_t kCancelCheckStride = 4096;
+    std::size_t since_cancel_check = 0;
     std::vector<ProjectFile> rebuilt;
     rebuilt.reserve(batch.changes.size());
     for (const auto& change : batch.changes) {
+      if (is_cancelled && ++since_cancel_check >= kCancelCheckStride) {
+        since_cancel_check = 0;
+        if (is_cancelled()) {
+          return false;  // abandon before committing; index left unchanged
+        }
+      }
       if (change.kind != platform::IndexUpdateBatch::Kind::CreatedOrModified) {
         continue;
       }
@@ -141,6 +152,9 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch) {
       rebuilt.push_back(std::move(file));
     }
 
+    if (is_cancelled && is_cancelled()) {
+      return false;  // abandon before the (also non-trivial) sort/commit
+    }
     std::sort(rebuilt.begin(), rebuilt.end(), LessProjectFile);
     rebuilt.erase(std::unique(rebuilt.begin(), rebuilt.end(),
                               [](const ProjectFile& lhs, const ProjectFile& rhs) {

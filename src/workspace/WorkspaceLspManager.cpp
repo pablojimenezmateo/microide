@@ -250,6 +250,18 @@ void LspManager::InstallTestClientForTesting(const std::string& language_id,
   InstallTestClientForTesting(std::vector<std::string>{language_id}, std::move(client));
 }
 
+bool LspManager::InstallTestClientIntoExistingForTesting(const std::string& language_id,
+                                                         std::unique_ptr<LspClient> client) {
+  ServerEntry* entry = ResolveEntry(language_id);
+  if (entry == nullptr) {
+    return false;
+  }
+  entry->client = std::move(client);
+  entry->test_install = true;
+  entry->last_error.clear();
+  return true;
+}
+
 void LspManager::CollectRetiredClients() {
   auto write_it = retiring_clients_.begin();
   for (auto read_it = retiring_clients_.begin(); read_it != retiring_clients_.end(); ++read_it) {

@@ -66,7 +66,14 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::FileIndexWatcherCallback::ApplyBatch");
-      applied_to_index = context_.current_project_state.file_index.ApplyBatch(batch);
+      // Abandon an in-flight initial bulk load if this watcher has since been
+      // retired (StopFileIndexWatcher bumps the generation before joining), so
+      // teardown/switch-away does not block ~1s on indexing a large tree.
+      applied_to_index = context_.current_project_state.file_index.ApplyBatch(
+          batch, [this, watcher_generation]() {
+            return file_index_watcher_generation_.load(std::memory_order_acquire) !=
+                   watcher_generation;
+          });
     }
     LogProjectIndexBatch(context_.current_project_state.root, batch, applied_to_index);
     if (!batch.is_initial && !batch.changes.empty()) {

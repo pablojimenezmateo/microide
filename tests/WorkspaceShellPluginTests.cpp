@@ -2,7 +2,11 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StringUtil.h"
+#include "workspace/WorkspaceLspClient.h"
+#include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceShellTestAccess.h"
+
+#include <memory>
 
 #include <chrono>
 #include <cctype>
@@ -2337,6 +2341,69 @@ void TestWorkspaceShellProjectReactivationDoesNotReloadPlugins() {
          "ReloadPluginsForCurrentProject");
 }
 
+void TestWorkspaceShellProjectReactivationKeepsLanguageServerWarm() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_a = temp_dir.path() / "project-a";
+  const std::filesystem::path project_b = temp_dir.path() / "project-b";
+  WriteFile(project_a / "README.md", "alpha\n");
+  WriteFile(project_b / "README.md", "beta\n");
+
+  // A plugin that contributes a language server for a synthetic language id. The
+  // command is never spawned: the server is registered lazily (eager_start=false)
+  // and the test injects a warm stub client instead of starting the process.
+  WritePluginInit(
+      plugins_root, "warmlsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "warmlsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({
+      id = "warmlsp.server",
+      language_id = "warmlang",
+      command = { "warmlsp-server" },
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
+         "warm-LSP fixture should open the first project");
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("warmlang"),
+         "the plugin's language server should be registered on first activation");
+
+  // Attach a warm stub client to the already-registered entry without disturbing
+  // its registration params, then capture its identity.
+  auto warm_client = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const warm_raw = warm_client.get();
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("warmlang", std::move(warm_client)),
+         "warm-LSP fixture should attach a stub client to the registered server");
+
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
+         "warm-LSP fixture should open the second project (tearing down the host)");
+
+  Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
+         "warm-LSP fixture should switch back to the first project");
+
+  // Regression: before the fix, reactivation rebuilt the LSP registry against the
+  // torn-down host and BeginShutdownServersNotIn({}) erased this entry, surfacing
+  // "No LSP server".
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("warmlang"),
+         "switching back must keep the project's language server registered");
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("warmlang") ==
+             warm_raw,
+         "switching back must retain the SAME warm client instance (no restart/re-index)");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
@@ -2404,6 +2471,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginSidebarPersistsAcrossProjectSwitches);
   AddTest(tests, "WorkspaceShell/ProjectReactivationDoesNotReloadPlugins",
           TestWorkspaceShellProjectReactivationDoesNotReloadPlugins);
+  AddTest(tests, "WorkspaceShell/ProjectReactivationKeepsLanguageServerWarm",
+          TestWorkspaceShellProjectReactivationKeepsLanguageServerWarm);
 }
 
 }  // namespace microide::tests

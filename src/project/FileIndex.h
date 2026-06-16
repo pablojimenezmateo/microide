@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -54,7 +55,13 @@ class FileIndex {
                RootPopulationMode population_mode = RootPopulationMode::ScanNow);
   void Reset();
   void Refresh();
-  bool ApplyBatch(const platform::IndexUpdateBatch& batch);
+  // Applies an index update batch. For the initial full-scan batch (the only
+  // expensive case), `is_cancelled` is polled during the bulk rebuild; if it
+  // returns true the rebuild aborts before committing, leaving the index
+  // unchanged and returning false. This lets a teardown (StopFileIndexWatcher)
+  // abandon an in-flight initial load instead of blocking on it.
+  bool ApplyBatch(const platform::IndexUpdateBatch& batch,
+                  const std::function<bool()>& is_cancelled = {});
   std::vector<ProjectFile> Snapshot() const;
   FileIndexSnapshot SnapshotWithVersion() const;
   FilePathSnapshot SnapshotPathsWithVersion(
