@@ -112,6 +112,55 @@ void TestTerminalSessionDeleteLineRespectsScrollRegion() {
   ExpectLineText(lines, 3, "", "delete line should blank-fill the freed bottom-margin row");
 }
 
+void TestTerminalSessionAlternateScreenPreservesPrimaryScrollback() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+
+  // Build a primary scrollback deeper than the viewport so the enter/exit path
+  // exercises a non-trivial line buffer (this is the buffer the move-based swap
+  // must hand back intact).
+  TerminalSessionTestAccess::AppendOutput(session, "P0\nP1\nP2\nP3\nP4\nP5");
+  const auto primary_before = session.SnapshotLines();
+  Expect(primary_before.size() == 6,
+         "primary screen should accumulate scrollback beyond the viewport");
+
+  // Enter the alternate screen (mode 1049 clears it) and draw distinct content.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049h\x1b[HALT");
+  ExpectLineText(session.SnapshotLines(), 0, "ALT",
+                 "alternate screen should show its own content after entering");
+
+  // Leaving the alternate screen must restore the primary scrollback verbatim.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1049l");
+  const auto primary_after = session.SnapshotLines();
+  Expect(primary_after.size() == primary_before.size(),
+         "exiting the alternate screen should restore the full primary scrollback");
+  for (std::size_t row = 0; row < primary_before.size(); ++row) {
+    Expect(LineText(primary_after[row]) == LineText(primary_before[row]),
+           "exiting the alternate screen should restore primary content byte-for-byte");
+  }
+  Expect(session.cursor_row() == 5 && session.cursor_column() == 2,
+         "mode 1049 should restore the saved primary cursor on exit");
+}
+
+void TestTerminalSessionAlternateScreenReentryPreservesAltContent() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+  TerminalSessionTestAccess::AppendOutput(session, "primary");
+
+  // Enter the alternate screen without clearing (mode 1047) and draw content.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1047h\x1b[HALTX");
+  ExpectLineText(session.SnapshotLines(), 0, "ALTX",
+                 "alternate screen should hold drawn content");
+
+  // Leave and re-enter without clearing: prior alternate content must survive.
+  // The move-based swap empties the backing store on restore, so re-entry must
+  // not mistake that for an uninitialized screen and clear it.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1047l");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1047h");
+  ExpectLineText(session.SnapshotLines(), 0, "ALTX",
+                 "re-entering the alternate screen should restore prior content");
+}
+
 void TestTerminalSessionPasteUsesBracketedPasteWhenEnabled() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1180,6 +1229,10 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalMouseEncodingUsesExactByteSequences);
   AddTest(tests, "TerminalSession/SessionMouseEncodingExactByteSequences",
           TestTerminalSessionMouseEncodingUsesExactByteSequences);
+  AddTest(tests, "TerminalSession/AlternateScreenPreservesPrimaryScrollback",
+          TestTerminalSessionAlternateScreenPreservesPrimaryScrollback);
+  AddTest(tests, "TerminalSession/AlternateScreenReentryPreservesAltContent",
+          TestTerminalSessionAlternateScreenReentryPreservesAltContent);
   AddTest(tests, "TerminalSession/AltScreenResizeClampsCursorRows",
           TestTerminalSessionAltScreenResizeClampsCursorRows);
   AddTest(tests, "TerminalSession/ResizeTrimScrollbackClampsSavedCursor",

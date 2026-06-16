@@ -547,6 +547,27 @@ void RegisterBuiltInScenarios() {
           },
   });
   PerfHarness::RegisterScenario(Scenario{
+      .name = "terminal_alt_screen_toggle",
+      .smoke = false,
+      .run =
+          [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.PumpFrames(2);
+            // Fill a deep primary scrollback, then toggle the alternate screen
+            // many times. Each toggle enters + exits, which previously deep-copied
+            // the full primary scrollback twice; this scenario surfaces that cost
+            // (and confirms the move-based swap that replaced it).
+            context.Measure("terminal.open", [&]() {
+              context.OpenTerminal(
+                  "bash -lc 'for i in $(seq 2000); do echo alt-screen-scrollback-line $i; "
+                  "done; for i in $(seq 200); do printf \"\\033[?1049h\\033[?1049l\"; done'");
+            });
+            context.Measure("terminal.alt_toggle_burst",
+                            [&]() { context.Wait(std::chrono::milliseconds(400)); });
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
       .name = "long_soak_8h",
       .smoke = false,
       .run =

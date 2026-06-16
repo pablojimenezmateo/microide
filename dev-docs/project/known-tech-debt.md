@@ -1237,22 +1237,59 @@ CSI-parser fuzzer clean; the app launches and renders.
   one draw call for N per string and could regress draw-call-bound frames. **Measure against
   `dev-docs/performance/perf-harness.md` scroll/typing scenarios before attempting** — do not
   commit on intuition.
-- **`terminal` escape-file decomposition (T3).** `TerminalSessionEscape.cpp` (~750 lines) is a flat
-  dispatch monolith (SGR / CSI `switch(final)` / OSC / private-mode). Splitting into
-  `TerminalSessionSgr/Csi/Osc/Modes.cpp` is pure relayout with no behaviour change; deferred
-  because it is high-churn code-movement on a hand-written parser whose only guard is the test
-  suite, the file is under no enforced cap, and the correctness fixes landed without needing it.
-- **`terminal` alt-screen scrollback copy (T5a).** `SaveActiveScreenLocked` does `screen.lines =
-  lines_` — a full deque copy of the primary scrollback on every alternate-screen enter (frequent:
-  vim/less/fzf). Consider move/visible-region-only. **Add a `terminal_alt_screen_toggle` perf
-  scenario and measure before changing.**
-- **Full terminal session-output fuzzer.** This pass added a self-contained `TerminalCsiParserFuzz`
-  (covers the tokenizer touched by T4). A fuzzer driving `AppendOutputLocked` directly (covering
-  the T1/T2 state machine) would have higher ROI but needs the whole terminal + platform + render +
-  SDL stack wired into a standalone target via `TerminalSessionTestAccess`. The T1/T2 paths are
-  covered by targeted unit tests in the meantime.
+- (T3, T5a, and the terminal session-output fuzzer were closed on 2026-06-16; see §26.)
 - **`app` headless lifecycle test (A2 follow-up).** The `quick_exit_on_shutdown` seam was added so
   `Initialize()`/`Shutdown()` can run in-process, but a dedicated headless ASAN lifecycle test was
   not written: the software renderer the tests use cannot exercise the real renderer's render-target
   texture path, and `Initialize`/`Shutdown` are private. Validated teardown via a live ASAN app run
   instead. A future test would need a render-target-capable headless renderer or a friend/test seam.
+
+## 26. 2026-06-16 Terminal deferred-debt closeout (T3, T5a, output fuzzer)
+
+Closed the three terminal items deferred from §25. Goal priority: speed > correctness >
+footprint.
+
+### Fixed in this pass (with regression coverage)
+
+- **alt-screen scrollback copy (T5a).** `SaveActiveScreenLocked` used to `screen.lines = lines_`
+  — a full `std::deque<TerminalLine>` copy of the primary scrollback (up to ~2000 lines, worst
+  case multi-MB) on every alternate-screen enter, with the symmetric copy back on exit. Both fire
+  whenever a TUI app (vim/less/fzf/tmux) starts or stops. The two screen buffers are never live
+  simultaneously, so the transition is now a buffer **move/swap**, not a copy:
+  `SaveActiveScreenMetadataLocked` persists only the cheap cursor/scroll-region scalars;
+  `SetAlternateScreenLocked` hands the active grid to its backing store via `std::move` and
+  `RestoreSavedScreenLocked` moves the target buffer into `lines_`. Each enter/exit drops from
+  O(scrollback) cell copies to O(1) moves + scalar copies. Behaviour is identical (content,
+  cursor, scroll region, snapshot generation, modes 47/1047/1048/1049). The one subtlety: the
+  move empties the backing store, so the "alternate screen never initialized" check (which keyed
+  on `alternate_screen_.lines.empty()`) is now captured *before* the move into a `should_clear`
+  flag — otherwise mode 47/1047 re-entry would wrongly clear restored content. New tests:
+  `TerminalSession/AlternateScreenPreservesPrimaryScrollback` (1049 round-trip restores primary
+  scrollback + cursor byte-for-byte) and `AlternateScreenReentryPreservesAltContent` (1047
+  re-entry restores prior alternate content). A `terminal_alt_screen_toggle` perf scenario
+  (`tests/perf/PerfMain.cpp`) fills a deep scrollback then toggles the alternate screen 200×,
+  surfacing the path that previously deep-copied twice per toggle.
+- **escape-file decomposition (T3).** The 732-line `TerminalSessionEscape.cpp` monolith split by
+  sequence family into `TerminalSessionCsi.cpp` (the `switch(final)` CSI dispatcher),
+  `TerminalSessionSgr.cpp` (SGR styling + extended-colour parsing), `TerminalSessionOsc.cpp`
+  (title / cwd / colour-query handling), and `TerminalSessionModes.cpp` (DEC private modes +
+  Kitty keyboard + DECRQM). All handlers stay `TerminalSession` members; the only cross-TU seam
+  is `detail::ApplySgrParameters`, declared in the new internal header
+  `src/terminal/TerminalSessionEscapeInternal.h` and called by the CSI dispatcher. Pure
+  relayout, no behaviour change — the existing `TerminalSessionTests` pass unchanged. The
+  architecture-lint allowlist (`tests/architecture/TerminalArchitectureRules.cpp`,
+  `CheckTerminalSessionSplitTranslationUnits`) was updated to name the four new TUs.
+- **full terminal session-output fuzzer.** New `tests/fuzz/TerminalSessionOutputFuzz.cpp` drives
+  `AppendOutputLocked` end-to-end (the T1/T2 state machine, UTF-8 decoder, glyph placement,
+  scrollback, alternate-screen swaps, and every escape/OSC/private-mode handler) via the existing
+  `TerminalSessionTestAccess::AppendOutput` seam — broader coverage than the CSI-only
+  `TerminalCsiParserFuzz`. Wired under `MICROIDE_FUZZ` with `MICROIDE_TESTING=1` (mandatory: the
+  test-access seam and `TerminalSession`'s class layout must agree across every TU or it is an ODR
+  mismatch) and the full terminal + `platform/TerminalBackend` + `render/AnsiPalette` + util link
+  closure. Seed corpus in `tests/fuzz/corpora/TerminalSessionOutputFuzz/` covers plain text, SGR,
+  cursor/erase, OSC, mode toggles, DCS/APC string payloads, mixed/invalid UTF-8, and overflow
+  parameters.
+
+Validated: full `ctest` green (incl. ArchitectureInvariants); ASAN preset green; the fuzz harness
+body compiled with GCC+ASAN/UBSAN and run clean over the seed corpus plus 80 randomized inputs
+(the libFuzzer build itself requires clang, run in CI).
