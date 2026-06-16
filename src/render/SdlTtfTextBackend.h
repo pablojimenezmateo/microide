@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/AsciiGlyphAtlas.h"
 #include "render/TextRendererBackend.h"
 
 #if MICROIDE_HAS_SDL3_TTF
@@ -102,10 +103,8 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void CloseFonts();
   void LoadFallbackFonts();
   bool CanUseFastAscii(std::string_view text) const;
+  void EnsureAsciiAtlas();
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
-  void ClearAsciiGlyphSurfaces();
-  SDL_Surface* ResolveAsciiGlyphSurface(char ch, SDL_Color color);
-  static std::uint64_t PackAsciiGlyphCacheKey(char ch, SDL_Color color);
   CacheEntry* ResolveEntry(std::string_view text, SDL_Color color);
 
   SDL_Renderer* renderer_ = nullptr;
@@ -121,12 +120,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual> cache_;
   std::list<CacheKey> cache_order_;
 
-  struct AsciiGlyphSurfaceEntry {
-    SDL_Surface* surface = nullptr;
-    std::list<std::uint64_t>::iterator order;
-  };
-  std::unordered_map<std::uint64_t, AsciiGlyphSurfaceEntry> ascii_glyph_surfaces_;
-  std::list<std::uint64_t> ascii_glyph_surface_order_;
+  // Colour-independent coverage atlas for ASCII composites. Built lazily on the
+  // first ASCII miss and rebuilt (via ClearCache) when the font size changes.
+  std::unique_ptr<AsciiGlyphAtlas> ascii_atlas_;
 };
 
 }  // namespace microide::render

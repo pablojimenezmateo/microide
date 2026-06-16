@@ -12,6 +12,8 @@ Updated 2026-05-20 with item #16 phase-1-through-3 progress (companion cap 51→
 Updated 2026-05-20 with scoped async tree git-status refresh (status-only automatic
 refreshes, first-paint tree badges, full refresh on Git sidebar open) and the new
 large-file / compare / merge perf gates that close items 5 and 17.3.
+Updated 2026-06-16 with the shipped colour-independent ASCII coverage atlas — the
+composite-on-miss shape §13 endorses, distinct from the rejected GPU/geometry variant.
 
 This document records the meaningful debt that remains after commit `0aa44cb`
 (`Fix shared diff/search paths and active editor state`).
@@ -701,6 +703,38 @@ is happy with — not the per-quad geometry approach attempted here.
 The OpenSpec record of the experiment is kept at
 `openspec/changes/text-renderer-glyph-atlas/` for archaeological purposes
 only. It is rejected; **do not apply**.
+
+### What shipped instead (2026-06-16): coverage atlas on the composite-on-miss path
+
+The rejection above is specifically about the **GPU / per-quad
+`SDL_RenderGeometry`** variant on the draw path. The doc's endorsed alternative
+("reuse atlas data to build a composite string texture on cache miss") was
+implemented on 2026-06-16 and is **not** the rejected design:
+
+- `src/render/AsciiGlyphAtlas.{h,cpp}` holds one **colour-independent** white
+  coverage atlas (printable ASCII `0x20..0x7E`), built lazily and rebuilt only on
+  font-size change. `SdlTtfTextBackend::BuildAsciiCompositeSurface` blits glyphs
+  from atlas sub-rects, tinting via `SDL_SetSurfaceColorMod`, to assemble the same
+  composite string surface as before.
+- The **hit path is byte-identical**: still one `SDL_RenderTexture` per cached
+  `(text, colour)` string. The gated steady-state paint scenarios (>99% composite
+  hit rate) never enter the miss path, so they do not move — the software perf
+  gate stays green. This satisfies precondition #1's intent by *not* using an
+  atlas on the software draw path at all.
+- The win is on the **miss path** and in **footprint**: the previous per-`(char,
+  colour)` glyph-surface cache (512-entry LRU) re-rasterized the same glyph shape
+  once per syntax colour and churned under multi-colour highlighting. The single
+  colour-independent atlas removes that explosion (cold first paint, theme
+  switches, scrolling fresh content) and the LRU bookkeeping.
+- Pixel-identity is regression-guarded:
+  `tests/TextRendererTests.cpp::TestAsciiGlyphAtlasMatchesPerColorRendering`
+  asserts a tinted atlas blit is 0-pixel-diff vs a direct `TTF_RenderText_Blended`
+  render across multiple colours; `...CoversPrintableRange` guards coverage.
+- Opaque colours only; translucent text (`a != 255`) keeps the exact whole-string
+  `TTF_RenderText_Blended` fallback in `ResolveEntry`.
+
+The §13 preconditions still gate any return to a **draw-path** atlas
+(`SDL_RenderGeometry`/GPU). They do not apply to this miss-path coverage atlas.
 
 ## 14. Split `document_->layout_revision` Into Tiered Revisions
 
