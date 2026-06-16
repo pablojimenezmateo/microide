@@ -6,6 +6,7 @@
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"

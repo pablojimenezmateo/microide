@@ -20,6 +20,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::CompareHead, "", "", "Compare Against HEAD", ""},
       ActionSpec{ActionId::Merge, "merge", "merge <base> <incoming> <current> [output]",
                  "Merge Editor", ""},
+      ActionSpec{ActionId::ShowInFileExplorer, "", "", "Show in File Explorer", ""},
       ActionSpec{ActionId::CopyAbsolutePath, "", "", "Copy Absolute Path", ""},
       ActionSpec{ActionId::CopyRelativePath, "", "", "Copy Relative Path", ""},
       ActionSpec{ActionId::CreateDirectory, "", "", "New Folder...", ""},

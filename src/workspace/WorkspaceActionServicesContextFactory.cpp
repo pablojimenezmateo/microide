@@ -112,6 +112,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .write_clipboard_text = [this](std::string_view text) { return WriteClipboardText(text); },
           .write_primary_selection_text =
               [this](std::string_view text) { return WritePrimarySelectionText(text); },
+          .reveal_path_in_file_explorer =
+              [this](const std::filesystem::path& dir) { return RevealPathInFileExplorer(dir); },
           .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
           .dismiss_overlay = [this]() { DismissOverlay(); },

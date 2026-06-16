@@ -59,6 +59,16 @@
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::CopyAbsolutePath, {}, WorkspaceShell::ActionSource::Menu);
   }
+  static void OpenTreeContextMenuForPath(WorkspaceShell& shell,
+                                         TreeContextTargetKind target,
+                                         const std::filesystem::path& path) {
+    shell.MakeMenuCoordinator().OpenTreeContextMenu(target, path, SDL_FRect{0, 0, 0, 0});
+  }
+  static bool ExecuteShowInFileExplorer(WorkspaceShell& shell) {
+    return ActionCoordinator(shell.MakeActionContext()).Execute(
+        WorkspaceShell::ActionId::ShowInFileExplorer, {},
+        WorkspaceShell::ActionSource::ContextMenu);
+  }
   static bool ExecutePasteClipboard(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::PasteClipboard, {}, WorkspaceShell::ActionSource::Menu);

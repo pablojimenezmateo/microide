@@ -390,6 +390,11 @@
                                    std::function<bool(std::string_view)> opener) {
     shell.external_url_opener_ = std::move(opener);
   }
+  static void SetFileManagerOpener(
+      WorkspaceShell& shell,
+      std::function<bool(const std::filesystem::path&)> opener) {
+    shell.file_manager_opener_ = std::move(opener);
+  }
   static void SetProjectOpenDialogLauncher(
       WorkspaceShell& shell,
       std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {

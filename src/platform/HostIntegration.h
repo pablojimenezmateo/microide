@@ -12,6 +12,8 @@ struct HostIntegrationResult {
 };
 
 HostIntegrationResult OpenUrl(std::string_view url);
-HostIntegrationResult RevealPath(const std::filesystem::path& path);
+
+// Opens the OS file manager at the given directory (Linux: `xdg-open`).
+HostIntegrationResult OpenPathInFileManager(const std::filesystem::path& directory);
 
 }  // namespace microide::platform

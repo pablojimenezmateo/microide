@@ -56,6 +56,7 @@ class WorkspaceActionContext {
         open_prompt_surface;
     std::function<bool(std::string_view)> write_clipboard_text;
     std::function<bool(std::string_view)> write_primary_selection_text;
+    std::function<bool(const std::filesystem::path&)> reveal_path_in_file_explorer;
     std::function<void(std::string)> open_terminal;
     std::function<void(OverlayMode)> show_overlay;
     std::function<void()> dismiss_overlay;
@@ -204,6 +205,7 @@ class WorkspaceActionContext {
   void OpenDeletePathPrompt(const std::filesystem::path& path);
   bool WriteClipboardText(std::string_view text) const;
   bool WritePrimarySelectionText(std::string_view text) const;
+  bool RevealPathInFileExplorer(const std::filesystem::path& directory) const;
 
   void OpenTerminal(std::string command);
   void ShowFileFinderWithQuery(std::string query);

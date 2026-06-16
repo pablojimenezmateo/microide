@@ -258,6 +258,16 @@ bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {
   return platform::OpenUrl(url).ok;
 }
 
+bool WorkspaceShell::RevealPathInFileExplorer(const std::filesystem::path& directory) const {
+  if (directory.empty()) {
+    return false;
+  }
+  if (file_manager_opener_) {
+    return file_manager_opener_(directory);
+  }
+  return platform::OpenPathInFileManager(directory).ok;
+}
+
 void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
                                              std::size_t line_count,
                                              int visible_rows) {

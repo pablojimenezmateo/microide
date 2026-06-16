@@ -237,6 +237,7 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::RenamePath),
       MenuItem(ActionId::DeletePath),
       MenuSeparator(),
+      MenuItem(ActionId::ShowInFileExplorer),
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),
   });
@@ -249,6 +250,7 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuSeparator(),
       MenuItem(ActionId::TreeRefresh, "Refresh"),
       MenuSeparator(),
+      MenuItem(ActionId::ShowInFileExplorer),
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),
   });
