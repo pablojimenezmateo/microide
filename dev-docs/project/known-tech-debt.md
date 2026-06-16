@@ -1231,12 +1231,14 @@ CSI-parser fuzzer clean; the app launches and renders.
 
 ### Deferred — verified, still open (next pass)
 
-- **`render` glyph-cell atlas (R5a).** The text backend still allocates a per-(string,color)
-  composite surface + texture on cache miss (one texture per unique string, 4096-entry LRU). A
-  single-atlas-texture draw path could cut texture count and miss-path allocation, but it trades
-  one draw call for N per string and could regress draw-call-bound frames. **Measure against
-  `dev-docs/performance/perf-harness.md` scroll/typing scenarios before attempting** — do not
-  commit on intuition.
+- (R5a `render` glyph-cell atlas was addressed on 2026-06-16 by the colour-independent coverage
+  atlas on the composite-on-miss path — commit `26246233`, `src/render/AsciiGlyphAtlas.{h,cpp}`;
+  see §13 "What shipped instead". That shipment removes the per-(char,colour) miss-path
+  re-rasterization R5a targeted and keeps the one-`SDL_RenderTexture`-per-string draw shape the
+  software renderer is happy with. The remaining single-atlas-texture *draw path* R5a sketched
+  stays rejected and gated by the §13 preconditions — GPU backend, >10% steady-state
+  texture-cache miss rate, and `BuildAsciiCompositeSurface` in the top-3 hotspots — none of which
+  hold today.)
 - (T3, T5a, and the terminal session-output fuzzer were closed on 2026-06-16; see §26.)
 - **`app` headless lifecycle test (A2 follow-up).** The `quick_exit_on_shutdown` seam was added so
   `Initialize()`/`Shutdown()` can run in-process, but a dedicated headless ASAN lifecycle test was
