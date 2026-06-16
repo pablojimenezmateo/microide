@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [1.2.0] - 2026-06-16
+
+Builds on 1.1.1 with a per-plugin capability sandbox, kernel-confined language servers, a
+color-independent glyph-cell render path, and a round of cross-subsystem correctness and footprint
+work.
+
+### Plugins
+- Enforce a per-plugin capability sandbox so contributed code runs against an explicit grant set.
+- Kernel-confine contributed language-server processes.
+
+### Rendering
+- Add a color-independent ASCII glyph-cell atlas on the composite-on-miss path.
+
+### Terminal
+- Close deferred terminal debt: T3 split, T5a move-swap, and an output fuzzer.
+
+### Internal
+- Deep pass: dedup, correctness, and footprint improvements across render, app, util, and terminal.
+- Add a headless Initialize/Render/Shutdown app lifecycle test.
+- Docs: drop experimental status, retire the Git Workstation "Preview" naming, archive the
+  `expand-git-diff-merge-perf-gates` change, and close R5a glyph-cell atlas tech debt.
+
 ## [1.1.1] - 2026-06-15
 
 Incremental release building on 1.1.0: a centralized LSP backbone with more bundled language
