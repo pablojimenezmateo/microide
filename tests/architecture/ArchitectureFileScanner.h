@@ -14,6 +14,12 @@ std::filesystem::path RepoRoot();
 std::string ReadText(const std::filesystem::path& path);
 std::size_t LineNumberAt(std::string_view text, std::size_t offset);
 std::vector<bool> BuildCodeMask(std::string_view text);
+// Counts source lines of code: lines holding at least one real code byte.
+// Blank lines and comment-only lines are excluded (per BuildCodeMask); a line
+// with code plus a trailing comment still counts. This is the single counter
+// behind every architecture file-size cap.
+std::size_t CountCodeLines(std::string_view text);
+std::size_t CountCodeLinesInFile(const std::filesystem::path& path);
 bool MatchesCodeAt(std::string_view text,
                    const std::vector<bool>& is_code,
                    std::size_t pos,

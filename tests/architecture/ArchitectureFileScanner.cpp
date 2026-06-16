@@ -123,6 +123,34 @@ std::vector<bool> BuildCodeMask(std::string_view text) {
   return is_code;
 }
 
+std::size_t CountCodeLines(std::string_view text) {
+  const std::vector<bool> is_code = BuildCodeMask(text);
+  std::size_t count = 0;
+  bool line_has_code = false;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    const char c = text[i];
+    if (c == '\n') {
+      if (line_has_code) {
+        ++count;
+      }
+      line_has_code = false;
+      continue;
+    }
+    if (is_code[i] && !std::isspace(static_cast<unsigned char>(c))) {
+      line_has_code = true;
+    }
+  }
+  if (line_has_code) {
+    ++count;
+  }
+  return count;
+}
+
+std::size_t CountCodeLinesInFile(const std::filesystem::path& path) {
+  const std::string text = ReadText(path);
+  return CountCodeLines(std::string_view(text));
+}
+
 bool MatchesCodeAt(std::string_view text,
                    const std::vector<bool>& is_code,
                    std::size_t pos,

@@ -261,6 +261,22 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // Establish the dummy SDL video subsystem once, before any test runs. SDL's
+  // dummy driver derives the display content scale at video-init time; if any
+  // test emits an SDL_Log (e.g. the redraw-trace flush exercises production
+  // logging) before video is initialized, SDL's lazy-init path yields a 2x
+  // content scale. That stray scale makes the logical render size half the
+  // pixel output size, which disables the retained scene-texture path and fails
+  // Application/HeadlessRendersRetainedSceneFrame depending on test order.
+  // Initializing up front removes the order dependence on shared global state.
+  try {
+    microide::tests::EnsureDummySdlVideoInitialized();
+  } catch (const std::exception& error) {
+    std::cerr << "microide_tests: " << error.what() << '\n';
+    shutdown_sdl();
+    return 2;
+  }
+
   std::vector<microide::tests::TestCase> tests;
   microide::tests::RegisterTestRunnerCliTests(tests);
   microide::tests::RegisterWheelAccumulatorTests(tests);

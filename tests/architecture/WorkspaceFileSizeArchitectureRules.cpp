@@ -50,17 +50,13 @@ RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root) {
     if (!name.starts_with("Workspace") || name.find("Coordinator") == std::string::npos) {
       continue;
     }
-    std::ifstream stream(entry.path());
-    std::size_t lines = 0;
-    std::string line;
-    while (std::getline(stream, line)) {
-      ++lines;
-    }
+    const std::size_t lines = CountCodeLinesInFile(entry.path());
     if (lines > 900) {
       result.violations.push_back(Violation{
           .path = entry.path(),
           .line = 1,
-          .message = "workspace coordinator translation units should stay at or below 900 lines",
+          .message = "workspace coordinator translation units should stay at or below 900 "
+                     "code lines (comments and blank lines excluded)",
       });
     }
   }

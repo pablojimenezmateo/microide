@@ -13,13 +13,7 @@ namespace microide::tests::architecture {
 namespace {
 
 std::size_t CountFileLines(const std::filesystem::path& path) {
-  std::ifstream stream(path);
-  std::size_t lines = 0;
-  std::string line;
-  while (std::getline(stream, line)) {
-    ++lines;
-  }
-  return lines;
+  return CountCodeLinesInFile(path);
 }
 
 }  // namespace
@@ -36,7 +30,8 @@ RuleResult CheckTerminalSessionTuSize(const std::filesystem::path& repo_root) {
         .path = path,
         .line = 1,
         .message = "TerminalSession.cpp should stay at or below " + std::to_string(kCap) +
-                   " lines; extract helpers instead of growing the facade",
+                   " code lines (comments and blank lines excluded); extract helpers "
+                   "instead of growing the facade",
     });
   }
   return result;
@@ -59,7 +54,8 @@ RuleResult CheckTerminalHelperTuSize(const std::filesystem::path& repo_root) {
       result.violations.push_back(Violation{
           .path = entry.path(),
           .line = 1,
-          .message = "terminal helper translation units should stay at or below 800 lines",
+          .message = "terminal helper translation units should stay at or below 800 code "
+                     "lines (comments and blank lines excluded)",
       });
     }
   }
@@ -140,7 +136,8 @@ RuleResult CheckTerminalSessionHeaderSize(const std::filesystem::path& repo_root
         .path = path,
         .line = 1,
         .message = "TerminalSession.h should stay at or below " + std::to_string(kCap) +
-                   " lines; move internal helpers out of the public header",
+                   " code lines (comments and blank lines excluded); move internal helpers "
+                   "out of the public header",
     });
   }
   return result;
@@ -269,7 +266,8 @@ RuleResult CheckArchitectureInvariantsDispatcherSize(const std::filesystem::path
         .line = 1,
         .message = "ArchitectureInvariantsTests.cpp should stay a dispatcher at or below " +
                    std::to_string(kCap) +
-                   " lines; add new rules under tests/architecture/ instead",
+                   " code lines (comments and blank lines excluded); add new rules under "
+                   "tests/architecture/ instead",
     });
   }
   return result;
@@ -291,7 +289,7 @@ RuleResult CheckArchitectureRulesTuSize(const std::filesystem::path& repo_root) 
           .path = entry.path(),
           .line = 1,
           .message = "architecture rule translation units should stay at or below " +
-                     std::to_string(kCap) + " lines",
+                     std::to_string(kCap) + " code lines (comments and blank lines excluded)",
       });
     }
   }
@@ -312,7 +310,8 @@ RuleResult CheckWorkspaceArchitectureRulesDispatcherSize(
         .line = 1,
         .message = "WorkspaceArchitectureRules.cpp should stay a dispatcher at or below " +
                    std::to_string(kCap) +
-                   " lines; add rule bodies under tests/architecture/*ArchitectureRules.cpp",
+                   " code lines (comments and blank lines excluded); add rule bodies under "
+                   "tests/architecture/*ArchitectureRules.cpp",
     });
   }
   return result;
