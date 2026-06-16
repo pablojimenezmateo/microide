@@ -130,7 +130,10 @@ std::unordered_map<std::string, LanguageContract> BuildDefaults() {
   {
     LanguageContract c;
     c.language_id = "markdown";
-    c.bracket_pairs = {{"(", ")"}, {"[", "]"}, {"{", "}"}};
+    // Prose: parens/brackets routinely span lines, so bracket-based folding
+    // produces bogus fold markers on ordinary paragraphs. Leave this empty;
+    // markdown still folds on indentation (nested lists / indented blocks).
+    c.bracket_pairs = {};
     c.auto_close_pairs = {{"(", ")"}, {"[", "]"},
                           {"\"", "\""}, {"`", "`"}};
     c.surround_pairs = {{"(", ")"}, {"[", "]"},

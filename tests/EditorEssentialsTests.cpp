@@ -421,6 +421,16 @@ void TestLanguageContractDefaults() {
   Expect(!cpp->bracket_pairs.empty(),
          "cpp bracket pairs should be populated");
 
+  // Markdown is prose: parens/brackets routinely span lines, so bracket-based
+  // folding would emit bogus fold markers on ordinary paragraphs. The contract
+  // intentionally ships no fold-driving bracket pairs, but still auto-closes.
+  const auto* md = registry.Find("markdown");
+  Expect(md != nullptr, "markdown contract should exist by default");
+  Expect(md->bracket_pairs.empty(),
+         "markdown should not fold on brackets (prose parens span lines)");
+  Expect(!md->auto_close_pairs.empty(),
+         "markdown should still auto-close brackets despite no fold pairs");
+
   const auto* py = registry.Find("python");
   Expect(py != nullptr, "python contract should exist by default");
   Expect(py->line_comment == "#",
