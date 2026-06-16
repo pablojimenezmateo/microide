@@ -3,6 +3,28 @@
 Use this checklist when cutting a microide release tag (e.g. `v1.1.0`). Items assume Linux is the
 primary validated host unless release notes state otherwise.
 
+## Standard release procedure
+
+When a release is requested ("do a release", "cut a release", "release vX.Y.Z"), perform **all** of
+these steps in order. None is optional — every published release must carry the `.deb` and its
+checksum so users have a packaged install path.
+
+1. **Bump the version.** Update `project(microide VERSION ...)` in `CMakeLists.txt` and refresh the
+   `vX.Y.Z` references in `README.md`.
+2. **Update `CHANGELOG.md`.** Add a new dated section for the version with grouped changes derived
+   from `git log <previous-tag>..HEAD`.
+3. **Build.** `cmake -S . -B build && cmake --build build -j8`; confirm the new version is baked
+   into the binary.
+4. **Build the package.** From `build/`, run `cpack -G DEB` to produce `microide_X.Y.Z_amd64.deb`.
+5. **Generate the checksum.** `sha256sum microide_X.Y.Z_amd64.deb > microide_X.Y.Z_amd64.deb.sha256`.
+6. **Commit and tag.** Commit the version/changelog/README changes, create an annotated tag
+   `vX.Y.Z`, and push both `main` and the tag.
+7. **Create the GitHub release.** `gh release create vX.Y.Z` with notes summarizing scope,
+   limitations, and safe-startup flags.
+8. **Attach artifacts.** `gh release upload vX.Y.Z microide_X.Y.Z_amd64.deb microide_X.Y.Z_amd64.deb.sha256`.
+9. **Verify.** `gh release view vX.Y.Z --json assets` and confirm both the `.deb` and `.deb.sha256`
+   are listed.
+
 ## Pre-tag engineering
 
 - [ ] `ctest --test-dir build --output-on-failure` green on release configuration
