@@ -256,7 +256,10 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalSession.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalSessionOutput.cpp
-  src/terminal/TerminalSessionEscape.cpp
+  src/terminal/TerminalSessionCsi.cpp
+  src/terminal/TerminalSessionSgr.cpp
+  src/terminal/TerminalSessionOsc.cpp
+  src/terminal/TerminalSessionModes.cpp
   src/terminal/TerminalSessionInput.cpp
   src/terminal/TerminalSessionInputEncoding.cpp
   src/terminal/TerminalSessionScreen.cpp
@@ -719,6 +722,42 @@ if(MICROIDE_FUZZ)
     tests/fuzz/TerminalCsiParserFuzz.cpp
   )
   microide_configure_fuzz_target(TerminalCsiParserFuzz)
+
+  # Drives the full AppendOutputLocked state machine (T1/T2), so it needs the
+  # complete TerminalSession link closure: every terminal TU, the PTY backend,
+  # and the util helpers they call. MICROIDE_TESTING=1 is mandatory — the
+  # TerminalSessionTestAccess seam and TerminalSession's class layout
+  # (test_sent_bytes_) must agree across every TU or the access is an ODR
+  # mismatch.
+  add_executable(TerminalSessionOutputFuzz
+    src/terminal/TerminalSession.cpp
+    src/terminal/TerminalAnsiColors.cpp
+    src/terminal/TerminalSessionOutput.cpp
+    src/terminal/TerminalSessionCsi.cpp
+    src/terminal/TerminalSessionSgr.cpp
+    src/terminal/TerminalSessionOsc.cpp
+    src/terminal/TerminalSessionModes.cpp
+    src/terminal/TerminalSessionInput.cpp
+    src/terminal/TerminalSessionInputEncoding.cpp
+    src/terminal/TerminalSessionScreen.cpp
+    src/terminal/TerminalBase64.cpp
+    src/terminal/TerminalCsiParser.cpp
+    src/terminal/TerminalMouseEncoder.cpp
+    src/terminal/TerminalOscClipboard.cpp
+    src/terminal/TerminalProcessControl.cpp
+    src/platform/TerminalBackend.cpp
+    src/render/AnsiPalette.cpp
+    src/util/Parse.cpp
+    src/util/StringUtil.cpp
+    src/util/PerformanceCounters.cpp
+    src/util/PerformanceTrace.cpp
+    tests/fuzz/TerminalSessionOutputFuzz.cpp
+  )
+  target_compile_definitions(TerminalSessionOutputFuzz PRIVATE MICROIDE_TESTING=1)
+  if(NOT MICROIDE_SDL3_TARGET STREQUAL "")
+    target_link_libraries(TerminalSessionOutputFuzz PRIVATE ${MICROIDE_SDL3_TARGET})
+  endif()
+  microide_configure_fuzz_target(TerminalSessionOutputFuzz)
 endif()
 
 if(MICROIDE_PERF_HARNESS_BUILD)

@@ -40,9 +40,10 @@ void TerminalSession::RestoreCursorLocked() {
   MoveCursorLocked(saved_cursor_row_, saved_cursor_column_);
 }
 
-void TerminalSession::SaveActiveScreenLocked() {
-  ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
-  screen.lines = lines_;
+void TerminalSession::SaveActiveScreenMetadataLocked(ScreenState& screen) {
+  // Persist only the cheap scalar cursor / scroll-region state. The line buffer
+  // is handled separately by the caller so the alternate-screen transition can
+  // move the (potentially multi-MB) scrollback instead of copying it.
   screen.cursor_row = cursor_row_;
   screen.cursor_column = cursor_column_;
   screen.saved_cursor_row = saved_cursor_row_;
@@ -51,9 +52,23 @@ void TerminalSession::SaveActiveScreenLocked() {
   screen.scroll_region_bottom = scroll_region_bottom_;
 }
 
+void TerminalSession::SaveActiveScreenLocked() {
+  ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
+  screen.lines = lines_;
+  SaveActiveScreenMetadataLocked(screen);
+}
+
 void TerminalSession::RestoreSavedScreenLocked() {
-  const ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
-  lines_ = screen.lines.empty() ? std::deque<TerminalLine>{TerminalLine{}} : screen.lines;
+  // Move the saved buffer into the active grid: the backing store is only read
+  // here and is rewritten on the next alternate-screen enter, so there is never
+  // a second live reference to copy for. `SaveActiveScreenLocked`/`SetAlternate-
+  // ScreenLocked` are the sole callers (no aliasing concern).
+  ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
+  if (screen.lines.empty()) {
+    lines_ = std::deque<TerminalLine>{TerminalLine{}};
+  } else {
+    lines_ = std::move(screen.lines);
+  }
   pending_utf8_sequence_.clear();
   if (use_alternate_screen_) {
     lines_.resize(std::max<std::size_t>(1, rows_));
@@ -86,12 +101,25 @@ void TerminalSession::ResetScreenLocked(bool fill_rows) {
 
 void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
   if (enabled) {
-    SaveActiveScreenLocked();
+    bool should_clear = clear;
     if (!use_alternate_screen_) {
+      // Whether the alternate screen has never been initialized. Captured before
+      // the move below empties the backing store (the move replaces the copy the
+      // original implementation relied on to read this after the restore).
+      should_clear = should_clear || alternate_screen_.lines.empty();
+      // Hand the primary scrollback to its backing store by move (O(1)); the
+      // active grid is about to be replaced by the alternate buffer anyway.
+      SaveActiveScreenMetadataLocked(primary_screen_);
+      primary_screen_.lines = std::move(lines_);
       use_alternate_screen_ = true;
-      RestoreSavedScreenLocked();
+      RestoreSavedScreenLocked();  // moves alternate_screen_.lines into lines_
+    } else {
+      // Already on the alternate screen: a redundant enter. Snapshot the current
+      // alternate grid so a later restore sees the latest contents.
+      SaveActiveScreenLocked();
+      should_clear = should_clear || alternate_screen_.lines.empty();
     }
-    if (clear || alternate_screen_.lines.empty()) {
+    if (should_clear) {
       ResetScreenLocked(true);
       SaveActiveScreenLocked();
     }
@@ -102,9 +130,12 @@ void TerminalSession::SetAlternateScreenLocked(bool enabled, bool clear) {
     return;
   }
 
-  SaveActiveScreenLocked();
+  // Hand the alternate grid back to its store by move, then move the primary
+  // scrollback back into the active grid.
+  SaveActiveScreenMetadataLocked(alternate_screen_);
+  alternate_screen_.lines = std::move(lines_);
   use_alternate_screen_ = false;
-  RestoreSavedScreenLocked();
+  RestoreSavedScreenLocked();  // moves primary_screen_.lines into lines_
 }
 
 void TerminalSession::AdvanceCursorRowLocked(bool wrapped_from_previous) {

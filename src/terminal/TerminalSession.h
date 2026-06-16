@@ -213,6 +213,7 @@ class TerminalSession {
   void ScrollRegionDownLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void SaveCursorLocked();
   void RestoreCursorLocked();
+  void SaveActiveScreenMetadataLocked(ScreenState& screen);
   void SaveActiveScreenLocked();
   void RestoreSavedScreenLocked();
   void ResetScreenLocked(bool fill_rows);

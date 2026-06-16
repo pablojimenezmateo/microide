@@ -220,9 +220,15 @@ RuleResult CheckTerminalSessionSplitTranslationUnits(const std::filesystem::path
   RuleResult result;
   result.label = "TerminalSession split translation units stay named";
   result.hard_fail = true;
-  const std::array<std::string_view, 5> allowed = {
+  const std::array<std::string_view, 8> allowed = {
       "TerminalSessionOutput.cpp",
-      "TerminalSessionEscape.cpp",
+      // Escape handling is split by sequence family: CSI dispatch, SGR styling,
+      // OSC, and DEC private/keyboard modes (was the monolithic
+      // TerminalSessionEscape.cpp).
+      "TerminalSessionCsi.cpp",
+      "TerminalSessionSgr.cpp",
+      "TerminalSessionOsc.cpp",
+      "TerminalSessionModes.cpp",
       "TerminalSessionInput.cpp",
       "TerminalSessionScreen.cpp",
       "TerminalSessionInputEncoding.cpp",
