@@ -191,6 +191,34 @@ void TestTextViewportMoveClearsFoldingModelBinding() {
          "moved-from viewport must not keep collapsed-row layout state");
 }
 
+// Regression: markdown prose freely breaks parentheticals across lines. Those
+// must NOT produce bracket fold markers (the markdown contract ships no
+// fold-driving bracket pairs). Indent-based folds are still allowed.
+void TestMarkdownProseParensDoNotFold() {
+  TabEntry::EditorTabState editor_state = MakeFoldingEditorTab();
+  auto& viewport = editor_state.views.front().viewport;
+  // Each paragraph opens a paren that closes on the following line — exactly the
+  // open-questions.md shape that produced bogus fold markers.
+  viewport.LoadContent(
+      "## Heading\n"
+      "Which capabilities are subscription-only (Planner / Expert Modeler /\n"
+      "Operations / Decision Owner) across tiers?\n"
+      "When resolved, record the decision (ADR for engineering, a business\n"
+      "page for the rest) and append to the log.\n",
+      "/tmp/fold-markdown-prose.md");
+  viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
+
+  LanguageContract contract;
+  contract.language_id = "markdown";  // mirrors the default contract: no bracket pairs.
+
+  EnsureFoldingModelFresh(editor_state, viewport, &contract, 4, true, viewport.visible_lines());
+
+  for (const auto& range : editor_state.folding_model->ranges()) {
+    Expect(range.source != microide::editor::FoldSource::Bracket,
+           "markdown prose parentheticals must not emit bracket fold ranges");
+  }
+}
+
 void TestViewportEditExposesFoldAnchorLineForIncrementalRefresh() {
   TextViewport viewport;
   viewport.LoadContent("aa\nbb\ncc\ndd\n", "/tmp/fold-anchor.cpp");
@@ -218,6 +246,8 @@ void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
           TestViewportPartialBudgetCollapsedFoldStillOmitsHiddenRows);
   AddTest(tests, "EditorFolding/Viewport/EditExposesFoldAnchorForIncrementalRefresh",
           TestViewportEditExposesFoldAnchorLineForIncrementalRefresh);
+  AddTest(tests, "EditorFolding/Markdown/ProseParensDoNotFold",
+          TestMarkdownProseParensDoNotFold);
 }
 
 }  // namespace microide::tests
