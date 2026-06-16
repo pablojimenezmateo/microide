@@ -11,6 +11,13 @@
 #include "app/SceneTexturePresenter.h"
 #include "workspace/WorkspaceShell.h"
 
+namespace microide::tests {
+// Narrow headless-lifecycle test seam (see tests/ApplicationTests.cpp). Lets the
+// suite drive the private Initialize()/Render()/Shutdown() in-process under the
+// dummy SDL video driver so teardown can be verified under sanitizers.
+struct ApplicationTestAccess;
+}  // namespace microide::tests
+
 namespace microide::app {
 
 class Application {
@@ -24,6 +31,8 @@ class Application {
   int Run();
 
  private:
+  friend struct ::microide::tests::ApplicationTestAccess;
+
   bool Initialize();
   void Shutdown();
   workspace::WorkspaceShell::EventResult HandleEvent(const SDL_Event& event);

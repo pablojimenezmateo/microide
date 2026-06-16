@@ -1240,11 +1240,11 @@ CSI-parser fuzzer clean; the app launches and renders.
   texture-cache miss rate, and `BuildAsciiCompositeSurface` in the top-3 hotspots — none of which
   hold today.)
 - (T3, T5a, and the terminal session-output fuzzer were closed on 2026-06-16; see §26.)
-- **`app` headless lifecycle test (A2 follow-up).** The `quick_exit_on_shutdown` seam was added so
-  `Initialize()`/`Shutdown()` can run in-process, but a dedicated headless ASAN lifecycle test was
-  not written: the software renderer the tests use cannot exercise the real renderer's render-target
-  texture path, and `Initialize`/`Shutdown` are private. Validated teardown via a live ASAN app run
-  instead. A future test would need a render-target-capable headless renderer or a friend/test seam.
+- (The `app` headless lifecycle test (A2 follow-up) was closed on 2026-06-16; see §27. The
+  premise that the headless software renderer cannot drive the render-target texture path turned
+  out to be false — the window-backed software renderer the dummy video driver hands to
+  `SDL_CreateRenderer` *does* support `SDL_TEXTUREACCESS_TARGET` — so the test runs the real
+  retained-scene path through a narrow friend seam.)
 
 ## 26. 2026-06-16 Terminal deferred-debt closeout (T3, T5a, output fuzzer)
 
@@ -1295,3 +1295,56 @@ footprint.
 Validated: full `ctest` green (incl. ArchitectureInvariants); ASAN preset green; the fuzz harness
 body compiled with GCC+ASAN/UBSAN and run clean over the seed corpus plus 80 randomized inputs
 (the libFuzzer build itself requires clang, run in CI).
+
+## 27. 2026-06-16 `app` headless lifecycle test (A2 follow-up closeout)
+
+Closed the last item deferred from §A2: a real in-process `Application` lifecycle test. The two
+blockers recorded in the deferred note both dissolved on inspection:
+
+- **"the software renderer cannot exercise the render-target texture path."** This was an
+  untested assumption. The renderer the tests bring up via the pixel oracles is
+  `SDL_CreateSoftwareRenderer(surface)`, which indeed has no render targets — but that is *not*
+  the renderer `Application` uses. Under the dummy video driver `SDL_CreateRenderer(window,
+  nullptr)` returns the **window-backed** software renderer, and a probe confirmed it accepts
+  `SDL_CreateTexture(..., SDL_TEXTUREACCESS_TARGET, ...)` and `SDL_SetRenderTarget`. So the real
+  `SceneTexturePresenter`/retained-scene path runs headless unchanged.
+- **"`Initialize`/`Shutdown` are private."** Resolved with a narrow friend seam,
+  `microide::tests::ApplicationTestAccess` (forward-declared in `src/app/Application.h`, mirroring
+  the existing `render::TextRendererTestAccess` idiom — friends are only banned in
+  `src/workspace/*`). It exposes `Initialize()`/`Render()`/`Shutdown()` plus read-only lifecycle
+  accessors.
+
+### Fixed in this pass (with regression coverage)
+
+- **`Shutdown()` left lifecycle state stale.** `Application::Shutdown()` destroyed the window and
+  renderer but never reset `initialized_`, so it was neither idempotent nor re-initializable
+  in-process — a second `Shutdown()` would re-run teardown on freed handles, and a subsequent
+  `Initialize()` early-returned `true` without rebuilding anything. Production masked this because
+  the only caller path is `quick_exit(0)` or a single destructor. `Shutdown()` now clears
+  `initialized_`/`first_render_complete_` and re-arms `presentation_state_dirty_` after the
+  workspace shutdown, before the `quick_exit` gate. Caught directly by the new idempotency /
+  re-init tests.
+
+### Tests added (`tests/ApplicationTests.cpp`)
+
+- `Application/HeadlessInitializeAndShutdownTearsDownCleanly` — full `Initialize()` →
+  `Shutdown()` with `quick_exit_on_shutdown=false`, asserting the window/renderer are created then
+  destroyed-and-nulled and that a second `Shutdown()` is a clean no-op.
+- `Application/HeadlessRendersRetainedSceneFrame` — opens a temp project, renders a full frame
+  (validating the retained scene render-target texture) then a partial dirty-rect frame (keeping it
+  valid), then shuts down.
+- `Application/HeadlessReinitializeAfterShutdown` — two init/render/shutdown cycles on one
+  `Application` to lock in the re-init fix.
+- `Application/HeadlessDestructorShutsDownInitializedApp` — initializes then lets `~Application()`
+  drive teardown and join the syntax-warmup thread, so ASAN/TSAN flag a leaked handle or unjoined
+  worker.
+
+All four redirect `HOME`/`XDG_CONFIG_HOME`/`XDG_STATE_HOME` (plus the Windows `APPDATA`/
+`LOCALAPPDATA` equivalents) into a `TemporaryDirectory` so the headless run never touches the
+developer profile, and run `safe_mode`/`disable_plugins` to keep the Lua runtime out of the path.
+`src/app/Application.cpp` and `src/app/SceneTexturePresenter.cpp` were added to the
+`microide_tests` target to link the real lifecycle code.
+
+Validated: full `ctest` green; the four new tests pass under ASAN. The dummy driver logs a benign
+`SDL_SetWindowHitTest failed: That operation is not supported` per `Initialize()` (headless
+hit-testing is unsupported); `Initialize()` ignores that result, so it is noise, not a failure.

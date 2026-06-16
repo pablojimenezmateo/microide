@@ -342,6 +342,13 @@ void Application::Shutdown() {
 
   workspace_shell_.Shutdown();
 
+  // Reset lifecycle state so the destructor and any second Shutdown() are clean
+  // no-ops, and so an in-process Initialize()/Shutdown() cycle (headless tests)
+  // rebuilds presentation state instead of trusting the prior renderer's cache.
+  initialized_ = false;
+  first_render_complete_ = false;
+  presentation_state_dirty_ = true;
+
   // All user state has been saved. Exit immediately rather than waiting for
   // destructor chains (terminal sessions, background thread joins, etc.).
   // The OS reclaims all child processes and resources. Tests disable this so
