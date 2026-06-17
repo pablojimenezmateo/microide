@@ -211,6 +211,33 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
+  if (state_.panel.content == PanelContentKind::Debug) {
+    DebugExecutionView& exec = state_.debug_execution;
+    if (!exec.frames.empty()) {
+      const auto panel_layout =
+          operations_.compute_bottom_panel_log_layout(layout, exec.frames.size());
+      if (Contains(panel_layout.content_rect, event.button.x, event.button.y)) {
+        const auto line_index = BottomPanelLineIndexAtPoint(
+            panel_layout, static_cast<float>(event.button.y), exec.frames.size());
+        if (line_index.has_value() && *line_index < exec.frames.size()) {
+          // Focus the picked frame; the editor execution-line highlight follows
+          // `focused_frame_index`, so selecting a caller moves the highlight too.
+          exec.focused_frame_index = *line_index;
+          const DebugStackFrameView& frame = exec.frames[*line_index];
+          if (!frame.source_path.empty()) {
+            operations_.open_file(frame.source_path);
+            if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+                viewport != nullptr) {
+              viewport->MoveCursorTo(frame.line, 0);
+            }
+            state_.surface.focus = FocusTarget::Editor;
+          }
+          return true;
+        }
+      }
+    }
+  }
+
   if (state_.panel.command_mode) {
     state_.surface.focus = FocusTarget::Panel;
   } else if (state_.panel.content != PanelContentKind::None) {

@@ -140,13 +140,27 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
   return {};
 }
 
-void WorkspaceShell::StopDebugging() { debug_service_.StopDebugging(); }
+void WorkspaceShell::StopDebugging() {
+  debug_service_.StopDebugging();
+  CloseDebugPanel(context_.current_project_state);
+  RequestBottomPanelRedraw();
+}
 
 void WorkspaceShell::ResendBreakpointsForFile(const std::filesystem::path& path) {
   debug_service_.ResendBreakpointsForFile(path);
 }
 
 bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSessionActive(); }
+
+bool WorkspaceShell::IsDebugSessionStopped() const {
+  return debug_service_.SessionState() == DebugSession::State::Stopped;
+}
+
+void WorkspaceShell::DebugContinue() { debug_service_.Continue(); }
+void WorkspaceShell::DebugStepOver() { debug_service_.StepOver(); }
+void WorkspaceShell::DebugStepIn() { debug_service_.StepIn(); }
+void WorkspaceShell::DebugStepOut() { debug_service_.StepOut(); }
+void WorkspaceShell::DebugPause() { debug_service_.Pause(); }
 
 void WorkspaceShell::AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output) {
   // Split on newlines so each console line is its own channel entry. A trailing

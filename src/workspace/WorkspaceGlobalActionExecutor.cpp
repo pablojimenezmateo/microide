@@ -139,6 +139,36 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.StopDebuggingWithFeedback();
       return DispatchResult::Handled;
+    case ActionId::DebugContinue:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.DebugContinue();
+      return DispatchResult::Handled;
+    case ActionId::DebugStepOver:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.DebugStepOver();
+      return DispatchResult::Handled;
+    case ActionId::DebugStepIn:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.DebugStepIn();
+      return DispatchResult::Handled;
+    case ActionId::DebugStepOut:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.DebugStepOut();
+      return DispatchResult::Handled;
+    case ActionId::DebugPause:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.DebugPause();
+      return DispatchResult::Handled;
     case ActionId::TestsRun: {
       std::string error_message;
       const bool ok = args.empty() ? context_.RunAllDiscoveredTests(&error_message)

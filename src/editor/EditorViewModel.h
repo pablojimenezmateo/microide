@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -50,6 +51,10 @@ struct EditorViewModel {
   // Logical opener line indices from outer enclosing fold to inner, pinned in the sticky band
   // (top row = outer scope). Empty when sticky scroll is disabled or no enclosing folds apply.
   std::span<const std::size_t> sticky_lines;
+  // 0-based buffer line of the debugger's current execution line, set only when
+  // a session is stopped on this viewport's file (debugger enabled). Drives the
+  // full-width execution-line fill + gutter arrow. Empty in the common case.
+  std::optional<std::size_t> execution_line_index;
   std::vector<WhitespaceGlyphRun> whitespace_glyph_runs;
   // CSR-style index into `whitespace_glyph_runs`: for visible row `r`, runs are in
   // [whitespace_row_offsets[r], whitespace_row_offsets[r+1]). Size is `visible_rows + 1` whenever

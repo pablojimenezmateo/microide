@@ -1068,6 +1068,13 @@
   void StopDebugging();
   void ResendBreakpointsForFile(const std::filesystem::path& path);
   bool IsDebugSessionActive() const;
+  bool IsDebugSessionStopped() const;
+  // Execution control (Phase 3); forward to debug_service_ / the active session.
+  void DebugContinue();
+  void DebugStepOver();
+  void DebugStepIn();
+  void DebugStepOut();
+  void DebugPause();
   void AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output);
   void ShowDebugConsole();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
@@ -1105,6 +1112,7 @@
   bool BottomPanelVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
+  bool BottomPanelShowsDebug() const;
   BottomPanelLogLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;

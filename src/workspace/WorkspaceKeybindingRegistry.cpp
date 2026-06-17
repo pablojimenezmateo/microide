@@ -131,6 +131,50 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // Debugger execution control (Phase 3). Global; the actions are gated on
+      // `debug.enabled` + session state in WorkspaceActionAvailability, so these
+      // keys are inert until a session is active. Pause has no default key (F6 is
+      // taken by file-finder); bind it via the command palette / keybindings.
+      KeybindingSpec{
+          .id = "debug-continue",
+          .action = ActionId::DebugContinue,
+          .key = SDLK_F5,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "debug-step-over",
+          .action = ActionId::DebugStepOver,
+          .key = SDLK_F10,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "debug-step-in",
+          .action = ActionId::DebugStepIn,
+          .key = SDLK_F11,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "debug-step-out",
+          .action = ActionId::DebugStepOut,
+          .key = SDLK_F11,
+          .modifiers = SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       // Editor context
       KeybindingSpec{
           .id = "undo",

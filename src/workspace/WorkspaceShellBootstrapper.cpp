@@ -134,6 +134,8 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           },
           .get_setting_value =
               [shell](std::string_view id) { return shell->GetSettingValue(id); },
+          .debug_session_active = [shell]() { return shell->IsDebugSessionActive(); },
+          .debug_session_stopped = [shell]() { return shell->IsDebugSessionStopped(); },
       });
 }
 

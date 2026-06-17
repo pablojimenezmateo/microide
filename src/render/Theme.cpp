@@ -277,6 +277,10 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   theme.breakpoint = ResolveForeground(styles, "breakpoint", theme.breakpoint);
   theme.breakpoint_unverified =
       ResolveForeground(styles, "breakpoint-unverified", theme.breakpoint_unverified);
+  theme.debug_execution_line =
+      ResolveForeground(styles, "debug-execution-line", theme.debug_execution_line);
+  theme.debug_execution_arrow =
+      ResolveForeground(styles, "debug-execution-arrow", theme.debug_execution_arrow);
   return theme;
 }
 
@@ -328,6 +332,8 @@ Theme MakeDefaultTheme() {
       .diagnostic_hint = SDL_Color{0x8d, 0xdf, 0x9f, 0xff},
       .breakpoint = SDL_Color{0xe5, 0x4b, 0x4b, 0xff},
       .breakpoint_unverified = SDL_Color{0x8a, 0x57, 0x57, 0xc0},
+      .debug_execution_line = SDL_Color{0x3a, 0x44, 0x22, 0x80},
+      .debug_execution_arrow = SDL_Color{0xe8, 0xc5, 0x6d, 0xff},
   };
   theme.selection_strong = CompositeOver(theme.selection_fill, theme.surface_background);
   return theme;

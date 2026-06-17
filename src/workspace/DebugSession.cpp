@@ -2,9 +2,17 @@
 
 #include <utility>
 
+#include "util/JsonValue.h"
+
 namespace microide::workspace {
 
 namespace {
+
+util::JsonValue ThreadIdArgs(int thread_id) {
+  util::JsonObject args;
+  args["threadId"] = util::JsonValue(static_cast<std::int64_t>(thread_id));
+  return util::JsonValue(std::move(args));
+}
 
 bool IsTerminalState(DebugSession::State state) {
   return state == DebugSession::State::Terminated || state == DebugSession::State::Failed;
@@ -224,10 +232,17 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       client_->BeginShutdown();
     }
   } else if (event == "stopped") {
-    // Execution control is Phase 3; record the coarse state so the UI can react.
+    const dap_protocol::DapStoppedEvent stop = dap_protocol::ParseStoppedEvent(body);
+    stopped_thread_id_ = stop.thread_id;
     SetState(State::Stopped);
+    // Resolve the call stack for the stopped thread, then hand the focused
+    // frames up so the host can highlight the execution line + fill the panel.
+    RequestStackTrace(stop);
   } else if (event == "continued") {
     if (state_ == State::Stopped) {
+      if (callbacks_.on_resumed) {
+        callbacks_.on_resumed();
+      }
       SetState(State::Running);
     }
   }
@@ -253,6 +268,65 @@ void DebugSession::RequestStop() {
     client_->BeginShutdown();
     SetState(State::Terminated);
   }
+}
+
+void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) {
+  if (!callbacks_.on_stopped) {
+    return;
+  }
+  util::JsonObject args;
+  args["threadId"] = util::JsonValue(static_cast<std::int64_t>(stop.thread_id));
+  args["startFrame"] = util::JsonValue(static_cast<std::int64_t>(0));
+  args["levels"] = util::JsonValue(static_cast<std::int64_t>(0));  // 0 = all frames
+  client_->SendRequestAsync(
+      "stackTrace", util::JsonValue(std::move(args)),
+      [this, stop](const dap_protocol::DapResponse& response) {
+        if (!response.success) {
+          return;
+        }
+        if (callbacks_.on_stopped) {
+          callbacks_.on_stopped(stop, dap_protocol::ParseStackFrames(response.body));
+        }
+      });
+}
+
+void DebugSession::SendResumeRequest(const char* command) {
+  if (state_ != State::Stopped) {
+    return;
+  }
+  client_->SendRequestAsync(command, ThreadIdArgs(stopped_thread_id_), {});
+  // Optimistically resume so the UI clears immediately; the next `stopped`
+  // (breakpoint/step end) repopulates the execution state.
+  if (callbacks_.on_resumed) {
+    callbacks_.on_resumed();
+  }
+  SetState(State::Running);
+}
+
+void DebugSession::Continue() { SendResumeRequest("continue"); }
+void DebugSession::StepOver() { SendResumeRequest("next"); }
+void DebugSession::StepIn() { SendResumeRequest("stepIn"); }
+void DebugSession::StepOut() { SendResumeRequest("stepOut"); }
+
+void DebugSession::Pause() {
+  if (state_ != State::Running || !client_->IsInitialized()) {
+    return;
+  }
+  // `pause` requires a threadId. When running we have no stopped thread, so ask
+  // the adapter for its threads and pause the first one (this is where Phase 3's
+  // `threads` request naturally lands; a thread selector arrives in Phase 7).
+  client_->SendRequestAsync(
+      "threads", util::JsonValue(nullptr), [this](const dap_protocol::DapResponse& response) {
+        if (!response.success) {
+          return;
+        }
+        const std::vector<dap_protocol::DapThread> threads =
+            dap_protocol::ParseThreads(response.body);
+        if (threads.empty()) {
+          return;
+        }
+        client_->SendRequestAsync("pause", ThreadIdArgs(threads.front().id), {});
+      });
 }
 
 void DebugSession::DrainCallbacks() { client_->DrainCallbacks(); }

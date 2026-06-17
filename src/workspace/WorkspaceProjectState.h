@@ -18,6 +18,7 @@
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
 #include "project/ProjectSearchService.h"
+#include "workspace/DebugViewModel.h"
 #include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceDapManager.h"
 #include "workspace/WorkspaceLspManager.h"
@@ -48,6 +49,9 @@ enum class PanelContentKind {
   None,
   Terminal,
   Output,
+  // Structured Call Stack panel for an active debug session (Phase 3). Unlike
+  // Terminal/Output (text), its rows come from `debug_execution.frames`.
+  Debug,
 };
 
 enum class BufferSearchField {
@@ -197,6 +201,17 @@ struct OutputPanelState {
   int scroll_row = 0;
 };
 
+// Call Stack panel scroll state. The frames + focused index live on
+// `ProjectWorkspaceState.debug_execution`; this only tracks the panel's own
+// vertical scroll so it survives tab switches. `open` gates the "Call Stack" tab
+// in the bottom-panel strip — set on the first stop, cleared on session stop or
+// when the tab is closed — so the tab persists across steps (when `debug_execution`
+// is momentarily empty) without coupling the tab strip to the session.
+struct DebugPanelState {
+  bool open = false;
+  int scroll_row = 0;
+};
+
 struct LspUiState {
   bool request_in_flight = false;
   Uint64 request_started_ticks = 0;
@@ -218,6 +233,7 @@ struct PanelState {
   int tab_scroll_index = 0;
   CommandState command;
   OutputPanelState output;
+  DebugPanelState debug;
 };
 
 struct WelcomeSurfaceState {
@@ -262,6 +278,10 @@ struct ProjectWorkspaceState {
   // Mirrors `diagnostics_store`: survives session restarts, persists via the
   // `debug` PersistedRecord. Only meaningful when `debug.enabled` is ON.
   editor::BreakpointStore breakpoint_store;
+  // Transient execution state for the active debug session (current stop + call
+  // stack + focused frame). Rebuilt on every `stopped`, cleared on resume/stop;
+  // never persisted. Only meaningful when `debug.enabled` is ON.
+  DebugExecutionView debug_execution;
   // Persisted + plugin-contributed launch/attach configurations and the
   // currently selected index. Start Debugging targets the selected config when
   // one exists, else falls back to the first registered adapter.
@@ -313,6 +333,24 @@ inline void HideOverlay(ProjectWorkspaceState& state) {
   state.overlay.visible = false;
   if (state.surface.focus == FocusTarget::Overlay) {
     state.surface.focus = PrimarySurfaceFocus(state);
+  }
+}
+
+// Retire the Call Stack tab and, when it was the active panel content, fall back
+// to a remaining tab so the bottom panel never strands on an empty Debug view.
+// Shared by the tab close button and session teardown.
+inline void CloseDebugPanel(ProjectWorkspaceState& state) {
+  state.panel.debug.open = false;
+  if (state.panel.content != PanelContentKind::Debug) {
+    return;
+  }
+  if (!state.terminal_tabs.empty()) {
+    state.panel.content = PanelContentKind::Terminal;
+  } else if (!state.panel.output.open_channel_ids.empty()) {
+    state.panel.content = PanelContentKind::Output;
+    state.panel.output.channel_id = state.panel.output.open_channel_ids.front();
+  } else {
+    state.panel.content = PanelContentKind::None;
   }
 }
 

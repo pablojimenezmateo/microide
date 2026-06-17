@@ -164,9 +164,13 @@ bool WorkspaceShell::BottomPanelShowsOutput() const {
   return context_.current_project_state.panel.content == PanelContentKind::Output;
 }
 
+bool WorkspaceShell::BottomPanelShowsDebug() const {
+  return context_.current_project_state.panel.content == PanelContentKind::Debug;
+}
+
 bool WorkspaceShell::BottomPanelVisible() const {
   return context_.current_project_state.panel.command_mode ||
-         BottomPanelShowsTerminal() || BottomPanelShowsOutput();
+         BottomPanelShowsTerminal() || BottomPanelShowsOutput() || BottomPanelShowsDebug();
 }
 
 WorkspaceShell::BottomPanelLogLayout WorkspaceShell::ComputeBottomPanelLogLayout(

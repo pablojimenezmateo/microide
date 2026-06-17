@@ -5,6 +5,7 @@
 #include <string>
 
 #include "editor/EditorViewModel.h"
+#include "workspace/DebugViewModel.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/NotificationService.h"
 #include "workspace/WorkspaceContext.h"
@@ -220,7 +221,8 @@ class RenderViewModelBuilder {
                                 int sticky_max_depth = 3,
                                 bool render_whitespace_enabled = false,
                                 bool debug_enabled = false,
-                                const editor::BreakpointStore* breakpoints = nullptr) const;
+                                const editor::BreakpointStore* breakpoints = nullptr,
+                                const DebugExecutionView* debug_execution = nullptr) const;
 
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
                                                std::size_t visible_rows,

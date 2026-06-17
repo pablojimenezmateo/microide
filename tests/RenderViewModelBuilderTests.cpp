@@ -1,5 +1,8 @@
 #include "TestSupport.h"
 
+#include "editor/EditorViewModel.h"
+#include "editor/TextViewport.h"
+#include "workspace/DebugViewModel.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarService.h"
@@ -126,6 +129,46 @@ void TestBuilderStatusBarSurfacesTooltipFromService() {
          "status bar VM should forward the segment tooltip so the render path can paint it");
 }
 
+void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
+  WorkspaceContext ctx;
+  RenderViewModelBuilder builder(ctx);
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("line0\nline1\nline2\nline3\n", "/proj/main.py");
+  viewport.SetViewportSize(8, 80);
+
+  microide::workspace::DebugExecutionView exec;
+  exec.stopped = true;
+  exec.thread_id = 1;
+  microide::workspace::DebugStackFrameView frame;
+  frame.source_path = std::filesystem::path("/proj/main.py").lexically_normal();
+  frame.line = 2;  // 0-based
+  exec.frames.push_back(frame);
+
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr,
+                                   /*occurrences_highlight_enabled=*/false,
+                                   /*occurrences_case_sensitive=*/false,
+                                   /*sticky_scroll_enabled=*/false, /*sticky_max_depth=*/3,
+                                   /*render_whitespace_enabled=*/false,
+                                   /*debug_enabled=*/true, /*breakpoints=*/nullptr, &exec);
+  Expect(vm.execution_line_index.has_value() && *vm.execution_line_index == 2,
+         "execution line should be marked on the focused frame's line for the matching file");
+
+  // Debugger disabled -> no execution-line mark even with a stopped session.
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
+                                   /*debug_enabled=*/false, nullptr, &exec);
+  Expect(!vm.execution_line_index.has_value(),
+         "execution line should not be marked when the debugger is disabled");
+
+  // A frame in a different file leaves this viewport unmarked.
+  exec.frames[0].source_path = std::filesystem::path("/proj/other.py").lexically_normal();
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
+                                   /*debug_enabled=*/true, nullptr, &exec);
+  Expect(!vm.execution_line_index.has_value(),
+         "execution line should not be marked when the focused frame is in another file");
+}
+
 }  // namespace
 
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
@@ -135,6 +178,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage);
   AddTest(tests, "RenderViewModelBuilder/StatusBarSurfacesTooltipFromService",
           TestBuilderStatusBarSurfacesTooltipFromService);
+  AddTest(tests, "RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile",
+          TestBuilderMarksExecutionLineOnlyForMatchingFile);
 }
 
 }  // namespace microide::tests

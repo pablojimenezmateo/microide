@@ -179,7 +179,16 @@ Original plan, retained for reference:
 - On launch, send `setBreakpoints` per file; reflect verified/unverified.
 - DAP surface: `setBreakpoints`, breakpoint verification, `breakpoint` event.
 
-### Phase 3 — Execution control + `stopped` + current-line highlight + Call Stack
+### Phase 3 — Execution control + `stopped` + current-line highlight + Call Stack ✅ DONE (2026-06-17)
+
+See "Phase 3 — what shipped" below. Summary: `stopped` resolves `stackTrace` and
+populates a host-owned `DebugExecutionView`; the focused frame paints a full-width
+execution-line fill + gutter arrow (cleared on resume) and is mirrored by a
+structured Call Stack bottom panel (`PanelContentKind::Debug`) whose rows navigate
+on click; bindable execution-control commands (continue / step over / step in /
+step out / pause) gate on `debug.enabled` + session state.
+
+Original plan, retained for reference:
 
 - New: `src/workspace/DebugViewModel.h`, `DebugCommands.{h,cpp}` (`debug.continue/
   stepOver/stepIn/stepOut/pause/stop/restart`, bindable).
@@ -385,6 +394,73 @@ Tests added: `BreakpointStoreTests` (7), `PersistedStateRecord/DebugState*` (2),
 mock adapter asserting 1-based lines, verification, and send-order), `DapProtocol`
 setBreakpoints shape, `PluginHost/LaunchConfig*` (2), `DebugStateRecordFuzz`.
 
+## Phase 3 — what shipped (2026-06-17)
+
+Files added:
+
+- `src/workspace/DebugViewModel.h` — host-owned, transient `DebugExecutionView`
+  (`stopped`, `thread_id`, `stop_reason`, `frames`, `focused_frame_index`) +
+  `DebugStackFrameView` (frame id, normalized `source_path`, 0-based `line`, and
+  **prebuilt** `display_primary`/`display_secondary` so render TUs never build
+  strings). Lives on `ProjectWorkspaceState.debug_execution`; never persisted —
+  rebuilt on every `stopped`, cleared on resume/stop.
+- `src/editor/ExecutionLineRender.{h,cpp}` — gutter execution-arrow geometry +
+  draw (a right-pointing triangle in `theme.debug_execution_arrow`, footprint
+  matched to the breakpoint dot so it overlays cleanly when stopped on one).
+
+Key decisions (locked):
+
+- **`stopped` → `stackTrace` directly (no `threads` first).** The stopped event
+  carries the `threadId`; `DebugSession` requests `stackTrace{threadId,startFrame:0,
+  levels:0}` and fires `Callbacks::on_stopped(stop, frames)` on success. A separate
+  `threads` round-trip is only spent where it is actually needed — `Pause()`, which
+  has no stopped thread to target (it resolves the first thread, then `pause`). The
+  full thread list / selector is deferred to Phase 7. (Priority: speed.)
+- **Optimistic resume.** `Continue/StepOver(next)/StepIn/StepOut` send their DAP
+  command then immediately fire `on_resumed` + set `Running` so the highlight +
+  Call Stack clear without waiting for a `continued` event (many adapters do not
+  send one); the next `stopped` repopulates. `continued` events are still honored.
+- **Execution line via the view model (R1).** `EditorViewModel.execution_line_index`
+  (a `std::optional<std::size_t>`) is set by `RenderViewModelBuilder` only when
+  `debug.enabled` and the focused frame's file lexically matches the viewport's
+  path; `EditorViewRenderer` paints a full-width `theme.debug_execution_line` fill
+  (outranking the selected-row highlight) + the gutter arrow. The pure render TU
+  reads no project state and materializes no strings.
+- **Call Stack panel is a peer bottom-panel tab.** `PanelContentKind::Debug` +
+  `BottomPanelTabKind::Debug` add a "Call Stack" tab gated on `panel.debug.open`
+  (set on the first stop, cleared on stop / tab close via the shared
+  `CloseDebugPanel` helper) so the tab persists across steps even while
+  `debug_execution` is momentarily empty — without coupling `TabStripService` to
+  the session. Rows render the prebuilt frame strings, highlight the focused frame,
+  and navigate on click (sets `focused_frame_index`, which also moves the
+  execution-line highlight to the picked frame).
+
+Wiring:
+
+- `DebugSession`: `on_stopped`/`on_resumed` callbacks, `stopped_thread_id_`,
+  `RequestStackTrace`, and `Continue/StepOver/StepIn/StepOut/Pause`.
+- `DebugService`: builds `DebugExecutionView` from frames (prebuilds display
+  strings, normalizes paths, DAP-line→0-based), and two new `Operations`
+  (`focus_source_location`, `show_call_stack_panel`); `StopDebugging` clears the
+  view. Shell wires the ops in `WorkspaceShellPlugins.cpp`; `WorkspaceShell::
+  StopDebugging` calls `CloseDebugPanel`.
+- Commands: `ActionId::Debug{Continue,StepOver,StepIn,StepOut,Pause}`, command-
+  registry rows, availability gating (`debug.enabled` + active + Stopped for
+  continue/step, Running for pause via a new `debug_session_stopped` operation),
+  global-executor dispatch, and context/shell forwarders. **Default keys**
+  (`WorkspaceKeybindingRegistry`): Continue=F5, Step Over=F10, Step In=F11, Step
+  Out=Shift+F11. Pause has no default (F6 is taken by file-finder); bind via the
+  palette. `restart` is deferred to Phase 7.
+- Theme: `debug_execution_line` + `debug_execution_arrow` (with `debug-execution-
+  line` / `debug-execution-arrow` theme-file keys).
+
+Tests added: `DebugService/SessionResolvesStackOnStopAndStepsResume` (real mock
+adapter: stop → stackTrace resolves the focused frames, then `next`/`stepIn`/
+`stepOut`/`continue` map to their DAP commands and fire `on_resumed`),
+`DebugService/SessionPauseFromRunning` (pause resolves a thread via `threads` then
+sends `pause`), `RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile`
+(execution-line set only when `debug.enabled` + path matches).
+
 ## How to validate
 
 ```bash
@@ -420,28 +496,30 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 3** (execution control + `stopped` + current-line highlight + Call
-Stack). The Phase 2 `setBreakpoints` path already drives the adapter to a
-`stopped` event; Phase 3 makes it actionable:
+Start **Phase 4** (Variables / Scopes panel + `setVariable`). Phase 3 already
+focuses a frame (`debug_execution.focused_frame_index`, with the frame's DAP `id`
+on `DebugStackFrameView`), which is the anchor the variables tree hangs off:
 
-- On `stopped`: `threads` → `stackTrace` → focus the top frame; paint a
-  full-width execution-line fill via `RowDecorationBuilder` (+ a gutter arrow) and
-  clear it on `continued`. Reuse the Phase 2 `breakpoint_gutter_marks` plumbing in
-  `EditorViewModel`/`RenderViewModelBuilder` for the execution-line decoration so
-  the render TU stays view-model-only.
-- New `DebugCommands.{h,cpp}` (`debug.continue/stepOver/stepIn/stepOut/pause/
-  stop/restart`, bindable) gated on `debug.enabled`, plus a structured
-  `PanelContentKind::Debug` for the Call Stack (the first non-text debug panel —
-  the Phase 1 console stays an output channel).
-- DAP surface: `stopped`, `continued`, `threads`, `stackTrace`, `continue`,
-  `next`, `stepIn`, `stepOut`, `pause`.
+- New `src/workspace/DebugVariablesModel.{h,cpp}`: a lazy tree keyed by
+  `variablesReference`, cleared on each stop (hook into the existing `on_stopped`
+  rebuild + `on_resumed`/`StopDebugging` clears). On frame focus → `scopes`; on
+  expand → `variables` (paged via `start`/`count`).
+- Surface it in the Call Stack panel area (a second structured section or a peer
+  "Variables" tab next to "Call Stack"); prebuild row text in the view model like
+  the call-stack rows. Inline edit via `SingleLineEditor` → `setVariable` (gated on
+  `capabilities.supports_set_variable`).
+- DAP surface: `scopes`, `variables`, `setVariable`.
 
-Opportunistic cleanup to fold into Phase 3 (per the dedup / tech-debt / UI-UX
-goals): the breakpoint / diagnostic / fold gutter markers now share the same
-per-row cursor-walk shape in `EditorViewRenderer`; if Phase 3 adds an execution
-arrow, factor a small shared gutter-marker dispatch instead of a fourth bespoke
-block. A config-picker UI (command palette over `launch_configs`) is the natural
-home for the persisted selection added in Phase 2.
+Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
+
+- The breakpoint / diagnostic / fold / execution gutter markers now share the same
+  per-row cursor-walk shape in `EditorViewRenderer`; the execution arrow is a
+  single `std::optional` (no cursor walk). If a fifth marker appears, factor a
+  shared gutter-marker dispatch instead of another bespoke block.
+- A config-picker UI (command palette over `launch_configs`) is the natural home
+  for the persisted selection added in Phase 2.
+- `Restart` (deferred from Phase 3) lands in Phase 7 with the terminate+relaunch
+  fallback (`!supportsRestartRequest`).
 
 All debugger work lands on the canonical `feat/dap` branch; do not merge to
 `main` until the effort is complete.

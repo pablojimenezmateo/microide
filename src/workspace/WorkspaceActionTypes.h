@@ -131,6 +131,13 @@ enum class ActionId {
   // Debugger (DAP). Gated on the `debug.enabled` master toggle.
   StartDebugging,
   StopDebugging,
+  // Execution control (Phase 3). Gated on `debug.enabled` + an active session;
+  // continue/step additionally require the session to be Stopped, pause Running.
+  DebugContinue,
+  DebugStepOver,
+  DebugStepIn,
+  DebugStepOut,
+  DebugPause,
 };
 
 enum class ActionSource {

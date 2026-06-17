@@ -441,6 +441,11 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `plugins-reload`
 - `debug-start`
 - `debug-stop`
+- `debug-continue`
+- `debug-step-over`
+- `debug-step-in`
+- `debug-step-out`
+- `debug-pause`
 - `quit`
 - `reopen`
 - `save`

@@ -140,6 +140,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/BreakpointRender.cpp
   src/editor/BreakpointStore.cpp
   src/editor/DecoratedTextGridRenderer.cpp
+  src/editor/ExecutionLineRender.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
@@ -838,6 +839,7 @@ add_executable(microide_diff_bench
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
+  src/editor/ExecutionLineRender.cpp
   src/editor/FoldingModel.cpp
   src/editor/IndentGuides.cpp
   src/editor/RowDecorationBuilder.cpp

@@ -72,6 +72,19 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Gated on the master debugger toggle; the executor reports adapter/
       // session preconditions as command feedback.
       return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::DebugContinue:
+    case ActionId::DebugStepOver:
+    case ActionId::DebugStepIn:
+    case ActionId::DebugStepOut:
+      // Resume/step are valid only while the session is paused.
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active() &&
+             operations_.debug_session_stopped && operations_.debug_session_stopped();
+    case ActionId::DebugPause:
+      // Pause is valid only while the session is running (active, not stopped).
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active() &&
+             !(operations_.debug_session_stopped && operations_.debug_session_stopped());
     case ActionId::CloseActiveTab:
       return !context_.current_project_state.open_tabs.empty();
     case ActionId::CloseAllTabs:

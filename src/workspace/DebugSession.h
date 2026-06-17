@@ -48,6 +48,15 @@ class DebugSession {
     // Every adapter event verbatim, for phases that react to stopped/continued/
     // breakpoint/thread events. Delivered after the built-in lifecycle handling.
     std::function<void(const std::string& event, const util::JsonValue& body)> on_event;
+    // Fired after a `stopped` event's `stackTrace` response resolves: the host
+    // gets the stop metadata plus the focused thread's frames (top frame first)
+    // so it can drive the execution-line highlight and Call Stack panel.
+    std::function<void(const dap_protocol::DapStoppedEvent& stop,
+                       const std::vector<dap_protocol::DapStackFrame>& frames)>
+        on_stopped;
+    // Fired when execution resumes (a continue/step request is sent, or the
+    // adapter emits `continued`) so the host clears the execution-line + stack.
+    std::function<void()> on_resumed;
     // Pulled when the adapter is ready for configuration (the `initialized`
     // event) and on every live re-send, to get the breakpoints to install.
     std::function<std::vector<editor::BreakpointStore::FileBreakpoints>()> breakpoint_provider;
@@ -86,6 +95,17 @@ class DebugSession {
   // launched debuggee shut down cleanly), otherwise `disconnect`.
   void RequestStop();
 
+  // Execution control (Phase 3). continue/step are valid only while Stopped and
+  // target the most recently stopped thread; each optimistically resumes (fires
+  // on_resumed + State::Running) for snappy UX — the next `stopped` repopulates.
+  // Pause is valid only while Running: it resolves a thread via `threads` and
+  // sends `pause` for the first one.
+  void Continue();
+  void StepOver();  // DAP `next`
+  void StepIn();
+  void StepOut();
+  void Pause();
+
   // Re-send `setBreakpoints` for one file while the session is live (e.g. the
   // user toggled a breakpoint after launch). Pulls the current snapshot from
   // `breakpoint_provider`; sends an empty list to clear a file. No-op until the
@@ -97,6 +117,10 @@ class DebugSession {
 
  private:
   void HandleEvent(const std::string& event, const util::JsonValue& body);
+  void RequestStackTrace(const dap_protocol::DapStoppedEvent& stop);
+  // Shared by continue/step: guard on Stopped, send `command{threadId}`, then
+  // optimistically resume.
+  void SendResumeRequest(const char* command);
   void SendLaunchRequest();
   void SendAllBreakpoints();
   void SendBreakpointsForFile(const editor::BreakpointStore::FileBreakpoints& file);
@@ -110,6 +134,9 @@ class DebugSession {
   std::string last_error_;
   bool launch_sent_ = false;
   bool configuration_done_sent_ = false;
+  // Thread id from the most recent `stopped` event; the target for stackTrace
+  // and continue/step requests.
+  int stopped_thread_id_ = 0;
 };
 
 // Stable name for a session state (status text, tracing, tests).

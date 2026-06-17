@@ -103,6 +103,23 @@ WorkspaceShell::WorkspaceShell() {
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
           .request_editor_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .focus_source_location =
+              [this](const std::filesystem::path& path, std::size_t line) {
+                OpenFile(path);
+                if (editor::TextViewport* viewport = ActiveEditorViewport();
+                    viewport != nullptr) {
+                  viewport->MoveCursorTo(line, 0);
+                }
+                context_.current_project_state.surface.focus = FocusTarget::Editor;
+                RequestEditorSurfaceRedraw();
+              },
+          .show_call_stack_panel =
+              [this]() {
+                ProjectWorkspaceState& state = context_.current_project_state;
+                state.panel.debug.open = true;
+                state.panel.content = PanelContentKind::Debug;
+                RequestBottomPanelRedraw();
+              },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

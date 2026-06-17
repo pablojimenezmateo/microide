@@ -32,7 +32,11 @@ const char* MockAdapterSource() {
   return R"py(import json
 import sys
 
-supports_config_done = (len(sys.argv) > 1 and sys.argv[1] == "config_done")
+mode = sys.argv[1] if len(sys.argv) > 1 else ""
+# config_done / stop / pause all advertise configurationDone support.
+supports_config_done = mode in ("config_done", "stop", "pause")
+stop_on_config = (mode == "stop")     # emit `stopped` after configurationDone
+running_no_stop = (mode == "pause")   # stay running so the test can pause
 seq = 0
 
 def read_message():
@@ -85,6 +89,9 @@ def finish_launch():
     event("output", {"category": "stdout", "output": "hello from adapter\n"})
     event("terminated")
 
+def emit_stop():
+    event("stopped", {"reason": "breakpoint", "threadId": 1, "allThreadsStopped": True})
+
 while True:
     msg = read_message()
     if msg is None:
@@ -109,7 +116,29 @@ while True:
             finish_launch()
     elif command == "configurationDone":
         respond(msg, {})
-        finish_launch()
+        if stop_on_config:
+            emit_stop()
+        elif running_no_stop:
+            pass  # stay running; the test will issue a pause
+        else:
+            finish_launch()
+    elif command == "stackTrace":
+        respond(msg, {"stackFrames": [
+            {"id": 1, "name": "main", "line": 10, "column": 1,
+             "source": {"name": "main.py", "path": "/proj/main.py"}},
+            {"id": 2, "name": "caller", "line": 3, "column": 1,
+             "source": {"name": "main.py", "path": "/proj/main.py"}},
+        ], "totalFrames": 2})
+    elif command in ("continue", "next", "stepIn", "stepOut"):
+        event("output", {"category": "stdout", "output": "cmd:" + command + "\n"})
+        respond(msg, {"allThreadsContinued": True} if command == "continue" else {})
+        emit_stop()  # re-stop so the test can drive the next step
+    elif command == "threads":
+        respond(msg, {"threads": [{"id": 1, "name": "main"}]})
+    elif command == "pause":
+        event("output", {"category": "stdout", "output": "cmd:pause\n"})
+        respond(msg, {})
+        emit_stop()
     elif command == "terminate":
         respond(msg, {})
         event("terminated")
@@ -143,6 +172,10 @@ struct CapturedSession {
   std::vector<DebugSession::State> states;
   std::string output;
   bool got_terminated_event = false;
+  std::vector<codec::DapStackFrame> last_frames;
+  std::string last_stop_reason;
+  int stop_count = 0;
+  int resume_count = 0;
 };
 
 DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
@@ -158,6 +191,13 @@ DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
       captured.got_terminated_event = true;
     }
   };
+  callbacks.on_stopped = [&captured](const codec::DapStoppedEvent& stop,
+                                     const std::vector<codec::DapStackFrame>& frames) {
+    captured.last_stop_reason = stop.reason;
+    captured.last_frames = frames;
+    ++captured.stop_count;
+  };
+  callbacks.on_resumed = [&captured]() { ++captured.resume_count; };
   return callbacks;
 }
 
@@ -298,6 +338,97 @@ void TestDebugSessionSendsBreakpointsBeforeConfigurationDone() {
   manager.ShutdownAll();
 }
 
+void TestDebugSessionResolvesStackOnStopAndStepsResume() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+
+  // The adapter stops after configurationDone; the session resolves stackTrace
+  // and hands the frames to on_stopped (top frame first).
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "session should resolve a stack on the first stop");
+  Expect(captured.last_stop_reason == "breakpoint", "stop reason should propagate");
+  Expect(captured.last_frames.size() == 2, "both stack frames should resolve");
+  if (captured.last_frames.size() == 2) {
+    Expect(captured.last_frames[0].name == "main" && captured.last_frames[0].line == 10,
+           "top frame should be the 1-based DAP line from the adapter");
+    Expect(captured.last_frames[0].source.path == "/proj/main.py",
+           "top frame should carry its source path");
+  }
+
+  // Step over -> the adapter records `next` and re-stops.
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  const int stops_before = captured.stop_count;
+  session->StepOver();
+  Expect(PollUntil(manager, [&]() { return captured.stop_count > stops_before; }),
+         "step over should drive another stop");
+  Expect(captured.output.find("cmd:next") != std::string::npos,
+         "StepOver should send the DAP `next` command");
+  Expect(captured.resume_count >= 1, "stepping should fire on_resumed optimistically");
+
+  // Step in / out map to their DAP commands.
+  session->StepIn();
+  Expect(PollUntil(manager, [&]() { return captured.output.find("cmd:stepIn") != std::string::npos; }),
+         "StepIn should send the DAP `stepIn` command");
+  session->StepOut();
+  Expect(PollUntil(manager,
+                   [&]() { return captured.output.find("cmd:stepOut") != std::string::npos; }),
+         "StepOut should send the DAP `stepOut` command");
+  session->Continue();
+  Expect(PollUntil(manager,
+                   [&]() { return captured.output.find("cmd:continue") != std::string::npos; }),
+         "Continue should send the DAP `continue` command");
+  manager.ShutdownAll();
+}
+
+void TestDebugSessionPauseFromRunning() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "pause"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+
+  // Adapter stays running after configurationDone.
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* session = manager.ActiveSession();
+                     return session != nullptr &&
+                            session->CurrentState() == DebugSession::State::Running;
+                   }),
+         "session should reach Running with no initial stop");
+
+  // Pause resolves a thread via `threads` then sends `pause`; the adapter stops.
+  manager.ActiveSession()->Pause();
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "pause should drive the adapter to a stop");
+  Expect(captured.output.find("cmd:pause") != std::string::npos,
+         "Pause should send the DAP `pause` command after resolving a thread");
+  manager.ShutdownAll();
+}
+
 void TestDebugManagerRejectsUnknownAdapterType() {
   DapManager manager;
   CapturedSession captured;
@@ -328,6 +459,9 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionRunsWithoutConfigurationDoneSupport);
   AddTest(tests, "DebugService/SessionSendsBreakpointsBeforeConfigurationDone",
           TestDebugSessionSendsBreakpointsBeforeConfigurationDone);
+  AddTest(tests, "DebugService/SessionResolvesStackOnStopAndStepsResume",
+          TestDebugSessionResolvesStackOnStopAndStepsResume);
+  AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",
           TestDebugManagerRejectsUnknownAdapterType);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",

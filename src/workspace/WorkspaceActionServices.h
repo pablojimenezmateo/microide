@@ -163,6 +163,15 @@ class WorkspaceActionContext {
     std::function<void()> stop_debugging;
     std::function<bool()> has_debug_adapters;
     std::function<bool()> debug_session_active;
+    // True when the active session is paused (`stopped`); gates continue/step
+    // (require stopped) vs. pause (requires running). Execution-control verbs
+    // forward to the active session (no-op when none / wrong state).
+    std::function<bool()> debug_session_stopped;
+    std::function<void()> debug_continue;
+    std::function<void()> debug_step_over;
+    std::function<void()> debug_step_in;
+    std::function<void()> debug_step_out;
+    std::function<void()> debug_pause;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -300,8 +309,16 @@ class WorkspaceActionContext {
   void RequestQuit();
   // Debugger (DAP). DebuggerEnabled reflects the `debug.enabled` master toggle.
   bool DebuggerEnabled() const;
+  bool DebugSessionActive() const;
+  bool DebugSessionStopped() const;
   void StartDebuggingWithFeedback();
   void StopDebuggingWithFeedback();
+  // Execution control (Phase 3). No-op when no session / wrong state.
+  void DebugContinue();
+  void DebugStepOver();
+  void DebugStepIn();
+  void DebugStepOut();
+  void DebugPause();
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free

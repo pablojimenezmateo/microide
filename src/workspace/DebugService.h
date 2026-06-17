@@ -35,6 +35,12 @@ class DebugService {
     std::function<void()> request_bottom_panel_redraw;
     // Repaint the editor gutter after breakpoint verification reflects back.
     std::function<void()> request_editor_redraw;
+    // Open + focus the active editor at a stopped frame (0-based line). Used on
+    // each stop to jump to the top frame, and on a Call Stack row click.
+    std::function<void(const std::filesystem::path& path, std::size_t line)> focus_source_location;
+    // Surface the structured Call Stack panel (select + focus its tab) on the
+    // first stop of a session.
+    std::function<void()> show_call_stack_panel;
   };
 
   DebugService() = default;
@@ -58,6 +64,15 @@ class DebugService {
   // Re-send `setBreakpoints` for one file to the active session (no-op when no
   // session is active). Used when the user toggles a breakpoint mid-session.
   void ResendBreakpointsForFile(const std::filesystem::path& path);
+
+  // Execution control (Phase 3). No-ops when no session is active; the session
+  // itself guards on the correct state (Stopped for continue/step, Running for
+  // pause).
+  void Continue();
+  void StepOver();
+  void StepIn();
+  void StepOut();
+  void Pause();
 
   bool IsSessionActive() const;
   DebugSession::State SessionState() const;

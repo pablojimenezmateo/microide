@@ -42,6 +42,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                kWorkspaceBottomPanelHeaderHeight);
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
+  const bool debug_panel = panel_vm.content == PanelContentKind::Debug;
+  const DebugExecutionView* debug_view =
+      (debug_panel && panel_vm.project_state != nullptr) ? &panel_vm.project_state->debug_execution
+                                                         : nullptr;
   const std::vector<VisibleStripTab> visible_panel_tabs =
       tab_strip_service_.ComputeVisibleBottomPanelTabs(
           *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
@@ -317,6 +321,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           break;
         }
       }
+    } else if (debug_panel) {
+      header_label = "Call Stack";
     }
     DrawVCenteredTextOn(text_renderer_, renderer, panel_header, 12.0f, theme_.chrome_text,
                         theme_.chrome_background, header_label);
@@ -348,6 +354,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const std::size_t panel_line_count =
       terminal_panel ? terminal_line_count
                      : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
+                     : debug_panel  ? (debug_view != nullptr ? debug_view->frames.size() : 0)
                                     : 0;
 
   const BottomPanelLogLayout panel_layout =
@@ -459,6 +466,33 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_secondary,
                  theme_.surface_background,
                  text_renderer_.TruncateToWidth(output_line, panel_layout.text_width));
+      continue;
+    }
+    if (debug_panel && debug_view != nullptr) {
+      const std::size_t frame_index = static_cast<std::size_t>(index);
+      const DebugStackFrameView& frame = debug_view->frames[frame_index];
+      const bool focused = frame_index == debug_view->focused_frame_index;
+      SDL_Color background = theme_.surface_background;
+      if (focused) {
+        background = theme_.row_highlight;
+        DrawFilledRect(renderer,
+                       MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+                                panel_layout.content_rect.w, panel_layout.line_height),
+                       background);
+      }
+      // Frame name (primary), then the source location (muted) trailing it.
+      const float primary_w = text_renderer_.MeasureWidth(frame.display_primary);
+      DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y,
+                 focused ? theme_.text_primary : theme_.text_secondary, background,
+                 text_renderer_.TruncateToWidth(frame.display_primary, panel_layout.text_width));
+      if (!frame.display_secondary.empty()) {
+        const float secondary_x = panel_layout.text_x + primary_w + 12.0f;
+        const float secondary_w = panel_layout.text_x + panel_layout.text_width - secondary_x;
+        if (secondary_w > 0.0f) {
+          DrawTextOn(text_renderer_, renderer, secondary_x, line_y, theme_.text_muted, background,
+                     text_renderer_.TruncateToWidth(frame.display_secondary, secondary_w));
+        }
+      }
       continue;
     }
   }

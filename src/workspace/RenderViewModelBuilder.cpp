@@ -496,10 +496,12 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     int sticky_max_depth,
     bool render_whitespace_enabled,
     bool debug_enabled,
-    const editor::BreakpointStore* breakpoints) const {
+    const editor::BreakpointStore* breakpoints,
+    const DebugExecutionView* debug_execution) const {
   util::AddPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls);
   out.fold_gutter_marks.clear();
   out.breakpoint_gutter_marks.clear();
+  out.execution_line_index.reset();
   out.sticky_lines = {};
   out.occurrence_ranges = {};
   out.whitespace_glyph_runs.clear();
@@ -556,6 +558,17 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
             .verified = bp->verified,
         });
       }
+    }
+  }
+
+  // Execution-line marker: set only when a session is stopped on this viewport's
+  // file. Path-matched on lexically-normalized generic strings (the frame source
+  // was normalized the same way when the stop was recorded).
+  if (debug_enabled && debug_execution != nullptr && debug_execution->HasLocation() &&
+      !viewport.is_placeholder()) {
+    if (viewport.path().lexically_normal().generic_string() ==
+        debug_execution->FocusedPath().lexically_normal().generic_string()) {
+      out.execution_line_index = debug_execution->FocusedLine();
     }
   }
 

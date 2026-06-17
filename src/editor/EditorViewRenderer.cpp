@@ -10,6 +10,7 @@
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/BreakpointRender.h"
 #include "editor/DiagnosticsRender.h"
+#include "editor/ExecutionLineRender.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceUiText.h"
@@ -627,6 +628,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     const float row_text_x =
         metrics.text_x + static_cast<float>(row_meta.indent) * text_renderer.CharWidth();
     const bool selected = line_index == cursor_line;
+    const bool is_execution_line = view_model != nullptr &&
+                                   view_model->execution_line_index.has_value() &&
+                                   *view_model->execution_line_index == line_index;
     const bool active_search_line =
         active_search_match.has_value() &&
         line_index >= active_search_match->start.line &&
@@ -871,8 +875,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.tokens = token_kinds;
     row_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
     row_input.layout = &row_layout;
-    row_input.has_background_fill = selected;
-    if (selected) {
+    // The execution line outranks the selected-row highlight so a paused frame
+    // stays visible even while it is the caret line.
+    row_input.has_background_fill = selected || is_execution_line;
+    if (is_execution_line) {
+      row_input.background_fill = DecoratedTextFill{
+          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .color = theme.debug_execution_line,
+      };
+    } else if (selected) {
       row_input.background_fill = DecoratedTextFill{
           .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
           .color = theme.row_highlight,
@@ -905,6 +916,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
           (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].verified);
       ++breakpoint_gutter_mark_index;
+    }
+    if (is_execution_line) {
+      // Drawn after the breakpoint dot so the arrow overlays it when a session
+      // stops on a breakpoint line.
+      DrawExecutionLineGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height);
     }
     if (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&
         (*fold_gutter_marks)[fold_gutter_mark_index].visual_row_index == visual_row_index) {

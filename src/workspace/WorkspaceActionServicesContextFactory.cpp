@@ -66,6 +66,44 @@ void WorkspaceActionContext::StopDebuggingWithFeedback() {
   state_.panel.command.feedback_text = "Debugging stopped";
 }
 
+bool WorkspaceActionContext::DebugSessionActive() const {
+  return operations_.debug_session_active && operations_.debug_session_active();
+}
+
+bool WorkspaceActionContext::DebugSessionStopped() const {
+  return operations_.debug_session_stopped && operations_.debug_session_stopped();
+}
+
+void WorkspaceActionContext::DebugContinue() {
+  if (operations_.debug_continue) {
+    operations_.debug_continue();
+  }
+}
+
+void WorkspaceActionContext::DebugStepOver() {
+  if (operations_.debug_step_over) {
+    operations_.debug_step_over();
+  }
+}
+
+void WorkspaceActionContext::DebugStepIn() {
+  if (operations_.debug_step_in) {
+    operations_.debug_step_in();
+  }
+}
+
+void WorkspaceActionContext::DebugStepOut() {
+  if (operations_.debug_step_out) {
+    operations_.debug_step_out();
+  }
+}
+
+void WorkspaceActionContext::DebugPause() {
+  if (operations_.debug_pause) {
+    operations_.debug_pause();
+  }
+}
+
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
   return WorkspaceActionContext(
       context_.project_catalog,
@@ -343,6 +381,12 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .stop_debugging = [this]() { StopDebugging(); },
           .has_debug_adapters = [this]() { return CurrentDapManager().HasRegisteredAdapters(); },
           .debug_session_active = [this]() { return IsDebugSessionActive(); },
+          .debug_session_stopped = [this]() { return IsDebugSessionStopped(); },
+          .debug_continue = [this]() { DebugContinue(); },
+          .debug_step_over = [this]() { DebugStepOver(); },
+          .debug_step_in = [this]() { DebugStepIn(); },
+          .debug_step_out = [this]() { DebugStepOut(); },
+          .debug_pause = [this]() { DebugPause(); },
       });
 }
 
