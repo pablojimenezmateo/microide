@@ -195,6 +195,48 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // Right-side debug pane surface switches, grouped with the toggle above
+      // (Ctrl+Shift+D). Ctrl+digit is the zoom family, so these use Ctrl+Shift+digit.
+      KeybindingSpec{
+          .id = "debug-pane-callstack",
+          .action = ActionId::DebugPaneShowCallStack,
+          .key = SDLK_1,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "debug-pane-variables",
+          .action = ActionId::DebugPaneShowVariables,
+          .key = SDLK_2,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "debug-pane-watch",
+          .action = ActionId::DebugPaneShowWatch,
+          .key = SDLK_3,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "debug-pane-breakpoints",
+          .action = ActionId::DebugPaneShowBreakpoints,
+          .key = SDLK_4,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       // Editor context
       KeybindingSpec{
           .id = "undo",

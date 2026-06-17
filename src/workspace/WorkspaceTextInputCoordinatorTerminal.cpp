@@ -179,6 +179,7 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
                 MakeCommandPromptCoordinator().AppendInput(input);
               },
           .refresh_compare_picker = [this]() { RefreshComparePicker(); },
+          .refresh_launch_config_picker = [this]() { RefreshLaunchConfigPicker(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },

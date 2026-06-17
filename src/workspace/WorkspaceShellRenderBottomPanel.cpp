@@ -350,7 +350,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                      : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
                      : 0;
 
-  const BottomPanelLogLayout panel_layout =
+  const LogSurfaceLayout panel_layout =
       ComputeBottomPanelLogLayout(layout, panel_line_count);
   SetBottomPanelScrollRow(panel_layout.scroll.vertical_scroll, panel_line_count,
                           panel_layout.scroll.visible_rows);

@@ -912,9 +912,14 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         breakpoint_gutter_mark_index < breakpoint_gutter_marks->size() &&
         (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].visual_row_index ==
             visual_row_index) {
-      DrawBreakpointGutterMarker(
-          renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
-          (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].verified);
+      const BreakpointGutterMark& bp_mark =
+          (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index];
+      const BreakpointGutterKind bp_kind = bp_mark.is_logpoint ? BreakpointGutterKind::Logpoint
+                                           : bp_mark.has_condition
+                                               ? BreakpointGutterKind::Conditional
+                                               : BreakpointGutterKind::Plain;
+      DrawBreakpointGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
+                                 bp_mark.verified, bp_kind);
       ++breakpoint_gutter_mark_index;
     }
     if (is_execution_line) {

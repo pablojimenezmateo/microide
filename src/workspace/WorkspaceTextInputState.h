@@ -15,6 +15,8 @@ enum class TextInputSurface {
   BufferReplaceReplace,
   ProjectSearchOverlay,
   CommitPicker,
+  // Launch-config picker query field (Phase 9).
+  LaunchConfigPicker,
   SidebarSearchQuery,
   SidebarSearchReplace,
   CommitSubject,

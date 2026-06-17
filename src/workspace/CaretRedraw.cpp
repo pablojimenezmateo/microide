@@ -175,7 +175,7 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(
   }
 
   const std::size_t line_count = terminal_tab->session.LineCount();
-  const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
+  const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
   if (cursor.row < static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) ||
       cursor.row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
                                             panel_layout.scroll.visible_rows)) {

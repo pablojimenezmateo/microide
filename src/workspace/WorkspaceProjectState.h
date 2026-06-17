@@ -45,6 +45,7 @@ enum class OverlayMode {
   BufferReplace,
   ProjectSearch,
   CommitPicker,
+  LaunchConfigPicker,
   Completion,
   CodeActions,
 };
@@ -158,6 +159,24 @@ struct ComparePickerState {
   std::size_t selected_index = 0;
 };
 
+// One selectable row in the launch-config picker (Phase 9). `config_index` points
+// back into ProjectWorkspaceState.launch_configs; display strings are precomputed
+// when the list is built so the render TU only draws them.
+struct LaunchConfigPickerItem {
+  std::size_t config_index = 0;
+  std::string primary_label;    // launch config name (left column)
+  std::string secondary_label;  // "type · request" (muted, right column)
+};
+
+struct LaunchConfigPickerState {
+  std::string title = "Select Launch Configuration";
+  std::string summary_line;  // "<matches> of <total>" precomputed on refresh
+  editor::SingleLineEditor query;
+  std::vector<LaunchConfigPickerItem> items;
+  std::vector<LaunchConfigPickerItem> matches;
+  std::size_t selected_index = 0;
+};
+
 struct CompletionSessionItem {
   std::string label;
   std::string detail;
@@ -191,6 +210,7 @@ struct OverlayWorkflowState {
   BufferSearchState buffer_search;
   ProjectSearchState project_search;
   ComparePickerState compare_picker;
+  LaunchConfigPickerState launch_config_picker;
   CompletionSessionState completion;
   CodeActionSessionState code_actions;
 };

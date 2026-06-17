@@ -21,7 +21,7 @@ namespace microide::workspace {
 class DebugPaneMouseCoordinator {
  public:
   struct Operations {
-    std::function<WorkspaceShell::BottomPanelLogLayout(const WorkspaceLayout&, std::size_t)>
+    std::function<WorkspaceShell::LogSurfaceLayout(const WorkspaceLayout&, std::size_t)>
         compute_debug_pane_list_layout;
     std::function<DebugPaneModeRowLayout(const SDL_FRect&)> debug_pane_mode_row;
     std::function<std::size_t()> debug_pane_active_row_count;

@@ -203,9 +203,9 @@ DebugPaneMouseCoordinator WorkspaceShell::MakeDebugPaneMouseCoordinator() {
       });
 }
 
-WorkspaceShell::BottomPanelLogLayout WorkspaceShell::ComputeDebugPaneListLayout(
+WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeDebugPaneListLayout(
     const WorkspaceLayout& layout, std::size_t line_count) const {
-  BottomPanelLogLayout panel_layout;
+  LogSurfaceLayout panel_layout;
   panel_layout.content_rect = DebugPaneContentRect(layout.right_pane);
   panel_layout.text_x = panel_layout.content_rect.x + kDebugPaneTextInset;
   panel_layout.text_y = panel_layout.content_rect.y + kDebugPaneTextTopInset;

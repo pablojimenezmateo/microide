@@ -18,6 +18,11 @@ struct BreakpointGutterMark {
   std::size_t visual_row_index = 0;
   bool enabled = true;
   bool verified = false;
+  // Phase 9 gutter-dot distinction: a condition or hit-count makes the dot read
+  // as conditional (tinted); a log message makes it a logpoint (diamond shape).
+  // `is_logpoint` wins when both are set (a logpoint never pauses execution).
+  bool has_condition = false;
+  bool is_logpoint = false;
 };
 
 struct OccurrenceRange {

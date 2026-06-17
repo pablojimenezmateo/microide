@@ -91,6 +91,7 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::SettingsQuery:
       operations_.request_overlay_redraw();
       break;
@@ -111,6 +112,8 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
       return &state_.panel.command.input;
     case TextInputSurface::CommitPicker:
       return &state_.overlay.workflow.compare_picker.query;
+    case TextInputSurface::LaunchConfigPicker:
+      return &state_.overlay.workflow.launch_config_picker.query;
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
       return &state_.overlay.workflow.buffer_search.query;
@@ -163,6 +166,13 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
     case TextInputSurface::CommitPicker:
       if (text_changed) {
         operations_.refresh_compare_picker();
+      } else {
+        operations_.request_overlay_redraw();
+      }
+      break;
+    case TextInputSurface::LaunchConfigPicker:
+      if (text_changed) {
+        operations_.refresh_launch_config_picker();
       } else {
         operations_.request_overlay_redraw();
       }
@@ -293,6 +303,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:

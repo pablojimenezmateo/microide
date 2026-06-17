@@ -169,10 +169,10 @@ bool WorkspaceShell::BottomPanelVisible() const {
          BottomPanelShowsTerminal() || BottomPanelShowsOutput();
 }
 
-WorkspaceShell::BottomPanelLogLayout WorkspaceShell::ComputeBottomPanelLogLayout(
+WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
     const WorkspaceLayout& layout,
     std::size_t line_count) const {
-  BottomPanelLogLayout panel_layout;
+  LogSurfaceLayout panel_layout;
   const bool reserve_prompt =
       context_.current_project_state.panel.command_mode;
   panel_layout.content_rect = BottomPanelContentRect(layout, reserve_prompt);
@@ -231,7 +231,7 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   if (!layout_state.has_value()) {
     return std::nullopt;
   }
-  const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(*layout_state, line_count);
+  const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(*layout_state, line_count);
   const std::size_t first_row =
       static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
   const auto lines = terminal_tab->session.SnapshotLineRange(
@@ -422,7 +422,7 @@ WorkspaceShell::TerminalSelectionPositionForPoint(
     return std::nullopt;
   }
   const WorkspaceLayout layout = *layout_state;
-  const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, lines.size());
+  const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(layout, lines.size());
   if (panel_layout.line_height <= 0.0f || y < panel_layout.text_y ||
       y >= panel_layout.content_rect.y + panel_layout.content_rect.h) {
     return std::nullopt;

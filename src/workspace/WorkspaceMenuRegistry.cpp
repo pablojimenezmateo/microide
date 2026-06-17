@@ -176,6 +176,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kDebugItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::StartDebugging, "Start Debugging"),
+      MenuItem(ActionId::PickLaunchConfig, "Select Launch Configuration…"),
       MenuItem(ActionId::StopDebugging, "Stop Debugging"),
       MenuSeparator(),
       MenuItem(ActionId::DebugContinue, "Continue", "F5"),
@@ -184,12 +185,13 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::DebugStepOut, "Step Out", "Shift+F11"),
       MenuItem(ActionId::DebugPause, "Pause"),
       MenuItem(ActionId::DebugRestart, "Restart", "Ctrl+Shift+F5"),
+      MenuItem(ActionId::DebugConsoleRepl, "Evaluate in Console…"),
       MenuSeparator(),
       MenuItem(ActionId::DebugPaneToggle, "Show Debug Pane", "Ctrl+Shift+D", {}, 0, true),
-      MenuItem(ActionId::DebugPaneShowCallStack, "Call Stack"),
-      MenuItem(ActionId::DebugPaneShowVariables, "Variables"),
-      MenuItem(ActionId::DebugPaneShowWatch, "Watch"),
-      MenuItem(ActionId::DebugPaneShowBreakpoints, "Breakpoints"),
+      MenuItem(ActionId::DebugPaneShowCallStack, "Call Stack", "Ctrl+Shift+1"),
+      MenuItem(ActionId::DebugPaneShowVariables, "Variables", "Ctrl+Shift+2"),
+      MenuItem(ActionId::DebugPaneShowWatch, "Watch", "Ctrl+Shift+3"),
+      MenuItem(ActionId::DebugPaneShowBreakpoints, "Breakpoints", "Ctrl+Shift+4"),
   });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),

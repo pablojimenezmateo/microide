@@ -93,6 +93,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Switching only makes sense with more than one live session.
       return SettingEnabled(operations_, "debug.enabled", false) &&
              operations_.debug_session_count && operations_.debug_session_count() > 1;
+    case ActionId::DebugConsoleRepl:
+      // REPL evaluation needs a live session (frame 0 when running).
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active();
+    case ActionId::PickLaunchConfig:
+      // The picker is useful whenever the debugger is enabled (it can launch).
+      return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:

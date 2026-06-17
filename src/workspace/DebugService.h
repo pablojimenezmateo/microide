@@ -148,6 +148,13 @@ class DebugService {
   // Whether the active session's adapter advertises `supportsEvaluateForHovers`.
   bool SupportsEvaluateForHovers() const;
 
+  // Debug-console REPL (Phase 9). Evaluate `expression` against the active
+  // session's focused frame (frame 0 when running) with `context:"repl"`, echoing
+  // the input and the (async) result into the active session's console channel and
+  // surfacing it. Returns false when there is no active session or the expression
+  // is empty (nothing was sent).
+  bool EvaluateRepl(const std::string& expression);
+
   bool IsSessionActive() const;
   DebugSession::State SessionState() const;
   std::string LastError() const;
@@ -176,6 +183,10 @@ class DebugService {
   // Drop all transient debug view models (execution / variables / hover / watch
   // results) and request redraws. Shared by stop / resume / restart / switch.
   void ClearTransientDebugViews();
+  // Append one text line to a session's console channel via `append_console_output`
+  // (wraps the text in a synthetic `console`-category output event). Used by the
+  // REPL to echo input and results.
+  void AppendConsoleLine(int session_id, const std::string& label, const std::string& text);
 
   WorkspaceContext* context_ = nullptr;
   Operations operations_{};

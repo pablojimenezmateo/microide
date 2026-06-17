@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/BreakpointStore.h"
 #include "editor/EditorViewModel.h"
 #include "editor/TextViewport.h"
 #include "workspace/DebugViewModel.h"
@@ -169,6 +170,50 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
          "execution line should not be marked when the focused frame is in another file");
 }
 
+void TestBuilderMarksConditionalAndLogpointGutterDots() {
+  WorkspaceContext ctx;
+  RenderViewModelBuilder builder(ctx);
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("line0\nline1\nline2\nline3\n", "/proj/main.py");
+  viewport.SetViewportSize(8, 80);
+
+  // Line 0: plain, line 1: conditional, line 2: hit-count, line 3: logpoint.
+  microide::editor::BreakpointStore store;
+  const std::filesystem::path path("/proj/main.py");
+  store.Set(path, 0);
+  store.SetCondition(path, 1, "x > 0");
+  store.SetHitCondition(path, 2, ">5");
+  store.SetLogMessage(path, 3, "hit {x}");
+
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
+                                   /*debug_enabled=*/true, &store, nullptr);
+  Expect(vm.breakpoint_gutter_marks.size() == 4,
+         "all four breakpoints should surface gutter marks for the matching file");
+
+  const auto mark_for = [&](std::size_t line) -> const microide::editor::BreakpointGutterMark* {
+    for (const auto& mark : vm.breakpoint_gutter_marks) {
+      if (mark.line_index == line) {
+        return &mark;
+      }
+    }
+    return nullptr;
+  };
+  const auto* plain = mark_for(0);
+  const auto* conditional = mark_for(1);
+  const auto* hit = mark_for(2);
+  const auto* logpoint = mark_for(3);
+  Expect(plain != nullptr && !plain->has_condition && !plain->is_logpoint,
+         "a plain breakpoint carries neither the conditional nor the logpoint flag");
+  Expect(conditional != nullptr && conditional->has_condition && !conditional->is_logpoint,
+         "a condition makes the mark read as conditional, not a logpoint");
+  Expect(hit != nullptr && hit->has_condition && !hit->is_logpoint,
+         "a hit-count condition also reads as conditional");
+  Expect(logpoint != nullptr && logpoint->is_logpoint,
+         "a log message makes the mark read as a logpoint");
+}
+
 }  // namespace
 
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
@@ -180,6 +225,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderStatusBarSurfacesTooltipFromService);
   AddTest(tests, "RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile",
           TestBuilderMarksExecutionLineOnlyForMatchingFile);
+  AddTest(tests, "RenderViewModelBuilder/MarksConditionalAndLogpointGutterDots",
+          TestBuilderMarksConditionalAndLogpointGutterDots);
 }
 
 }  // namespace microide::tests

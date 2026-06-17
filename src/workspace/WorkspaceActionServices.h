@@ -178,6 +178,12 @@ class WorkspaceActionContext {
     // next session (index < 0) or selects a 1-based index.
     std::function<std::size_t()> debug_session_count;
     std::function<void(int index)> debug_switch_session;
+    // Debug-console REPL (Phase 9): open the single-line prompt that evaluates an
+    // expression in the active session and appends the result to the console.
+    std::function<void()> open_debug_repl_prompt;
+    // Launch-config picker (Phase 9): open the fuzzy picker over the project's
+    // launch configs.
+    std::function<void()> open_launch_config_picker;
     // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
@@ -337,6 +343,9 @@ class WorkspaceActionContext {
   // (index < 0) or a 1-based session index.
   std::size_t DebugSessionCount() const;
   void DebugSwitchSession(int index);
+  // Debug-console REPL + launch-config picker (Phase 9).
+  void OpenDebugReplPrompt();
+  void OpenLaunchConfigPicker();
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();
   void ShowDebugPaneSurface(DebugPaneMode mode);

@@ -725,6 +725,48 @@ void TestDebugSessionWatchEvaluate() {
   manager.ShutdownAll();
 }
 
+// The debug-console REPL evaluates against the real mock adapter via the same
+// RequestEvaluate path as watch/hover, but with context "repl" (ungated, like
+// watch) — mirroring DebugService::EvaluateRepl's wire interaction. Frame 0 is the
+// fallback when running; here we evaluate against the stopped top frame.
+void TestDebugSessionReplEvaluate() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "evaluate"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "adapter should stop so a frame is focusable");
+  Expect(!captured.last_frames.empty(), "a stack frame should resolve on stop");
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  const int frame_id = captured.last_frames[0].id;
+
+  bool resolved = false;
+  std::string repl_value;
+  session->RequestEvaluate("answer", frame_id, "repl",
+                           [&](bool ok, codec::DapEvaluateResult result) {
+                             if (ok) {
+                               repl_value = result.result;
+                             }
+                             resolved = true;
+                           });
+  Expect(PollUntil(manager, [&]() { return resolved; }), "repl evaluate should resolve");
+  Expect(repl_value == "answer@" + std::to_string(frame_id),
+         "the adapter's repl-context result echoes the expression evaluated in the frame");
+  manager.ShutdownAll();
+}
+
 // The session-level capability gate: an adapter without supportsEvaluateForHovers
 // rejects a hover evaluate without sending anything on the wire.
 void TestDebugSessionEvaluateGatedOnCapability() {
@@ -1293,6 +1335,7 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionVariablesTreeAndSetVariable);
   AddTest(tests, "DebugService/SessionEvaluateHover", TestDebugSessionEvaluateHover);
   AddTest(tests, "DebugService/SessionWatchEvaluate", TestDebugSessionWatchEvaluate);
+  AddTest(tests, "DebugService/SessionReplEvaluate", TestDebugSessionReplEvaluate);
   AddTest(tests, "DebugService/SessionEvaluateGatedOnCapability",
           TestDebugSessionEvaluateGatedOnCapability);
   AddTest(tests, "DebugService/HoverModelBehavior", TestDebugHoverModelBehavior);

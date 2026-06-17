@@ -17,7 +17,8 @@ SDL_FRect BreakpointGutterMarkerRect(float gutter_x, float y, float gutter_width
 }
 
 void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& theme, float gutter_x,
-                                float y, float gutter_width, float line_height, bool verified) {
+                                float y, float gutter_width, float line_height, bool verified,
+                                BreakpointGutterKind kind) {
   if (renderer == nullptr || gutter_width <= 0.0f || line_height <= 0.0f) {
     return;
   }
@@ -25,11 +26,22 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
   const float radius = bounds.w * 0.5f;
   const float cx = bounds.x + radius;
   const float cy = bounds.y + radius;
-  const SDL_Color color = verified ? theme.breakpoint : theme.breakpoint_unverified;
+
+  // Conditional / hit-count breakpoints keep the disc but swap to a distinct tint
+  // (dimmed when not yet verified). Logpoints switch to a diamond outline below.
+  SDL_Color color = verified ? theme.breakpoint : theme.breakpoint_unverified;
+  if (kind == BreakpointGutterKind::Conditional) {
+    color = theme.breakpoint_conditional;
+    if (!verified) {
+      color.a = static_cast<Uint8>(static_cast<float>(color.a) * 0.6f);
+    }
+  }
   SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
 
-  // Fill the disc as horizontal spans (one rect per scanline). The dot is tiny
-  // (≤12px), so this is a handful of fills coalesced by SDL's batcher.
+  // Fill the shape as horizontal spans (one rect per scanline). The marker is tiny
+  // (≤12px), so this is a handful of fills coalesced by SDL's batcher. A disc uses
+  // a circular half-width; a logpoint diamond uses a linear one (peaks at center).
+  const bool diamond = kind == BreakpointGutterKind::Logpoint;
   const int rows = static_cast<int>(std::ceil(bounds.h));
   std::vector<SDL_FRect> spans;
   spans.reserve(static_cast<std::size_t>(std::max(1, rows)));
@@ -39,7 +51,8 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
     if (std::fabs(dy) > radius) {
       continue;
     }
-    const float half_width = std::sqrt(std::max(0.0f, radius * radius - dy * dy));
+    const float half_width = diamond ? std::max(0.0f, radius - std::fabs(dy))
+                                      : std::sqrt(std::max(0.0f, radius * radius - dy * dy));
     spans.push_back(SDL_FRect{cx - half_width, row_y, half_width * 2.0f, 1.0f});
   }
   if (!spans.empty()) {

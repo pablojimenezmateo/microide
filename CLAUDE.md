@@ -140,7 +140,7 @@ The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `
 ## Related Docs
 
 - `AGENTS.md`: repo policy, priorities, and iteration loop
-- `dev-docs/debugger/dap-integration.md`: debugger/DAP architecture, status, and phased roadmap (active phase; Phase 6 done, on `feat/dap`)
+- `dev-docs/debugger/dap-integration.md`: debugger/DAP architecture, status, and phased roadmap (active phase; Phases 0–9 done, on `feat/dap`)
 - `dev-docs/project/active-work.md`: current shipped baseline and active phases
 - `dev-docs/project/implementation-guide.md`: durable product and subsystem map
 - `guidelines/architecture.md`: handbook summary of subsystem boundaries

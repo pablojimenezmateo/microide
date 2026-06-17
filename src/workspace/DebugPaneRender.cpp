@@ -106,7 +106,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       mode == DebugPaneMode::Breakpoints ? &project_state.debug_breakpoints_panel : nullptr;
 
   const std::size_t line_count = DebugPaneActiveRowCount();
-  const BottomPanelLogLayout panel_layout = ComputeDebugPaneListLayout(layout, line_count);
+  const LogSurfaceLayout panel_layout = ComputeDebugPaneListLayout(layout, line_count);
   SetDebugPaneScrollRow(panel_layout.scroll.vertical_scroll, line_count,
                         panel_layout.scroll.visible_rows);
 

@@ -52,7 +52,7 @@ std::optional<OutputLocation> ParseOutputLocationLine(std::string_view text) {
 }
 
 std::optional<std::size_t> BottomPanelLineIndexAtPoint(
-    const WorkspaceShell::BottomPanelLogLayout& panel_layout,
+    const WorkspaceShell::LogSurfaceLayout& panel_layout,
     float y,
     std::size_t line_count) {
   return BottomPanelLineIndexAtY(panel_layout.text_y, panel_layout.line_height,

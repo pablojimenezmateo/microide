@@ -62,6 +62,9 @@ struct PromptSurfaceState {
     // `target_line` (reused as the watch-expression index).
     AddWatchExpression,
     EditWatchExpression,
+    // Debugger (Phase 9): evaluate an expression in the active session via
+    // `evaluate(context:"repl")`; the result is appended to the debug console.
+    EvaluateReplInput,
   };
 
   Kind kind = Kind::None;

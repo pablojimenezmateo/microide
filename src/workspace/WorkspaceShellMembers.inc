@@ -322,7 +322,11 @@
   };
 
  public:
-  struct BottomPanelLogLayout {
+  // Geometry of a scrollable text/list surface (content rect + text origin +
+  // scroll surface). Shared by the bottom panel (terminal/output) and the
+  // right-side debug pane; computed by ComputeBottomPanelLogLayout /
+  // ComputeDebugPaneListLayout respectively.
+  struct LogSurfaceLayout {
     SDL_FRect content_rect{};
     float text_x = 0.0f;
     float text_y = 0.0f;
@@ -778,6 +782,11 @@
   void RefreshComparePicker();
   void MoveComparePickerSelection(int delta);
   void OpenSelectedCompareCommit();
+  // Launch-config picker (Phase 9): open the fuzzy picker over the project's launch
+  // configs, re-filter on query change, and start a session for the chosen config.
+  void OpenLaunchConfigPicker();
+  void RefreshLaunchConfigPicker();
+  void ConfirmLaunchConfigSelection();
   void OpenComparison(const project::GitCommitEntry& commit);
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);
@@ -1156,6 +1165,10 @@
   // and commit it into the watch model (edit with empty text removes).
   void OpenWatchExpressionPrompt(std::optional<std::size_t> index);
   void CommitWatchExpressionPrompt();
+  // Debug-console REPL (Phase 9): open the single-line evaluate prompt, and commit
+  // it (evaluate in the active session, then re-open for the next expression).
+  void OpenDebugReplPrompt();
+  void CommitDebugReplPrompt();
   void AppendDebugConsoleOutput(int session_id, const std::string& label,
                                 const dap_protocol::DapOutputEvent& output);
   void ShowDebugConsole(int session_id, const std::string& label);
@@ -1194,7 +1207,7 @@
   bool BottomPanelVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
-  BottomPanelLogLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
+  LogSurfaceLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
   int BottomPanelScrollRow(std::size_t line_count, int visible_rows) const;
@@ -1260,8 +1273,8 @@
   void RenderDebugPaneSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   DebugPaneModeRowLayout DebugPaneModeRow(const SDL_FRect& pane_rect) const;
   // List geometry below the mode-row, anchored to layout.right_pane. Reuses the
-  // BottomPanelLogLayout shape (content rect + text origin + scroll surface).
-  BottomPanelLogLayout ComputeDebugPaneListLayout(const WorkspaceLayout& layout,
+  // LogSurfaceLayout shape (content rect + text origin + scroll surface).
+  LogSurfaceLayout ComputeDebugPaneListLayout(const WorkspaceLayout& layout,
                                                   std::size_t line_count) const;
   // Row count + clamped scroll for the currently active debug-pane surface.
   std::size_t DebugPaneActiveRowCount() const;

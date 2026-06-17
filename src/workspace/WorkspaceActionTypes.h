@@ -143,6 +143,14 @@ enum class ActionId {
   // optional 1-based index selects a specific session. Gated on `debug.enabled`
   // + more than one live session.
   DebugSwitchSession,
+  // Debug-console REPL (Phase 9). Opens a single-line prompt that evaluates an
+  // expression in the active session and appends the result to the console.
+  // Gated on `debug.enabled` + an active session.
+  DebugConsoleRepl,
+  // Launch-config picker (Phase 9). Opens a fuzzy picker over the project's
+  // launch configs; choosing one persists the selection and starts a session.
+  // Gated on `debug.enabled`.
+  PickLaunchConfig,
   // Breakpoint modifiers (Phase 6). Context-menu only: they read the breakpoint
   // gutter menu's path + line, so palette/keybinding invocation is a no-op.
   DebugBreakpointEditCondition,

@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/GitCompareService.h"
+#include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -857,6 +858,46 @@ void TestWorkspaceShellRenamePromptMouseClickPositionsCaret() {
          "mouse-up after triple-click should be handled");
 }
 
+// Phase 9 launch-config picker: opening seeds one row per launch config with
+// prebuilt name/type labels; the query filters case-insensitively across both
+// columns; confirming a match persists its index as the selected launch config.
+void TestWorkspaceShellLaunchConfigPicker() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::vector<microide::workspace::LaunchConfig> configs;
+  configs.push_back({.name = "Run pytest", .type = "debugpy", .request = "launch"});
+  configs.push_back({.name = "Attach to server", .type = "debugpy", .request = "attach"});
+  configs.push_back({.name = "Debug binary", .type = "lldb", .request = "launch"});
+  WorkspaceShellTestAccess::SeedLaunchConfigs(shell, configs);
+
+  WorkspaceShellTestAccess::OpenLaunchConfigPicker(shell);
+  Expect(WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(shell).size() == 3,
+         "opening the picker should list every launch config");
+
+  // Filter by adapter type (secondary column) — matches both debugpy configs.
+  WorkspaceShellTestAccess::SetLaunchConfigPickerQuery(shell, "debugpy");
+  Expect(WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(shell).size() == 2,
+         "the query should filter across the type column");
+
+  // Filter by name (primary column, case-insensitive) down to one match.
+  WorkspaceShellTestAccess::SetLaunchConfigPickerQuery(shell, "ATTACH");
+  const auto labels = WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(shell);
+  Expect(labels.size() == 1 && labels[0] == "Attach to server",
+         "the query should match the name column case-insensitively");
+
+  // Confirming the sole match persists its original config index (1) even though
+  // launching fails here (no adapter registered) — the selection is written first.
+  WorkspaceShellTestAccess::SelectAndConfirmLaunchConfig(shell, 0);
+  Expect(WorkspaceShellTestAccess::SelectedLaunchConfigIndex(shell) == 1,
+         "confirming a filtered match persists the underlying launch-config index");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
@@ -893,6 +934,7 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors);
   AddTest(tests, "WorkspaceShell/DiscardAllGitPromptReconcilesOpenTabs",
           TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs);
+  AddTest(tests, "WorkspaceShell/LaunchConfigPicker", TestWorkspaceShellLaunchConfigPicker);
   AddTest(tests, "WorkspaceShell/DeletePromptOnlyClosesAffectedSplitEditor",
           TestWorkspaceShellDeletePromptOnlyClosesAffectedSplitEditor);
 #endif

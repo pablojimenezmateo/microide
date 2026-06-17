@@ -149,6 +149,51 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
+  if (state_.overlay.mode == OverlayMode::LaunchConfigPicker) {
+    auto& picker = state_.overlay.workflow.launch_config_picker;
+    const std::size_t item_count = picker.matches.size();
+    const auto apply_selection = [&](std::size_t index) {
+      if (item_count == 0) {
+        return;
+      }
+      picker.selected_index = std::min(index, item_count - 1);
+      if (const auto layout = operations_.current_workspace_layout(); layout.has_value()) {
+        operations_.reveal_overlay_selection(operations_.compute_overlay_rect(layout->editor_area));
+      }
+    };
+    switch (event.key) {
+      case SDLK_ESCAPE:
+        operations_.dismiss_overlay(false);
+        return true;
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        operations_.activate_overlay_selection();
+        return true;
+      case SDLK_UP:
+        apply_selection(ClampListIndexMove(picker.selected_index, item_count, -1));
+        return true;
+      case SDLK_DOWN:
+        apply_selection(ClampListIndexMove(picker.selected_index, item_count, 1));
+        return true;
+      case SDLK_PAGEUP:
+        apply_selection(ClampListIndexMove(picker.selected_index, item_count, -kListPageStep));
+        return true;
+      case SDLK_PAGEDOWN:
+        apply_selection(ClampListIndexMove(picker.selected_index, item_count, kListPageStep));
+        return true;
+      case SDLK_HOME:
+        apply_selection(0);
+        return true;
+      case SDLK_END:
+        if (item_count > 0) {
+          apply_selection(item_count - 1);
+        }
+        return true;
+      default:
+        return operations_.text_input_handle_single_line_key_down(event, modifiers);
+    }
+  }
+
   if (state_.overlay.mode == OverlayMode::Completion ||
       state_.overlay.mode == OverlayMode::CodeActions) {
     // Completion and code-actions are the same list widget over different item vectors;

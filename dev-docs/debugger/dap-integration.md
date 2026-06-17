@@ -1,7 +1,7 @@
 # Debugger / DAP Integration
 
 Status: **active, dedicated phase** (promoted from the durable non-goal list on
-2026-06-17). Phases 0–8 are done on `feat/dap`; Phase 9 (polish/dedup) is next.
+2026-06-17). Phases 0–9 are done on `feat/dap`; Phase 10 (polish/cleanup) is next.
 This document is the single self-sufficient source of truth for the debugger
 effort — a fresh agent on any machine should be able to read this file and
 continue without external context.
@@ -284,18 +284,38 @@ attention and (when the user is not parked at another stop) **auto-focuses**. Ea
 session gets its **own console channel** (`debug.console.<id>`). TSAN-clean with
 two adapter I/O threads live.
 
-### Phase 9 — Polish / dedup (next)
+### Phase 9 — Polish / dedup ✅ DONE (2026-06-17)
+
+See "Phase 9 — what shipped" below. Summary: a fuzzy **launch-config picker**
+(reusing the CommitPicker overlay pattern + a shared two-column picker renderer), a
+**debug-console REPL** (`evaluate(context:"repl")` via the shared
+`PromptSurfaceService` prompt, results streamed to the active session's console),
+**conditional/hit-count vs. logpoint gutter-dot render distinction** (a tinted disc
+vs. a diamond), and dedup/UX cleanup (the shared `LogSurfaceLayout` rename +
+right-side debug-pane surface-switch keybindings `Ctrl+Shift+1..4`).
+
+### Phase 10 — Polish / cleanup (next)
 
 Opportunistic, independently shippable (pick during execution):
 
-- **Launch-config picker** — a command palette over the per-project
-  `launch_configs` (persisted selection added in Phase 2 still has no picker UI).
-- **Conditional/logpoint gutter-dot render distinction** (deferred from Phase 6 as
-  optional polish): the most likely next gutter change; factor a shared
-  gutter-marker dispatch if a fifth marker appears.
-- **Debug-console REPL input** — `evaluate(context:"repl")` reusing the
-  `PromptSurfaceService` single-line field + `DebugValueTree` for structured
-  results.
+- **Per-session console cleanup** — terminated sessions' console tabs currently
+  persist (no `WorkspaceOutputChannels` remove API). A `RemoveChannel` +
+  tab-close-on-prune is the tidy follow-up if the lingering tabs prove annoying.
+- **Structured REPL/console value expansion** — Phase 9's REPL appends the result
+  as a text line; a structured result (`variablesReference > 0`) could expand
+  inline via the shared `DebugValueTree` (the value-tree core already models the
+  expandable side). The natural next step if text-only REPL output proves limiting.
+- **"Stop All Sessions" command** — a thin wrapper over `BeginShutdownAll`/
+  `ShutdownAll` on `DapManager` (multi-session left this as a one-liner follow-up).
+- **Launch-config editor** — Phase 9 added a *picker* over `launch_configs`; a small
+  create/edit UI (native `PersistedRecord`, no `.vscode/launch.json`) would let a
+  user author configs without a plugin contributing them.
+- **Function / data breakpoints** — surface `supportsFunctionBreakpoints` /
+  `supportsDataBreakpoints` if an adapter advertises them (a new breakpoint kind in
+  the Breakpoints pane).
+
+Recommended next coherent slice: the **console cleanup + structured REPL expansion +
+Stop-All** trio (all small, all build directly on shipped Phase 8/9 seams).
 
 ## Phase 0 — what shipped (2026-06-17)
 
@@ -917,6 +937,74 @@ Tests added (`tests/DebugServiceTests.cpp`):
 - TSAN: the concurrent-sessions test runs clean with two adapter I/O threads live
   (the natural multi-thread gate). Requires `vm.mmap_rnd_bits=28` for the preset.
 
+## Phase 9 — what shipped (2026-06-17)
+
+Four independently-shippable polish/dedup pieces. No new persisted format, no
+protocol additions; the launch-config selection (`selected_launch_config_index`)
+and breakpoint modifier fields already persisted from Phase 2/6.
+
+**Launch-config picker** (`ActionId::PickLaunchConfig`, command `debug-pick-config`
+"Select Launch Configuration", Debug menu, gated on `debug.enabled`):
+
+- New `OverlayMode::LaunchConfigPicker` + `TextInputSurface::LaunchConfigPicker` +
+  `LaunchConfigPickerState`/`LaunchConfigPickerItem` (`WorkspaceProjectState.h`,
+  next to `compare_picker`). Mirrors the CommitPicker fuzzy-picker exactly.
+- The picker logic lives as thin shell methods (`OpenLaunchConfigPicker` /
+  `RefreshLaunchConfigPicker` / `ConfirmLaunchConfigSelection` in
+  `WorkspaceShellLsp.cpp`): open seeds one row per `launch_configs` entry (prebuilt
+  `name` + `type · request` labels), the query substring-filters both columns
+  case-insensitively, confirm persists `selected_launch_config_index` and launches
+  via the existing `StartDebugging(config, cwd)` path.
+- **Dedup:** the CommitPicker render branch was factored into a shared
+  `draw_two_column_picker(...)` lambda in `WorkspaceShellRenderOverlay.cpp` that both
+  pickers call (header + query field + summary/hint + accent-marked rows +
+  scrollbar). The picker integrates through the established overlay seams —
+  `CurrentTextInputSurface`, `OverlayItemCount`/`SelectedIndex`/`SetSelectedIndex`/
+  `ActivateOverlaySelection`, the Completion-style key branch, wheel + row-click
+  mouse, caret-kind, and the text-change `refresh_launch_config_picker` op.
+
+**Debug-console REPL** (`ActionId::DebugConsoleRepl`, command `debug-repl`, Debug
+menu, gated on `debug.enabled` + an active session):
+
+- New `PromptSurfaceState::Action::EvaluateReplInput`; `WorkspaceShell::
+  OpenDebugReplPrompt`/`CommitDebugReplPrompt` open the shared single-line prompt and
+  **re-open it after each commit** so it behaves REPL-like.
+- `DebugService::EvaluateRepl(expression)` resolves the active session + focused
+  frame (frame 0 when running), echoes `> <expr>` then the (async) result `value`
+  (+ `type`) into the active session's console channel via the existing
+  `append_console_output` op (a synthetic `console`-category event), and surfaces
+  the console. `evaluate(context:"repl")` is ungated like `"watch"`. Structured
+  results render as text for now (deep expansion deferred to Phase 10).
+
+**Conditional / logpoint gutter dots** (render-only; the store fields already exist):
+
+- `BreakpointGutterMark` gained `has_condition` (condition **or** hit-count) and
+  `is_logpoint` (log message), populated in `RenderViewModelBuilder` from the
+  matched breakpoint's optionals. `DrawBreakpointGutterMarker` gained a
+  `BreakpointGutterKind` (Plain / Conditional / Logpoint): a plain breakpoint is the
+  existing disc, a conditional one is the disc in a new `theme.breakpoint_conditional`
+  tint (amber), a logpoint is a filled **diamond** (a shape cue that it never
+  pauses). Logpoint wins when both are set. Verified/unverified dimming still applies.
+
+**Dedup + UX cleanup:**
+
+- `WorkspaceShell::BottomPanelLogLayout` → **`LogSurfaceLayout`** (the struct is now
+  shared by the bottom panel and the right-side debug pane; the `Compute*` method
+  names are unchanged).
+- The four right-pane surface-switch actions (`DebugPaneShow*`) got default
+  keybindings **`Ctrl+Shift+1..4`** (grouped with the pane toggle `Ctrl+Shift+D`;
+  `Ctrl+digit` is the zoom family, so these use `Ctrl+Shift+digit`) + menu accelerators.
+
+Tests added:
+
+- `DebugService/SessionReplEvaluate` — real mock-adapter (`evaluate` mode): a
+  `repl`-context evaluate against the stopped frame returns the adapter's value.
+- `RenderViewModelBuilder/MarksConditionalAndLogpointGutterDots` — plain / condition
+  / hit-count / logpoint breakpoints set the right `has_condition`/`is_logpoint` flags.
+- `WorkspaceShell/LaunchConfigPicker` — open lists all configs; the query filters
+  both columns case-insensitively; confirming a filtered match persists the
+  underlying launch-config index.
+
 ## How to validate
 
 ```bash
@@ -965,6 +1053,14 @@ Stop the active session → it disappears and the active advances; Restart leave
 exactly one session row. Run the TSAN preset (`tools/run-checks.sh tsan`, needs
 `sudo sysctl vm.mmap_rnd_bits=28`) — two adapter I/O threads now run at once.
 
+For Phase 9: with a plugin contributing ≥2 launch configs, run `debug-pick-config`
+→ a fuzzy picker lists them; type to filter, Enter (or click) launches the picked
+config and the selection persists. Stop at a breakpoint → `debug-repl` → type an
+expression → its value prints to the console and the prompt re-opens for the next
+one. Set a plain, a conditional (right-click → Edit Condition), and a logpoint
+(Edit Log Message) breakpoint on three lines → the gutter shows a red disc, an amber
+disc, and a diamond respectively. `Ctrl+Shift+1..4` switch the right-pane surface.
+
 Tracing: set `MICROIDE_TRACE_DAP_LIFECYCLE=1` for adapter lifecycle logs (mirrors
 `MICROIDE_TRACE_LSP_LIFECYCLE`).
 
@@ -974,20 +1070,19 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Phase 8 is done. Start **Phase 9** (polish / dedup) — independently shippable
-pieces, pick by value during execution (see the "Phase 9" roadmap entry above):
+Phase 9 is done. Start **Phase 10** (polish / cleanup) — independently shippable
+pieces, pick by value during execution (see the "Phase 10" roadmap entry above):
 
-- **Launch-config picker** — a command palette over the per-project
-  `launch_configs` (the persisted selection from Phase 2 still has no picker; with
-  multi-session it now also chooses *which* config a new session launches).
-- **Conditional/logpoint gutter-dot render distinction** (deferred from Phase 6):
-  the most likely next gutter change; factor a shared gutter-marker dispatch if a
-  fifth marker appears.
-- **Debug-console REPL input** — `evaluate(context:"repl")` reusing the
-  `PromptSurfaceService` single-line field + `DebugValueTree` for structured output.
 - **Per-session console cleanup**: terminated sessions' console tabs currently
   persist (no `WorkspaceOutputChannels` remove API). A `RemoveChannel` +
   tab-close-on-prune is the tidy follow-up if the lingering tabs prove annoying.
+- **Structured REPL/console value expansion** — Phase 9's REPL appends results as
+  text; a `variablesReference > 0` result could expand inline via the shared
+  `DebugValueTree` (its expandable side is already modeled).
+- **"Stop All Sessions" command** — a thin wrapper over `BeginShutdownAll`/
+  `ShutdownAll` on `DapManager`.
+- **Launch-config editor** — Phase 9 added the *picker*; a small create/edit UI
+  (native `PersistedRecord`) would let users author configs without a plugin.
 
 Multi-session pieces now in place to build on:
 
@@ -1007,22 +1102,25 @@ Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
   `draw_value_tree_row` lambda in `WorkspaceShellRenderBottomPanel.cpp`; the Phase 7
   Breakpoints tab reuses `draw_two_column_row`. A fifth structured debug panel
   should reuse them too (and `IsDebugPanelContent` already folds the family).
-- Breakpoint condition/hit/log + watch add/edit all route through the shared
-  `PromptSurfaceService` single-line prompt; a future REPL input or watch-from-
-  selection action should reuse it rather than a bespoke field.
+- Breakpoint condition/hit/log + watch add/edit + the Phase 9 debug-console REPL
+  all route through the shared `PromptSurfaceService` single-line prompt; a future
+  watch-from-selection action should reuse it rather than a bespoke field.
+- The two fuzzy pickers (commit/ref + Phase 9 launch-config) share the
+  `draw_two_column_picker` lambda in `WorkspaceShellRenderOverlay.cpp`; a third
+  two-column overlay picker should reuse it rather than re-deriving the chrome.
 - The breakpoint / diagnostic / fold / execution gutter markers share the same
-  per-row cursor-walk shape in `EditorViewRenderer`; if a fifth marker appears,
-  factor a shared gutter-marker dispatch. A render distinction for
-  conditional/logpoint dots (deferred from Phase 6 as optional polish) is the most
-  likely next gutter change.
+  per-row cursor-walk shape in `EditorViewRenderer`. The breakpoint marker now
+  dispatches on `BreakpointGutterKind` (plain disc / conditional tint / logpoint
+  diamond) inside `DrawBreakpointGutterMarker`; if a *fifth* distinct gutter marker
+  appears, factor a shared gutter-marker dispatch one level up.
 - The Plugin and DebugValue hover popups share `ComputeTwoBlockHoverCardRect` /
   `DrawTwoBlockHoverCard`; route the Diagnostic popup through them if its layout is
   ever made byte-identical.
 - The `DebugHoverModel` async-cache shape (Begin/Classify/Resolve/Fail + generation
   guard) is a template if a hover popup later wants to **expand a structured value
   inline** — and `DebugValueTree` now models the expandable side directly.
-- A config-picker UI (command palette over `launch_configs`) is the natural home
-  for the persisted selection added in Phase 2.
+- The Phase 9 launch-config picker is a *read* UI over `launch_configs`; a future
+  config *editor* (create/edit, native `PersistedRecord`) is the natural complement.
 
 All debugger work lands on the canonical `feat/dap` branch; do not merge to
 `main` until the effort is complete.

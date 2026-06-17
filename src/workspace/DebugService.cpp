@@ -589,6 +589,63 @@ void DebugService::CancelVariableEdit() {
   }
 }
 
+void DebugService::AppendConsoleLine(int session_id, const std::string& label,
+                                     const std::string& text) {
+  if (!operations_.append_console_output) {
+    return;
+  }
+  dap_protocol::DapOutputEvent event;
+  event.category = "console";
+  event.output = text + "\n";
+  operations_.append_console_output(session_id, label, event);
+}
+
+bool DebugService::EvaluateRepl(const std::string& expression) {
+  if (expression.empty()) {
+    return false;
+  }
+  DapManager& manager = CurrentDapManager();
+  DebugSession* session = manager.ActiveSession();
+  if (session == nullptr) {
+    return false;
+  }
+  const int session_id = manager.ActiveSessionId();
+  std::string label;
+  for (const DapSessionInfo& info : manager.Sessions()) {
+    if (info.id == session_id) {
+      label = info.name;
+      break;
+    }
+  }
+  // Echo the typed expression, then surface the console so the result is visible.
+  AppendConsoleLine(session_id, label, "> " + expression);
+  if (operations_.show_debug_console) {
+    operations_.show_debug_console(session_id, label);
+  }
+  // Frame 0 when running (no stopped frame); the adapter evaluates in global scope.
+  session->RequestEvaluate(
+      expression, FocusedFrameId(), "repl",
+      [this, session_id, label](bool ok, dap_protocol::DapEvaluateResult result) {
+        std::string line;
+        if (ok) {
+          line = result.result.empty() ? std::string("(no value)") : result.result;
+          if (!result.type.empty()) {
+            line += "  : " + result.type;
+          }
+        } else {
+          line = "error: could not evaluate expression";
+        }
+        AppendConsoleLine(session_id, label, line);
+        if (operations_.request_bottom_panel_redraw) {
+          operations_.request_bottom_panel_redraw();
+        }
+      });
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+  return true;
+}
+
 int DebugService::FocusedFrameId() const {
   const DebugStackFrameView* frame = CurrentProjectState().debug_execution.FocusedFrame();
   return frame != nullptr ? frame->id : 0;

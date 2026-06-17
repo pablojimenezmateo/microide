@@ -196,6 +196,8 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Add Watch";
     case PromptSurfaceState::Action::EditWatchExpression:
       return "Edit Watch";
+    case PromptSurfaceState::Action::EvaluateReplInput:
+      return "Debug Console";
   }
   return "Prompt";
 }
@@ -246,6 +248,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Evaluate this expression on every stop.";
     case PromptSurfaceState::Action::EditWatchExpression:
       return "Edit this watch expression (empty removes it).";
+    case PromptSurfaceState::Action::EvaluateReplInput:
+      return "Evaluate in the active session; the result prints to the console.";
   }
   return {};
 }
@@ -292,6 +296,8 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Add", "Cancel"};
     case PromptSurfaceState::Action::EditWatchExpression:
       return {"Save", "Cancel"};
+    case PromptSurfaceState::Action::EvaluateReplInput:
+      return {"Evaluate", "Close"};
   }
   return {"OK", "Cancel"};
 }
@@ -383,6 +389,11 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       (context_.prompts.surface.action == PromptSurfaceState::Action::AddWatchExpression ||
        context_.prompts.surface.action == PromptSurfaceState::Action::EditWatchExpression)) {
     CommitWatchExpressionPrompt();
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::EvaluateReplInput) {
+    CommitDebugReplPrompt();
     return;
   }
   EditorTabService editor_tabs = MakeEditorTabService();
@@ -503,6 +514,27 @@ void WorkspaceShell::CommitWatchExpressionPrompt() {
     debug_service_.AddWatch(text);
   }
   RequestBottomPanelRedraw();
+}
+
+void WorkspaceShell::OpenDebugReplPrompt() {
+  // The REPL has no associated path; reuse the project root so the surface still
+  // resolves a sensible label.
+  MakePromptSurfaceService().OpenPromptSurface(PromptSurfaceState::Action::EvaluateReplInput,
+                                               PromptSurfaceState::Kind::TextInput,
+                                               context_.current_project_state.root, std::string{});
+}
+
+void WorkspaceShell::CommitDebugReplPrompt() {
+  const std::string text = context_.prompts.surface.input.text();
+  MakePromptSurfaceService().DismissPromptSurface(true);
+  if (text.empty()) {
+    // Empty input closes the REPL loop rather than evaluating nothing.
+    return;
+  }
+  debug_service_.EvaluateRepl(text);
+  // Re-open the prompt so the user can keep evaluating without re-triggering the
+  // command (REPL-like). A no-active-session evaluate is a no-op in the service.
+  OpenDebugReplPrompt();
 }
 
 }  // namespace microide::workspace

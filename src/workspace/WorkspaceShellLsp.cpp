@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <cctype>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -143,6 +144,76 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
     return error.empty() ? "failed to start debug session" : error;
   }
   return {};
+}
+
+namespace {
+std::string ToLowerAscii(std::string_view text) {
+  std::string lowered(text);
+  for (char& c : lowered) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return lowered;
+}
+}  // namespace
+
+void WorkspaceShell::OpenLaunchConfigPicker() {
+  LaunchConfigPickerState& picker =
+      context_.current_project_state.overlay.workflow.launch_config_picker;
+  picker.query.SetText("");
+  picker.items.clear();
+  const std::vector<LaunchConfig>& configs = context_.current_project_state.launch_configs;
+  picker.items.reserve(configs.size());
+  for (std::size_t i = 0; i < configs.size(); ++i) {
+    const LaunchConfig& config = configs[i];
+    std::string secondary = config.type;
+    if (!config.request.empty()) {
+      secondary += " · " + config.request;
+    }
+    picker.items.push_back(LaunchConfigPickerItem{
+        .config_index = i,
+        .primary_label = config.name.empty() ? config.type : config.name,
+        .secondary_label = std::move(secondary),
+    });
+  }
+  RefreshLaunchConfigPicker();
+  ShowOverlay(OverlayMode::LaunchConfigPicker);
+}
+
+void WorkspaceShell::RefreshLaunchConfigPicker() {
+  LaunchConfigPickerState& picker =
+      context_.current_project_state.overlay.workflow.launch_config_picker;
+  picker.matches.clear();
+  picker.selected_index = 0;
+  const std::string query = ToLowerAscii(picker.query.text());
+  for (const LaunchConfigPickerItem& item : picker.items) {
+    if (!query.empty()) {
+      const std::string haystack = ToLowerAscii(item.primary_label + " " + item.secondary_label);
+      if (haystack.find(query) == std::string::npos) {
+        continue;
+      }
+    }
+    picker.matches.push_back(item);
+  }
+  picker.summary_line =
+      std::to_string(picker.matches.size()) + " of " + std::to_string(picker.items.size());
+  ResetOverlayScroll();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::ConfirmLaunchConfigSelection() {
+  LaunchConfigPickerState& picker =
+      context_.current_project_state.overlay.workflow.launch_config_picker;
+  if (picker.matches.empty() || picker.selected_index >= picker.matches.size()) {
+    return;
+  }
+  const std::size_t config_index = picker.matches[picker.selected_index].config_index;
+  const std::vector<LaunchConfig>& configs = context_.current_project_state.launch_configs;
+  if (config_index >= configs.size()) {
+    return;
+  }
+  // Persist the selection (so Start Debugging / restart reuse it) and launch.
+  context_.current_project_state.selected_launch_config_index = config_index;
+  StartDebugging(configs[config_index], context_.current_project_state.root.generic_string());
 }
 
 void WorkspaceShell::StopDebugging() {

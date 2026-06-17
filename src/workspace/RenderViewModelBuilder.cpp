@@ -585,6 +585,8 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
             .visual_row_index = visual_row_index,
             .enabled = bp->enabled,
             .verified = bp->verified,
+            .has_condition = bp->condition.has_value() || bp->hit_condition.has_value(),
+            .is_logpoint = bp->log_message.has_value(),
         });
       }
     }

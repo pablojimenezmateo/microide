@@ -9,7 +9,7 @@ namespace microide::workspace {
 namespace {
 
 std::optional<std::size_t> DebugPaneLineIndexAtPoint(
-    const WorkspaceShell::BottomPanelLogLayout& panel_layout, float y, std::size_t line_count) {
+    const WorkspaceShell::LogSurfaceLayout& panel_layout, float y, std::size_t line_count) {
   return BottomPanelLineIndexAtY(panel_layout.text_y, panel_layout.line_height,
                                  panel_layout.scroll.visible_rows,
                                  panel_layout.scroll.vertical_scroll, y, line_count);
