@@ -1,6 +1,6 @@
 # Release checklist
 
-Use this checklist when cutting a microide release tag (e.g. `v1.1.0`). Items assume Linux is the
+Use this checklist when cutting a microide release tag (e.g. `v1.3.0`). Items assume Linux is the
 primary validated host unless release notes state otherwise.
 
 ## Standard release procedure
@@ -37,7 +37,7 @@ checksum so users have a packaged install path.
 ## Tag and artifacts
 
 - [ ] `CHANGELOG.md` updated with the release version, date, and grouped changes
-- [ ] Git annotated tag `v1.1.0` (or chosen version) on the release commit
+- [ ] Git annotated tag `v1.3.0` (or chosen version) on the release commit
 - [ ] Release notes summarizing scope, limitations, and safe-startup flags
 - [ ] SHA256 checksums for distributed Linux x86_64 binary (if published)
 - [ ] Build-from-source instructions (`dev-docs/platform/linux-build.md` or README build section)
@@ -78,5 +78,5 @@ Publish in release notes:
 
 ## Post-tag
 
-- [ ] Archive OpenSpec change `prepare-git-workstation-preview`
 - [ ] Update `dev-docs/project/active-work.md` release status if scope shipped
+- [ ] Archive any OpenSpec change that shipped with this tag (move it under `openspec/changes/archive/`)

@@ -1,6 +1,6 @@
 # MicroIDE Product Guide
 
-Reviewed on 2026-06-14.
+Reviewed on 2026-06-17.
 
 This file captures the durable product direction for the current C++/SDL3 codebase.
 Keep it shorter than `dev-docs/project/active-work.md`.

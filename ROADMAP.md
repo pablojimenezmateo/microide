@@ -1,6 +1,6 @@
 # MicroIDE Roadmap
 
-Reviewed on 2026-06-14.
+Reviewed on 2026-06-17.
 
 This file is the forward-looking plan for the current branch. `dev-docs/project/active-work.md` remains the
 source of truth for shipped baseline and accepted scope cuts.
@@ -33,8 +33,11 @@ It is:
   fallback audit have shipped; what remains is end-to-end validation, regression coverage, and
   polish around this wedge before broadening scope again.
 - validate the shipped foundations (LSP / tasks / tests / SCM) against real workflows
-- harden the remaining host boundaries, especially around `WorkspaceShell` (file decomposition
-  is satisfied; ownership decomposition is partial — see `dev-docs/project/known-tech-debt.md` items 15–16)
+- harden the remaining host boundaries, especially around `WorkspaceShell` (file decomposition is
+  satisfied; the `TextViewport` / `WorkspaceShell` ownership-decomposition passes have been taken as
+  far as the perf gate allows and are closed — see
+  `guidelines/tech-debt/archive/2026-05-20-textviewport-and-shell-decomposition.md`. Further ownership
+  reduction is gated on a measured win, not pursued speculatively.)
 - keep UI latency stable while the new runtime surfaces are exercised under load
 
 ## Immediate Slice

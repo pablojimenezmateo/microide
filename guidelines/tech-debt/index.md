@@ -27,3 +27,19 @@ No open tech debt records yet.
 ## Archive
 
 Resolved records belong in `archive/` using the file name `YYYY-MM-DD-<slug>.md`.
+
+The closed tech-debt history (previously a long journal inside
+`dev-docs/project/known-tech-debt.md`) was moved here on 2026-06-17:
+
+- `archive/2026-04-29-comprehensive-cleanup-and-single-line-input.md`
+- `archive/2026-05-01-render-and-layout-perf-batch.md`
+- `archive/2026-05-15-layout-revision-tiers.md`
+- `archive/2026-05-19-search-index-event-watch.md`
+- `archive/2026-05-19-throughput-pass-followups.md`
+- `archive/2026-05-20-textviewport-and-shell-decomposition.md`
+- `archive/2026-06-11-deep-correctness-audit.md`
+- `archive/2026-06-15-render-app-util-terminal-pass.md`
+- `archive/2026-06-16-terminal-headless-and-glyph-atlas-closeout.md`
+
+Two of these carry durable **do-not-retry** guardrails (the editor glyph-atlas draw-path and the
+`TextDocumentModel` ownership extraction); `dev-docs/project/known-tech-debt.md` links them directly.

@@ -534,7 +534,7 @@ Relevant code:
 
 - `src/workspace/WorkspaceReviewComments.cpp` — `GetThreads`, `GetComments`
 - `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
-- `dev-docs/project/known-tech-debt.md` — item 8
+- `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §8
 
 ### New finding 2: `ComputeEditorPaneLayouts` called twice per render frame (MEDIUM)
 
@@ -551,7 +551,7 @@ No caching infrastructure was needed.
 Relevant code:
 
 - `src/workspace/WorkspaceShellRenderFrame.cpp` — two separate `ComputeEditorPaneLayouts` calls
-- `dev-docs/project/known-tech-debt.md` — item 9
+- `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §9
 
 ### New finding 3: Terminal cursor state acquired under three separate mutex locks per frame (MEDIUM)
 
@@ -570,7 +570,7 @@ Relevant code:
 
 - `src/terminal/TerminalSession.h` — `cursor_row()`, `cursor_column()`, `cursor_visible()`
 - `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal cursor render path
-- `dev-docs/project/known-tech-debt.md` — item 10
+- `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §10
 
 ### New finding 4: `std::find` on `marked_lines` vector in `draw_review_comment_markers` (MEDIUM)
 
@@ -596,7 +596,7 @@ Implemented:
 Relevant code:
 
 - `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
-- `dev-docs/project/known-tech-debt.md` — item 11
+- `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §11
 
 ## Deep-Dive Findings (2026-04-23)
 

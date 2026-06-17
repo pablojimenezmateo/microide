@@ -357,6 +357,17 @@ class TextViewport {
   bool TrySkipOverClose(char ch);
   bool MaybeDedentOnClose(char ch);
   bool TryInsertNewlineSplitBraces();
+  // Brace-split-on-newline geometry for a single caret position. Returns the
+  // replacement text (`"\n" + inner_indent + "\n" + base_indent`) plus the
+  // inner-indent landing column when (line, column) sits between a matching
+  // auto-close opener/closer, or std::nullopt otherwise. Shared by the
+  // single-caret newline path and the multi-caret insert fan-out.
+  struct NewlineBraceSplit {
+    std::string text;
+    std::string inner_indent;
+  };
+  std::optional<NewlineBraceSplit> ComputeNewlineBraceSplit(std::size_t line,
+                                                            std::size_t column) const;
   bool InInsertionSuppressedScope(std::size_t line, std::size_t column) const;
   bool TryMultiCaretPairInsert(char ch);
   void InvalidateDerivedCaches(InvalidationReason reason);

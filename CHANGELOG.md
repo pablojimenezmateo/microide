@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [1.3.0] - 2026-06-17
+
+Closes out the remaining open editor/folding/project topics, then does a deep documentation pass:
+the closed tech-debt history is moved out of the known-debt journal into a dated archive, and the
+public-facing and dev docs are refreshed.
+
+### Editor
+- Multi-caret brace-split on newline: pressing Enter now fans the single-caret brace-split geometry
+  across every caret.
+- Stop bogus fold markers on Markdown prose.
+
+### LSP & Project
+- Keep the language server warm across project-tab switches.
+- Unblock project switch/open stalls.
+
+### Internal
+- Architecture size caps now count source lines (SLOC), with the duplicated line counters deduped;
+  fix a headless-test flake.
+- Docs: archive the closed tech-debt history under `guidelines/tech-debt/archive/` and trim the
+  known-debt journal to open items only; refresh README, ROADMAP, active-work, and the release
+  checklist; repoint references that named now-archived debt sections.
+
 ## [1.2.1] - 2026-06-16
 
 Incremental release building on 1.2.0 with a file-tree convenience action and the standard release

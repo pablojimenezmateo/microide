@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/FoldingModel.h"
+#include "editor/LanguageContractView.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
 
@@ -17,6 +18,85 @@ FoldingModel::ComputeOptions DefaultFoldOptions() {
   options.use_indent_source = true;
   options.tab_size = 4;
   return options;
+}
+
+microide::editor::LanguageContractView MakeCStyleContractView() {
+  microide::editor::LanguageContractView view;
+  view.auto_close_pairs = {{"(", ")"}, {"[", "]"}, {"{", "}"}};
+  view.surround_pairs = view.auto_close_pairs;
+  view.indent_after_open_patterns = {"{", "(", "["};
+  view.dedent_on_close_chars = {"}", ")", "]"};
+  view.line_comment = "//";
+  view.auto_close_enabled = true;
+  view.surround_enabled = true;
+  view.smart_indent_enabled = true;
+  return view;
+}
+
+// §12.1: pressing Enter with several carets each sitting between a matching
+// auto-close pair must split every brace pair across three lines (mirroring the
+// single-caret TryInsertNewlineSplitBraces path) in one undoable step.
+void TestMultiCaretSplitBracesAtEveryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("foo() {}\nfoo() {}", "/tmp/mc-split-braces.cpp");
+  viewport.SetLanguageContractView(MakeCStyleContractView());
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(2);
+  viewport.MoveCursorTo(0, 7);            // between '{' and '}' on line 0
+  viewport.SetSecondaryCarets({{1, 7}});  // between '{' and '}' on line 1
+
+  viewport.InsertNewline();
+
+  Expect(viewport.lines().size() == 6,
+         "each caret between a brace pair should split into three lines");
+  Expect(viewport.lines()[0] == "foo() {" && viewport.lines()[1] == "  " &&
+             viewport.lines()[2] == "}",
+         "first caret should produce opener / indented body / closer");
+  Expect(viewport.lines()[3] == "foo() {" && viewport.lines()[4] == "  " &&
+             viewport.lines()[5] == "}",
+         "second caret should produce opener / indented body / closer");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "primary caret should land on its indented body line");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{4, 2},
+         "secondary caret should land on its body line, shifted by the upper split");
+
+  Expect(viewport.Undo(), "multi-caret brace split should undo as one step");
+  Expect(viewport.lines().size() == 2 && viewport.lines()[0] == "foo() {}" &&
+             viewport.lines()[1] == "foo() {}",
+         "undo should atomically restore both original lines");
+}
+
+// A caret not between a matching pair must fall back to a plain newline +
+// auto-indent while its sibling caret still splits its braces, all in one step.
+void TestMultiCaretSplitBracesMixedWithPlainNewline() {
+  TextViewport viewport;
+  viewport.LoadContent("foo() {}\nbar baz", "/tmp/mc-split-braces-mixed.cpp");
+  viewport.SetLanguageContractView(MakeCStyleContractView());
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(2);
+  viewport.MoveCursorTo(0, 7);            // between '{' and '}' -> brace split
+  viewport.SetSecondaryCarets({{1, 3}});  // middle of "bar baz" -> plain newline
+
+  viewport.InsertNewline();
+
+  Expect(viewport.lines().size() == 5,
+         "brace caret splits into three lines, plain caret into two");
+  Expect(viewport.lines()[0] == "foo() {" && viewport.lines()[1] == "  " &&
+             viewport.lines()[2] == "}",
+         "the brace caret should still split across three lines");
+  Expect(viewport.lines()[3] == "bar" && viewport.lines()[4] == " baz",
+         "the non-brace caret should receive a plain newline split");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "primary caret should land on its indented brace body");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{4, 0},
+         "plain-newline caret should land at the start of the wrapped remainder");
+
+  Expect(viewport.Undo(), "mixed multi-caret newline should undo as one step");
+  Expect(viewport.lines().size() == 2 && viewport.lines()[0] == "foo() {}" &&
+             viewport.lines()[1] == "bar baz",
+         "undo should atomically restore both original lines");
 }
 
 // Simulates a caret promoted via `Add Cursor At Match`: same `AddSecondaryCaret` API,
@@ -272,6 +352,10 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretMultiCharInsertShiftsSameLineCarets);
   AddTest(tests, "EditorMultiCaret/MultiCaretBackspaceShiftsSameLineCarets",
           TestMultiCaretBackspaceShiftsSameLineCarets);
+  AddTest(tests, "EditorMultiCaret/MultiCaretSplitBracesAtEveryCaret",
+          TestMultiCaretSplitBracesAtEveryCaret);
+  AddTest(tests, "EditorMultiCaret/MultiCaretSplitBracesMixedWithPlainNewline",
+          TestMultiCaretSplitBracesMixedWithPlainNewline);
 }
 
 }  // namespace microide::tests
