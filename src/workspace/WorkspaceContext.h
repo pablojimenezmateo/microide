@@ -28,6 +28,9 @@ struct WorkspaceContext {
     if (state.lsp_manager == nullptr) {
       state.lsp_manager = std::make_unique<LspManager>();
     }
+    if (state.dap_manager == nullptr) {
+      state.dap_manager = std::make_unique<DapManager>();
+    }
   }
 
   void ResetCurrentProjectStateStorage() {

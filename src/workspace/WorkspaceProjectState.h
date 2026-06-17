@@ -17,6 +17,7 @@
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
 #include "project/ProjectSearchService.h"
+#include "workspace/WorkspaceDapManager.h"
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
@@ -256,6 +257,10 @@ struct ProjectWorkspaceState {
   editor::DiagnosticsStore diagnostics_store;
   std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
   LspUiState lsp;
+  // Per-project debug-adapter registry + active debug session (DAP). Lazily
+  // populated by DebugService::EnsureProjectDapManager so a project that never
+  // debugs pays nothing; mirrors `lsp_manager`.
+  std::unique_ptr<DapManager> dap_manager = std::make_unique<DapManager>();
   std::string active_colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
   EditorPreferences editor_preferences;
