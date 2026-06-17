@@ -186,6 +186,9 @@ bool WorkspaceTabStripChrome::ActivateBottomPanelTab(std::size_t model_index) {
     case BottomPanelTabKind::Debug:
       context_->current_project_state.panel.content = PanelContentKind::Debug;
       break;
+    case BottomPanelTabKind::DebugVariables:
+      context_->current_project_state.panel.content = PanelContentKind::DebugVariables;
+      break;
   }
 
   context_->current_project_state.surface.focus = FocusTarget::Panel;
@@ -209,6 +212,7 @@ bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
       operations_.close_output_channel_tab(tab.output_channel_id);
       break;
     case BottomPanelTabKind::Debug:
+    case BottomPanelTabKind::DebugVariables:
       CloseDebugPanel(context_->current_project_state);
       break;
   }

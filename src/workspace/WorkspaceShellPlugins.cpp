@@ -117,7 +117,11 @@ WorkspaceShell::WorkspaceShell() {
               [this]() {
                 ProjectWorkspaceState& state = context_.current_project_state;
                 state.panel.debug.open = true;
-                state.panel.content = PanelContentKind::Debug;
+                // Surface a debug panel on the first stop, but don't yank the user
+                // off the Variables tab back to Call Stack on every subsequent step.
+                if (!IsDebugPanelContent(state.panel.content)) {
+                  state.panel.content = PanelContentKind::Debug;
+                }
                 RequestBottomPanelRedraw();
               },
       });

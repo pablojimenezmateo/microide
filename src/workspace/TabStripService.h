@@ -37,7 +37,8 @@ struct TabStripOverflowControls {
 enum class BottomPanelTabKind {
   Terminal,
   Output,
-  Debug,  // Call Stack (structured debug panel); present while `panel.debug.open`
+  Debug,           // Call Stack (structured debug panel); present while `panel.debug.open`
+  DebugVariables,  // Variables/Scopes (peer to Call Stack); same `panel.debug.open` gate
 };
 
 struct BottomPanelTabModel {

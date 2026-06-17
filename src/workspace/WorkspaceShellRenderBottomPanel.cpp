@@ -43,9 +43,14 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
   const bool debug_panel = panel_vm.content == PanelContentKind::Debug;
+  const bool variables_panel = panel_vm.content == PanelContentKind::DebugVariables;
   const DebugExecutionView* debug_view =
       (debug_panel && panel_vm.project_state != nullptr) ? &panel_vm.project_state->debug_execution
                                                          : nullptr;
+  const DebugVariablesModel* vars_model =
+      (variables_panel && panel_vm.project_state != nullptr)
+          ? &panel_vm.project_state->debug_variables
+          : nullptr;
   const std::vector<VisibleStripTab> visible_panel_tabs =
       tab_strip_service_.ComputeVisibleBottomPanelTabs(
           *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
@@ -323,6 +328,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       }
     } else if (debug_panel) {
       header_label = "Call Stack";
+    } else if (variables_panel) {
+      header_label = "Variables";
     }
     DrawVCenteredTextOn(text_renderer_, renderer, panel_header, 12.0f, theme_.chrome_text,
                         theme_.chrome_background, header_label);
@@ -355,7 +362,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       terminal_panel ? terminal_line_count
                      : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
                      : debug_panel  ? (debug_view != nullptr ? debug_view->frames.size() : 0)
-                                    : 0;
+                     : variables_panel ? (vars_model != nullptr ? vars_model->Rows().size() : 0)
+                                       : 0;
 
   const BottomPanelLogLayout panel_layout =
       ComputeBottomPanelLogLayout(layout, panel_line_count);
@@ -381,6 +389,54 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       terminal_lines = &terminal_tab->visible_lines_snapshot.lines;
     }
   }
+
+  // Shared two-column row painter for the structured debug panels: a primary
+  // label, then a muted secondary trailing it. Used by both Call Stack (name +
+  // location) and the Variables non-editing path (name + value).
+  const auto draw_two_column_row = [&](float x, float text_width, const std::string& primary,
+                                       SDL_Color primary_color, const std::string& secondary,
+                                       SDL_Color secondary_color, float line_y,
+                                       SDL_Color background) {
+    const float primary_w = text_renderer_.MeasureWidth(primary);
+    DrawTextOn(text_renderer_, renderer, x, line_y, primary_color, background,
+               text_renderer_.TruncateToWidth(primary, text_width));
+    if (secondary.empty()) {
+      return;
+    }
+    const float secondary_x = x + primary_w + 12.0f;
+    const float secondary_w = x + text_width - secondary_x;
+    if (secondary_w > 0.0f) {
+      DrawTextOn(text_renderer_, renderer, secondary_x, line_y, secondary_color, background,
+                 text_renderer_.TruncateToWidth(secondary, secondary_w));
+    }
+  };
+  // Disclosure triangle for an expandable Variables row: right-pointing when
+  // collapsed, down-pointing when expanded (filled horizontal spans, matching the
+  // execution-arrow technique).
+  const auto draw_disclosure = [&](float x, float line_y, bool expanded, SDL_Color color) {
+    const float size = 7.0f;
+    const float cy = line_y + panel_layout.line_height * 0.5f - 1.0f;
+    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    if (expanded) {
+      for (int i = 0; i < static_cast<int>(size); ++i) {
+        const float w = size - static_cast<float>(i) * 2.0f;
+        if (w <= 0.0f) {
+          break;
+        }
+        DrawFilledRect(renderer, MakeRect(x + static_cast<float>(i), cy - 2.0f + static_cast<float>(i),
+                                          w, 1.0f),
+                       color);
+      }
+    } else {
+      for (int i = 0; i < static_cast<int>(size); ++i) {
+        const float h = size - static_cast<float>(i) * 2.0f;
+        if (h <= 0.0f) {
+          break;
+        }
+        DrawFilledRect(renderer, MakeRect(x + static_cast<float>(i), cy - h * 0.5f, 1.0f, h), color);
+      }
+    }
+  };
 
   for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
     const int index = panel_layout.scroll.vertical_scroll + row;
@@ -481,18 +537,81 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                        background);
       }
       // Frame name (primary), then the source location (muted) trailing it.
-      const float primary_w = text_renderer_.MeasureWidth(frame.display_primary);
-      DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y,
-                 focused ? theme_.text_primary : theme_.text_secondary, background,
-                 text_renderer_.TruncateToWidth(frame.display_primary, panel_layout.text_width));
-      if (!frame.display_secondary.empty()) {
-        const float secondary_x = panel_layout.text_x + primary_w + 12.0f;
-        const float secondary_w = panel_layout.text_x + panel_layout.text_width - secondary_x;
-        if (secondary_w > 0.0f) {
-          DrawTextOn(text_renderer_, renderer, secondary_x, line_y, theme_.text_muted, background,
-                     text_renderer_.TruncateToWidth(frame.display_secondary, secondary_w));
-        }
+      draw_two_column_row(panel_layout.text_x, panel_layout.text_width, frame.display_primary,
+                          focused ? theme_.text_primary : theme_.text_secondary,
+                          frame.display_secondary, theme_.text_muted, line_y, background);
+      continue;
+    }
+    if (variables_panel && vars_model != nullptr) {
+      const std::vector<DebugVariableRowView>& rows = vars_model->Rows();
+      const std::size_t row_index = static_cast<std::size_t>(index);
+      const DebugVariableRowView& var_row = rows[row_index];
+      const bool selected = row_index == vars_model->SelectedRow();
+      SDL_Color background = theme_.surface_background;
+      if (selected) {
+        background = theme_.row_highlight;
+        DrawFilledRect(renderer,
+                       MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+                                panel_layout.content_rect.w, panel_layout.line_height),
+                       background);
       }
+      const float indent = static_cast<float>(var_row.depth) * 14.0f;
+      const float row_x = panel_layout.text_x + indent;
+      if (var_row.has_children) {
+        draw_disclosure(row_x, line_y, var_row.expanded, theme_.text_muted);
+      }
+      const float name_x = row_x + 14.0f;
+      const float name_avail = panel_layout.text_x + panel_layout.text_width - name_x;
+      if (name_avail <= 0.0f) {
+        continue;
+      }
+      const bool editing = vars_model->IsEditing() && vars_model->EditingNodeId().has_value() &&
+                           *vars_model->EditingNodeId() == var_row.node_id;
+      if (editing) {
+        // Name (primary), then an inline value editor over the value column.
+        const float name_w = text_renderer_.MeasureWidth(var_row.display_name);
+        DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_primary, background,
+                   text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+        const float value_x = name_x + std::min(name_w, name_avail) + 12.0f;
+        const float value_w = panel_layout.text_x + panel_layout.text_width - value_x;
+        if (value_w > 4.0f) {
+          const SDL_FRect field = MakeRect(value_x - 2.0f, line_y - 2.0f, value_w,
+                                           panel_layout.line_height + 2.0f);
+          DrawTextFieldFrame(renderer, theme_, field, true);
+          const float field_text_x = value_x + 2.0f;
+          const float field_avail = std::max(1.0f, value_w - 8.0f);
+          const auto metrics =
+              ComputeSingleLineViewMetrics(vars_model->EditBuffer(), "", field_avail);
+          const std::string_view displayed = metrics.displayed_text;
+          if (metrics.selection_bytes.has_value()) {
+            const float sel_x =
+                field_text_x +
+                text_renderer_.MeasureWidth(displayed.substr(0, metrics.selection_bytes->first));
+            const float sel_w = text_renderer_.MeasureWidth(
+                displayed.substr(metrics.selection_bytes->first,
+                                 metrics.selection_bytes->second - metrics.selection_bytes->first));
+            if (sel_w > 0.0f) {
+              DrawFilledRect(renderer,
+                             MakeRect(sel_x, line_y - 1.0f, sel_w, panel_layout.line_height),
+                             theme_.selection_fill);
+            }
+          }
+          text_renderer_.DrawString(renderer, field_text_x, line_y, theme_.text_primary, displayed);
+          // Static caret (the Variables field does not join the shared caret-blink
+          // machinery; it renders its own non-blinking caret like the Settings field).
+          if (context_.interaction_state.window_has_input_focus &&
+              context_.text_input.composition.text.empty()) {
+            DrawFilledRect(renderer,
+                           MakeRect(field_text_x + metrics.cursor_x, line_y - 1.0f, 1.5f,
+                                    text_renderer_.LineHeight()),
+                           theme_.cursor);
+          }
+        }
+        continue;
+      }
+      // Name (primary), then the value (muted) trailing it.
+      draw_two_column_row(name_x, name_avail, var_row.display_name, theme_.text_primary,
+                          var_row.display_value, theme_.text_secondary, line_y, background);
       continue;
     }
   }

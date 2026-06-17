@@ -106,6 +106,22 @@ class DebugSession {
   void StepOut();
   void Pause();
 
+  // Variables inspection (Phase 4). Request/response style with inline callbacks
+  // (these are not lifecycle events, so they stay off the Callbacks struct — the
+  // same shape as Pause()'s `threads` round-trip). Callbacks fire on the main
+  // thread when the response arrives; no-ops until the adapter is initialized.
+  // Fetch the scopes for one focused frame.
+  void RequestScopes(int frame_id,
+                     std::function<void(std::vector<dap_protocol::DapScope>)> callback);
+  // Fetch the children of a structured variable/scope (variablesReference > 0).
+  void RequestVariables(int variables_reference,
+                        std::function<void(std::vector<dap_protocol::DapVariable>)> callback);
+  // Mutate a variable's value. Gated on `supportsSetVariable`; when unsupported the
+  // callback fires immediately with ok=false. On success the adapter echoes the
+  // (possibly normalized) value/type/reference.
+  void SetVariable(int variables_reference, const std::string& name, const std::string& value,
+                   std::function<void(bool ok, dap_protocol::DapSetVariableResult)> callback);
+
   // Re-send `setBreakpoints` for one file while the session is live (e.g. the
   // user toggled a breakpoint after launch). Pulls the current snapshot from
   // `breakpoint_provider`; sends an empty list to clear a file. No-op until the

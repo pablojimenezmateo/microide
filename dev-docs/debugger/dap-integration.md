@@ -198,7 +198,16 @@ Original plan, retained for reference:
 - DAP surface: `stopped`, `continued`, `threads`, `stackTrace`, `continue`, `next`,
   `stepIn`, `stepOut`, `pause`.
 
-### Phase 4 — Variables / Scopes panel + `setVariable`
+### Phase 4 — Variables / Scopes panel + `setVariable` ✅ DONE (2026-06-17)
+
+See "Phase 4 — what shipped" below. Summary: a peer **"Variables"** bottom-panel
+tab (next to "Call Stack") renders the focused frame's scopes/locals as a lazily
+expanded tree (`DebugVariablesModel`); scopes are fetched eagerly on each stop and
+the first scope auto-expands, child `variables` are fetched lazily on expand, and a
+leaf value can be edited inline (`SingleLineEditor` → `setVariable`, gated on
+`supportsSetVariable`). Switching call-stack frames re-fetches the tree.
+
+Original plan, retained for reference:
 
 - New: `src/workspace/DebugVariablesModel.{h,cpp}` (lazy tree keyed by
   `variablesReference`, cleared on each stop).
@@ -461,11 +470,84 @@ adapter: stop → stackTrace resolves the focused frames, then `next`/`stepIn`/
 sends `pause`), `RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile`
 (execution-line set only when `debug.enabled` + path matches).
 
+## Phase 4 — what shipped (2026-06-17)
+
+Files added:
+
+- `src/workspace/DebugVariablesModel.{h,cpp}` — the lazy Variables tree for the
+  focused frame. Source of truth is a node tree keyed by a stable monotonic
+  `node_id` (with a `variablesReference → node` index); a prebuilt **flat row
+  list** (`DebugVariableRowView`: prebuilt `display_name`/`display_value`/
+  `display_type` + `depth`/`has_children`/`expanded`/`editable`/`node_id`) is
+  rematerialized on every change so render/click are O(1) by row index (mirrors
+  `debug_execution.frames`). Owns the inline-edit state (`SingleLineEditor` buffer +
+  `editing_node_` + `selected_row_`). Lives on `ProjectWorkspaceState.debug_variables`,
+  transient — cleared on resume/stop, never persisted. Performs **no I/O**;
+  `DebugService` drives the requests and feeds responses back through `Apply*`.
+
+Key decisions (locked):
+
+- **Peer "Variables" tab, not a split panel.** A second `BottomPanelTabKind::
+  DebugVariables` / `PanelContentKind::DebugVariables` tab sits next to "Call Stack",
+  reusing the whole tab-strip/scroll/click infrastructure verbatim; both tabs share
+  `panel.debug.open` so they appear/disappear together. A new `IsDebugPanelContent()`
+  helper folds the Debug-family special-case (was forking across `CloseDebugPanel`,
+  `BottomPanelShowsDebug`, render) into one predicate.
+- **Eager scopes, lazy variables.** `DebugService::FocusFrame` (called on each stop
+  for the top frame and on a call-stack frame switch) issues one `scopes` request
+  and **auto-expands the first scope** (conventionally "Locals") for immediate
+  visibility; structured children are fetched lazily on expand (`ToggleRow` returns
+  the `variablesReference` to fetch, else 0). This matches the speed → low-CPU
+  priority: one cheap request per stop, the expensive fetches only on demand.
+- **Authoritative `setVariable`.** Inline edit commits via `session->SetVariable`
+  (gated on `supportsSetVariable` at the session layer; the UI also gates edit
+  entry). The row's value updates only from the adapter's **returned** (possibly
+  normalized) value — never the raw typed text. Edit mode exits immediately on
+  commit; the value lands when the response arrives.
+- **Variables value field renders its own static caret.** A new
+  `TextInputSurface::DebugVariableEdit` routes typing to `debug_variables.EditBuffer()`,
+  but the field draws its own non-blinking caret in the bottom-panel TU (like the
+  Settings field) so it stays out of the shared caret-blink machinery — no idle
+  wake-ups (low-CPU priority).
+- **`setVariable`/`scopes`/`variables` request encoding lives in `DapProtocol`** as
+  `Make*Arguments` (+ `ParseSetVariableResult`); the Phase 3 `stackTrace` arg-building
+  was moved out of `DebugSession` into `MakeStackTraceArguments` so all DAP request
+  encoding now lives in the one protocol TU (its own stated invariant).
+
+Wiring:
+
+- `DebugSession`: `RequestScopes`/`RequestVariables`/`SetVariable` (inline callbacks,
+  not lifecycle events — the same shape as `Pause()`'s `threads` round-trip).
+- `DebugService`: `FocusFrame`/`ToggleVariableRow`/`BeginVariableEdit`/
+  `CommitVariableEdit`/`CancelVariableEdit`; clears `debug_variables` on resume/stop;
+  `on_stopped` calls `FocusFrame` for the top frame.
+- Input: panel mouse (`WorkspacePanelMouseCoordinator`) — single-click a parent row
+  expands/collapses, double-click a leaf value begins edit, a call-stack frame click
+  fires `on_debug_frame_focus_changed` → `FocusFrame`; keyboard
+  (`HandleDebugVariablesKeyDown`) — Up/Down select, Left/Right collapse/expand,
+  Enter expand-or-edit, Enter/Escape commit/cancel while editing. `bottom_panel_line_count`
+  now reports the Debug/Variables row counts so wheel + scrollbar work in those panels.
+- The on-stop "show panel" op no longer yanks the user off the Variables tab back to
+  Call Stack on every step (only switches when no debug panel is currently shown).
+
+Tests added (`tests/DebugServiceTests.cpp`, `tests/DapProtocolTests.cpp`):
+
+- `DapProtocol/EncodesVariablesRequests` — `MakeStackTrace/Scopes/Variables/
+  SetVariableArguments` (paging omitted when zero) + `ParseSetVariableResult`.
+- `DebugService/SessionVariablesTreeAndSetVariable` — real mock-adapter (`variables`
+  mode): stop → scopes → expand Locals → x/obj rows → expand obj → nested depth-2
+  field → collapse → `setVariable` echoes the new value into the row.
+- `DebugService/SessionSetVariableGatedOnCapability` — an adapter without
+  `supportsSetVariable` rejects `setVariable` (callback `ok=false`, nothing on the wire).
+- `DebugService/VariablesModelTreeBehavior` — pure `DebugVariablesModel`: flatten
+  ordering/depth, lazy expand/collapse + no-refetch, `setVariable` application,
+  edit-target resolution, selection clamping, `Clear`.
+
 ## How to validate
 
 ```bash
 cmake --build build -j8
-./build/microide/microide_tests Dap DebugService    # focused: 19 DAP/session tests
+./build/microide/microide_tests Dap DebugService    # focused: 25 DAP/session tests
 ./build/microide/microide_tests Breakpoint          # BreakpointStore (7)
 ./build/microide/microide_tests "PersistedStateRecord" "PluginHost/LaunchConfig"
 tools/run-checks.sh tests                            # full unit suite incl. arch invariants
@@ -496,19 +578,22 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 4** (Variables / Scopes panel + `setVariable`). Phase 3 already
-focuses a frame (`debug_execution.focused_frame_index`, with the frame's DAP `id`
-on `DebugStackFrameView`), which is the anchor the variables tree hangs off:
+Start **Phase 5** (hover-to-inspect via `evaluate`). Phase 4 already focuses a
+frame and exposes its DAP `id` (`DebugExecutionView::FocusedFrame()->id`), which is
+the `frameId` an `evaluate` request needs:
 
-- New `src/workspace/DebugVariablesModel.{h,cpp}`: a lazy tree keyed by
-  `variablesReference`, cleared on each stop (hook into the existing `on_stopped`
-  rebuild + `on_resumed`/`StopDebugging` clears). On frame focus → `scopes`; on
-  expand → `variables` (paged via `start`/`count`).
-- Surface it in the Call Stack panel area (a second structured section or a peer
-  "Variables" tab next to "Call Stack"); prebuild row text in the view model like
-  the call-stack rows. Inline edit via `SingleLineEditor` → `setVariable` (gated on
-  `capabilities.supports_set_variable`).
-- DAP surface: `scopes`, `variables`, `setVariable`.
+- Add `EditorHoverTarget::Kind::DebugValue` in `WorkspaceShellHoverTargets.cpp`:
+  while a session is `Stopped` and `debug.enabled`, hovering a token resolves its
+  range and the expression under it.
+- `DebugService` issues `evaluate(expr, frameId, context:"hover")` (the focused
+  frame's id), caching the result keyed by (frame id, expression) like the plugin
+  hover cache; render the value through `WorkspaceShellHoverPopup.cpp`.
+- `DapProtocol` already has `ParseEvaluateResult`; add `MakeEvaluateArguments(expr,
+  frameId, context)` next to the Phase 4 `Make*Arguments` (keep all request encoding
+  in the one protocol TU). DAP surface: `evaluate` (`context:"hover"`).
+- The `DebugVariablesModel` lazy-tree shape is reusable if a hover popup later wants
+  to expand a structured value inline (a structured `evaluate` result carries a
+  `variablesReference`, the same anchor `variables` requests hang off).
 
 Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
 
@@ -516,8 +601,15 @@ Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
   per-row cursor-walk shape in `EditorViewRenderer`; the execution arrow is a
   single `std::optional` (no cursor walk). If a fifth marker appears, factor a
   shared gutter-marker dispatch instead of another bespoke block.
+- The Call Stack and Variables bottom-panel rows now share a `draw_two_column_row`
+  lambda in `WorkspaceShellRenderBottomPanel.cpp`; a third structured debug panel
+  (e.g. Watch in Phase 6) should reuse it rather than copy the row-paint block.
 - A config-picker UI (command palette over `launch_configs`) is the natural home
   for the persisted selection added in Phase 2.
+- The Watch panel (Phase 6) is the natural next structured peer tab; it can reuse
+  the `DebugVariablesModel` tree (each watched expression's `evaluate` result with a
+  `variablesReference` becomes a root) and the peer-tab + `IsDebugPanelContent`
+  plumbing Phase 4 added.
 - `Restart` (deferred from Phase 3) lands in Phase 7 with the terminate+relaunch
   fallback (`!supportsRestartRequest`).
 

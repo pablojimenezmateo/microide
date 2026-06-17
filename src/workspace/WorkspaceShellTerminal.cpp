@@ -165,7 +165,7 @@ bool WorkspaceShell::BottomPanelShowsOutput() const {
 }
 
 bool WorkspaceShell::BottomPanelShowsDebug() const {
-  return context_.current_project_state.panel.content == PanelContentKind::Debug;
+  return IsDebugPanelContent(context_.current_project_state.panel.content);
 }
 
 bool WorkspaceShell::BottomPanelVisible() const {

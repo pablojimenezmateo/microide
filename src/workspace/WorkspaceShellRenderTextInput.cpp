@@ -417,6 +417,8 @@ void WorkspaceShell::RenderSingleLineTextSelection(
       // single-line caret/selection machinery.
     case TextInputSurface::SettingsQuery:
       // The Settings overlay renders its own caret/selection.
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables value field renders its own selection in the bottom panel.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -476,6 +478,8 @@ void WorkspaceShell::RenderActiveTextInputCaret(
       // single-line caret/selection machinery.
     case TextInputSurface::SettingsQuery:
       // The Settings overlay renders its own caret.
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables value field renders its own static caret in the bottom panel.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

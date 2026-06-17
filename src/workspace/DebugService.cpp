@@ -1,8 +1,10 @@
 #include "workspace/DebugService.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -110,6 +112,12 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
                                 const std::vector<dap_protocol::DapStackFrame>& frames) {
     ProjectWorkspaceState& state = CurrentProjectState();
     state.debug_execution = BuildExecutionView(stop, frames);
+    // Populate the Variables tree for the top (focused) frame so it is ready the
+    // instant the user switches to the Variables tab (scopes is one cheap request).
+    if (const DebugStackFrameView* focused = state.debug_execution.FocusedFrame();
+        focused != nullptr) {
+      FocusFrame(focused->id);
+    }
     if (operations_.show_call_stack_panel) {
       operations_.show_call_stack_panel();
     }
@@ -124,9 +132,11 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
       operations_.request_bottom_panel_redraw();
     }
   };
-  // On resume: drop the execution view so the highlight + stack clear at once.
+  // On resume: drop the execution view + variables so the highlight, stack, and
+  // variables tree clear at once.
   callbacks.on_resumed = [this]() {
     CurrentProjectState().debug_execution.Clear();
+    CurrentProjectState().debug_variables.Clear();
     if (operations_.request_editor_redraw) {
       operations_.request_editor_redraw();
     }
@@ -165,11 +175,98 @@ void DebugService::StopDebugging() {
   // Verification state is tied to the adapter; drop it so a fresh session
   // re-verifies from scratch and the gutter shows unverified until then.
   CurrentProjectState().breakpoint_store.ResetVerification();
-  // Drop the execution view so the highlight + Call Stack panel clear.
+  // Drop the execution view + variables so the highlight, Call Stack, and
+  // Variables panels clear.
   CurrentProjectState().debug_execution.Clear();
+  CurrentProjectState().debug_variables.Clear();
   if (operations_.request_editor_redraw) {
     operations_.request_editor_redraw();
   }
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+void DebugService::FocusFrame(int frame_id) {
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session == nullptr) {
+    return;
+  }
+  CurrentProjectState().debug_variables.BeginFrame(frame_id);
+  session->RequestScopes(frame_id, [this](std::vector<dap_protocol::DapScope> scopes) {
+    DebugVariablesModel& model = CurrentProjectState().debug_variables;
+    model.ApplyScopes(scopes);
+    // Auto-expand the first scope (conventionally "Locals") for immediate
+    // visibility; this issues one `variables` request via ToggleVariableRow.
+    if (!model.Rows().empty()) {
+      ToggleVariableRow(0);
+    }
+    if (operations_.request_bottom_panel_redraw) {
+      operations_.request_bottom_panel_redraw();
+    }
+  });
+}
+
+void DebugService::ToggleVariableRow(std::size_t row) {
+  const int reference = CurrentProjectState().debug_variables.ToggleRow(row);
+  if (reference > 0) {
+    if (DebugSession* session = CurrentDapManager().ActiveSession(); session != nullptr) {
+      session->RequestVariables(
+          reference, [this, reference](std::vector<dap_protocol::DapVariable> variables) {
+            CurrentProjectState().debug_variables.ApplyVariables(reference, variables);
+            if (operations_.request_bottom_panel_redraw) {
+              operations_.request_bottom_panel_redraw();
+            }
+          });
+    }
+  }
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+void DebugService::BeginVariableEdit(std::size_t row) {
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  // Gate edit entry on the adapter capability so an unsupported adapter never
+  // shows an edit field that cannot commit.
+  if (session == nullptr || !session->Client().Capabilities().supports_set_variable) {
+    return;
+  }
+  if (CurrentProjectState().debug_variables.BeginEdit(row) &&
+      operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+void DebugService::CommitVariableEdit() {
+  DebugVariablesModel& model = CurrentProjectState().debug_variables;
+  const auto target = model.EditTargetForCommit();
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (target.has_value() && session != nullptr) {
+    const std::string value = model.EditBuffer().text();
+    const std::uint32_t node_id = target->node_id;
+    session->SetVariable(
+        target->container_reference, target->name, value,
+        [this, node_id](bool ok, dap_protocol::DapSetVariableResult result) {
+          // Authoritative: apply only the adapter's returned (possibly normalized)
+          // value, never the raw typed text.
+          if (ok) {
+            CurrentProjectState().debug_variables.ApplySetVariable(node_id, result);
+          }
+          if (operations_.request_bottom_panel_redraw) {
+            operations_.request_bottom_panel_redraw();
+          }
+        });
+  }
+  // Leave edit mode immediately; the row's value updates when the response lands.
+  model.CancelEdit();
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+void DebugService::CancelVariableEdit() {
+  CurrentProjectState().debug_variables.CancelEdit();
   if (operations_.request_bottom_panel_redraw) {
     operations_.request_bottom_panel_redraw();
   }

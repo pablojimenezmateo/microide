@@ -130,6 +130,34 @@ void TestDapProtocolParsesBreakpointsAndEvaluate() {
   Expect(eval.result == "42" && eval.type == "int", "evaluate result parsed");
 }
 
+void TestDapProtocolEncodesVariablesRequests() {
+  const JsonValue stack = codec::MakeStackTraceArguments(3, 0, 0);
+  Expect(stack["threadId"].AsInt() == 3 && stack["startFrame"].AsInt() == 0 &&
+             stack["levels"].AsInt() == 0,
+         "stackTrace arguments carry threadId/startFrame/levels");
+
+  const JsonValue scopes = codec::MakeScopesArguments(11);
+  Expect(scopes["frameId"].AsInt() == 11, "scopes arguments carry the frame id");
+
+  // start/count are omitted when zero (whole-set fetch), present otherwise.
+  const JsonValue whole = codec::MakeVariablesArguments(42, 0, 0);
+  Expect(whole["variablesReference"].AsInt() == 42, "variables arguments carry the reference");
+  Expect(!whole.HasKey("start") && !whole.HasKey("count"), "zero paging fields are omitted");
+  const JsonValue paged = codec::MakeVariablesArguments(42, 10, 20);
+  Expect(paged["start"].AsInt() == 10 && paged["count"].AsInt() == 20, "nonzero paging is sent");
+
+  const JsonValue set = codec::MakeSetVariableArguments(
+      codec::SetVariableInput{.variables_reference = 1000, .name = "x", .value = "99"});
+  Expect(set["variablesReference"].AsInt() == 1000 && set["name"].AsString() == "x" &&
+             set["value"].AsString() == "99",
+         "setVariable arguments carry the container ref, name, and value");
+
+  const codec::DapSetVariableResult result = codec::ParseSetVariableResult(
+      Json(R"({"value":"99","type":"int","variablesReference":0})"));
+  Expect(result.value == "99" && result.type == "int" && result.variables_reference == 0,
+         "setVariable result parsed");
+}
+
 }  // namespace
 
 void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
@@ -143,6 +171,7 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
           TestDapProtocolParsesThreadsAndStackAndScopesAndVariables);
   AddTest(tests, "DapProtocol/ParsesBreakpointsAndEvaluate",
           TestDapProtocolParsesBreakpointsAndEvaluate);
+  AddTest(tests, "DapProtocol/EncodesVariablesRequests", TestDapProtocolEncodesVariablesRequests);
 }
 
 }  // namespace microide::tests

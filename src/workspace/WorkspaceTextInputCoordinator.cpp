@@ -75,6 +75,9 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::Command:
       operations_.request_bottom_panel_command_redraw();
       break;
+    case TextInputSurface::DebugVariableEdit:
+      operations_.request_bottom_panel_content_redraw();
+      break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:
@@ -121,6 +124,8 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
       return &state_.overlay.workflow.project_search.edit_buffer;
+    case TextInputSurface::DebugVariableEdit:
+      return &state_.debug_variables.EditBuffer();
     case TextInputSurface::CommitSubject:
       return &state_.sidebar.git.commit_workflow.subject;
     case TextInputSurface::CommitBody:
@@ -202,6 +207,9 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       // pre-check + draft-persist refresh happens on coarser events (field switch,
       // close) so each keystroke stays cheap.
       operations_.request_sidebar_redraw();
+      break;
+    case TextInputSurface::DebugVariableEdit:
+      operations_.request_bottom_panel_content_redraw();
       break;
     case TextInputSurface::None:
     case TextInputSurface::Editor:
@@ -286,8 +294,9 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::DebugVariableEdit:
     case TextInputSurface::CommitSubject:
-      // CommitSubject is a single-line editor handled by ActiveSingleLineTextState above;
+      // These are single-line editors handled by ActiveSingleLineTextState above;
       // reaching here means it had no backing state, so there is nothing to insert.
       return false;
     case TextInputSurface::CommitBody: {

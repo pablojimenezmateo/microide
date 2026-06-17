@@ -4,6 +4,7 @@
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugSession.h"
+#include "workspace/DebugVariablesModel.h"
 #include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceDapManager.h"
 
@@ -20,6 +21,7 @@ namespace {
 using microide::util::JsonValue;
 using microide::workspace::DapManager;
 using microide::workspace::DebugSession;
+using microide::workspace::DebugVariablesModel;
 using microide::workspace::LaunchConfig;
 namespace codec = microide::workspace::dap_protocol;
 
@@ -33,9 +35,10 @@ const char* MockAdapterSource() {
 import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
-# config_done / stop / pause all advertise configurationDone support.
-supports_config_done = mode in ("config_done", "stop", "pause")
-stop_on_config = (mode == "stop")     # emit `stopped` after configurationDone
+# config_done / stop / pause / variables all advertise configurationDone support.
+supports_config_done = mode in ("config_done", "stop", "pause", "variables")
+supports_set_variable = (mode == "variables")
+stop_on_config = mode in ("stop", "variables")  # emit `stopped` after configurationDone
 running_no_stop = (mode == "pause")   # stay running so the test can pause
 seq = 0
 
@@ -102,6 +105,7 @@ while True:
     received.append(command)
     if command == "initialize":
         respond(msg, {"supportsConfigurationDoneRequest": supports_config_done,
+                      "supportsSetVariable": supports_set_variable,
                       "supportsTerminateRequest": True})
         event("initialized")
     elif command == "setBreakpoints":
@@ -133,6 +137,27 @@ while True:
         event("output", {"category": "stdout", "output": "cmd:" + command + "\n"})
         respond(msg, {"allThreadsContinued": True} if command == "continue" else {})
         emit_stop()  # re-stop so the test can drive the next step
+    elif command == "scopes":
+        respond(msg, {"scopes": [
+            {"name": "Locals", "variablesReference": 1000, "expensive": False},
+            {"name": "Globals", "variablesReference": 2000, "expensive": False},
+        ]})
+    elif command == "variables":
+        ref = msg.get("arguments", {}).get("variablesReference", 0)
+        if ref == 1000:
+            respond(msg, {"variables": [
+                {"name": "x", "value": "1", "type": "int", "variablesReference": 0},
+                {"name": "obj", "value": "{...}", "type": "Obj", "variablesReference": 1001},
+            ]})
+        elif ref == 1001:
+            respond(msg, {"variables": [
+                {"name": "field", "value": "7", "type": "int", "variablesReference": 0},
+            ]})
+        else:
+            respond(msg, {"variables": []})
+    elif command == "setVariable":
+        args = msg.get("arguments", {})
+        respond(msg, {"value": args.get("value", ""), "type": "int", "variablesReference": 0})
     elif command == "threads":
         respond(msg, {"threads": [{"id": 1, "name": "main"}]})
     elif command == "pause":
@@ -429,6 +454,183 @@ void TestDebugSessionPauseFromRunning() {
   manager.ShutdownAll();
 }
 
+// Drives the real scopes/variables/setVariable round-trips against the mock
+// adapter, feeding responses into a DebugVariablesModel exactly as DebugService
+// does — exercising protocol + session + model end to end.
+void TestDebugSessionVariablesTreeAndSetVariable() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "variables"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "adapter should stop so a frame is focusable");
+  Expect(!captured.last_frames.empty(), "a stack frame should resolve on stop");
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  const int frame_id = captured.last_frames.empty() ? 0 : captured.last_frames[0].id;
+
+  DebugVariablesModel model;
+  model.BeginFrame(frame_id);
+
+  // scopes → two collapsed top-level rows.
+  bool scopes_done = false;
+  session->RequestScopes(frame_id, [&](std::vector<codec::DapScope> scopes) {
+    model.ApplyScopes(scopes);
+    scopes_done = true;
+  });
+  Expect(PollUntil(manager, [&]() { return scopes_done; }), "scopes should resolve");
+  Expect(model.Rows().size() == 2, "two scopes should produce two rows");
+  Expect(model.Rows()[0].display_name == "Locals" && model.Rows()[0].has_children,
+         "first scope should be an expandable Locals row");
+
+  // Expand Locals → fetch its variables (x scalar, obj structured).
+  const int locals_ref = model.ToggleRow(0);
+  Expect(locals_ref == 1000, "expanding Locals should request its variablesReference");
+  bool locals_done = false;
+  session->RequestVariables(locals_ref, [&](std::vector<codec::DapVariable> vars) {
+    model.ApplyVariables(locals_ref, vars);
+    locals_done = true;
+  });
+  Expect(PollUntil(manager, [&]() { return locals_done; }), "Locals variables should resolve");
+  Expect(model.Rows().size() == 4, "Locals + x + obj + Globals should flatten to four rows");
+  Expect(model.Rows()[1].display_name == "x" && model.Rows()[1].depth == 1 &&
+             !model.Rows()[1].has_children && model.Rows()[1].editable,
+         "x should be an editable depth-1 leaf");
+  Expect(model.Rows()[2].display_name == "obj" && model.Rows()[2].has_children,
+         "obj should be an expandable child");
+
+  // Expand obj → nested child at depth 2; collapsing removes it.
+  const int obj_ref = model.ToggleRow(2);
+  Expect(obj_ref == 1001, "expanding obj should request its variablesReference");
+  bool obj_done = false;
+  session->RequestVariables(obj_ref, [&](std::vector<codec::DapVariable> vars) {
+    model.ApplyVariables(obj_ref, vars);
+    obj_done = true;
+  });
+  Expect(PollUntil(manager, [&]() { return obj_done; }), "obj variables should resolve");
+  Expect(model.Rows().size() == 5 && model.Rows()[3].display_name == "field" &&
+             model.Rows()[3].depth == 2,
+         "obj's field should appear nested at depth 2");
+  Expect(model.ToggleRow(2) == 0 && model.Rows().size() == 4,
+         "collapsing obj should drop its children without a refetch");
+
+  // setVariable on x → the adapter echoes the new value, applied authoritatively.
+  const std::uint32_t x_node = model.Rows()[1].node_id;
+  bool set_done = false;
+  bool set_ok = false;
+  session->SetVariable(1000, "x", "99", [&](bool ok, codec::DapSetVariableResult result) {
+    set_ok = ok;
+    if (ok) {
+      model.ApplySetVariable(x_node, result);
+    }
+    set_done = true;
+  });
+  Expect(PollUntil(manager, [&]() { return set_done; }), "setVariable should respond");
+  Expect(set_ok, "setVariable should succeed when the adapter supports it");
+  Expect(model.Rows()[1].display_value == "99", "x's value should reflect the adapter's echo");
+  manager.ShutdownAll();
+}
+
+// The session-level capability gate: an adapter without supportsSetVariable
+// rejects setVariable without sending anything on the wire.
+void TestDebugSessionSetVariableGatedOnCapability() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+
+  bool callback_fired = false;
+  bool callback_ok = true;
+  manager.ActiveSession()->SetVariable(
+      1000, "x", "5", [&](bool ok, codec::DapSetVariableResult) {
+        callback_fired = true;
+        callback_ok = ok;
+      });
+  Expect(PollUntil(manager, [&]() { return callback_fired; }),
+         "setVariable callback should fire even when unsupported");
+  Expect(!callback_ok, "setVariable should report failure when the adapter lacks the capability");
+  manager.ShutdownAll();
+}
+
+// Pure DebugVariablesModel behavior (no adapter): flatten ordering, lazy
+// expand/collapse, setVariable application, inline-edit targeting, selection.
+void TestDebugVariablesModelTreeBehavior() {
+  DebugVariablesModel model;
+  model.BeginFrame(7);
+  Expect(model.FrameId() == 7, "BeginFrame should record the focused frame id");
+
+  std::vector<codec::DapScope> scopes = {
+      codec::DapScope{.name = "Locals", .variables_reference = 1000},
+      codec::DapScope{.name = "Globals", .variables_reference = 2000},
+  };
+  model.ApplyScopes(scopes);
+  Expect(model.Rows().size() == 2, "two scopes flatten to two rows");
+  Expect(model.Rows()[0].has_children && !model.Rows()[0].expanded && !model.Rows()[0].editable,
+         "a scope row is expandable, collapsed, and not editable");
+
+  Expect(model.ToggleRow(0) == 1000, "expanding a not-loaded scope returns its reference to fetch");
+  model.ApplyVariables(1000, {
+      codec::DapVariable{.name = "x", .value = "1", .type = "int", .variables_reference = 0},
+      codec::DapVariable{.name = "obj", .value = "{...}", .type = "Obj", .variables_reference = 1001},
+  });
+  Expect(model.Rows().size() == 4, "expanded Locals interleaves its children before Globals");
+  Expect(model.Rows()[1].display_name == "x" && model.Rows()[1].depth == 1,
+         "child x sits at depth 1");
+
+  Expect(model.ToggleRow(2) == 1001, "expanding obj returns its reference");
+  model.ApplyVariables(1001,
+                       {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}});
+  Expect(model.Rows().size() == 5 && model.Rows()[3].depth == 2, "nested field flattens at depth 2");
+  Expect(model.ToggleRow(2) == 0 && model.Rows().size() == 4, "collapse removes the subtree");
+  Expect(model.ToggleRow(2) == 0 && model.Rows().size() == 5,
+         "re-expanding a loaded node does not refetch");
+
+  // Inline edit targeting + setVariable application.
+  Expect(!model.BeginEdit(0), "scopes are not editable");
+  Expect(model.BeginEdit(1) && model.IsEditing(), "a leaf variable enters edit");
+  Expect(model.EditBuffer().text() == "1", "edit buffer seeds with the current value");
+  const auto target = model.EditTargetForCommit();
+  Expect(target.has_value() && target->container_reference == 1000 && target->name == "x",
+         "commit target carries the container ref + name setVariable needs");
+  model.ApplySetVariable(model.Rows()[1].node_id,
+                         codec::DapSetVariableResult{.value = "42", .type = "int"});
+  Expect(model.Rows()[1].display_value == "42", "setVariable result updates the row value");
+  model.CancelEdit();
+  Expect(!model.IsEditing(), "cancel exits edit mode");
+
+  // Selection cursor clamps to row bounds.
+  model.SetSelectedRow(99);
+  Expect(model.SelectedRow() == model.Rows().size() - 1, "selection clamps to the last row");
+  model.MoveSelection(-100);
+  Expect(model.SelectedRow() == 0, "selection clamps to the first row");
+
+  model.Clear();
+  Expect(model.Empty() && model.Rows().empty(), "Clear empties the tree");
+}
+
 void TestDebugManagerRejectsUnknownAdapterType() {
   DapManager manager;
   CapturedSession captured;
@@ -462,6 +664,11 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionResolvesStackOnStopAndStepsResume",
           TestDebugSessionResolvesStackOnStopAndStepsResume);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
+  AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",
+          TestDebugSessionVariablesTreeAndSetVariable);
+  AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
+          TestDebugSessionSetVariableGatedOnCapability);
+  AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",
           TestDebugManagerRejectsUnknownAdapterType);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",

@@ -224,6 +224,10 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           // `focused_frame_index`, so selecting a caller moves the highlight too.
           exec.focused_frame_index = *line_index;
           const DebugStackFrameView& frame = exec.frames[*line_index];
+          // Refresh the Variables tree for the newly focused frame.
+          if (operations_.on_debug_frame_focus_changed) {
+            operations_.on_debug_frame_focus_changed(frame.id);
+          }
           if (!frame.source_path.empty()) {
             operations_.open_file(frame.source_path);
             if (editor::TextViewport* viewport = operations_.active_editor_viewport();
@@ -232,6 +236,36 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             }
             state_.surface.focus = FocusTarget::Editor;
           }
+          return true;
+        }
+      }
+    }
+  }
+
+  if (state_.panel.content == PanelContentKind::DebugVariables) {
+    DebugVariablesModel& model = state_.debug_variables;
+    const std::vector<DebugVariableRowView>& rows = model.Rows();
+    if (!rows.empty()) {
+      const auto panel_layout =
+          operations_.compute_bottom_panel_log_layout(layout, rows.size());
+      if (Contains(panel_layout.content_rect, event.button.x, event.button.y)) {
+        const auto line_index = BottomPanelLineIndexAtPoint(
+            panel_layout, static_cast<float>(event.button.y), rows.size());
+        if (line_index.has_value() && *line_index < rows.size()) {
+          model.SetSelectedRow(*line_index);
+          const DebugVariableRowView& row = rows[*line_index];
+          // Double-click a leaf value to edit it; single-click a parent to
+          // expand/collapse its subtree (lazy-fetched on first expand).
+          if (event.button.clicks >= 2 && row.editable && !row.has_children) {
+            if (operations_.begin_debug_variable_edit) {
+              operations_.begin_debug_variable_edit(*line_index);
+            }
+          } else if (event.button.clicks == 1 && row.has_children) {
+            if (operations_.toggle_debug_variable_row) {
+              operations_.toggle_debug_variable_row(*line_index);
+            }
+          }
+          state_.surface.focus = FocusTarget::Panel;
           return true;
         }
       }
@@ -450,6 +484,13 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                   }
                   return std::size_t{0};
                 }
+                const ProjectWorkspaceState& state = context_.current_project_state;
+                if (state.panel.content == PanelContentKind::Debug) {
+                  return state.debug_execution.frames.size();
+                }
+                if (state.panel.content == PanelContentKind::DebugVariables) {
+                  return state.debug_variables.Rows().size();
+                }
                 return std::size_t{0};
               },
           .set_bottom_panel_scroll_row =
@@ -505,6 +546,12 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               [terminal_panel]() mutable {
                 terminal_panel.SyncPrimarySelectionWithTerminalSelection();
               },
+          .on_debug_frame_focus_changed =
+              [this](int frame_id) { debug_service_.FocusFrame(frame_id); },
+          .toggle_debug_variable_row =
+              [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
+          .begin_debug_variable_edit =
+              [this](std::size_t row) { debug_service_.BeginVariableEdit(row); },
       });
 }
 

@@ -107,6 +107,17 @@ struct DapEvaluateResult {
   int variables_reference = 0;
 };
 
+// `setVariable` response body. The adapter echoes the (possibly normalized) new
+// value and may change the type / structure reference (e.g. a scalar becomes a
+// container), so all three are reflected back into the variables tree.
+struct DapSetVariableResult {
+  std::string value;
+  std::string type;
+  int variables_reference = 0;
+  int named_variables = 0;
+  int indexed_variables = 0;
+};
+
 // ---- setBreakpoints request arguments -------------------------------------
 // One source-line breakpoint to send. `line` is the 1-based DAP line (callers
 // convert from their 0-based buffer index). `condition`/`hit_condition`/
@@ -122,6 +133,25 @@ struct SetBreakpointInput {
 //   {"source":{"path":...},"breakpoints":[{"line":N,"condition":...},...]}
 util::JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
                                             const std::vector<SetBreakpointInput>& breakpoints);
+
+// ---- Variables / scopes / setVariable request arguments (Phase 4) ----------
+// Build `stackTrace` arguments: {"threadId":N,"startFrame":S,"levels":L}. `levels`
+// 0 means "all frames" per the DAP spec.
+util::JsonValue MakeStackTraceArguments(int thread_id, int start_frame, int levels);
+// Build `scopes` arguments: {"frameId":N}.
+util::JsonValue MakeScopesArguments(int frame_id);
+// Build `variables` arguments: {"variablesReference":N[,"start":S][,"count":C]}.
+// `start`/`count` are emitted only when nonzero (paging; 0/0 fetches the whole set).
+util::JsonValue MakeVariablesArguments(int variables_reference, int start, int count);
+
+struct SetVariableInput {
+  int variables_reference = 0;  // the container the named child lives in
+  std::string name;
+  std::string value;
+};
+// Build `setVariable` arguments:
+//   {"variablesReference":N,"name":...,"value":...}
+util::JsonValue MakeSetVariableArguments(const SetVariableInput& input);
 
 // ---- Encode (structs -> wire JSON) ----------------------------------------
 util::JsonValue MakeRequest(int seq, const std::string& command,
@@ -150,5 +180,6 @@ std::vector<DapBreakpoint> ParseBreakpoints(const util::JsonValue& body);
 DapStoppedEvent ParseStoppedEvent(const util::JsonValue& body);
 DapOutputEvent ParseOutputEvent(const util::JsonValue& body);
 DapEvaluateResult ParseEvaluateResult(const util::JsonValue& body);
+DapSetVariableResult ParseSetVariableResult(const util::JsonValue& body);
 
 }  // namespace microide::workspace::dap_protocol

@@ -158,6 +158,17 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     return handled;
   }
 
+  // The Variables panel owns its keys while focused so tree navigation + inline
+  // edit are not stolen by global shortcuts. Unhandled keys fall through (the
+  // handler returns false) so global bindings like F5 still work in nav mode.
+  if (state_.surface.focus == FocusTarget::Panel &&
+      state_.panel.content == PanelContentKind::DebugVariables) {
+    if (HandleDebugVariablesKeyDown(event, modifiers)) {
+      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      return true;
+    }
+  }
+
   const bool active_compare_tab = operations_.active_tab_is_compare();
   const bool active_merge_tab = operations_.active_tab_is_merge();
   if (HandleGlobalKeyDown(event, modifiers, active_compare_tab, active_merge_tab)) {
@@ -347,6 +358,70 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   }
 
   return DispatchResolvedKeybinding(*binding, ActionSource::Shortcut);
+}
+
+bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& event,
+                                                      SDL_Keymod modifiers) {
+  DebugVariablesModel& model = state_.debug_variables;
+  if (model.IsEditing()) {
+    switch (event.key) {
+      case SDLK_RETURN:
+      case SDLK_KP_ENTER:
+        if (operations_.commit_debug_variable_edit) {
+          operations_.commit_debug_variable_edit();
+        }
+        return true;
+      case SDLK_ESCAPE:
+        if (operations_.cancel_debug_variable_edit) {
+          operations_.cancel_debug_variable_edit();
+        }
+        return true;
+      default:
+        // Field navigation/editing (arrows, home/end, backspace, …). Consume the
+        // key regardless so no global binding fires mid-edit; text insertion
+        // arrives separately via SDL_TEXTINPUT.
+        operations_.text_input_handle_single_line_key_down(event, modifiers);
+        return true;
+    }
+  }
+
+  const std::vector<DebugVariableRowView>& rows = model.Rows();
+  const std::size_t selected = model.SelectedRow();
+  const DebugVariableRowView* row = selected < rows.size() ? &rows[selected] : nullptr;
+  switch (event.key) {
+    case SDLK_UP:
+      model.MoveSelection(-1);
+      return true;
+    case SDLK_DOWN:
+      model.MoveSelection(1);
+      return true;
+    case SDLK_RIGHT:
+      if (row != nullptr && row->has_children && !row->expanded &&
+          operations_.toggle_debug_variable_row) {
+        operations_.toggle_debug_variable_row(selected);
+      }
+      return true;
+    case SDLK_LEFT:
+      if (row != nullptr && row->has_children && row->expanded &&
+          operations_.toggle_debug_variable_row) {
+        operations_.toggle_debug_variable_row(selected);
+      }
+      return true;
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+      if (row != nullptr) {
+        if (row->has_children) {
+          if (operations_.toggle_debug_variable_row) {
+            operations_.toggle_debug_variable_row(selected);
+          }
+        } else if (row->editable && operations_.begin_debug_variable_edit) {
+          operations_.begin_debug_variable_edit(selected);
+        }
+      }
+      return true;
+    default:
+      return false;
+  }
 }
 
 KeybindingContext KeyInputCoordinator::ActiveKeybindingContext() const {
@@ -753,6 +828,12 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .move_merge_selection = [this](int delta) { MoveMergeSelection(delta); },
           .apply_merge_choice = [this](compare::MergeChoice choice) { ApplyMergeChoice(choice); },
           .open_merge_result_file = [this]() { OpenMergeResultFile(); },
+          .toggle_debug_variable_row =
+              [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
+          .begin_debug_variable_edit =
+              [this](std::size_t row) { debug_service_.BeginVariableEdit(row); },
+          .commit_debug_variable_edit = [this]() { debug_service_.CommitVariableEdit(); },
+          .cancel_debug_variable_edit = [this]() { debug_service_.CancelVariableEdit(); },
       });
 }
 

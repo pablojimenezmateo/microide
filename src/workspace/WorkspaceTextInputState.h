@@ -21,6 +21,9 @@ enum class TextInputSurface {
   CommitBody,
   Terminal,
   SettingsQuery,
+  // Inline edit of a value in the debug Variables panel (Phase 4). Routes to
+  // `debug_variables.EditBuffer()`; the panel renders its own static caret.
+  DebugVariableEdit,
 };
 
 struct TextCompositionState {

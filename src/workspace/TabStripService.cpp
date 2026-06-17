@@ -425,8 +425,10 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
     });
   }
 
-  // Call Stack tab: present while the debugger panel is open (set on the first
-  // stop, cleared on session stop / tab close). Structured, not channel-backed.
+  // Call Stack + Variables tabs: present while the debugger panel is open (set on
+  // the first stop, cleared on session stop / tab close). Structured, not
+  // channel-backed. They share `panel.debug.open` so they appear/disappear
+  // together; the user switches between them like any other bottom-panel tab.
   if (state.panel.debug.open) {
     tabs.push_back(BottomPanelTabModel{
         .kind = BottomPanelTabKind::Debug,
@@ -434,6 +436,13 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
         .output_channel_id = {},
         .label = "Call Stack",
         .tooltip_label = "Call Stack",
+    });
+    tabs.push_back(BottomPanelTabModel{
+        .kind = BottomPanelTabKind::DebugVariables,
+        .terminal_index = 0,
+        .output_channel_id = {},
+        .label = "Variables",
+        .tooltip_label = "Variables",
     });
   }
 
@@ -476,6 +485,9 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
       active_model_index = i;
     } else if (state.panel.content == PanelContentKind::Debug &&
                tabs[i].kind == BottomPanelTabKind::Debug) {
+      active_model_index = i;
+    } else if (state.panel.content == PanelContentKind::DebugVariables &&
+               tabs[i].kind == BottomPanelTabKind::DebugVariables) {
       active_model_index = i;
     }
   }

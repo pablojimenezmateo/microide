@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -73,6 +74,17 @@ class DebugService {
   void StepIn();
   void StepOut();
   void Pause();
+
+  // Variables panel (Phase 4). Focus a frame → fetch its scopes (and auto-expand
+  // the first one); toggle a tree row → lazily fetch/collapse its children;
+  // begin/commit/cancel an inline value edit → DAP `setVariable` (gated on the
+  // adapter capability). All are no-ops without an active session. FocusFrame is
+  // also driven internally on each stop for the top frame.
+  void FocusFrame(int frame_id);
+  void ToggleVariableRow(std::size_t row);
+  void BeginVariableEdit(std::size_t row);
+  void CommitVariableEdit();
+  void CancelVariableEdit();
 
   bool IsSessionActive() const;
   DebugSession::State SessionState() const;

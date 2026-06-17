@@ -274,12 +274,8 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
   if (!callbacks_.on_stopped) {
     return;
   }
-  util::JsonObject args;
-  args["threadId"] = util::JsonValue(static_cast<std::int64_t>(stop.thread_id));
-  args["startFrame"] = util::JsonValue(static_cast<std::int64_t>(0));
-  args["levels"] = util::JsonValue(static_cast<std::int64_t>(0));  // 0 = all frames
   client_->SendRequestAsync(
-      "stackTrace", util::JsonValue(std::move(args)),
+      "stackTrace", dap_protocol::MakeStackTraceArguments(stop.thread_id, 0, 0),
       [this, stop](const dap_protocol::DapResponse& response) {
         if (!response.success) {
           return;
@@ -287,6 +283,62 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
         if (callbacks_.on_stopped) {
           callbacks_.on_stopped(stop, dap_protocol::ParseStackFrames(response.body));
         }
+      });
+}
+
+void DebugSession::RequestScopes(int frame_id,
+                                 std::function<void(std::vector<dap_protocol::DapScope>)> callback) {
+  if (!callback || !client_->IsInitialized()) {
+    return;
+  }
+  client_->SendRequestAsync(
+      "scopes", dap_protocol::MakeScopesArguments(frame_id),
+      [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
+        if (!response.success) {
+          return;
+        }
+        callback(dap_protocol::ParseScopes(response.body));
+      });
+}
+
+void DebugSession::RequestVariables(
+    int variables_reference, std::function<void(std::vector<dap_protocol::DapVariable>)> callback) {
+  if (!callback || variables_reference <= 0 || !client_->IsInitialized()) {
+    return;
+  }
+  client_->SendRequestAsync(
+      "variables", dap_protocol::MakeVariablesArguments(variables_reference, 0, 0),
+      [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
+        if (!response.success) {
+          return;
+        }
+        callback(dap_protocol::ParseVariables(response.body));
+      });
+}
+
+void DebugSession::SetVariable(int variables_reference, const std::string& name,
+                               const std::string& value,
+                               std::function<void(bool, dap_protocol::DapSetVariableResult)> callback) {
+  // Gate on the adapter capability so we never send a request it would reject.
+  if (variables_reference <= 0 || !client_->IsInitialized() ||
+      !client_->Capabilities().supports_set_variable) {
+    if (callback) {
+      callback(false, dap_protocol::DapSetVariableResult{});
+    }
+    return;
+  }
+  client_->SendRequestAsync(
+      "setVariable",
+      dap_protocol::MakeSetVariableArguments(
+          dap_protocol::SetVariableInput{
+              .variables_reference = variables_reference, .name = name, .value = value}),
+      [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
+        if (!callback) {
+          return;
+        }
+        callback(response.success,
+                 response.success ? dap_protocol::ParseSetVariableResult(response.body)
+                                  : dap_protocol::DapSetVariableResult{});
       });
 }
 

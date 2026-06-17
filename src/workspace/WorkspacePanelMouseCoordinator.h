@@ -43,6 +43,12 @@ class PanelMouseCoordinator {
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<float(float, float)> clamp_bottom_panel_height;
     std::function<void()> sync_primary_selection_with_terminal_selection;
+    // Debug Variables panel (Phase 4): re-fetch scopes/variables when a different
+    // call-stack frame is focused; lazily expand/collapse a tree row; enter inline
+    // value edit on a leaf.
+    std::function<void(int)> on_debug_frame_focus_changed;
+    std::function<void(std::size_t)> toggle_debug_variable_row;
+    std::function<void(std::size_t)> begin_debug_variable_edit;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,

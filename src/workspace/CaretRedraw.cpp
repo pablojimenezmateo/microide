@@ -67,6 +67,9 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::SettingsQuery:
       // The Settings overlay renders its own static (non-blinking) caret; it does
       // not participate in the shared caret-blink machinery.
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables value field likewise renders its own static caret in the
+      // bottom-panel TU, so it stays out of the blink machinery (no idle wake-ups).
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

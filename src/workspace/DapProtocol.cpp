@@ -48,6 +48,40 @@ JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
   return JsonValue(std::move(args));
 }
 
+JsonValue MakeStackTraceArguments(int thread_id, int start_frame, int levels) {
+  JsonObject args;
+  args["threadId"] = JsonValue(static_cast<std::int64_t>(thread_id));
+  args["startFrame"] = JsonValue(static_cast<std::int64_t>(start_frame));
+  args["levels"] = JsonValue(static_cast<std::int64_t>(levels));
+  return JsonValue(std::move(args));
+}
+
+JsonValue MakeScopesArguments(int frame_id) {
+  JsonObject args;
+  args["frameId"] = JsonValue(static_cast<std::int64_t>(frame_id));
+  return JsonValue(std::move(args));
+}
+
+JsonValue MakeVariablesArguments(int variables_reference, int start, int count) {
+  JsonObject args;
+  args["variablesReference"] = JsonValue(static_cast<std::int64_t>(variables_reference));
+  if (start != 0) {
+    args["start"] = JsonValue(static_cast<std::int64_t>(start));
+  }
+  if (count != 0) {
+    args["count"] = JsonValue(static_cast<std::int64_t>(count));
+  }
+  return JsonValue(std::move(args));
+}
+
+JsonValue MakeSetVariableArguments(const SetVariableInput& input) {
+  JsonObject args;
+  args["variablesReference"] = JsonValue(static_cast<std::int64_t>(input.variables_reference));
+  args["name"] = JsonValue(input.name);
+  args["value"] = JsonValue(input.value);
+  return JsonValue(std::move(args));
+}
+
 JsonValue MakeRequest(int seq, const std::string& command, const JsonValue& arguments) {
   JsonObject req;
   req["seq"] = JsonValue(static_cast<std::int64_t>(seq));
@@ -241,6 +275,16 @@ DapEvaluateResult ParseEvaluateResult(const JsonValue& body) {
   result.result = AsString(body["result"]);
   result.type = AsString(body["type"]);
   result.variables_reference = AsInt(body["variablesReference"]);
+  return result;
+}
+
+DapSetVariableResult ParseSetVariableResult(const JsonValue& body) {
+  DapSetVariableResult result;
+  result.value = AsString(body["value"]);
+  result.type = AsString(body["type"]);
+  result.variables_reference = AsInt(body["variablesReference"]);
+  result.named_variables = AsInt(body["namedVariables"]);
+  result.indexed_variables = AsInt(body["indexedVariables"]);
   return result;
 }
 
