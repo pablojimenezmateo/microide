@@ -5,7 +5,7 @@ search, and terminal workflows. Single-window, keyboard-first, runs without GPU 
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
-> **Status: stable.** Tagged `v1.2.1` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
+> **Status: stable.** Tagged `v1.3.0` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
 > No signed binaries or third-party comparative benchmarks yet — build from source or package
 > locally. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
@@ -105,7 +105,7 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Release Status
 
-- Tagged `v1.2.1`. No signed binaries are published yet; the supported paths today are: build from
+- Tagged `v1.3.0`. No signed binaries are published yet; the supported paths today are: build from
   source or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for
   what shipped.
 - No screenshot or demo gallery is committed yet. That is deliberate for now: workflow docs track
@@ -113,8 +113,9 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Current UI Preview
 
-- Screenshots/demos are pending.
-- This section will include a captioned screenshot of the current UI once one is committed.
+No screenshot or demo gallery is committed. This is deliberate: the workflow docs under `dev-docs/`
+track the current UI more faithfully than a static gallery would, and the single-window, keyboard-first
+shell is best understood by building and running it (see [Build](#build)).
 
 ## What Works Today
 
@@ -169,7 +170,7 @@ Known workflow boundaries:
 Honest list of what this is not, or what is unfinished. Read this before adopting microide for
 serious work.
 
-- **No signed binaries.** Releases are git-tagged (`v1.2.1`), but build from source or package
+- **No signed binaries.** Releases are git-tagged (`v1.3.0`), but build from source or package
   locally; no signed binaries are published.
 - **No comparative benchmarks.** Internal baselines compare microide against itself; the project
   has not been measured against VSCode, Zed, Helix, or any other editor. Claims like "fastest" or
@@ -407,39 +408,8 @@ Right-click terminal tab: **Copy Last Command + Output**.
 
 ## Commands
 
-Run commands with `Ctrl+e` (command prompt):
+Run commands with `Ctrl+e` (command prompt). Current commands:
 
-```
-about                               code-actions
-colorscheme [name|list]             compare [path] [commit-prefix]
-completion                          files [root]
-find <query>                        find-references
-focus <editor|sidebar|panel>        git-refresh
-goto <line[:col]>                   goto-definition
-indent-width [n]                    jump <line[:col]>
-keyboard-shortcuts                  layout-mode-toggle
-merge <base> <incoming> <current> [output]
-open <path>                         plugins-reload
-project-close                       project-next
-project-open [path]                 project-prev
-project-search [query]              quit
-reopen                              save
-search <query>                      settings
-sidebar-close                       sidebar-hide
-sidebar-show [tool]                 sidebar-toggle [tool]
-sidebar-width <n>                   soft-tabs [on|off]
-split-first                         split-last
-split-next                          split-prev
-status-bar-toggle                   tab [path]
-tab-size [n]                        tabmove <n>
-tabswitch <tab>                     term [command]
-tests-discover                      tests-run [test-id...]
-tree [root]                         tree-refresh
-ui-scale [n|up|down|reset]          unsplit
-vsplit [path]                       wrap [on|off]
-```
-
-Current commands:
 - `code-actions`
 - `colorscheme [name|list]`
 - `completion`

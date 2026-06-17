@@ -137,7 +137,8 @@ visibility, or merge resolution.** The only size-driven behavior is diff
 
 - New compare modes or SCM integrations
 - Plugin-owned compare/merge rendering
-- GPU text backend or glyph-atlas experiments (see `dev-docs/project/known-tech-debt.md` item 13)
+- GPU text backend or glyph-atlas experiments (see the §13 guardrail in
+  `guidelines/tech-debt/archive/2026-06-16-terminal-headless-and-glyph-atlas-closeout.md`)
 
 ## Validation Checklist
 

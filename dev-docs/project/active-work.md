@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-06-14.
+Reviewed on 2026-06-17.
 
 This is the single source of truth for:
 
@@ -64,68 +64,11 @@ These are implemented and should not be treated as open migration work:
 
 ## Active Phases
 
-Update (2026-05-06): `codebase-cleanup-perf-and-debt` shipped focused cleanup slices across render,
-editor, subprocess, and persistence paths: sidebar query/replace fallback text now materializes in
-`RenderViewModelBuilder`, clipboard and replace-all flows reduced large transient allocations,
-formatter and tool SHA verification dispatch now run through background execution seams, and the
-legacy persistence importer was removed in favor of structured-record-only persistence.
-
-Update (2026-05-07): `responsive-layout-and-options-polish` shipped the responsive shell pass:
-window scaling now avoids retained-text blur on HiDPI/fractional-scale displays, the menu bar keeps
-all top-level menus reachable through compact/overflow chrome, hit pads cover small resize, close,
-scrollbar, and terminal-tab controls, the bottom status bar is host-owned and clickable, and
-Settings and Help/About overlays now share one settings-overlay service and
-view-model-rendered surface.
-
-Update (2026-05-08): `full-ui-ux-revision` shipped. Status-bar source-control affordance now
-surfaces branch identity and cleanliness, compact mode is state-labeled and checkable in menus,
-Project and Search sidebar headers now use cohesive two-row control layouts, and Help/About plus
-workspace actions no longer expose removed auth/chat/debug/task/test/problem surfaces.
-
-Update (2026-05-08, **descoped 2026-06-17**): `stabilize-ci-and-remove-periodic-workflows` left
-the CI policy event-driven only (`push`, `pull_request`, `workflow_dispatch`) with periodic
-schedules removed and `perf-harness`/`fuzz` routed to manual dispatch. Hosted CI is **no longer a
-project objective**: it stayed blocked on GitHub-hosted-runner billing, and the supported
-validation path is local `tools/run-checks.sh` (`tests`/`asan`/`ubsan`/`tsan`) plus the manual
-fuzz/perf targets. The captured-baseline perf gate on a self-hosted `perf-runner-v1` queue is
-likewise descoped — that infrastructure does not exist and is not being pursued. See **Deferred Or
-Out Of Scope**.
-
-Update (2026-05-12): **Editor essentials** (`editor-essential-capabilities`) — **shipped and
-archived** at
-`openspec/changes/archive/2026-05-12-editor-essential-capabilities/`. Upstream specs synced as
-`openspec/specs/editor-block-structure-affordances/`,
-`openspec/specs/editor-code-shaping-actions/`,
-`openspec/specs/editor-language-pair-and-indent/`, and the extension to
-`openspec/specs/editor-multicursor-and-wrap/`. Shipped surface:
-`WorkspaceLanguageContract` + plugin `ctx.brackets` / `ctx.comments` / `ctx.indents` /
-`ctx.snippets`, fold-aware `TextViewport` layout and gutter marks, sticky-scroll band, indent
-guides, render-whitespace overlays, bracket emphasis (string/comment-aware scan) and jump,
-contract-driven auto-close / surround / smart indent, shaping actions and viewport-bounded
-occurrence highlights, snippet engine + Insert Snippet overlay, symbol outline sidebar (LSP +
-regex fallback), save normalization, and auto-detect indent on open (see
-`dev-docs/project/editor-essentials.md`). Committed perf baselines for the new scenarios live under
-`tests/perf/baselines/editor_*.json`.
-
-Update (2026-06-17): the previously **partial** archived `tasks.md` items are now closed.
-5.13 (dedicated viewport-integrated folding matrix) and 12.1 (multi-caret fold-paging) are
-covered by `tests/EditorFoldingTests.cpp` and `tests/EditorMultiCaretTests.cpp`
-(`PageUpAcrossCollapsedFoldUsesVisibleRows`, `FoldAwareVerticalMotionSkipsHiddenLines`).
-The lone editor TODO — multi-caret brace-split-on-newline — is now implemented: Enter fans the
-single-caret `TryInsertNewlineSplitBraces` geometry across every caret through
-`ApplyMultiCaretInsert` via the shared `ComputeNewlineBraceSplit` helper, covered by
-`EditorMultiCaret/MultiCaretSplitBraces*`. 16.3 (host-side TSAN) was re-run on this host
-(2026-06-17, `vm.mmap_rnd_bits=28` + `tools/run-checks.sh tsan`): the full suite passes with zero
-ThreadSanitizer warnings, so it is closed.
-
-Update (2026-05-28): Git-first shell UX pass shipped in the current tree. The Git sidebar now
-surfaces workflow and commit-readiness summaries plus selected-row action hints, and compare tabs
-now render explicit review-mode/action-hint chrome so working-tree staging flows read more like a
-guided review surface than a raw diff.
-
-Update (2026-06-09): Linux local packaging now includes a `.deb` path with installed desktop
-metadata and shared runtime assets. Repository-owned GitHub workflow files were removed; local
-build, test, and packaging docs are now the supported delivery path in-tree.
+The chronological log of shipped-and-archived changes that used to live here has been removed — that
+history is recorded faithfully in `CHANGELOG.md` (user-facing) and `openspec/changes/archive/`
+(per-change proposal/spec/tasks). The durable scope decisions those entries carried (hosted CI and a
+self-hosted perf-runner are descoped; non-Linux host backends are not being built) are recorded under
+**Deferred Or Out Of Scope** below. This section now describes only what is genuinely active.
 
 ### 1. Plugin Platform Expansion
 
@@ -639,7 +582,7 @@ Current state:
   the review-comment marker, terminal snapshot generation, editor-pane-layout, and terminal cursor
   lock items from that pass are now fixed;
   see `dev-docs/performance/performance-findings.md` (Second Performance Pass section) and
-  `dev-docs/project/known-tech-debt.md` items 8–11 for the prioritized list
+  `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` (§8–§11) for the record
 
 Open work:
 
@@ -683,8 +626,9 @@ These are not current project work unless deliberately promoted into their own p
 
 ## Git Workstation
 
-OpenSpec change `prepare-git-workstation-preview` defines the workstation release scope, safe
-startup flags, release checklist, and trust documentation. See:
+The workstation release scope, safe startup flags, release checklist, and trust documentation are
+captured in the docs below (the `prepare-git-workstation-preview` OpenSpec change that originally
+defined this scope has shipped and is no longer a live change):
 
 - `dev-docs/project/git-workstation.md` — supported / unsupported workflows
 - `dev-docs/project/release-checklist.md` — tag, artifacts, tested-workflows matrix
