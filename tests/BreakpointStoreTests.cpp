@@ -103,9 +103,41 @@ void TestBreakpointStoreRevisionBumps() {
   Expect(store.revision() != before, "mutation should bump the revision");
 }
 
+void TestBreakpointStoreModifierSetters() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/mod.py";
+
+  // Setting a modifier on a bare line materializes the breakpoint (so the
+  // context menu's "Edit Condition…" doubles as "Add Conditional Breakpoint").
+  store.SetCondition(path, 12, "i > 5");
+  Expect(store.HasBreakpoint(path, 12), "setting a condition creates the breakpoint");
+  const auto* bps = store.FindByPath(path);
+  Expect(bps != nullptr && bps->size() == 1 && (*bps)[0].condition == std::optional<std::string>("i > 5"),
+         "condition is stored on the breakpoint");
+
+  store.SetHitCondition(path, 12, ">10");
+  store.SetLogMessage(path, 12, "value={x}");
+  const auto* after = store.FindByPath(path);
+  Expect(after != nullptr && (*after)[0].hit_condition == std::optional<std::string>(">10") &&
+             (*after)[0].log_message == std::optional<std::string>("value={x}"),
+         "hit condition + log message are stored");
+
+  // A nullopt clears the field (an empty prompt commit).
+  const std::uint64_t before_clear = store.revision();
+  store.SetCondition(path, 12, std::nullopt);
+  Expect(!(*store.FindByPath(path))[0].condition.has_value(), "nullopt clears the condition");
+  Expect(store.revision() != before_clear, "clearing a modifier bumps the revision");
+
+  // A no-op assignment does not bump the revision.
+  const std::uint64_t before_noop = store.revision();
+  store.SetHitCondition(path, 12, ">10");
+  Expect(store.revision() == before_noop, "an unchanged modifier does not bump the revision");
+}
+
 }  // namespace
 
 void RegisterBreakpointStoreTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "BreakpointStore/ModifierSetters", TestBreakpointStoreModifierSetters);
   AddTest(tests, "BreakpointStore/ToggleAddsAndRemoves", TestBreakpointStoreToggleAddsAndRemoves);
   AddTest(tests, "BreakpointStore/KeepsLinesSorted", TestBreakpointStoreKeepsLinesSorted);
   AddTest(tests, "BreakpointStore/PathNormalizationMatches",

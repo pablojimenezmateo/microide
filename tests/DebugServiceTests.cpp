@@ -6,6 +6,7 @@
 #include "workspace/DebugSession.h"
 #include "workspace/DebugVariablesModel.h"
 #include "workspace/DebugViewModel.h"
+#include "workspace/DebugWatchModel.h"
 #include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceDapManager.h"
 
@@ -24,6 +25,7 @@ using microide::workspace::DapManager;
 using microide::workspace::DebugSession;
 using microide::workspace::DebugHoverModel;
 using microide::workspace::DebugVariablesModel;
+using microide::workspace::DebugWatchModel;
 using microide::workspace::LaunchConfig;
 namespace codec = microide::workspace::dap_protocol;
 
@@ -639,6 +641,51 @@ void TestDebugSessionEvaluateHover() {
   manager.ShutdownAll();
 }
 
+// Watch expressions evaluate against the real mock adapter via the same
+// RequestEvaluate path as hover, but with context "watch" (which is NOT
+// capability-gated) and folding the result onto a DebugWatchModel root —
+// mirroring DebugService::EvaluateWatches.
+void TestDebugSessionWatchEvaluate() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "evaluate"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "adapter should stop so a frame is focusable");
+  Expect(!captured.last_frames.empty(), "a stack frame should resolve on stop");
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  const int frame_id = captured.last_frames[0].id;
+
+  DebugWatchModel watch;
+  watch.AddExpression("count");
+  Expect(watch.Rows().size() == 1 && watch.Rows()[0].display_value.empty(),
+         "the watch root starts as a blank placeholder");
+  bool resolved = false;
+  session->RequestEvaluate(watch.Expressions()[0], frame_id, "watch",
+                           [&](bool ok, codec::DapEvaluateResult result) {
+                             if (ok) {
+                               watch.ApplyEvaluate(0, result);
+                             }
+                             resolved = true;
+                           });
+  Expect(PollUntil(manager, [&]() { return resolved; }), "watch evaluate should resolve");
+  Expect(watch.Rows()[0].display_value == "count@" + std::to_string(frame_id),
+         "the adapter's evaluated value folds onto the watch expression's root");
+  manager.ShutdownAll();
+}
+
 // The session-level capability gate: an adapter without supportsEvaluateForHovers
 // rejects a hover evaluate without sending anything on the wire.
 void TestDebugSessionEvaluateGatedOnCapability() {
@@ -760,6 +807,63 @@ void TestDebugVariablesModelTreeBehavior() {
   Expect(model.Empty() && model.Rows().empty(), "Clear empties the tree");
 }
 
+// Pure DebugWatchModel behavior (no adapter): persistent expression list +
+// transient evaluated tree, placeholder roots, lazy expand, edit/remove,
+// ExpressionIndexForRow, and ClearResults keeping the expressions.
+void TestDebugWatchModelBehavior() {
+  DebugWatchModel model;
+  Expect(!model.HasExpressions() && model.Rows().empty(), "an empty watch model has no rows");
+
+  const std::size_t i0 = model.AddExpression("x");
+  const std::size_t i1 = model.AddExpression("obj");
+  Expect(i0 == 0 && i1 == 1, "AddExpression returns the new index");
+  Expect(model.Expressions().size() == 2, "both expressions are tracked");
+  Expect(model.Rows().size() == 2, "each expression pre-creates a placeholder root");
+  Expect(model.Rows()[0].display_name == "x" && model.Rows()[0].depth == 0,
+         "a root row shows the expression at depth 0");
+  Expect(model.Rows()[0].editable && !model.Rows()[0].has_children,
+         "an unevaluated scalar root is editable and not yet expandable");
+
+  // Fold async evaluate results onto the roots by index.
+  model.ApplyEvaluate(
+      0, codec::DapEvaluateResult{.result = "42", .type = "int", .variables_reference = 0});
+  model.ApplyEvaluate(
+      1, codec::DapEvaluateResult{.result = "{...}", .type = "Obj", .variables_reference = 900});
+  Expect(model.Rows()[0].display_value == "42", "a scalar result folds onto its root");
+  Expect(model.Rows()[1].has_children, "a structured result makes the root expandable");
+
+  Expect(model.ExpressionIndexForRow(0) == std::optional<std::size_t>(0),
+         "row 0 maps back to expression 0");
+
+  // Expand the structured watch root via the shared tree machinery.
+  Expect(model.ToggleRow(1) == 900, "expanding a structured root returns its reference to fetch");
+  model.ApplyVariables(
+      900, {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}});
+  Expect(model.Rows().size() == 3 && model.Rows()[2].depth == 1, "the child folds at depth 1");
+  Expect(!model.ExpressionIndexForRow(2).has_value(), "a child row is not an expression root");
+
+  // Edit rebuilds placeholder roots (dropping stale results); remove drops by index.
+  model.EditExpression(0, "x + 1");
+  Expect(model.Expressions()[0] == "x + 1", "EditExpression updates the string");
+  Expect(model.Rows().size() == 2 && model.Rows()[0].display_value.empty(),
+         "editing rebuilds blank placeholder roots");
+  model.RemoveExpression(0);
+  Expect(model.Expressions().size() == 1 && model.Expressions()[0] == "obj",
+         "RemoveExpression drops the expression at the index");
+  model.EditExpression(0, "");
+  Expect(model.Expressions().empty(), "editing an expression to empty removes it");
+
+  // SetExpressions (persistence restore) + ClearResults keeps the expressions.
+  model.SetExpressions({"a", "b"});
+  Expect(model.Expressions().size() == 2 && model.Rows().size() == 2,
+         "SetExpressions rebuilds one root per restored expression");
+  model.ApplyEvaluate(0, codec::DapEvaluateResult{.result = "1"});
+  model.ClearResults();
+  Expect(model.Expressions().size() == 2, "ClearResults keeps the persistent expression list");
+  Expect(model.Rows().size() == 2 && model.Rows()[0].display_value.empty(),
+         "ClearResults blanks evaluated values but keeps the placeholder rows");
+}
+
 void TestDebugManagerRejectsUnknownAdapterType() {
   DapManager manager;
   CapturedSession captured;
@@ -796,12 +900,14 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",
           TestDebugSessionVariablesTreeAndSetVariable);
   AddTest(tests, "DebugService/SessionEvaluateHover", TestDebugSessionEvaluateHover);
+  AddTest(tests, "DebugService/SessionWatchEvaluate", TestDebugSessionWatchEvaluate);
   AddTest(tests, "DebugService/SessionEvaluateGatedOnCapability",
           TestDebugSessionEvaluateGatedOnCapability);
   AddTest(tests, "DebugService/HoverModelBehavior", TestDebugHoverModelBehavior);
   AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
           TestDebugSessionSetVariableGatedOnCapability);
   AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);
+  AddTest(tests, "DebugService/WatchModelBehavior", TestDebugWatchModelBehavior);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",
           TestDebugManagerRejectsUnknownAdapterType);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",

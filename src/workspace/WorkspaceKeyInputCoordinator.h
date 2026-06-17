@@ -179,6 +179,15 @@ class KeyInputCoordinator {
     std::function<void(std::size_t)> begin_debug_variable_edit;
     std::function<void()> commit_debug_variable_edit;
     std::function<void()> cancel_debug_variable_edit;
+    // Watch panel (Phase 6): tree nav/expand + inline child setVariable edit, plus
+    // add/edit/remove of the watch expression strings (add/edit route to a prompt).
+    std::function<void(std::size_t)> toggle_debug_watch_row;
+    std::function<void(std::size_t)> begin_debug_watch_edit;
+    std::function<void()> commit_debug_watch_edit;
+    std::function<void()> cancel_debug_watch_edit;
+    std::function<void()> add_debug_watch_expression;
+    std::function<void(std::size_t)> edit_debug_watch_expression;
+    std::function<void(std::size_t)> remove_debug_watch_expression;
   };
 
   KeyInputCoordinator(ProjectWorkspaceState& state,
@@ -206,6 +215,7 @@ class KeyInputCoordinator {
   bool HandleCompareKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleMergeKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  bool HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
 
   ProjectWorkspaceState& state_;

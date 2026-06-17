@@ -44,6 +44,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
   const bool debug_panel = panel_vm.content == PanelContentKind::Debug;
   const bool variables_panel = panel_vm.content == PanelContentKind::DebugVariables;
+  const bool watch_panel = panel_vm.content == PanelContentKind::DebugWatch;
   const DebugExecutionView* debug_view =
       (debug_panel && panel_vm.project_state != nullptr) ? &panel_vm.project_state->debug_execution
                                                          : nullptr;
@@ -51,6 +52,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       (variables_panel && panel_vm.project_state != nullptr)
           ? &panel_vm.project_state->debug_variables
           : nullptr;
+  const DebugWatchModel* watch_model =
+      (watch_panel && panel_vm.project_state != nullptr) ? &panel_vm.project_state->debug_watch
+                                                         : nullptr;
   const std::vector<VisibleStripTab> visible_panel_tabs =
       tab_strip_service_.ComputeVisibleBottomPanelTabs(
           *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
@@ -363,6 +367,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                      : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
                      : debug_panel  ? (debug_view != nullptr ? debug_view->frames.size() : 0)
                      : variables_panel ? (vars_model != nullptr ? vars_model->Rows().size() : 0)
+                     : watch_panel ? (watch_model != nullptr ? watch_model->Rows().size() : 0)
                                        : 0;
 
   const BottomPanelLogLayout panel_layout =
@@ -436,6 +441,80 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         DrawFilledRect(renderer, MakeRect(x + static_cast<float>(i), cy - h * 0.5f, 1.0f, h), color);
       }
     }
+  };
+  // Shared row painter for the lazy value-tree panels (Variables + Watch). Both
+  // expose the same DebugValueTree-backed surface (Rows / SelectedRow / IsEditing
+  // / EditingNodeId / EditBuffer), so a single generic lambda renders either: an
+  // indented disclosure for expandable rows, then name + value, with an inline
+  // setVariable editor over the value column while a leaf is being edited.
+  const auto draw_value_tree_row = [&](const auto& model, std::size_t row_index, float line_y) {
+    const std::vector<DebugVariableRowView>& rows = model.Rows();
+    const DebugVariableRowView& var_row = rows[row_index];
+    const bool selected = row_index == model.SelectedRow();
+    SDL_Color background = theme_.surface_background;
+    if (selected) {
+      background = theme_.row_highlight;
+      DrawFilledRect(renderer,
+                     MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+                              panel_layout.content_rect.w, panel_layout.line_height),
+                     background);
+    }
+    const float indent = static_cast<float>(var_row.depth) * 14.0f;
+    const float row_x = panel_layout.text_x + indent;
+    if (var_row.has_children) {
+      draw_disclosure(row_x, line_y, var_row.expanded, theme_.text_muted);
+    }
+    const float name_x = row_x + 14.0f;
+    const float name_avail = panel_layout.text_x + panel_layout.text_width - name_x;
+    if (name_avail <= 0.0f) {
+      return;
+    }
+    const bool editing = model.IsEditing() && model.EditingNodeId().has_value() &&
+                         *model.EditingNodeId() == var_row.node_id;
+    if (editing) {
+      // Name (primary), then an inline value editor over the value column.
+      const float name_w = text_renderer_.MeasureWidth(var_row.display_name);
+      DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_primary, background,
+                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+      const float value_x = name_x + std::min(name_w, name_avail) + 12.0f;
+      const float value_w = panel_layout.text_x + panel_layout.text_width - value_x;
+      if (value_w > 4.0f) {
+        const SDL_FRect field =
+            MakeRect(value_x - 2.0f, line_y - 2.0f, value_w, panel_layout.line_height + 2.0f);
+        DrawTextFieldFrame(renderer, theme_, field, true);
+        const float field_text_x = value_x + 2.0f;
+        const float field_avail = std::max(1.0f, value_w - 8.0f);
+        const auto metrics = ComputeSingleLineViewMetrics(model.EditBuffer(), "", field_avail);
+        const std::string_view displayed = metrics.displayed_text;
+        if (metrics.selection_bytes.has_value()) {
+          const float sel_x =
+              field_text_x +
+              text_renderer_.MeasureWidth(displayed.substr(0, metrics.selection_bytes->first));
+          const float sel_w = text_renderer_.MeasureWidth(
+              displayed.substr(metrics.selection_bytes->first,
+                               metrics.selection_bytes->second - metrics.selection_bytes->first));
+          if (sel_w > 0.0f) {
+            DrawFilledRect(renderer,
+                           MakeRect(sel_x, line_y - 1.0f, sel_w, panel_layout.line_height),
+                           theme_.selection_fill);
+          }
+        }
+        text_renderer_.DrawString(renderer, field_text_x, line_y, theme_.text_primary, displayed);
+        // Static caret (these fields do not join the shared caret-blink machinery;
+        // they render their own non-blinking caret like the Settings field).
+        if (context_.interaction_state.window_has_input_focus &&
+            context_.text_input.composition.text.empty()) {
+          DrawFilledRect(renderer,
+                         MakeRect(field_text_x + metrics.cursor_x, line_y - 1.0f, 1.5f,
+                                  text_renderer_.LineHeight()),
+                         theme_.cursor);
+        }
+      }
+      return;
+    }
+    // Name (primary), then the value (muted) trailing it.
+    draw_two_column_row(name_x, name_avail, var_row.display_name, theme_.text_primary,
+                        var_row.display_value, theme_.text_secondary, line_y, background);
   };
 
   for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
@@ -543,77 +622,20 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       continue;
     }
     if (variables_panel && vars_model != nullptr) {
-      const std::vector<DebugVariableRowView>& rows = vars_model->Rows();
-      const std::size_t row_index = static_cast<std::size_t>(index);
-      const DebugVariableRowView& var_row = rows[row_index];
-      const bool selected = row_index == vars_model->SelectedRow();
-      SDL_Color background = theme_.surface_background;
-      if (selected) {
-        background = theme_.row_highlight;
-        DrawFilledRect(renderer,
-                       MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
-                                panel_layout.content_rect.w, panel_layout.line_height),
-                       background);
-      }
-      const float indent = static_cast<float>(var_row.depth) * 14.0f;
-      const float row_x = panel_layout.text_x + indent;
-      if (var_row.has_children) {
-        draw_disclosure(row_x, line_y, var_row.expanded, theme_.text_muted);
-      }
-      const float name_x = row_x + 14.0f;
-      const float name_avail = panel_layout.text_x + panel_layout.text_width - name_x;
-      if (name_avail <= 0.0f) {
-        continue;
-      }
-      const bool editing = vars_model->IsEditing() && vars_model->EditingNodeId().has_value() &&
-                           *vars_model->EditingNodeId() == var_row.node_id;
-      if (editing) {
-        // Name (primary), then an inline value editor over the value column.
-        const float name_w = text_renderer_.MeasureWidth(var_row.display_name);
-        DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_primary, background,
-                   text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
-        const float value_x = name_x + std::min(name_w, name_avail) + 12.0f;
-        const float value_w = panel_layout.text_x + panel_layout.text_width - value_x;
-        if (value_w > 4.0f) {
-          const SDL_FRect field = MakeRect(value_x - 2.0f, line_y - 2.0f, value_w,
-                                           panel_layout.line_height + 2.0f);
-          DrawTextFieldFrame(renderer, theme_, field, true);
-          const float field_text_x = value_x + 2.0f;
-          const float field_avail = std::max(1.0f, value_w - 8.0f);
-          const auto metrics =
-              ComputeSingleLineViewMetrics(vars_model->EditBuffer(), "", field_avail);
-          const std::string_view displayed = metrics.displayed_text;
-          if (metrics.selection_bytes.has_value()) {
-            const float sel_x =
-                field_text_x +
-                text_renderer_.MeasureWidth(displayed.substr(0, metrics.selection_bytes->first));
-            const float sel_w = text_renderer_.MeasureWidth(
-                displayed.substr(metrics.selection_bytes->first,
-                                 metrics.selection_bytes->second - metrics.selection_bytes->first));
-            if (sel_w > 0.0f) {
-              DrawFilledRect(renderer,
-                             MakeRect(sel_x, line_y - 1.0f, sel_w, panel_layout.line_height),
-                             theme_.selection_fill);
-            }
-          }
-          text_renderer_.DrawString(renderer, field_text_x, line_y, theme_.text_primary, displayed);
-          // Static caret (the Variables field does not join the shared caret-blink
-          // machinery; it renders its own non-blinking caret like the Settings field).
-          if (context_.interaction_state.window_has_input_focus &&
-              context_.text_input.composition.text.empty()) {
-            DrawFilledRect(renderer,
-                           MakeRect(field_text_x + metrics.cursor_x, line_y - 1.0f, 1.5f,
-                                    text_renderer_.LineHeight()),
-                           theme_.cursor);
-          }
-        }
-        continue;
-      }
-      // Name (primary), then the value (muted) trailing it.
-      draw_two_column_row(name_x, name_avail, var_row.display_name, theme_.text_primary,
-                          var_row.display_value, theme_.text_secondary, line_y, background);
+      draw_value_tree_row(*vars_model, static_cast<std::size_t>(index), line_y);
       continue;
     }
+    if (watch_panel && watch_model != nullptr) {
+      draw_value_tree_row(*watch_model, static_cast<std::size_t>(index), line_y);
+      continue;
+    }
+  }
+
+  // Empty-state hint so adding the first watch expression is discoverable (a
+  // static literal, so the render TU still materializes no per-frame strings).
+  if (watch_panel && (watch_model == nullptr || watch_model->Rows().empty())) {
+    DrawTextOn(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y, theme_.text_muted,
+               theme_.surface_background, "No watch expressions — click or press Insert to add one.");
   }
 
   if (terminal_panel) {

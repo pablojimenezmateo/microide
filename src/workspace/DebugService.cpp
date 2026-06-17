@@ -140,6 +140,8 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
     CurrentProjectState().debug_execution.Clear();
     CurrentProjectState().debug_variables.Clear();
     CurrentProjectState().debug_hover.Clear();
+    // Keep the watch expressions (persistent) but drop their stale values.
+    CurrentProjectState().debug_watch.ClearResults();
     if (operations_.request_editor_redraw) {
       operations_.request_editor_redraw();
     }
@@ -183,6 +185,7 @@ void DebugService::StopDebugging() {
   CurrentProjectState().debug_execution.Clear();
   CurrentProjectState().debug_variables.Clear();
   CurrentProjectState().debug_hover.Clear();
+  CurrentProjectState().debug_watch.ClearResults();
   if (operations_.request_editor_redraw) {
     operations_.request_editor_redraw();
   }
@@ -212,6 +215,9 @@ void DebugService::FocusFrame(int frame_id) {
       operations_.request_bottom_panel_redraw();
     }
   });
+  // Re-evaluate watch expressions in the (now focused) frame's scope. Runs on
+  // every stop (top frame) and on a call-stack frame switch.
+  EvaluateWatches(frame_id);
 }
 
 void DebugService::ToggleVariableRow(std::size_t row) {
@@ -274,6 +280,111 @@ void DebugService::CommitVariableEdit() {
 
 void DebugService::CancelVariableEdit() {
   CurrentProjectState().debug_variables.CancelEdit();
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+int DebugService::FocusedFrameId() const {
+  const DebugStackFrameView* frame = CurrentProjectState().debug_execution.FocusedFrame();
+  return frame != nullptr ? frame->id : 0;
+}
+
+void DebugService::EvaluateWatches(int frame_id) {
+  DebugWatchModel& watch = CurrentProjectState().debug_watch;
+  // Rebuild one placeholder root per expression so rows stay stable/ordered while
+  // the (async) results stream in by index.
+  watch.BeginEvaluation();
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session != nullptr) {
+    const std::vector<std::string> expressions = watch.Expressions();
+    for (std::size_t i = 0; i < expressions.size(); ++i) {
+      session->RequestEvaluate(
+          expressions[i], frame_id, "watch",
+          [this, i](bool ok, dap_protocol::DapEvaluateResult result) {
+            if (ok) {
+              CurrentProjectState().debug_watch.ApplyEvaluate(i, result);
+            }
+            if (operations_.request_bottom_panel_redraw) {
+              operations_.request_bottom_panel_redraw();
+            }
+          });
+    }
+  }
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+std::size_t DebugService::AddWatch(std::string expression) {
+  const std::size_t index = CurrentProjectState().debug_watch.AddExpression(std::move(expression));
+  EvaluateWatches(FocusedFrameId());
+  return index;
+}
+
+void DebugService::EditWatch(std::size_t index, std::string expression) {
+  CurrentProjectState().debug_watch.EditExpression(index, std::move(expression));
+  EvaluateWatches(FocusedFrameId());
+}
+
+void DebugService::RemoveWatch(std::size_t index) {
+  CurrentProjectState().debug_watch.RemoveExpression(index);
+  EvaluateWatches(FocusedFrameId());
+}
+
+void DebugService::ToggleWatchRow(std::size_t row) {
+  const int reference = CurrentProjectState().debug_watch.ToggleRow(row);
+  if (reference > 0) {
+    if (DebugSession* session = CurrentDapManager().ActiveSession(); session != nullptr) {
+      session->RequestVariables(
+          reference, [this, reference](std::vector<dap_protocol::DapVariable> variables) {
+            CurrentProjectState().debug_watch.ApplyVariables(reference, variables);
+            if (operations_.request_bottom_panel_redraw) {
+              operations_.request_bottom_panel_redraw();
+            }
+          });
+    }
+  }
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+void DebugService::BeginWatchEdit(std::size_t row) {
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session == nullptr || !session->Client().Capabilities().supports_set_variable) {
+    return;
+  }
+  if (CurrentProjectState().debug_watch.BeginEdit(row) && operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+void DebugService::CommitWatchEdit() {
+  DebugWatchModel& model = CurrentProjectState().debug_watch;
+  const auto target = model.EditTargetForCommit();
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (target.has_value() && session != nullptr) {
+    const std::string value = model.EditBuffer().text();
+    const std::uint32_t node_id = target->node_id;
+    session->SetVariable(target->container_reference, target->name, value,
+                         [this, node_id](bool ok, dap_protocol::DapSetVariableResult result) {
+                           if (ok) {
+                             CurrentProjectState().debug_watch.ApplySetVariable(node_id, result);
+                           }
+                           if (operations_.request_bottom_panel_redraw) {
+                             operations_.request_bottom_panel_redraw();
+                           }
+                         });
+  }
+  model.CancelEdit();
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+void DebugService::CancelWatchEdit() {
+  CurrentProjectState().debug_watch.CancelEdit();
   if (operations_.request_bottom_panel_redraw) {
     operations_.request_bottom_panel_redraw();
   }

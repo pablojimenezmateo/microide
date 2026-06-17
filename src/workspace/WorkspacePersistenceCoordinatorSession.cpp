@@ -63,9 +63,11 @@ void PersistenceCoordinator::SaveDebugState() {
     });
   }
   persisted.selected_launch_config_index = state.selected_launch_config_index;
+  persisted.watch_expressions = state.debug_watch.Expressions();
 
   // Avoid leaving a stale file when there is nothing to persist.
-  if (persisted.files.empty() && persisted.launch_configs.empty()) {
+  if (persisted.files.empty() && persisted.launch_configs.empty() &&
+      persisted.watch_expressions.empty()) {
     std::error_code error;
     std::filesystem::remove(debug_path, error);
     return;
@@ -120,6 +122,7 @@ void PersistenceCoordinator::RestoreDebugState() {
     state.launch_configs.push_back(std::move(config));
   }
   state.selected_launch_config_index = persisted.selected_launch_config_index;
+  state.debug_watch.SetExpressions(std::move(persisted.watch_expressions));
 }
 
 bool PersistenceCoordinator::RestoreSessionState() {

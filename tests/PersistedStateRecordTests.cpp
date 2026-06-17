@@ -286,12 +286,16 @@ void TestPersistedStateDebugStateRoundTrip() {
       .arguments_json = R"({"program":"main.py","stopOnEntry":true})",
   });
   state.selected_launch_config_index = 0;
+  state.watch_expressions = {"i", "arr[i]", "node->next"};
 
   std::vector<std::byte> encoded;
   Expect(EncodeDebugStateRecord(state, &encoded), "debug state should encode");
 
   PersistedDebugState decoded;
   Expect(DecodeDebugStateRecord(encoded, &decoded), "debug state should decode");
+  Expect(decoded.watch_expressions.size() == 3 && decoded.watch_expressions[0] == "i" &&
+             decoded.watch_expressions[2] == "node->next",
+         "watch expressions round-trip in order");
   Expect(decoded.files.size() == 2, "two breakpoint files should round-trip");
   Expect(decoded.files[0].path == std::filesystem::path("/proj/main.py"), "file path round-trips");
   Expect(decoded.files[0].breakpoints.size() == 2, "two breakpoints on first file");
@@ -308,6 +312,30 @@ void TestPersistedStateDebugStateRoundTrip() {
                  R"({"program":"main.py","stopOnEntry":true})",
          "launch config round-trips with verbatim arguments json");
   Expect(decoded.selected_launch_config_index == 0, "selected index round-trips");
+}
+
+void TestPersistedStateDebugStateBackwardCompatNoWatch() {
+  // A pre-Phase-6 record carried no WatchExpression tags. The new encoder emits
+  // none when the list is empty, producing byte-identical output, so this also
+  // proves an old record decodes with the new (additive-tag) decoder: the
+  // breakpoints survive and watch_expressions defaults empty (no schema bump).
+  PersistedDebugState state;
+  PersistedFileBreakpoints file;
+  file.path = "/proj/legacy.py";
+  file.breakpoints.push_back(PersistedBreakpoint{.line = 3, .enabled = true});
+  state.files.push_back(std::move(file));
+  state.selected_launch_config_index = 2;
+
+  std::vector<std::byte> encoded;
+  Expect(EncodeDebugStateRecord(state, &encoded), "legacy-shaped debug state should encode");
+
+  PersistedDebugState decoded;
+  Expect(DecodeDebugStateRecord(encoded, &decoded), "a record without watch tags should decode");
+  Expect(decoded.watch_expressions.empty(), "missing watch tags default to an empty list");
+  Expect(decoded.files.size() == 1 && decoded.files[0].breakpoints.size() == 1 &&
+             decoded.files[0].breakpoints[0].line == 3,
+         "breakpoints survive a watch-free record");
+  Expect(decoded.selected_launch_config_index == 2, "selected index survives a watch-free record");
 }
 
 void TestPersistedStateDebugStateRequiresSchema() {
@@ -361,6 +389,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedStateRecord/ProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto",
           TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto);
   AddTest(tests, "PersistedStateRecord/DebugStateRoundTrip", TestPersistedStateDebugStateRoundTrip);
+  AddTest(tests, "PersistedStateRecord/DebugStateBackwardCompatNoWatch",
+          TestPersistedStateDebugStateBackwardCompatNoWatch);
   AddTest(tests, "PersistedStateRecord/DebugStateRequiresSchema",
           TestPersistedStateDebugStateRequiresSchema);
 }

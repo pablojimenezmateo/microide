@@ -20,6 +20,7 @@
 #include "project/ProjectSearchService.h"
 #include "workspace/DebugVariablesModel.h"
 #include "workspace/DebugViewModel.h"
+#include "workspace/DebugWatchModel.h"
 #include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceDapManager.h"
 #include "workspace/WorkspaceLspManager.h"
@@ -56,13 +57,17 @@ enum class PanelContentKind {
   // Structured Variables/Scopes tree for the focused frame (Phase 4). Peer tab to
   // the Call Stack; rows come from `debug_variables.Rows()`.
   DebugVariables,
+  // Watch-expressions tree (Phase 6). Peer tab to the Call Stack / Variables;
+  // rows come from `debug_watch.Rows()`.
+  DebugWatch,
 };
 
-// True for any debug-session structured panel (Call Stack / Variables). Both
-// share `panel.debug.open` and the same fallback on close so they are treated as
-// one family wherever a "is the debug panel showing" check is needed.
+// True for any debug-session structured panel (Call Stack / Variables / Watch).
+// They share `panel.debug.open` and the same fallback on close so they are
+// treated as one family wherever a "is the debug panel showing" check is needed.
 inline bool IsDebugPanelContent(PanelContentKind content) {
-  return content == PanelContentKind::Debug || content == PanelContentKind::DebugVariables;
+  return content == PanelContentKind::Debug || content == PanelContentKind::DebugVariables ||
+         content == PanelContentKind::DebugWatch;
 }
 
 enum class BufferSearchField {
@@ -222,6 +227,7 @@ struct DebugPanelState {
   bool open = false;
   int scroll_row = 0;            // Call Stack tab scroll
   int variables_scroll_row = 0;  // Variables tab scroll (peer tab, own scroll)
+  int watch_scroll_row = 0;      // Watch tab scroll (peer tab, own scroll)
 };
 
 struct LspUiState {
@@ -303,6 +309,11 @@ struct ProjectWorkspaceState {
   // resume/stop and on a focused-frame switch; never persisted. Only meaningful
   // when `debug.enabled` is ON and the session is Stopped.
   DebugHoverModel debug_hover;
+  // Watch expressions (Phase 6): a persisted list of expressions + their
+  // transient evaluated value tree. The expression list survives session
+  // restarts (persisted in the `debug` PersistedRecord); the evaluated values
+  // are re-fetched on each `stopped`. Only meaningful when `debug.enabled` is ON.
+  DebugWatchModel debug_watch;
   // Persisted + plugin-contributed launch/attach configurations and the
   // currently selected index. Start Debugging targets the selected config when
   // one exists, else falls back to the first registered adapter.

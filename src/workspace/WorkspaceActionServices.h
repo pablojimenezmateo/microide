@@ -172,6 +172,10 @@ class WorkspaceActionContext {
     std::function<void()> debug_step_in;
     std::function<void()> debug_step_out;
     std::function<void()> debug_pause;
+    // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
+    // menu's target line on the shell side.
+    std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
+    std::function<void()> remove_breakpoint_from_menu;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -319,6 +323,10 @@ class WorkspaceActionContext {
   void DebugStepIn();
   void DebugStepOut();
   void DebugPause();
+  // Breakpoint modifiers (Phase 6). Read the breakpoint-gutter context menu's
+  // target line; open a prompt seeded with the current field / remove the bp.
+  void EditBreakpointModifierFromMenu(ActionId id);
+  void RemoveBreakpointFromMenu();
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free

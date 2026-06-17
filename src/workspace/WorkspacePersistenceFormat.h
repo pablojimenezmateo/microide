@@ -182,6 +182,7 @@ struct PersistedDebugState {
   std::vector<PersistedFileBreakpoints> files;
   std::vector<PersistedLaunchConfig> launch_configs;
   std::size_t selected_launch_config_index = 0;
+  std::vector<std::string> watch_expressions;  // Phase 6 (additive; empty on old records)
 };
 
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state,

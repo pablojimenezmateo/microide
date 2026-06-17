@@ -235,6 +235,21 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
+  // Breakpoint gutter right-click opens the breakpoint context menu (Phase 6),
+  // taking precedence over the editor context menu. Declines (returns false)
+  // for any non-gutter right-click, so the editor context menu still works.
+  if (event.button.button == SDL_BUTTON_RIGHT && ActiveTabIsEditor() &&
+      Contains(layout.editor_surface, event.button.x, event.button.y)) {
+    SyncActiveEditorTab();
+    if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+      NormalizeEditorSplitTree(*editor_tab);
+    }
+    if (MakeEditorMouseCoordinator().HandleGutterContextMenu(event, layout)) {
+      ensure_redraw([this]() { RequestChromeRedraw(); });
+      return true;
+    }
+  }
+
   if (event.button.button == SDL_BUTTON_RIGHT &&
       Contains(layout.editor_surface, event.button.x, event.button.y) &&
       ActiveEditableViewport() != nullptr) {

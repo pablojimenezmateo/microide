@@ -39,7 +39,8 @@ class MenuCoordinator {
   bool MoveActiveMenuItem(int delta);
   void OpenTreeContextMenu(TreeContextTargetKind target,
                            const std::filesystem::path& path,
-                           const SDL_FRect& anchor_rect);
+                           const SDL_FRect& anchor_rect,
+                           std::size_t line = 0);
   void CloseTreeContextMenu();
   bool ExecuteTreeContextMenuItem(std::size_t item_index);
   int FirstEnabledTreeContextMenuItemIndex() const;

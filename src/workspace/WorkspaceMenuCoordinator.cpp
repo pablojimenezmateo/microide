@@ -173,12 +173,14 @@ bool MenuCoordinator::MoveActiveMenuItem(int delta) {
 
 void MenuCoordinator::OpenTreeContextMenu(TreeContextTargetKind target,
                                           const std::filesystem::path& path,
-                                          const SDL_FRect& anchor_rect) {
+                                          const SDL_FRect& anchor_rect,
+                                          std::size_t line) {
   operations_.request_chrome_redraw();
   CloseMenuBar();
   menu_state_.tree_context_menu.open = true;
   menu_state_.tree_context_menu.target = target;
   menu_state_.tree_context_menu.path = path.lexically_normal();
+  menu_state_.tree_context_menu.line = line;
   menu_state_.tree_context_menu.anchor_rect = anchor_rect;
   menu_state_.tree_context_menu.active_item_index = FirstEnabledTreeContextMenuItemIndex();
   operations_.request_chrome_redraw();

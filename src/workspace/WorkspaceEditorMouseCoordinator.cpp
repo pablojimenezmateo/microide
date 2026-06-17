@@ -87,6 +87,56 @@ EditorMouseCoordinator::EditorMouseCoordinator(ProjectWorkspaceState& state,
       text_renderer_(text_renderer),
       operations_(std::move(operations)) {}
 
+bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
+                                                     const WorkspaceLayout& layout) {
+  if (event.button.button != SDL_BUTTON_RIGHT || !operations_.open_breakpoint_context_menu) {
+    return false;
+  }
+  const auto debug_setting = operations_.get_setting_value
+                                 ? operations_.get_setting_value("debug.enabled")
+                                 : std::nullopt;
+  const bool debug_enabled = debug_setting.has_value() && *debug_setting != "false" &&
+                             *debug_setting != "0" && *debug_setting != "off";
+  if (!debug_enabled) {
+    return false;
+  }
+  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
+  const auto pane_it = std::find_if(panes.begin(), panes.end(),
+                                    [&](const WorkspaceShell::EditorPaneLayout& pane) {
+                                      return Contains(pane.rect, event.button.x, event.button.y);
+                                    });
+  if (pane_it == panes.end()) {
+    return false;
+  }
+  if (!pane_it->active) {
+    operations_.set_active_editor_split(pane_it->leaf_id);
+  }
+  editor::TextViewport* viewport = operations_.active_editor_viewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return false;
+  }
+  const editor::EditorViewMetrics metrics =
+      editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_it->rect);
+  const float gutter_left = pane_it->rect.x;
+  const float fold_hit_left = pane_it->rect.x + metrics.gutter_width - 18.0f;
+  if (event.button.y < metrics.first_line_y || event.button.x < gutter_left ||
+      event.button.x >= fold_hit_left) {
+    return false;
+  }
+  const std::size_t visual_row =
+      viewport->scroll_line() +
+      static_cast<std::size_t>((event.button.y - metrics.first_line_y) / metrics.line_height);
+  if (visual_row >= viewport->visual_line_count()) {
+    return false;
+  }
+  const std::size_t line_index = viewport->VisualRowLineIndex(visual_row);
+  const SDL_FRect anchor{static_cast<float>(event.button.x), static_cast<float>(event.button.y),
+                         1.0f, 1.0f};
+  operations_.open_breakpoint_context_menu(viewport->path(), line_index, anchor);
+  state_.surface.focus = FocusTarget::Editor;
+  return true;
+}
+
 bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                                               const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleButtonDown");
@@ -237,6 +287,8 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // Breakpoint gutter click. When the debugger is enabled, the gutter area to
   // the left of the fold hit zone toggles a breakpoint on the clicked line.
   // Gated on `debug.enabled` so the editor is unchanged when debugging is off.
+  // (Right-click opens the breakpoint context menu via HandleGutterContextMenu,
+  // dispatched ahead of the editor context menu in WorkspaceShellMouse.)
   if (event.button.button == SDL_BUTTON_LEFT && event.button.y >= metrics.first_line_y) {
     const auto debug_setting = operations_.get_setting_value
                                    ? operations_.get_setting_value("debug.enabled")
@@ -584,6 +636,9 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
               },
           .on_breakpoint_toggled =
               [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
+          .open_breakpoint_context_menu =
+              [this](const std::filesystem::path& path, std::size_t line,
+                     const SDL_FRect& anchor) { OpenBreakpointContextMenu(path, line, anchor); },
       });
 }
 

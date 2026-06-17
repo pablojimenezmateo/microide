@@ -1125,6 +1125,19 @@
   void DebugStepIn();
   void DebugStepOut();
   void DebugPause();
+  // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
+  // menu's target path+line; open a seeded prompt for a condition/hit/log field
+  // (mapped from the ActionId) or remove the breakpoint and live-resend.
+  void OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
+                                 const SDL_FRect& anchor_rect);
+  void EditBreakpointModifierFromMenu(ActionId id);
+  void RemoveBreakpointFromMenu();
+  // Commit a SetBreakpoint* prompt: write the field (empty clears) + live-resend.
+  void CommitBreakpointModifierPrompt();
+  // Watch panel (Phase 6): open the add/edit-expression prompt (nullopt = add),
+  // and commit it into the watch model (edit with empty text removes).
+  void OpenWatchExpressionPrompt(std::optional<std::size_t> index);
+  void CommitWatchExpressionPrompt();
   void AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output);
   void ShowDebugConsole();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);

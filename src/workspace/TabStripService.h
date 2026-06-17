@@ -39,6 +39,7 @@ enum class BottomPanelTabKind {
   Output,
   Debug,           // Call Stack (structured debug panel); present while `panel.debug.open`
   DebugVariables,  // Variables/Scopes (peer to Call Stack); same `panel.debug.open` gate
+  DebugWatch,      // Watch expressions (peer to Call Stack); same `panel.debug.open` gate
 };
 
 struct BottomPanelTabModel {

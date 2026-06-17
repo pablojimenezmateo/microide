@@ -187,6 +187,12 @@ bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::b
       return false;
     }
   }
+  for (const std::string& expression : state.watch_expressions) {
+    if (!AppendRecord(DebugStateTag::WatchExpression,
+                      [&](PrimitiveWriter& w) { return w.WriteString(expression); }, out)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -226,6 +232,14 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                      return false;
                    }
                    state->launch_configs.push_back(std::move(config));
+                   return true;
+                 }
+                 case DebugStateTag::WatchExpression: {
+                   std::string expression;
+                   if (!reader.ReadString(&expression) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->watch_expressions.push_back(std::move(expression));
                    return true;
                  }
                }

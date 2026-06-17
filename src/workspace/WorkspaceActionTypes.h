@@ -138,6 +138,12 @@ enum class ActionId {
   DebugStepIn,
   DebugStepOut,
   DebugPause,
+  // Breakpoint modifiers (Phase 6). Context-menu only: they read the breakpoint
+  // gutter menu's path + line, so palette/keybinding invocation is a no-op.
+  DebugBreakpointEditCondition,
+  DebugBreakpointEditHitCondition,
+  DebugBreakpointEditLogMessage,
+  DebugBreakpointRemove,
 };
 
 enum class ActionSource {

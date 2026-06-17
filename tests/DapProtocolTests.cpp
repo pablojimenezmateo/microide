@@ -164,6 +164,11 @@ void TestDapProtocolEncodesVariablesRequests() {
          "evaluate arguments carry expression, frameId, and context");
   const JsonValue eval_no_frame = codec::MakeEvaluateArguments("count", 0, "hover");
   Expect(!eval_no_frame.HasKey("frameId"), "evaluate omits frameId when zero");
+  // Watch expressions reuse the same encoder with context "watch" (Phase 6).
+  const JsonValue watch = codec::MakeEvaluateArguments("arr[i]", 7, "watch");
+  Expect(watch["expression"].AsString() == "arr[i]" && watch["frameId"].AsInt() == 7 &&
+             watch["context"].AsString() == "watch",
+         "watch evaluate carries expression, frameId, and the watch context");
 }
 
 }  // namespace

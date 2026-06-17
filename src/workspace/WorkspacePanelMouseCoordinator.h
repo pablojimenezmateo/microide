@@ -49,6 +49,13 @@ class PanelMouseCoordinator {
     std::function<void(int)> on_debug_frame_focus_changed;
     std::function<void(std::size_t)> toggle_debug_variable_row;
     std::function<void(std::size_t)> begin_debug_variable_edit;
+    // Debug Watch panel (Phase 6): toggle a watched value's subtree; begin inline
+    // setVariable edit on a watched child leaf; add/edit a watch expression
+    // string (routed to a prompt on the shell side; `edit` takes its index).
+    std::function<void(std::size_t)> toggle_debug_watch_row;
+    std::function<void(std::size_t)> begin_debug_watch_edit;
+    std::function<void()> add_debug_watch_expression;
+    std::function<void(std::size_t)> edit_debug_watch_expression;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,

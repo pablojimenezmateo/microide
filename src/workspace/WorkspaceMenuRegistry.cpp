@@ -269,6 +269,15 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuSeparator(),
       MenuItem(ActionId::TreeRefresh, "Refresh"),
   });
+  // Breakpoint gutter context menu (Phase 6). Editing a modifier on a bare line
+  // materializes the breakpoint, so these double as "add conditional / logpoint".
+  static const auto kBreakpointItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::DebugBreakpointEditCondition, "Edit Condition…"),
+      MenuItem(ActionId::DebugBreakpointEditHitCondition, "Edit Hit Count…"),
+      MenuItem(ActionId::DebugBreakpointEditLogMessage, "Edit Log Message…"),
+      MenuSeparator(),
+      MenuItem(ActionId::DebugBreakpointRemove, "Remove Breakpoint"),
+  });
 
   switch (target) {
     case TreeContextTargetKind::File:
@@ -279,6 +288,8 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       return kRootItems;
     case TreeContextTargetKind::Background:
       return kBackgroundItems;
+    case TreeContextTargetKind::BreakpointLine:
+      return kBreakpointItems;
     case TreeContextTargetKind::None:
     default:
       return {};

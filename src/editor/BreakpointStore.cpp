@@ -72,6 +72,57 @@ void BreakpointStore::Set(const std::filesystem::path& path, std::size_t line, b
   BumpRevision();
 }
 
+Breakpoint* BreakpointStore::MutableBreakpoint(const std::filesystem::path& path,
+                                               std::size_t line) {
+  const std::filesystem::path normalized = path.lexically_normal();
+  const std::string key = PathKey(normalized);
+  if (key.empty()) {
+    return nullptr;
+  }
+  auto& entry = by_path_[key];
+  if (entry.path.empty()) {
+    entry.path = normalized;
+  }
+  auto& breakpoints = entry.breakpoints;
+  const auto it = std::lower_bound(
+      breakpoints.begin(), breakpoints.end(), line,
+      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
+  if (it != breakpoints.end() && it->line == line) {
+    return &(*it);
+  }
+  return &(*breakpoints.insert(it, Breakpoint{.line = line}));
+}
+
+void BreakpointStore::SetCondition(const std::filesystem::path& path, std::size_t line,
+                                   std::optional<std::string> condition) {
+  Breakpoint* bp = MutableBreakpoint(path, line);
+  if (bp == nullptr || bp->condition == condition) {
+    return;
+  }
+  bp->condition = std::move(condition);
+  BumpRevision();
+}
+
+void BreakpointStore::SetHitCondition(const std::filesystem::path& path, std::size_t line,
+                                      std::optional<std::string> hit_condition) {
+  Breakpoint* bp = MutableBreakpoint(path, line);
+  if (bp == nullptr || bp->hit_condition == hit_condition) {
+    return;
+  }
+  bp->hit_condition = std::move(hit_condition);
+  BumpRevision();
+}
+
+void BreakpointStore::SetLogMessage(const std::filesystem::path& path, std::size_t line,
+                                    std::optional<std::string> log_message) {
+  Breakpoint* bp = MutableBreakpoint(path, line);
+  if (bp == nullptr || bp->log_message == log_message) {
+    return;
+  }
+  bp->log_message = std::move(log_message);
+  BumpRevision();
+}
+
 void BreakpointStore::Remove(const std::filesystem::path& path, std::size_t line) {
   const std::string key = PathKey(path);
   std::vector<Breakpoint>* breakpoints = MutableForKey(key);

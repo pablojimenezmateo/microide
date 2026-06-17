@@ -1,9 +1,10 @@
 # Debugger / DAP Integration
 
 Status: **active, dedicated phase** (promoted from the durable non-goal list on
-2026-06-17). This document is the single self-sufficient source of truth for the
-debugger effort — a fresh agent on any machine should be able to read this file
-and continue without external context.
+2026-06-17). Phases 0–6 are done on `feat/dap`; Phase 7 (polish) is next. This
+document is the single self-sufficient source of truth for the debugger effort — a
+fresh agent on any machine should be able to read this file and continue without
+external context.
 
 ## Goal
 
@@ -233,7 +234,16 @@ Original plan, retained for reference:
   `evaluate(expr, frameId, context:"hover")`, caching like plugin hover; render via
   `WorkspaceShellHoverPopup.cpp`. DAP surface: `evaluate` (`context:"hover"`).
 
-### Phase 6 — Conditional / hit-count / logpoints + watch expressions
+### Phase 6 — Conditional / hit-count / logpoints + watch expressions ✅ DONE (2026-06-17)
+
+See "Phase 6 — what shipped" below. Summary: a right-click breakpoint-gutter
+context menu edits condition/hit-count/log-message via the shared prompt surface
+(re-sending `setBreakpoints` live); a new persisted **Watch** panel (third peer
+tab) re-evaluates each expression with `evaluate(context:"watch")` on every stop
+and frame switch. The Variables + Watch trees now share an extracted
+`DebugValueTree` core (dedup).
+
+Original plan, retained for reference:
 
 - Breakpoint context menu sets condition/hit/log (fields already on `BreakpointStore`;
   gate on the matching capabilities). New `WatchExpressionStore.{h,cpp}` persisted in
@@ -628,6 +638,79 @@ Tests added (`tests/DebugServiceTests.cpp`, `tests/DapProtocolTests.cpp`,
 - `DebugService/HoverModelBehavior` — pure `DebugHoverModel`: key classification,
   generation guard dropping a stale completion, `Clear`.
 
+## Phase 6 — what shipped (2026-06-17)
+
+Files added:
+
+- `src/workspace/DebugValueTree.{h,cpp}` — the shared lazy value-tree core
+  extracted from `DebugVariablesModel` (node store keyed by stable id +
+  `variablesReference` index, flatten → `DebugVariableRowView` rows, lazy
+  expand/`ApplyVariables`, `ApplySetVariable`/`SetNodeValue` via a shared
+  `RebindReference`, selection cursor, inline `SingleLineEditor` edit + commit
+  target). `DebugVariablesModel` is now a thin wrapper owning one (adding only
+  `BeginFrame`/`ApplyScopes`); its public API and the `VariablesModelTreeBehavior`
+  test are unchanged, guarding the refactor.
+- `src/workspace/DebugWatchModel.{h,cpp}` — the Watch panel model: a persistent
+  ordered expression list + a transient `DebugValueTree`. `BeginEvaluation`
+  pre-creates one placeholder root per expression (stable, ordered rows) and
+  `ApplyEvaluate(index, …)` folds each async result in by index; structured
+  results expand via the shared tree. `Add/Edit/RemoveExpression`,
+  `SetExpressions` (restore), `ExpressionIndexForRow` (root vs child),
+  `ClearResults` (keeps expressions, blanks values).
+
+Key decisions (locked):
+
+- **Breakpoint editing reuses the tree context menu + the prompt surface (dedup),
+  not a bespoke overlay.** A gutter right-click opens the existing
+  `TreeContextMenuState` machinery (a new `TreeContextTargetKind::BreakpointLine`
+  carrying a `line`); items route through four context-menu-only `ActionId`s
+  (`DebugBreakpointEdit{Condition,HitCondition,LogMessage}` / `…Remove`, no
+  command-registry specs so they stay out of the palette). Editing opens a
+  single-line `PromptSurfaceService` prompt (`SetBreakpoint{Condition,HitCondition,
+  LogMessage}` actions + a `target_line` field); commit writes the
+  `BreakpointStore` modifier (empty clears) and live-re-sends `setBreakpoints`.
+  Because the right-click is preempted by the editor context menu in
+  `WorkspaceShellMouse`, a dedicated side-effect-free
+  `EditorMouseCoordinator::HandleGutterContextMenu` is dispatched ahead of it.
+- **Capability gating stays at the wire (correctness).** Editing a modifier is
+  always allowed (the field persists); `DebugSession::SendBreakpointsForFile`
+  already drops condition/hit/log when the adapter lacks the matching capability,
+  so a stored-but-unsupported modifier is simply not sent — no menu-level gating
+  needed.
+- **Watch is a third peer tab mirroring Phase 4.** `PanelContentKind::DebugWatch`
+  + `BottomPanelTabKind::DebugWatch` add a "Watch" tab under the same
+  `panel.debug.open` gate and `IsDebugPanelContent` family; the bottom-panel
+  render shares a generic `draw_value_tree_row` lambda between Variables and Watch.
+  Mouse/keyboard mirror the Variables coordinators (single-click expand,
+  double-click/Enter edit, Insert add, Delete remove, prompt-based expression
+  add/edit). An empty-state hint makes the first add discoverable.
+- **Watch re-evaluation is driven from `FocusFrame` (speed/correctness).**
+  `DebugService::EvaluateWatches(frame_id)` runs inside `FocusFrame`, so it fires
+  on every stop (top frame) and on a call-stack frame switch, evaluating each
+  expression in the focused frame's scope with `context:"watch"` (uncapped, unlike
+  hover). Results clear on resume/stop (`ClearResults`, keeping the expression
+  list).
+- **Persistence is an additive tag with no schema bump (correctness).**
+  `PersistedDebugState.watch_expressions` serializes as repeated
+  `DebugStateTag::WatchExpression` string records. The tag stream skips unknown
+  tags and the schema check hard-rejects version mismatches, so an additive tag is
+  fully backward/forward compatible — bumping `kSchemaVersion` would have silently
+  discarded existing persisted breakpoints. Saved/restored in the existing
+  `Save/RestoreDebugState` hooks.
+
+Tests added:
+
+- `tests/BreakpointStoreTests.cpp` — `ModifierSetters` (find-or-create, clear on
+  nullopt, revision bumps, no-op skip).
+- `tests/DebugServiceTests.cpp` — `WatchModelBehavior` (pure model: placeholder
+  roots, `ApplyEvaluate`, lazy expand, `ExpressionIndexForRow`, edit/remove,
+  `SetExpressions`/`ClearResults`) and `SessionWatchEvaluate` (real mock adapter:
+  stop → `evaluate(context:"watch")` folds onto a watch root).
+- `tests/DapProtocolTests.cpp` — `MakeEvaluateArguments(context:"watch")` shape.
+- `tests/PersistedStateRecordTests.cpp` — watch expressions round-trip +
+  `DebugStateBackwardCompatNoWatch` (a watch-free record decodes with breakpoints
+  intact). `DebugStateRecordFuzz` exercises the new tag (no target change).
+
 ## How to validate
 
 ```bash
@@ -666,50 +749,49 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 6** (conditional / hit-count / logpoint breakpoints + watch
-expressions). The pieces already in place to build on:
+Start **Phase 7** (polish: multi-thread, multi-session, exception breakpoints,
+restart). The pieces already in place to build on:
 
-- `editor::BreakpointStore` already carries the `condition`/`hit_condition`/
-  `log_message` fields (reserved since Phase 2), persists them in the `debug`
-  `PersistedRecord`, and `DapProtocol::MakeSetBreakpointsArguments` already emits
-  them when non-empty. Phase 6 adds the **breakpoint context menu** to edit them
-  (gated on `supportsConditionalBreakpoints` / `supportsHitConditionalBreakpoints` /
-  `supportsLogPoints`) and re-sends `setBreakpoints` for the file on commit (the
-  live re-send path from Phase 2).
-- **Watch panel:** a new `WatchExpressionStore.{h,cpp}` persisted in
-  `PersistedDebugState`, surfaced as a third structured peer tab next to Call Stack /
-  Variables. It reuses the Phase 4 peer-tab + `IsDebugPanelContent` plumbing and the
-  `DebugVariablesModel` tree — each watched expression's `evaluate(context:"watch")`
-  result with a `variablesReference > 0` becomes a tree root, re-evaluated on each
-  `stopped`. The Phase 5 `RequestEvaluate`/`MakeEvaluateArguments` plumbing is reused
-  verbatim with `context:"watch"` (only `context:"hover"` is capability-gated).
-- The `DebugHoverModel` async-cache shape (Begin/Classify/Resolve/Fail + generation
-  guard) is a template if a hover popup later wants to **expand a structured value
-  inline** (a structured `evaluate` result carries a `variablesReference`, the same
-  anchor `variables` requests hang off — and `DebugVariablesModel` already models it).
+- **Multi-session:** `DapManager` already owns the active `DebugSession` and each
+  `DapClient` owns its own `seq`/`pending_requests`, so N concurrent sessions need
+  an active-session switcher + event routing by originating client, not a protocol
+  change. The transient view models (`debug_execution`/`debug_variables`/
+  `debug_watch`/`debug_hover`) already live per-project on `ProjectWorkspaceState`.
+- **Multi-thread:** `stopped`→`stackTrace` currently targets the stopped thread
+  directly (Phase 3 speed decision); a thread selector in the Call Stack panel
+  needs a `threads` round-trip + a focused-thread field on `DebugExecutionView`.
+- **Exception breakpoints:** `setExceptionBreakpoints(filters)` from
+  `capabilities.exceptionBreakpointFilters`; surface the filters as toggles
+  (natural home: the Breakpoints area / a small settings list).
+- **Restart:** `restart` with a terminate+relaunch fallback when
+  `!supportsRestartRequest` (deferred since Phase 3). Add `DebugRestart` alongside
+  the other execution-control `ActionId`s.
+- Run the **TSAN preset** once multi-session concurrent I/O lands.
 
 Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
 
-- The Plugin and DebugValue hover popups now share `ComputeTwoBlockHoverCardRect` /
-  `DrawTwoBlockHoverCard` in `WorkspaceShellHoverPopup.cpp`. If the Diagnostic popup's
-  layout is ever made byte-identical (severity label + message is the same two-block
-  shape), route it through the helper too rather than keeping its bespoke branch.
-
-- The breakpoint / diagnostic / fold / execution gutter markers now share the same
-  per-row cursor-walk shape in `EditorViewRenderer`; the execution arrow is a
-  single `std::optional` (no cursor walk). If a fifth marker appears, factor a
-  shared gutter-marker dispatch instead of another bespoke block.
-- The Call Stack and Variables bottom-panel rows now share a `draw_two_column_row`
-  lambda in `WorkspaceShellRenderBottomPanel.cpp`; a third structured debug panel
-  (e.g. Watch in Phase 6) should reuse it rather than copy the row-paint block.
+- The Variables + Watch trees now share `DebugValueTree`; if a third value-tree
+  surface appears (e.g. a REPL result view, or inline hover expansion), build it on
+  `DebugValueTree` too rather than re-deriving the node/flatten machinery.
+- The bottom-panel structured rows now share `draw_two_column_row` **and** the
+  generic `draw_value_tree_row` lambda in `WorkspaceShellRenderBottomPanel.cpp`; a
+  fourth structured debug panel should reuse them.
+- Breakpoint condition/hit/log + watch add/edit all route through the shared
+  `PromptSurfaceService` single-line prompt; a future REPL input or watch-from-
+  selection action should reuse it rather than a bespoke field.
+- The breakpoint / diagnostic / fold / execution gutter markers share the same
+  per-row cursor-walk shape in `EditorViewRenderer`; if a fifth marker appears,
+  factor a shared gutter-marker dispatch. A render distinction for
+  conditional/logpoint dots (deferred from Phase 6 as optional polish) is the most
+  likely next gutter change.
+- The Plugin and DebugValue hover popups share `ComputeTwoBlockHoverCardRect` /
+  `DrawTwoBlockHoverCard`; route the Diagnostic popup through them if its layout is
+  ever made byte-identical.
+- The `DebugHoverModel` async-cache shape (Begin/Classify/Resolve/Fail + generation
+  guard) is a template if a hover popup later wants to **expand a structured value
+  inline** — and `DebugValueTree` now models the expandable side directly.
 - A config-picker UI (command palette over `launch_configs`) is the natural home
   for the persisted selection added in Phase 2.
-- The Watch panel (Phase 6) is the natural next structured peer tab; it can reuse
-  the `DebugVariablesModel` tree (each watched expression's `evaluate` result with a
-  `variablesReference` becomes a root) and the peer-tab + `IsDebugPanelContent`
-  plumbing Phase 4 added.
-- `Restart` (deferred from Phase 3) lands in Phase 7 with the terminate+relaunch
-  fallback (`!supportsRestartRequest`).
 
 All debugger work lands on the canonical `feat/dap` branch; do not merge to
 `main` until the effort is complete.

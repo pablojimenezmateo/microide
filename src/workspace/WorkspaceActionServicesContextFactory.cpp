@@ -104,6 +104,18 @@ void WorkspaceActionContext::DebugPause() {
   }
 }
 
+void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
+  if (operations_.edit_breakpoint_modifier_from_menu) {
+    operations_.edit_breakpoint_modifier_from_menu(id);
+  }
+}
+
+void WorkspaceActionContext::RemoveBreakpointFromMenu() {
+  if (operations_.remove_breakpoint_from_menu) {
+    operations_.remove_breakpoint_from_menu();
+  }
+}
+
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
   return WorkspaceActionContext(
       context_.project_catalog,
@@ -387,6 +399,9 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .debug_step_in = [this]() { DebugStepIn(); },
           .debug_step_out = [this]() { DebugStepOut(); },
           .debug_pause = [this]() { DebugPause(); },
+          .edit_breakpoint_modifier_from_menu =
+              [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
+          .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
       });
 }
 

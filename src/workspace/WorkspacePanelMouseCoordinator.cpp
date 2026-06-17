@@ -272,6 +272,42 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
+  if (state_.panel.content == PanelContentKind::DebugWatch) {
+    DebugWatchModel& model = state_.debug_watch;
+    const std::vector<DebugVariableRowView>& rows = model.Rows();
+    const auto panel_layout =
+        operations_.compute_bottom_panel_log_layout(layout, std::max<std::size_t>(rows.size(), 1));
+    if (Contains(panel_layout.content_rect, event.button.x, event.button.y)) {
+      const auto line_index = BottomPanelLineIndexAtPoint(
+          panel_layout, static_cast<float>(event.button.y), rows.size());
+      if (line_index.has_value() && *line_index < rows.size()) {
+        model.SetSelectedRow(*line_index);
+        const DebugVariableRowView& row = rows[*line_index];
+        const std::optional<std::size_t> expr_index = model.ExpressionIndexForRow(*line_index);
+        if (event.button.clicks >= 2 && expr_index.has_value()) {
+          // Double-click an expression root → edit its expression string.
+          if (operations_.edit_debug_watch_expression) {
+            operations_.edit_debug_watch_expression(*expr_index);
+          }
+        } else if (event.button.clicks >= 2 && row.editable && !row.has_children) {
+          // Double-click a watched child leaf → inline setVariable edit.
+          if (operations_.begin_debug_watch_edit) {
+            operations_.begin_debug_watch_edit(*line_index);
+          }
+        } else if (event.button.clicks == 1 && row.has_children) {
+          if (operations_.toggle_debug_watch_row) {
+            operations_.toggle_debug_watch_row(*line_index);
+          }
+        }
+      } else if (operations_.add_debug_watch_expression) {
+        // Click in the empty area (or empty panel) → prompt for a new expression.
+        operations_.add_debug_watch_expression();
+      }
+      state_.surface.focus = FocusTarget::Panel;
+      return true;
+    }
+  }
+
   if (state_.panel.command_mode) {
     state_.surface.focus = FocusTarget::Panel;
   } else if (state_.panel.content != PanelContentKind::None) {
@@ -552,6 +588,13 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
           .begin_debug_variable_edit =
               [this](std::size_t row) { debug_service_.BeginVariableEdit(row); },
+          .toggle_debug_watch_row =
+              [this](std::size_t row) { debug_service_.ToggleWatchRow(row); },
+          .begin_debug_watch_edit =
+              [this](std::size_t row) { debug_service_.BeginWatchEdit(row); },
+          .add_debug_watch_expression = [this]() { OpenWatchExpressionPrompt(std::nullopt); },
+          .edit_debug_watch_expression =
+              [this](std::size_t index) { OpenWatchExpressionPrompt(index); },
       });
 }
 

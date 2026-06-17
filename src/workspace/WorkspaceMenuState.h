@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 
@@ -13,6 +14,8 @@ struct TreeContextMenuState {
   bool open = false;
   TreeContextTargetKind target = TreeContextTargetKind::None;
   std::filesystem::path path;
+  // 0-based buffer line for the BreakpointLine target (unused otherwise).
+  std::size_t line = 0;
   SDL_FRect anchor_rect{};
   int active_item_index = -1;
 };

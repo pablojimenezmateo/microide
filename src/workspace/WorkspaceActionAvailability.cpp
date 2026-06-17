@@ -85,6 +85,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return SettingEnabled(operations_, "debug.enabled", false) &&
              operations_.debug_session_active && operations_.debug_session_active() &&
              !(operations_.debug_session_stopped && operations_.debug_session_stopped());
+    case ActionId::DebugBreakpointEditCondition:
+    case ActionId::DebugBreakpointEditHitCondition:
+    case ActionId::DebugBreakpointEditLogMessage:
+    case ActionId::DebugBreakpointRemove:
+      // Breakpoint-gutter context-menu items; the menu only opens when the
+      // debugger is enabled, and editing works with or without a live session.
+      return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::CloseActiveTab:
       return !context_.current_project_state.open_tabs.empty();
     case ActionId::CloseAllTabs:

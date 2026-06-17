@@ -41,6 +41,8 @@ enum class TreeContextTargetKind {
   Directory,
   Root,
   Background,
+  // Debugger (Phase 6): right-click on the breakpoint gutter for a source line.
+  BreakpointLine,
 };
 
 struct MenuItemSpec {

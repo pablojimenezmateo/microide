@@ -61,6 +61,17 @@ class BreakpointStore {
   bool Toggle(const std::filesystem::path& path, std::size_t line);
   void Set(const std::filesystem::path& path, std::size_t line, bool enabled = true);
   void Remove(const std::filesystem::path& path, std::size_t line);
+
+  // Edit the Phase 6 modifier fields. Each finds-or-creates the breakpoint on
+  // `path:line` (so setting a condition on a bare line materializes a real
+  // breakpoint), assigns the field, and bumps the revision when it changes. A
+  // nullopt clears the field (e.g. an empty condition string from the prompt).
+  void SetCondition(const std::filesystem::path& path, std::size_t line,
+                    std::optional<std::string> condition);
+  void SetHitCondition(const std::filesystem::path& path, std::size_t line,
+                       std::optional<std::string> hit_condition);
+  void SetLogMessage(const std::filesystem::path& path, std::size_t line,
+                     std::optional<std::string> log_message);
   void ClearFile(const std::filesystem::path& path);
   void Clear();
 
@@ -87,6 +98,9 @@ class BreakpointStore {
  private:
   static std::string PathKey(const std::filesystem::path& path);
   std::vector<Breakpoint>* MutableForKey(const std::string& key);
+  // Find the breakpoint on `path:line`, creating it (sorted) when absent.
+  // Returns nullptr only for an empty path.
+  Breakpoint* MutableBreakpoint(const std::filesystem::path& path, std::size_t line);
   void BumpRevision();
 
   struct FileEntry {

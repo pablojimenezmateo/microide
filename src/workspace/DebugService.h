@@ -86,6 +86,23 @@ class DebugService {
   void CommitVariableEdit();
   void CancelVariableEdit();
 
+  // Watch panel (Phase 6). The expression list is persistent; on each stop (and
+  // frame switch) every expression is re-evaluated with `evaluate(context:
+  // "watch")` against the focused frame. Add/Edit/Remove mutate the persisted
+  // list and re-evaluate immediately when a session is stopped. ToggleWatchRow
+  // lazily expands a structured result; the *Edit methods drive inline
+  // setVariable on a watched value's child (gated on the adapter capability).
+  void EvaluateWatches(int frame_id);
+  std::size_t AddWatch(std::string expression);
+  void EditWatch(std::size_t index, std::string expression);
+  void RemoveWatch(std::size_t index);
+  void ToggleWatchRow(std::size_t row);
+  void BeginWatchEdit(std::size_t row);
+  void CommitWatchEdit();
+  void CancelWatchEdit();
+  // Focused frame id of the active stop (0 when not stopped / no session).
+  int FocusedFrameId() const;
+
   // Hover-to-inspect (Phase 5). Evaluate `expression` in `frame_id`'s scope with
   // `context:"hover"`, writing the result into `debug_hover` and requesting an
   // editor redraw so the (synchronous) hover resolver re-resolves into a cache

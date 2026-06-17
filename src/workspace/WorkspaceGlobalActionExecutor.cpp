@@ -169,6 +169,20 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.DebugPause();
       return DispatchResult::Handled;
+    case ActionId::DebugBreakpointEditCondition:
+    case ActionId::DebugBreakpointEditHitCondition:
+    case ActionId::DebugBreakpointEditLogMessage:
+    case ActionId::DebugBreakpointRemove:
+      // Context-menu only: the breakpoint gutter menu supplies the target line.
+      if (source != ActionSource::ContextMenu || !context_.DebuggerEnabled()) {
+        return DispatchResult::Unhandled;
+      }
+      if (id == ActionId::DebugBreakpointRemove) {
+        context_.RemoveBreakpointFromMenu();
+      } else {
+        context_.EditBreakpointModifierFromMenu(id);
+      }
+      return DispatchResult::Handled;
     case ActionId::TestsRun: {
       std::string error_message;
       const bool ok = args.empty() ? context_.RunAllDiscoveredTests(&error_message)

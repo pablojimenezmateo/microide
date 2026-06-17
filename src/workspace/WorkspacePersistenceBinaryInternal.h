@@ -208,6 +208,7 @@ enum class DebugStateTag : std::uint16_t {
   FileBreakpoints = 2,            // repeated, one nested record per file
   LaunchConfig = 3,               // repeated, one nested record per config
   SelectedLaunchConfigIndex = 4,
+  WatchExpression = 5,            // Phase 6: repeated, one string record per expression
 };
 
 enum class FileBreakpointsTag : std::uint16_t {
