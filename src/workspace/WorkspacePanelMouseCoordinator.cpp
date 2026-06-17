@@ -221,6 +221,15 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             BottomPanelLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y), row_count);
         if (line_index.has_value() && *line_index < row_count) {
           const auto row_ref = exec.PanelRowAt(*line_index);
+          if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Session) {
+            // Switch the active session: re-project the picked session's stop.
+            const int session_id = exec.sessions[row_ref.index].id;
+            if (session_id != exec.focused_session_id &&
+                operations_.on_debug_session_focus_changed) {
+              operations_.on_debug_session_focus_changed(session_id);
+            }
+            return true;
+          }
           if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Thread) {
             // Switch to the picked thread: re-resolve its frames + re-focus it.
             const int thread_id = exec.threads[row_ref.index].id;
@@ -631,6 +640,8 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               [this](int frame_id) { debug_service_.FocusFrame(frame_id); },
           .on_debug_thread_focus_changed =
               [this](int thread_id) { debug_service_.FocusThread(thread_id); },
+          .on_debug_session_focus_changed =
+              [this](int session_id) { debug_service_.FocusSession(session_id); },
           .toggle_debug_variable_row =
               [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
           .begin_debug_variable_edit =

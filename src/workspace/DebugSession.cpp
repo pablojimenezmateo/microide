@@ -497,6 +497,17 @@ void DebugSession::SwitchThread(int thread_id) {
   RequestStackTrace(stop);
 }
 
+void DebugSession::Reactivate() {
+  if (state_ != State::Stopped || !client_->IsInitialized()) {
+    return;
+  }
+  // Re-resolve the call stack + thread list for the retained stop so the shared
+  // execution view (which another session may have overwritten while this one was
+  // in the background) rebuilds for this session's current location.
+  RequestStackTrace(last_stop_);
+  RequestThreadsForStop();
+}
+
 void DebugSession::DrainCallbacks() { client_->DrainCallbacks(); }
 
 void DebugSession::SetState(State state) {

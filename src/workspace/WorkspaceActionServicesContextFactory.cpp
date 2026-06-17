@@ -110,6 +110,16 @@ void WorkspaceActionContext::DebugRestart() {
   }
 }
 
+std::size_t WorkspaceActionContext::DebugSessionCount() const {
+  return operations_.debug_session_count ? operations_.debug_session_count() : 0;
+}
+
+void WorkspaceActionContext::DebugSwitchSession(int index) {
+  if (operations_.debug_switch_session) {
+    operations_.debug_switch_session(index);
+  }
+}
+
 void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
   if (operations_.edit_breakpoint_modifier_from_menu) {
     operations_.edit_breakpoint_modifier_from_menu(id);
@@ -406,6 +416,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .debug_step_out = [this]() { DebugStepOut(); },
           .debug_pause = [this]() { DebugPause(); },
           .debug_restart = [this]() { DebugRestart(); },
+          .debug_session_count = [this]() { return CurrentDapManager().SessionCount(); },
+          .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
           .edit_breakpoint_modifier_from_menu =
               [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },

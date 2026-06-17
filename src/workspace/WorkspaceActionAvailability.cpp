@@ -89,6 +89,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Restart is valid whenever a session is active (running or stopped).
       return SettingEnabled(operations_, "debug.enabled", false) &&
              operations_.debug_session_active && operations_.debug_session_active();
+    case ActionId::DebugSwitchSession:
+      // Switching only makes sense with more than one live session.
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_count && operations_.debug_session_count() > 1;
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:

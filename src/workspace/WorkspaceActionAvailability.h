@@ -40,6 +40,8 @@ class ActionAvailability {
     // paused; stopped = that session is paused at a breakpoint/step.
     std::function<bool()> debug_session_active;
     std::function<bool()> debug_session_stopped;
+    // Number of live debug sessions (Phase 8) — gates the session switcher.
+    std::function<std::size_t()> debug_session_count;
   };
 
   ActionAvailability(const WorkspaceContext& context, Operations operations);

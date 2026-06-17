@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -14,16 +16,26 @@
 
 namespace microide::workspace {
 
+// A live session's identity for the session-switcher UI. `name` is the launch
+// config's name (falling back to its adapter type); `attention` marks a
+// background session that has paused but not yet been viewed.
+struct DapSessionInfo {
+  int id = 0;
+  std::string name;
+  DebugSession::State state = DebugSession::State::Inactive;
+  bool attention = false;
+};
+
 // Per-project registry of contributed debug adapters (keyed by adapter `type`,
 // mirroring how LspManager keys servers by language id) plus ownership of the
-// active debug session. A debug session is transient — created on "Start
+// live debug sessions. A debug session is transient — created on "Start
 // Debugging", torn down on terminate — unlike an LSP server which is long-lived;
 // so the manager stores adapter *definitions* and hands a command+sandbox to the
 // session it spawns.
 //
-// Phase 1 supports a single active session. Phase 7 generalizes to N concurrent
-// sessions with an active-session switcher; the per-type registry already
-// supports that without change.
+// Phase 8 holds N concurrent sessions with one *active* session (the one the UI
+// projects). Each session carries a stable monotonic id; routing is by
+// originating session. The per-type adapter registry is shared across sessions.
 class DapManager {
  public:
   DapManager();
@@ -49,27 +61,59 @@ class DapManager {
   // config until per-project launch-config selection lands in a later phase.
   std::vector<std::string> AdapterTypes() const;
 
-  // Begin a debug session for `config`. Resolves `config.type` to a registered
-  // adapter, spawns it, and drives the lifecycle, forwarding events through
-  // `callbacks`. Returns false (and sets LastError) when the type is unknown or
-  // the adapter cannot be spawned. A previously active session is stopped first.
-  bool StartSession(const LaunchConfig& config, DebugSession::Callbacks callbacks,
-                    const std::string& cwd = {});
+  // Begin a new debug session for `config` and make it active. Resolves
+  // `config.type` to a registered adapter, spawns it, and drives the lifecycle.
+  // The session's stable id is assigned first, then `make_callbacks(id)` builds
+  // the callbacks bound to it (so events can be routed by originating session).
+  // Returns the new session id, or 0 (LastError populated) when the type is
+  // unknown or the adapter cannot be spawned. Existing sessions are untouched.
+  int StartSession(const LaunchConfig& config,
+                   std::function<DebugSession::Callbacks(int id)> make_callbacks,
+                   const std::string& cwd = {});
+  // Convenience overload for callers that do not need the session id bound into
+  // their callbacks (tests, simple call sites): the same callbacks are used
+  // regardless of the assigned id.
+  int StartSession(const LaunchConfig& config, DebugSession::Callbacks callbacks,
+                   const std::string& cwd = {});
+  // Restart fallback: drop the active session in place, then start a fresh one
+  // (so a terminate+relaunch restart does not leave a second session row).
+  int ReplaceActiveSession(const LaunchConfig& config,
+                           std::function<DebugSession::Callbacks(int id)> make_callbacks,
+                           const std::string& cwd = {});
+  int ReplaceActiveSession(const LaunchConfig& config, DebugSession::Callbacks callbacks,
+                           const std::string& cwd = {});
 
-  DebugSession* ActiveSession() { return session_.get(); }
-  const DebugSession* ActiveSession() const { return session_.get(); }
-  bool HasActiveSession() const { return session_ != nullptr; }
+  DebugSession* ActiveSession();
+  const DebugSession* ActiveSession() const;
+  bool HasActiveSession() const { return ActiveSession() != nullptr; }
+  int ActiveSessionId() const { return active_session_id_; }
+  // Make `id` the active session (no-op if unknown). Does not touch the session.
+  void SetActiveSession(int id);
+  DebugSession* SessionById(int id);
+  std::size_t SessionCount() const { return sessions_.size(); }
+  // Mark/clear the "paused in the background" attention flag for a session.
+  void SetSessionAttention(int id, bool attention);
+  // Live sessions in stable creation order (drives the session-switcher rows).
+  std::vector<DapSessionInfo> Sessions() const;
 
   // Request graceful teardown of the active session (terminate/disconnect). The
-  // session object is retained until ClearSession()/StartSession() so terminal
-  // state and the last error stay queryable for the UI.
+  // session object is retained until a later prune so terminal state stays
+  // queryable; PruneTerminated() drops it once its I/O thread has joined.
   void StopActiveSession();
-  // Drop the active session object outright (blocking shutdown if still running).
+  // Drop the active session object outright (blocking shutdown if still running),
+  // repointing the active session to the most recent survivor.
   void ClearSession();
+  // Drop sessions whose adapter has terminated/failed *and* whose I/O thread has
+  // joined (so we never destroy a session inside its own callback). Repoints the
+  // active session when it was the one removed. Returns the ids that were removed
+  // (empty when nothing changed) so the caller can re-sync the UI / drop console
+  // channels.
+  std::vector<int> PruneTerminated();
 
   const std::string& LastError() const { return last_error_; }
 
-  // Call from the main thread each frame to dispatch pending callbacks/events.
+  // Call from the main thread each frame to dispatch pending callbacks/events
+  // for *every* live session.
   void DrainCallbacks();
 
   // Begin background shutdown without blocking; then ShutdownAll waits.
@@ -81,10 +125,22 @@ class DapManager {
     std::vector<std::string> command;
     platform::SubprocessSandbox sandbox;
   };
+  struct SessionEntry {
+    int id = 0;
+    bool attention = false;
+    std::unique_ptr<DebugSession> session;
+  };
+
+  // Index of the entry whose id == active_session_id_, or sessions_.size() if none.
+  std::size_t ActiveIndex() const;
+  // Drop the active entry (blocking shutdown), repointing active to the survivor.
+  void ClearActiveEntry();
 
   Uint32 wake_event_type_ = 0;
   std::unordered_map<std::string, AdapterEntry> adapters_;
-  std::unique_ptr<DebugSession> session_;
+  std::vector<SessionEntry> sessions_;
+  int active_session_id_ = 0;
+  int next_session_id_ = 1;
   std::string last_error_;
 };
 

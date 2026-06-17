@@ -29,6 +29,17 @@ struct DebugThreadView {
   std::string display;
 };
 
+// One entry in the session selector (Phase 8 multi-session). `display` is
+// prebuilt (e.g. "server (paused)") so the Call Stack render TU only draws.
+// `attention` marks a background session that paused but has not yet been viewed
+// (rendered with an accent). Sourced from DapManager — survives resume so the
+// switcher stays available while the active session runs.
+struct DebugSessionView {
+  int id = 0;
+  std::string display;
+  bool attention = false;
+};
+
 // Transient execution state for the active debug session: the current stop, its
 // call stack, and which frame the user is focused on. Lives on
 // ProjectWorkspaceState (mirrors `breakpoint_store` / `diagnostics_store`) but is
@@ -45,7 +56,17 @@ struct DebugExecutionView {
   // selector is shown). Preserved across a thread switch (frames are rebuilt).
   std::vector<DebugThreadView> threads;
   int focused_thread_id = 0;
+  // Session selector (Phase 8 multi-session). Populated from DapManager whenever
+  // the live-session set / active id / attention changes. Unlike the stop-scoped
+  // fields below, these are NOT cleared on resume/stop (Clear() preserves them):
+  // the switcher must stay available so the user can switch to a paused
+  // background session while the active one runs.
+  std::vector<DebugSessionView> sessions;
+  int focused_session_id = 0;
 
+  // Clear only the stop-scoped state (frames/threads/reason). The session
+  // selector (`sessions`/`focused_session_id`) is owned by DapManager's
+  // projection and intentionally survives so it stays visible while running.
   void Clear() {
     stopped = false;
     thread_id = 0;
@@ -80,23 +101,33 @@ struct DebugExecutionView {
     return frame != nullptr ? frame->line : 0;
   }
 
-  // The Call Stack panel lays out an optional thread selector above the frame
-  // list. The selector is shown only when there is more than one thread; with a
-  // single thread the panel is byte-for-byte its pre-Phase-7 look. Render, mouse,
-  // and scroll all derive their row geometry from these helpers so the optional
-  // leading thread rows never desynchronize.
+  // The Call Stack panel lays out optional selectors above the frame list:
+  // session rows (Phase 8), then thread rows (Phase 7), then frames. Each
+  // selector shows only when it has more than one entry; with a single
+  // session+thread the panel is byte-for-byte its pre-Phase-7 look. Render,
+  // mouse, and scroll all derive their row geometry from these helpers so the
+  // optional leading rows never desynchronize.
+  bool HasSessionSelector() const { return sessions.size() > 1; }
+  std::size_t SessionRowCount() const { return HasSessionSelector() ? sessions.size() : 0; }
   bool HasThreadSelector() const { return threads.size() > 1; }
   std::size_t ThreadRowCount() const { return HasThreadSelector() ? threads.size() : 0; }
-  std::size_t PanelRowCount() const { return ThreadRowCount() + frames.size(); }
+  std::size_t PanelRowCount() const {
+    return SessionRowCount() + ThreadRowCount() + frames.size();
+  }
 
   struct PanelRowRef {
-    enum class Kind { Thread, Frame };
+    enum class Kind { Session, Thread, Frame };
     Kind kind = Kind::Frame;
-    std::size_t index = 0;  // into `threads` (Thread) or `frames` (Frame)
+    std::size_t index = 0;  // into `sessions` / `threads` / `frames` per kind
   };
-  // Map a flat panel row to a thread or frame. Rows [0, ThreadRowCount()) are
-  // thread rows; the remainder are frames.
+  // Map a flat panel row to a session, thread, or frame. Rows are laid out
+  // [sessions)[threads)[frames) in that order.
   PanelRowRef PanelRowAt(std::size_t row) const {
+    const std::size_t session_rows = SessionRowCount();
+    if (row < session_rows) {
+      return PanelRowRef{PanelRowRef::Kind::Session, row};
+    }
+    row -= session_rows;
     const std::size_t thread_rows = ThreadRowCount();
     if (row < thread_rows) {
       return PanelRowRef{PanelRowRef::Kind::Thread, row};

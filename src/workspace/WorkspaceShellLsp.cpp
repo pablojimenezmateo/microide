@@ -14,8 +14,14 @@
 namespace microide::workspace {
 
 namespace {
-constexpr std::string_view kDebugConsoleChannelId = "debug.console";
-constexpr std::string_view kDebugConsoleChannelLabel = "Debug Console";
+// One console channel per debug session, keyed by session id. The label defaults
+// to the session name; a generic fallback covers an unnamed session.
+std::string DebugConsoleChannelId(int session_id) {
+  return "debug.console." + std::to_string(session_id);
+}
+std::string DebugConsoleChannelLabel(const std::string& session_label) {
+  return session_label.empty() ? std::string("Debug Console") : session_label;
+}
 }  // namespace
 
 bool WorkspaceShell::HasActiveCompletionProvider() const {
@@ -102,11 +108,9 @@ DapManager& WorkspaceShell::EnsureProjectDapManager(ProjectWorkspaceState& state
 void WorkspaceShell::ConsumeDapCallbacks() { debug_service_.ConsumeDapCallbacks(); }
 
 bool WorkspaceShell::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
-  const bool started = debug_service_.StartDebugging(config, cwd);
-  if (started) {
-    ShowDebugConsole();
-  }
-  return started;
+  // DebugService surfaces the new session's console channel via the show_debug_console
+  // operation, so no separate ShowDebugConsole() call is needed here.
+  return debug_service_.StartDebugging(config, cwd);
 }
 
 std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
@@ -142,9 +146,31 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
 }
 
 void WorkspaceShell::StopDebugging() {
+  // Stops the active session. Only close the debug panel when this was the last
+  // live session; with others remaining, the panel stays (re-projected by the
+  // next-frame prune as the active session advances).
+  const bool last_session = CurrentDapManager().SessionCount() <= 1;
   debug_service_.StopDebugging();
-  CloseDebugPanel(context_.current_project_state);
+  if (last_session) {
+    CloseDebugPanel(context_.current_project_state);
+  }
   RequestBottomPanelRedraw();
+}
+
+void WorkspaceShell::DebugFocusSession(int session_id) {
+  debug_service_.FocusSession(session_id);
+}
+
+void WorkspaceShell::DebugSwitchSession(int index) {
+  // index < 0 cycles to the next session; index >= 1 selects a 1-based session.
+  if (index < 0) {
+    debug_service_.FocusNextSession();
+    return;
+  }
+  const std::vector<DapSessionInfo> sessions = debug_service_.Sessions();
+  if (index >= 1 && static_cast<std::size_t>(index) <= sessions.size()) {
+    debug_service_.FocusSession(sessions[static_cast<std::size_t>(index - 1)].id);
+  }
 }
 
 void WorkspaceShell::ResendBreakpointsForFile(const std::filesystem::path& path) {
@@ -173,7 +199,10 @@ void WorkspaceShell::DebugPause() { debug_service_.Pause(); }
 void WorkspaceShell::DebugRestart() { debug_service_.Restart(); }
 void WorkspaceShell::DebugFocusThread(int thread_id) { debug_service_.FocusThread(thread_id); }
 
-void WorkspaceShell::AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output) {
+void WorkspaceShell::AppendDebugConsoleOutput(int session_id, const std::string& label,
+                                              const dap_protocol::DapOutputEvent& output) {
+  const std::string channel_id = DebugConsoleChannelId(session_id);
+  const std::string channel_label = DebugConsoleChannelLabel(label);
   // Split on newlines so each console line is its own channel entry. A trailing
   // newline (common in adapter output) does not produce a spurious blank entry.
   const std::string& text = output.output;
@@ -181,21 +210,21 @@ void WorkspaceShell::AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent
   while (start < text.size()) {
     const std::size_t newline = text.find('\n', start);
     if (newline == std::string::npos) {
-      output_channels_.AppendLine(kDebugConsoleChannelId, kDebugConsoleChannelLabel,
-                                  text.substr(start));
+      output_channels_.AppendLine(channel_id, channel_label, text.substr(start));
       break;
     }
-    output_channels_.AppendLine(kDebugConsoleChannelId, kDebugConsoleChannelLabel,
-                                text.substr(start, newline - start));
+    output_channels_.AppendLine(channel_id, channel_label, text.substr(start, newline - start));
     start = newline + 1;
   }
 }
 
-void WorkspaceShell::ShowDebugConsole() {
-  EnsureOutputChannelTabOpen(kDebugConsoleChannelId);
-  output_channels_.EnsureChannel(kDebugConsoleChannelId, kDebugConsoleChannelLabel);
+void WorkspaceShell::ShowDebugConsole(int session_id, const std::string& label) {
+  const std::string channel_id = DebugConsoleChannelId(session_id);
+  const std::string channel_label = DebugConsoleChannelLabel(label);
+  EnsureOutputChannelTabOpen(channel_id);
+  output_channels_.EnsureChannel(channel_id, channel_label);
   context_.current_project_state.panel.content = PanelContentKind::Output;
-  context_.current_project_state.panel.output.channel_id = std::string(kDebugConsoleChannelId);
+  context_.current_project_state.panel.output.channel_id = channel_id;
   RequestBottomPanelRedraw();
 }
 

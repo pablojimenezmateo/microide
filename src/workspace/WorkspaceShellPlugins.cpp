@@ -95,8 +95,13 @@ WorkspaceShell::WorkspaceShell() {
       context_,
       DebugService::Operations{
           .append_console_output =
-              [this](const dap_protocol::DapOutputEvent& output) {
-                AppendDebugConsoleOutput(output);
+              [this](int session_id, const std::string& label,
+                     const dap_protocol::DapOutputEvent& output) {
+                AppendDebugConsoleOutput(session_id, label, output);
+              },
+          .show_debug_console =
+              [this](int session_id, const std::string& label) {
+                ShowDebugConsole(session_id, label);
               },
           .notify_session_state_changed =
               [this](DebugSession::State /*state*/) { RequestChromeRedraw(); },

@@ -1127,6 +1127,147 @@ void TestDebugManagerRetainAdaptersDropsStaleTypes() {
   Expect(manager.HasAdapter("b"), "retained adapter 'b' should survive reconcile");
 }
 
+// Pure DebugExecutionView: the Call Stack panel lays out optional session +
+// thread selectors above the frame list. PanelRowAt/PanelRowCount must dispatch
+// sessions → threads → frames, and Clear() must preserve the session selector
+// (sourced from DapManager) while dropping the stop-scoped state.
+void TestDebugExecutionViewPanelRowDispatch() {
+  using microide::workspace::DebugExecutionView;
+  using Kind = DebugExecutionView::PanelRowRef::Kind;
+  DebugExecutionView view;
+  view.stopped = true;
+  view.sessions = {{1, "server (paused)", false}, {2, "client (running)", true}};
+  view.focused_session_id = 2;
+  view.threads = {{1, "Thread 1"}, {2, "Thread 2"}};
+  view.frames.resize(2);
+
+  Expect(view.HasSessionSelector() && view.HasThreadSelector(), "both selectors are shown with >1");
+  Expect(view.PanelRowCount() == 6, "2 sessions + 2 threads + 2 frames = 6 rows");
+  Expect(view.PanelRowAt(0).kind == Kind::Session && view.PanelRowAt(0).index == 0, "row 0 = session 0");
+  Expect(view.PanelRowAt(1).kind == Kind::Session && view.PanelRowAt(1).index == 1, "row 1 = session 1");
+  Expect(view.PanelRowAt(2).kind == Kind::Thread && view.PanelRowAt(2).index == 0, "row 2 = thread 0");
+  Expect(view.PanelRowAt(3).kind == Kind::Thread && view.PanelRowAt(3).index == 1, "row 3 = thread 1");
+  Expect(view.PanelRowAt(4).kind == Kind::Frame && view.PanelRowAt(4).index == 0, "row 4 = frame 0");
+  Expect(view.PanelRowAt(5).kind == Kind::Frame && view.PanelRowAt(5).index == 1, "row 5 = frame 1");
+
+  // A single session shows no session selector; the rows shift up.
+  view.sessions = {{1, "only", false}};
+  Expect(!view.HasSessionSelector(), "one session hides the selector");
+  Expect(view.PanelRowCount() == 4, "no session rows: 2 threads + 2 frames");
+  Expect(view.PanelRowAt(0).kind == Kind::Thread, "row 0 is now the first thread");
+
+  // Clear() keeps the session selector but drops the stop-scoped state.
+  view.sessions = {{1, "a", false}, {2, "b", false}};
+  view.focused_session_id = 2;
+  view.Clear();
+  Expect(view.sessions.size() == 2 && view.focused_session_id == 2,
+         "Clear preserves the manager-sourced session selector");
+  Expect(view.frames.empty() && view.threads.empty() && !view.stopped,
+         "Clear drops the stop-scoped frames/threads/state");
+}
+
+// Two concurrent sessions against the real mock adapter: distinct ids, both reach
+// a stop, Sessions() exposes id/name/state/attention, the active session switches
+// and Reactivate re-projects, and stopping the active session prunes it so the
+// active advances — down to an empty manager.
+void TestDebugManagerMultipleConcurrentSessions() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+
+  CapturedSession cap_a;
+  CapturedSession cap_b;
+  LaunchConfig config_a;
+  config_a.name = "server";
+  config_a.type = "mock";
+  config_a.request = "launch";
+  LaunchConfig config_b;
+  config_b.name = "client";
+  config_b.type = "mock";
+  config_b.request = "launch";
+
+  const int id_a = manager.StartSession(config_a, MakeCallbacks(cap_a));
+  const int id_b = manager.StartSession(config_b, MakeCallbacks(cap_b));
+  Expect(id_a != 0 && id_b != 0 && id_a != id_b, "two sessions get distinct non-zero ids");
+  Expect(manager.SessionCount() == 2, "both sessions are live concurrently");
+  Expect(manager.ActiveSessionId() == id_b, "the most recently started session is active");
+
+  Expect(PollUntil(manager, [&]() { return cap_a.stop_count >= 1 && cap_b.stop_count >= 1; }),
+         "both concurrent sessions reach a stop");
+
+  const auto infos = manager.Sessions();
+  Expect(infos.size() == 2, "Sessions() lists both sessions");
+  Expect(infos[0].id == id_a && infos[0].name == "server", "first row keeps creation order + name");
+  Expect(infos[1].id == id_b && infos[1].name == "client", "second row keeps creation order + name");
+  Expect(infos[0].state == DebugSession::State::Stopped, "a stopped session reports Stopped");
+
+  manager.SetSessionAttention(id_a, true);
+  Expect(manager.Sessions()[0].attention, "attention flag is exposed for the switcher");
+  manager.SetActiveSession(id_a);
+  Expect(manager.ActiveSessionId() == id_a && manager.ActiveSession() == manager.SessionById(id_a),
+         "SetActiveSession repoints the active session");
+
+  const int before = cap_a.stop_count;
+  manager.SessionById(id_a)->Reactivate();
+  Expect(PollUntil(manager, [&]() { return cap_a.stop_count > before; }),
+         "Reactivate re-resolves the stack and re-fires on_stopped");
+
+  manager.StopActiveSession();  // stops id_a
+  Expect(PollUntil(manager,
+                   [&]() {
+                     manager.PruneTerminated();
+                     return manager.SessionCount() == 1;
+                   }),
+         "the stopped active session is pruned once its adapter terminates");
+  Expect(manager.ActiveSessionId() == id_b, "the active session advances to the survivor");
+
+  manager.StopActiveSession();  // stops id_b
+  Expect(PollUntil(manager,
+                   [&]() {
+                     manager.PruneTerminated();
+                     return manager.SessionCount() == 0;
+                   }),
+         "the last session prunes to an empty manager");
+  Expect(manager.ActiveSessionId() == 0, "no active session id remains");
+  manager.ShutdownAll();
+}
+
+// The restart terminate+relaunch fallback replaces the active session in place:
+// the session set stays size 1 (no second row) and the replacement is active with
+// a fresh id.
+void TestDebugManagerReplaceActiveSession() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "config_done"));
+
+  CapturedSession cap1;
+  LaunchConfig config;
+  config.name = "x";
+  config.type = "mock";
+  config.request = "launch";
+  const int id1 = manager.StartSession(config, MakeCallbacks(cap1));
+  Expect(id1 != 0 && manager.SessionCount() == 1, "the first session starts");
+
+  CapturedSession cap2;
+  const int id2 = manager.ReplaceActiveSession(config, MakeCallbacks(cap2));
+  Expect(id2 != 0 && id2 != id1, "the replacement gets a fresh id");
+  Expect(manager.SessionCount() == 1, "replace keeps a single session (no second row)");
+  Expect(manager.ActiveSessionId() == id2, "the replacement is the active session");
+  manager.ShutdownAll();
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
@@ -1163,6 +1304,12 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugManagerRejectsUnknownAdapterType);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",
           TestDebugManagerRetainAdaptersDropsStaleTypes);
+  AddTest(tests, "DebugService/ExecutionViewPanelRowDispatch",
+          TestDebugExecutionViewPanelRowDispatch);
+  AddTest(tests, "DebugService/ManagerMultipleConcurrentSessions",
+          TestDebugManagerMultipleConcurrentSessions);
+  AddTest(tests, "DebugService/ManagerReplaceActiveSession",
+          TestDebugManagerReplaceActiveSession);
 }
 
 }  // namespace microide::tests

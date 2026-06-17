@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugSession.h"
@@ -28,8 +29,14 @@ struct ProjectWorkspaceState;
 class DebugService {
  public:
   struct Operations {
-    // Stream a DAP `output` event to the debug console (an output channel).
-    std::function<void(const dap_protocol::DapOutputEvent& output)> append_console_output;
+    // Stream a DAP `output` event to a session's debug console (one output channel
+    // per session, keyed by session id; `label` names the channel/tab).
+    std::function<void(int session_id, const std::string& label,
+                       const dap_protocol::DapOutputEvent& output)>
+        append_console_output;
+    // Surface (open + select) a session's console channel. Called on session start
+    // and on a session switch so the console follows the active session.
+    std::function<void(int session_id, const std::string& label)> show_debug_console;
     // Notify on session state changes (drives status text / redraw).
     std::function<void(DebugSession::State state)> notify_session_state_changed;
     std::function<void()> request_chrome_redraw;
@@ -84,6 +91,18 @@ class DebugService {
   // stopped / no session.
   void FocusThread(int thread_id);
 
+  // Make `session_id` the active debug session (Phase 8 multi-session): clears the
+  // previously-active session's transient view, surfaces the picked session's
+  // console, and re-projects its current stop (via DebugSession::Reactivate). The
+  // session-switcher command + Call Stack session-row click both route here.
+  // No-op for an unknown id.
+  void FocusSession(int session_id);
+  // Cycle the active session to the next live one (wraps). Used by the no-arg
+  // `debug-switch-session` command. No-op with fewer than two sessions.
+  void FocusNextSession();
+  // Live sessions for the switcher UI (id + prebuilt label + state + attention).
+  std::vector<DapSessionInfo> Sessions() const;
+
   // Breakpoints panel (Phase 7). Toggle one exception-breakpoint filter and live
   // re-send `setExceptionBreakpoints` to the active session (if any). Rebuild the
   // panel's prebuilt rows from the current breakpoints + advertised filters
@@ -136,11 +155,26 @@ class DebugService {
  private:
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
-  // Build the session callbacks that wire the configured Operations in. Shared by
-  // StartDebugging and the restart relaunch path.
-  DebugSession::Callbacks BuildSessionCallbacks();
+  // Build the session callbacks that wire the configured Operations in, bound to
+  // the originating session's id + console label so events route correctly. Shared
+  // by StartDebugging and the restart relaunch path.
+  DebugSession::Callbacks BuildSessionCallbacks(int session_id, std::string session_label);
+  // True when `session_id` is the active (UI-projected) session.
+  bool IsActiveSession(int session_id) const;
+  // Spawn a session for `config` (replacing the active one when `replace`), wire
+  // its callbacks, surface its console, and sync the switcher. Returns the new id
+  // (0 on failure). Shared by StartDebugging and the restart relaunch fallback.
+  int LaunchSession(const LaunchConfig& config, const std::string& cwd, bool replace);
+  // Project a stop (call stack + focused frame) of the active session into the
+  // shared transient views: build the execution view, focus the top frame, surface
+  // the Call Stack panel, and jump the editor to the top frame.
+  void ProjectStop(const dap_protocol::DapStoppedEvent& stop,
+                   const std::vector<dap_protocol::DapStackFrame>& frames);
+  // Rebuild the session-selector rows on `debug_execution` from the manager's live
+  // sessions + active id (prebuilt display strings; survives resume).
+  void SyncSessionsPanel();
   // Drop all transient debug view models (execution / variables / hover / watch
-  // results) and request redraws. Shared by stop / resume / restart.
+  // results) and request redraws. Shared by stop / resume / restart / switch.
   void ClearTransientDebugViews();
 
   WorkspaceContext* context_ = nullptr;

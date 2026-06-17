@@ -1129,6 +1129,10 @@
   void DebugRestart();
   // Focus a thread in the Call Stack thread selector (Phase 7 multi-thread).
   void DebugFocusThread(int thread_id);
+  // Make a session active (by id, for the Call Stack session-row click) or switch
+  // by 1-based index / cycle (index < 0) for the command (Phase 8 multi-session).
+  void DebugFocusSession(int session_id);
+  void DebugSwitchSession(int index);
   // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
   // menu's target path+line; open a seeded prompt for a condition/hit/log field
   // (mapped from the ActionId) or remove the breakpoint and live-resend.
@@ -1142,8 +1146,9 @@
   // and commit it into the watch model (edit with empty text removes).
   void OpenWatchExpressionPrompt(std::optional<std::size_t> index);
   void CommitWatchExpressionPrompt();
-  void AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output);
-  void ShowDebugConsole();
+  void AppendDebugConsoleOutput(int session_id, const std::string& label,
+                                const dap_protocol::DapOutputEvent& output);
+  void ShowDebugConsole(int session_id, const std::string& label);
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
   std::string ActiveLspStatusText(bool ensure_started = true);

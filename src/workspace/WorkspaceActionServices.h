@@ -173,6 +173,11 @@ class WorkspaceActionContext {
     std::function<void()> debug_step_out;
     std::function<void()> debug_pause;
     std::function<void()> debug_restart;
+    // Multi-session switcher (Phase 8). debug_session_count reports how many live
+    // sessions exist (gates the switch command); debug_switch_session cycles to the
+    // next session (index < 0) or selects a 1-based index.
+    std::function<std::size_t()> debug_session_count;
+    std::function<void(int index)> debug_switch_session;
     // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
@@ -325,6 +330,10 @@ class WorkspaceActionContext {
   void DebugStepOut();
   void DebugPause();
   void DebugRestart();
+  // Multi-session switcher (Phase 8). Count of live sessions; switch to the next
+  // (index < 0) or a 1-based session index.
+  std::size_t DebugSessionCount() const;
+  void DebugSwitchSession(int index);
   // Breakpoint modifiers (Phase 6). Read the breakpoint-gutter context menu's
   // target line; open a prompt seeded with the current field / remove the bp.
   void EditBreakpointModifierFromMenu(ActionId id);

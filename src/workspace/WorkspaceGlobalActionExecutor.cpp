@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/Parse.h"
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceCommandParsing.h"
 namespace microide::workspace {
@@ -175,6 +176,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.DebugRestart();
       return DispatchResult::Handled;
+    case ActionId::DebugSwitchSession: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      if (context_.DebugSessionCount() < 2) {
+        return reject("Need at least two debug sessions to switch");
+      }
+      // No arg → cycle to the next session; an arg is a 1-based session index.
+      int index = -1;
+      if (!args.empty()) {
+        if (const std::optional<int> parsed = util::ParseInt(args[0]); parsed.has_value()) {
+          index = *parsed;
+        } else {
+          return reject("debug-switch-session expects a session number");
+        }
+      }
+      context_.DebugSwitchSession(index);
+      return DispatchResult::Handled;
+    }
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:

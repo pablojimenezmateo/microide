@@ -611,10 +611,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       continue;
     }
     if (debug_panel && debug_view != nullptr) {
+      constexpr float kIndentStep = 16.0f;
       const auto row_ref = debug_view->PanelRowAt(static_cast<std::size_t>(index));
-      if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Thread) {
-        const DebugThreadView& thread = debug_view->threads[row_ref.index];
-        const bool focused = thread.id == debug_view->focused_thread_id;
+      const auto fill_row_background = [&](bool focused) -> SDL_Color {
         SDL_Color background = theme_.surface_background;
         if (focused) {
           background = theme_.row_highlight;
@@ -623,28 +622,45 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                   panel_layout.content_rect.w, panel_layout.line_height),
                          background);
         }
-        // Thread rows sit flush-left; the focused thread's frames are shown below.
-        DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y,
+        return background;
+      };
+      // Session rows (Phase 8) sit flush-left above the thread/frame hierarchy.
+      // The active session highlights; a background session that paused (attention)
+      // draws in the accent color until the user views it.
+      if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Session) {
+        const DebugSessionView& session = debug_view->sessions[row_ref.index];
+        const bool focused = session.id == debug_view->focused_session_id;
+        const SDL_Color background = fill_row_background(focused);
+        SDL_Color text = focused ? theme_.text_primary : theme_.text_secondary;
+        if (session.attention && !focused) {
+          text = theme_.accent;
+        }
+        DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, text, background,
+                   text_renderer_.TruncateToWidth(session.display, panel_layout.text_width));
+        continue;
+      }
+      // Thread rows indent under the session selector when one is shown.
+      const float thread_indent = debug_view->HasSessionSelector() ? kIndentStep : 0.0f;
+      if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Thread) {
+        const DebugThreadView& thread = debug_view->threads[row_ref.index];
+        const bool focused = thread.id == debug_view->focused_thread_id;
+        const SDL_Color background = fill_row_background(focused);
+        DrawTextOn(text_renderer_, renderer, panel_layout.text_x + thread_indent, line_y,
                    focused ? theme_.text_primary : theme_.text_secondary, background,
-                   text_renderer_.TruncateToWidth(thread.display, panel_layout.text_width));
+                   text_renderer_.TruncateToWidth(thread.display,
+                                                  panel_layout.text_width - thread_indent));
         continue;
       }
       const std::size_t frame_index = row_ref.index;
       const DebugStackFrameView& frame = debug_view->frames[frame_index];
       const bool focused = frame_index == debug_view->focused_frame_index;
-      SDL_Color background = theme_.surface_background;
-      if (focused) {
-        background = theme_.row_highlight;
-        DrawFilledRect(renderer,
-                       MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
-                                panel_layout.content_rect.w, panel_layout.line_height),
-                       background);
-      }
-      // Frame rows indent under the thread selector when one is shown, so the
-      // hierarchy (thread → its frames) reads at a glance.
-      const float frame_x = panel_layout.text_x + (debug_view->HasThreadSelector() ? 16.0f : 0.0f);
-      const float frame_width =
-          panel_layout.text_width - (debug_view->HasThreadSelector() ? 16.0f : 0.0f);
+      const SDL_Color background = fill_row_background(focused);
+      // Frame rows indent under each shown selector (session and/or thread) so the
+      // hierarchy (session → thread → its frames) reads at a glance.
+      const float frame_indent =
+          thread_indent + (debug_view->HasThreadSelector() ? kIndentStep : 0.0f);
+      const float frame_x = panel_layout.text_x + frame_indent;
+      const float frame_width = panel_layout.text_width - frame_indent;
       // Frame name (primary), then the source location (muted) trailing it.
       draw_two_column_row(frame_x, frame_width, frame.display_primary,
                           focused ? theme_.text_primary : theme_.text_secondary,

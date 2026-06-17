@@ -50,6 +50,9 @@ class PanelMouseCoordinator {
     // Call Stack thread selector (Phase 7 multi-thread): switch the active thread,
     // re-resolving its frames.
     std::function<void(int)> on_debug_thread_focus_changed;
+    // Call Stack session selector (Phase 8 multi-session): switch the active
+    // session, re-projecting its stop.
+    std::function<void(int)> on_debug_session_focus_changed;
     std::function<void(std::size_t)> toggle_debug_variable_row;
     std::function<void(std::size_t)> begin_debug_variable_edit;
     // Debug Watch panel (Phase 6): toggle a watched value's subtree; begin inline

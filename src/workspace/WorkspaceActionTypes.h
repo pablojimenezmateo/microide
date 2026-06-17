@@ -139,6 +139,10 @@ enum class ActionId {
   DebugStepOut,
   DebugPause,
   DebugRestart,
+  // Multi-session switcher (Phase 8). No arg cycles to the next session; an
+  // optional 1-based index selects a specific session. Gated on `debug.enabled`
+  // + more than one live session.
+  DebugSwitchSession,
   // Breakpoint modifiers (Phase 6). Context-menu only: they read the breakpoint
   // gutter menu's path + line, so palette/keybinding invocation is a no-op.
   DebugBreakpointEditCondition,

@@ -72,6 +72,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::DebugPause, "debug-pause", "debug-pause", "Pause", ""},
       ActionSpec{ActionId::DebugRestart, "debug-restart", "debug-restart", "Restart Debugging",
                  "Ctrl+Shift+F5"},
+      ActionSpec{ActionId::DebugSwitchSession, "debug-switch-session", "debug-switch-session [n]",
+                 "Switch Debug Session", ""},
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
       ActionSpec{ActionId::RenamePath, "", "", "Rename...", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},

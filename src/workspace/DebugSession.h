@@ -134,6 +134,12 @@ class DebugSession {
   // the picked thread. Used by the Call Stack thread selector.
   void SwitchThread(int thread_id);
 
+  // Re-project this session's current stop through `on_stopped` + `on_threads`
+  // (Phase 8 multi-session). Used when the user switches the active session back
+  // to this one: it rebuilds the shared execution view from the session's
+  // retained last stop. No-op unless the session is Stopped.
+  void Reactivate();
+
   // Variables inspection (Phase 4). Request/response style with inline callbacks
   // (these are not lifecycle events, so they stay off the Callbacks struct — the
   // same shape as Pause()'s `threads` round-trip). Callbacks fire on the main

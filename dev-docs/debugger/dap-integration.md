@@ -1,7 +1,7 @@
 # Debugger / DAP Integration
 
 Status: **active, dedicated phase** (promoted from the durable non-goal list on
-2026-06-17). Phases 0–7 are done on `feat/dap`; Phase 8 (multi-session) is next.
+2026-06-17). Phases 0–8 are done on `feat/dap`; Phase 9 (polish/dedup) is next.
 This document is the single self-sufficient source of truth for the debugger
 effort — a fresh agent on any machine should be able to read this file and
 continue without external context.
@@ -257,18 +257,31 @@ one (it reworks `DapManager`'s single-session ownership + event routing) and the
 least valuable for a single-window editor, so it was **split out into Phase 8**.
 Phase 7 shipped the three additive features. See "Phase 7 — what shipped" below.
 
-### Phase 8 — Multi-session
+### Phase 8 — Multi-session ✅ DONE (2026-06-17)
 
-- N concurrent `DebugSession`s with an active-session switcher (each `DapClient`
-  owns its own `seq`/`pending_requests`; route events by originating client).
-  The transient view models (`debug_execution`/`debug_variables`/`debug_watch`/
-  `debug_hover`/`debug_breakpoints_panel`) already live per-project on
-  `ProjectWorkspaceState`; they would move to per-session or be rebuilt on the
-  active-session switch. `DapManager.session_` (a single `unique_ptr`) becomes a
-  collection + an active index/id; `StartSession` appends rather than replacing.
-  A session switcher UI (command palette or a Call-Stack-panel header dropdown).
-  Run the **TSAN preset** once concurrent multi-session I/O lands (multiple
-  `DapClient` I/O threads running at once).
+See "Phase 8 — what shipped" below. Summary: `DapManager` now owns N concurrent
+`DebugSession`s (a `SessionEntry` vector + a stable monotonic id + an active id)
+instead of a single `unique_ptr`; `StartSession` appends and returns the new id,
+events route by originating session, and only the *active* session projects into
+the shared transient views. A Call-Stack-panel **session selector** (reusing the
+Phase 7 flat-row `PanelRowAt` machinery, one level up) + a `debug-switch-session`
+command switch the active session; a background session that pauses badges for
+attention and (when the user is not parked at another stop) **auto-focuses**. Each
+session gets its **own console channel** (`debug.console.<id>`). TSAN-clean with
+two adapter I/O threads live.
+
+### Phase 9 — Polish / dedup (next)
+
+Opportunistic, independently shippable (pick during execution):
+
+- **Launch-config picker** — a command palette over the per-project
+  `launch_configs` (persisted selection added in Phase 2 still has no picker UI).
+- **Conditional/logpoint gutter-dot render distinction** (deferred from Phase 6 as
+  optional polish): the most likely next gutter change; factor a shared
+  gutter-marker dispatch if a fifth marker appears.
+- **Debug-console REPL input** — `evaluate(context:"repl")` reusing the
+  `PromptSurfaceService` single-line field + `DebugValueTree` for structured
+  results.
 
 ## Phase 0 — what shipped (2026-06-17)
 
@@ -810,6 +823,86 @@ Tests added (`tests/DebugServiceTests.cpp` mock-adapter modes `restart`/`threads
 - `PersistedStateRecord/DebugStateRoundTrip` + `…BackwardCompatNoWatch` extended for
   the exception-filter ids + seeded flag. `DebugStateRecordFuzz` exercises the new tags.
 
+## Phase 8 — what shipped (2026-06-17)
+
+N concurrent sessions with an active-session switcher. No new persisted state, no
+protocol additions — the change is ownership plumbing + event routing.
+
+Files changed (no new files; the design reused existing seams):
+
+- `src/workspace/WorkspaceDapManager.{h,cpp}` — `session_` (single `unique_ptr`)
+  became a `SessionEntry` vector (`{id, attention, unique_ptr<DebugSession>}`) +
+  `active_session_id_` + a monotonic `next_session_id_`. `StartSession` takes a
+  **callbacks factory** (`make_callbacks(int id)` — the id is assigned first so
+  events bind to it), appends, makes the new session active, and returns the id (0
+  on failure); a by-value convenience overload covers tests/simple callers.
+  `ReplaceActiveSession` (drop active in place + start) backs the restart fallback
+  so it never leaves a second row. New: `ActiveSessionId`/`SetActiveSession`/
+  `SessionById`/`SessionCount`/`SetSessionAttention`/`Sessions()` (→ `DapSessionInfo`
+  {id,name,state,attention}) and `PruneTerminated()` (drops sessions whose adapter
+  is terminal **and** whose I/O thread has joined — never inside a callback —
+  repointing the active id; returns the removed ids). `DrainCallbacks` pumps every
+  session.
+- `src/workspace/DebugSession.{h,cpp}` — added `Reactivate()`: re-resolves the
+  retained `last_stop_`'s stack + threads (re-fires `on_stopped`/`on_threads`) so a
+  session switch rebuilds the shared view from the picked session's current stop.
+- `src/workspace/DebugViewModel.h` — `DebugExecutionView` gained
+  `DebugSessionView`/`sessions`/`focused_session_id`; `PanelRowRef::Kind` grew a
+  `Session` variant; `PanelRowAt`/`PanelRowCount` lay rows out **sessions → threads
+  → frames**. `Clear()` **preserves** the session selector (sourced from
+  `DapManager`, survives resume so the switcher stays visible while running).
+- `src/workspace/DebugService.{h,cpp}` — `BuildSessionCallbacks(id, label)` routes
+  by originating session: the active session projects into the shared views
+  (`ProjectStop` factored out), a background `stopped` sets attention and (when the
+  active session is *not* itself stopped) **auto-focuses** the just-paused session.
+  `FocusSession`/`FocusNextSession` switch the active session (clear views →
+  surface its console → `SyncSessionsPanel` → `Reactivate`). `SyncSessionsPanel`
+  rebuilds the prebuilt session rows (name + state word). `ConsumeDapCallbacks`
+  drains then prunes; an active-session change re-projects the survivor.
+  `StopDebugging` resets shared adapter state (verification + advertised filters)
+  only when stopping the **last** session.
+- **Per-session console** (`WorkspaceShellLsp.cpp`): one channel per session,
+  `debug.console.<id>` labelled by session name; the `append_console_output` /
+  `show_debug_console` Operations carry the session id so output never intermixes
+  and the console follows the active session. (Terminated sessions' console tabs
+  persist until manually closed — `WorkspaceOutputChannels` has no remove API and
+  keeping them preserves final output; a deliberate deviation from "remove on
+  prune".)
+- **Session selector UI**: rendered in the Call Stack panel
+  (`WorkspaceShellRenderBottomPanel.cpp`, session rows flush-left with the active
+  one highlighted and an attention row drawn in `theme.accent`; thread/frame rows
+  indent under it), clicked in `WorkspacePanelMouseCoordinator.cpp` (→
+  `on_debug_session_focus_changed` → `FocusSession`).
+- **`debug-switch-session [n]` command** wired through the standard pattern
+  (`ActionId::DebugSwitchSession`, registry, availability gate on `debug.enabled` +
+  `debug_session_count > 1`, executor cycle/1-based-index, context op, shell
+  forwarder `DebugSwitchSession(int)`). README current-commands list updated.
+
+Key decisions (locked):
+
+- **Active-session projection, not per-session view models.** The heavy transient
+  views stay one-per-project and represent the active session; a switch clears +
+  re-projects via `Reactivate` (one round-trip on a rare user action → low memory,
+  no stale-frame cache). Render TUs are unchanged in shape.
+- **Auto-focus a background stop only when the active session is not stopped** —
+  never yank the user off a session they are inspecting (user choice).
+- **Prune outside `DrainCallbacks`, gated on `!Client().IsRunning()`** — a session
+  is never destroyed inside its own callback.
+- **The session list lives in `debug_execution` but survives `Clear()`** — sourced
+  from `DapManager`, so the switcher stays available while the active session runs.
+
+Tests added (`tests/DebugServiceTests.cpp`):
+
+- `DebugService/ExecutionViewPanelRowDispatch` — pure `PanelRowAt`/`PanelRowCount`
+  3-kind dispatch (sessions→threads→frames) + `Clear()` preserves the selector.
+- `DebugService/ManagerMultipleConcurrentSessions` — two real mock-adapter sessions
+  stop concurrently; distinct ids, `Sessions()` shape, attention, `SetActiveSession`,
+  `Reactivate` re-fires `on_stopped`, `StopActiveSession` + `PruneTerminated`
+  advances the active id down to an empty manager.
+- `DebugService/ManagerReplaceActiveSession` — the restart fallback keeps one row.
+- TSAN: the concurrent-sessions test runs clean with two adapter I/O threads live
+  (the natural multi-thread gate). Requires `vm.mmap_rnd_bits=28` for the preset.
+
 ## How to validate
 
 ```bash
@@ -848,6 +941,16 @@ re-binds breakpoints (via the DAP `restart` request when the adapter supports it
 else terminate + relaunch). The mock adapter has `restart`/`threads`/`exception`
 modes covering these paths.
 
+For Phase 8: Start Debugging twice (two targets) → the Call Stack tab shows a
+session selector above the thread/frame rows; click the other session row (or run
+`debug-switch-session`) → its call stack / variables / watch / console
+re-populate and the editor execution line moves to its frame. Let a background
+session hit a breakpoint while the active one is *running* → it auto-focuses; if
+the active session is itself stopped, the background one only badges "(paused)".
+Stop the active session → it disappears and the active advances; Restart leaves
+exactly one session row. Run the TSAN preset (`tools/run-checks.sh tsan`, needs
+`sudo sysctl vm.mmap_rnd_bits=28`) — two adapter I/O threads now run at once.
+
 Tracing: set `MICROIDE_TRACE_DAP_LIFECYCLE=1` for adapter lifecycle logs (mirrors
 `MICROIDE_TRACE_LSP_LIFECYCLE`).
 
@@ -857,29 +960,31 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 8** (multi-session) — the last piece of the original Phase 7,
-deferred for being the only invasive change. The pieces already in place to build
-on:
+Phase 8 is done. Start **Phase 9** (polish / dedup) — independently shippable
+pieces, pick by value during execution (see the "Phase 9" roadmap entry above):
 
-- **Multi-session:** `DapManager.session_` is a single `unique_ptr<DebugSession>`;
-  generalize it to a collection + an active index/id, with `StartSession`
-  appending rather than replacing. Each `DapClient` already owns its own
-  `seq`/`pending_requests`, so routing is by originating client; the per-frame
-  `DrainCallbacks` must pump every live session. The transient view models
-  (`debug_execution`/`debug_variables`/`debug_watch`/`debug_hover`/
-  `debug_breakpoints_panel`) live per-project on `ProjectWorkspaceState` — on an
-  active-session switch they are rebuilt from the newly-active session's state (or
-  moved per-session). A session switcher UI (command palette over live sessions,
-  or a Call-Stack-panel header dropdown reusing the Phase 7 thread-selector shape).
-- Run the **TSAN preset** once concurrent multi-session I/O lands (multiple
-  `DapClient` I/O threads at once) — the first time the debugger has more than one
-  adapter thread running, so it is the natural TSAN gate.
+- **Launch-config picker** — a command palette over the per-project
+  `launch_configs` (the persisted selection from Phase 2 still has no picker; with
+  multi-session it now also chooses *which* config a new session launches).
+- **Conditional/logpoint gutter-dot render distinction** (deferred from Phase 6):
+  the most likely next gutter change; factor a shared gutter-marker dispatch if a
+  fifth marker appears.
+- **Debug-console REPL input** — `evaluate(context:"repl")` reusing the
+  `PromptSurfaceService` single-line field + `DebugValueTree` for structured output.
+- **Per-session console cleanup**: terminated sessions' console tabs currently
+  persist (no `WorkspaceOutputChannels` remove API). A `RemoveChannel` +
+  tab-close-on-prune is the tidy follow-up if the lingering tabs prove annoying.
+
+Multi-session pieces now in place to build on:
+
+- `DapManager` owns a `SessionEntry` vector + active id; `Sessions()` →
+  `DapSessionInfo` is the switcher's data source, and `PruneTerminated()` keeps the
+  set == live adapters. A future "Stop All Sessions" command is a thin wrapper over
+  `BeginShutdownAll`/`ShutdownAll`.
+- The session selector reuses the flat-row `PanelRowAt` machinery (now three kinds:
+  session → thread → frame); a fourth leading selector would extend the same enum.
 
 Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
-
-- The Phase 7 thread-selector row shape (a flat row list with `PanelRowAt`
-  dispatch) is the template for a Phase 8 session switcher rendered in the same
-  Call Stack header.
 
 - The Variables + Watch trees now share `DebugValueTree`; if a third value-tree
   surface appears (e.g. a REPL result view, or inline hover expansion), build it on

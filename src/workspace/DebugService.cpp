@@ -105,13 +105,84 @@ const DapManager& DebugService::CurrentDapManager() const {
   return const_cast<DebugService*>(this)->CurrentDapManager();
 }
 
-void DebugService::ConsumeDapCallbacks() { CurrentDapManager().DrainCallbacks(); }
+void DebugService::ConsumeDapCallbacks() {
+  DapManager& manager = CurrentDapManager();
+  const int active_before = manager.ActiveSessionId();
+  manager.DrainCallbacks();
+  // Prune sessions whose adapter has terminated and whose I/O thread has joined
+  // (done outside DrainCallbacks so a session is never destroyed inside its own
+  // callback). When the *active* session was the one removed, re-project the new
+  // active session; a background prune leaves the active view untouched.
+  const std::vector<int> removed = manager.PruneTerminated();
+  if (!removed.empty()) {
+    if (manager.ActiveSessionId() != active_before) {
+      ClearTransientDebugViews();
+      if (DebugSession* active = manager.ActiveSession(); active != nullptr) {
+        for (const DapSessionInfo& info : manager.Sessions()) {
+          if (info.id == manager.ActiveSessionId() && operations_.show_debug_console) {
+            operations_.show_debug_console(info.id, info.name);
+            break;
+          }
+        }
+        active->Reactivate();
+      }
+    }
+    SyncSessionsPanel();
+    if (operations_.request_bottom_panel_redraw) {
+      operations_.request_bottom_panel_redraw();
+    }
+  }
+}
 
-DebugSession::Callbacks DebugService::BuildSessionCallbacks() {
+bool DebugService::IsActiveSession(int session_id) const {
+  return CurrentDapManager().ActiveSessionId() == session_id;
+}
+
+void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
+                               const std::vector<dap_protocol::DapStackFrame>& frames) {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  // Preserve the thread + session selectors across the rebuild (frames are rebuilt
+  // for the stopped thread, but the selector contents do not change).
+  std::vector<DebugThreadView> threads = std::move(state.debug_execution.threads);
+  std::vector<DebugSessionView> sessions = std::move(state.debug_execution.sessions);
+  const int focused_session = state.debug_execution.focused_session_id;
+  state.debug_execution = BuildExecutionView(stop, frames);
+  state.debug_execution.threads = std::move(threads);
+  state.debug_execution.focused_thread_id = stop.thread_id;
+  state.debug_execution.sessions = std::move(sessions);
+  state.debug_execution.focused_session_id = focused_session;
+  // A fresh stop invalidates any prior hover value (new frame state / values).
+  state.debug_hover.Clear();
+  // Populate the Variables tree for the top (focused) frame so it is ready the
+  // instant the user switches to the Variables tab (scopes is one cheap request).
+  if (const DebugStackFrameView* focused = state.debug_execution.FocusedFrame();
+      focused != nullptr) {
+    FocusFrame(focused->id);
+  }
+  if (operations_.show_call_stack_panel) {
+    operations_.show_call_stack_panel();
+  }
+  if (operations_.focus_source_location && state.debug_execution.HasLocation()) {
+    operations_.focus_source_location(state.debug_execution.FocusedPath(),
+                                      state.debug_execution.FocusedLine());
+  }
+  if (operations_.request_editor_redraw) {
+    operations_.request_editor_redraw();
+  }
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
+                                                            std::string session_label) {
   DebugSession::Callbacks callbacks;
-  callbacks.on_output = [this](const dap_protocol::DapOutputEvent& output) {
+  callbacks.on_output = [this, session_id, session_label](
+                            const dap_protocol::DapOutputEvent& output) {
+    // Each session streams to its own console channel, regardless of which session
+    // is active, so background output never intermixes with the foreground one.
     if (operations_.append_console_output) {
-      operations_.append_console_output(output);
+      operations_.append_console_output(session_id, session_label, output);
     }
     if (operations_.request_bottom_panel_redraw) {
       operations_.request_bottom_panel_redraw();
@@ -121,51 +192,69 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks() {
     if (operations_.notify_session_state_changed) {
       operations_.notify_session_state_changed(state);
     }
+    // A state change moves a session row's label (running/paused/terminated).
+    SyncSessionsPanel();
     if (operations_.request_chrome_redraw) {
       operations_.request_chrome_redraw();
-    }
-  };
-  // On every stop: rebuild the execution view (call stack + focused frame),
-  // surface the Call Stack panel, and jump the editor to the top frame.
-  callbacks.on_stopped = [this](const dap_protocol::DapStoppedEvent& stop,
-                                const std::vector<dap_protocol::DapStackFrame>& frames) {
-    ProjectWorkspaceState& state = CurrentProjectState();
-    // Preserve the thread list across a thread switch (frames are rebuilt for the
-    // picked thread, but the selector contents do not change).
-    std::vector<DebugThreadView> threads = std::move(state.debug_execution.threads);
-    state.debug_execution = BuildExecutionView(stop, frames);
-    state.debug_execution.threads = std::move(threads);
-    state.debug_execution.focused_thread_id = stop.thread_id;
-    // A fresh stop invalidates any prior hover value (new frame state / values).
-    state.debug_hover.Clear();
-    // Populate the Variables tree for the top (focused) frame so it is ready the
-    // instant the user switches to the Variables tab (scopes is one cheap request).
-    if (const DebugStackFrameView* focused = state.debug_execution.FocusedFrame();
-        focused != nullptr) {
-      FocusFrame(focused->id);
-    }
-    if (operations_.show_call_stack_panel) {
-      operations_.show_call_stack_panel();
-    }
-    if (operations_.focus_source_location && state.debug_execution.HasLocation()) {
-      operations_.focus_source_location(state.debug_execution.FocusedPath(),
-                                        state.debug_execution.FocusedLine());
-    }
-    if (operations_.request_editor_redraw) {
-      operations_.request_editor_redraw();
     }
     if (operations_.request_bottom_panel_redraw) {
       operations_.request_bottom_panel_redraw();
     }
   };
-  // On resume: drop the execution view + variables so the highlight, stack, and
-  // variables tree clear at once.
-  callbacks.on_resumed = [this]() { ClearTransientDebugViews(); };
+  // On every stop: the active session projects into the shared views; a background
+  // session badges for attention and (when the user is not parked at another stop)
+  // auto-focuses so the just-paused session comes to the foreground.
+  callbacks.on_stopped = [this, session_id](
+                             const dap_protocol::DapStoppedEvent& stop,
+                             const std::vector<dap_protocol::DapStackFrame>& frames) {
+    DapManager& manager = CurrentDapManager();
+    if (IsActiveSession(session_id)) {
+      manager.SetSessionAttention(session_id, false);
+      ProjectStop(stop, frames);
+      SyncSessionsPanel();
+      return;
+    }
+    manager.SetSessionAttention(session_id, true);
+    const DebugSession* active = manager.ActiveSession();
+    const bool active_inspecting =
+        active != nullptr && active->CurrentState() == DebugSession::State::Stopped;
+    if (!active_inspecting) {
+      // Auto-focus: bring the just-paused background session to the foreground.
+      manager.SetActiveSession(session_id);
+      manager.SetSessionAttention(session_id, false);
+      ClearTransientDebugViews();
+      for (const DapSessionInfo& info : manager.Sessions()) {
+        if (info.id == session_id && operations_.show_debug_console) {
+          operations_.show_debug_console(info.id, info.name);
+          break;
+        }
+      }
+      ProjectStop(stop, frames);
+    }
+    SyncSessionsPanel();
+    if (operations_.request_bottom_panel_redraw) {
+      operations_.request_bottom_panel_redraw();
+    }
+  };
+  // On resume: the active session drops its execution view; a background resume
+  // just clears that session's attention badge.
+  callbacks.on_resumed = [this, session_id]() {
+    if (IsActiveSession(session_id)) {
+      ClearTransientDebugViews();
+    } else {
+      CurrentDapManager().SetSessionAttention(session_id, false);
+      SyncSessionsPanel();
+      if (operations_.request_bottom_panel_redraw) {
+        operations_.request_bottom_panel_redraw();
+      }
+    }
+  };
   // Thread list lands a beat after the stop; fill the selector (preserving the
-  // focused thread). Ignored if the session resumed in the meantime.
-  callbacks.on_threads = [this](const std::vector<dap_protocol::DapThread>& threads) {
+  // focused thread). Only the active session drives the shared selector.
+  callbacks.on_threads = [this, session_id](
+                             const std::vector<dap_protocol::DapThread>& threads) {
     ProjectWorkspaceState& state = CurrentProjectState();
-    if (!state.debug_execution.stopped) {
+    if (!IsActiveSession(session_id) || !state.debug_execution.stopped) {
       return;
     }
     state.debug_execution.threads = BuildThreadViews(threads);
@@ -232,24 +321,48 @@ void DebugService::ClearTransientDebugViews() {
   }
 }
 
-bool DebugService::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
+int DebugService::LaunchSession(const LaunchConfig& config, const std::string& cwd, bool replace) {
   last_launch_config_ = config;
   last_cwd_ = cwd;
-  return CurrentDapManager().StartSession(config, BuildSessionCallbacks(), cwd);
+  const std::string label = !config.name.empty() ? config.name : config.type;
+  DapManager& manager = CurrentDapManager();
+  auto factory = [this, label](int id) { return BuildSessionCallbacks(id, label); };
+  const int id =
+      replace ? manager.ReplaceActiveSession(config, factory, cwd)
+              : manager.StartSession(config, factory, cwd);
+  if (id != 0) {
+    if (operations_.show_debug_console) {
+      operations_.show_debug_console(id, label);
+    }
+    SyncSessionsPanel();
+  }
+  return id;
+}
+
+bool DebugService::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
+  return LaunchSession(config, cwd, /*replace=*/false) != 0;
 }
 
 void DebugService::StopDebugging() {
-  CurrentDapManager().StopActiveSession();
-  // Verification state is tied to the adapter; drop it so a fresh session
-  // re-verifies from scratch and the gutter shows unverified until then.
-  CurrentProjectState().breakpoint_store.ResetVerification();
-  // The advertised exception filters belong to the (now dead) adapter; drop them
-  // so the Breakpoints tab shows only line breakpoints until a new session binds.
-  CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
+  DapManager& manager = CurrentDapManager();
+  // Stopping the last live session resets the project-shared adapter state
+  // (breakpoint verification + advertised exception filters). With other sessions
+  // still live, leave that shared state intact — they still rely on it.
+  const bool last_session = manager.SessionCount() <= 1;
+  manager.StopActiveSession();
+  if (last_session) {
+    // Verification state is tied to the adapter; drop it so a fresh session
+    // re-verifies from scratch and the gutter shows unverified until then.
+    CurrentProjectState().breakpoint_store.ResetVerification();
+    // The advertised exception filters belong to the (now dead) adapter; drop them
+    // so the Breakpoints tab shows only line breakpoints until a new session binds.
+    CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
+  }
   SyncBreakpointsPanel();
-  // Drop the execution view + variables so the highlight, Call Stack, and
-  // Variables panels clear.
+  // Drop the execution view + variables; the next-frame prune advances the active
+  // session and re-projects it when one remains.
   ClearTransientDebugViews();
+  SyncSessionsPanel();
 }
 
 void DebugService::Restart() {
@@ -264,11 +377,95 @@ void DebugService::Restart() {
     ClearTransientDebugViews();
     return;
   }
-  // Fallback: terminate + relaunch with the same config. StartSession() blocks on
-  // the prior session's shutdown, so this is a clean synchronous relaunch.
+  // Fallback: terminate + relaunch with the same config, replacing the active
+  // session in place so no second session row appears. ReplaceActiveSession blocks
+  // on the prior session's shutdown, so this is a clean synchronous relaunch.
   CurrentProjectState().breakpoint_store.ResetVerification();
   ClearTransientDebugViews();
-  StartDebugging(last_launch_config_, last_cwd_);
+  LaunchSession(last_launch_config_, last_cwd_, /*replace=*/true);
+}
+
+void DebugService::FocusSession(int session_id) {
+  DapManager& manager = CurrentDapManager();
+  DebugSession* session = manager.SessionById(session_id);
+  if (session == nullptr) {
+    return;
+  }
+  manager.SetActiveSession(session_id);
+  manager.SetSessionAttention(session_id, false);
+  // Drop the previously-active session's projection, then re-project this one.
+  ClearTransientDebugViews();
+  const std::string label = !session->Config().name.empty() ? session->Config().name
+                                                            : session->Config().type;
+  if (operations_.show_debug_console) {
+    operations_.show_debug_console(session_id, label);
+  }
+  SyncSessionsPanel();
+  // Re-project the picked session's current stop (no-op if it is running): the
+  // stack/threads re-resolve and re-fire on_stopped through the active path.
+  session->Reactivate();
+}
+
+void DebugService::FocusNextSession() {
+  DapManager& manager = CurrentDapManager();
+  const std::vector<DapSessionInfo> sessions = manager.Sessions();
+  if (sessions.size() < 2) {
+    return;
+  }
+  const int active = manager.ActiveSessionId();
+  std::size_t index = 0;
+  for (std::size_t i = 0; i < sessions.size(); ++i) {
+    if (sessions[i].id == active) {
+      index = i;
+      break;
+    }
+  }
+  FocusSession(sessions[(index + 1) % sessions.size()].id);
+}
+
+std::vector<DapSessionInfo> DebugService::Sessions() const {
+  return CurrentDapManager().Sessions();
+}
+
+void DebugService::SyncSessionsPanel() {
+  DapManager& manager = CurrentDapManager();
+  DebugExecutionView& view = CurrentProjectState().debug_execution;
+  view.sessions.clear();
+  for (const DapSessionInfo& info : manager.Sessions()) {
+    DebugSessionView row;
+    row.id = info.id;
+    row.attention = info.attention;
+    std::string display = info.name;
+    const char* word = nullptr;
+    switch (info.state) {
+      case DebugSession::State::Initializing:
+      case DebugSession::State::Configuring:
+        word = "starting";
+        break;
+      case DebugSession::State::Running:
+        word = "running";
+        break;
+      case DebugSession::State::Stopped:
+        word = "paused";
+        break;
+      case DebugSession::State::Terminated:
+        word = "terminated";
+        break;
+      case DebugSession::State::Failed:
+        word = "failed";
+        break;
+      case DebugSession::State::Inactive:
+        break;
+    }
+    if (word != nullptr) {
+      display += " (";
+      display += word;
+      display += ')';
+    }
+    row.display = std::move(display);
+    view.sessions.push_back(std::move(row));
+  }
+  view.focused_session_id = manager.ActiveSessionId();
 }
 
 void DebugService::FocusThread(int thread_id) {
