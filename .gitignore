@@ -10,3 +10,12 @@
 *.swp
 *.swo
 *~
+
+# libFuzzer corpora accumulate auto-generated, hash-named inputs on every run and
+# clog the tree. Ignore those, but keep each target's directory (a tracked
+# .gitkeep) so the documented `./<Target>Fuzz tests/fuzz/corpora/<Target>`
+# commands still work (libFuzzer errors on a missing corpus dir), and keep any
+# hand-curated `seed_*` inputs (intentional, not regenerated identically).
+/tests/fuzz/corpora/*/*
+!/tests/fuzz/corpora/*/.gitkeep
+!/tests/fuzz/corpora/*/seed_*
