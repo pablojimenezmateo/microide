@@ -55,14 +55,23 @@ WorkspaceLayout ComputeLayout(float window_width,
                               float sidebar_width,
                               float bottom_panel_height,
                               LayoutModeInputs layout_mode_inputs,
-                              bool reserve_status_bar) {
+                              bool reserve_status_bar,
+                              bool right_pane_visible,
+                              float right_pane_width) {
+  const LayoutMode layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
   const float resolved_bottom_panel_height = bottom_panel_visible ? bottom_panel_height : 0.0f;
   const float resolved_sidebar_width = sidebar_visible ? sidebar_width : 0.0f;
+  // The right debug pane is suppressed in compact layouts so the sidebar + pane
+  // can't starve the editor below its minimum width.
+  const bool right_pane_effective_visible =
+      right_pane_visible && layout_mode != LayoutMode::Compact;
+  const float resolved_right_pane_width =
+      right_pane_effective_visible ? right_pane_width : 0.0f;
   const float status_bar_height =
       reserve_status_bar ? kWorkspaceStatusBarHeight : 0.0f;
 
   WorkspaceLayout layout;
-  layout.layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
+  layout.layout_mode = layout_mode;
   layout.full = MakeRect(0.0f, 0.0f, window_width, window_height);
   layout.menu_bar = MakeRect(0.0f, 0.0f, window_width, kMenuBarHeight);
   layout.project_tab_strip =
@@ -82,10 +91,18 @@ WorkspaceLayout ComputeLayout(float window_width,
       MakeRect(0.0f, content_top, window_width,
                std::max(0.0f, window_height - content_top - content_bottom_reserved));
   layout.sidebar = MakeRect(0.0f, layout.content.y, resolved_sidebar_width, layout.content.h);
-  layout.editor_area =
-      MakeRect(resolved_sidebar_width + (sidebar_visible ? kDivider : 0.0f), layout.content.y,
-               window_width - resolved_sidebar_width - (sidebar_visible ? kDivider : 0.0f),
-               layout.content.h);
+  const float editor_area_x = resolved_sidebar_width + (sidebar_visible ? kDivider : 0.0f);
+  const float right_pane_reserve =
+      resolved_right_pane_width + (right_pane_effective_visible ? kDivider : 0.0f);
+  const float editor_area_width =
+      std::max(0.0f, window_width - editor_area_x - right_pane_reserve);
+  layout.editor_area = MakeRect(editor_area_x, layout.content.y, editor_area_width,
+                                layout.content.h);
+  layout.right_pane =
+      right_pane_effective_visible
+          ? MakeRect(layout.editor_area.x + layout.editor_area.w + kDivider, layout.content.y,
+                     resolved_right_pane_width, layout.content.h)
+          : MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   layout.breadcrumb =
       MakeRect(layout.editor_area.x, layout.editor_area.y, layout.editor_area.w, kHeaderHeight);
   layout.editor_surface =
@@ -188,6 +205,16 @@ float ClampSidebarWidth(float width, float window_width) {
   return std::clamp(width, viable_min_width, max_width);
 }
 
+float ClampRightPaneWidth(float width, float window_width, float sidebar_width) {
+  const float viable_min_width =
+      kWorkspaceSidebarHorizontalInset * 2.0f + kWorkspaceSidebarRowHeight + 1.0f;
+  const float sidebar_reserve = sidebar_width > 0.0f ? sidebar_width + kDivider : 0.0f;
+  const float available = window_width - sidebar_reserve - kMinEditorAreaWidth - kDivider;
+  const float max_width =
+      std::min(kWorkspaceMaxRightPaneWidth, std::max(viable_min_width, available));
+  return std::clamp(width, viable_min_width, max_width);
+}
+
 float ClampBottomPanelHeight(float height, float window_height) {
   const float content_height =
       std::max(0.0f, window_height - kMenuBarHeight - kProjectTabStripHeight - kTabStripHeight);
@@ -231,6 +258,14 @@ SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout) {
                   kResizeHandleThickness + kDivider);
 }
 
+SDL_FRect RightPaneResizeHandleRect(const WorkspaceLayout& layout) {
+  if (layout.right_pane.w <= 0.0f || layout.right_pane.h <= 0.0f) {
+    return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+  }
+  return MakeRect(layout.right_pane.x - kResizeHandleThickness * 0.5f - kDivider,
+                  layout.right_pane.y, kResizeHandleThickness + kDivider, layout.right_pane.h);
+}
+
 SDL_FRect SidebarResizeCursorRect(const WorkspaceLayout& layout) {
   const SDL_FRect visual = SidebarResizeHandleRect(layout);
   if (visual.w <= 0.0f || visual.h <= 0.0f) {
@@ -249,8 +284,26 @@ SDL_FRect BottomPanelResizeCursorRect(const WorkspaceLayout& layout) {
                   visual.h + kWorkspaceResizeHandleCursorInflate * 2.0f);
 }
 
+SDL_FRect RightPaneResizeCursorRect(const WorkspaceLayout& layout) {
+  const SDL_FRect visual = RightPaneResizeHandleRect(layout);
+  if (visual.w <= 0.0f || visual.h <= 0.0f) {
+    return visual;
+  }
+  return MakeRect(visual.x - kWorkspaceResizeHandleCursorInflate, visual.y,
+                  visual.w + kWorkspaceResizeHandleCursorInflate * 2.0f, visual.h);
+}
+
 SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout) {
   const SDL_FRect visual = SidebarResizeHandleRect(layout);
+  if (visual.w <= 0.0f || visual.h <= 0.0f) {
+    return visual;
+  }
+  return MakeRect(visual.x - kWorkspaceResizeHandleHitInflate, visual.y,
+                  visual.w + kWorkspaceResizeHandleHitInflate * 2.0f, visual.h);
+}
+
+SDL_FRect RightPaneResizeHitRect(const WorkspaceLayout& layout) {
+  const SDL_FRect visual = RightPaneResizeHandleRect(layout);
   if (visual.w <= 0.0f || visual.h <= 0.0f) {
     return visual;
   }
@@ -955,7 +1008,8 @@ bool operator==(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept
          rect_eq(lhs.menu_bar, rhs.menu_bar) && rect_eq(lhs.project_tab_strip, rhs.project_tab_strip) &&
          rect_eq(lhs.tab_strip, rhs.tab_strip) && rect_eq(lhs.bottom_panel, rhs.bottom_panel) &&
          rect_eq(lhs.content, rhs.content) && rect_eq(lhs.sidebar, rhs.sidebar) &&
-         rect_eq(lhs.editor_area, rhs.editor_area) && rect_eq(lhs.breadcrumb, rhs.breadcrumb) &&
+         rect_eq(lhs.editor_area, rhs.editor_area) && rect_eq(lhs.right_pane, rhs.right_pane) &&
+         rect_eq(lhs.breadcrumb, rhs.breadcrumb) &&
          rect_eq(lhs.editor_surface, rhs.editor_surface) && rect_eq(lhs.status_bar, rhs.status_bar);
 }
 

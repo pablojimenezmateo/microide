@@ -36,6 +36,7 @@ enum class FocusTarget {
   Editor,
   Panel,
   Overlay,
+  DebugPane,
 };
 
 enum class OverlayMode {
@@ -52,29 +53,18 @@ enum class PanelContentKind {
   None,
   Terminal,
   Output,
-  // Structured Call Stack panel for an active debug session (Phase 3). Unlike
-  // Terminal/Output (text), its rows come from `debug_execution.frames`.
-  Debug,
-  // Structured Variables/Scopes tree for the focused frame (Phase 4). Peer tab to
-  // the Call Stack; rows come from `debug_variables.Rows()`.
-  DebugVariables,
-  // Watch-expressions tree (Phase 6). Peer tab to the Call Stack / Variables;
-  // rows come from `debug_watch.Rows()`.
-  DebugWatch,
-  // Breakpoints list (Phase 7): exception-filter toggles + navigable line
-  // breakpoints. Peer tab; rows come from `debug_breakpoints_panel.Rows()`.
-  DebugBreakpoints,
 };
 
-// True for any debug-session structured panel (Call Stack / Variables / Watch /
-// Breakpoints). They share `panel.debug.open` and the same fallback on close so
-// they are treated as one family wherever a "is the debug panel showing" check
-// is needed.
-inline bool IsDebugPanelContent(PanelContentKind content) {
-  return content == PanelContentKind::Debug || content == PanelContentKind::DebugVariables ||
-         content == PanelContentKind::DebugWatch ||
-         content == PanelContentKind::DebugBreakpoints;
-}
+// The four structured debug surfaces shown in the right-side debug pane. Selected
+// by the pane's mode-row (a button switcher); only one is visible at a time. The
+// backing data lives on `ProjectWorkspaceState` (`debug_execution`,
+// `debug_variables`, `debug_watch`, `debug_breakpoints_panel`) and is reused as-is.
+enum class DebugPaneMode {
+  CallStack,
+  Variables,
+  Watch,
+  Breakpoints,
+};
 
 enum class BufferSearchField {
   Search,
@@ -223,18 +213,19 @@ struct OutputPanelState {
   int scroll_row = 0;
 };
 
-// Call Stack panel scroll state. The frames + focused index live on
-// `ProjectWorkspaceState.debug_execution`; this only tracks the panel's own
-// vertical scroll so it survives tab switches. `open` gates the "Call Stack" tab
-// in the bottom-panel strip — set on the first stop, cleared on session stop or
-// when the tab is closed — so the tab persists across steps (when `debug_execution`
-// is momentarily empty) without coupling the tab strip to the session.
-struct DebugPanelState {
-  bool open = false;
-  int scroll_row = 0;             // Call Stack tab scroll
-  int variables_scroll_row = 0;   // Variables tab scroll (peer tab, own scroll)
-  int watch_scroll_row = 0;       // Watch tab scroll (peer tab, own scroll)
-  int breakpoints_scroll_row = 0;  // Breakpoints tab scroll (peer tab, own scroll)
+// Right-side debug pane (mirrors the left SidebarState). The four debug surfaces
+// share this pane via a mode-row button switcher; each keeps its own scroll so a
+// surface switch preserves position. `visible` gates the whole pane (auto-opened
+// on the first stop, toggled from the Debug menu); meaningful only when the
+// `debug.enabled` setting is ON. Width is persisted per project.
+struct DebugPaneState {
+  bool visible = false;
+  float width = 288.0f;  // mirror SidebarState default
+  DebugPaneMode mode = DebugPaneMode::CallStack;
+  int call_stack_scroll_row = 0;
+  int variables_scroll_row = 0;
+  int watch_scroll_row = 0;
+  int breakpoints_scroll_row = 0;
 };
 
 struct LspUiState {
@@ -258,7 +249,6 @@ struct PanelState {
   int tab_scroll_index = 0;
   CommandState command;
   OutputPanelState output;
-  DebugPanelState debug;
 };
 
 struct WelcomeSurfaceState {
@@ -327,6 +317,11 @@ struct ProjectWorkspaceState {
   // the `debug` PersistedRecord; advertised filters are transient. Only
   // meaningful when `debug.enabled` is ON.
   DebugBreakpointsModel debug_breakpoints_panel;
+  // Right-side debug pane UI state (visibility, width, active surface, per-surface
+  // scroll). The pane hosts the four structured debug surfaces; its data still
+  // comes from the debug_* models above. Visibility/width/mode persist per
+  // project. Only meaningful when `debug.enabled` is ON.
+  DebugPaneState debug_pane;
   // Persisted + plugin-contributed launch/attach configurations and the
   // currently selected index. Start Debugging targets the selected config when
   // one exists, else falls back to the first registered adapter.
@@ -378,24 +373,6 @@ inline void HideOverlay(ProjectWorkspaceState& state) {
   state.overlay.visible = false;
   if (state.surface.focus == FocusTarget::Overlay) {
     state.surface.focus = PrimarySurfaceFocus(state);
-  }
-}
-
-// Retire the Call Stack + Variables tabs and, when one was the active panel
-// content, fall back to a remaining tab so the bottom panel never strands on an
-// empty Debug view. Shared by the tab close button and session teardown.
-inline void CloseDebugPanel(ProjectWorkspaceState& state) {
-  state.panel.debug.open = false;
-  if (!IsDebugPanelContent(state.panel.content)) {
-    return;
-  }
-  if (!state.terminal_tabs.empty()) {
-    state.panel.content = PanelContentKind::Terminal;
-  } else if (!state.panel.output.open_channel_ids.empty()) {
-    state.panel.content = PanelContentKind::Output;
-    state.panel.output.channel_id = state.panel.output.open_channel_ids.front();
-  } else {
-    state.panel.content = PanelContentKind::None;
   }
 }
 

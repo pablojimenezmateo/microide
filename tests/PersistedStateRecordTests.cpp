@@ -2,6 +2,7 @@
 
 #include "persistence/PersistedRecord.h"
 #include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspaceProjectState.h"
 
 #include <cmath>
 #include <cstddef>
@@ -130,6 +131,9 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.outgoing_base_choice.custom_ref = "release/2.0";
   session.active_tab_index = 1;
   session.tabs = {editor_tab, compare_tab};
+  session.right_pane_visible = true;
+  session.right_pane_width = 312.0f;
+  session.right_pane_mode = static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch);
   return session;
 }
 
@@ -153,6 +157,27 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
              decoded_session.tabs[0].views.size() == 1 &&
              decoded_session.tabs[1].compare_right_ref == "WORKTREE",
          "project session tabs should round-trip");
+  Expect(decoded_session.right_pane_visible &&
+             std::fabs(decoded_session.right_pane_width - 312.0f) < 0.0001f &&
+             decoded_session.right_pane_mode ==
+                 static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch),
+         "project session right-pane fields should round-trip");
+
+  // A record stream lacking the right-pane tags (older session file) decodes to
+  // the struct defaults rather than failing.
+  PersistedProjectSessionState legacy = BuildProjectSessionFixture();
+  legacy.right_pane_visible = false;
+  legacy.right_pane_width = 288.0f;
+  legacy.right_pane_mode = 0;
+  std::vector<std::byte> legacy_record;
+  Expect(EncodeProjectSessionRecord(legacy, &legacy_record),
+         "legacy project session encode should succeed");
+  PersistedProjectSessionState decoded_legacy;
+  Expect(DecodeProjectSessionRecord(legacy_record, &decoded_legacy),
+         "legacy project session decode should succeed");
+  Expect(!decoded_legacy.right_pane_visible &&
+             decoded_legacy.right_pane_mode == 0,
+         "absent right-pane tags decode to defaults");
   std::size_t offset = 0;
   bool saw_chat_registry = false;
   while (offset < session_record.size()) {

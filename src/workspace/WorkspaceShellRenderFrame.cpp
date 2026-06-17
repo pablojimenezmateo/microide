@@ -74,6 +74,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   clip_frame_overlay_view_models_valid_ = false;
   prepare_cached_sidebar_vm_.reset();
   prepare_cached_bottom_panel_vm_.reset();
+  prepare_cached_debug_pane_vm_.reset();
   prepare_cached_text_input_vm_.reset();
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
@@ -86,6 +87,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const RenderViewModelBuilder view_models(context_);
   prepare_cached_sidebar_vm_.emplace(view_models.BuildSidebarSurface());
   prepare_cached_bottom_panel_vm_.emplace(view_models.BuildBottomPanelSurface());
+  prepare_cached_debug_pane_vm_.emplace(view_models.BuildDebugPaneSurface());
   const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
@@ -95,12 +97,17 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
   const float clamped_panel_height =
       ClampBottomPanelHeight(project_state.panel.height, static_cast<float>(height));
+  const float resolved_sidebar_width = sidebar_vm.visible ? clamped_sidebar_width : 0.0f;
+  const float clamped_right_pane_width = ClampRightPaneWidth(
+      project_state.debug_pane.width, static_cast<float>(width), resolved_sidebar_width);
   if (clamped_sidebar_width != project_state.sidebar.width ||
-      clamped_panel_height != project_state.panel.height) {
+      clamped_panel_height != project_state.panel.height ||
+      clamped_right_pane_width != project_state.debug_pane.width) {
     layout_dirty_ = true;
   }
   project_state.sidebar.width = clamped_sidebar_width;
   project_state.panel.height = clamped_panel_height;
+  project_state.debug_pane.width = clamped_right_pane_width;
 
   WorkspaceLayout layout;
   bool workspace_layout_recomputed = false;
@@ -109,7 +116,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                            panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
                            project_state.sidebar.width, project_state.panel.height,
                            layout_mode_service_.SnapshotInputs(),
-                           layout_mode_service_.StatusBarVisible());
+                           layout_mode_service_.StatusBarVisible(),
+                           project_state.debug_pane.visible, project_state.debug_pane.width);
     layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
     layout_dirty_ = false;

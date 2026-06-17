@@ -76,7 +76,8 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
       operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::DebugVariableEdit:
-      operations_.request_bottom_panel_content_redraw();
+      // The Variables inline edit now lives in the right-side debug pane.
+      operations_.request_window_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -209,7 +210,8 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       operations_.request_sidebar_redraw();
       break;
     case TextInputSurface::DebugVariableEdit:
-      operations_.request_bottom_panel_content_redraw();
+      // The Variables inline edit now lives in the right-side debug pane.
+      operations_.request_window_redraw();
       break;
     case TextInputSurface::None:
     case TextInputSurface::Editor:

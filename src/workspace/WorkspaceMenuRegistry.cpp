@@ -174,6 +174,23 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::Term, "New Terminal"),
       MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
   });
+  static const auto kDebugItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::StartDebugging, "Start Debugging"),
+      MenuItem(ActionId::StopDebugging, "Stop Debugging"),
+      MenuSeparator(),
+      MenuItem(ActionId::DebugContinue, "Continue", "F5"),
+      MenuItem(ActionId::DebugStepOver, "Step Over", "F10"),
+      MenuItem(ActionId::DebugStepIn, "Step In", "F11"),
+      MenuItem(ActionId::DebugStepOut, "Step Out", "Shift+F11"),
+      MenuItem(ActionId::DebugPause, "Pause"),
+      MenuItem(ActionId::DebugRestart, "Restart", "Ctrl+Shift+F5"),
+      MenuSeparator(),
+      MenuItem(ActionId::DebugPaneToggle, "Show Debug Pane", "Ctrl+Shift+D", {}, 0, true),
+      MenuItem(ActionId::DebugPaneShowCallStack, "Call Stack"),
+      MenuItem(ActionId::DebugPaneShowVariables, "Variables"),
+      MenuItem(ActionId::DebugPaneShowWatch, "Watch"),
+      MenuItem(ActionId::DebugPaneShowBreakpoints, "Breakpoints"),
+  });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),
       MenuItem(ActionId::PluginsReload, "Reload Plugins"),
@@ -209,6 +226,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::GitOutgoingBase, "Outgoing Base", {}},
       MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
+      MenuSpec{MenuId::Debug, "Debug", kDebugItems},
       MenuSpec{MenuId::Help, "Help", kHelpItems},
       MenuSpec{MenuId::EditorContext, "Editor", kEditorContextItems},
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},

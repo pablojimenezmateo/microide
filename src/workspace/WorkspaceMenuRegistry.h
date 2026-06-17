@@ -29,6 +29,7 @@ enum class MenuId {
   EditorTabContext,
   Project,
   Terminal,
+  Debug,
   Help,
   TerminalContext,
   TerminalTabContext,

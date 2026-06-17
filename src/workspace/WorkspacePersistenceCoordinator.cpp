@@ -92,6 +92,12 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
                                                                        activate_restored_tab);
               },
           .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
+          .debugger_enabled =
+              [this]() {
+                const auto value = GetSettingValue("debug.enabled");
+                return value.has_value() &&
+                       !(*value == "false" || *value == "0" || *value == "off");
+              },
       });
 }
 

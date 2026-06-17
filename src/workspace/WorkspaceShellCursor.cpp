@@ -121,7 +121,9 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
       ComputeLayout(window_width, window_height, context_.current_project_state.sidebar.visible, BottomPanelVisible(),
                     context_.current_project_state.sidebar.width, context_.current_project_state.panel.height,
                     layout_mode_service_.SnapshotInputs(),
-                    layout_mode_service_.StatusBarVisible());
+                    layout_mode_service_.StatusBarVisible(),
+                    context_.current_project_state.debug_pane.visible,
+                    context_.current_project_state.debug_pane.width);
   if (!Contains(layout.menu_bar, x, y)) {
     return false;
   }
@@ -370,6 +372,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   if (context_.current_project_state.sidebar.visible &&
       Contains(SidebarResizeCursorRect(layout), x, y)) {
+    return CursorKind::EwResize;
+  }
+  if (context_.current_project_state.debug_pane.visible &&
+      Contains(RightPaneResizeCursorRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
   if (BottomPanelVisible() && Contains(BottomPanelResizeCursorRect(layout), x, y)) {
@@ -1089,6 +1095,10 @@ std::optional<SDL_FRect> WorkspaceShell::FocusSurfaceRect(const WorkspaceLayout&
       return layout.editor_surface;
     case FocusTarget::Panel:
       return BottomPanelVisible() ? std::optional<SDL_FRect>(layout.bottom_panel) : std::nullopt;
+    case FocusTarget::DebugPane:
+      return context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f
+                 ? std::optional<SDL_FRect>(layout.right_pane)
+                 : std::nullopt;
     case FocusTarget::Overlay:
     default:
       return std::nullopt;

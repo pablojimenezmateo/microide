@@ -9,6 +9,7 @@
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/DebugPaneMouseCoordinator.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceTabMouseCoordinator.h"
@@ -222,6 +223,19 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
       context_.current_project_state.sidebar.width = ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
       RequestSidebarLayoutChangeRedraw(drag_layout);
+      return true;
+    }
+
+    if (context_.interaction_state.drag_target == DragTarget::RightPaneDivider) {
+      const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
+      const float resolved_sidebar_width = context_.current_project_state.sidebar.visible
+                                               ? context_.current_project_state.sidebar.width
+                                               : 0.0f;
+      // The pane hugs the right edge, so its width grows as the divider moves left.
+      context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
+          window_width - static_cast<float>(event.motion.x), window_width, resolved_sidebar_width);
+      MarkLayoutDirty();
+      ensure_redraw([this]() { RequestWindowRedraw(); });
       return true;
     }
 
@@ -603,6 +617,11 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
 
   if (MakeSidebarMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
     ensure_redraw([this]() { RequestSidebarRedraw(); });
+    return true;
+  }
+
+  if (MakeDebugPaneMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 

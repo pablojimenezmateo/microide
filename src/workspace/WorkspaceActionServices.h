@@ -182,6 +182,9 @@ class WorkspaceActionContext {
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
     std::function<void()> remove_breakpoint_from_menu;
+    // Right-side debug pane: toggle visibility, or show a specific surface.
+    std::function<void()> toggle_debug_pane;
+    std::function<void(DebugPaneMode)> show_debug_pane_mode;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -334,6 +337,9 @@ class WorkspaceActionContext {
   // (index < 0) or a 1-based session index.
   std::size_t DebugSessionCount() const;
   void DebugSwitchSession(int index);
+  // Right-side debug pane (toggle / surface switch).
+  void ToggleDebugPane();
+  void ShowDebugPaneSurface(DebugPaneMode mode);
   // Breakpoint modifiers (Phase 6). Read the breakpoint-gutter context menu's
   // target line; open a prompt seeded with the current field / remove the bp.
   void EditBreakpointModifierFromMenu(ActionId id);

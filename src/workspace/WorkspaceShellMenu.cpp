@@ -22,6 +22,19 @@ bool IsMenuBarTopLevelMenu(MenuId id) {
 
 }  // namespace
 
+bool WorkspaceShell::IsMenuBarMenuVisible(MenuId id) const {
+  if (!IsMenuBarTopLevelMenu(id)) {
+    return false;
+  }
+  // The Debug menu only appears when the debugger feature is enabled, so the
+  // shell shows no debug affordances at all in the default (debugger-off) state.
+  if (id == MenuId::Debug) {
+    const auto value = GetSettingValue("debug.enabled");
+    return value.has_value() && !(*value == "false" || *value == "0" || *value == "off");
+  }
+  return true;
+}
+
 std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMenuBarItems(
     const SDL_FRect& menu_bar) const {
   std::vector<VisibleMenuBarItem> items;
@@ -49,7 +62,7 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
   float total_x = x;
   bool any_overflow = false;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (!IsMenuBarTopLevelMenu(spec.id)) {
+    if (!IsMenuBarMenuVisible(spec.id)) {
       continue;
     }
     const char* key = spec.label.data();
@@ -88,7 +101,7 @@ std::vector<MenuId> WorkspaceShell::ComputeOverflowMenuBarItems(
   std::vector<MenuId> overflow;
   std::size_t consumed = 0;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (!IsMenuBarTopLevelMenu(spec.id)) {
+    if (!IsMenuBarMenuVisible(spec.id)) {
       continue;
     }
     if (consumed < visible.size() && visible[consumed].id == spec.id) {
@@ -443,6 +456,9 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
 
   if (item.action == ActionId::SidebarToggle) {
     return context_.current_project_state.sidebar.visible;
+  }
+  if (item.action == ActionId::DebugPaneToggle) {
+    return context_.current_project_state.debug_pane.visible;
   }
   if (item.action == ActionId::Wrap) {
     return context_.current_project_state.editor_preferences.soft_wrap;

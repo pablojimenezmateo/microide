@@ -458,6 +458,9 @@
   static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
   std::vector<VisibleMenuBarItem> ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
   std::vector<MenuId> ComputeOverflowMenuBarItems(const SDL_FRect& menu_bar) const;
+  // True when a top-level menu should appear in the menu bar / hamburger overflow.
+  // Gates MenuId::Debug on the `debug.enabled` setting.
+  bool IsMenuBarMenuVisible(MenuId id) const;
   std::optional<SDL_FRect> MenuOverflowChevronRect(const SDL_FRect& menu_bar) const;
   std::vector<VisibleWindowControlButton> ComputeVisibleWindowControlButtons(
       const SDL_FRect& menu_bar) const;
@@ -519,6 +522,7 @@
   LifecycleCoordinator MakeLifecycleCoordinator();
   SidebarCoordinator MakeSidebarCoordinator();
   SidebarService MakeSidebarService();
+  DebugPaneService MakeDebugPaneService();
   KeyInputCoordinator MakeKeyInputCoordinator();
   TextInputCoordinator MakeTextInputCoordinator();
   EditorTabService MakeEditorTabService();
@@ -534,6 +538,7 @@
   bool HandleTabMouseWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks);
   SidebarMouseCoordinator MakeSidebarMouseCoordinator();
   PanelMouseCoordinator MakePanelMouseCoordinator();
+  DebugPaneMouseCoordinator MakeDebugPaneMouseCoordinator();
   TerminalPanelService MakeTerminalPanelService();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
@@ -847,6 +852,11 @@
   void ShowGitSidebar();
   void ShowTestsSidebar();
   bool ShowPluginSidebar(std::string_view id, bool temporary = false);
+  // Right-side debug pane convenience wrappers (forward to MakeDebugPaneService()).
+  void ShowDebugPaneMode(DebugPaneMode mode);
+  void ToggleDebugPane();
+  void CloseDebugPane();
+  void OpenDebugPaneOnStop();
   SidebarModeRowLayout SidebarModeRow(const SDL_FRect& sidebar_rect) const;
   std::string HoveredSidebarModeTooltipLabel(const SDL_FRect& sidebar_rect) const;
   void CloseSidebar();
@@ -1184,7 +1194,6 @@
   bool BottomPanelVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
-  bool BottomPanelShowsDebug() const;
   BottomPanelLogLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
@@ -1245,6 +1254,19 @@
   void RenderBottomPanelSurface(SDL_Renderer* renderer,
                                 const WorkspaceLayout& layout,
                                 std::size_t terminal_line_count);
+  // Right-side debug pane (Call Stack / Variables / Watch / Breakpoints). Defined in
+  // DebugPaneRender.cpp; the four structured debug surfaces moved here from the
+  // bottom panel.
+  void RenderDebugPaneSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
+  DebugPaneModeRowLayout DebugPaneModeRow(const SDL_FRect& pane_rect) const;
+  // List geometry below the mode-row, anchored to layout.right_pane. Reuses the
+  // BottomPanelLogLayout shape (content rect + text origin + scroll surface).
+  BottomPanelLogLayout ComputeDebugPaneListLayout(const WorkspaceLayout& layout,
+                                                  std::size_t line_count) const;
+  // Row count + clamped scroll for the currently active debug-pane surface.
+  std::size_t DebugPaneActiveRowCount() const;
+  int DebugPaneScrollRow(std::size_t line_count, int visible_rows) const;
+  void SetDebugPaneScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderNotifications(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
@@ -1494,6 +1516,7 @@
   mutable std::optional<OverlaySurfaceViewModel> clip_cached_overlay_vm_;
   mutable std::optional<SidebarSurfaceViewModel> prepare_cached_sidebar_vm_;
   mutable std::optional<BottomPanelSurfaceViewModel> prepare_cached_bottom_panel_vm_;
+  mutable std::optional<DebugPaneSurfaceViewModel> prepare_cached_debug_pane_vm_;
   mutable std::optional<TextInputSurfaceViewModel> prepare_cached_text_input_vm_;
   // Last bottom-panel rect for which ResizeTerminalToPanel was invoked. When
   // the panel rect is unchanged between frames there's nothing to recompute,

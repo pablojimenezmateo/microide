@@ -6,6 +6,20 @@ This document is the single self-sufficient source of truth for the debugger
 effort — a fresh agent on any machine should be able to read this file and
 continue without external context.
 
+> **UI rework (2026-06-17, post-Phase 8):** the four *structured* debug surfaces
+> (Call Stack, Variables, Watch, Breakpoints) no longer live as bottom-panel tabs.
+> They moved to a dedicated **right-side debug pane** (mirroring the left sidebar)
+> with a mode-row button switcher, plus a top-level **Debug** menu. Both are gated
+> on `debug.enabled`. The pane auto-opens on the first stop. The **Debug Console**
+> (program stdout/stderr) stays in the bottom panel as an Output channel. The old
+> `PanelContentKind::Debug*` tabs, `panel.debug`, and `CloseDebugPanel` were
+> deleted. New code: `DebugPaneState`/`DebugPaneMode` (`WorkspaceProjectState.h`),
+> `DebugPaneRegistry`, `DebugPaneService`, `DebugPaneRender.cpp`,
+> `DebugPaneLayout.cpp`, `DebugPaneMouseCoordinator`, `WorkspaceLayout::right_pane`,
+> and the persisted `right_pane_*` session fields. Data models
+> (`DebugExecutionView`/`DebugVariablesModel`/`DebugWatchModel`/`DebugBreakpointsModel`)
+> are unchanged and reused.
+
 ## Goal
 
 Full interactive debugging in microide, driven through the **Debug Adapter

@@ -146,15 +146,15 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
 }
 
 void WorkspaceShell::StopDebugging() {
-  // Stops the active session. Only close the debug panel when this was the last
-  // live session; with others remaining, the panel stays (re-projected by the
+  // Stops the active session. Only close the debug pane when this was the last
+  // live session; with others remaining, the pane stays (re-projected by the
   // next-frame prune as the active session advances).
   const bool last_session = CurrentDapManager().SessionCount() <= 1;
   debug_service_.StopDebugging();
   if (last_session) {
-    CloseDebugPanel(context_.current_project_state);
+    CloseDebugPane();
   }
-  RequestBottomPanelRedraw();
+  RequestWindowRedraw();
 }
 
 void WorkspaceShell::DebugFocusSession(int session_id) {

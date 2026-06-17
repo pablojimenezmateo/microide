@@ -195,6 +195,27 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.DebugSwitchSession(index);
       return DispatchResult::Handled;
     }
+    case ActionId::DebugPaneToggle:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.ToggleDebugPane();
+      return DispatchResult::Handled;
+    case ActionId::DebugPaneShowCallStack:
+    case ActionId::DebugPaneShowVariables:
+    case ActionId::DebugPaneShowWatch:
+    case ActionId::DebugPaneShowBreakpoints: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      const DebugPaneMode mode = id == ActionId::DebugPaneShowVariables ? DebugPaneMode::Variables
+                                 : id == ActionId::DebugPaneShowWatch    ? DebugPaneMode::Watch
+                                 : id == ActionId::DebugPaneShowBreakpoints
+                                     ? DebugPaneMode::Breakpoints
+                                     : DebugPaneMode::CallStack;
+      context_.ShowDebugPaneSurface(mode);
+      return DispatchResult::Handled;
+    }
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:

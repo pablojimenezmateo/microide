@@ -149,6 +149,12 @@ enum class ActionId {
   DebugBreakpointEditHitCondition,
   DebugBreakpointEditLogMessage,
   DebugBreakpointRemove,
+  // Right-side debug pane (toggle + surface switching). Gated on `debug.enabled`.
+  DebugPaneToggle,
+  DebugPaneShowCallStack,
+  DebugPaneShowVariables,
+  DebugPaneShowWatch,
+  DebugPaneShowBreakpoints,
 };
 
 enum class ActionSource {

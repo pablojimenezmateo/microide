@@ -120,6 +120,18 @@ void WorkspaceActionContext::DebugSwitchSession(int index) {
   }
 }
 
+void WorkspaceActionContext::ToggleDebugPane() {
+  if (operations_.toggle_debug_pane) {
+    operations_.toggle_debug_pane();
+  }
+}
+
+void WorkspaceActionContext::ShowDebugPaneSurface(DebugPaneMode mode) {
+  if (operations_.show_debug_pane_mode) {
+    operations_.show_debug_pane_mode(mode);
+  }
+}
+
 void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
   if (operations_.edit_breakpoint_modifier_from_menu) {
     operations_.edit_breakpoint_modifier_from_menu(id);
@@ -421,6 +433,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .edit_breakpoint_modifier_from_menu =
               [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
+          .toggle_debug_pane = [this]() { ToggleDebugPane(); },
+          .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
       });
 }
 

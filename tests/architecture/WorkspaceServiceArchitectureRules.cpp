@@ -422,7 +422,7 @@ RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_r
     const std::string name = entry.path().filename().string();
     if (name.starts_with("WorkspaceShellRender") || name == "RenderViewModelBuilder.cpp" ||
         name == "WorkspaceShellChrome.cpp" || name == "WorkspaceShellHoverPopup.cpp" ||
-        name == "WorkspaceShellHoverTargets.cpp") {
+        name == "WorkspaceShellHoverTargets.cpp" || name == "DebugPaneRender.cpp") {
       targets.push_back(entry.path());
     }
   }
@@ -499,7 +499,7 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
     }
     const std::string name = entry.path().filename().string();
     if (name.starts_with("WorkspaceShellRender") || name == "WorkspaceShellHoverPopup.cpp" ||
-        name == "WorkspaceShellHoverTargets.cpp") {
+        name == "WorkspaceShellHoverTargets.cpp" || name == "DebugPaneRender.cpp") {
       render_files.push_back(entry.path());
     }
   }

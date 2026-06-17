@@ -36,6 +36,7 @@ struct WorkspaceLayout {
   SDL_FRect content{};
   SDL_FRect sidebar{};
   SDL_FRect editor_area{};
+  SDL_FRect right_pane{};
   SDL_FRect breadcrumb{};
   SDL_FRect editor_surface{};
   SDL_FRect status_bar{};
@@ -215,6 +216,7 @@ inline constexpr float kWorkspaceScrollbarThickness = 10.0f;
 inline constexpr float kWorkspaceScrollbarInset = 2.0f;
 inline constexpr float kWorkspaceScrollbarMinThumbLength = 24.0f;
 inline constexpr float kWorkspaceMaxSidebarWidth = 520.0f;
+inline constexpr float kWorkspaceMaxRightPaneWidth = 520.0f;
 inline constexpr float kWorkspaceMinEditorAreaWidth = 280.0f;
 inline constexpr float kWorkspaceMinEditorAreaHeight = 120.0f;
 inline constexpr float kWorkspaceBottomPanelHeaderHeight = 28.0f;
@@ -265,7 +267,9 @@ WorkspaceLayout ComputeLayout(float window_width,
                               float sidebar_width,
                               float bottom_panel_height,
                               LayoutModeInputs layout_mode_inputs = {},
-                              bool reserve_status_bar = false);
+                              bool reserve_status_bar = false,
+                              bool right_pane_visible = false,
+                              float right_pane_width = 0.0f);
 std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
     const SDL_FRect& rect,
     bool vertical,
@@ -280,6 +284,10 @@ inline bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
 std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,
                                             const SDL_FRect& rhs);
 float ClampSidebarWidth(float width, float window_width);
+// Clamp the right debug pane width so the sidebar + pane together never starve the
+// editor below kWorkspaceMinEditorAreaWidth. `sidebar_width` is the currently
+// resolved sidebar width (0 when hidden).
+float ClampRightPaneWidth(float width, float window_width, float sidebar_width);
 float ClampBottomPanelHeight(float height, float window_height);
 int BottomPanelVisibleRowsForHeight(float panel_height, float line_height, bool command_mode);
 // Resolve the vertical coordinate `y` to an absolute bottom-panel log line index, or
@@ -296,10 +304,15 @@ int TailScrollRowForContent(std::size_t line_count, int visible_rows);
 int ClampScrollRowToContent(int scroll_row, std::size_t line_count, int visible_rows);
 SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout);
+// Right debug pane resize handle, anchored on the pane's LEFT edge (where it meets
+// the editor area), mirroring the sidebar handle on the opposite side.
+SDL_FRect RightPaneResizeHandleRect(const WorkspaceLayout& layout);
 SDL_FRect SidebarResizeCursorRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeCursorRect(const WorkspaceLayout& layout);
+SDL_FRect RightPaneResizeCursorRect(const WorkspaceLayout& layout);
 SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout);
+SDL_FRect RightPaneResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry);
 SDL_FRect HorizontalScrollbarHitRect(const ScrollbarGeometry& geometry);
 SDL_FRect TabCloseHitRect(const SDL_FRect& close_visual_rect, const SDL_FRect& tab_rect);

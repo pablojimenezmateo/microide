@@ -147,6 +147,11 @@ struct PersistedProjectSessionState {
   OutgoingBaseChoice outgoing_base_choice;
   std::size_t active_tab_index = 0;
   std::vector<PersistedEditorTabState> tabs;
+  // Right-side debug pane (visibility / width / active surface). Only restored
+  // when `debug.enabled` is on. `right_pane_mode` is a DebugPaneMode cast to u8.
+  bool right_pane_visible = false;
+  float right_pane_width = 288.0f;
+  std::uint8_t right_pane_mode = 0;
 };
 
 struct PersistedWorkspaceSessionState {

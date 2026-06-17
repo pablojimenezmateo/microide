@@ -48,6 +48,10 @@ class PersistenceCoordinator {
     std::function<void()> reset_project_catalog_to_welcome_state;
     std::function<bool(std::size_t, bool)> restore_project_catalog_after_removal;
     std::function<void()> ensure_active_project_visible;
+    // True when the `debug.enabled` setting is on; gates restoring the right-side
+    // debug pane visible (so a pane left open in a prior session stays hidden when
+    // the debugger feature is currently disabled).
+    std::function<bool()> debugger_enabled;
   };
 
   PersistenceCoordinator(WorkspaceContext& context,

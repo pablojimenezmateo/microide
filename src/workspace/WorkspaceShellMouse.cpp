@@ -10,6 +10,7 @@
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/DebugPaneMouseCoordinator.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceTabMouseCoordinator.h"
@@ -209,6 +210,17 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (event.button.button == SDL_BUTTON_LEFT && context_.current_project_state.sidebar.visible &&
       Contains(SidebarResizeHitRect(layout), event.button.x, event.button.y)) {
     context_.interaction_state.drag_target = DragTarget::SidebarDivider;
+    return true;
+  }
+
+  if (event.button.button == SDL_BUTTON_LEFT && context_.current_project_state.debug_pane.visible &&
+      Contains(RightPaneResizeHitRect(layout), event.button.x, event.button.y)) {
+    context_.interaction_state.drag_target = DragTarget::RightPaneDivider;
+    return true;
+  }
+
+  if (MakeDebugPaneMouseCoordinator().HandleButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 

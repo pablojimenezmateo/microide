@@ -448,6 +448,11 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `debug-pause`
 - `debug-restart`
 - `debug-switch-session [n]`
+- `debug-pane-toggle`
+- `debug-pane-callstack`
+- `debug-pane-variables`
+- `debug-pane-watch`
+- `debug-pane-breakpoints`
 - `quit`
 - `reopen`
 - `save`

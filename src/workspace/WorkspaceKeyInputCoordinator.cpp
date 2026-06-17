@@ -158,23 +158,23 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     return handled;
   }
 
-  // The Variables panel owns its keys while focused so tree navigation + inline
-  // edit are not stolen by global shortcuts. Unhandled keys fall through (the
-  // handler returns false) so global bindings like F5 still work in nav mode.
-  if (state_.surface.focus == FocusTarget::Panel &&
-      state_.panel.content == PanelContentKind::DebugVariables) {
+  // The Variables surface owns its keys while the debug pane holds focus so tree
+  // navigation + inline edit are not stolen by global shortcuts. Unhandled keys
+  // fall through (the handler returns false) so global bindings like F5 still work.
+  if (state_.surface.focus == FocusTarget::DebugPane &&
+      state_.debug_pane.mode == DebugPaneMode::Variables) {
     if (HandleDebugVariablesKeyDown(event, modifiers)) {
-      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      ensure_redraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
   }
 
-  // The Watch panel likewise owns its keys while focused (tree nav + inline edit,
+  // The Watch surface likewise owns its keys while focused (tree nav + inline edit,
   // plus add/edit/remove of watch expressions).
-  if (state_.surface.focus == FocusTarget::Panel &&
-      state_.panel.content == PanelContentKind::DebugWatch) {
+  if (state_.surface.focus == FocusTarget::DebugPane &&
+      state_.debug_pane.mode == DebugPaneMode::Watch) {
     if (HandleDebugWatchKeyDown(event, modifiers)) {
-      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      ensure_redraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
   }

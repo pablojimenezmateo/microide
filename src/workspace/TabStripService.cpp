@@ -425,41 +425,6 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
     });
   }
 
-  // Call Stack + Variables tabs: present while the debugger panel is open (set on
-  // the first stop, cleared on session stop / tab close). Structured, not
-  // channel-backed. They share `panel.debug.open` so they appear/disappear
-  // together; the user switches between them like any other bottom-panel tab.
-  if (state.panel.debug.open) {
-    tabs.push_back(BottomPanelTabModel{
-        .kind = BottomPanelTabKind::Debug,
-        .terminal_index = 0,
-        .output_channel_id = {},
-        .label = "Call Stack",
-        .tooltip_label = "Call Stack",
-    });
-    tabs.push_back(BottomPanelTabModel{
-        .kind = BottomPanelTabKind::DebugVariables,
-        .terminal_index = 0,
-        .output_channel_id = {},
-        .label = "Variables",
-        .tooltip_label = "Variables",
-    });
-    tabs.push_back(BottomPanelTabModel{
-        .kind = BottomPanelTabKind::DebugWatch,
-        .terminal_index = 0,
-        .output_channel_id = {},
-        .label = "Watch",
-        .tooltip_label = "Watch",
-    });
-    tabs.push_back(BottomPanelTabModel{
-        .kind = BottomPanelTabKind::DebugBreakpoints,
-        .terminal_index = 0,
-        .output_channel_id = {},
-        .label = "Breakpoints",
-        .tooltip_label = "Breakpoints",
-    });
-  }
-
   return tabs;
 }
 
@@ -496,18 +461,6 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
     } else if (state.panel.content == PanelContentKind::Output &&
                tabs[i].kind == BottomPanelTabKind::Output &&
                tabs[i].output_channel_id == state.panel.output.channel_id) {
-      active_model_index = i;
-    } else if (state.panel.content == PanelContentKind::Debug &&
-               tabs[i].kind == BottomPanelTabKind::Debug) {
-      active_model_index = i;
-    } else if (state.panel.content == PanelContentKind::DebugVariables &&
-               tabs[i].kind == BottomPanelTabKind::DebugVariables) {
-      active_model_index = i;
-    } else if (state.panel.content == PanelContentKind::DebugWatch &&
-               tabs[i].kind == BottomPanelTabKind::DebugWatch) {
-      active_model_index = i;
-    } else if (state.panel.content == PanelContentKind::DebugBreakpoints &&
-               tabs[i].kind == BottomPanelTabKind::DebugBreakpoints) {
       active_model_index = i;
     }
   }

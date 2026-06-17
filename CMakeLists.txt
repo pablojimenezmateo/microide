@@ -446,6 +446,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/DebugValueTree.cpp
   src/workspace/DebugVariablesModel.cpp
   src/workspace/DebugWatchModel.cpp
+  src/workspace/DebugPaneRegistry.cpp
+  src/workspace/DebugPaneLayout.cpp
+  src/workspace/DebugPaneRender.cpp
+  src/workspace/DebugPaneService.cpp
+  src/workspace/DebugPaneMouseCoordinator.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
   src/workspace/WorkspaceSaveParticipants.cpp
   src/workspace/WorkspaceCompletionRegistry.cpp
@@ -622,6 +627,7 @@ add_executable(microide_tests
   tests/PersistedRecordDumpTests.cpp
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
+  tests/DebugPaneTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/StringUtilTests.cpp
   tests/SubprocessTests.cpp

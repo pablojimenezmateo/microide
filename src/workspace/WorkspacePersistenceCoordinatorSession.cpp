@@ -145,6 +145,10 @@ bool PersistenceCoordinator::RestoreSessionState() {
   persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
   persisted_session.outgoing_base_choice = CurrentProjectState().sidebar.git.outgoing_base_choice;
   persisted_session.active_tab_index = CurrentProjectState().active_tab_index;
+  persisted_session.right_pane_visible = CurrentProjectState().debug_pane.visible;
+  persisted_session.right_pane_width = CurrentProjectState().debug_pane.width;
+  persisted_session.right_pane_mode =
+      static_cast<std::uint8_t>(CurrentProjectState().debug_pane.mode);
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ParseSessionFile");
     if (!operations_.persistence_service->LoadProjectSession(session_path, &persisted_session)) {
@@ -482,6 +486,17 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.sidebar.width = persisted_session.sidebar_width;
     state.panel.height = persisted_session.bottom_panel_height;
     state.sidebar.git.outgoing_base_choice = persisted_session.outgoing_base_choice;
+    // Right-side debug pane: restore width/mode always, but only re-open it when the
+    // debugger feature is currently enabled (else a pane left open in a prior session
+    // would surface debug UI in the default debugger-off state).
+    state.debug_pane.width = persisted_session.right_pane_width;
+    state.debug_pane.mode = persisted_session.right_pane_mode <=
+                                    static_cast<std::uint8_t>(DebugPaneMode::Breakpoints)
+                                ? static_cast<DebugPaneMode>(persisted_session.right_pane_mode)
+                                : DebugPaneMode::CallStack;
+    const bool debugger_enabled =
+        operations_.debugger_enabled && operations_.debugger_enabled();
+    state.debug_pane.visible = persisted_session.right_pane_visible && debugger_enabled;
   }
 
   if (state.open_tabs.empty()) {
@@ -521,6 +536,10 @@ void PersistenceCoordinator::SaveSessionState() {
   persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
   persisted_session.outgoing_base_choice = CurrentProjectState().sidebar.git.outgoing_base_choice;
   persisted_session.active_tab_index = 0;
+  persisted_session.right_pane_visible = CurrentProjectState().debug_pane.visible;
+  persisted_session.right_pane_width = CurrentProjectState().debug_pane.width;
+  persisted_session.right_pane_mode =
+      static_cast<std::uint8_t>(CurrentProjectState().debug_pane.mode);
 
   auto& state = CurrentProjectState();
   for (std::size_t tab_index = 0; tab_index < state.open_tabs.size(); ++tab_index) {

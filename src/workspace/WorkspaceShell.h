@@ -80,6 +80,8 @@
 #include "workspace/WorkspaceProjectFileMonitor.h"
 #include "workspace/WorkspaceProjectDialogState.h"
 #include "workspace/WorkspaceProjectState.h"
+#include "workspace/DebugPaneRegistry.h"
+#include "workspace/DebugPaneService.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspacePromptState.h"
 #include "workspace/RenderViewModelBuilder.h"
@@ -118,6 +120,7 @@ class MergeMouseCoordinator;
 class TabMouseCoordinator;
 class SidebarMouseCoordinator;
 class PanelMouseCoordinator;
+class DebugPaneMouseCoordinator;
 
 class WorkspaceShell {
 #include "workspace/WorkspaceShellMembers.inc"

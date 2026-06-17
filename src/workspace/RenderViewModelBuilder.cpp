@@ -1,5 +1,6 @@
 #include "workspace/RenderViewModelBuilder.h"
 
+#include "workspace/DebugPaneRegistry.h"
 #include "workspace/GitSidebarCommandCenter.h"
 
 #include "editor/FoldingModel.h"
@@ -481,6 +482,34 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .query_fallback_text = query_fallback_text,
       .replace_fallback_text = replace_fallback_text,
       .git_sidebar = std::move(git_sidebar),
+      .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
+  };
+}
+
+DebugPaneSurfaceViewModel RenderViewModelBuilder::BuildDebugPaneSurface() const {
+  const DebugPaneState& pane = context_.current_project_state.debug_pane;
+  int scroll_row = 0;
+  switch (pane.mode) {
+    case DebugPaneMode::CallStack:
+      scroll_row = pane.call_stack_scroll_row;
+      break;
+    case DebugPaneMode::Variables:
+      scroll_row = pane.variables_scroll_row;
+      break;
+    case DebugPaneMode::Watch:
+      scroll_row = pane.watch_scroll_row;
+      break;
+    case DebugPaneMode::Breakpoints:
+      scroll_row = pane.breakpoints_scroll_row;
+      break;
+  }
+  const DebugPaneSurfaceSpec* spec = FindDebugPaneSurface(pane.mode);
+  return DebugPaneSurfaceViewModel{
+      .visible = pane.visible,
+      .mode = pane.mode,
+      .scroll_row = scroll_row,
+      .header_label = spec != nullptr ? spec->label : std::string_view{},
+      .focus = context_.current_project_state.surface.focus,
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }

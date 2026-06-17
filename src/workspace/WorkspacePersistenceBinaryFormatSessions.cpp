@@ -54,7 +54,13 @@ bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
                     },
                     out) ||
       !AppendRecord(ProjectSessionTag::ActiveTabIndex,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, state.active_tab_index); }, out)) {
+                    [&](PrimitiveWriter& w) { return WriteSize(w, state.active_tab_index); }, out) ||
+      !AppendRecord(ProjectSessionTag::RightPaneVisible,
+                    [&](PrimitiveWriter& w) { return w.WriteBool(state.right_pane_visible); }, out) ||
+      !AppendRecord(ProjectSessionTag::RightPaneWidth,
+                    [&](PrimitiveWriter& w) { return w.WriteF32(state.right_pane_width); }, out) ||
+      !AppendRecord(ProjectSessionTag::RightPaneMode,
+                    [&](PrimitiveWriter& w) { return w.WriteU8(state.right_pane_mode); }, out)) {
     return false;
   }
 
@@ -107,6 +113,12 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                           reader.remaining() == 0;
                  case ProjectSessionTag::ActiveTabIndex:
                    return ReadSize(reader, &state->active_tab_index) && reader.remaining() == 0;
+                 case ProjectSessionTag::RightPaneVisible:
+                   return reader.ReadBool(&state->right_pane_visible) && reader.remaining() == 0;
+                 case ProjectSessionTag::RightPaneWidth:
+                   return reader.ReadF32(&state->right_pane_width) && reader.remaining() == 0;
+                 case ProjectSessionTag::RightPaneMode:
+                   return reader.ReadU8(&state->right_pane_mode) && reader.remaining() == 0;
                  case ProjectSessionTag::Tab: {
                    PersistedEditorTabState tab;
                    if (!DecodeEditorTab(payload, &tab)) {

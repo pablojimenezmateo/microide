@@ -122,6 +122,19 @@ struct BottomPanelSurfaceViewModel {
   BottomPanelTabDragViewModel tab_drag;
 };
 
+// Right-side debug pane surface (Call Stack / Variables / Watch / Breakpoints).
+// The backing models live on `project_state` and already hold prebuilt display
+// strings, so the view model only forwards the pointer + the active surface's
+// scroll and a static label string_view — no per-frame string materialization.
+struct DebugPaneSurfaceViewModel {
+  bool visible = false;
+  DebugPaneMode mode = DebugPaneMode::CallStack;
+  int scroll_row = 0;
+  std::string_view header_label;
+  FocusTarget focus = FocusTarget::Sidebar;
+  ProjectWorkspaceState* project_state = nullptr;
+};
+
 struct HoverPopupViewModel {
   bool visible = false;
   bool has_active_target = false;
@@ -215,6 +228,7 @@ class RenderViewModelBuilder {
   OverlaySurfaceViewModel BuildOverlaySurface() const;
   TextInputSurfaceViewModel BuildTextInputSurface() const;
   SidebarSurfaceViewModel BuildSidebarSurface() const;
+  DebugPaneSurfaceViewModel BuildDebugPaneSurface() const;
   /// Populates `out` with clear()+push_back / assign patterns so vector capacities are reused
   /// when the workspace render path retains the same `EditorViewModel` object across frames.
   void BuildEditorViewModelInto(editor::EditorViewModel& out,

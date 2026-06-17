@@ -165,11 +165,13 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::Editor;
   }
 
+  if (context_.current_project_state.surface.focus == FocusTarget::DebugPane &&
+      context_.current_project_state.debug_pane.mode == DebugPaneMode::Variables &&
+      context_.current_project_state.debug_variables.IsEditing()) {
+    return TextInputSurface::DebugVariableEdit;
+  }
+
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    if (context_.current_project_state.panel.content == PanelContentKind::DebugVariables &&
-        context_.current_project_state.debug_variables.IsEditing()) {
-      return TextInputSurface::DebugVariableEdit;
-    }
     if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) {
       return TextInputSurface::Terminal;
     }

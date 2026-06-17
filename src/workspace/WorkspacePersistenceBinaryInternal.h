@@ -155,6 +155,9 @@ enum class ProjectSessionTag : std::uint16_t {
   ChatRegistry = 7,
   OutgoingBaseKind = 8,
   OutgoingBaseCustomRef = 9,
+  RightPaneVisible = 10,
+  RightPaneWidth = 11,
+  RightPaneMode = 12,
 };
 
 enum class EditorTabTag : std::uint16_t {
