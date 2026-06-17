@@ -110,7 +110,29 @@ Python mock-adapter pattern from `tests/WorkspaceLspClientTests.cpp` /
 `DapClient` mirroring `LspClient`, plus `DapProtocol` and a mock-adapter test
 harness. No UI. See "Phase 0 — what shipped" below.
 
-### Phase 1 — `DebugService` + `ctx.debug.add` + session lifecycle + debug console + **toggle**
+### Phase 1 — `DebugService` + `ctx.debug.add` + session lifecycle + debug console + **toggle** ✅ DONE (2026-06-17)
+
+See "Phase 1 — what shipped" below. Summary: `DebugService`/`DapManager`/
+`DebugSession` drive the launch lifecycle, `ctx.debug.add` contributes adapters,
+the `debug.enabled` toggle and Start/Stop Debugging commands gate the surface, and
+`output` events stream to a Debug Console. Two design notes vs. the original plan:
+
+- **Console reuses the output-channel infrastructure.** The Debug Console is a
+  `WorkspaceOutputChannels` channel (`debug.console`) rendered through the
+  existing `PanelContentKind::Output` path, rather than a new
+  `PanelContentKind::Debug` + `DebugConsoleState`. The Output panel is already
+  channel-backed, so this reuses proven rendering/tab-strip/scroll code and adds
+  no render-TU surface. A dedicated `PanelContentKind::Debug` will arrive when
+  Phase 3+ introduces *structured* debug panels (Call Stack / Variables / Watch),
+  which are not text output.
+- **Launch config is minimal.** `StartDebuggingWithDefaultConfig` launches the
+  first registered adapter with an empty-argument `launch` request. Per-project
+  launch-config selection + persistence (native `PersistedRecord` format, no
+  `.vscode/launch.json`) is deferred; it pairs naturally with breakpoint
+  persistence in Phase 2.
+
+Original plan, retained for reference:
+
 
 - New: `src/workspace/DebugService.{h,cpp}` (mirror `LspService`), `WorkspaceDapManager.{h,cpp}`
   (mirror `WorkspaceLspManager`), `DebugSession.{h,cpp}` (state machine
@@ -234,13 +256,64 @@ Architecture change: retired `CheckNoDebuggerDapSurface` and its fixture/test
 (`tests/architecture/WorkspaceCoordinatorArchitectureRules.{h,cpp}`,
 `WorkspaceArchitectureRules.{h,cpp}`, `tests/ArchitectureInvariantsTests.cpp`).
 
+## Phase 1 — what shipped (2026-06-17)
+
+Files added:
+
+- `src/workspace/LaunchConfig.h` — native launch/attach config (`name`, `type`,
+  `request`, verbatim `arguments`). No `.vscode/launch.json` import.
+- `src/workspace/DebugSession.{h,cpp}` — lifecycle state machine
+  (`Inactive→Initializing→Configuring→Running→Stopped→Terminated/Failed`) on top of
+  a `DapClient`. Drives initialize → launch/attach (queued; the client flushes it
+  once the initialize response arrives) → `configurationDone` (gated on
+  `supportsConfigurationDoneRequest`) → running; streams `output`; tears down on
+  `terminated`/`exited`. `RequestStop` prefers `terminate` over `disconnect` when
+  the adapter supports it.
+- `src/workspace/WorkspaceDapManager.{h,cpp}` — per-project `DapManager`: adapter
+  registry keyed by adapter `type` (mirrors `LspManager`'s per-language servers),
+  owning the transient active `DebugSession`. `RegisterAdapter` / `RetainAdaptersIn`
+  / `StartSession` / `StopActiveSession` / `DrainCallbacks`.
+- `src/workspace/DebugService.{h,cpp}` — shell-facing facade mirroring `LspService`:
+  `Configure`, `SetWakeEventType`, `CurrentDapManager`/`EnsureProjectDapManager`,
+  `ConsumeDapCallbacks`, `StartDebugging`/`StopDebugging`.
+
+Wiring:
+
+- `ProjectWorkspaceState.dap_manager` (lazy, mirrors `lsp_manager`); ensured in
+  `WorkspaceContext::RebindProjectState`.
+- `DebugService debug_service_` on the shell; thin forwarders live in the existing
+  protocol-service companion `WorkspaceShellLsp.cpp` (kept there to respect the
+  `WorkspaceShell*.cpp` companion-count invariant — the behavior is on the service).
+- Dedicated `dap_event_type_` + `consume_dap_callbacks` drained each frame next to
+  the LSP pump (`WorkspaceEventOrchestrator`, `WorkspaceShellBootstrapper`,
+  `WorkspaceLifecycleCoordinator`).
+- Plugin seam: `PluginHost::ContributedDebugAdapter`,
+  `ParseDebugAdapterRegistration` (type defaults to the local id),
+  `RegisterDebugAdapter`, `ctx.debug.add` bound via `PluginHostLuaApi.inc` /
+  `PluginLuaContextInterop.*`, gated on `capabilities.process.exec` + contribution
+  sandbox; teardown prunes a plugin's adapters on unload. Reconciled into the
+  per-project `DapManager` in `WorkspaceShellPlugins.cpp`.
+- Console: DAP `output` events stream into the `debug.console` output channel;
+  `ShowDebugConsole` surfaces it on session start.
+- Toggle + commands: `debug.enabled` (user scope, default off);
+  `ActionId::StartDebugging`/`StopDebugging` (`debug-start`/`debug-stop`), gated on
+  the toggle.
+
+Tests added:
+
+- `tests/DebugServiceTests.cpp` — real Python mock-adapter lifecycle with and
+  without `configurationDone`, unknown-adapter-type rejection, reconcile drop (4).
+- `tests/PluginHostTests.cpp` — `ctx.debug.add` registration (explicit + defaulted
+  type) and the `capabilities.process.exec` gate (2).
+
 ## How to validate
 
 ```bash
 cmake --build build -j8
-./build/microide/microide_tests Dap          # focused: 14 DAP tests
-tools/run-checks.sh tests                     # full unit suite incl. arch invariants
-                                              # (reads /tmp/microide-tests.log)
+./build/microide/microide_tests Dap DebugService    # focused: 18 DAP/session tests
+./build/microide/microide_tests DebugAdapter        # ctx.debug.add registration (2)
+tools/run-checks.sh tests                            # full unit suite incl. arch invariants
+                                                     # (reads /tmp/microide-tests.log)
 ```
 
 Tracing: set `MICROIDE_TRACE_DAP_LIFECYCLE=1` for adapter lifecycle logs (mirrors
@@ -252,8 +325,13 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 1**: stand up `DebugService` + `WorkspaceDapManager` + `DebugSession`,
-add the `ctx.debug.add` plugin contribution and the `debug.enabled` toggle, and
-stream `output` events into a Debug Console panel. Drive a real adapter
-end-to-end (debugpy on a tiny Python script, or lldb-dap on a small C program) via
-a dogfood plugin's `ctx.debug.add`.
+Start **Phase 2** (breakpoints): `BreakpointStore`, gutter-click toggle, gutter
+dot rendering via the editor view model, `PersistedDebugState` (binary +
+CRC32C, with a fuzz target for `DecodeDebugStateRecord`), and `setBreakpoints`
+on launch. Pair launch-config persistence with it (native `PersistedRecord`
+format) so Start Debugging can target a chosen config instead of the Phase 1
+first-adapter default. Dogfood end-to-end with a plugin's `ctx.debug.add`
+(debugpy on a tiny Python script, or lldb-dap on a small C program).
+
+All debugger work lands on the canonical `feat/dap` branch; do not merge to
+`main` until the effort is complete.
