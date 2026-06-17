@@ -64,10 +64,13 @@ void PersistenceCoordinator::SaveDebugState() {
   }
   persisted.selected_launch_config_index = state.selected_launch_config_index;
   persisted.watch_expressions = state.debug_watch.Expressions();
+  persisted.enabled_exception_filters = state.debug_breakpoints_panel.EnabledFilterIds();
+  persisted.exception_filters_seeded = state.debug_breakpoints_panel.Seeded();
 
   // Avoid leaving a stale file when there is nothing to persist.
   if (persisted.files.empty() && persisted.launch_configs.empty() &&
-      persisted.watch_expressions.empty()) {
+      persisted.watch_expressions.empty() && persisted.enabled_exception_filters.empty() &&
+      !persisted.exception_filters_seeded) {
     std::error_code error;
     std::filesystem::remove(debug_path, error);
     return;
@@ -123,6 +126,9 @@ void PersistenceCoordinator::RestoreDebugState() {
   }
   state.selected_launch_config_index = persisted.selected_launch_config_index;
   state.debug_watch.SetExpressions(std::move(persisted.watch_expressions));
+  state.debug_breakpoints_panel.SetEnabledFilterIds(std::move(persisted.enabled_exception_filters),
+                                                    persisted.exception_filters_seeded);
+  state.debug_breakpoints_panel.Rebuild(state.breakpoint_store);
 }
 
 bool PersistenceCoordinator::RestoreSessionState() {

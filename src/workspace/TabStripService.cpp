@@ -451,6 +451,13 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
         .label = "Watch",
         .tooltip_label = "Watch",
     });
+    tabs.push_back(BottomPanelTabModel{
+        .kind = BottomPanelTabKind::DebugBreakpoints,
+        .terminal_index = 0,
+        .output_channel_id = {},
+        .label = "Breakpoints",
+        .tooltip_label = "Breakpoints",
+    });
   }
 
   return tabs;
@@ -498,6 +505,9 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
       active_model_index = i;
     } else if (state.panel.content == PanelContentKind::DebugWatch &&
                tabs[i].kind == BottomPanelTabKind::DebugWatch) {
+      active_model_index = i;
+    } else if (state.panel.content == PanelContentKind::DebugBreakpoints &&
+               tabs[i].kind == BottomPanelTabKind::DebugBreakpoints) {
       active_model_index = i;
     }
   }

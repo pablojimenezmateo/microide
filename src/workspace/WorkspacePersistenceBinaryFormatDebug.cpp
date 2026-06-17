@@ -193,6 +193,17 @@ bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::b
       return false;
     }
   }
+  for (const std::string& filter_id : state.enabled_exception_filters) {
+    if (!AppendRecord(DebugStateTag::ExceptionFilter,
+                      [&](PrimitiveWriter& w) { return w.WriteString(filter_id); }, out)) {
+      return false;
+    }
+  }
+  if (state.exception_filters_seeded &&
+      !AppendRecord(DebugStateTag::ExceptionFiltersSeeded,
+                    [&](PrimitiveWriter& w) { return w.WriteBool(true); }, out)) {
+    return false;
+  }
   return true;
 }
 
@@ -242,6 +253,17 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                    state->watch_expressions.push_back(std::move(expression));
                    return true;
                  }
+                 case DebugStateTag::ExceptionFilter: {
+                   std::string filter_id;
+                   if (!reader.ReadString(&filter_id) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->enabled_exception_filters.push_back(std::move(filter_id));
+                   return true;
+                 }
+                 case DebugStateTag::ExceptionFiltersSeeded:
+                   return reader.ReadBool(&state->exception_filters_seeded) &&
+                          reader.remaining() == 0;
                }
                return true;
              }) &&

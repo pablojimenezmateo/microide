@@ -183,6 +183,11 @@ struct PersistedDebugState {
   std::vector<PersistedLaunchConfig> launch_configs;
   std::size_t selected_launch_config_index = 0;
   std::vector<std::string> watch_expressions;  // Phase 6 (additive; empty on old records)
+  // Phase 7 (additive; empty/false on old records): the user's enabled
+  // exception-breakpoint filter ids, and whether adapter defaults have been
+  // seeded once (so "all filters off" persists rather than re-seeding).
+  std::vector<std::string> enabled_exception_filters;
+  bool exception_filters_seeded = false;
 };
 
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state,

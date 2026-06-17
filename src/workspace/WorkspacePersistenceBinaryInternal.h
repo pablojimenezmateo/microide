@@ -209,6 +209,8 @@ enum class DebugStateTag : std::uint16_t {
   LaunchConfig = 3,               // repeated, one nested record per config
   SelectedLaunchConfigIndex = 4,
   WatchExpression = 5,            // Phase 6: repeated, one string record per expression
+  ExceptionFilter = 6,            // Phase 7: repeated, one string record per enabled filter id
+  ExceptionFiltersSeeded = 7,     // Phase 7: bool, whether adapter defaults were seeded once
 };
 
 enum class FileBreakpointsTag : std::uint16_t {

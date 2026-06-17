@@ -18,6 +18,7 @@
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
 #include "project/ProjectSearchService.h"
+#include "workspace/DebugBreakpointsModel.h"
 #include "workspace/DebugVariablesModel.h"
 #include "workspace/DebugViewModel.h"
 #include "workspace/DebugWatchModel.h"
@@ -60,14 +61,19 @@ enum class PanelContentKind {
   // Watch-expressions tree (Phase 6). Peer tab to the Call Stack / Variables;
   // rows come from `debug_watch.Rows()`.
   DebugWatch,
+  // Breakpoints list (Phase 7): exception-filter toggles + navigable line
+  // breakpoints. Peer tab; rows come from `debug_breakpoints_panel.Rows()`.
+  DebugBreakpoints,
 };
 
-// True for any debug-session structured panel (Call Stack / Variables / Watch).
-// They share `panel.debug.open` and the same fallback on close so they are
-// treated as one family wherever a "is the debug panel showing" check is needed.
+// True for any debug-session structured panel (Call Stack / Variables / Watch /
+// Breakpoints). They share `panel.debug.open` and the same fallback on close so
+// they are treated as one family wherever a "is the debug panel showing" check
+// is needed.
 inline bool IsDebugPanelContent(PanelContentKind content) {
   return content == PanelContentKind::Debug || content == PanelContentKind::DebugVariables ||
-         content == PanelContentKind::DebugWatch;
+         content == PanelContentKind::DebugWatch ||
+         content == PanelContentKind::DebugBreakpoints;
 }
 
 enum class BufferSearchField {
@@ -225,9 +231,10 @@ struct OutputPanelState {
 // is momentarily empty) without coupling the tab strip to the session.
 struct DebugPanelState {
   bool open = false;
-  int scroll_row = 0;            // Call Stack tab scroll
-  int variables_scroll_row = 0;  // Variables tab scroll (peer tab, own scroll)
-  int watch_scroll_row = 0;      // Watch tab scroll (peer tab, own scroll)
+  int scroll_row = 0;             // Call Stack tab scroll
+  int variables_scroll_row = 0;   // Variables tab scroll (peer tab, own scroll)
+  int watch_scroll_row = 0;       // Watch tab scroll (peer tab, own scroll)
+  int breakpoints_scroll_row = 0;  // Breakpoints tab scroll (peer tab, own scroll)
 };
 
 struct LspUiState {
@@ -314,6 +321,12 @@ struct ProjectWorkspaceState {
   // restarts (persisted in the `debug` PersistedRecord); the evaluated values
   // are re-fetched on each `stopped`. Only meaningful when `debug.enabled` is ON.
   DebugWatchModel debug_watch;
+  // Breakpoints panel model (Phase 7): the persisted enabled exception-filter id
+  // set + the active session's advertised filters + a prebuilt row list (filter
+  // toggles followed by navigable line breakpoints). The enabled set persists in
+  // the `debug` PersistedRecord; advertised filters are transient. Only
+  // meaningful when `debug.enabled` is ON.
+  DebugBreakpointsModel debug_breakpoints_panel;
   // Persisted + plugin-contributed launch/attach configurations and the
   // currently selected index. Start Debugging targets the selected config when
   // one exists, else falls back to the first registered adapter.

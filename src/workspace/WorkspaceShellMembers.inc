@@ -1125,6 +1125,10 @@
   void DebugStepIn();
   void DebugStepOut();
   void DebugPause();
+  // Restart the active session (Phase 7); DAP `restart` or terminate+relaunch.
+  void DebugRestart();
+  // Focus a thread in the Call Stack thread selector (Phase 7 multi-thread).
+  void DebugFocusThread(int thread_id);
   // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
   // menu's target path+line; open a seeded prompt for a condition/hit/log field
   // (mapped from the ActionId) or remove the breakpoint and live-resend.

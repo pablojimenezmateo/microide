@@ -70,6 +70,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::DebugStepOut, "debug-step-out", "debug-step-out", "Step Out",
                  "Shift+F11"},
       ActionSpec{ActionId::DebugPause, "debug-pause", "debug-pause", "Pause", ""},
+      ActionSpec{ActionId::DebugRestart, "debug-restart", "debug-restart", "Restart Debugging",
+                 "Ctrl+Shift+F5"},
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
       ActionSpec{ActionId::RenamePath, "", "", "Rename...", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},

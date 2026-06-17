@@ -74,6 +74,22 @@ class DebugService {
   void StepIn();
   void StepOut();
   void Pause();
+  // Restart the active session (Phase 7). Uses the DAP `restart` request when the
+  // adapter advertises `supportsRestartRequest`, otherwise terminates and
+  // relaunches with the same config + cwd. No-op when no session is active.
+  void Restart();
+
+  // Focus a thread in the Call Stack thread selector (Phase 7 multi-thread):
+  // re-resolves the picked thread's frames and re-focuses it. No-op when not
+  // stopped / no session.
+  void FocusThread(int thread_id);
+
+  // Breakpoints panel (Phase 7). Toggle one exception-breakpoint filter and live
+  // re-send `setExceptionBreakpoints` to the active session (if any). Rebuild the
+  // panel's prebuilt rows from the current breakpoints + advertised filters
+  // (called by the shell whenever the breakpoint set or filters change).
+  void ToggleExceptionFilter(const std::string& filter_id);
+  void SyncBreakpointsPanel();
 
   // Variables panel (Phase 4). Focus a frame → fetch its scopes (and auto-expand
   // the first one); toggle a tree row → lazily fetch/collapse its children;
@@ -120,10 +136,19 @@ class DebugService {
  private:
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
+  // Build the session callbacks that wire the configured Operations in. Shared by
+  // StartDebugging and the restart relaunch path.
+  DebugSession::Callbacks BuildSessionCallbacks();
+  // Drop all transient debug view models (execution / variables / hover / watch
+  // results) and request redraws. Shared by stop / resume / restart.
+  void ClearTransientDebugViews();
 
   WorkspaceContext* context_ = nullptr;
   Operations operations_{};
   Uint32 wake_event_type_ = 0;
+  // Remembered for the terminate+relaunch restart fallback.
+  LaunchConfig last_launch_config_{};
+  std::string last_cwd_;
 };
 
 }  // namespace microide::workspace

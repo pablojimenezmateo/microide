@@ -1,5 +1,6 @@
 #include "workspace/DebugSession.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "util/JsonValue.h"
@@ -213,14 +214,45 @@ void DebugSession::ResendBreakpointsForFile(const std::filesystem::path& path) {
   SendBreakpointsForFile(editor::BreakpointStore::FileBreakpoints{.path = path});
 }
 
+void DebugSession::SendExceptionFilters() {
+  const std::vector<dap_protocol::DapExceptionFilter>& advertised =
+      client_->Capabilities().exception_filters;
+  if (advertised.empty() || !callbacks_.exception_filter_provider) {
+    return;
+  }
+  const std::vector<std::string> enabled = callbacks_.exception_filter_provider();
+  // Send only ids the adapter advertised, in advertised order, so we never push a
+  // filter id the adapter would reject.
+  std::vector<std::string> ids;
+  for (const dap_protocol::DapExceptionFilter& filter : advertised) {
+    if (std::find(enabled.begin(), enabled.end(), filter.filter) != enabled.end()) {
+      ids.push_back(filter.filter);
+    }
+  }
+  client_->SendRequestAsync("setExceptionBreakpoints",
+                            dap_protocol::MakeSetExceptionBreakpointsArguments(ids), {});
+}
+
+void DebugSession::ResendExceptionFilters() {
+  if (!client_->IsInitialized()) {
+    return;
+  }
+  SendExceptionFilters();
+}
+
 void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& body) {
   if (event == "initialized") {
-    // The adapter is ready for configuration. Install breakpoints first, then
-    // finalize with configurationDone. Both ride the client's single ordered
-    // stream, so configurationDone reaches the adapter after every
-    // setBreakpoints request (the DAP handshake requires send-order, not
-    // response-order); verification reflects back asynchronously.
+    // The adapter is ready for configuration. Surface its advertised exception
+    // filters (so the host can seed/show them), install breakpoints + exception
+    // filters, then finalize with configurationDone. All ride the client's single
+    // ordered stream, so configurationDone reaches the adapter last (the DAP
+    // handshake requires send-order, not response-order); verification reflects
+    // back asynchronously.
+    if (callbacks_.on_exception_filters_available) {
+      callbacks_.on_exception_filters_available(client_->Capabilities().exception_filters);
+    }
     SendAllBreakpoints();
+    SendExceptionFilters();
     SendConfigurationDone();
   } else if (event == "output") {
     if (callbacks_.on_output) {
@@ -234,10 +266,14 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
   } else if (event == "stopped") {
     const dap_protocol::DapStoppedEvent stop = dap_protocol::ParseStoppedEvent(body);
     stopped_thread_id_ = stop.thread_id;
+    last_stop_ = stop;
     SetState(State::Stopped);
     // Resolve the call stack for the stopped thread, then hand the focused
     // frames up so the host can highlight the execution line + fill the panel.
     RequestStackTrace(stop);
+    // Fetch the thread list as a second request so the Call Stack panel can show
+    // a thread selector; it lands a beat later and never delays the stack.
+    RequestThreadsForStop();
   } else if (event == "continued") {
     if (state_ == State::Stopped) {
       if (callbacks_.on_resumed) {
@@ -390,20 +426,75 @@ void DebugSession::Pause() {
     return;
   }
   // `pause` requires a threadId. When running we have no stopped thread, so ask
-  // the adapter for its threads and pause the first one (this is where Phase 3's
-  // `threads` request naturally lands; a thread selector arrives in Phase 7).
+  // the adapter for its threads and pause the first one.
+  RequestThreads([this](std::vector<dap_protocol::DapThread> threads) {
+    if (threads.empty()) {
+      return;
+    }
+    client_->SendRequestAsync("pause", ThreadIdArgs(threads.front().id), {});
+  });
+}
+
+void DebugSession::Restart() {
+  if (!client_->IsInitialized() || !client_->Capabilities().supports_restart_request) {
+    return;
+  }
+  // A re-emitted `initialized` (some adapters send one on restart) must re-install
+  // breakpoints and re-finalize, so re-arm the configurationDone guard.
+  configuration_done_sent_ = false;
+  // The DAP `restart` request optionally carries the original launch/attach
+  // arguments under `arguments`; pass them through when we have them.
+  util::JsonObject args;
+  if (!config_.arguments.IsNull()) {
+    args["arguments"] = config_.arguments;
+  }
+  client_->SendRequestAsync("restart", util::JsonValue(std::move(args)), {});
+  // Optimistically clear the current stop; the adapter re-runs and stops again.
+  if (state_ == State::Stopped) {
+    if (callbacks_.on_resumed) {
+      callbacks_.on_resumed();
+    }
+    SetState(State::Running);
+  }
+}
+
+void DebugSession::RequestThreads(
+    std::function<void(std::vector<dap_protocol::DapThread>)> callback) {
+  if (!callback || !client_->IsInitialized()) {
+    return;
+  }
   client_->SendRequestAsync(
-      "threads", util::JsonValue(nullptr), [this](const dap_protocol::DapResponse& response) {
+      "threads", util::JsonValue(nullptr),
+      [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
         if (!response.success) {
           return;
         }
-        const std::vector<dap_protocol::DapThread> threads =
-            dap_protocol::ParseThreads(response.body);
-        if (threads.empty()) {
-          return;
-        }
-        client_->SendRequestAsync("pause", ThreadIdArgs(threads.front().id), {});
+        callback(dap_protocol::ParseThreads(response.body));
       });
+}
+
+void DebugSession::RequestThreadsForStop() {
+  if (!callbacks_.on_threads) {
+    return;
+  }
+  RequestThreads([this](std::vector<dap_protocol::DapThread> threads) {
+    if (callbacks_.on_threads) {
+      callbacks_.on_threads(threads);
+    }
+  });
+}
+
+void DebugSession::SwitchThread(int thread_id) {
+  if (state_ != State::Stopped || !client_->IsInitialized()) {
+    return;
+  }
+  stopped_thread_id_ = thread_id;
+  dap_protocol::DapStoppedEvent stop = last_stop_;
+  stop.thread_id = thread_id;
+  last_stop_ = stop;
+  // Reuse the stop path: re-resolve frames for the picked thread and re-emit
+  // on_stopped so the host re-focuses it (execution line + Call Stack + scopes).
+  RequestStackTrace(stop);
 }
 
 void DebugSession::DrainCallbacks() { client_->DrainCallbacks(); }

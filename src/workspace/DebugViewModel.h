@@ -22,6 +22,13 @@ struct DebugStackFrameView {
   std::string display_secondary;      // e.g. "main.c:42"   (prebuilt, muted)
 };
 
+// One entry in the thread selector (Phase 7 multi-thread). `display` is prebuilt
+// (e.g. "Thread 1: MainThread") so the Call Stack render TU only draws.
+struct DebugThreadView {
+  int id = 0;
+  std::string display;
+};
+
 // Transient execution state for the active debug session: the current stop, its
 // call stack, and which frame the user is focused on. Lives on
 // ProjectWorkspaceState (mirrors `breakpoint_store` / `diagnostics_store`) but is
@@ -32,6 +39,12 @@ struct DebugExecutionView {
   std::string stop_reason;  // breakpoint / step / pause / exception / ...
   std::vector<DebugStackFrameView> frames;
   std::size_t focused_frame_index = 0;
+  // Thread selector (Phase 7 multi-thread). Populated a beat after the stop via
+  // a `threads` request; `focused_thread_id` is the thread whose frames `frames`
+  // currently holds. A single-thread target leaves `threads` size <= 1 (no
+  // selector is shown). Preserved across a thread switch (frames are rebuilt).
+  std::vector<DebugThreadView> threads;
+  int focused_thread_id = 0;
 
   void Clear() {
     stopped = false;
@@ -39,6 +52,8 @@ struct DebugExecutionView {
     stop_reason.clear();
     frames.clear();
     focused_frame_index = 0;
+    threads.clear();
+    focused_thread_id = 0;
   }
 
   const DebugStackFrameView* FocusedFrame() const {
@@ -63,6 +78,30 @@ struct DebugExecutionView {
   std::size_t FocusedLine() const {
     const DebugStackFrameView* frame = FocusedFrame();
     return frame != nullptr ? frame->line : 0;
+  }
+
+  // The Call Stack panel lays out an optional thread selector above the frame
+  // list. The selector is shown only when there is more than one thread; with a
+  // single thread the panel is byte-for-byte its pre-Phase-7 look. Render, mouse,
+  // and scroll all derive their row geometry from these helpers so the optional
+  // leading thread rows never desynchronize.
+  bool HasThreadSelector() const { return threads.size() > 1; }
+  std::size_t ThreadRowCount() const { return HasThreadSelector() ? threads.size() : 0; }
+  std::size_t PanelRowCount() const { return ThreadRowCount() + frames.size(); }
+
+  struct PanelRowRef {
+    enum class Kind { Thread, Frame };
+    Kind kind = Kind::Frame;
+    std::size_t index = 0;  // into `threads` (Thread) or `frames` (Frame)
+  };
+  // Map a flat panel row to a thread or frame. Rows [0, ThreadRowCount()) are
+  // thread rows; the remainder are frames.
+  PanelRowRef PanelRowAt(std::size_t row) const {
+    const std::size_t thread_rows = ThreadRowCount();
+    if (row < thread_rows) {
+      return PanelRowRef{PanelRowRef::Kind::Thread, row};
+    }
+    return PanelRowRef{PanelRowRef::Kind::Frame, row - thread_rows};
   }
 };
 

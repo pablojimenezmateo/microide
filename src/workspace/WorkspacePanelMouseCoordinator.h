@@ -47,6 +47,9 @@ class PanelMouseCoordinator {
     // call-stack frame is focused; lazily expand/collapse a tree row; enter inline
     // value edit on a leaf.
     std::function<void(int)> on_debug_frame_focus_changed;
+    // Call Stack thread selector (Phase 7 multi-thread): switch the active thread,
+    // re-resolving its frames.
+    std::function<void(int)> on_debug_thread_focus_changed;
     std::function<void(std::size_t)> toggle_debug_variable_row;
     std::function<void(std::size_t)> begin_debug_variable_edit;
     // Debug Watch panel (Phase 6): toggle a watched value's subtree; begin inline
@@ -56,6 +59,8 @@ class PanelMouseCoordinator {
     std::function<void(std::size_t)> begin_debug_watch_edit;
     std::function<void()> add_debug_watch_expression;
     std::function<void(std::size_t)> edit_debug_watch_expression;
+    // Debug Breakpoints panel (Phase 7): toggle an exception-breakpoint filter.
+    std::function<void(const std::string&)> toggle_debug_exception_filter;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,

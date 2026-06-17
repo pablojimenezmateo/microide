@@ -3,6 +3,7 @@
 #include "editor/BreakpointStore.h"
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
+#include "workspace/DebugBreakpointsModel.h"
 #include "workspace/DebugSession.h"
 #include "workspace/DebugVariablesModel.h"
 #include "workspace/DebugViewModel.h"
@@ -39,11 +40,17 @@ const char* MockAdapterSource() {
 import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
-# config_done / stop / pause / variables / evaluate all advertise configurationDone support.
-supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate")
+# config_done / stop / pause / variables / evaluate / restart / threads / exception
+# all advertise configurationDone support.
+supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
+                                "restart", "threads", "exception")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
-stop_on_config = mode in ("stop", "variables", "evaluate")  # emit `stopped` after configurationDone
+supports_restart = (mode == "restart")
+multi_thread = (mode == "threads")     # `threads` returns two threads + per-thread frames
+exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters
+# emit `stopped` after configurationDone
+stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception")
 running_no_stop = (mode == "pause")   # stay running so the test can pause
 seq = 0
 
@@ -109,10 +116,17 @@ while True:
     command = msg.get("command")
     received.append(command)
     if command == "initialize":
-        respond(msg, {"supportsConfigurationDoneRequest": supports_config_done,
-                      "supportsSetVariable": supports_set_variable,
-                      "supportsEvaluateForHovers": supports_evaluate,
-                      "supportsTerminateRequest": True})
+        caps = {"supportsConfigurationDoneRequest": supports_config_done,
+                "supportsSetVariable": supports_set_variable,
+                "supportsEvaluateForHovers": supports_evaluate,
+                "supportsRestartRequest": supports_restart,
+                "supportsTerminateRequest": True}
+        if exception_mode:
+            caps["exceptionBreakpointFilters"] = [
+                {"filter": "raised", "label": "Raised Exceptions", "default": False},
+                {"filter": "uncaught", "label": "Uncaught Exceptions", "default": True},
+            ]
+        respond(msg, caps)
         event("initialized")
     elif command == "setBreakpoints":
         args = msg.get("arguments", {})
@@ -133,12 +147,21 @@ while True:
         else:
             finish_launch()
     elif command == "stackTrace":
+        tid = msg.get("arguments", {}).get("threadId", 1)
+        # Encode the threadId into the top frame name so a thread switch is
+        # observable (the frames differ per thread).
+        top_name = "main" if tid == 1 else "worker"
         respond(msg, {"stackFrames": [
-            {"id": 1, "name": "main", "line": 10, "column": 1,
+            {"id": tid * 10 + 1, "name": top_name, "line": 10, "column": 1,
              "source": {"name": "main.py", "path": "/proj/main.py"}},
-            {"id": 2, "name": "caller", "line": 3, "column": 1,
+            {"id": tid * 10 + 2, "name": "caller", "line": 3, "column": 1,
              "source": {"name": "main.py", "path": "/proj/main.py"}},
         ], "totalFrames": 2})
+    elif command == "restart":
+        event("output", {"category": "stdout", "output": "cmd:restart\n"})
+        respond(msg, {})
+        # Re-run the configuration handshake (some adapters re-emit initialized).
+        event("initialized")
     elif command in ("continue", "next", "stepIn", "stepOut"):
         event("output", {"category": "stdout", "output": "cmd:" + command + "\n"})
         respond(msg, {"allThreadsContinued": True} if command == "continue" else {})
@@ -170,7 +193,14 @@ while True:
         value = args.get("expression", "") + "@" + str(args.get("frameId", 0))
         respond(msg, {"result": value, "type": "int", "variablesReference": 0})
     elif command == "threads":
-        respond(msg, {"threads": [{"id": 1, "name": "main"}]})
+        if multi_thread:
+            respond(msg, {"threads": [{"id": 1, "name": "main"}, {"id": 2, "name": "worker"}]})
+        else:
+            respond(msg, {"threads": [{"id": 1, "name": "main"}]})
+    elif command == "setExceptionBreakpoints":
+        filters = msg.get("arguments", {}).get("filters", [])
+        event("output", {"category": "stdout", "output": "exc:" + ",".join(filters) + "\n"})
+        respond(msg, {})
     elif command == "pause":
         event("output", {"category": "stdout", "output": "cmd:pause\n"})
         respond(msg, {})
@@ -212,6 +242,8 @@ struct CapturedSession {
   std::string last_stop_reason;
   int stop_count = 0;
   int resume_count = 0;
+  std::vector<codec::DapThread> last_threads;
+  std::vector<codec::DapExceptionFilter> advertised_filters;
 };
 
 DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
@@ -234,6 +266,13 @@ DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
     ++captured.stop_count;
   };
   callbacks.on_resumed = [&captured]() { ++captured.resume_count; };
+  callbacks.on_threads = [&captured](const std::vector<codec::DapThread>& threads) {
+    captured.last_threads = threads;
+  };
+  callbacks.on_exception_filters_available =
+      [&captured](const std::vector<codec::DapExceptionFilter>& filters) {
+        captured.advertised_filters = filters;
+      };
   return callbacks;
 }
 
@@ -864,6 +903,209 @@ void TestDebugWatchModelBehavior() {
          "ClearResults blanks evaluated values but keeps the placeholder rows");
 }
 
+// Restart via the DAP `restart` request: the adapter re-runs its handshake and
+// re-stops; the session re-sends configurationDone and reports a second stop.
+void TestDebugSessionRestartViaRestartRequest() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "restart"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "adapter should stop after the first configurationDone");
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr && session->Client().Capabilities().supports_restart_request,
+         "restart-mode adapter advertises supportsRestartRequest");
+
+  const int stops_before = captured.stop_count;
+  session->Restart();
+  Expect(PollUntil(manager, [&]() { return captured.stop_count > stops_before; }),
+         "restart should drive the adapter to re-stop");
+  Expect(captured.output.find("cmd:restart") != std::string::npos,
+         "Restart should send the DAP `restart` command");
+  manager.ShutdownAll();
+}
+
+// A session whose adapter lacks supportsRestartRequest performs no in-place
+// restart (the service layer terminates + relaunches instead).
+void TestDebugSessionRestartNoOpWithoutCapability() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));  // no restart cap
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+  DebugSession* session = manager.ActiveSession();
+  Expect(!session->Client().Capabilities().supports_restart_request,
+         "stop-mode adapter does not advertise supportsRestartRequest");
+  session->Restart();
+  // Give any erroneous restart a chance to surface, then confirm none was sent.
+  PollUntil(manager, [&]() { return captured.output.find("cmd:restart") != std::string::npos; },
+            200);
+  Expect(captured.output.find("cmd:restart") == std::string::npos,
+         "Restart must not send a `restart` request without the capability");
+  manager.ShutdownAll();
+}
+
+// Multi-thread: on stop the session caches the full thread list via `threads`,
+// and SwitchThread re-resolves the picked thread's frames (observably different).
+void TestDebugSessionThreadsCachedAndSwitch() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "threads"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+  // The thread list lands a beat after the stop (a second `threads` request).
+  Expect(PollUntil(manager, [&]() { return captured.last_threads.size() == 2; }),
+         "the session should cache the adapter's full thread list on stop");
+  Expect(captured.last_threads[0].name == "main" && captured.last_threads[1].name == "worker",
+         "both threads should resolve with their names");
+  Expect(captured.last_frames.size() == 2 && captured.last_frames[0].name == "main",
+         "the initial stop resolves thread 1's frames");
+
+  // Switch to thread 2 → its frames re-resolve (top frame name differs).
+  manager.ActiveSession()->SwitchThread(2);
+  Expect(PollUntil(manager,
+                   [&]() {
+                     return !captured.last_frames.empty() &&
+                            captured.last_frames[0].name == "worker";
+                   }),
+         "SwitchThread should re-resolve the picked thread's frames");
+  manager.ShutdownAll();
+}
+
+// Exception filters: the adapter advertises filters at initialize; the session
+// surfaces them and sends the enabled ids via setExceptionBreakpoints on launch;
+// a live re-send reflects a toggle.
+void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "exception"));
+
+  CapturedSession captured;
+  DebugSession::Callbacks callbacks = MakeCallbacks(captured);
+  // The host's enabled-filter set (intersected with advertised filters by the
+  // session). "bogus" must be filtered out; only "raised" should reach the wire.
+  std::vector<std::string> enabled = {"raised", "bogus"};
+  callbacks.exception_filter_provider = [&enabled]() { return enabled; };
+
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, std::move(callbacks)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+  Expect(captured.advertised_filters.size() == 2,
+         "the adapter's advertised exception filters should surface to the host");
+  Expect(captured.advertised_filters[0].filter == "raised" &&
+             captured.advertised_filters[1].default_enabled,
+         "advertised filter ids + defaults should parse");
+  Expect(captured.output.find("exc:raised\n") != std::string::npos,
+         "only advertised enabled ids should be sent via setExceptionBreakpoints");
+
+  // Toggle: enable both, live re-send.
+  enabled = {"raised", "uncaught"};
+  manager.ActiveSession()->ResendExceptionFilters();
+  Expect(PollUntil(manager,
+                   [&]() { return captured.output.find("exc:raised,uncaught\n") != std::string::npos; }),
+         "a live re-send should reflect the updated enabled set");
+  manager.ShutdownAll();
+}
+
+// Pure DebugBreakpointsModel behavior (no adapter): default seeding, toggle,
+// EnabledAdvertisedIds intersection, and Rebuild's prebuilt rows.
+void TestDebugBreakpointsModelBehavior() {
+  using microide::workspace::DebugBreakpointsModel;
+  using microide::workspace::DebugBreakpointRowView;
+  DebugBreakpointsModel model;
+
+  std::vector<codec::DapExceptionFilter> filters = {
+      codec::DapExceptionFilter{.filter = "raised", .label = "Raised", .default_enabled = false},
+      codec::DapExceptionFilter{.filter = "uncaught", .label = "Uncaught", .default_enabled = true},
+  };
+  // First advertise seeds defaults (only "uncaught" is default-on).
+  Expect(model.SetAdvertisedFilters(filters), "first advertise seeds defaults (a change)");
+  Expect(model.Seeded(), "the model records that defaults were seeded");
+  Expect(model.IsEnabled("uncaught") && !model.IsEnabled("raised"),
+         "the default-on filter is enabled, the default-off one is not");
+  Expect((model.EnabledAdvertisedIds() == std::vector<std::string>{"uncaught"}),
+         "EnabledAdvertisedIds returns only enabled advertised ids in advertised order");
+
+  // Re-advertising does not re-seed (a user's choice persists).
+  Expect(!model.SetAdvertisedFilters(filters), "re-advertise after seeding is not a change");
+
+  // Toggle raised on; an unknown id is a no-op.
+  Expect(model.ToggleFilter("raised"), "toggling an advertised filter changes the set");
+  Expect(!model.ToggleFilter("nope"), "toggling an unadvertised filter is a no-op");
+  Expect((model.EnabledAdvertisedIds() == std::vector<std::string>{"raised", "uncaught"}),
+         "both filters are now enabled, in advertised order");
+
+  // Rebuild rows: a header + one row per filter, then a breakpoints section.
+  editor::BreakpointStore store;
+  store.Set("/proj/a.py", 4);
+  store.SetCondition("/proj/a.py", 9, "i > 3");
+  model.Rebuild(store);
+  const std::vector<DebugBreakpointRowView>& rows = model.Rows();
+  Expect(!rows.empty() && rows[0].kind == DebugBreakpointRowView::Kind::Header,
+         "the first row is the exception-filters header");
+  bool saw_filter = false;
+  bool saw_breakpoint = false;
+  for (const DebugBreakpointRowView& row : rows) {
+    if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter && row.filter_id == "uncaught") {
+      saw_filter = row.enabled;
+    }
+    if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && row.display == "a.py:10") {
+      saw_breakpoint = (row.secondary == "when i > 3");
+    }
+  }
+  Expect(saw_filter, "an enabled filter row reflects its enabled state");
+  Expect(saw_breakpoint, "a conditional breakpoint row prebuilds file:line + a condition trailer");
+
+  // Clearing advertised filters (session stop) drops the filter section.
+  model.ClearAdvertisedFilters();
+  model.Rebuild(store);
+  for (const DebugBreakpointRowView& row : model.Rows()) {
+    Expect(row.kind != DebugBreakpointRowView::Kind::ExceptionFilter,
+           "no exception-filter rows remain after the advertised set is cleared");
+  }
+}
+
 void TestDebugManagerRejectsUnknownAdapterType() {
   DapManager manager;
   CapturedSession captured;
@@ -897,6 +1139,15 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionResolvesStackOnStopAndStepsResume",
           TestDebugSessionResolvesStackOnStopAndStepsResume);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
+  AddTest(tests, "DebugService/SessionRestartViaRestartRequest",
+          TestDebugSessionRestartViaRestartRequest);
+  AddTest(tests, "DebugService/SessionRestartNoOpWithoutCapability",
+          TestDebugSessionRestartNoOpWithoutCapability);
+  AddTest(tests, "DebugService/SessionThreadsCachedAndSwitch",
+          TestDebugSessionThreadsCachedAndSwitch);
+  AddTest(tests, "DebugService/SessionExceptionFiltersSentOnLaunchAndToggle",
+          TestDebugSessionExceptionFiltersSentOnLaunchAndToggle);
+  AddTest(tests, "DebugService/BreakpointsModelBehavior", TestDebugBreakpointsModelBehavior);
   AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",
           TestDebugSessionVariablesTreeAndSetVariable);
   AddTest(tests, "DebugService/SessionEvaluateHover", TestDebugSessionEvaluateHover);

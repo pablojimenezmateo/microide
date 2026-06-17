@@ -17,6 +17,17 @@
 // request via `request_seq`.
 namespace microide::workspace::dap_protocol {
 
+// One exception-breakpoint filter advertised by the adapter in its initialize
+// response (`capabilities.exceptionBreakpointFilters`). `filter` is the id sent
+// back in `setExceptionBreakpoints`; `label` is the human-readable toggle text.
+struct DapExceptionFilter {
+  std::string filter;
+  std::string label;
+  std::string description;
+  bool default_enabled = false;
+  bool supports_condition = false;
+};
+
 // ---- Adapter capabilities (subset we act on) ------------------------------
 struct DapCapabilities {
   bool supports_configuration_done_request = false;
@@ -30,6 +41,9 @@ struct DapCapabilities {
   bool supports_restart_request = false;
   bool supports_step_back = false;
   bool supports_exception_filter_options = false;
+  // The adapter's advertised exception-breakpoint filters (Phase 7). Empty when
+  // the adapter does not support exception breakpoints.
+  std::vector<DapExceptionFilter> exception_filters;
 };
 
 // ---- Response / event envelopes -------------------------------------------
@@ -133,6 +147,10 @@ struct SetBreakpointInput {
 //   {"source":{"path":...},"breakpoints":[{"line":N,"condition":...},...]}
 util::JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
                                             const std::vector<SetBreakpointInput>& breakpoints);
+
+// Build the `setExceptionBreakpoints` arguments object (Phase 7):
+//   {"filters":["filterId", ...]}
+util::JsonValue MakeSetExceptionBreakpointsArguments(const std::vector<std::string>& filter_ids);
 
 // ---- Variables / scopes / setVariable request arguments (Phase 4) ----------
 // Build `stackTrace` arguments: {"threadId":N,"startFrame":S,"levels":L}. `levels`

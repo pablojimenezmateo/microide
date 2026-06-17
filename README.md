@@ -446,6 +446,7 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `debug-step-in`
 - `debug-step-out`
 - `debug-pause`
+- `debug-restart`
 - `quit`
 - `reopen`
 - `save`

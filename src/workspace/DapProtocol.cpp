@@ -48,6 +48,17 @@ JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
   return JsonValue(std::move(args));
 }
 
+JsonValue MakeSetExceptionBreakpointsArguments(const std::vector<std::string>& filter_ids) {
+  JsonArray filters;
+  filters.reserve(filter_ids.size());
+  for (const std::string& id : filter_ids) {
+    filters.push_back(JsonValue(id));
+  }
+  JsonObject args;
+  args["filters"] = JsonValue(std::move(filters));
+  return JsonValue(std::move(args));
+}
+
 JsonValue MakeStackTraceArguments(int thread_id, int start_frame, int levels) {
   JsonObject args;
   args["threadId"] = JsonValue(static_cast<std::int64_t>(thread_id));
@@ -147,6 +158,21 @@ DapCapabilities ParseCapabilities(const JsonValue& body) {
   caps.supports_restart_request = body["supportsRestartRequest"].AsBool(false);
   caps.supports_step_back = body["supportsStepBack"].AsBool(false);
   caps.supports_exception_filter_options = body["supportsExceptionFilterOptions"].AsBool(false);
+  for (const JsonValue& item : body["exceptionBreakpointFilters"].AsArray()) {
+    DapExceptionFilter filter;
+    filter.filter = AsString(item["filter"]);
+    if (filter.filter.empty()) {
+      continue;
+    }
+    filter.label = AsString(item["label"]);
+    if (filter.label.empty()) {
+      filter.label = filter.filter;
+    }
+    filter.description = AsString(item["description"]);
+    filter.default_enabled = item["default"].AsBool(false);
+    filter.supports_condition = item["supportsCondition"].AsBool(false);
+    caps.exception_filters.push_back(std::move(filter));
+  }
   return caps;
 }
 

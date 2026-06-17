@@ -172,6 +172,7 @@ class WorkspaceActionContext {
     std::function<void()> debug_step_in;
     std::function<void()> debug_step_out;
     std::function<void()> debug_pause;
+    std::function<void()> debug_restart;
     // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
@@ -323,6 +324,7 @@ class WorkspaceActionContext {
   void DebugStepIn();
   void DebugStepOut();
   void DebugPause();
+  void DebugRestart();
   // Breakpoint modifiers (Phase 6). Read the breakpoint-gutter context menu's
   // target line; open a prompt seeded with the current field / remove the bp.
   void EditBreakpointModifierFromMenu(ActionId id);

@@ -149,6 +149,9 @@ void WorkspaceShell::StopDebugging() {
 
 void WorkspaceShell::ResendBreakpointsForFile(const std::filesystem::path& path) {
   debug_service_.ResendBreakpointsForFile(path);
+  // The Breakpoints panel mirrors the line-breakpoint set; rebuild it whenever a
+  // breakpoint is toggled or a modifier edited (both route through here).
+  debug_service_.SyncBreakpointsPanel();
 }
 
 bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSessionActive(); }
@@ -167,6 +170,8 @@ void WorkspaceShell::DebugStepOver() { debug_service_.StepOver(); }
 void WorkspaceShell::DebugStepIn() { debug_service_.StepIn(); }
 void WorkspaceShell::DebugStepOut() { debug_service_.StepOut(); }
 void WorkspaceShell::DebugPause() { debug_service_.Pause(); }
+void WorkspaceShell::DebugRestart() { debug_service_.Restart(); }
+void WorkspaceShell::DebugFocusThread(int thread_id) { debug_service_.FocusThread(thread_id); }
 
 void WorkspaceShell::AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output) {
   // Split on newlines so each console line is its own channel entry. A trailing

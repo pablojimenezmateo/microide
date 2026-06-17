@@ -213,17 +213,26 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   if (state_.panel.content == PanelContentKind::Debug) {
     DebugExecutionView& exec = state_.debug_execution;
-    if (!exec.frames.empty()) {
-      const auto panel_layout =
-          operations_.compute_bottom_panel_log_layout(layout, exec.frames.size());
+    const std::size_t row_count = exec.PanelRowCount();
+    if (row_count > 0) {
+      const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, row_count);
       if (Contains(panel_layout.content_rect, event.button.x, event.button.y)) {
-        const auto line_index = BottomPanelLineIndexAtPoint(
-            panel_layout, static_cast<float>(event.button.y), exec.frames.size());
-        if (line_index.has_value() && *line_index < exec.frames.size()) {
+        const auto line_index =
+            BottomPanelLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y), row_count);
+        if (line_index.has_value() && *line_index < row_count) {
+          const auto row_ref = exec.PanelRowAt(*line_index);
+          if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Thread) {
+            // Switch to the picked thread: re-resolve its frames + re-focus it.
+            const int thread_id = exec.threads[row_ref.index].id;
+            if (thread_id != exec.focused_thread_id && operations_.on_debug_thread_focus_changed) {
+              operations_.on_debug_thread_focus_changed(thread_id);
+            }
+            return true;
+          }
           // Focus the picked frame; the editor execution-line highlight follows
           // `focused_frame_index`, so selecting a caller moves the highlight too.
-          exec.focused_frame_index = *line_index;
-          const DebugStackFrameView& frame = exec.frames[*line_index];
+          exec.focused_frame_index = row_ref.index;
+          const DebugStackFrameView& frame = exec.frames[row_ref.index];
           // Refresh the Variables tree for the newly focused frame.
           if (operations_.on_debug_frame_focus_changed) {
             operations_.on_debug_frame_focus_changed(frame.id);
@@ -302,6 +311,36 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       } else if (operations_.add_debug_watch_expression) {
         // Click in the empty area (or empty panel) → prompt for a new expression.
         operations_.add_debug_watch_expression();
+      }
+      state_.surface.focus = FocusTarget::Panel;
+      return true;
+    }
+  }
+
+  if (state_.panel.content == PanelContentKind::DebugBreakpoints) {
+    const DebugBreakpointsModel& model = state_.debug_breakpoints_panel;
+    const std::vector<DebugBreakpointRowView>& rows = model.Rows();
+    if (!rows.empty()) {
+      const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, rows.size());
+      if (Contains(panel_layout.content_rect, event.button.x, event.button.y)) {
+        const auto line_index = BottomPanelLineIndexAtPoint(
+            panel_layout, static_cast<float>(event.button.y), rows.size());
+        if (line_index.has_value() && *line_index < rows.size()) {
+          const DebugBreakpointRowView& row = rows[*line_index];
+          if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter &&
+              operations_.toggle_debug_exception_filter) {
+            operations_.toggle_debug_exception_filter(row.filter_id);
+          } else if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && !row.path.empty()) {
+            // Navigate to the breakpoint's source line.
+            operations_.open_file(row.path);
+            if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+                viewport != nullptr) {
+              viewport->MoveCursorTo(row.line, 0);
+            }
+            state_.surface.focus = FocusTarget::Editor;
+            return true;
+          }
+        }
       }
       state_.surface.focus = FocusTarget::Panel;
       return true;
@@ -522,10 +561,16 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                 }
                 const ProjectWorkspaceState& state = context_.current_project_state;
                 if (state.panel.content == PanelContentKind::Debug) {
-                  return state.debug_execution.frames.size();
+                  return state.debug_execution.PanelRowCount();
                 }
                 if (state.panel.content == PanelContentKind::DebugVariables) {
                   return state.debug_variables.Rows().size();
+                }
+                if (state.panel.content == PanelContentKind::DebugWatch) {
+                  return state.debug_watch.Rows().size();
+                }
+                if (state.panel.content == PanelContentKind::DebugBreakpoints) {
+                  return state.debug_breakpoints_panel.RowCount();
                 }
                 return std::size_t{0};
               },
@@ -584,6 +629,8 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
               },
           .on_debug_frame_focus_changed =
               [this](int frame_id) { debug_service_.FocusFrame(frame_id); },
+          .on_debug_thread_focus_changed =
+              [this](int thread_id) { debug_service_.FocusThread(thread_id); },
           .toggle_debug_variable_row =
               [this](std::size_t row) { debug_service_.ToggleVariableRow(row); },
           .begin_debug_variable_edit =
@@ -595,6 +642,10 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
           .add_debug_watch_expression = [this]() { OpenWatchExpressionPrompt(std::nullopt); },
           .edit_debug_watch_expression =
               [this](std::size_t index) { OpenWatchExpressionPrompt(index); },
+          .toggle_debug_exception_filter =
+              [this](const std::string& filter_id) {
+                debug_service_.ToggleExceptionFilter(filter_id);
+              },
       });
 }
 

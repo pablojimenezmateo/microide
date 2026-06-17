@@ -45,6 +45,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const bool debug_panel = panel_vm.content == PanelContentKind::Debug;
   const bool variables_panel = panel_vm.content == PanelContentKind::DebugVariables;
   const bool watch_panel = panel_vm.content == PanelContentKind::DebugWatch;
+  const bool breakpoints_panel = panel_vm.content == PanelContentKind::DebugBreakpoints;
   const DebugExecutionView* debug_view =
       (debug_panel && panel_vm.project_state != nullptr) ? &panel_vm.project_state->debug_execution
                                                          : nullptr;
@@ -55,6 +56,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const DebugWatchModel* watch_model =
       (watch_panel && panel_vm.project_state != nullptr) ? &panel_vm.project_state->debug_watch
                                                          : nullptr;
+  const DebugBreakpointsModel* breakpoints_model =
+      (breakpoints_panel && panel_vm.project_state != nullptr)
+          ? &panel_vm.project_state->debug_breakpoints_panel
+          : nullptr;
   const std::vector<VisibleStripTab> visible_panel_tabs =
       tab_strip_service_.ComputeVisibleBottomPanelTabs(
           *panel_vm.project_state, panel_header, layout_mode_service_.CurrentMode(),
@@ -365,10 +370,12 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const std::size_t panel_line_count =
       terminal_panel ? terminal_line_count
                      : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
-                     : debug_panel  ? (debug_view != nullptr ? debug_view->frames.size() : 0)
+                     : debug_panel  ? (debug_view != nullptr ? debug_view->PanelRowCount() : 0)
                      : variables_panel ? (vars_model != nullptr ? vars_model->Rows().size() : 0)
                      : watch_panel ? (watch_model != nullptr ? watch_model->Rows().size() : 0)
-                                       : 0;
+                     : breakpoints_panel
+                         ? (breakpoints_model != nullptr ? breakpoints_model->RowCount() : 0)
+                         : 0;
 
   const BottomPanelLogLayout panel_layout =
       ComputeBottomPanelLogLayout(layout, panel_line_count);
@@ -604,7 +611,25 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       continue;
     }
     if (debug_panel && debug_view != nullptr) {
-      const std::size_t frame_index = static_cast<std::size_t>(index);
+      const auto row_ref = debug_view->PanelRowAt(static_cast<std::size_t>(index));
+      if (row_ref.kind == DebugExecutionView::PanelRowRef::Kind::Thread) {
+        const DebugThreadView& thread = debug_view->threads[row_ref.index];
+        const bool focused = thread.id == debug_view->focused_thread_id;
+        SDL_Color background = theme_.surface_background;
+        if (focused) {
+          background = theme_.row_highlight;
+          DrawFilledRect(renderer,
+                         MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+                                  panel_layout.content_rect.w, panel_layout.line_height),
+                         background);
+        }
+        // Thread rows sit flush-left; the focused thread's frames are shown below.
+        DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y,
+                   focused ? theme_.text_primary : theme_.text_secondary, background,
+                   text_renderer_.TruncateToWidth(thread.display, panel_layout.text_width));
+        continue;
+      }
+      const std::size_t frame_index = row_ref.index;
       const DebugStackFrameView& frame = debug_view->frames[frame_index];
       const bool focused = frame_index == debug_view->focused_frame_index;
       SDL_Color background = theme_.surface_background;
@@ -615,8 +640,13 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                 panel_layout.content_rect.w, panel_layout.line_height),
                        background);
       }
+      // Frame rows indent under the thread selector when one is shown, so the
+      // hierarchy (thread → its frames) reads at a glance.
+      const float frame_x = panel_layout.text_x + (debug_view->HasThreadSelector() ? 16.0f : 0.0f);
+      const float frame_width =
+          panel_layout.text_width - (debug_view->HasThreadSelector() ? 16.0f : 0.0f);
       // Frame name (primary), then the source location (muted) trailing it.
-      draw_two_column_row(panel_layout.text_x, panel_layout.text_width, frame.display_primary,
+      draw_two_column_row(frame_x, frame_width, frame.display_primary,
                           focused ? theme_.text_primary : theme_.text_secondary,
                           frame.display_secondary, theme_.text_muted, line_y, background);
       continue;
@@ -629,6 +659,38 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       draw_value_tree_row(*watch_model, static_cast<std::size_t>(index), line_y);
       continue;
     }
+    if (breakpoints_panel && breakpoints_model != nullptr) {
+      const std::size_t row_index = static_cast<std::size_t>(index);
+      if (row_index >= breakpoints_model->Rows().size()) {
+        continue;
+      }
+      const DebugBreakpointRowView& row = breakpoints_model->Rows()[row_index];
+      if (row.kind == DebugBreakpointRowView::Kind::Header) {
+        DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y, theme_.text_muted,
+                   theme_.surface_background,
+                   text_renderer_.TruncateToWidth(row.display, panel_layout.text_width));
+        continue;
+      }
+      if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter) {
+        // A leading checkbox glyph encodes the enabled state (no per-frame string
+        // build: both glyphs are static literals).
+        const char* checkbox = row.enabled ? "[x] " : "[ ] ";
+        const float box_w = text_renderer_.MeasureWidth(checkbox);
+        DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y,
+                   row.enabled ? theme_.text_primary : theme_.text_secondary,
+                   theme_.surface_background, checkbox);
+        DrawTextOn(text_renderer_, renderer, panel_layout.text_x + box_w, line_y,
+                   row.enabled ? theme_.text_primary : theme_.text_secondary,
+                   theme_.surface_background,
+                   text_renderer_.TruncateToWidth(row.display, panel_layout.text_width - box_w));
+        continue;
+      }
+      // Breakpoint row: "file:line" indented, with a muted modifier trailer.
+      draw_two_column_row(panel_layout.text_x + 16.0f, panel_layout.text_width - 16.0f, row.display,
+                          theme_.text_secondary, row.secondary, theme_.text_muted, line_y,
+                          theme_.surface_background);
+      continue;
+    }
   }
 
   // Empty-state hint so adding the first watch expression is discoverable (a
@@ -636,6 +698,11 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   if (watch_panel && (watch_model == nullptr || watch_model->Rows().empty())) {
     DrawTextOn(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y, theme_.text_muted,
                theme_.surface_background, "No watch expressions — click or press Insert to add one.");
+  }
+  if (breakpoints_panel && (breakpoints_model == nullptr || breakpoints_model->RowCount() == 0)) {
+    DrawTextOn(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y, theme_.text_muted,
+               theme_.surface_background,
+               "No breakpoints — click the editor gutter to add one.");
   }
 
   if (terminal_panel) {

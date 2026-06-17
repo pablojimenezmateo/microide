@@ -175,6 +175,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      KeybindingSpec{
+          .id = "debug-restart",
+          .action = ActionId::DebugRestart,
+          .key = SDLK_F5,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       // Editor context
       KeybindingSpec{
           .id = "undo",

@@ -1,10 +1,10 @@
 # Debugger / DAP Integration
 
 Status: **active, dedicated phase** (promoted from the durable non-goal list on
-2026-06-17). Phases 0–6 are done on `feat/dap`; Phase 7 (polish) is next. This
-document is the single self-sufficient source of truth for the debugger effort — a
-fresh agent on any machine should be able to read this file and continue without
-external context.
+2026-06-17). Phases 0–7 are done on `feat/dap`; Phase 8 (multi-session) is next.
+This document is the single self-sufficient source of truth for the debugger
+effort — a fresh agent on any machine should be able to read this file and
+continue without external context.
 
 ## Goal
 
@@ -250,13 +250,25 @@ Original plan, retained for reference:
   `PersistedDebugState`; Watch panel re-evaluates on each `stopped`
   (`evaluate(context:"watch")`).
 
-### Phase 7 — Polish: multi-thread, multi-session, exception breakpoints, restart
+### Phase 7 — Polish: multi-thread, exception breakpoints, restart ✅ DONE (2026-06-17)
+
+The original Phase 7 bundled four features; multi-session was the only invasive
+one (it reworks `DapManager`'s single-session ownership + event routing) and the
+least valuable for a single-window editor, so it was **split out into Phase 8**.
+Phase 7 shipped the three additive features. See "Phase 7 — what shipped" below.
+
+### Phase 8 — Multi-session
 
 - N concurrent `DebugSession`s with an active-session switcher (each `DapClient`
   owns its own `seq`/`pending_requests`; route events by originating client).
-  Thread selector in the call-stack panel. `setExceptionBreakpoints(filters)` from
-  `capabilities.exceptionBreakpointFilters`. `restart` with terminate+relaunch
-  fallback if `!supportsRestartRequest`. Run the TSAN preset (multi-thread I/O).
+  The transient view models (`debug_execution`/`debug_variables`/`debug_watch`/
+  `debug_hover`/`debug_breakpoints_panel`) already live per-project on
+  `ProjectWorkspaceState`; they would move to per-session or be rebuilt on the
+  active-session switch. `DapManager.session_` (a single `unique_ptr`) becomes a
+  collection + an active index/id; `StartSession` appends rather than replacing.
+  A session switcher UI (command palette or a Call-Stack-panel header dropdown).
+  Run the **TSAN preset** once concurrent multi-session I/O lands (multiple
+  `DapClient` I/O threads running at once).
 
 ## Phase 0 — what shipped (2026-06-17)
 
@@ -711,11 +723,98 @@ Tests added:
   `DebugStateBackwardCompatNoWatch` (a watch-free record decodes with breakpoints
   intact). `DebugStateRecordFuzz` exercises the new tag (no target change).
 
+## Phase 7 — what shipped (2026-06-17)
+
+Three additive features (multi-session deferred to Phase 8). Files added:
+
+- `src/workspace/DebugBreakpointsModel.{h,cpp}` — backs the new **"Breakpoints"**
+  peer bottom-panel tab: the persisted enabled exception-filter id set + the active
+  session's advertised filters + a prebuilt flat row list (a header, one toggle row
+  per advertised filter, then navigable `file:line` breakpoint rows). Rebuilt by
+  `Rebuild(BreakpointStore)` on any input change (mirrors how `DebugValueTree` keeps
+  a prebuilt row list, so the lint-covered render TU only draws).
+
+**Restart** (`ActionId::DebugRestart`, default **Ctrl+Shift+F5**):
+
+- `DebugSession::Restart()` sends the DAP `restart` request when the adapter
+  advertises `supportsRestartRequest` (re-arming the `configurationDone` guard so a
+  re-emitted `initialized` re-installs breakpoints) and optimistically resumes.
+- `DebugService::Restart()` uses that path when supported, else **terminates +
+  relaunches** with the remembered `LaunchConfig`/cwd (`StartSession` blocks on the
+  prior session's shutdown, so it is a clean synchronous relaunch).
+- Wired end-to-end via the established command pattern (registry / availability /
+  keybinding / executor / context op / shell forwarder), gated on `debug.enabled`
+  + an active session.
+
+**Multi-thread** (thread selector in the Call Stack panel):
+
+- `DebugExecutionView` gained `threads` (prebuilt `DebugThreadView` rows) +
+  `focused_thread_id`, plus `HasThreadSelector()`/`PanelRowCount()`/`PanelRowAt()`
+  helpers so render, mouse, and scroll derive the optional leading thread rows from
+  one source of truth (a single-thread target shows no selector — byte-for-byte the
+  pre-Phase-7 look).
+- On `stopped`, `DebugSession` fires the stack first then a **second** `threads`
+  request (`on_threads`) so the thread list augments the panel a beat later without
+  delaying the stack/highlight (speed). `SwitchThread(id)` re-resolves the picked
+  thread's frames and re-emits `on_stopped` (reusing `FocusFrame` → scopes/watch
+  refresh). `Pause()`'s thread round-trip was deduped onto the shared
+  `RequestThreads`.
+- Call Stack render indents frames under a highlighted thread header;
+  `WorkspacePanelMouseCoordinator` switches threads on a header click.
+
+**Exception breakpoints** (the Breakpoints tab):
+
+- `DapProtocol` gained `DapExceptionFilter` + `DapCapabilities.exception_filters`
+  (parsed from `exceptionBreakpointFilters`) and `MakeSetExceptionBreakpointsArguments`.
+- `DebugSession` surfaces advertised filters at `initialized`
+  (`on_exception_filters_available`), pulls the enabled ids
+  (`exception_filter_provider`), and sends `setExceptionBreakpoints` (intersected
+  with advertised ids, in advertised order) during the config handshake +
+  `ResendExceptionFilters()` on a live toggle.
+- `DebugBreakpointsModel` seeds the enabled set from adapter defaults the first
+  time filters are seen (a persisted `seeded` flag, so "all off" persists rather
+  than re-seeding). `DebugService::ToggleExceptionFilter` + `SyncBreakpointsPanel`
+  drive the panel; clicking a filter row toggles + live-resends, clicking a
+  breakpoint row navigates.
+- Persistence: additive `DebugStateTag::ExceptionFilter` (repeated string ids) +
+  `ExceptionFiltersSeeded` (bool) — **no `kSchemaVersion` bump** (the watch-tag
+  pattern); round-tripped in `Save/RestoreDebugState`.
+
+Key decisions (locked):
+
+- **Multi-session deferred to Phase 8** (per the scope split): the three additive
+  features ship independently; the invasive `DapManager` single-session rework is
+  isolated.
+- **Threads as a second async request, not folded into the stop path** (speed):
+  the execution-line + Call Stack appear immediately; the selector fills a beat
+  later. Single-thread targets render exactly as before.
+- **Exception filters are adapter-dynamic, so they live in a model + a peer tab,
+  not static settings.** The enabled id set persists; the advertised filter
+  definitions are transient (cleared on session stop).
+- **No schema bump for the new persisted tags** (additive, skip-unknown), matching
+  the Phase 6 watch-expression decision.
+
+Tests added (`tests/DebugServiceTests.cpp` mock-adapter modes `restart`/`threads`/
+`exception`, `tests/DapProtocolTests.cpp`, `tests/PersistedStateRecordTests.cpp`):
+
+- `DebugService/SessionRestartViaRestartRequest` + `SessionRestartNoOpWithoutCapability`.
+- `DebugService/SessionThreadsCachedAndSwitch` (threads cached on stop; `SwitchThread`
+  re-resolves the other thread's frames).
+- `DebugService/SessionExceptionFiltersSentOnLaunchAndToggle` (advertised filters
+  surface; only advertised-enabled ids reach the wire; a live re-send reflects a toggle).
+- `DebugService/BreakpointsModelBehavior` (pure: default seeding, no re-seed,
+  toggle, `EnabledAdvertisedIds` intersection, `Rebuild` rows, clear-advertised).
+- `DapProtocol/ParsesCapabilities` extended (`exceptionBreakpointFilters` +
+  `supportsRestartRequest`); `EncodesVariablesRequests` extended
+  (`MakeSetExceptionBreakpointsArguments`).
+- `PersistedStateRecord/DebugStateRoundTrip` + `…BackwardCompatNoWatch` extended for
+  the exception-filter ids + seeded flag. `DebugStateRecordFuzz` exercises the new tags.
+
 ## How to validate
 
 ```bash
 cmake --build build -j8
-./build/microide/microide_tests Dap DebugService    # focused: 28 DAP/session tests
+./build/microide/microide_tests Dap DebugService    # focused DAP/session tests
 ./build/microide/microide_tests Breakpoint          # BreakpointStore (7)
 ./build/microide/microide_tests "PersistedStateRecord" "PluginHost/LaunchConfig"
 tools/run-checks.sh tests                            # full unit suite incl. arch invariants
@@ -740,6 +839,15 @@ breakpoint, and hover a local in the stopped file — the value popup appears (a
 updates when you switch call-stack frames). The mock adapter now has an `evaluate`
 mode advertising `supportsEvaluateForHovers`.
 
+For Phase 7: stop in a multi-threaded target → the Call Stack tab shows a thread
+selector (one row per thread); click another thread → its frames replace the
+list. Open the **Breakpoints** tab → toggle an exception filter (e.g. "Raised
+Exceptions") and confirm a thrown exception now stops; click a line-breakpoint
+row to navigate to it. Restart (Ctrl+Shift+F5) → the session relaunches and
+re-binds breakpoints (via the DAP `restart` request when the adapter supports it,
+else terminate + relaunch). The mock adapter has `restart`/`threads`/`exception`
+modes covering these paths.
+
 Tracing: set `MICROIDE_TRACE_DAP_LIFECYCLE=1` for adapter lifecycle logs (mirrors
 `MICROIDE_TRACE_LSP_LIFECYCLE`).
 
@@ -749,33 +857,37 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 7** (polish: multi-thread, multi-session, exception breakpoints,
-restart). The pieces already in place to build on:
+Start **Phase 8** (multi-session) — the last piece of the original Phase 7,
+deferred for being the only invasive change. The pieces already in place to build
+on:
 
-- **Multi-session:** `DapManager` already owns the active `DebugSession` and each
-  `DapClient` owns its own `seq`/`pending_requests`, so N concurrent sessions need
-  an active-session switcher + event routing by originating client, not a protocol
-  change. The transient view models (`debug_execution`/`debug_variables`/
-  `debug_watch`/`debug_hover`) already live per-project on `ProjectWorkspaceState`.
-- **Multi-thread:** `stopped`→`stackTrace` currently targets the stopped thread
-  directly (Phase 3 speed decision); a thread selector in the Call Stack panel
-  needs a `threads` round-trip + a focused-thread field on `DebugExecutionView`.
-- **Exception breakpoints:** `setExceptionBreakpoints(filters)` from
-  `capabilities.exceptionBreakpointFilters`; surface the filters as toggles
-  (natural home: the Breakpoints area / a small settings list).
-- **Restart:** `restart` with a terminate+relaunch fallback when
-  `!supportsRestartRequest` (deferred since Phase 3). Add `DebugRestart` alongside
-  the other execution-control `ActionId`s.
-- Run the **TSAN preset** once multi-session concurrent I/O lands.
+- **Multi-session:** `DapManager.session_` is a single `unique_ptr<DebugSession>`;
+  generalize it to a collection + an active index/id, with `StartSession`
+  appending rather than replacing. Each `DapClient` already owns its own
+  `seq`/`pending_requests`, so routing is by originating client; the per-frame
+  `DrainCallbacks` must pump every live session. The transient view models
+  (`debug_execution`/`debug_variables`/`debug_watch`/`debug_hover`/
+  `debug_breakpoints_panel`) live per-project on `ProjectWorkspaceState` — on an
+  active-session switch they are rebuilt from the newly-active session's state (or
+  moved per-session). A session switcher UI (command palette over live sessions,
+  or a Call-Stack-panel header dropdown reusing the Phase 7 thread-selector shape).
+- Run the **TSAN preset** once concurrent multi-session I/O lands (multiple
+  `DapClient` I/O threads at once) — the first time the debugger has more than one
+  adapter thread running, so it is the natural TSAN gate.
 
 Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
+
+- The Phase 7 thread-selector row shape (a flat row list with `PanelRowAt`
+  dispatch) is the template for a Phase 8 session switcher rendered in the same
+  Call Stack header.
 
 - The Variables + Watch trees now share `DebugValueTree`; if a third value-tree
   surface appears (e.g. a REPL result view, or inline hover expansion), build it on
   `DebugValueTree` too rather than re-deriving the node/flatten machinery.
-- The bottom-panel structured rows now share `draw_two_column_row` **and** the
-  generic `draw_value_tree_row` lambda in `WorkspaceShellRenderBottomPanel.cpp`; a
-  fourth structured debug panel should reuse them.
+- The bottom-panel structured rows share `draw_two_column_row` **and** the generic
+  `draw_value_tree_row` lambda in `WorkspaceShellRenderBottomPanel.cpp`; the Phase 7
+  Breakpoints tab reuses `draw_two_column_row`. A fifth structured debug panel
+  should reuse them too (and `IsDebugPanelContent` already folds the family).
 - Breakpoint condition/hit/log + watch add/edit all route through the shared
   `PromptSurfaceService` single-line prompt; a future REPL input or watch-from-
   selection action should reuse it rather than a bespoke field.

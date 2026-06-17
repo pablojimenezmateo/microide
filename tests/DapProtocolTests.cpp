@@ -62,14 +62,28 @@ void TestDapProtocolParsesResponse() {
 void TestDapProtocolParsesCapabilities() {
   const codec::DapCapabilities caps = codec::ParseCapabilities(
       Json(R"({"supportsConfigurationDoneRequest":true,"supportsConditionalBreakpoints":true,
-          "supportsSetVariable":true,"supportsEvaluateForHovers":true,"supportsLogPoints":true})"));
+          "supportsSetVariable":true,"supportsEvaluateForHovers":true,"supportsLogPoints":true,
+          "supportsRestartRequest":true,
+          "exceptionBreakpointFilters":[
+            {"filter":"raised","label":"Raised Exceptions"},
+            {"filter":"uncaught","label":"Uncaught Exceptions","default":true,
+             "supportsCondition":true}]})"));
   Expect(caps.supports_configuration_done_request, "configurationDone capability");
   Expect(caps.supports_conditional_breakpoints, "conditional breakpoints capability");
   Expect(caps.supports_set_variable, "setVariable capability");
   Expect(caps.supports_evaluate_for_hovers, "evaluate-for-hovers capability");
   Expect(caps.supports_log_points, "logpoints capability");
+  Expect(caps.supports_restart_request, "restart-request capability (Phase 7)");
+  // Exception filters parse with ids/labels/defaults (Phase 7).
+  Expect(caps.exception_filters.size() == 2, "both advertised exception filters parse");
+  Expect(caps.exception_filters[0].filter == "raised" &&
+             caps.exception_filters[0].label == "Raised Exceptions" &&
+             !caps.exception_filters[0].default_enabled,
+         "first filter id/label/default parse");
+  Expect(caps.exception_filters[1].default_enabled && caps.exception_filters[1].supports_condition,
+         "second filter's default + supportsCondition parse");
   // Absent flags default to false.
-  Expect(!caps.supports_restart_request, "absent capability defaults to false");
+  Expect(!caps.supports_step_back, "absent capability defaults to false");
 }
 
 void TestDapProtocolParsesStoppedEvent() {
@@ -169,6 +183,18 @@ void TestDapProtocolEncodesVariablesRequests() {
   Expect(watch["expression"].AsString() == "arr[i]" && watch["frameId"].AsInt() == 7 &&
              watch["context"].AsString() == "watch",
          "watch evaluate carries expression, frameId, and the watch context");
+
+  // setExceptionBreakpoints (Phase 7): a `filters` array of the enabled ids.
+  const JsonValue exc = codec::MakeSetExceptionBreakpointsArguments({"raised", "uncaught"});
+  Expect(exc.HasKey("filters") && exc["filters"].IsArray() &&
+             exc["filters"].AsArray().size() == 2,
+         "setExceptionBreakpoints carries a filters array");
+  Expect(exc["filters"].AsArray()[0].AsString() == "raised" &&
+             exc["filters"].AsArray()[1].AsString() == "uncaught",
+         "the filters array preserves the enabled ids in order");
+  const JsonValue exc_empty = codec::MakeSetExceptionBreakpointsArguments({});
+  Expect(exc_empty["filters"].IsArray() && exc_empty["filters"].AsArray().empty(),
+         "an empty enabled set encodes an empty filters array");
 }
 
 }  // namespace

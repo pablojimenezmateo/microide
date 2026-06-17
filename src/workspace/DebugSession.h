@@ -57,6 +57,10 @@ class DebugSession {
     // Fired when execution resumes (a continue/step request is sent, or the
     // adapter emits `continued`) so the host clears the execution-line + stack.
     std::function<void()> on_resumed;
+    // Fired with the adapter's full thread list (Phase 7 multi-thread). Resolved
+    // a beat after `on_stopped` so the Call Stack panel can offer a thread
+    // selector without delaying the stack/highlight on the stopped thread.
+    std::function<void(const std::vector<dap_protocol::DapThread>& threads)> on_threads;
     // Pulled when the adapter is ready for configuration (the `initialized`
     // event) and on every live re-send, to get the breakpoints to install.
     std::function<std::vector<editor::BreakpointStore::FileBreakpoints>()> breakpoint_provider;
@@ -65,6 +69,14 @@ class DebugSession {
     std::function<void(const std::filesystem::path& path,
                        const std::vector<dap_protocol::DapBreakpoint>& breakpoints)>
         on_breakpoints_verified;
+    // Pushed with the adapter's advertised exception-breakpoint filters when the
+    // session initializes (Phase 7), so the host can populate the Breakpoints tab
+    // and seed the enabled set from each filter's default.
+    std::function<void(const std::vector<dap_protocol::DapExceptionFilter>& filters)>
+        on_exception_filters_available;
+    // Pulled at `initialized` and on every live re-send to get the enabled
+    // exception-filter ids to install via setExceptionBreakpoints.
+    std::function<std::vector<std::string>()> exception_filter_provider;
   };
 
   DebugSession();
@@ -106,6 +118,22 @@ class DebugSession {
   void StepOut();
   void Pause();
 
+  // Restart the active session in place via the DAP `restart` request (Phase 7).
+  // Only valid when the adapter advertises `supportsRestartRequest`; callers
+  // without the capability terminate + relaunch at the service layer instead.
+  // Re-arms the configurationDone guard so a re-emitted `initialized` re-installs
+  // breakpoints, and optimistically resumes so the UI clears at once.
+  void Restart();
+
+  // Threads (Phase 7 multi-thread). Fetch the adapter's full thread list; the
+  // callback fires on the main thread when the response arrives. No-op until the
+  // adapter is initialized.
+  void RequestThreads(std::function<void(std::vector<dap_protocol::DapThread>)> callback);
+  // Re-resolve the call stack for `thread_id` while Stopped and hand the frames
+  // up through `on_stopped` (with the cached stop reason) so the host re-focuses
+  // the picked thread. Used by the Call Stack thread selector.
+  void SwitchThread(int thread_id);
+
   // Variables inspection (Phase 4). Request/response style with inline callbacks
   // (these are not lifecycle events, so they stay off the Callbacks struct — the
   // same shape as Pause()'s `threads` round-trip). Callbacks fire on the main
@@ -135,18 +163,28 @@ class DebugSession {
   // adapter is initialized.
   void ResendBreakpointsForFile(const std::filesystem::path& path);
 
+  // Re-send `setExceptionBreakpoints` with the current enabled filter set while
+  // the session is live (e.g. the user toggled a filter). Pulls the enabled ids
+  // from `exception_filter_provider` and intersects them with the adapter's
+  // advertised filters. No-op until the adapter is initialized.
+  void ResendExceptionFilters();
+
   DapClient& Client() { return *client_; }
   const DapClient& Client() const { return *client_; }
 
  private:
   void HandleEvent(const std::string& event, const util::JsonValue& body);
   void RequestStackTrace(const dap_protocol::DapStoppedEvent& stop);
+  // Fetch the thread list and forward it through `on_threads` (augments the
+  // Call Stack panel a beat after the stack itself resolves; keeps the stop fast).
+  void RequestThreadsForStop();
   // Shared by continue/step: guard on Stopped, send `command{threadId}`, then
   // optimistically resume.
   void SendResumeRequest(const char* command);
   void SendLaunchRequest();
   void SendAllBreakpoints();
   void SendBreakpointsForFile(const editor::BreakpointStore::FileBreakpoints& file);
+  void SendExceptionFilters();
   void SendConfigurationDone();
   void SetState(State state);
 
@@ -160,6 +198,9 @@ class DebugSession {
   // Thread id from the most recent `stopped` event; the target for stackTrace
   // and continue/step requests.
   int stopped_thread_id_ = 0;
+  // The most recent `stopped` event, retained so SwitchThread can re-emit
+  // on_stopped with the original stop reason for a different thread's frames.
+  dap_protocol::DapStoppedEvent last_stop_{};
 };
 
 // Stable name for a session state (status text, tracing, tests).

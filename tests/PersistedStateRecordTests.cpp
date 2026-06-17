@@ -287,6 +287,8 @@ void TestPersistedStateDebugStateRoundTrip() {
   });
   state.selected_launch_config_index = 0;
   state.watch_expressions = {"i", "arr[i]", "node->next"};
+  state.enabled_exception_filters = {"raised", "uncaught"};
+  state.exception_filters_seeded = true;
 
   std::vector<std::byte> encoded;
   Expect(EncodeDebugStateRecord(state, &encoded), "debug state should encode");
@@ -296,6 +298,11 @@ void TestPersistedStateDebugStateRoundTrip() {
   Expect(decoded.watch_expressions.size() == 3 && decoded.watch_expressions[0] == "i" &&
              decoded.watch_expressions[2] == "node->next",
          "watch expressions round-trip in order");
+  Expect(decoded.enabled_exception_filters.size() == 2 &&
+             decoded.enabled_exception_filters[0] == "raised" &&
+             decoded.enabled_exception_filters[1] == "uncaught",
+         "enabled exception filters round-trip in order (Phase 7)");
+  Expect(decoded.exception_filters_seeded, "the seeded flag round-trips (Phase 7)");
   Expect(decoded.files.size() == 2, "two breakpoint files should round-trip");
   Expect(decoded.files[0].path == std::filesystem::path("/proj/main.py"), "file path round-trips");
   Expect(decoded.files[0].breakpoints.size() == 2, "two breakpoints on first file");
@@ -332,6 +339,8 @@ void TestPersistedStateDebugStateBackwardCompatNoWatch() {
   PersistedDebugState decoded;
   Expect(DecodeDebugStateRecord(encoded, &decoded), "a record without watch tags should decode");
   Expect(decoded.watch_expressions.empty(), "missing watch tags default to an empty list");
+  Expect(decoded.enabled_exception_filters.empty() && !decoded.exception_filters_seeded,
+         "missing exception-filter tags default to empty/unseeded (Phase 7 additive)");
   Expect(decoded.files.size() == 1 && decoded.files[0].breakpoints.size() == 1 &&
              decoded.files[0].breakpoints[0].line == 3,
          "breakpoints survive a watch-free record");

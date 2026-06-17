@@ -46,6 +46,25 @@ DebugExecutionView BuildExecutionView(const dap_protocol::DapStoppedEvent& stop,
   return view;
 }
 
+// Build the thread-selector rows, prebuilding each display string off the render
+// hot path (e.g. "Thread 1: MainThread").
+std::vector<DebugThreadView> BuildThreadViews(const std::vector<dap_protocol::DapThread>& threads) {
+  std::vector<DebugThreadView> views;
+  views.reserve(threads.size());
+  for (const dap_protocol::DapThread& thread : threads) {
+    DebugThreadView row;
+    row.id = thread.id;
+    std::string display = "Thread " + std::to_string(thread.id);
+    if (!thread.name.empty()) {
+      display += ": ";
+      display += thread.name;
+    }
+    row.display = std::move(display);
+    views.push_back(std::move(row));
+  }
+  return views;
+}
+
 }  // namespace
 
 void DebugService::Configure(WorkspaceContext& context, Operations operations) {
@@ -88,7 +107,7 @@ const DapManager& DebugService::CurrentDapManager() const {
 
 void DebugService::ConsumeDapCallbacks() { CurrentDapManager().DrainCallbacks(); }
 
-bool DebugService::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
+DebugSession::Callbacks DebugService::BuildSessionCallbacks() {
   DebugSession::Callbacks callbacks;
   callbacks.on_output = [this](const dap_protocol::DapOutputEvent& output) {
     if (operations_.append_console_output) {
@@ -111,7 +130,12 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
   callbacks.on_stopped = [this](const dap_protocol::DapStoppedEvent& stop,
                                 const std::vector<dap_protocol::DapStackFrame>& frames) {
     ProjectWorkspaceState& state = CurrentProjectState();
+    // Preserve the thread list across a thread switch (frames are rebuilt for the
+    // picked thread, but the selector contents do not change).
+    std::vector<DebugThreadView> threads = std::move(state.debug_execution.threads);
     state.debug_execution = BuildExecutionView(stop, frames);
+    state.debug_execution.threads = std::move(threads);
+    state.debug_execution.focused_thread_id = stop.thread_id;
     // A fresh stop invalidates any prior hover value (new frame state / values).
     state.debug_hover.Clear();
     // Populate the Variables tree for the top (focused) frame so it is ready the
@@ -136,14 +160,17 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
   };
   // On resume: drop the execution view + variables so the highlight, stack, and
   // variables tree clear at once.
-  callbacks.on_resumed = [this]() {
-    CurrentProjectState().debug_execution.Clear();
-    CurrentProjectState().debug_variables.Clear();
-    CurrentProjectState().debug_hover.Clear();
-    // Keep the watch expressions (persistent) but drop their stale values.
-    CurrentProjectState().debug_watch.ClearResults();
-    if (operations_.request_editor_redraw) {
-      operations_.request_editor_redraw();
+  callbacks.on_resumed = [this]() { ClearTransientDebugViews(); };
+  // Thread list lands a beat after the stop; fill the selector (preserving the
+  // focused thread). Ignored if the session resumed in the meantime.
+  callbacks.on_threads = [this](const std::vector<dap_protocol::DapThread>& threads) {
+    ProjectWorkspaceState& state = CurrentProjectState();
+    if (!state.debug_execution.stopped) {
+      return;
+    }
+    state.debug_execution.threads = BuildThreadViews(threads);
+    if (state.debug_execution.focused_thread_id == 0) {
+      state.debug_execution.focused_thread_id = state.debug_execution.thread_id;
     }
     if (operations_.request_bottom_panel_redraw) {
       operations_.request_bottom_panel_redraw();
@@ -168,11 +195,47 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
           });
         }
         CurrentProjectState().breakpoint_store.ApplyVerification(path, results);
+        SyncBreakpointsPanel();
         if (operations_.request_editor_redraw) {
           operations_.request_editor_redraw();
         }
       };
-  return CurrentDapManager().StartSession(config, std::move(callbacks), cwd);
+  // Advertised exception filters arrive at `initialized`: populate the Breakpoints
+  // panel (seeding the enabled set from adapter defaults the first time).
+  callbacks.on_exception_filters_available =
+      [this](const std::vector<dap_protocol::DapExceptionFilter>& filters) {
+        CurrentProjectState().debug_breakpoints_panel.SetAdvertisedFilters(filters);
+        SyncBreakpointsPanel();
+        if (operations_.request_bottom_panel_redraw) {
+          operations_.request_bottom_panel_redraw();
+        }
+      };
+  // The session pulls the enabled filter ids at `initialized` and on live re-send.
+  callbacks.exception_filter_provider = [this]() {
+    return CurrentProjectState().debug_breakpoints_panel.EnabledAdvertisedIds();
+  };
+  return callbacks;
+}
+
+void DebugService::ClearTransientDebugViews() {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  state.debug_execution.Clear();
+  state.debug_variables.Clear();
+  state.debug_hover.Clear();
+  // Keep the watch expressions (persistent) but drop their stale values.
+  state.debug_watch.ClearResults();
+  if (operations_.request_editor_redraw) {
+    operations_.request_editor_redraw();
+  }
+  if (operations_.request_bottom_panel_redraw) {
+    operations_.request_bottom_panel_redraw();
+  }
+}
+
+bool DebugService::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
+  last_launch_config_ = config;
+  last_cwd_ = cwd;
+  return CurrentDapManager().StartSession(config, BuildSessionCallbacks(), cwd);
 }
 
 void DebugService::StopDebugging() {
@@ -180,18 +243,62 @@ void DebugService::StopDebugging() {
   // Verification state is tied to the adapter; drop it so a fresh session
   // re-verifies from scratch and the gutter shows unverified until then.
   CurrentProjectState().breakpoint_store.ResetVerification();
+  // The advertised exception filters belong to the (now dead) adapter; drop them
+  // so the Breakpoints tab shows only line breakpoints until a new session binds.
+  CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
+  SyncBreakpointsPanel();
   // Drop the execution view + variables so the highlight, Call Stack, and
   // Variables panels clear.
-  CurrentProjectState().debug_execution.Clear();
-  CurrentProjectState().debug_variables.Clear();
-  CurrentProjectState().debug_hover.Clear();
-  CurrentProjectState().debug_watch.ClearResults();
-  if (operations_.request_editor_redraw) {
-    operations_.request_editor_redraw();
+  ClearTransientDebugViews();
+}
+
+void DebugService::Restart() {
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session == nullptr || !session->IsActive()) {
+    return;
+  }
+  if (session->Client().Capabilities().supports_restart_request) {
+    // In-place restart: the adapter relaunches the debuggee and re-emits its
+    // initialized/stopped sequence. Clear the current stop's transient views.
+    session->Restart();
+    ClearTransientDebugViews();
+    return;
+  }
+  // Fallback: terminate + relaunch with the same config. StartSession() blocks on
+  // the prior session's shutdown, so this is a clean synchronous relaunch.
+  CurrentProjectState().breakpoint_store.ResetVerification();
+  ClearTransientDebugViews();
+  StartDebugging(last_launch_config_, last_cwd_);
+}
+
+void DebugService::FocusThread(int thread_id) {
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session == nullptr) {
+    return;
+  }
+  CurrentProjectState().debug_execution.focused_thread_id = thread_id;
+  session->SwitchThread(thread_id);
+}
+
+void DebugService::ToggleExceptionFilter(const std::string& filter_id) {
+  DebugBreakpointsModel& panel = CurrentProjectState().debug_breakpoints_panel;
+  if (!panel.ToggleFilter(filter_id)) {
+    return;
+  }
+  SyncBreakpointsPanel();
+  // Live re-send so the change takes effect immediately on an active session.
+  if (DebugSession* session = CurrentDapManager().ActiveSession();
+      session != nullptr && session->IsActive()) {
+    session->ResendExceptionFilters();
   }
   if (operations_.request_bottom_panel_redraw) {
     operations_.request_bottom_panel_redraw();
   }
+}
+
+void DebugService::SyncBreakpointsPanel() {
+  ProjectWorkspaceState& state = CurrentProjectState();
+  state.debug_breakpoints_panel.Rebuild(state.breakpoint_store);
 }
 
 void DebugService::FocusFrame(int frame_id) {
