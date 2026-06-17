@@ -132,6 +132,12 @@ void WorkspaceActionContext::ShowDebugPaneSurface(DebugPaneMode mode) {
   }
 }
 
+void WorkspaceActionContext::StopAllDebugSessions() {
+  if (operations_.stop_all_debug_sessions) {
+    operations_.stop_all_debug_sessions();
+  }
+}
+
 void WorkspaceActionContext::OpenDebugReplPrompt() {
   if (operations_.open_debug_repl_prompt) {
     operations_.open_debug_repl_prompt();
@@ -442,6 +448,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .debug_restart = [this]() { DebugRestart(); },
           .debug_session_count = [this]() { return CurrentDapManager().SessionCount(); },
           .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
+          .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
           .open_launch_config_picker = [this]() { OpenLaunchConfigPicker(); },
           .edit_breakpoint_modifier_from_menu =

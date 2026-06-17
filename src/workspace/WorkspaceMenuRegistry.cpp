@@ -178,6 +178,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::StartDebugging, "Start Debugging"),
       MenuItem(ActionId::PickLaunchConfig, "Select Launch Configuration…"),
       MenuItem(ActionId::StopDebugging, "Stop Debugging"),
+      MenuItem(ActionId::DebugStopAllSessions, "Stop All Sessions"),
       MenuSeparator(),
       MenuItem(ActionId::DebugContinue, "Continue", "F5"),
       MenuItem(ActionId::DebugStepOver, "Step Over", "F10"),

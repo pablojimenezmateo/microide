@@ -190,8 +190,13 @@ while True:
     elif command == "evaluate":
         args = msg.get("arguments", {})
         # Echo the expression + frame so the test can assert both reached the wire.
-        value = args.get("expression", "") + "@" + str(args.get("frameId", 0))
-        respond(msg, {"result": value, "type": "int", "variablesReference": 0})
+        expr = args.get("expression", "")
+        value = expr + "@" + str(args.get("frameId", 0))
+        # "obj" yields a structured result (variablesReference 1001) so the REPL can
+        # expand one level via a follow-up variables request; everything else is a leaf.
+        ref = 1001 if expr == "obj" else 0
+        respond(msg, {"result": value, "type": "Obj" if ref else "int",
+                      "variablesReference": ref})
     elif command == "threads":
         if multi_thread:
             respond(msg, {"threads": [{"id": 1, "name": "main"}, {"id": 2, "name": "worker"}]})
@@ -764,6 +769,32 @@ void TestDebugSessionReplEvaluate() {
   Expect(PollUntil(manager, [&]() { return resolved; }), "repl evaluate should resolve");
   Expect(repl_value == "answer@" + std::to_string(frame_id),
          "the adapter's repl-context result echoes the expression evaluated in the frame");
+
+  // Structured result: a "repl" evaluate of "obj" carries a variablesReference, which
+  // EvaluateRepl expands one level via a follow-up variables request (the two-step
+  // path exercised here: evaluate -> variables).
+  bool struct_resolved = false;
+  int struct_ref = 0;
+  session->RequestEvaluate("obj", frame_id, "repl",
+                           [&](bool ok, codec::DapEvaluateResult result) {
+                             if (ok) {
+                               struct_ref = result.variables_reference;
+                             }
+                             struct_resolved = true;
+                           });
+  Expect(PollUntil(manager, [&]() { return struct_resolved; }),
+         "structured repl evaluate should resolve");
+  Expect(struct_ref == 1001, "a structured repl result carries a variablesReference to expand");
+  bool children_resolved = false;
+  std::vector<codec::DapVariable> children;
+  session->RequestVariables(struct_ref, [&](std::vector<codec::DapVariable> vars) {
+    children = std::move(vars);
+    children_resolved = true;
+  });
+  Expect(PollUntil(manager, [&]() { return children_resolved; }),
+         "the follow-up variables request should resolve the structured children");
+  Expect(children.size() == 1 && children[0].name == "field" && children[0].value == "7",
+         "the structured repl result expands one level into its child fields");
   manager.ShutdownAll();
 }
 
@@ -1310,6 +1341,42 @@ void TestDebugManagerReplaceActiveSession() {
   manager.ShutdownAll();
 }
 
+// "Stop All Sessions" (Phase 10): BeginShutdownAll + ShutdownAll tears down every
+// live session at once; the subsequent prune empties the manager. This is the
+// manager path DebugService::StopAllDebugging wraps.
+void TestDebugManagerStopAllSessions() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+
+  CapturedSession cap_a;
+  CapturedSession cap_b;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  const int id_a = manager.StartSession(config, MakeCallbacks(cap_a));
+  const int id_b = manager.StartSession(config, MakeCallbacks(cap_b));
+  Expect(id_a != 0 && id_b != 0 && manager.SessionCount() == 2, "two sessions start");
+  Expect(PollUntil(manager, [&]() { return cap_a.stop_count >= 1 && cap_b.stop_count >= 1; }),
+         "both sessions reach a stop");
+
+  manager.BeginShutdownAll();
+  manager.ShutdownAll();  // blocks until both adapter I/O threads join
+  Expect(PollUntil(manager,
+                   [&]() {
+                     manager.PruneTerminated();
+                     return manager.SessionCount() == 0;
+                   }),
+         "Stop All tears every session down to an empty manager");
+  Expect(manager.ActiveSessionId() == 0, "no active session id remains after Stop All");
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
@@ -1336,6 +1403,7 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionEvaluateHover", TestDebugSessionEvaluateHover);
   AddTest(tests, "DebugService/SessionWatchEvaluate", TestDebugSessionWatchEvaluate);
   AddTest(tests, "DebugService/SessionReplEvaluate", TestDebugSessionReplEvaluate);
+  AddTest(tests, "DebugService/ManagerStopAllSessions", TestDebugManagerStopAllSessions);
   AddTest(tests, "DebugService/SessionEvaluateGatedOnCapability",
           TestDebugSessionEvaluateGatedOnCapability);
   AddTest(tests, "DebugService/HoverModelBehavior", TestDebugHoverModelBehavior);

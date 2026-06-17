@@ -41,6 +41,9 @@ class WorkspaceOutputChannels {
                                                            std::size_t index,
                                                            const std::filesystem::path& resolved_path) const;
   void Clear(std::string_view id);
+  // Drop a channel entirely (entries + parsed cache). No-op if the id is unknown.
+  // Used when a debug session is pruned so its console does not linger (Phase 10).
+  void RemoveChannel(std::string_view id);
 
  private:
   struct Channel {

@@ -1,10 +1,10 @@
 # Debugger / DAP Integration
 
-Status: **active, dedicated phase** (promoted from the durable non-goal list on
-2026-06-17). Phases 0–9 are done on `feat/dap`; Phase 10 (polish/cleanup) is next.
-This document is the single self-sufficient source of truth for the debugger
-effort — a fresh agent on any machine should be able to read this file and
-continue without external context.
+Status: **feature-complete on `feat/dap`** (promoted from the durable non-goal list
+on 2026-06-17). Phases 0–10 are done; the locked goals below are all met. The
+remaining step is merging `feat/dap` → `main`. This document is the single
+self-sufficient source of truth for the debugger effort — a fresh agent on any
+machine should be able to read this file and continue without external context.
 
 > **UI rework (2026-06-17, post-Phase 8):** the four *structured* debug surfaces
 > (Call Stack, Variables, Watch, Breakpoints) no longer live as bottom-panel tabs.
@@ -294,28 +294,26 @@ See "Phase 9 — what shipped" below. Summary: a fuzzy **launch-config picker**
 vs. a diamond), and dedup/UX cleanup (the shared `LogSurfaceLayout` rename +
 right-side debug-pane surface-switch keybindings `Ctrl+Shift+1..4`).
 
-### Phase 10 — Polish / cleanup (next)
+### Phase 10 — Polish / cleanup ✅ DONE (2026-06-17)
 
-Opportunistic, independently shippable (pick during execution):
+See "Phase 10 — what shipped" below. Summary: the **per-session console cleanup**
+(`WorkspaceOutputChannels::RemoveChannel` + tab-close on prune), a **"Stop All
+Sessions"** command (`debug-stop-all`), and **structured REPL expansion** (a
+`variablesReference > 0` result expands one level into the console). This was the
+last planned slice; the debugger is feature-complete.
 
-- **Per-session console cleanup** — terminated sessions' console tabs currently
-  persist (no `WorkspaceOutputChannels` remove API). A `RemoveChannel` +
-  tab-close-on-prune is the tidy follow-up if the lingering tabs prove annoying.
-- **Structured REPL/console value expansion** — Phase 9's REPL appends the result
-  as a text line; a structured result (`variablesReference > 0`) could expand
-  inline via the shared `DebugValueTree` (the value-tree core already models the
-  expandable side). The natural next step if text-only REPL output proves limiting.
-- **"Stop All Sessions" command** — a thin wrapper over `BeginShutdownAll`/
-  `ShutdownAll` on `DapManager` (multi-session left this as a one-liner follow-up).
+### Beyond Phase 10 — out of scope (future, only if asked)
+
+Not planned; listed so a future agent knows they were considered:
+
 - **Launch-config editor** — Phase 9 added a *picker* over `launch_configs`; a small
   create/edit UI (native `PersistedRecord`, no `.vscode/launch.json`) would let a
   user author configs without a plugin contributing them.
 - **Function / data breakpoints** — surface `supportsFunctionBreakpoints` /
-  `supportsDataBreakpoints` if an adapter advertises them (a new breakpoint kind in
-  the Breakpoints pane).
-
-Recommended next coherent slice: the **console cleanup + structured REPL expansion +
-Stop-All** trio (all small, all build directly on shipped Phase 8/9 seams).
+  `supportsDataBreakpoints` if an adapter advertises them.
+- **Deep (lazy, multi-level) REPL value expansion** — Phase 10 expands one level
+  into the text console; a true tree would need a dedicated value-tree surface
+  (build it on the existing `DebugValueTree` if ever wanted).
 
 ## Phase 0 — what shipped (2026-06-17)
 
@@ -1005,6 +1003,52 @@ Tests added:
   both columns case-insensitively; confirming a filtered match persists the
   underlying launch-config index.
 
+## Phase 10 — what shipped (2026-06-17)
+
+The last planned slice — three small cleanups, all on shipped Phase 8/9 seams. No
+new persisted state or protocol additions.
+
+**Per-session console cleanup:**
+
+- New `WorkspaceOutputChannels::RemoveChannel(id)` (drops a channel's entries +
+  parsed cache). A new `DebugService::Operations::remove_debug_console(session_id)`
+  is invoked from `ConsumeDapCallbacks` for every id returned by `PruneTerminated()`,
+  wired to `WorkspaceShell::RemoveDebugConsole` → `CloseOutputChannelTab` (advances
+  the active output channel if needed) + `RemoveChannel`. So a terminated session's
+  console tab no longer lingers — it closes when the session is pruned. **Tradeoff
+  (reverses a deliberate Phase 8 deviation):** final output is no longer retained
+  after a session terminates; it streams live while the session runs and clears on
+  prune.
+
+**"Stop All Sessions"** (`ActionId::DebugStopAllSessions`, command `debug-stop-all`,
+Debug menu, gated on `debug.enabled` + an active session):
+
+- `DebugService::StopAllDebugging` calls `DapManager::BeginShutdownAll` +
+  `ShutdownAll` (blocks until every adapter I/O thread joins), then resets the
+  project-shared adapter state (breakpoint verification + advertised exception
+  filters) and clears the transient views — the same teardown as `StopDebugging`'s
+  last-session branch, applied to all at once. `WorkspaceShell::StopAllDebugSessions`
+  also closes the debug pane. The next-frame prune drops the sessions + their
+  consoles (via the cleanup above).
+
+**Structured REPL expansion:**
+
+- `DebugService::EvaluateRepl`'s completion now checks `variablesReference`: a
+  structured result (e.g. an object/dict) issues a follow-up `RequestVariables` and
+  appends each child as an indented `    name: value` console line. One eager level
+  (the console is a text channel; deep lazy expansion would need a tree surface).
+
+Tests added:
+
+- `WorkspaceShared/OutputChannelsRemoveChannel` — `RemoveChannel` drops only the
+  named channel + refreshes the channel list; unknown id is a no-op.
+- `DebugService/ManagerStopAllSessions` — two real mock-adapter sessions tear down
+  via `BeginShutdownAll`/`ShutdownAll` + prune to an empty manager.
+- `DebugService/SessionReplEvaluate` extended — a `repl` evaluate of `"obj"` returns
+  a `variablesReference`, and the follow-up `variables` request resolves its child
+  `field` (the structured two-step the console expansion uses). The mock `evaluate`
+  handler now returns a structured result for `"obj"`.
+
 ## How to validate
 
 ```bash
@@ -1061,6 +1105,11 @@ one. Set a plain, a conditional (right-click → Edit Condition), and a logpoint
 (Edit Log Message) breakpoint on three lines → the gutter shows a red disc, an amber
 disc, and a diamond respectively. `Ctrl+Shift+1..4` switch the right-pane surface.
 
+For Phase 10: stop two sessions, run `debug-stop-all` → both tear down and the debug
+pane closes; the terminated sessions' console tabs disappear (rather than lingering).
+In the REPL (`debug-repl`), evaluate an object/dict → its fields print as indented
+`name: value` lines beneath the result.
+
 Tracing: set `MICROIDE_TRACE_DAP_LIFECYCLE=1` for adapter lifecycle logs (mirrors
 `MICROIDE_TRACE_LSP_LIFECYCLE`).
 
@@ -1070,19 +1119,15 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Phase 9 is done. Start **Phase 10** (polish / cleanup) — independently shippable
-pieces, pick by value during execution (see the "Phase 10" roadmap entry above):
+Phases 0–10 are done; the debugger is **feature-complete** against the locked goals.
+The remaining step is to **merge `feat/dap` → `main`** (this doc's "do not merge
+until the effort is complete" gate is now reached). Before merging: run the
+sanitizer presets (ASAN/UBSAN/TSAN — TSAN needs `sudo sysctl vm.mmap_rnd_bits=28`)
+and the focused DAP suite; then fast-forward/merge and drop the per-phase "what
+shipped" sections into a single changelog entry if desired.
 
-- **Per-session console cleanup**: terminated sessions' console tabs currently
-  persist (no `WorkspaceOutputChannels` remove API). A `RemoveChannel` +
-  tab-close-on-prune is the tidy follow-up if the lingering tabs prove annoying.
-- **Structured REPL/console value expansion** — Phase 9's REPL appends results as
-  text; a `variablesReference > 0` result could expand inline via the shared
-  `DebugValueTree` (its expandable side is already modeled).
-- **"Stop All Sessions" command** — a thin wrapper over `BeginShutdownAll`/
-  `ShutdownAll` on `DapManager`.
-- **Launch-config editor** — Phase 9 added the *picker*; a small create/edit UI
-  (native `PersistedRecord`) would let users author configs without a plugin.
+Anything further (launch-config editor, function/data breakpoints, deep lazy REPL
+expansion) is out of scope — see "Beyond Phase 10" above; pick up only on request.
 
 Multi-session pieces now in place to build on:
 

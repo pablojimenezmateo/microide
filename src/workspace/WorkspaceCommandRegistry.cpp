@@ -74,6 +74,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Ctrl+Shift+F5"},
       ActionSpec{ActionId::DebugSwitchSession, "debug-switch-session", "debug-switch-session [n]",
                  "Switch Debug Session", ""},
+      ActionSpec{ActionId::DebugStopAllSessions, "debug-stop-all", "debug-stop-all",
+                 "Stop All Debug Sessions", ""},
       ActionSpec{ActionId::DebugConsoleRepl, "debug-repl", "debug-repl", "Evaluate in Debug Console",
                  ""},
       ActionSpec{ActionId::PickLaunchConfig, "debug-pick-config", "debug-pick-config",

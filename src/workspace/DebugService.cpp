@@ -115,6 +115,14 @@ void DebugService::ConsumeDapCallbacks() {
   // active session; a background prune leaves the active view untouched.
   const std::vector<int> removed = manager.PruneTerminated();
   if (!removed.empty()) {
+    // Drop each pruned session's console channel + tab so dead consoles do not
+    // accumulate (Phase 10). Done before re-projecting the survivor so the active
+    // console switch below lands on a still-live channel.
+    if (operations_.remove_debug_console) {
+      for (const int id : removed) {
+        operations_.remove_debug_console(id);
+      }
+    }
     if (manager.ActiveSessionId() != active_before) {
       ClearTransientDebugViews();
       if (DebugSession* active = manager.ActiveSession(); active != nullptr) {
@@ -361,6 +369,24 @@ void DebugService::StopDebugging() {
   SyncBreakpointsPanel();
   // Drop the execution view + variables; the next-frame prune advances the active
   // session and re-projects it when one remains.
+  ClearTransientDebugViews();
+  SyncSessionsPanel();
+}
+
+void DebugService::StopAllDebugging() {
+  DapManager& manager = CurrentDapManager();
+  if (manager.SessionCount() == 0) {
+    return;
+  }
+  // Tear every session down (blocks until all adapter I/O threads join). The
+  // next-frame prune drops the now-terminal sessions and cleans their consoles.
+  manager.BeginShutdownAll();
+  manager.ShutdownAll();
+  // All sessions are gone, so reset the project-shared adapter state (same as
+  // StopDebugging's last-session branch).
+  CurrentProjectState().breakpoint_store.ResetVerification();
+  CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
+  SyncBreakpointsPanel();
   ClearTransientDebugViews();
   SyncSessionsPanel();
 }
@@ -626,16 +652,38 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
   session->RequestEvaluate(
       expression, FocusedFrameId(), "repl",
       [this, session_id, label](bool ok, dap_protocol::DapEvaluateResult result) {
-        std::string line;
-        if (ok) {
-          line = result.result.empty() ? std::string("(no value)") : result.result;
-          if (!result.type.empty()) {
-            line += "  : " + result.type;
+        if (!ok) {
+          AppendConsoleLine(session_id, label, "error: could not evaluate expression");
+          if (operations_.request_bottom_panel_redraw) {
+            operations_.request_bottom_panel_redraw();
           }
-        } else {
-          line = "error: could not evaluate expression";
+          return;
+        }
+        std::string line = result.result.empty() ? std::string("(no value)") : result.result;
+        if (!result.type.empty()) {
+          line += "  : " + result.type;
         }
         AppendConsoleLine(session_id, label, line);
+        // Structured result: expand one level of children inline as indented
+        // `name: value` lines so a dict/object prints its fields (Phase 10). Deep
+        // lazy expansion would need a tree surface; the console is text, so a single
+        // eager level covers the common "print this object" case.
+        if (result.variables_reference > 0) {
+          if (DebugSession* child_session = CurrentDapManager().SessionById(session_id);
+              child_session != nullptr) {
+            child_session->RequestVariables(
+                result.variables_reference,
+                [this, session_id, label](std::vector<dap_protocol::DapVariable> variables) {
+                  for (const dap_protocol::DapVariable& variable : variables) {
+                    AppendConsoleLine(session_id, label, "    " + variable.name + ": " +
+                                                             variable.value);
+                  }
+                  if (operations_.request_bottom_panel_redraw) {
+                    operations_.request_bottom_panel_redraw();
+                  }
+                });
+          }
+        }
         if (operations_.request_bottom_panel_redraw) {
           operations_.request_bottom_panel_redraw();
         }

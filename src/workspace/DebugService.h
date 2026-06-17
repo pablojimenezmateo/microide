@@ -37,6 +37,9 @@ class DebugService {
     // Surface (open + select) a session's console channel. Called on session start
     // and on a session switch so the console follows the active session.
     std::function<void(int session_id, const std::string& label)> show_debug_console;
+    // Drop a pruned session's console channel + close its tab (Phase 10 cleanup),
+    // so terminated sessions' consoles do not linger.
+    std::function<void(int session_id)> remove_debug_console;
     // Notify on session state changes (drives status text / redraw).
     std::function<void(DebugSession::State state)> notify_session_state_changed;
     std::function<void()> request_chrome_redraw;
@@ -68,6 +71,9 @@ class DebugService {
   bool StartDebugging(const LaunchConfig& config, const std::string& cwd = {});
   // Request graceful teardown of the active session.
   void StopDebugging();
+  // Tear down every live session (Phase 10). Blocks until all adapter I/O threads
+  // join; resets the project-shared adapter state. No-op when none are active.
+  void StopAllDebugging();
 
   // Re-send `setBreakpoints` for one file to the active session (no-op when no
   // session is active). Used when the user toggles a breakpoint mid-session.

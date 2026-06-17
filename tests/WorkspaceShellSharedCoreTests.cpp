@@ -225,6 +225,25 @@ void TestWorkspaceOutputChannelsParseAndCacheContextSnippets() {
          "clearing a channel should drop cached parsed snippet metadata");
 }
 
+// RemoveChannel drops a channel entirely (Phase 10 debug-console cleanup): the
+// channel disappears from Channels()/Entries() while siblings are untouched.
+void TestWorkspaceOutputChannelsRemoveChannel() {
+  WorkspaceOutputChannels channels;
+  channels.AppendLine("debug.console.1", "Session 1", "hello");
+  channels.AppendLine("debug.console.2", "Session 2", "world");
+  Expect(channels.Channels().size() == 2, "two channels exist before removal");
+
+  channels.RemoveChannel("debug.console.1");
+  Expect(channels.Entries("debug.console.1") == nullptr,
+         "a removed channel's entries are gone");
+  Expect(channels.Channels().size() == 1 &&
+             channels.Channels().front().id == "debug.console.2",
+         "removal drops only the named channel and refreshes the channel list");
+
+  channels.RemoveChannel("debug.console.1");  // idempotent / unknown id is a no-op
+  Expect(channels.Channels().size() == 1, "removing an unknown channel is a no-op");
+}
+
 void TestWorkspaceSharedCommandCompletionHelpers() {
   const std::vector<CommandCompletionCandidate> candidates = {
       {"compare", true},
@@ -508,6 +527,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/AtomicTextWrite", TestWorkspaceSharedAtomicTextWrite);
   AddTest(tests, "WorkspaceShared/OutputChannelsParseAndCacheContextSnippets",
           TestWorkspaceOutputChannelsParseAndCacheContextSnippets);
+  AddTest(tests, "WorkspaceShared/OutputChannelsRemoveChannel",
+          TestWorkspaceOutputChannelsRemoveChannel);
   AddTest(tests, "WorkspaceShared/CommandCompletionHelpers",
           TestWorkspaceSharedCommandCompletionHelpers);
   AddTest(tests, "Workspace/CommandRegistry", TestWorkspaceCommandRegistry);

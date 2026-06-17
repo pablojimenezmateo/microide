@@ -1172,6 +1172,10 @@
   void AppendDebugConsoleOutput(int session_id, const std::string& label,
                                 const dap_protocol::DapOutputEvent& output);
   void ShowDebugConsole(int session_id, const std::string& label);
+  // Remove a pruned session's console channel + close its tab (Phase 10).
+  void RemoveDebugConsole(int session_id);
+  // Stop every live debug session and close the debug pane (Phase 10).
+  void StopAllDebugSessions();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
   std::string ActiveLspStatusText(bool ensure_started = true);

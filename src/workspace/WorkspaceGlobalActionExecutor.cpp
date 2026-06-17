@@ -195,6 +195,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.DebugSwitchSession(index);
       return DispatchResult::Handled;
     }
+    case ActionId::DebugStopAllSessions:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      if (!context_.DebugSessionActive()) {
+        return reject("No debug session is running");
+      }
+      context_.StopAllDebugSessions();
+      return DispatchResult::Handled;
     case ActionId::DebugConsoleRepl:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");

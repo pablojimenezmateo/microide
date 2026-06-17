@@ -228,6 +228,12 @@ void WorkspaceShell::StopDebugging() {
   RequestWindowRedraw();
 }
 
+void WorkspaceShell::StopAllDebugSessions() {
+  debug_service_.StopAllDebugging();
+  CloseDebugPane();
+  RequestWindowRedraw();
+}
+
 void WorkspaceShell::DebugFocusSession(int session_id) {
   debug_service_.FocusSession(session_id);
 }
@@ -296,6 +302,15 @@ void WorkspaceShell::ShowDebugConsole(int session_id, const std::string& label) 
   output_channels_.EnsureChannel(channel_id, channel_label);
   context_.current_project_state.panel.content = PanelContentKind::Output;
   context_.current_project_state.panel.output.channel_id = channel_id;
+  RequestBottomPanelRedraw();
+}
+
+void WorkspaceShell::RemoveDebugConsole(int session_id) {
+  const std::string channel_id = DebugConsoleChannelId(session_id);
+  // Close the tab first (advances the active output channel if this was it), then
+  // drop the channel's backing data.
+  CloseOutputChannelTab(channel_id);
+  output_channels_.RemoveChannel(channel_id);
   RequestBottomPanelRedraw();
 }
 

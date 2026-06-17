@@ -143,6 +143,9 @@ enum class ActionId {
   // optional 1-based index selects a specific session. Gated on `debug.enabled`
   // + more than one live session.
   DebugSwitchSession,
+  // Stop every live debug session (Phase 10). Gated on `debug.enabled` + at least
+  // one active session.
+  DebugStopAllSessions,
   // Debug-console REPL (Phase 9). Opens a single-line prompt that evaluates an
   // expression in the active session and appends the result to the console.
   // Gated on `debug.enabled` + an active session.

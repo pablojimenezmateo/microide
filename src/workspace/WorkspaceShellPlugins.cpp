@@ -103,6 +103,7 @@ WorkspaceShell::WorkspaceShell() {
               [this](int session_id, const std::string& label) {
                 ShowDebugConsole(session_id, label);
               },
+          .remove_debug_console = [this](int session_id) { RemoveDebugConsole(session_id); },
           .notify_session_state_changed =
               [this](DebugSession::State /*state*/) { RequestChromeRedraw(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
