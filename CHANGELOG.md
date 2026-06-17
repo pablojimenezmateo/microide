@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [1.3.1] - 2026-06-17
+
+Patch release fixing blurry text on centered overlays under fractional display scaling.
+
+### Rendering
+- Snap glyph-texture origins onto the physical pixel grid so NEAREST-sampled text stays 1:1 with
+  the device under fractional display scales (e.g. 125%). Fixes soft/blurry glyphs on the
+  Help/About and Settings overlays; the editor (already grid-aligned) and integer scales are
+  unchanged.
+
 ## [1.3.0] - 2026-06-17
 
 Closes out the remaining open editor/folding/project topics, then does a deep documentation pass:

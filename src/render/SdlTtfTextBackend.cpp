@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "platform/RuntimePaths.h"
+#include "render/PixelAlign.h"
 #include "util/PerformanceCounters.h"
 #include "util/StartupTrace.h"
 
@@ -189,9 +190,14 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
 
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
+  // Snap only the origin onto the device-pixel grid: snapped*scale is integral,
+  // and entry->width/height are whole physical pixels, so both edges land on the
+  // grid and the NEAREST-sampled glyph texture maps 1:1. Origins within a line
+  // share a fractional base plus integer cell multiples, so all runs snap by the
+  // same delta and intra-line spacing is preserved.
   const SDL_FRect destination = SDL_FRect{
-      x,
-      y,
+      DeviceAlignedOrigin(x, scale_x),
+      DeviceAlignedOrigin(y, scale_y),
       static_cast<float>(entry->width) / scale_x,
       static_cast<float>(entry->height) / scale_y,
   };

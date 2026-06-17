@@ -7,6 +7,7 @@
 #include "editor/TextViewport.h"
 #include "platform/RuntimePaths.h"
 #include "render/AsciiGlyphAtlas.h"
+#include "render/PixelAlign.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 #include "workspace/RenderViewModelBuilder.h"
@@ -1770,6 +1771,38 @@ void TestEditorEssentialsDisablingLayersClearsRendererCaches() {
          "indent guides off should clear cached guide runs");
 }
 
+void TestDeviceAlignedOriginSnapsToPhysicalPixelGrid() {
+  using microide::render::DeviceAlignedOrigin;
+
+  // Integer scales are an exact no-op: glyph origins are already grid-aligned.
+  Expect(DeviceAlignedOrigin(18.0f, 1.0f) == 18.0f,
+         "scale 1.0 must leave the origin unchanged");
+  Expect(DeviceAlignedOrigin(123.0f, 2.0f) == 123.0f,
+         "integer scale must leave an aligned origin unchanged");
+  Expect(DeviceAlignedOrigin(0.0f, 1.25f) == 0.0f, "zero origin stays at zero");
+
+  // Non-positive / non-finite scales fall back to the input untouched.
+  Expect(DeviceAlignedOrigin(17.3f, 0.0f) == 17.3f,
+         "non-positive scale must not divide by zero");
+
+  // Under a fractional scale the snapped origin must map onto a whole physical
+  // pixel: result * scale is integral. These are the exact overlay offsets that
+  // smeared before the fix (content_x=+18, list_top=+10 at 125% display scale).
+  const float scales[] = {1.25f, 1.5f, 1.75f, 2.5f};
+  const float origins[] = {10.0f, 18.0f, 26.0f, 134.5f, 207.0f};
+  for (const float scale : scales) {
+    for (const float origin : origins) {
+      const float aligned = DeviceAlignedOrigin(origin, scale);
+      const float physical = aligned * scale;
+      Expect(std::fabs(physical - std::round(physical)) < 1e-3f,
+             "snapped origin must land on an integer physical pixel");
+      // Snapping never moves the origin by more than half a physical pixel.
+      Expect(std::fabs(aligned - origin) * scale <= 0.5f + 1e-3f,
+             "snap must stay within half a physical pixel of the request");
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
@@ -1860,6 +1893,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer truncation uses bounded width probes",
           TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements);
+  AddTest(tests,
+          "TextRenderer device-aligned origin snaps text to the physical pixel grid",
+          TestDeviceAlignedOriginSnapsToPhysicalPixelGrid);
 #if MICROIDE_HAS_SDL3_TTF
   AddTest(tests,
           "TextRenderer SDL_ttf ASCII UI labels avoid extra glyph gaps",
