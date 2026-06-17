@@ -108,8 +108,23 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
     const bool is_primary = (i == primary_index);
     const std::size_t line = std::min(carets[i].line, document_->lines.size() - 1);
     const std::size_t column = TextLayout::ClampTextColumn(document_->lines[line], carets[i].column);
-    const std::string replacement =
-        text == "\n" ? "\n" + AutoIndentForNewline(line, column) : std::string(text);
+    // On Enter, a caret sitting between a matching auto-close pair splits the
+    // braces across three lines and lands on the inner-indent line, mirroring
+    // the single-caret TryInsertNewlineSplitBraces path. Other carets fall back
+    // to a plain newline + auto-indent. Both share the reverse-walk fan-out.
+    std::string replacement;
+    std::optional<TextPosition> brace_split_caret;
+    if (text == "\n") {
+      if (std::optional<NewlineBraceSplit> split = ComputeNewlineBraceSplit(line, column);
+          split.has_value()) {
+        replacement = std::move(split->text);
+        brace_split_caret = TextPosition{line + 1, split->inner_indent.size()};
+      } else {
+        replacement = "\n" + AutoIndentForNewline(line, column);
+      }
+    } else {
+      replacement = std::string(text);
+    }
     const SelectionRange removed{TextPosition{line, column}, TextPosition{line, column}};
     const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(removed, replacement);
     if (!entry.has_value()) {
@@ -121,8 +136,9 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
       result.position =
           detail::RemapPositionAfterReplace(result.position, removed.start, removed.end, replacement);
     }
-    results.push_back(ResultCaret{
-        TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column}, is_primary});
+    const TextPosition landed = brace_split_caret.value_or(
+        TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column});
+    results.push_back(ResultCaret{landed, is_primary});
   }
 
   TextPosition primary_after = primary_before;

@@ -309,50 +309,56 @@ bool TextViewport::MaybeDedentOnClose(char ch) {
   return ApplyRangeEdit(erase_range, "", true);
 }
 
-bool TextViewport::TryInsertNewlineSplitBraces() {
-  // TODO(multi-caret): brace-split-on-newline is single-caret only. A multi-caret
-  // variant needs the same reverse-walk fan-out as the Apply* paths plus per-caret
-  // auto-indent; tracked as a follow-up.
-  if (has_selection() || has_multiple_carets()) {
-    return false;
-  }
+std::optional<TextViewport::NewlineBraceSplit> TextViewport::ComputeNewlineBraceSplit(
+    std::size_t line, std::size_t column) const {
   if (!lc_view_.auto_close_enabled) {
-    return false;
+    return std::nullopt;
   }
-  if (cursor_line_ >= document_->lines.size()) {
-    return false;
+  if (line >= document_->lines.size()) {
+    return std::nullopt;
   }
-  const std::string& current_line = document_->lines[cursor_line_];
-  const std::size_t column = TextLayout::ClampTextColumn(current_line, cursor_column_);
+  const std::string& current_line = document_->lines[line];
   if (column == 0 || column >= current_line.size()) {
-    return false;
+    return std::nullopt;
   }
   const char prev = current_line[column - 1];
   const char next = current_line[column];
   const auto* opener = FindAutoCloseOpener(lc_view_, prev);
   if (opener == nullptr || opener->close.size() != 1 || opener->close[0] != next) {
+    return std::nullopt;
+  }
+  const std::string base_indent = AutoIndentForNewline(line, column);
+  const std::string inner_indent = base_indent + IndentUnit();
+  return NewlineBraceSplit{
+      .text = std::string("\n") + inner_indent + "\n" + base_indent,
+      .inner_indent = inner_indent,
+  };
+}
+
+bool TextViewport::TryInsertNewlineSplitBraces() {
+  if (has_selection() || has_multiple_carets()) {
     return false;
   }
-  const std::string base_indent = AutoIndentForNewline(cursor_line_, column);
-  const std::string unit = IndentUnit();
-  std::string inner_indent;
-  if (lc_view_.smart_indent_enabled) {
-    inner_indent = base_indent + unit;
-  } else {
-    inner_indent = base_indent + unit;
+  if (cursor_line_ >= document_->lines.size()) {
+    return false;
   }
-  const std::string replacement = std::string("\n") + inner_indent + "\n" + base_indent;
+  const std::size_t column =
+      TextLayout::ClampTextColumn(document_->lines[cursor_line_], cursor_column_);
+  const std::optional<NewlineBraceSplit> split = ComputeNewlineBraceSplit(cursor_line_, column);
+  if (!split.has_value()) {
+    return false;
+  }
   const std::size_t opener_line = cursor_line_;
   const SelectionRange range = SelectionRange{
       TextPosition{cursor_line_, column},
       TextPosition{cursor_line_, column},
   };
-  if (!ApplyRangeEdit(range, replacement, true)) {
+  if (!ApplyRangeEdit(range, split->text, true)) {
     return false;
   }
   cursor_line_ = opener_line + 1;
   if (cursor_line_ < document_->lines.size()) {
-    cursor_column_ = std::min(inner_indent.size(), document_->lines[cursor_line_].size());
+    cursor_column_ = std::min(split->inner_indent.size(), document_->lines[cursor_line_].size());
   } else {
     cursor_column_ = 0;
   }

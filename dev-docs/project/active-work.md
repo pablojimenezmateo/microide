@@ -82,11 +82,14 @@ surfaces branch identity and cleanliness, compact mode is state-labeled and chec
 Project and Search sidebar headers now use cohesive two-row control layouts, and Help/About plus
 workspace actions no longer expose removed auth/chat/debug/task/test/problem surfaces.
 
-Update (2026-05-08): `stabilize-ci-and-remove-periodic-workflows` is in progress. Active CI policy
-now requires event-driven triggers only (`push`, `pull_request`, `workflow_dispatch`) and removes
-periodic schedules. `perf-harness` and `fuzz` route extended coverage to manual dispatch instead of
-nightly cron runs. Current remaining blocker is repository billing for GitHub-hosted runners,
-which prevents workflow jobs from starting until account payments/spending limits are restored.
+Update (2026-05-08, **descoped 2026-06-17**): `stabilize-ci-and-remove-periodic-workflows` left
+the CI policy event-driven only (`push`, `pull_request`, `workflow_dispatch`) with periodic
+schedules removed and `perf-harness`/`fuzz` routed to manual dispatch. Hosted CI is **no longer a
+project objective**: it stayed blocked on GitHub-hosted-runner billing, and the supported
+validation path is local `tools/run-checks.sh` (`tests`/`asan`/`ubsan`/`tsan`) plus the manual
+fuzz/perf targets. The captured-baseline perf gate on a self-hosted `perf-runner-v1` queue is
+likewise descoped — that infrastructure does not exist and is not being pursued. See **Deferred Or
+Out Of Scope**.
 
 Update (2026-05-12): **Editor essentials** (`editor-essential-capabilities`) — **shipped and
 archived** at
@@ -102,10 +105,18 @@ contract-driven auto-close / surround / smart indent, shaping actions and viewpo
 occurrence highlights, snippet engine + Insert Snippet overlay, symbol outline sidebar (LSP +
 regex fallback), save normalization, and auto-detect indent on open (see
 `dev-docs/project/editor-essentials.md`). Committed perf baselines for the new scenarios live under
-`tests/perf/baselines/editor_*.json`. Remaining **partial** items in the archived
-`tasks.md`: dedicated viewport-integrated `tests/EditorFoldingTests.cpp` matrix and
-multi-caret fold-paging coverage (5.13 / 12.1), and host-side TSAN re-run on a kernel
-that maps cleanly (16.3 — environmental; ASAN/UBSAN focused runs clean).
+`tests/perf/baselines/editor_*.json`.
+
+Update (2026-06-17): the previously **partial** archived `tasks.md` items are now closed.
+5.13 (dedicated viewport-integrated folding matrix) and 12.1 (multi-caret fold-paging) are
+covered by `tests/EditorFoldingTests.cpp` and `tests/EditorMultiCaretTests.cpp`
+(`PageUpAcrossCollapsedFoldUsesVisibleRows`, `FoldAwareVerticalMotionSkipsHiddenLines`).
+The lone editor TODO — multi-caret brace-split-on-newline — is now implemented: Enter fans the
+single-caret `TryInsertNewlineSplitBraces` geometry across every caret through
+`ApplyMultiCaretInsert` via the shared `ComputeNewlineBraceSplit` helper, covered by
+`EditorMultiCaret/MultiCaretSplitBraces*`. 16.3 (host-side TSAN) was re-run on this host
+(2026-06-17, `vm.mmap_rnd_bits=28` + `tools/run-checks.sh tsan`): the full suite passes with zero
+ThreadSanitizer warnings, so it is closed.
 
 Update (2026-05-28): Git-first shell UX pass shipped in the current tree. The Git sidebar now
 surfaces workflow and commit-readiness summaries plus selected-row action hints, and compare tabs
@@ -317,15 +328,17 @@ Current state:
   service boundary
 - CMake now supports macOS bundle output, Windows desktop output, and non-`pkg-config` package
   discovery for PCRE2
-- local bring-up now exists for Linux, macOS, and Windows host-facing build or test paths, while
-  CI is intentionally deferred until the cross-platform backends settle
+- local bring-up now exists for Linux, macOS, and Windows host-facing build or test paths
 
-Remaining work:
+Descoped (2026-06-17): Linux is the supported host. The `src/platform/*` seams
+(`ProcessBackend`, `TerminalBackend`, `FileIndexWatcher`, app-directory / trash / URL services)
+stay in place because they keep the host boundary clean and testable, but native Windows and
+macOS subprocess, terminal, and file-watcher backends are **no longer a project objective**. On
+non-Linux hosts the poll/snapshot watcher fallback is the accepted permanent baseline, and
+host-platform CI is not being pursued. See **Deferred Or Out Of Scope**.
 
-- implement Windows subprocess and terminal backends behind the new seams
-- add native macOS and Windows watcher backends so supported hosts do not rely on polling by
-  default
-- add focused host-platform CI later, after the terminal/process and watcher backends are stable
+Additional current state (shell decomposition, recorded here historically):
+
 - chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
   `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
   project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
@@ -415,9 +428,9 @@ Remaining work:
 Open work:
 
 - keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
-- validate broader native file-watch coverage beyond the current Linux-backed asset watcher once
-  target-host build and runtime validation are available; until then snapshot fallback remains
-  the correct baseline for macOS and Windows hosts
+- the Linux-backed asset watcher is the supported baseline; broader native file-watch coverage on
+  non-Linux hosts is descoped (see **Deferred Or Out Of Scope**), and the snapshot fallback is the
+  accepted permanent baseline elsewhere
 - add async or background plugin task surfaces only if real plugin workloads require them
 - preserve the rule that editing, compare, merge, search, git, and terminal remain built-in
   product features even when plugins can extend around them
@@ -661,6 +674,12 @@ These are not current project work unless deliberately promoted into their own p
 - cloud or collaboration features
 - recent-project and recent-file affordances
 - diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
+- native Windows/macOS host backends (subprocess, terminal, file-watcher) — Linux is the supported
+  host; the `src/platform/*` seams remain but non-Linux backends are not being built, and the
+  poll/snapshot watcher fallback is the accepted permanent baseline for non-Linux hosts
+- hosted CI and a self-hosted `perf-runner-v1` captured-baseline perf gate — local
+  `tools/run-checks.sh` (`tests`/`asan`/`ubsan`/`tsan`) plus the manual fuzz/perf targets are the
+  supported validation path
 
 ## Git Workstation
 
