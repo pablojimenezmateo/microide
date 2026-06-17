@@ -153,6 +153,13 @@ struct SetVariableInput {
 //   {"variablesReference":N,"name":...,"value":...}
 util::JsonValue MakeSetVariableArguments(const SetVariableInput& input);
 
+// ---- evaluate request arguments (Phase 5: hover-to-inspect) ----------------
+// Build `evaluate` arguments: {"expression":...,"frameId":N,"context":...}.
+// `context` is "hover" for hover-to-inspect (also "watch"/"repl" in later phases).
+// `frameId` scopes the expression to a stack frame's lexical scope; omitted when 0.
+util::JsonValue MakeEvaluateArguments(const std::string& expression, int frame_id,
+                                      const std::string& context);
+
 // ---- Encode (structs -> wire JSON) ----------------------------------------
 util::JsonValue MakeRequest(int seq, const std::string& command,
                             const util::JsonValue& arguments);

@@ -156,6 +156,14 @@ void TestDapProtocolEncodesVariablesRequests() {
       Json(R"({"value":"99","type":"int","variablesReference":0})"));
   Expect(result.value == "99" && result.type == "int" && result.variables_reference == 0,
          "setVariable result parsed");
+
+  // evaluate (hover-to-inspect): expression + context always present; frameId omitted when 0.
+  const JsonValue eval = codec::MakeEvaluateArguments("count", 7, "hover");
+  Expect(eval["expression"].AsString() == "count" && eval["frameId"].AsInt() == 7 &&
+             eval["context"].AsString() == "hover",
+         "evaluate arguments carry expression, frameId, and context");
+  const JsonValue eval_no_frame = codec::MakeEvaluateArguments("count", 0, "hover");
+  Expect(!eval_no_frame.HasKey("frameId"), "evaluate omits frameId when zero");
 }
 
 }  // namespace

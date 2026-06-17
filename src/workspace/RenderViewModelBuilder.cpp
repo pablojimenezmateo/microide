@@ -707,10 +707,13 @@ HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_targ
   };
 }
 
-HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets() const {
+HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets(bool debug_hover_enabled) const {
   return HoverTargetsViewModel{
       .hover_enabled = true,
       .diagnostics_store = &context_.current_project_state.diagnostics_store,
+      .debug_execution =
+          debug_hover_enabled ? &context_.current_project_state.debug_execution : nullptr,
+      .debug_hover = debug_hover_enabled ? &context_.current_project_state.debug_hover : nullptr,
   };
 }
 

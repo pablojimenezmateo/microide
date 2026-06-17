@@ -5,6 +5,7 @@
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugSession.h"
 #include "workspace/DebugVariablesModel.h"
+#include "workspace/DebugViewModel.h"
 #include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceDapManager.h"
 
@@ -21,6 +22,7 @@ namespace {
 using microide::util::JsonValue;
 using microide::workspace::DapManager;
 using microide::workspace::DebugSession;
+using microide::workspace::DebugHoverModel;
 using microide::workspace::DebugVariablesModel;
 using microide::workspace::LaunchConfig;
 namespace codec = microide::workspace::dap_protocol;
@@ -35,10 +37,11 @@ const char* MockAdapterSource() {
 import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
-# config_done / stop / pause / variables all advertise configurationDone support.
-supports_config_done = mode in ("config_done", "stop", "pause", "variables")
+# config_done / stop / pause / variables / evaluate all advertise configurationDone support.
+supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate")
 supports_set_variable = (mode == "variables")
-stop_on_config = mode in ("stop", "variables")  # emit `stopped` after configurationDone
+supports_evaluate = (mode == "evaluate")
+stop_on_config = mode in ("stop", "variables", "evaluate")  # emit `stopped` after configurationDone
 running_no_stop = (mode == "pause")   # stay running so the test can pause
 seq = 0
 
@@ -106,6 +109,7 @@ while True:
     if command == "initialize":
         respond(msg, {"supportsConfigurationDoneRequest": supports_config_done,
                       "supportsSetVariable": supports_set_variable,
+                      "supportsEvaluateForHovers": supports_evaluate,
                       "supportsTerminateRequest": True})
         event("initialized")
     elif command == "setBreakpoints":
@@ -158,6 +162,11 @@ while True:
     elif command == "setVariable":
         args = msg.get("arguments", {})
         respond(msg, {"value": args.get("value", ""), "type": "int", "variablesReference": 0})
+    elif command == "evaluate":
+        args = msg.get("arguments", {})
+        # Echo the expression + frame so the test can assert both reached the wire.
+        value = args.get("expression", "") + "@" + str(args.get("frameId", 0))
+        respond(msg, {"result": value, "type": "int", "variablesReference": 0})
     elif command == "threads":
         respond(msg, {"threads": [{"id": 1, "name": "main"}]})
     elif command == "pause":
@@ -575,6 +584,126 @@ void TestDebugSessionSetVariableGatedOnCapability() {
   manager.ShutdownAll();
 }
 
+// Drives the real `evaluate(context:"hover")` round-trip against the mock adapter
+// and feeds the result into a DebugHoverModel exactly as DebugService::EvaluateHover
+// does — protocol + session + model end to end, including dedup + generation guard.
+void TestDebugSessionEvaluateHover() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "evaluate"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "adapter should stop so a frame is focusable");
+  Expect(!captured.last_frames.empty(), "a stack frame should resolve on stop");
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  Expect(session->Client().Capabilities().supports_evaluate_for_hovers,
+         "evaluate-mode adapter advertises supportsEvaluateForHovers");
+  const int frame_id = captured.last_frames[0].id;
+
+  // Mirror DebugService::EvaluateHover's model interaction: Begin → request →
+  // Resolve under the in-flight generation.
+  DebugHoverModel hover;
+  Expect(hover.Classify(frame_id, "count") == DebugHoverModel::Lookup::Miss,
+         "fresh model classifies any query as a miss");
+  const std::uint64_t generation = hover.Begin(frame_id, "count");
+  Expect(hover.Classify(frame_id, "count") == DebugHoverModel::Lookup::Pending,
+         "an in-flight query classifies as pending (suppresses re-issue)");
+  session->RequestEvaluate("count", frame_id, "hover",
+                           [&](bool ok, codec::DapEvaluateResult result) {
+                             if (ok) {
+                               hover.Resolve(generation, std::move(result.result),
+                                             std::move(result.type));
+                             } else {
+                               hover.Fail(generation);
+                             }
+                           });
+  Expect(PollUntil(manager,
+                   [&]() { return hover.status == DebugHoverModel::Status::Resolved; }),
+         "evaluate should resolve the hover value");
+  Expect(hover.Classify(frame_id, "count") == DebugHoverModel::Lookup::Hit,
+         "the resolved value is served as a cache hit");
+  Expect(hover.value == "count@" + std::to_string(frame_id) && hover.type == "int",
+         "the adapter's evaluated result + type land in the model");
+  manager.ShutdownAll();
+}
+
+// The session-level capability gate: an adapter without supportsEvaluateForHovers
+// rejects a hover evaluate without sending anything on the wire.
+void TestDebugSessionEvaluateGatedOnCapability() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));  // no evaluate cap
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+
+  bool callback_fired = false;
+  bool callback_ok = true;
+  manager.ActiveSession()->RequestEvaluate(
+      "count", captured.last_frames.empty() ? 0 : captured.last_frames[0].id, "hover",
+      [&](bool ok, codec::DapEvaluateResult) {
+        callback_fired = true;
+        callback_ok = ok;
+      });
+  Expect(PollUntil(manager, [&]() { return callback_fired; }),
+         "hover evaluate callback should fire even when unsupported");
+  Expect(!callback_ok, "hover evaluate should report failure without the capability");
+  manager.ShutdownAll();
+}
+
+// Pure DebugHoverModel behavior (no adapter): classify keying, generation guard
+// dropping stale completions, and Clear.
+void TestDebugHoverModelBehavior() {
+  DebugHoverModel hover;
+  Expect(hover.status == DebugHoverModel::Status::Empty, "model starts Empty");
+  Expect(hover.Classify(1, "x") == DebugHoverModel::Lookup::Miss, "empty model is a miss");
+
+  // A different frame or expression is always a miss (key = frame_id + expression).
+  const std::uint64_t gen = hover.Begin(1, "x");
+  Expect(hover.Classify(2, "x") == DebugHoverModel::Lookup::Miss, "different frame is a miss");
+  Expect(hover.Classify(1, "y") == DebugHoverModel::Lookup::Miss, "different expr is a miss");
+  Expect(hover.Classify(1, "x") == DebugHoverModel::Lookup::Pending, "same key while pending");
+
+  hover.Resolve(gen, "42", "int");
+  Expect(hover.Classify(1, "x") == DebugHoverModel::Lookup::Hit && hover.value == "42",
+         "resolve under the live generation lands a hit");
+
+  // A stale completion (older generation, e.g. after a frame switch) is dropped.
+  const std::uint64_t gen2 = hover.Begin(1, "x");
+  hover.Resolve(gen, "stale", "int");
+  Expect(hover.status == DebugHoverModel::Status::Pending && hover.value.empty(),
+         "a completion from a superseded generation is ignored");
+  hover.Fail(gen2);
+  Expect(hover.Classify(1, "x") == DebugHoverModel::Lookup::Failed, "fail marks the query failed");
+
+  hover.Clear();
+  Expect(hover.status == DebugHoverModel::Status::Empty &&
+             hover.Classify(1, "x") == DebugHoverModel::Lookup::Miss,
+         "Clear resets to Empty and bumps the generation");
+}
+
 // Pure DebugVariablesModel behavior (no adapter): flatten ordering, lazy
 // expand/collapse, setVariable application, inline-edit targeting, selection.
 void TestDebugVariablesModelTreeBehavior() {
@@ -666,6 +795,10 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
   AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",
           TestDebugSessionVariablesTreeAndSetVariable);
+  AddTest(tests, "DebugService/SessionEvaluateHover", TestDebugSessionEvaluateHover);
+  AddTest(tests, "DebugService/SessionEvaluateGatedOnCapability",
+          TestDebugSessionEvaluateGatedOnCapability);
+  AddTest(tests, "DebugService/HoverModelBehavior", TestDebugHoverModelBehavior);
   AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
           TestDebugSessionSetVariableGatedOnCapability);
   AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);

@@ -130,6 +130,12 @@ struct HoverPopupViewModel {
 struct HoverTargetsViewModel {
   bool hover_enabled = false;
   const editor::DiagnosticsStore* diagnostics_store = nullptr;
+  // Debug hover-to-inspect (Phase 5): non-null only when the caller-supplied gate
+  // holds (debug.enabled + session Stopped + adapter advertises hover evaluation),
+  // so the render-surface resolver reads debug state through the view model rather
+  // than reaching into project state directly.
+  const DebugExecutionView* debug_execution = nullptr;
+  const DebugHoverModel* debug_hover = nullptr;
 };
 
 struct StatusBarSegmentViewModel {
@@ -234,7 +240,10 @@ class RenderViewModelBuilder {
                                                bool render_whitespace_enabled = false) const;
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
   HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
-  HoverTargetsViewModel BuildHoverTargets() const;
+  // `debug_hover_enabled` is the shell-computed gate (debug.enabled + session
+  // Stopped + supportsEvaluateForHovers); when set, the returned view model carries
+  // the focused-frame execution view + the hover-eval cache for the resolver.
+  HoverTargetsViewModel BuildHoverTargets(bool debug_hover_enabled = false) const;
   StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
                                     const class StatusBarService& service) const;
   NotificationsViewModel BuildNotifications(const NotificationService& service) const;

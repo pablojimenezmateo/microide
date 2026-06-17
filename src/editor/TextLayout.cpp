@@ -199,4 +199,23 @@ std::size_t TextLayout::AdvanceVisualColumn(std::size_t visual_column,
   return visual_column + (remainder == 0 ? safe_tab_size : safe_tab_size - remainder);
 }
 
+TextLayout::ByteRange TextLayout::IdentifierRangeAt(const std::string& line,
+                                                    std::size_t text_column) {
+  const auto is_ident = [](unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+  };
+  if (text_column >= line.size() || !is_ident(static_cast<unsigned char>(line[text_column]))) {
+    return {};
+  }
+  std::size_t start = text_column;
+  while (start > 0 && is_ident(static_cast<unsigned char>(line[start - 1]))) {
+    --start;
+  }
+  std::size_t end = text_column + 1;
+  while (end < line.size() && is_ident(static_cast<unsigned char>(line[end]))) {
+    ++end;
+  }
+  return {start, end};
+}
+
 }  // namespace microide::editor

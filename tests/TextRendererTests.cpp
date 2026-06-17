@@ -1803,9 +1803,43 @@ void TestDeviceAlignedOriginSnapsToPhysicalPixelGrid() {
   }
 }
 
+void TestTextLayoutIdentifierRangeAt() {
+  using microide::editor::TextLayout;
+
+  // Cursor anywhere inside an identifier yields the full word range.
+  const std::string line = "  int count_2 = other->x;";
+  const std::size_t c = line.find("count_2");
+  for (std::size_t off = 0; off < std::string("count_2").size(); ++off) {
+    const auto r = TextLayout::IdentifierRangeAt(line, c + off);
+    Expect(!r.empty() && r.start == c && r.end == c + 7,
+           "any byte inside count_2 resolves to the whole identifier");
+  }
+
+  // Non-identifier bytes (space, punctuation, past end-of-line) resolve to empty.
+  Expect(TextLayout::IdentifierRangeAt(line, 0).empty(), "leading space is not an identifier");
+  Expect(TextLayout::IdentifierRangeAt(line, line.find('=')).empty(),
+         "operator byte is not an identifier");
+  Expect(TextLayout::IdentifierRangeAt(line, line.size()).empty(),
+         "past end-of-line is empty");
+  Expect(TextLayout::IdentifierRangeAt("", 0).empty(), "empty line is empty");
+
+  // Member access does not merge across `->`/`.` (identifier-only, Phase 5 contract).
+  const std::size_t x = line.find("->x") + 2;
+  const auto rx = TextLayout::IdentifierRangeAt(line, x);
+  Expect(!rx.empty() && line.substr(rx.start, rx.end - rx.start) == "x",
+         "member access stops at the operator");
+
+  // Tabs/leading indent do not affect byte-offset resolution.
+  const std::string tabbed = "\t\tvalue";
+  const auto rt = TextLayout::IdentifierRangeAt(tabbed, 3);
+  Expect(!rt.empty() && rt.start == 2 && rt.end == tabbed.size(),
+         "identifier after tabs resolves by byte offset");
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextLayout identifier range at cursor", TestTextLayoutIdentifierRangeAt);
   AddTest(tests,
           "TextRenderer decorated grid paints row fills and underlines separately",
           TestDecoratedTextGridRendererPaintsRowFillAndUnderline);

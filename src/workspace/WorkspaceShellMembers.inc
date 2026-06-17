@@ -380,11 +380,21 @@
     SDL_FRect copy_sha_rect{};
   };
 
+  // Debug hover-to-inspect popup payload (Phase 5): the evaluated value + its type
+  // for the identifier under the cursor while a session is Stopped. Strings are
+  // prebuilt by DebugService (off the render path).
+  struct DebugHoverValue {
+    std::string value;
+    std::string type;
+    bool operator==(const DebugHoverValue&) const = default;
+  };
+
   struct EditorHoverTarget {
     enum class Kind {
       Blame,
       Diagnostic,
       Plugin,
+      DebugValue,
     };
 
     Kind kind = Kind::Blame;
@@ -392,13 +402,14 @@
     std::size_t blame_line_index = 0;
     std::optional<editor::PublishedDiagnostic> diagnostic;
     std::optional<plugin::PluginHost::HoverResult> plugin_hover;
+    std::optional<DebugHoverValue> debug_value;
 
     bool operator==(const EditorHoverTarget& other) const {
       return kind == other.kind && anchor_rect.x == other.anchor_rect.x &&
              anchor_rect.y == other.anchor_rect.y && anchor_rect.w == other.anchor_rect.w &&
              anchor_rect.h == other.anchor_rect.h &&
              blame_line_index == other.blame_line_index && diagnostic == other.diagnostic &&
-             plugin_hover == other.plugin_hover;
+             plugin_hover == other.plugin_hover && debug_value == other.debug_value;
     }
   };
 
@@ -409,8 +420,20 @@
     std::size_t blame_line_index = 0;
     std::optional<editor::PublishedDiagnostic> diagnostic;
     std::optional<plugin::PluginHost::HoverResult> plugin_hover;
+    std::optional<DebugHoverValue> debug_value;
     std::optional<SDL_FRect> primary_action_rect;
   };
+
+  // Recorded by the (const) debug-value hover resolver when it classifies a cache
+  // MISS, and consumed by the non-const UpdateEditorHover to kick off the async
+  // `evaluate` request. Keeps the const resolver pure-read (no DAP I/O); the
+  // instance-scoped, cleaner analog of the thread_local cache the plugin hover uses.
+  struct PendingHoverEval {
+    int frame_id = 0;
+    std::string expression;
+    bool valid = false;
+  };
+  mutable PendingHoverEval pending_hover_eval_;
 
   enum class ProjectOpenDialogLaunchResult {
     Launched,
@@ -922,12 +945,36 @@
       const TextGridInteractionLayout& interaction,
       float x,
       float y) const;
+  // Debug hover-to-inspect (Phase 5). Resolves the identifier under (x,y) in the
+  // focused frame's source file and serves a cached `evaluate` value, recording a
+  // PendingHoverEval on a cache miss so UpdateEditorHover can kick off the request.
+  std::optional<EditorHoverTarget> DebugValueHoverTargetAtPosition(float x, float y) const;
+  std::optional<EditorHoverTarget> DebugValueHoverTargetForViewport(
+      const editor::TextViewport& viewport,
+      const TextGridInteractionLayout& interaction,
+      float x,
+      float y) const;
   std::optional<EditorHoverPopupLayout> ActiveEditorHoverPopupLayout() const;
   SDL_FRect EditorHoverPopupPrimaryActionHitRect(const EditorHoverPopupLayout& popup) const;
   bool EditorHoverPopupPrimaryActionHovered(float x, float y) const;
   std::vector<std::string> WrapEditorHoverPopupText(std::string_view text,
                                                     float max_width,
                                                     std::size_t max_lines) const;
+  // Shared "secondary title line(s) + gap + primary content line(s)" hover-card
+  // shape used by the Plugin (title/content) and DebugValue (type/value) popups.
+  // Compute the positioned card rect, and draw the two stacked text blocks.
+  SDL_FRect ComputeTwoBlockHoverCardRect(std::string_view title,
+                                         std::string_view content,
+                                         std::size_t max_title_lines,
+                                         std::size_t max_content_lines,
+                                         const SDL_FRect& anchor_rect,
+                                         const SDL_FRect& editor_surface) const;
+  void DrawTwoBlockHoverCard(SDL_Renderer* renderer,
+                             const SDL_FRect& card_rect,
+                             std::string_view title,
+                             std::string_view content,
+                             std::size_t max_title_lines,
+                             std::size_t max_content_lines) const;
   void UpdateEditorHover(float x, float y);
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
   SDL_FRect EditorBlamePopupCopyShaHitRect(const EditorBlamePopupLayout& popup) const;
@@ -1069,6 +1116,9 @@
   void ResendBreakpointsForFile(const std::filesystem::path& path);
   bool IsDebugSessionActive() const;
   bool IsDebugSessionStopped() const;
+  // Canonical read of the master `debug.enabled` toggle (default off). The one
+  // place that interprets the stored setting string as a bool for shell code.
+  bool DebugEnabled() const;
   // Execution control (Phase 3); forward to debug_service_ / the active session.
   void DebugContinue();
   void DebugStepOver();

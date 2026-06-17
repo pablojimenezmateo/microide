@@ -215,7 +215,18 @@ Original plan, retained for reference:
   inline edit via `SingleLineEditor` → `setVariable`. Row text prebuilt in the view
   model. DAP surface: `scopes`, `variables`, `setVariable`.
 
-### Phase 5 — Hover-to-inspect via `evaluate`
+### Phase 5 — Hover-to-inspect via `evaluate` ✅ DONE (2026-06-17)
+
+See "Phase 5 — what shipped" below. Summary: while a session is `Stopped` and
+`debug.enabled` is on, hovering an identifier in the **focused frame's source file**
+resolves it as an expression and shows its `evaluate(context:"hover")` value in a
+hover popup. The editor hover pipeline is synchronous but `evaluate` is async, so the
+result is cached in a transient, frame-scoped `DebugHoverModel` (keyed by `(frame id,
+expression)`, generation-guarded): a cache *hit* is served by the const hover
+resolver, a *miss* kicks off the async request which on completion requests an editor
+redraw that re-resolves into a hit. Gated on `supportsEvaluateForHovers`.
+
+Original plan, retained for reference:
 
 - Add `EditorHoverTarget::Kind::DebugValue` in `WorkspaceShellHoverTargets.cpp`;
   when paused + hovering a token, resolve its range and
@@ -543,11 +554,85 @@ Tests added (`tests/DebugServiceTests.cpp`, `tests/DapProtocolTests.cpp`):
   ordering/depth, lazy expand/collapse + no-refetch, `setVariable` application,
   edit-target resolution, selection clamping, `Clear`.
 
+## Phase 5 — what shipped (2026-06-17)
+
+Files added:
+
+- `src/workspace/DebugViewModel.h` gained `DebugHoverModel` — the transient
+  hover-to-inspect cache for the focused frame's most recent
+  `evaluate(context:"hover")`. Keyed by `(frame_id, expression)`; a monotonic
+  `generation` (bumped on `Begin`/`Clear`) lets a completion that lands after a frame
+  switch / resume be dropped. `Classify` returns `Miss/Pending/Hit/Failed`; `Begin`
+  marks Pending + returns the generation; `Resolve`/`Fail` are generation-guarded.
+  Lives on `ProjectWorkspaceState.debug_hover` next to `debug_execution`/
+  `debug_variables`; never persisted — cleared on resume/stop and on a frame switch.
+
+Files changed:
+
+- `src/editor/TextLayout.{h,cpp}` — `IdentifierRangeAt(line, text_column)` returns the
+  `[A-Za-z0-9_]+` `ByteRange` under a byte column (empty off an identifier). The bare
+  word is the hover expression; member-access (`a.b`/`a->b`) is a narrow TODO, not done.
+
+Key decisions (locked):
+
+- **Async cache served by a synchronous resolver (R1).** The hover pipeline is
+  synchronous (`UpdateEditorHover` → `EditorHoverTargetAtPosition`, both effectively
+  read-only), but `evaluate` is async. The const resolver
+  `DebugValueHoverTargetForViewport` serves a cache *hit*, returns nothing for
+  *pending*/*failed* (no placeholder popup → no flicker), and on a *miss* records a
+  `mutable PendingHoverEval` slot. The non-const `UpdateEditorHover` reads that slot
+  and calls `DebugService::EvaluateHover`, whose completion `request_editor_redraw`s →
+  the next frame's resolution re-classifies as a hit. No DAP I/O in the const path; no
+  `const_cast`. The per-`(frame,expr)` dedup in `EvaluateHover` keeps the chatty
+  per-frame hover trigger to one request per token.
+- **Render-surface state flows through the view model.** `WorkspaceShellHoverTargets.cpp`
+  is a lint-covered render-surface TU and must not read `context_.current_project_state`
+  directly. `HoverTargetsViewModel` gained `debug_execution` + `debug_hover` pointers,
+  populated by `BuildHoverTargets(debug_hover_enabled)` only when the shell-computed gate
+  holds (`DebugEnabled()` + `IsDebugSessionStopped()` + `SupportsEvaluateForHovers()`).
+- **Focused-frame-file gate (correctness).** Hover evaluates only over the focused
+  frame's source file (lexically-normalized path match, same as the execution-line
+  marker), since `evaluate(frameId)` resolves names in that frame's lexical scope.
+- **Shared two-block hover-card helper (dedup).** `ComputeTwoBlockHoverCardRect` +
+  `DrawTwoBlockHoverCard` in `WorkspaceShellHoverPopup.cpp` capture the
+  "muted title line(s) + gap + primary content line(s)" shape; the Plugin (title/content)
+  and DebugValue (type/value) popups both route through them instead of a fourth
+  near-duplicate branch. Blame/Diagnostic are unchanged.
+
+Wiring:
+
+- `DapProtocol::MakeEvaluateArguments(expression, frameId, context)` (omits `frameId`
+  when 0) joins the other `Make*Arguments`; `ParseEvaluateResult` already existed.
+- `DebugSession::RequestEvaluate(expression, frameId, context, cb(ok, result))` mirrors
+  `RequestScopes`/`SetVariable`; hover context is gated on `supportsEvaluateForHovers`
+  (callback fires `ok=false` when unsupported, nothing on the wire).
+- `DebugService::EvaluateHover(frameId, expression)` (dedup → `Begin` → `RequestEvaluate`
+  → generation-guarded `Resolve`/`Fail` → `request_editor_redraw`) +
+  `SupportsEvaluateForHovers()`. `debug_hover.Clear()` runs alongside the existing
+  `debug_execution`/`debug_variables` clears on stop/resume **and in `FocusFrame`**.
+- `WorkspaceShell::DebugEnabled()` centralizes the `debug.enabled` bool parse for shell
+  code. `EditorHoverTarget::Kind::DebugValue` + `DebugHoverValue{value,type}` probe
+  between Diagnostic and Plugin (debug values outrank LSP hover while paused).
+
+Tests added (`tests/DebugServiceTests.cpp`, `tests/DapProtocolTests.cpp`,
+`tests/TextRendererTests.cpp`):
+
+- `DapProtocol/EncodesVariablesRequests` extended — `MakeEvaluateArguments` shape +
+  `frameId` omitted when 0.
+- `TextLayout identifier range at cursor` — `IdentifierRangeAt` mid-word/boundaries/
+  whitespace/punctuation/tabs + no member-access merge.
+- `DebugService/SessionEvaluateHover` — real mock-adapter (`evaluate` mode): stop →
+  `Begin`/Pending → `RequestEvaluate` → `Resolve` → Hit with the adapter's value/type.
+- `DebugService/SessionEvaluateGatedOnCapability` — adapter without
+  `supportsEvaluateForHovers` rejects the hover evaluate (callback `ok=false`).
+- `DebugService/HoverModelBehavior` — pure `DebugHoverModel`: key classification,
+  generation guard dropping a stale completion, `Clear`.
+
 ## How to validate
 
 ```bash
 cmake --build build -j8
-./build/microide/microide_tests Dap DebugService    # focused: 25 DAP/session tests
+./build/microide/microide_tests Dap DebugService    # focused: 28 DAP/session tests
 ./build/microide/microide_tests Breakpoint          # BreakpointStore (7)
 ./build/microide/microide_tests "PersistedStateRecord" "PluginHost/LaunchConfig"
 tools/run-checks.sh tests                            # full unit suite incl. arch invariants
@@ -567,7 +652,10 @@ Real-adapter dogfood (debugpy): the launch sequence microide uses
 `configurationDone`) was confirmed against debugpy 1.8.21 — the breakpoint binds
 (`verified: true`) and a `stopped` event arrives at the line. The full C++
 client/session path is exercised by the real-subprocess mock-adapter integration
-test (`DebugServiceTests`).
+test (`DebugServiceTests`). For Phase 5, enable `debug.enabled`, stop at a
+breakpoint, and hover a local in the stopped file — the value popup appears (and
+updates when you switch call-stack frames). The mock adapter now has an `evaluate`
+mode advertising `supportsEvaluateForHovers`.
 
 Tracing: set `MICROIDE_TRACE_DAP_LIFECYCLE=1` for adapter lifecycle logs (mirrors
 `MICROIDE_TRACE_LSP_LIFECYCLE`).
@@ -578,24 +666,34 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 5** (hover-to-inspect via `evaluate`). Phase 4 already focuses a
-frame and exposes its DAP `id` (`DebugExecutionView::FocusedFrame()->id`), which is
-the `frameId` an `evaluate` request needs:
+Start **Phase 6** (conditional / hit-count / logpoint breakpoints + watch
+expressions). The pieces already in place to build on:
 
-- Add `EditorHoverTarget::Kind::DebugValue` in `WorkspaceShellHoverTargets.cpp`:
-  while a session is `Stopped` and `debug.enabled`, hovering a token resolves its
-  range and the expression under it.
-- `DebugService` issues `evaluate(expr, frameId, context:"hover")` (the focused
-  frame's id), caching the result keyed by (frame id, expression) like the plugin
-  hover cache; render the value through `WorkspaceShellHoverPopup.cpp`.
-- `DapProtocol` already has `ParseEvaluateResult`; add `MakeEvaluateArguments(expr,
-  frameId, context)` next to the Phase 4 `Make*Arguments` (keep all request encoding
-  in the one protocol TU). DAP surface: `evaluate` (`context:"hover"`).
-- The `DebugVariablesModel` lazy-tree shape is reusable if a hover popup later wants
-  to expand a structured value inline (a structured `evaluate` result carries a
-  `variablesReference`, the same anchor `variables` requests hang off).
+- `editor::BreakpointStore` already carries the `condition`/`hit_condition`/
+  `log_message` fields (reserved since Phase 2), persists them in the `debug`
+  `PersistedRecord`, and `DapProtocol::MakeSetBreakpointsArguments` already emits
+  them when non-empty. Phase 6 adds the **breakpoint context menu** to edit them
+  (gated on `supportsConditionalBreakpoints` / `supportsHitConditionalBreakpoints` /
+  `supportsLogPoints`) and re-sends `setBreakpoints` for the file on commit (the
+  live re-send path from Phase 2).
+- **Watch panel:** a new `WatchExpressionStore.{h,cpp}` persisted in
+  `PersistedDebugState`, surfaced as a third structured peer tab next to Call Stack /
+  Variables. It reuses the Phase 4 peer-tab + `IsDebugPanelContent` plumbing and the
+  `DebugVariablesModel` tree — each watched expression's `evaluate(context:"watch")`
+  result with a `variablesReference > 0` becomes a tree root, re-evaluated on each
+  `stopped`. The Phase 5 `RequestEvaluate`/`MakeEvaluateArguments` plumbing is reused
+  verbatim with `context:"watch"` (only `context:"hover"` is capability-gated).
+- The `DebugHoverModel` async-cache shape (Begin/Classify/Resolve/Fail + generation
+  guard) is a template if a hover popup later wants to **expand a structured value
+  inline** (a structured `evaluate` result carries a `variablesReference`, the same
+  anchor `variables` requests hang off — and `DebugVariablesModel` already models it).
 
 Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
+
+- The Plugin and DebugValue hover popups now share `ComputeTwoBlockHoverCardRect` /
+  `DrawTwoBlockHoverCard` in `WorkspaceShellHoverPopup.cpp`. If the Diagnostic popup's
+  layout is ever made byte-identical (severity label + message is the same two-block
+  shape), route it through the helper too rather than keeping its bespoke branch.
 
 - The breakpoint / diagnostic / fold / execution gutter markers now share the same
   per-row cursor-walk shape in `EditorViewRenderer`; the execution arrow is a

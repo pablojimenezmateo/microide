@@ -298,6 +298,11 @@ struct ProjectWorkspaceState {
   // on each `stopped`/frame focus, cleared on resume/stop; never persisted. Only
   // meaningful when `debug.enabled` is ON.
   DebugVariablesModel debug_variables;
+  // Transient hover-to-inspect cache (Phase 5): the in-flight / most recent
+  // `evaluate(context:"hover")` result for the focused frame. Cleared on
+  // resume/stop and on a focused-frame switch; never persisted. Only meaningful
+  // when `debug.enabled` is ON and the session is Stopped.
+  DebugHoverModel debug_hover;
   // Persisted + plugin-contributed launch/attach configurations and the
   // currently selected index. Start Debugging targets the selected config when
   // one exists, else falls back to the first registered adapter.

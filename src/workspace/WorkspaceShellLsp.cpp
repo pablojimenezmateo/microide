@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -154,6 +155,11 @@ bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSess
 
 bool WorkspaceShell::IsDebugSessionStopped() const {
   return debug_service_.SessionState() == DebugSession::State::Stopped;
+}
+
+bool WorkspaceShell::DebugEnabled() const {
+  const std::optional<std::string> value = GetSettingValue("debug.enabled");
+  return value.has_value() && *value != "false" && *value != "0" && *value != "off";
 }
 
 void WorkspaceShell::DebugContinue() { debug_service_.Continue(); }

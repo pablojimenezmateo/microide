@@ -342,6 +342,31 @@ void DebugSession::SetVariable(int variables_reference, const std::string& name,
       });
 }
 
+void DebugSession::RequestEvaluate(
+    const std::string& expression, int frame_id, const std::string& context,
+    std::function<void(bool, dap_protocol::DapEvaluateResult)> callback) {
+  // Gate hover evaluation on the adapter capability so we never send a request it
+  // would reject; non-hover contexts (watch/repl, later phases) are always allowed.
+  const bool hover = context == "hover";
+  if (expression.empty() || !client_->IsInitialized() ||
+      (hover && !client_->Capabilities().supports_evaluate_for_hovers)) {
+    if (callback) {
+      callback(false, dap_protocol::DapEvaluateResult{});
+    }
+    return;
+  }
+  client_->SendRequestAsync(
+      "evaluate", dap_protocol::MakeEvaluateArguments(expression, frame_id, context),
+      [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
+        if (!callback) {
+          return;
+        }
+        callback(response.success, response.success
+                                       ? dap_protocol::ParseEvaluateResult(response.body)
+                                       : dap_protocol::DapEvaluateResult{});
+      });
+}
+
 void DebugSession::SendResumeRequest(const char* command) {
   if (state_ != State::Stopped) {
     return;

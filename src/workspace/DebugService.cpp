@@ -112,6 +112,8 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
                                 const std::vector<dap_protocol::DapStackFrame>& frames) {
     ProjectWorkspaceState& state = CurrentProjectState();
     state.debug_execution = BuildExecutionView(stop, frames);
+    // A fresh stop invalidates any prior hover value (new frame state / values).
+    state.debug_hover.Clear();
     // Populate the Variables tree for the top (focused) frame so it is ready the
     // instant the user switches to the Variables tab (scopes is one cheap request).
     if (const DebugStackFrameView* focused = state.debug_execution.FocusedFrame();
@@ -137,6 +139,7 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
   callbacks.on_resumed = [this]() {
     CurrentProjectState().debug_execution.Clear();
     CurrentProjectState().debug_variables.Clear();
+    CurrentProjectState().debug_hover.Clear();
     if (operations_.request_editor_redraw) {
       operations_.request_editor_redraw();
     }
@@ -179,6 +182,7 @@ void DebugService::StopDebugging() {
   // Variables panels clear.
   CurrentProjectState().debug_execution.Clear();
   CurrentProjectState().debug_variables.Clear();
+  CurrentProjectState().debug_hover.Clear();
   if (operations_.request_editor_redraw) {
     operations_.request_editor_redraw();
   }
@@ -192,6 +196,9 @@ void DebugService::FocusFrame(int frame_id) {
   if (session == nullptr) {
     return;
   }
+  // Hover values are frame-scoped: a frame switch must not serve a value (or let a
+  // still-in-flight request resolve) keyed to the previously focused frame.
+  CurrentProjectState().debug_hover.Clear();
   CurrentProjectState().debug_variables.BeginFrame(frame_id);
   session->RequestScopes(frame_id, [this](std::vector<dap_protocol::DapScope> scopes) {
     DebugVariablesModel& model = CurrentProjectState().debug_variables;
@@ -270,6 +277,39 @@ void DebugService::CancelVariableEdit() {
   if (operations_.request_bottom_panel_redraw) {
     operations_.request_bottom_panel_redraw();
   }
+}
+
+void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session == nullptr) {
+    return;
+  }
+  DebugHoverModel& hover = CurrentProjectState().debug_hover;
+  // Dedup: the per-frame hover trigger re-asks every mouse-move; only the first
+  // ask for a given (frame, expression) issues a request. Pending/Resolved/Failed
+  // for the same key are all served (or suppressed) without re-issuing.
+  if (hover.Classify(frame_id, expression) != DebugHoverModel::Lookup::Miss) {
+    return;
+  }
+  const std::uint64_t generation = hover.Begin(frame_id, expression);
+  session->RequestEvaluate(
+      expression, frame_id, "hover",
+      [this, generation](bool ok, dap_protocol::DapEvaluateResult result) {
+        DebugHoverModel& model = CurrentProjectState().debug_hover;
+        if (ok) {
+          model.Resolve(generation, std::move(result.result), std::move(result.type));
+        } else {
+          model.Fail(generation);
+        }
+        if (operations_.request_editor_redraw) {
+          operations_.request_editor_redraw();
+        }
+      });
+}
+
+bool DebugService::SupportsEvaluateForHovers() const {
+  const DebugSession* session = CurrentDapManager().ActiveSession();
+  return session != nullptr && session->Client().Capabilities().supports_evaluate_for_hovers;
 }
 
 void DebugService::ResendBreakpointsForFile(const std::filesystem::path& path) {

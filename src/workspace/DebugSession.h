@@ -122,6 +122,13 @@ class DebugSession {
   void SetVariable(int variables_reference, const std::string& name, const std::string& value,
                    std::function<void(bool ok, dap_protocol::DapSetVariableResult)> callback);
 
+  // Evaluate an expression in a frame's scope (Phase 5: hover-to-inspect). Gated
+  // on `supportsEvaluateForHovers` for `context:"hover"`; when unsupported the
+  // callback fires immediately with ok=false. Same inline request/response shape
+  // as RequestScopes — fires on the main thread when the response arrives.
+  void RequestEvaluate(const std::string& expression, int frame_id, const std::string& context,
+                       std::function<void(bool ok, dap_protocol::DapEvaluateResult)> callback);
+
   // Re-send `setBreakpoints` for one file while the session is live (e.g. the
   // user toggled a breakpoint after launch). Pulls the current snapshot from
   // `breakpoint_provider`; sends an empty list to clear a file. No-op until the

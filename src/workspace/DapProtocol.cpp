@@ -82,6 +82,19 @@ JsonValue MakeSetVariableArguments(const SetVariableInput& input) {
   return JsonValue(std::move(args));
 }
 
+JsonValue MakeEvaluateArguments(const std::string& expression, int frame_id,
+                                const std::string& context) {
+  JsonObject args;
+  args["expression"] = JsonValue(expression);
+  if (frame_id != 0) {
+    args["frameId"] = JsonValue(static_cast<std::int64_t>(frame_id));
+  }
+  if (!context.empty()) {
+    args["context"] = JsonValue(context);
+  }
+  return JsonValue(std::move(args));
+}
+
 JsonValue MakeRequest(int seq, const std::string& command, const JsonValue& arguments) {
   JsonObject req;
   req["seq"] = JsonValue(static_cast<std::int64_t>(seq));

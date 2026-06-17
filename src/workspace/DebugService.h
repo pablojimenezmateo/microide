@@ -86,6 +86,16 @@ class DebugService {
   void CommitVariableEdit();
   void CancelVariableEdit();
 
+  // Hover-to-inspect (Phase 5). Evaluate `expression` in `frame_id`'s scope with
+  // `context:"hover"`, writing the result into `debug_hover` and requesting an
+  // editor redraw so the (synchronous) hover resolver re-resolves into a cache
+  // hit. Deduplicates against the in-flight/cached query, so the chatty per-frame
+  // hover trigger issues at most one request per (frame, expression). No-op
+  // without an active session.
+  void EvaluateHover(int frame_id, const std::string& expression);
+  // Whether the active session's adapter advertises `supportsEvaluateForHovers`.
+  bool SupportsEvaluateForHovers() const;
+
   bool IsSessionActive() const;
   DebugSession::State SessionState() const;
   std::string LastError() const;
