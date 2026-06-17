@@ -35,6 +35,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests);
 void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests);
 void RegisterLspProtocolTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests);
+void RegisterDapProtocolTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
@@ -344,6 +346,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterGitSidebarCommandCenterTests(tests);
   microide::tests::RegisterWorkspaceLspClientTests(tests);
   microide::tests::RegisterLspProtocolTests(tests);
+  microide::tests::RegisterWorkspaceDapClientTests(tests);
+  microide::tests::RegisterDapProtocolTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
   microide::tests::RegisterMergeConflictResolutionTests(tests);
   microide::tests::RegisterFileOperationServiceTests(tests);

@@ -28,7 +28,6 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   run(CheckLspDidOpenIsNonBlocking);
   run(CheckTextViewportNoCombinedLayoutRevision);
   run(CheckNoLegacyPersistenceSymbols);
-  run(CheckNoDebuggerDapSurface);
   run(CheckNoExecutorPostThenFutureGetInWorkspace);
   run(CheckNoSynchronousSubprocessInWorkspace);
   run(CheckNoDirectGitRepositoryInWorkspace);

@@ -70,6 +70,16 @@ history is recorded faithfully in `CHANGELOG.md` (user-facing) and `openspec/cha
 self-hosted perf-runner are descoped; non-Linux host backends are not being built) are recorded under
 **Deferred Or Out Of Scope** below. This section now describes only what is genuinely active.
 
+### 0. Debugger / DAP Support (promoted 2026-06-17)
+
+Full interactive debugging via the Debug Adapter Protocol, host-owned (mirroring the
+LSP client), behind a master "Enable debugger" toggle. Decomposed into independently
+shippable phases (protocol client → session lifecycle → breakpoints → execution
+control → variables → hover-inspect → conditional breakpoints/watches → polish).
+**Phase 0 (protocol client core: `DapClient` + `DapProtocol` + mock-adapter tests)
+is complete.** The full roadmap, status, and next steps live in
+`dev-docs/debugger/dap-integration.md` — read that before continuing the work.
+
 ### 1. Plugin Platform Expansion
 
 This is the dominant current phase and will be large.
@@ -610,7 +620,6 @@ Open work:
 
 These are not current project work unless deliberately promoted into their own phase:
 
-- debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - plugin sandboxing, marketplace trust, and project-local plugin loading (ships
   `--disable-plugins` / `--safe-mode` only; see `dev-docs/project/git-workstation.md`)

@@ -433,6 +433,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspManager.cpp
+  src/workspace/DapProtocol.cpp
+  src/workspace/WorkspaceDapClient.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
   src/workspace/WorkspaceSaveParticipants.cpp
   src/workspace/WorkspaceCompletionRegistry.cpp
@@ -567,6 +569,8 @@ add_executable(microide_tests
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/LspProtocolTests.cpp
+  tests/WorkspaceDapClientTests.cpp
+  tests/DapProtocolTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
   tests/MergeConflictResolutionTests.cpp

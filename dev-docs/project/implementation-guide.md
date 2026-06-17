@@ -98,9 +98,12 @@ The authoritative product thesis — including in-scope capabilities, priority o
 
 ## Explicit Non-Goals
 
+Debugger/DAP support was previously listed here; it was **promoted to an active,
+dedicated phase on 2026-06-17**. See `dev-docs/debugger/dap-integration.md` for the
+architecture, status, and roadmap.
+
 These are out of scope unless deliberately added as a separate phase:
 
-- debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - broad plugin security-system hardening (sandboxing, capability prompts, signing, marketplace
   trust); Git Workstation adds `--disable-plugins` / `--safe-mode` only

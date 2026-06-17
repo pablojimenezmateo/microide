@@ -42,7 +42,9 @@ open repository, inspect changes, diff files, resolve merge conflicts, then stag
 
 ### Requirement: Durable Non-Goals
 
-MicroIDE SHALL treat the following as out of scope unless deliberately promoted into a dedicated phase: debugger/DAP support, plugin marketplaces and remote install flows, Micro-plugin compatibility, broad plugin security-system hardening work (including plugin sandboxing, per-plugin capability prompts, plugin signing, and plugin marketplace trust), cloud or collaboration features, account systems and sync, recent-project and recent-file surfaces, and native OS menu integration.
+MicroIDE SHALL treat the following as out of scope unless deliberately promoted into a dedicated phase: plugin marketplaces and remote install flows, Micro-plugin compatibility, broad plugin security-system hardening work (including plugin sandboxing, per-plugin capability prompts, plugin signing, and plugin marketplace trust), cloud or collaboration features, account systems and sync, recent-project and recent-file surfaces, and native OS menu integration.
+
+Debugger/DAP support was promoted out of this non-goal list into a dedicated, active phase on 2026-06-17; see `dev-docs/debugger/dap-integration.md`.
 
 Minimal startup recovery and trust controls for the Git Workstation, specifically `--disable-plugins`, `--safe-mode`, visible plugins-disabled state, and documentation that repo-local plugin code is not loaded by default, SHALL be considered in scope for that workstation and SHALL NOT imply a plugin sandbox or marketplace trust model.
 
