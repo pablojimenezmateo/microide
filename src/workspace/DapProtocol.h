@@ -107,6 +107,22 @@ struct DapEvaluateResult {
   int variables_reference = 0;
 };
 
+// ---- setBreakpoints request arguments -------------------------------------
+// One source-line breakpoint to send. `line` is the 1-based DAP line (callers
+// convert from their 0-based buffer index). `condition`/`hit_condition`/
+// `log_message` are emitted only when non-empty (Phase 6 fields).
+struct SetBreakpointInput {
+  int line = 0;
+  std::string condition;
+  std::string hit_condition;
+  std::string log_message;
+};
+
+// Build the `setBreakpoints` arguments object:
+//   {"source":{"path":...},"breakpoints":[{"line":N,"condition":...},...]}
+util::JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
+                                            const std::vector<SetBreakpointInput>& breakpoints);
+
 // ---- Encode (structs -> wire JSON) ----------------------------------------
 util::JsonValue MakeRequest(int seq, const std::string& command,
                             const util::JsonValue& arguments);

@@ -65,10 +65,48 @@ bool DebugService::StartDebugging(const LaunchConfig& config, const std::string&
       operations_.request_chrome_redraw();
     }
   };
+  // The session pulls the breakpoint snapshot at `initialized` and on each live
+  // re-send; verification reflects back into the project's BreakpointStore.
+  callbacks.breakpoint_provider = [this]() {
+    return CurrentProjectState().breakpoint_store.SnapshotAll();
+  };
+  callbacks.on_breakpoints_verified =
+      [this](const std::filesystem::path& path,
+             const std::vector<dap_protocol::DapBreakpoint>& breakpoints) {
+        std::vector<editor::VerifiedBreakpoint> results;
+        results.reserve(breakpoints.size());
+        for (const dap_protocol::DapBreakpoint& breakpoint : breakpoints) {
+          results.push_back(editor::VerifiedBreakpoint{
+              .id = breakpoint.id,
+              .verified = breakpoint.verified,
+              .line = breakpoint.line,
+              .message = breakpoint.message,
+          });
+        }
+        CurrentProjectState().breakpoint_store.ApplyVerification(path, results);
+        if (operations_.request_editor_redraw) {
+          operations_.request_editor_redraw();
+        }
+      };
   return CurrentDapManager().StartSession(config, std::move(callbacks), cwd);
 }
 
-void DebugService::StopDebugging() { CurrentDapManager().StopActiveSession(); }
+void DebugService::StopDebugging() {
+  CurrentDapManager().StopActiveSession();
+  // Verification state is tied to the adapter; drop it so a fresh session
+  // re-verifies from scratch and the gutter shows unverified until then.
+  CurrentProjectState().breakpoint_store.ResetVerification();
+  if (operations_.request_editor_redraw) {
+    operations_.request_editor_redraw();
+  }
+}
+
+void DebugService::ResendBreakpointsForFile(const std::filesystem::path& path) {
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session != nullptr && session->IsActive()) {
+    session->ResendBreakpointsForFile(path);
+  }
+}
 
 bool DebugService::IsSessionActive() const {
   const DebugSession* session = CurrentDapManager().ActiveSession();

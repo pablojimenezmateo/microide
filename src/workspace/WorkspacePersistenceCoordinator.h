@@ -71,6 +71,9 @@ class PersistenceCoordinator {
  private:
   std::filesystem::path SessionStatePath() const;
   std::filesystem::path WorkspaceSessionStatePath() const;
+  std::filesystem::path DebugStatePath() const;
+  void SaveDebugState();
+  void RestoreDebugState();
 
   std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(
       const TabEntry& tab) const;

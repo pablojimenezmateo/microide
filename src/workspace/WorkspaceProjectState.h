@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "editor/BreakpointStore.h"
 #include "editor/DiagnosticsStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
@@ -17,6 +18,7 @@
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
 #include "project/ProjectSearchService.h"
+#include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceDapManager.h"
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -255,6 +257,16 @@ struct ProjectWorkspaceState {
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
   editor::DiagnosticsStore diagnostics_store;
+  // Per-project breakpoints keyed by file path. Adapter-agnostic; the host
+  // snapshots it at launch (setBreakpoints) and reflects verification back.
+  // Mirrors `diagnostics_store`: survives session restarts, persists via the
+  // `debug` PersistedRecord. Only meaningful when `debug.enabled` is ON.
+  editor::BreakpointStore breakpoint_store;
+  // Persisted + plugin-contributed launch/attach configurations and the
+  // currently selected index. Start Debugging targets the selected config when
+  // one exists, else falls back to the first registered adapter.
+  std::vector<LaunchConfig> launch_configs;
+  std::size_t selected_launch_config_index = 0;
   std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
   LspUiState lsp;
   // Per-project debug-adapter registry + active debug session (DAP). Lazily

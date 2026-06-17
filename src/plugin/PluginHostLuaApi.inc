@@ -468,6 +468,22 @@
         });
   }
 
+  static int LuaDebugAddConfig(lua_State* state) {
+    return RegisterTableContribution(
+        state, "debug launch-config registration requires an active plugin state",
+        "failed to parse debug launch-config registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          // A launch config only describes how to invoke an adapter; it spawns
+          // nothing itself, so it shares the debug-adapter capability gate.
+          if (!plugin->capabilities.process_exec) {
+            *error_message = "debug launch config requires capabilities.process.exec";
+            return false;
+          }
+          return contribution_interop::RegisterLaunchConfig(state, plugin->id,
+                                                            &host->launch_configs, error_message);
+        });
+  }
+
   static int LuaToolAdd(lua_State* state) {
     return RegisterTableContribution(
         state, "tool registration requires an active plugin state",
@@ -750,6 +766,7 @@
             .code_action_add = &LuaCodeActionAdd,
             .lsp_add = &LuaLspAdd,
             .debug_add = &LuaDebugAdd,
+            .debug_add_config = &LuaDebugAddConfig,
             .task_add = &LuaTaskAdd,
             .tool_add = &LuaToolAdd,
             .test_provider_add = &LuaTestProviderAdd,
@@ -830,7 +847,7 @@
         &hovers, &hover_provider_order, &menu_entries, &keybindings, &settings, &status_items,
         &status_item_order, &formatters, &save_participants, &save_participant_runtimes,
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
-        &language_servers, &debug_adapters, &tasks, &tools, &test_providers,
+        &language_servers, &debug_adapters, &launch_configs, &tasks, &tools, &test_providers,
         &test_provider_runtimes,
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
         &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,

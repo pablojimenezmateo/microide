@@ -61,6 +61,7 @@ void UnregisterContributionsForState(
     std::vector<runtime_types::CodeActionRuntime>* code_action_runtimes,
     std::vector<PluginHost::ContributedLanguageServer>* language_servers,
     std::vector<PluginHost::ContributedDebugAdapter>* debug_adapters,
+    std::vector<PluginHost::ContributedLaunchConfig>* launch_configs,
     std::vector<PluginHost::ContributedTask>* tasks,
     std::vector<PluginHost::ContributedTool>* tools,
     std::vector<PluginHost::ContributedTestProvider>* test_providers,
@@ -198,6 +199,12 @@ void UnregisterContributionsForState(
                        return e.plugin_id == plugin_id;
                      }),
       debug_adapters->end());
+  launch_configs->erase(
+      std::remove_if(launch_configs->begin(), launch_configs->end(),
+                     [&](const PluginHost::ContributedLaunchConfig& e) {
+                       return e.plugin_id == plugin_id;
+                     }),
+      launch_configs->end());
   tasks->erase(std::remove_if(tasks->begin(), tasks->end(),
                               [&](const PluginHost::ContributedTask& e) {
                                 return e.plugin_id == plugin_id;

@@ -1066,6 +1066,7 @@
   // persistence is a later phase; Phase 1 launches the first registered adapter.
   std::string StartDebuggingWithDefaultConfig();
   void StopDebugging();
+  void ResendBreakpointsForFile(const std::filesystem::path& path);
   bool IsDebugSessionActive() const;
   void AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output);
   void ShowDebugConsole();

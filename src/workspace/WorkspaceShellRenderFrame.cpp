@@ -379,6 +379,11 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.occurrences.enabled", true);
     const bool occurrences_case_sensitive =
         setting_enabled("editor.search.case_sensitive", false);
+    // Breakpoint gutter dots only render when the debugger is enabled (default
+    // off), keeping the editor byte-for-byte unchanged for non-debug users.
+    const bool debug_enabled = setting_enabled("debug.enabled", false);
+    const editor::BreakpointStore* breakpoint_store =
+        debug_enabled ? &project_state.breakpoint_store : nullptr;
     const editor::FoldingModel* active_folding_model = nullptr;
     if (!fold_enabled) {
       if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
@@ -413,7 +418,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_render_builder.BuildEditorViewModelInto(
           tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
           occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-          sticky_scroll_max_depth, render_whitespace_enabled);
+          sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store);
       if (!tls_editor_surface_vm.sticky_lines.empty()) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
             text_renderer_, *active_viewport, layout.editor_surface,
@@ -422,7 +427,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-            sticky_scroll_max_depth, render_whitespace_enabled);
+            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store);
       }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
@@ -459,7 +464,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_render_builder.BuildEditorViewModelInto(
           tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
           occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
-          render_whitespace_enabled);
+          render_whitespace_enabled, debug_enabled, breakpoint_store);
       if (!tls_editor_surface_vm.sticky_lines.empty()) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
             text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
@@ -467,7 +472,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
             occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
-            render_whitespace_enabled);
+            render_whitespace_enabled, debug_enabled, breakpoint_store);
       }
       tls_pane_scroll_metrics[pane_index] = metrics;
       tls_pane_scroll_metrics_valid[pane_index] = 1;

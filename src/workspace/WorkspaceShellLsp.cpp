@@ -113,10 +113,26 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
   if (types.empty()) {
     return "no debug adapter is registered (a plugin must contribute one via ctx.debug.add)";
   }
+
+  // Prefer the project's selected launch config (persisted or plugin-contributed)
+  // when its adapter type is registered; otherwise fall back to launching the
+  // first registered adapter with empty arguments.
   LaunchConfig config;
-  config.type = types.front();
-  config.name = config.type;
-  config.request = "launch";
+  const auto& project_state = context_.current_project_state;
+  const auto& configs = project_state.launch_configs;
+  const auto has_registered_adapter = [&](const std::string& type) {
+    return !type.empty() && CurrentDapManager().HasAdapter(type);
+  };
+  if (!configs.empty() &&
+      project_state.selected_launch_config_index < configs.size() &&
+      has_registered_adapter(configs[project_state.selected_launch_config_index].type)) {
+    config = configs[project_state.selected_launch_config_index];
+  } else {
+    config.type = types.front();
+    config.name = config.type;
+    config.request = "launch";
+  }
+
   if (!StartDebugging(config, context_.current_project_state.root.generic_string())) {
     const std::string error = debug_service_.LastError();
     return error.empty() ? "failed to start debug session" : error;
@@ -125,6 +141,10 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
 }
 
 void WorkspaceShell::StopDebugging() { debug_service_.StopDebugging(); }
+
+void WorkspaceShell::ResendBreakpointsForFile(const std::filesystem::path& path) {
+  debug_service_.ResendBreakpointsForFile(path);
+}
 
 bool WorkspaceShell::IsDebugSessionActive() const { return debug_service_.IsSessionActive(); }
 

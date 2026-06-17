@@ -41,6 +41,7 @@ void UnregisterContributionsForState(
     std::vector<runtime_types::CodeActionRuntime>* code_action_runtimes,
     std::vector<PluginHost::ContributedLanguageServer>* language_servers,
     std::vector<PluginHost::ContributedDebugAdapter>* debug_adapters,
+    std::vector<PluginHost::ContributedLaunchConfig>* launch_configs,
     std::vector<PluginHost::ContributedTask>* tasks,
     std::vector<PluginHost::ContributedTool>* tools,
     std::vector<PluginHost::ContributedTestProvider>* test_providers,

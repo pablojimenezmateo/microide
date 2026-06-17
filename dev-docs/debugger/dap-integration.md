@@ -155,7 +155,16 @@ Original plan, retained for reference:
   `SubprocessSandbox` for adapters is more permissive than LSP/formatters.
 - Tests: `DebugServiceTests.cpp`, `PluginDebugAdapterRegistrationTests.cpp`.
 
-### Phase 2 — Breakpoints (gutter click toggle + persistence + `setBreakpoints`)
+### Phase 2 — Breakpoints (gutter click toggle + persistence + `setBreakpoints`) ✅ DONE (2026-06-17)
+
+See "Phase 2 — what shipped" below. Summary: a clickable gutter toggles
+breakpoints (gated on `debug.enabled`), dots render via the editor view model,
+breakpoints + launch configs persist in a per-project `debug` record (binary +
+CRC32C, fuzzed), `setBreakpoints` is sent per file on launch (and live on toggle)
+with verification reflected back, and `ctx.debug.addConfig` lets plugins
+contribute launch configs that Start Debugging can target.
+
+Original plan, retained for reference:
 
 - New: `src/workspace/BreakpointStore.{h,cpp}` (per-project path→breakpoints, with
   condition/hit/log fields reserved for Phase 6).
@@ -306,15 +315,101 @@ Tests added:
 - `tests/PluginHostTests.cpp` — `ctx.debug.add` registration (explicit + defaulted
   type) and the `capabilities.process.exec` gate (2).
 
+## Phase 2 — what shipped (2026-06-17)
+
+Files added:
+
+- `src/editor/BreakpointStore.{h,cpp}` — per-project, adapter-agnostic store keyed
+  by file path (reuses `DiagnosticsStore`-style path normalization). Lines are
+  0-based buffer indices; `enabled` + reserved `condition`/`hit_condition`/
+  `log_message` persist, while `verified`/`adapter_id`/`verify_message` are
+  transient. `Toggle`/`Set`/`Remove`, `FindByPath` (sorted), `SnapshotAll`,
+  `ApplyVerification` (index-primary, line-fallback), `ReplaceAll`, `revision()`.
+  Lives on `ProjectWorkspaceState` next to `diagnostics_store`.
+- `src/editor/BreakpointRender.{h,cpp}` — gutter-dot geometry + draw (filled disc
+  via horizontal spans; solid `theme.breakpoint` when verified, dimmed
+  `theme.breakpoint_unverified` otherwise). Distinct from the diagnostic bar
+  (`gutter_x + 2`) and the right-edge fold marker.
+- `src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp` — `Encode/
+  DecodeDebugStateRecord` for `PersistedDebugState` (breakpoints + launch configs
+  + selected index), schema-tag/version gated like the session record.
+- `tests/BreakpointStoreTests.cpp` (7), `tests/fuzz/DebugStateRecordFuzz.cpp`.
+
+Key decisions (locked):
+
+- **`setBreakpoints` fires in stream order, not awaited.** On the `initialized`
+  event `DebugSession` sends one `setBreakpoints` per file, then
+  `configurationDone`. The single ordered `DapClient` stream guarantees the
+  adapter receives them in order (the DAP handshake requires send-order, not
+  response-order); verification reflects back asynchronously via
+  `on_breakpoints_verified`. Confirmed against real debugpy (see validation).
+- **Rendering via the view model (R1).** `EditorViewModel.breakpoint_gutter_marks`
+  is populated by `RenderViewModelBuilder::BuildEditorViewModelInto` (gated on
+  `debug.enabled` + a `BreakpointStore*`), consumed by `EditorViewRenderer`'s
+  gutter loop with a cursor walk mirroring `fold_gutter_marks`. The pure render TU
+  reads no project state and materializes no strings.
+- **Separate `debug` persistence file**, `project_state_directory()/"debug"`,
+  capability_flags = 5, saved/restored inside the existing `SaveSessionState`/
+  `RestoreSessionState` hooks (restore runs before any early return so it survives
+  empty-tab projects). Launch config `arguments` persist as a serialized JSON
+  string; a corrupt string falls back to Null without nuking the record.
+- **Session↔store coupling is callback-only.** `DebugSession::Callbacks` gained a
+  `breakpoint_provider` (pulled at `initialized` and on live re-send) and
+  `on_breakpoints_verified` (pushed per file). `DebugService` wires both to the
+  project's `BreakpointStore` and an editor-redraw op; `StopDebugging` resets
+  verification. No friend classes; the shell stays a thin forwarder
+  (`ResendBreakpointsForFile`).
+
+Wiring:
+
+- Gutter click toggle in `WorkspaceEditorMouseCoordinator` occupies the gutter
+  left of the fold hit zone (`[editor_rect.x, gutter_right - 18)`), gated on
+  `debug.enabled`; toggling routes `on_breakpoint_toggled` → shell
+  `ResendBreakpointsForFile` so an active session re-sends that file live.
+- `DapProtocol::MakeSetBreakpointsArguments` builds `{source:{path},breakpoints:
+  [{line(+1),condition?,hitCondition?,logMessage?}]}`; Phase 6 fields are gated on
+  the matching capabilities.
+- **`ctx.debug.addConfig` plugin seam** mirrors `ctx.debug.add`:
+  `PluginHost::ContributedLaunchConfig` + `ParseLaunchConfigRegistration` +
+  `RegisterLaunchConfig` + `LuaDebugAddConfig` on the `ctx.debug` module
+  (`add`/`addConfig`), gated on `capabilities.process.exec`, pruned on unload.
+  Reconciled into `ProjectWorkspaceState.launch_configs` in `WorkspaceShellPlugins`
+  (live contributed set authoritative; persisted set is the pre-reload fallback;
+  the user's selected index is preserved/clamped).
+- `StartDebuggingWithDefaultConfig` launches the selected config when its adapter
+  type is registered, else falls back to the first registered adapter (Phase 1
+  behavior). No config-picker UI yet (deferred).
+
+Tests added: `BreakpointStoreTests` (7), `PersistedStateRecord/DebugState*` (2),
+`DebugService/SessionSendsBreakpointsBeforeConfigurationDone` (real-subprocess
+mock adapter asserting 1-based lines, verification, and send-order), `DapProtocol`
+setBreakpoints shape, `PluginHost/LaunchConfig*` (2), `DebugStateRecordFuzz`.
+
 ## How to validate
 
 ```bash
 cmake --build build -j8
-./build/microide/microide_tests Dap DebugService    # focused: 18 DAP/session tests
-./build/microide/microide_tests DebugAdapter        # ctx.debug.add registration (2)
+./build/microide/microide_tests Dap DebugService    # focused: 19 DAP/session tests
+./build/microide/microide_tests Breakpoint          # BreakpointStore (7)
+./build/microide/microide_tests "PersistedStateRecord" "PluginHost/LaunchConfig"
 tools/run-checks.sh tests                            # full unit suite incl. arch invariants
                                                      # (reads /tmp/microide-tests.log)
 ```
+
+Fuzz the debug-state decoder:
+
+```bash
+cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build/microide-fuzz --target DebugStateRecordFuzz -j8
+./build/microide-fuzz/microide/DebugStateRecordFuzz -max_total_time=30 tests/fuzz/corpora/DebugStateRecordFuzz
+```
+
+Real-adapter dogfood (debugpy): the launch sequence microide uses
+(initialize → launch → `initialized` → `setBreakpoints` 1-based →
+`configurationDone`) was confirmed against debugpy 1.8.21 — the breakpoint binds
+(`verified: true`) and a `stopped` event arrives at the line. The full C++
+client/session path is exercised by the real-subprocess mock-adapter integration
+test (`DebugServiceTests`).
 
 Tracing: set `MICROIDE_TRACE_DAP_LIFECYCLE=1` for adapter lifecycle logs (mirrors
 `MICROIDE_TRACE_LSP_LIFECYCLE`).
@@ -325,13 +420,28 @@ unrelated to the debugger work.
 
 ## Next steps
 
-Start **Phase 2** (breakpoints): `BreakpointStore`, gutter-click toggle, gutter
-dot rendering via the editor view model, `PersistedDebugState` (binary +
-CRC32C, with a fuzz target for `DecodeDebugStateRecord`), and `setBreakpoints`
-on launch. Pair launch-config persistence with it (native `PersistedRecord`
-format) so Start Debugging can target a chosen config instead of the Phase 1
-first-adapter default. Dogfood end-to-end with a plugin's `ctx.debug.add`
-(debugpy on a tiny Python script, or lldb-dap on a small C program).
+Start **Phase 3** (execution control + `stopped` + current-line highlight + Call
+Stack). The Phase 2 `setBreakpoints` path already drives the adapter to a
+`stopped` event; Phase 3 makes it actionable:
+
+- On `stopped`: `threads` → `stackTrace` → focus the top frame; paint a
+  full-width execution-line fill via `RowDecorationBuilder` (+ a gutter arrow) and
+  clear it on `continued`. Reuse the Phase 2 `breakpoint_gutter_marks` plumbing in
+  `EditorViewModel`/`RenderViewModelBuilder` for the execution-line decoration so
+  the render TU stays view-model-only.
+- New `DebugCommands.{h,cpp}` (`debug.continue/stepOver/stepIn/stepOut/pause/
+  stop/restart`, bindable) gated on `debug.enabled`, plus a structured
+  `PanelContentKind::Debug` for the Call Stack (the first non-text debug panel —
+  the Phase 1 console stays an output channel).
+- DAP surface: `stopped`, `continued`, `threads`, `stackTrace`, `continue`,
+  `next`, `stepIn`, `stepOut`, `pause`.
+
+Opportunistic cleanup to fold into Phase 3 (per the dedup / tech-debt / UI-UX
+goals): the breakpoint / diagnostic / fold gutter markers now share the same
+per-row cursor-walk shape in `EditorViewRenderer`; if Phase 3 adds an execution
+arrow, factor a small shared gutter-marker dispatch instead of a fourth bespoke
+block. A config-picker UI (command palette over `launch_configs`) is the natural
+home for the persisted selection added in Phase 2.
 
 All debugger work lands on the canonical `feat/dap` branch; do not merge to
 `main` until the effort is complete.

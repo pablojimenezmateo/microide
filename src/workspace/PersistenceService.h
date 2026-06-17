@@ -27,6 +27,11 @@ class PersistenceService {
                             PersistedWorkspaceSessionState* state) const;
   bool SaveWorkspaceSession(const std::filesystem::path& target_path,
                             const PersistedWorkspaceSessionState& state) const;
+
+  bool LoadDebugState(const std::filesystem::path& target_path,
+                      PersistedDebugState* state) const;
+  bool SaveDebugState(const std::filesystem::path& target_path,
+                      const PersistedDebugState& state) const;
 };
 
 }  // namespace microide::workspace

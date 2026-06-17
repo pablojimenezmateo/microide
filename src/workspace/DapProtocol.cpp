@@ -20,6 +20,34 @@ std::string AsString(const JsonValue& value) {
 
 }  // namespace
 
+JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
+                                      const std::vector<SetBreakpointInput>& breakpoints) {
+  JsonObject source;
+  source["path"] = JsonValue(source_path);
+
+  JsonArray entries;
+  entries.reserve(breakpoints.size());
+  for (const SetBreakpointInput& breakpoint : breakpoints) {
+    JsonObject entry;
+    entry["line"] = JsonValue(static_cast<std::int64_t>(breakpoint.line));
+    if (!breakpoint.condition.empty()) {
+      entry["condition"] = JsonValue(breakpoint.condition);
+    }
+    if (!breakpoint.hit_condition.empty()) {
+      entry["hitCondition"] = JsonValue(breakpoint.hit_condition);
+    }
+    if (!breakpoint.log_message.empty()) {
+      entry["logMessage"] = JsonValue(breakpoint.log_message);
+    }
+    entries.push_back(JsonValue(std::move(entry)));
+  }
+
+  JsonObject args;
+  args["source"] = JsonValue(std::move(source));
+  args["breakpoints"] = JsonValue(std::move(entries));
+  return JsonValue(std::move(args));
+}
+
 JsonValue MakeRequest(int seq, const std::string& command, const JsonValue& arguments) {
   JsonObject req;
   req["seq"] = JsonValue(static_cast<std::int64_t>(seq));

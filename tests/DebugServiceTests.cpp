@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/BreakpointStore.h"
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugSession.h"
@@ -75,7 +76,12 @@ def event(name, body=None):
         msg["body"] = body
     write_message(msg)
 
+received = []
+
 def finish_launch():
+    # Emit the command order so tests can assert setBreakpoints precedes
+    # configurationDone on the wire.
+    event("output", {"category": "stdout", "output": "commands:" + ",".join(received) + "\n"})
     event("output", {"category": "stdout", "output": "hello from adapter\n"})
     event("terminated")
 
@@ -86,10 +92,17 @@ while True:
     if msg.get("type") != "request":
         continue
     command = msg.get("command")
+    received.append(command)
     if command == "initialize":
         respond(msg, {"supportsConfigurationDoneRequest": supports_config_done,
                       "supportsTerminateRequest": True})
         event("initialized")
+    elif command == "setBreakpoints":
+        args = msg.get("arguments", {})
+        verified = []
+        for i, bp in enumerate(args.get("breakpoints", [])):
+            verified.append({"id": i + 1, "verified": True, "line": bp.get("line", 0)})
+        respond(msg, {"breakpoints": verified})
     elif command == "launch":
         respond(msg, {})
         if not supports_config_done:
@@ -223,6 +236,68 @@ void TestDebugSessionRunsWithoutConfigurationDoneSupport() {
   manager.ShutdownAll();
 }
 
+void TestDebugSessionSendsBreakpointsBeforeConfigurationDone() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "config_done"));
+
+  CapturedSession captured;
+  DebugSession::Callbacks callbacks = MakeCallbacks(captured);
+
+  // Two breakpoints on one file at 0-based lines 4 and 9 (DAP lines 5 and 10).
+  const std::filesystem::path source_path = "/proj/main.py";
+  callbacks.breakpoint_provider = [&]() {
+    editor::BreakpointStore::FileBreakpoints file;
+    file.path = source_path;
+    file.breakpoints.push_back(editor::Breakpoint{.line = 4});
+    file.breakpoints.push_back(editor::Breakpoint{.line = 9});
+    return std::vector<editor::BreakpointStore::FileBreakpoints>{file};
+  };
+  std::vector<codec::DapBreakpoint> verified;
+  std::filesystem::path verified_path;
+  callbacks.on_breakpoints_verified =
+      [&](const std::filesystem::path& path, const std::vector<codec::DapBreakpoint>& breakpoints) {
+        verified_path = path;
+        verified = breakpoints;
+      };
+
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, std::move(callbacks)), "session should start");
+
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* session = manager.ActiveSession();
+                     return session != nullptr &&
+                            session->CurrentState() == DebugSession::State::Terminated;
+                   }),
+         "session should reach Terminated");
+
+  Expect(verified.size() == 2, "adapter should verify both breakpoints");
+  if (verified.size() == 2) {
+    Expect(verified[0].line == 5 && verified[1].line == 10,
+           "0-based store lines should be sent as 1-based DAP lines");
+    Expect(verified[0].verified && verified[1].verified, "breakpoints should report verified");
+  }
+  Expect(verified_path == source_path, "verification should carry the source path");
+
+  // The recorded command order must place setBreakpoints before configurationDone.
+  const std::size_t order_pos = captured.output.find("commands:");
+  Expect(order_pos != std::string::npos, "adapter should emit its command order");
+  const std::size_t set_pos = captured.output.find("setBreakpoints", order_pos);
+  const std::size_t cfg_pos = captured.output.find("configurationDone", order_pos);
+  Expect(set_pos != std::string::npos && cfg_pos != std::string::npos && set_pos < cfg_pos,
+         "setBreakpoints must be sent before configurationDone");
+  manager.ShutdownAll();
+}
+
 void TestDebugManagerRejectsUnknownAdapterType() {
   DapManager manager;
   CapturedSession captured;
@@ -251,6 +326,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone);
   AddTest(tests, "DebugService/SessionRunsWithoutConfigurationDoneSupport",
           TestDebugSessionRunsWithoutConfigurationDoneSupport);
+  AddTest(tests, "DebugService/SessionSendsBreakpointsBeforeConfigurationDone",
+          TestDebugSessionSendsBreakpointsBeforeConfigurationDone);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",
           TestDebugManagerRejectsUnknownAdapterType);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",

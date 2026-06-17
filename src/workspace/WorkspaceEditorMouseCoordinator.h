@@ -40,6 +40,9 @@ class EditorMouseCoordinator {
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     // Dispatches a non-blocking external-change banner action (Reload/Overwrite/Keep).
     std::function<void(EditorBannerAction, const std::filesystem::path&)> editor_banner_action;
+    // Notifies that a breakpoint was toggled on `path` (live re-send to an
+    // active debug session). Only invoked when `debug.enabled` is ON.
+    std::function<void(const std::filesystem::path&)> on_breakpoint_toggled;
   };
 
   EditorMouseCoordinator(ProjectWorkspaceState& state,

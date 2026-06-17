@@ -203,6 +203,33 @@ enum class WorkspaceSessionTag : std::uint16_t {
   ActiveProjectIndex = 3,
 };
 
+enum class DebugStateTag : std::uint16_t {
+  Schema = 1,
+  FileBreakpoints = 2,            // repeated, one nested record per file
+  LaunchConfig = 3,               // repeated, one nested record per config
+  SelectedLaunchConfigIndex = 4,
+};
+
+enum class FileBreakpointsTag : std::uint16_t {
+  Path = 1,
+  Breakpoint = 2,                 // repeated, one nested record per breakpoint
+};
+
+enum class BreakpointTag : std::uint16_t {
+  Line = 1,
+  Enabled = 2,
+  Condition = 3,
+  HitCondition = 4,
+  LogMessage = 5,
+};
+
+enum class LaunchConfigTag : std::uint16_t {
+  Name = 1,
+  Type = 2,
+  Request = 3,
+  ArgumentsJson = 4,
+};
+
 template <typename EnumTag, typename WritePayload>
 bool AppendRecord(EnumTag tag, WritePayload write_payload, std::vector<std::byte>* out) {
   if (out == nullptr) {

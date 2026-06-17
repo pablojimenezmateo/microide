@@ -137,6 +137,8 @@ target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 set(MICROIDE_CORE_SOURCES
   src/app/BackgroundTaskCounter.cpp
   src/editor/BracketScanner.cpp
+  src/editor/BreakpointRender.cpp
+  src/editor/BreakpointStore.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
@@ -379,6 +381,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/TerminalPanelService.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
+  src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp
   src/workspace/GitRepositoryService.cpp
   src/workspace/PatchApplyService.cpp
   src/workspace/PersistenceService.cpp
@@ -558,6 +561,7 @@ add_executable(microide_tests
   tests/CompareReviewTests.cpp
   tests/BranchReviewStateTests.cpp
   tests/PatchApplyTests.cpp
+  tests/BreakpointStoreTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
@@ -713,6 +717,13 @@ if(MICROIDE_FUZZ)
   )
   microide_configure_fuzz_target(PersistedRecordReaderFuzz)
 
+  add_executable(DebugStateRecordFuzz
+    src/persistence/PersistedRecord.cpp
+    src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp
+    tests/fuzz/DebugStateRecordFuzz.cpp
+  )
+  microide_configure_fuzz_target(DebugStateRecordFuzz)
+
   add_executable(SearchRegexFuzz
     tests/fuzz/SearchRegexFuzz.cpp
   )
@@ -822,6 +833,7 @@ endif()
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   src/editor/BracketScanner.cpp
+  src/editor/BreakpointRender.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp

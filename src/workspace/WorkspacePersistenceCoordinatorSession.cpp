@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <limits>
 
+#include "util/JsonValue.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/StartupTrace.h"
@@ -20,6 +21,105 @@ namespace {
 std::filesystem::path PersistenceCoordinator::SessionStatePath() const {
   return CurrentProjectState().root.empty() ? std::filesystem::path{}
                                             : operations_.project_state_directory() / "session";
+}
+
+std::filesystem::path PersistenceCoordinator::DebugStatePath() const {
+  return CurrentProjectState().root.empty() ? std::filesystem::path{}
+                                            : operations_.project_state_directory() / "debug";
+}
+
+void PersistenceCoordinator::SaveDebugState() {
+  if (operations_.persistence_service == nullptr) {
+    return;
+  }
+  const std::filesystem::path debug_path = DebugStatePath();
+  if (debug_path.empty()) {
+    return;
+  }
+  const ProjectWorkspaceState& state = CurrentProjectState();
+
+  PersistedDebugState persisted;
+  for (const auto& file : state.breakpoint_store.SnapshotAll()) {
+    PersistedFileBreakpoints persisted_file;
+    persisted_file.path = file.path;
+    for (const editor::Breakpoint& breakpoint : file.breakpoints) {
+      persisted_file.breakpoints.push_back(PersistedBreakpoint{
+          .line = breakpoint.line,
+          .enabled = breakpoint.enabled,
+          .condition = breakpoint.condition,
+          .hit_condition = breakpoint.hit_condition,
+          .log_message = breakpoint.log_message,
+      });
+    }
+    persisted.files.push_back(std::move(persisted_file));
+  }
+  for (const LaunchConfig& config : state.launch_configs) {
+    persisted.launch_configs.push_back(PersistedLaunchConfig{
+        .name = config.name,
+        .type = config.type,
+        .request = config.request,
+        .arguments_json =
+            config.arguments.IsNull() ? std::string{} : util::SerializeJson(config.arguments),
+    });
+  }
+  persisted.selected_launch_config_index = state.selected_launch_config_index;
+
+  // Avoid leaving a stale file when there is nothing to persist.
+  if (persisted.files.empty() && persisted.launch_configs.empty()) {
+    std::error_code error;
+    std::filesystem::remove(debug_path, error);
+    return;
+  }
+  operations_.persistence_service->SaveDebugState(debug_path, persisted);
+}
+
+void PersistenceCoordinator::RestoreDebugState() {
+  if (operations_.persistence_service == nullptr) {
+    return;
+  }
+  const std::filesystem::path debug_path = DebugStatePath();
+  if (debug_path.empty()) {
+    return;
+  }
+  PersistedDebugState persisted;
+  if (!operations_.persistence_service->LoadDebugState(debug_path, &persisted)) {
+    return;
+  }
+
+  ProjectWorkspaceState& state = CurrentProjectState();
+  std::vector<editor::BreakpointStore::FileBreakpoints> files;
+  files.reserve(persisted.files.size());
+  for (const PersistedFileBreakpoints& persisted_file : persisted.files) {
+    editor::BreakpointStore::FileBreakpoints file;
+    file.path = persisted_file.path;
+    for (const PersistedBreakpoint& breakpoint : persisted_file.breakpoints) {
+      file.breakpoints.push_back(editor::Breakpoint{
+          .line = breakpoint.line,
+          .enabled = breakpoint.enabled,
+          .condition = breakpoint.condition,
+          .hit_condition = breakpoint.hit_condition,
+          .log_message = breakpoint.log_message,
+      });
+    }
+    files.push_back(std::move(file));
+  }
+  state.breakpoint_store.ReplaceAll(std::move(files));
+
+  state.launch_configs.clear();
+  for (const PersistedLaunchConfig& persisted_config : persisted.launch_configs) {
+    LaunchConfig config;
+    config.name = persisted_config.name;
+    config.type = persisted_config.type;
+    config.request = persisted_config.request;
+    // A corrupt arguments string must not nuke the rest; fall back to Null.
+    if (!persisted_config.arguments_json.empty()) {
+      if (auto parsed = util::ParseJson(persisted_config.arguments_json); parsed.has_value()) {
+        config.arguments = std::move(*parsed);
+      }
+    }
+    state.launch_configs.push_back(std::move(config));
+  }
+  state.selected_launch_config_index = persisted.selected_launch_config_index;
 }
 
 bool PersistenceCoordinator::RestoreSessionState() {
@@ -54,6 +154,10 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.overlay.workflow.compare_picker.items.clear();
     state.overlay.workflow.compare_picker.selected_index = 0;
   }
+
+  // Breakpoints + launch configs persist independently of tabs; restore them
+  // before any early return so they survive even an empty-tab project.
+  RestoreDebugState();
 
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RebuildTabs");
@@ -430,6 +534,7 @@ void PersistenceCoordinator::SaveSessionState() {
   }
 
   operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
+  SaveDebugState();
 }
 
 std::optional<PersistedEditorTabState>

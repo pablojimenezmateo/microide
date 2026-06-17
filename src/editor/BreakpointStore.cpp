@@ -1,0 +1,206 @@
+#include "editor/BreakpointStore.h"
+
+#include <algorithm>
+#include <utility>
+
+namespace microide::editor {
+
+std::string BreakpointStore::PathKey(const std::filesystem::path& path) {
+  return path.empty() ? std::string{} : path.lexically_normal().generic_string();
+}
+
+void BreakpointStore::BumpRevision() {
+  if (++revision_ == 0) {
+    revision_ = 1;
+  }
+}
+
+std::vector<Breakpoint>* BreakpointStore::MutableForKey(const std::string& key) {
+  const auto it = by_path_.find(key);
+  return it == by_path_.end() ? nullptr : &it->second.breakpoints;
+}
+
+bool BreakpointStore::Toggle(const std::filesystem::path& path, std::size_t line) {
+  const std::filesystem::path normalized = path.lexically_normal();
+  const std::string key = PathKey(normalized);
+  if (key.empty()) {
+    return false;
+  }
+  auto& entry = by_path_[key];
+  if (entry.path.empty()) {
+    entry.path = normalized;
+  }
+  auto& breakpoints = entry.breakpoints;
+  const auto it = std::lower_bound(
+      breakpoints.begin(), breakpoints.end(), line,
+      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
+  if (it != breakpoints.end() && it->line == line) {
+    breakpoints.erase(it);
+    if (breakpoints.empty()) {
+      by_path_.erase(key);
+    }
+    BumpRevision();
+    return false;
+  }
+  breakpoints.insert(it, Breakpoint{.line = line});
+  BumpRevision();
+  return true;
+}
+
+void BreakpointStore::Set(const std::filesystem::path& path, std::size_t line, bool enabled) {
+  const std::filesystem::path normalized = path.lexically_normal();
+  const std::string key = PathKey(normalized);
+  if (key.empty()) {
+    return;
+  }
+  auto& entry = by_path_[key];
+  if (entry.path.empty()) {
+    entry.path = normalized;
+  }
+  auto& breakpoints = entry.breakpoints;
+  const auto it = std::lower_bound(
+      breakpoints.begin(), breakpoints.end(), line,
+      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
+  if (it != breakpoints.end() && it->line == line) {
+    if (it->enabled != enabled) {
+      it->enabled = enabled;
+      BumpRevision();
+    }
+    return;
+  }
+  breakpoints.insert(it, Breakpoint{.line = line, .enabled = enabled});
+  BumpRevision();
+}
+
+void BreakpointStore::Remove(const std::filesystem::path& path, std::size_t line) {
+  const std::string key = PathKey(path);
+  std::vector<Breakpoint>* breakpoints = MutableForKey(key);
+  if (breakpoints == nullptr) {
+    return;
+  }
+  const auto it = std::lower_bound(
+      breakpoints->begin(), breakpoints->end(), line,
+      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
+  if (it == breakpoints->end() || it->line != line) {
+    return;
+  }
+  breakpoints->erase(it);
+  if (breakpoints->empty()) {
+    by_path_.erase(key);
+  }
+  BumpRevision();
+}
+
+void BreakpointStore::ClearFile(const std::filesystem::path& path) {
+  if (by_path_.erase(PathKey(path)) > 0) {
+    BumpRevision();
+  }
+}
+
+void BreakpointStore::Clear() {
+  if (by_path_.empty()) {
+    return;
+  }
+  by_path_.clear();
+  BumpRevision();
+}
+
+bool BreakpointStore::HasBreakpoint(const std::filesystem::path& path, std::size_t line) const {
+  const auto it = by_path_.find(PathKey(path));
+  if (it == by_path_.end()) {
+    return false;
+  }
+  const auto& breakpoints = it->second.breakpoints;
+  const auto bp = std::lower_bound(
+      breakpoints.begin(), breakpoints.end(), line,
+      [](const Breakpoint& b, std::size_t value) { return b.line < value; });
+  return bp != breakpoints.end() && bp->line == line;
+}
+
+const std::vector<Breakpoint>* BreakpointStore::FindByPath(
+    const std::filesystem::path& path) const {
+  const auto it = by_path_.find(PathKey(path));
+  return it == by_path_.end() ? nullptr : &it->second.breakpoints;
+}
+
+std::vector<BreakpointStore::FileBreakpoints> BreakpointStore::SnapshotAll() const {
+  std::vector<FileBreakpoints> files;
+  files.reserve(by_path_.size());
+  for (const auto& [key, entry] : by_path_) {
+    files.push_back(FileBreakpoints{.path = entry.path, .breakpoints = entry.breakpoints});
+  }
+  // Deterministic order for callers/tests.
+  std::sort(files.begin(), files.end(), [](const FileBreakpoints& lhs, const FileBreakpoints& rhs) {
+    return lhs.path.generic_string() < rhs.path.generic_string();
+  });
+  return files;
+}
+
+void BreakpointStore::ApplyVerification(const std::filesystem::path& path,
+                                        const std::vector<VerifiedBreakpoint>& results) {
+  std::vector<Breakpoint>* breakpoints = MutableForKey(PathKey(path));
+  if (breakpoints == nullptr) {
+    return;
+  }
+  for (std::size_t i = 0; i < results.size(); ++i) {
+    const VerifiedBreakpoint& result = results[i];
+    Breakpoint* target = nullptr;
+    if (i < breakpoints->size()) {
+      target = &(*breakpoints)[i];  // positional match (DAP guarantees order)
+    } else if (result.line > 0) {
+      const std::size_t line = static_cast<std::size_t>(result.line - 1);
+      const auto it = std::find_if(breakpoints->begin(), breakpoints->end(),
+                                   [line](const Breakpoint& bp) { return bp.line == line; });
+      if (it != breakpoints->end()) {
+        target = &(*it);
+      }
+    }
+    if (target == nullptr) {
+      continue;
+    }
+    target->verified = result.verified;
+    target->adapter_id = result.id;
+    target->verify_message = result.message;
+  }
+  BumpRevision();
+}
+
+void BreakpointStore::ResetVerification() {
+  bool changed = false;
+  for (auto& [key, entry] : by_path_) {
+    for (Breakpoint& bp : entry.breakpoints) {
+      if (bp.verified || bp.adapter_id != 0 || !bp.verify_message.empty()) {
+        bp.verified = false;
+        bp.adapter_id = 0;
+        bp.verify_message.clear();
+        changed = true;
+      }
+    }
+  }
+  if (changed) {
+    BumpRevision();
+  }
+}
+
+void BreakpointStore::ReplaceAll(std::vector<FileBreakpoints> files) {
+  by_path_.clear();
+  for (auto& file : files) {
+    const std::filesystem::path normalized = file.path.lexically_normal();
+    const std::string key = PathKey(normalized);
+    if (key.empty() || file.breakpoints.empty()) {
+      continue;
+    }
+    std::sort(file.breakpoints.begin(), file.breakpoints.end(),
+              [](const Breakpoint& lhs, const Breakpoint& rhs) { return lhs.line < rhs.line; });
+    // Drop any persisted transient state defensively.
+    for (Breakpoint& bp : file.breakpoints) {
+      bp.verified = false;
+      bp.adapter_id = 0;
+      bp.verify_message.clear();
+    }
+    by_path_[key] = FileEntry{.path = normalized, .breakpoints = std::move(file.breakpoints)};
+  }
+  BumpRevision();
+}
+
+}  // namespace microide::editor

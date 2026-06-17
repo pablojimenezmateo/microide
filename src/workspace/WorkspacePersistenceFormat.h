@@ -154,6 +154,36 @@ struct PersistedWorkspaceSessionState {
   std::size_t active_project_index = 0;
 };
 
+// Per-project debug state: breakpoints (keyed by file) plus launch configs.
+// `arguments_json` holds the launch config's verbatim `arguments` serialized as
+// JSON text so this format carries no util::JsonValue dependency; the coordinator
+// (de)serializes it. Transient adapter verification is never persisted.
+struct PersistedBreakpoint {
+  std::size_t line = 0;  // 0-based buffer line index
+  bool enabled = true;
+  std::optional<std::string> condition;
+  std::optional<std::string> hit_condition;
+  std::optional<std::string> log_message;
+};
+
+struct PersistedFileBreakpoints {
+  std::filesystem::path path;
+  std::vector<PersistedBreakpoint> breakpoints;
+};
+
+struct PersistedLaunchConfig {
+  std::string name;
+  std::string type;
+  std::string request = "launch";
+  std::string arguments_json;  // serialized launch/attach `arguments`, or empty
+};
+
+struct PersistedDebugState {
+  std::vector<PersistedFileBreakpoints> files;
+  std::vector<PersistedLaunchConfig> launch_configs;
+  std::size_t selected_launch_config_index = 0;
+};
+
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state,
                             std::vector<std::byte>* out);
 bool DecodeUserConfigRecord(std::span<const std::byte> input,
@@ -170,5 +200,7 @@ bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
                                   std::vector<std::byte>* out);
 bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                                   PersistedWorkspaceSessionState* state);
+bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::byte>* out);
+bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugState* state);
 
 }  // namespace microide::workspace

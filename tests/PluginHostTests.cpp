@@ -1354,6 +1354,91 @@ return ide.plugin({
          "ctx.debug.add without capabilities.process.exec should register nothing");
 }
 
+void TestPluginHostLaunchConfigRegistration() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "launch config fixture\n");
+
+  WritePluginInit(
+      global_plugins, "phase2-config",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase2-config",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.debug.addConfig({
+      id = "main",
+      name = "Debug main.py",
+      type = "debugpy",
+      request = "launch",
+      arguments = '{"program":"main.py","stopOnEntry":true}'
+    })
+    ctx.debug.addConfig({
+      id = "attach-default",
+      type = "debugpy"
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "launch-config plugin should reload successfully");
+  Expect(host.ContributedLaunchConfigs().size() == 2,
+         "ctx.debug.addConfig should register both launch configs");
+
+  const auto& main_config = host.ContributedLaunchConfigs().front();
+  Expect(main_config.id == "phase2-config.main" && main_config.name == "Debug main.py" &&
+             main_config.type == "debugpy" && main_config.request == "launch" &&
+             main_config.arguments_json == R"({"program":"main.py","stopOnEntry":true})" &&
+             main_config.plugin_id == "phase2-config",
+         "an explicit launch config should round-trip with namespaced id and verbatim arguments");
+
+  const auto& defaulted = host.ContributedLaunchConfigs().back();
+  Expect(defaulted.id == "phase2-config.attach-default" && defaulted.name == "attach-default" &&
+             defaulted.request == "launch",
+         "an omitted name should default to the id and request to launch");
+}
+
+void TestPluginHostLaunchConfigRequiresProcessExec() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "launch config capability fixture\n");
+
+  WritePluginInit(
+      global_plugins, "phase2-config-nocap",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "phase2-config-nocap",
+  setup = function(ctx)
+    ctx.debug.addConfig({ id = "main", type = "debugpy" })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  host.Reload(project_root);
+  Expect(host.ContributedLaunchConfigs().empty(),
+         "ctx.debug.addConfig without capabilities.process.exec should register nothing");
+}
+
 void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2162,6 +2247,9 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/DebugAdapterRegistration", TestPluginHostDebugAdapterRegistration);
   AddTest(tests, "PluginHost/DebugAdapterRequiresProcessExec",
           TestPluginHostDebugAdapterRequiresProcessExec);
+  AddTest(tests, "PluginHost/LaunchConfigRegistration", TestPluginHostLaunchConfigRegistration);
+  AddTest(tests, "PluginHost/LaunchConfigRequiresProcessExec",
+          TestPluginHostLaunchConfigRequiresProcessExec);
   AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",
           TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary);
   AddTest(tests, "PluginHost/RepoCppLspPluginRegistersClangdForCLikeLanguages",

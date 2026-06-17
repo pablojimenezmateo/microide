@@ -636,6 +636,11 @@ PluginHost::ContributedDebugAdapters() const {
   return impl_->debug_adapters;
 }
 
+const std::vector<PluginHost::ContributedLaunchConfig>&
+PluginHost::ContributedLaunchConfigs() const {
+  return impl_->launch_configs;
+}
+
 const std::vector<PluginHost::ContributedTask>& PluginHost::ContributedTasks() const {
   return impl_->tasks;
 }

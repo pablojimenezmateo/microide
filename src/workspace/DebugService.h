@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <filesystem>
 #include <functional>
 #include <string>
 
@@ -32,6 +33,8 @@ class DebugService {
     std::function<void(DebugSession::State state)> notify_session_state_changed;
     std::function<void()> request_chrome_redraw;
     std::function<void()> request_bottom_panel_redraw;
+    // Repaint the editor gutter after breakpoint verification reflects back.
+    std::function<void()> request_editor_redraw;
   };
 
   DebugService() = default;
@@ -51,6 +54,10 @@ class DebugService {
   bool StartDebugging(const LaunchConfig& config, const std::string& cwd = {});
   // Request graceful teardown of the active session.
   void StopDebugging();
+
+  // Re-send `setBreakpoints` for one file to the active session (no-op when no
+  // session is active). Used when the user toggles a breakpoint mid-session.
+  void ResendBreakpointsForFile(const std::filesystem::path& path);
 
   bool IsSessionActive() const;
   DebugSession::State SessionState() const;

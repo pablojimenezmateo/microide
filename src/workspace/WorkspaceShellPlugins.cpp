@@ -1,10 +1,12 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <set>
 #include <string_view>
 #include <unordered_set>
 
+#include "util/JsonValue.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -100,6 +102,7 @@ WorkspaceShell::WorkspaceShell() {
               [this](DebugSession::State /*state*/) { RequestChromeRedraw(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+          .request_editor_redraw = [this]() { RequestEditorSurfaceRedraw(); },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
@@ -325,6 +328,33 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
       CurrentDapManager().RegisterAdapter(adapter.type, adapter.command, adapter.sandbox);
     }
     CurrentDapManager().RetainAdaptersIn(active_debug_adapter_types);
+
+    // Reconcile plugin-contributed launch configs into the project. Persistence
+    // restores configs before plugins reload (a fallback); once plugins are up,
+    // the live contributed set is authoritative. The user's selected index is
+    // preserved (clamped) so a re-reconcile does not reset the chosen config.
+    auto& project_state = context_.current_project_state;
+    const std::size_t previous_selected = project_state.selected_launch_config_index;
+    project_state.launch_configs.clear();
+    for (const auto& config : host.ContributedLaunchConfigs()) {
+      if (config.type.empty()) {
+        continue;
+      }
+      LaunchConfig launch_config;
+      launch_config.name = config.name;
+      launch_config.type = config.type;
+      launch_config.request = config.request.empty() ? std::string("launch") : config.request;
+      if (!config.arguments_json.empty()) {
+        if (auto parsed = util::ParseJson(config.arguments_json); parsed.has_value()) {
+          launch_config.arguments = std::move(*parsed);
+        }
+      }
+      project_state.launch_configs.push_back(std::move(launch_config));
+    }
+    project_state.selected_launch_config_index =
+        project_state.launch_configs.empty()
+            ? 0
+            : std::min(previous_selected, project_state.launch_configs.size() - 1);
   }
   for (const auto& tool : host.ContributedTools()) {
     tool_registry_.Register(ToolSpec{

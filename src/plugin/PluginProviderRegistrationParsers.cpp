@@ -83,6 +83,35 @@ bool ParseDebugAdapterRegistration(lua_State* state,
   return true;
 }
 
+bool ParseLaunchConfigRegistration(lua_State* state,
+                                   const std::string& plugin_id,
+                                   LaunchConfigRegistration* out,
+                                   std::string* error_message) {
+  if (out == nullptr) return false;
+  auto id_opt = ReadStringField(state, 1, "id");
+  auto type_opt = ReadStringField(state, 1, "type");
+  if (!id_opt || id_opt->empty() || !type_opt || type_opt->empty()) return false;
+  auto name_opt = ReadStringField(state, 1, "name");
+  auto request_opt = ReadStringField(state, 1, "request");
+  // `arguments` is a JSON-string field (same convention as LSP
+  // initialization_options); the host parses it into the launch request body.
+  std::string arguments_json;
+  if (auto json = ReadStringField(state, 1, "arguments")) {
+    arguments_json = std::move(*json);
+  }
+  out->contributed = PluginHost::ContributedLaunchConfig{
+      .id = plugin_id + "." + *id_opt,
+      .name = (name_opt && !name_opt->empty()) ? std::move(*name_opt) : *id_opt,
+      .type = std::move(*type_opt),
+      .request = (request_opt && !request_opt->empty()) ? std::move(*request_opt)
+                                                        : std::string("launch"),
+      .arguments_json = std::move(arguments_json),
+      .plugin_id = plugin_id,
+  };
+  if (error_message) error_message->clear();
+  return true;
+}
+
 bool ParseToolRegistration(lua_State* state,
                            const std::string& plugin_id,
                            ToolRegistration* out,

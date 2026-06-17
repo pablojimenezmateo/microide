@@ -12,6 +12,13 @@ struct FoldGutterMark {
   bool collapsed = false;
 };
 
+struct BreakpointGutterMark {
+  std::size_t line_index = 0;
+  std::size_t visual_row_index = 0;
+  bool enabled = true;
+  bool verified = false;
+};
+
 struct OccurrenceRange {
   std::size_t line_index = 0;
   std::size_t start_column = 0;
@@ -33,6 +40,8 @@ struct WhitespaceGlyphRun {
 
 struct EditorViewModel {
   std::vector<FoldGutterMark> fold_gutter_marks;
+  // Breakpoint dots for visible rows (empty unless the debugger is enabled).
+  std::vector<BreakpointGutterMark> breakpoint_gutter_marks;
   // `occurrence_ranges` and `sticky_lines` are views into thread_local builder caches owned by
   // `RenderViewModelBuilder`. They stay valid until the next BuildEditorViewModelInto on the
   // same thread, which matches the render-frame lifetime of this view model. The view-into-cache

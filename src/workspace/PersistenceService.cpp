@@ -132,4 +132,22 @@ bool PersistenceService::SaveWorkspaceSession(const std::filesystem::path& targe
          persistence::PersistedRecordWriter::WriteFile(target_path, body, 4u);
 }
 
+bool PersistenceService::LoadDebugState(const std::filesystem::path& target_path,
+                                        PersistedDebugState* state) const {
+  if (target_path.empty() || state == nullptr) {
+    return false;
+  }
+  return LoadStructuredRecord<PersistedDebugState>(target_path, DecodeDebugStateRecord, state);
+}
+
+bool PersistenceService::SaveDebugState(const std::filesystem::path& target_path,
+                                        const PersistedDebugState& state) const {
+  if (target_path.empty()) {
+    return false;
+  }
+  std::vector<std::byte> body;
+  return EncodeDebugStateRecord(state, &body) &&
+         persistence::PersistedRecordWriter::WriteFile(target_path, body, 5u);
+}
+
 }  // namespace microide::workspace

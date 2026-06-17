@@ -494,9 +494,12 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     bool occurrences_case_sensitive,
     bool sticky_scroll_enabled,
     int sticky_max_depth,
-    bool render_whitespace_enabled) const {
+    bool render_whitespace_enabled,
+    bool debug_enabled,
+    const editor::BreakpointStore* breakpoints) const {
   util::AddPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls);
   out.fold_gutter_marks.clear();
+  out.breakpoint_gutter_marks.clear();
   out.sticky_lines = {};
   out.occurrence_ranges = {};
   out.whitespace_glyph_runs.clear();
@@ -521,6 +524,38 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
           .visual_row_index = visual_row_index,
           .collapsed = folding_model->IsCollapsedAtOpener(row_meta.line_index),
       });
+    }
+  }
+
+  // Breakpoint gutter dots, gated on the debugger being enabled. Mirrors the
+  // fold-mark loop: one mark per visible opener row, deduped to the first visual
+  // row of a wrapped line so a dot is not painted on every wrap fragment.
+  if (debug_enabled && breakpoints != nullptr && !viewport.is_placeholder()) {
+    if (const std::vector<editor::Breakpoint>* file = breakpoints->FindByPath(viewport.path());
+        file != nullptr && !file->empty()) {
+      out.breakpoint_gutter_marks.reserve(file->size());
+      for (std::size_t row = 0; row < visible_rows; ++row) {
+        const std::size_t visual_row_index = viewport.scroll_line() + row;
+        if (visual_row_index >= viewport.visual_line_count()) {
+          break;
+        }
+        const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
+        if (viewport.soft_wrap() && row_meta.visual_start != 0) {
+          continue;
+        }
+        const auto bp = std::lower_bound(
+            file->begin(), file->end(), row_meta.line_index,
+            [](const editor::Breakpoint& b, std::size_t line) { return b.line < line; });
+        if (bp == file->end() || bp->line != row_meta.line_index) {
+          continue;
+        }
+        out.breakpoint_gutter_marks.push_back(editor::BreakpointGutterMark{
+            .line_index = row_meta.line_index,
+            .visual_row_index = visual_row_index,
+            .enabled = bp->enabled,
+            .verified = bp->verified,
+        });
+      }
     }
   }
 

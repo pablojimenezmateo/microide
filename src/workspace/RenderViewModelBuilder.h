@@ -218,7 +218,9 @@ class RenderViewModelBuilder {
                                 bool occurrences_case_sensitive,
                                 bool sticky_scroll_enabled = false,
                                 int sticky_max_depth = 3,
-                                bool render_whitespace_enabled = false) const;
+                                bool render_whitespace_enabled = false,
+                                bool debug_enabled = false,
+                                const editor::BreakpointStore* breakpoints = nullptr) const;
 
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
                                                std::size_t visible_rows,

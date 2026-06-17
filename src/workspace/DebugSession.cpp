@@ -142,10 +142,77 @@ void DebugSession::SendConfigurationDone() {
                             });
 }
 
+void DebugSession::SendAllBreakpoints() {
+  if (!callbacks_.breakpoint_provider) {
+    return;
+  }
+  for (const auto& file : callbacks_.breakpoint_provider()) {
+    SendBreakpointsForFile(file);
+  }
+}
+
+void DebugSession::SendBreakpointsForFile(const editor::BreakpointStore::FileBreakpoints& file) {
+  const std::string source_path = file.path.generic_string();
+  if (source_path.empty()) {
+    return;
+  }
+  const dap_protocol::DapCapabilities& caps = client_->Capabilities();
+  std::vector<dap_protocol::SetBreakpointInput> inputs;
+  inputs.reserve(file.breakpoints.size());
+  for (const editor::Breakpoint& breakpoint : file.breakpoints) {
+    if (!breakpoint.enabled) {
+      continue;
+    }
+    dap_protocol::SetBreakpointInput input;
+    // BreakpointStore stores 0-based buffer lines; DAP wants 1-based.
+    input.line = static_cast<int>(breakpoint.line) + 1;
+    // Phase 6 fields, gated on adapter capabilities so we never send a key an
+    // adapter rejects. Empty values are omitted by the encoder regardless.
+    if (caps.supports_conditional_breakpoints && breakpoint.condition) {
+      input.condition = *breakpoint.condition;
+    }
+    if (caps.supports_hit_conditional_breakpoints && breakpoint.hit_condition) {
+      input.hit_condition = *breakpoint.hit_condition;
+    }
+    if (caps.supports_log_points && breakpoint.log_message) {
+      input.log_message = *breakpoint.log_message;
+    }
+    inputs.push_back(std::move(input));
+  }
+
+  const std::filesystem::path path = file.path;
+  client_->SendRequestAsync(
+      "setBreakpoints", dap_protocol::MakeSetBreakpointsArguments(source_path, inputs),
+      [this, path](const dap_protocol::DapResponse& response) {
+        if (response.success && callbacks_.on_breakpoints_verified) {
+          callbacks_.on_breakpoints_verified(path, dap_protocol::ParseBreakpoints(response.body));
+        }
+      });
+}
+
+void DebugSession::ResendBreakpointsForFile(const std::filesystem::path& path) {
+  if (!client_->IsInitialized() || !callbacks_.breakpoint_provider) {
+    return;
+  }
+  const std::string target_key = path.lexically_normal().generic_string();
+  for (const auto& file : callbacks_.breakpoint_provider()) {
+    if (file.path.lexically_normal().generic_string() == target_key) {
+      SendBreakpointsForFile(file);
+      return;
+    }
+  }
+  // No breakpoints remain for the file: send an empty list to clear them.
+  SendBreakpointsForFile(editor::BreakpointStore::FileBreakpoints{.path = path});
+}
+
 void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& body) {
   if (event == "initialized") {
-    // Adapter is ready for configuration (breakpoints in Phase 2). Phase 1 has
-    // nothing to configure, so finalize with configurationDone immediately.
+    // The adapter is ready for configuration. Install breakpoints first, then
+    // finalize with configurationDone. Both ride the client's single ordered
+    // stream, so configurationDone reaches the adapter after every
+    // setBreakpoints request (the DAP handshake requires send-order, not
+    // response-order); verification reflects back asynchronously.
+    SendAllBreakpoints();
     SendConfigurationDone();
   } else if (event == "output") {
     if (callbacks_.on_output) {

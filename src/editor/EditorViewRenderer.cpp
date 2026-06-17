@@ -8,6 +8,7 @@
 #include <string>
 
 #include "editor/DecoratedTextGridRenderer.h"
+#include "editor/BreakpointRender.h"
 #include "editor/DiagnosticsRender.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceTrace.h"
@@ -428,6 +429,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const std::vector<FoldGutterMark>* fold_gutter_marks =
       view_model != nullptr ? &view_model->fold_gutter_marks : nullptr;
   std::size_t fold_gutter_mark_index = 0;
+  const std::vector<BreakpointGutterMark>* breakpoint_gutter_marks =
+      view_model != nullptr ? &view_model->breakpoint_gutter_marks : nullptr;
+  std::size_t breakpoint_gutter_mark_index = 0;
 
   // Build the visible-row→buffer-line map once so the indent-guides compute
   // and the per-row paint loop can both consume it. The visible-rows count is
@@ -892,6 +896,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         severity.has_value()) {
       DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                  *severity);
+    }
+    if (breakpoint_gutter_marks != nullptr &&
+        breakpoint_gutter_mark_index < breakpoint_gutter_marks->size() &&
+        (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].visual_row_index ==
+            visual_row_index) {
+      DrawBreakpointGutterMarker(
+          renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
+          (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].verified);
+      ++breakpoint_gutter_mark_index;
     }
     if (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&
         (*fold_gutter_marks)[fold_gutter_mark_index].visual_row_index == visual_row_index) {

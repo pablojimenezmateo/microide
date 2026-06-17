@@ -55,6 +55,10 @@ struct Theme {
   SDL_Color diagnostic_warning;
   SDL_Color diagnostic_info;
   SDL_Color diagnostic_hint;
+  // Breakpoint gutter dot: solid `breakpoint` when the adapter has verified it,
+  // dimmed `breakpoint_unverified` otherwise (set but not yet bound / no session).
+  SDL_Color breakpoint;
+  SDL_Color breakpoint_unverified;
 };
 
 Theme MakeDefaultTheme();

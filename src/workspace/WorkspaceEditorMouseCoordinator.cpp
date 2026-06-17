@@ -234,6 +234,40 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
+  // Breakpoint gutter click. When the debugger is enabled, the gutter area to
+  // the left of the fold hit zone toggles a breakpoint on the clicked line.
+  // Gated on `debug.enabled` so the editor is unchanged when debugging is off.
+  if (event.button.button == SDL_BUTTON_LEFT && event.button.y >= metrics.first_line_y) {
+    const auto debug_setting = operations_.get_setting_value
+                                   ? operations_.get_setting_value("debug.enabled")
+                                   : std::nullopt;
+    const bool debug_enabled = debug_setting.has_value() && *debug_setting != "false" &&
+                               *debug_setting != "0" && *debug_setting != "off";
+    if (debug_enabled) {
+      const float gutter_left = editor_rect.x;
+      const float fold_hit_left = editor_rect.x + metrics.gutter_width - 18.0f;
+      if (event.button.x >= gutter_left && event.button.x < fold_hit_left) {
+        const std::size_t visual_row =
+            viewport->scroll_line() +
+            static_cast<std::size_t>((event.button.y - metrics.first_line_y) /
+                                     metrics.line_height);
+        if (visual_row < viewport->visual_line_count()) {
+          const std::size_t line_index = viewport->VisualRowLineIndex(visual_row);
+          const std::filesystem::path& path = viewport->path();
+          if (!path.empty()) {
+            state_.breakpoint_store.Toggle(path, line_index);
+            if (operations_.on_breakpoint_toggled) {
+              operations_.on_breakpoint_toggled(path);
+            }
+            operations_.request_focused_editor_redraw();
+            state_.surface.focus = FocusTarget::Editor;
+            return true;
+          }
+        }
+      }
+    }
+  }
+
   const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
   const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
   const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
@@ -548,6 +582,8 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
               [this](EditorBannerAction action, const std::filesystem::path& path) {
                 ActivateEditorBannerAction(action, path);
               },
+          .on_breakpoint_toggled =
+              [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
       });
 }
 

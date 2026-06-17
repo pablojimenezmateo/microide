@@ -274,6 +274,9 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
       ResolveForeground(styles, "diagnostic-warning", theme.diagnostic_warning);
   theme.diagnostic_info = ResolveForeground(styles, "diagnostic-info", theme.diagnostic_info);
   theme.diagnostic_hint = ResolveForeground(styles, "diagnostic-hint", theme.diagnostic_hint);
+  theme.breakpoint = ResolveForeground(styles, "breakpoint", theme.breakpoint);
+  theme.breakpoint_unverified =
+      ResolveForeground(styles, "breakpoint-unverified", theme.breakpoint_unverified);
   return theme;
 }
 
@@ -323,6 +326,8 @@ Theme MakeDefaultTheme() {
       .diagnostic_warning = SDL_Color{0xe8, 0xc5, 0x6d, 0xff},
       .diagnostic_info = SDL_Color{0x7a, 0xb0, 0xff, 0xff},
       .diagnostic_hint = SDL_Color{0x8d, 0xdf, 0x9f, 0xff},
+      .breakpoint = SDL_Color{0xe5, 0x4b, 0x4b, 0xff},
+      .breakpoint_unverified = SDL_Color{0x8a, 0x57, 0x57, 0xc0},
   };
   theme.selection_strong = CompositeOver(theme.selection_fill, theme.surface_background);
   return theme;

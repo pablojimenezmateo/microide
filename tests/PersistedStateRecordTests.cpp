@@ -11,16 +11,22 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::DecodeDebugStateRecord;
 using microide::workspace::DecodeProjectConfigRecord;
 using microide::workspace::DecodeProjectSessionRecord;
 using microide::workspace::DecodeUserConfigRecord;
 using microide::workspace::DecodeWorkspaceSessionRecord;
+using microide::workspace::EncodeDebugStateRecord;
 using microide::workspace::EncodeProjectConfigRecord;
 using microide::workspace::EncodeProjectSessionRecord;
 using microide::workspace::EncodeUserConfigRecord;
 using microide::workspace::EncodeWorkspaceSessionRecord;
+using microide::workspace::PersistedBreakpoint;
+using microide::workspace::PersistedDebugState;
 using microide::workspace::PersistedEditorTabState;
 using microide::workspace::PersistedEditorViewState;
+using microide::workspace::PersistedFileBreakpoints;
+using microide::workspace::PersistedLaunchConfig;
 using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedSidebarViewPolicy;
@@ -260,6 +266,60 @@ void TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto() {
          "missing outgoing base fields should default to Auto");
 }
 
+void TestPersistedStateDebugStateRoundTrip() {
+  PersistedDebugState state;
+  PersistedFileBreakpoints file_a;
+  file_a.path = "/proj/main.py";
+  file_a.breakpoints.push_back(PersistedBreakpoint{.line = 4, .enabled = true});
+  file_a.breakpoints.push_back(
+      PersistedBreakpoint{.line = 9, .enabled = false, .condition = std::string("x > 5")});
+  PersistedFileBreakpoints file_b;
+  file_b.path = "/proj/util.py";
+  file_b.breakpoints.push_back(
+      PersistedBreakpoint{.line = 1, .log_message = std::string("hit {x}")});
+  state.files.push_back(std::move(file_a));
+  state.files.push_back(std::move(file_b));
+  state.launch_configs.push_back(PersistedLaunchConfig{
+      .name = "Debug main",
+      .type = "debugpy",
+      .request = "launch",
+      .arguments_json = R"({"program":"main.py","stopOnEntry":true})",
+  });
+  state.selected_launch_config_index = 0;
+
+  std::vector<std::byte> encoded;
+  Expect(EncodeDebugStateRecord(state, &encoded), "debug state should encode");
+
+  PersistedDebugState decoded;
+  Expect(DecodeDebugStateRecord(encoded, &decoded), "debug state should decode");
+  Expect(decoded.files.size() == 2, "two breakpoint files should round-trip");
+  Expect(decoded.files[0].path == std::filesystem::path("/proj/main.py"), "file path round-trips");
+  Expect(decoded.files[0].breakpoints.size() == 2, "two breakpoints on first file");
+  Expect(decoded.files[0].breakpoints[1].line == 9 &&
+             decoded.files[0].breakpoints[1].enabled == false &&
+             decoded.files[0].breakpoints[1].condition.has_value() &&
+             *decoded.files[0].breakpoints[1].condition == "x > 5",
+         "conditional breakpoint round-trips");
+  Expect(decoded.files[1].breakpoints[0].log_message.has_value() &&
+             *decoded.files[1].breakpoints[0].log_message == "hit {x}",
+         "logpoint message round-trips");
+  Expect(decoded.launch_configs.size() == 1 && decoded.launch_configs[0].type == "debugpy" &&
+             decoded.launch_configs[0].arguments_json ==
+                 R"({"program":"main.py","stopOnEntry":true})",
+         "launch config round-trips with verbatim arguments json");
+  Expect(decoded.selected_launch_config_index == 0, "selected index round-trips");
+}
+
+void TestPersistedStateDebugStateRequiresSchema() {
+  // A body without the Schema tag must be rejected (mirrors project-session).
+  std::vector<std::byte> body;
+  PersistedDebugState empty;
+  // Encode then strip is awkward; instead decode an empty/garbage buffer.
+  PersistedDebugState decoded;
+  Expect(!DecodeDebugStateRecord(std::span<const std::byte>(body), &decoded),
+         "empty body (no schema tag) should fail to decode");
+}
+
 }  // namespace
 
 // Regression: a corrupt/adversarial length prefix must not drive an unbounded
@@ -300,6 +360,9 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateRecordDecodersSkipUnknownTags);
   AddTest(tests, "PersistedStateRecord/ProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto",
           TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto);
+  AddTest(tests, "PersistedStateRecord/DebugStateRoundTrip", TestPersistedStateDebugStateRoundTrip);
+  AddTest(tests, "PersistedStateRecord/DebugStateRequiresSchema",
+          TestPersistedStateDebugStateRequiresSchema);
 }
 
 }  // namespace microide::tests

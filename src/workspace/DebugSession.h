@@ -7,6 +7,9 @@
 #include <string>
 #include <vector>
 
+#include <filesystem>
+
+#include "editor/BreakpointStore.h"
 #include "platform/SubprocessSandbox.h"
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
@@ -45,6 +48,14 @@ class DebugSession {
     // Every adapter event verbatim, for phases that react to stopped/continued/
     // breakpoint/thread events. Delivered after the built-in lifecycle handling.
     std::function<void(const std::string& event, const util::JsonValue& body)> on_event;
+    // Pulled when the adapter is ready for configuration (the `initialized`
+    // event) and on every live re-send, to get the breakpoints to install.
+    std::function<std::vector<editor::BreakpointStore::FileBreakpoints>()> breakpoint_provider;
+    // Pushed with the adapter's verified/rejected breakpoints for one file,
+    // positional to the setBreakpoints request, so the host can reflect state.
+    std::function<void(const std::filesystem::path& path,
+                       const std::vector<dap_protocol::DapBreakpoint>& breakpoints)>
+        on_breakpoints_verified;
   };
 
   DebugSession();
@@ -75,12 +86,20 @@ class DebugSession {
   // launched debuggee shut down cleanly), otherwise `disconnect`.
   void RequestStop();
 
+  // Re-send `setBreakpoints` for one file while the session is live (e.g. the
+  // user toggled a breakpoint after launch). Pulls the current snapshot from
+  // `breakpoint_provider`; sends an empty list to clear a file. No-op until the
+  // adapter is initialized.
+  void ResendBreakpointsForFile(const std::filesystem::path& path);
+
   DapClient& Client() { return *client_; }
   const DapClient& Client() const { return *client_; }
 
  private:
   void HandleEvent(const std::string& event, const util::JsonValue& body);
   void SendLaunchRequest();
+  void SendAllBreakpoints();
+  void SendBreakpointsForFile(const editor::BreakpointStore::FileBreakpoints& file);
   void SendConfigurationDone();
   void SetState(State state);
 
