@@ -1061,6 +1061,10 @@
   DapManager& EnsureProjectDapManager(ProjectWorkspaceState& state);
   void ConsumeDapCallbacks();
   bool StartDebugging(const LaunchConfig& config, const std::string& cwd = {});
+  // Builds a minimal launch config from a registered adapter and starts it.
+  // Returns an error string (empty on success). Launch-config selection /
+  // persistence is a later phase; Phase 1 launches the first registered adapter.
+  std::string StartDebuggingWithDefaultConfig();
   void StopDebugging();
   bool IsDebugSessionActive() const;
   void AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output);

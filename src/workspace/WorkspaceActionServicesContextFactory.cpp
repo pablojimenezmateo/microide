@@ -39,6 +39,33 @@ void WorkspaceActionContext::RequestQuit() {
   operations_.request_quit();
 }
 
+bool WorkspaceActionContext::DebuggerEnabled() const {
+  if (!operations_.get_setting_value) {
+    return false;
+  }
+  const auto value = operations_.get_setting_value("debug.enabled");
+  if (!value.has_value()) {
+    return false;
+  }
+  return !(*value == "false" || *value == "0" || *value == "off" || value->empty());
+}
+
+void WorkspaceActionContext::StartDebuggingWithFeedback() {
+  if (!operations_.start_debugging) {
+    return;
+  }
+  const std::string error = operations_.start_debugging();
+  state_.panel.command.feedback_text =
+      error.empty() ? std::string("Debugging started") : ("Debug: " + error);
+}
+
+void WorkspaceActionContext::StopDebuggingWithFeedback() {
+  if (operations_.stop_debugging) {
+    operations_.stop_debugging();
+  }
+  state_.panel.command.feedback_text = "Debugging stopped";
+}
+
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
   return WorkspaceActionContext(
       context_.project_catalog,
@@ -312,6 +339,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
           .plugin_runtime_reload_summary = [this]() { return PluginRuntimeReloadSummary(); },
           .request_quit = [this]() { RequestQuit(); },
+          .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
+          .stop_debugging = [this]() { StopDebugging(); },
+          .has_debug_adapters = [this]() { return CurrentDapManager().HasRegisteredAdapters(); },
+          .debug_session_active = [this]() { return IsDebugSessionActive(); },
       });
 }
 

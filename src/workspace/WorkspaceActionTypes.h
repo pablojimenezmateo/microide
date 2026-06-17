@@ -128,6 +128,9 @@ enum class ActionId {
   MarkBranchHunkReviewed,
   ClearBranchReviewState,
   EditBranchReviewNote,
+  // Debugger (DAP). Gated on the `debug.enabled` master toggle.
+  StartDebugging,
+  StopDebugging,
 };
 
 enum class ActionSource {

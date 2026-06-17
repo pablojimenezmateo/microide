@@ -439,6 +439,8 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `project-prev`
 - `project-search [query]`
 - `plugins-reload`
+- `debug-start`
+- `debug-stop`
 - `quit`
 - `reopen`
 - `save`

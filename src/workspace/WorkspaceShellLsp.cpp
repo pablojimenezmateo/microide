@@ -2,6 +2,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 // Thin forwarders to the host-owned protocol-client services so existing
 // render/menu/plugin call sites stay unchanged. The LSP glue lives in
@@ -105,6 +106,22 @@ bool WorkspaceShell::StartDebugging(const LaunchConfig& config, const std::strin
     ShowDebugConsole();
   }
   return started;
+}
+
+std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
+  const std::vector<std::string> types = CurrentDapManager().AdapterTypes();
+  if (types.empty()) {
+    return "no debug adapter is registered (a plugin must contribute one via ctx.debug.add)";
+  }
+  LaunchConfig config;
+  config.type = types.front();
+  config.name = config.type;
+  config.request = "launch";
+  if (!StartDebugging(config, context_.current_project_state.root.generic_string())) {
+    const std::string error = debug_service_.LastError();
+    return error.empty() ? "failed to start debug session" : error;
+  }
+  return {};
 }
 
 void WorkspaceShell::StopDebugging() { debug_service_.StopDebugging(); }

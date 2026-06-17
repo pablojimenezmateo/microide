@@ -127,6 +127,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.ReloadPluginsWithFeedback();
       return DispatchResult::Handled;
+    case ActionId::StartDebugging:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.StartDebuggingWithFeedback();
+      return DispatchResult::Handled;
+    case ActionId::StopDebugging:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.StopDebuggingWithFeedback();
+      return DispatchResult::Handled;
     case ActionId::TestsRun: {
       std::string error_message;
       const bool ok = args.empty() ? context_.RunAllDiscoveredTests(&error_message)

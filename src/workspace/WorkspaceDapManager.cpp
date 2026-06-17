@@ -56,6 +56,15 @@ bool DapManager::HasAdapter(const std::string& type) const {
 
 bool DapManager::HasRegisteredAdapters() const { return !adapters_.empty(); }
 
+std::vector<std::string> DapManager::AdapterTypes() const {
+  std::vector<std::string> types;
+  types.reserve(adapters_.size());
+  for (const auto& [type, _] : adapters_) {
+    types.push_back(type);
+  }
+  return types;
+}
+
 bool DapManager::StartSession(const LaunchConfig& config, DebugSession::Callbacks callbacks,
                               const std::string& cwd) {
   last_error_.clear();

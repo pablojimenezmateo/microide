@@ -156,6 +156,13 @@ class WorkspaceActionContext {
     std::function<void()> reload_plugins_for_current_project;
     std::function<std::string()> plugin_runtime_reload_summary;
     std::function<void()> request_quit;
+    // Debugger (DAP). start_debugging builds a default launch config from the
+    // current project's registered adapters; it returns an error string (empty
+    // on success). has_debug_adapters reports whether any adapter is registered.
+    std::function<std::string()> start_debugging;
+    std::function<void()> stop_debugging;
+    std::function<bool()> has_debug_adapters;
+    std::function<bool()> debug_session_active;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -291,6 +298,10 @@ class WorkspaceActionContext {
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
   void RequestQuit();
+  // Debugger (DAP). DebuggerEnabled reflects the `debug.enabled` master toggle.
+  bool DebuggerEnabled() const;
+  void StartDebuggingWithFeedback();
+  void StopDebuggingWithFeedback();
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free

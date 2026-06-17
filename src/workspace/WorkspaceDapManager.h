@@ -45,6 +45,9 @@ class DapManager {
 
   bool HasAdapter(const std::string& type) const;
   bool HasRegisteredAdapters() const;
+  // Registered adapter type ids (unordered). Used to build a default launch
+  // config until per-project launch-config selection lands in a later phase.
+  std::vector<std::string> AdapterTypes() const;
 
   // Begin a debug session for `config`. Resolves `config.type` to a registered
   // adapter, spawns it, and drives the lifecycle, forwarding events through

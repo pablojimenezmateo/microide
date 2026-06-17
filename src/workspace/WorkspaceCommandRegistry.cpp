@@ -62,6 +62,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                                  "Ctrl+Shift+F"},
       ActionSpec{ActionId::PluginsReload, "plugins-reload", "plugins-reload", "Reload Plugins",
                  ""},
+      ActionSpec{ActionId::StartDebugging, "debug-start", "debug-start", "Start Debugging", ""},
+      ActionSpec{ActionId::StopDebugging, "debug-stop", "debug-stop", "Stop Debugging", ""},
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
       ActionSpec{ActionId::RenamePath, "", "", "Rename...", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},

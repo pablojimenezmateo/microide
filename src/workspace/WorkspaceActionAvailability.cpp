@@ -67,6 +67,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SidebarShow:
     case ActionId::SidebarToggle:
       return true;
+    case ActionId::StartDebugging:
+    case ActionId::StopDebugging:
+      // Gated on the master debugger toggle; the executor reports adapter/
+      // session preconditions as command feedback.
+      return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::CloseActiveTab:
       return !context_.current_project_state.open_tabs.empty();
     case ActionId::CloseAllTabs:
