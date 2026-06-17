@@ -441,6 +441,33 @@
         });
   }
 
+  static int LuaDebugAdd(lua_State* state) {
+    return RegisterTableContribution(
+        state, "debug adapter registration requires an active plugin state",
+        "failed to parse debug adapter registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          if (!plugin->capabilities.process_exec) {
+            *error_message = "debug adapter requires capabilities.process.exec";
+            return false;
+          }
+          if (!contribution_interop::RegisterDebugAdapter(
+                  state, plugin->id, &host->debug_adapters, error_message)) {
+            return false;
+          }
+          if (!host->debug_adapters.empty() &&
+              !CommandAllowed(plugin->capabilities, host->debug_adapters.back().command)) {
+            host->debug_adapters.pop_back();
+            *error_message = "debug adapter program not in capabilities.process.allow";
+            return false;
+          }
+          if (!host->debug_adapters.empty()) {
+            host->debug_adapters.back().sandbox =
+                MakeContributionSandbox(host->current_project_root, plugin);
+          }
+          return true;
+        });
+  }
+
   static int LuaToolAdd(lua_State* state) {
     return RegisterTableContribution(
         state, "tool registration requires an active plugin state",
@@ -722,6 +749,7 @@
             .completion_add = &LuaCompletionAdd,
             .code_action_add = &LuaCodeActionAdd,
             .lsp_add = &LuaLspAdd,
+            .debug_add = &LuaDebugAdd,
             .task_add = &LuaTaskAdd,
             .tool_add = &LuaToolAdd,
             .test_provider_add = &LuaTestProviderAdd,
@@ -802,7 +830,8 @@
         &hovers, &hover_provider_order, &menu_entries, &keybindings, &settings, &status_items,
         &status_item_order, &formatters, &save_participants, &save_participant_runtimes,
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
-        &language_servers, &tasks, &tools, &test_providers, &test_provider_runtimes,
+        &language_servers, &debug_adapters, &tasks, &tools, &test_providers,
+        &test_provider_runtimes,
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
         &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,
         &bracket_sets, &comment_markers, &indent_rules, &snippets);

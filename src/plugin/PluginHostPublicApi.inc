@@ -631,6 +631,11 @@ PluginHost::ContributedLanguageServers() const {
   return impl_->language_servers;
 }
 
+const std::vector<PluginHost::ContributedDebugAdapter>&
+PluginHost::ContributedDebugAdapters() const {
+  return impl_->debug_adapters;
+}
+
 const std::vector<PluginHost::ContributedTask>& PluginHost::ContributedTasks() const {
   return impl_->tasks;
 }

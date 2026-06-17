@@ -60,6 +60,29 @@ bool ParseLanguageServerRegistration(lua_State* state,
   return true;
 }
 
+bool ParseDebugAdapterRegistration(lua_State* state,
+                                   const std::string& plugin_id,
+                                   DebugAdapterRegistration* out,
+                                   std::string* error_message) {
+  if (out == nullptr) return false;
+  auto id_opt = ReadStringField(state, 1, "id");
+  auto command_opt = ReadStringArrayField(state, 1, "command");
+  // `type` is the DAP adapter type id matched by a LaunchConfig; default it to
+  // the local id when omitted so a single-adapter plugin can stay terse.
+  auto type_opt = ReadStringField(state, 1, "type");
+  std::string type = (type_opt && !type_opt->empty()) ? std::move(*type_opt)
+                     : (id_opt ? *id_opt : std::string());
+  if (!id_opt || type.empty() || !command_opt || command_opt->empty()) return false;
+  out->contributed = PluginHost::ContributedDebugAdapter{
+      .id = plugin_id + "." + *id_opt,
+      .type = std::move(type),
+      .command = std::move(*command_opt),
+      .plugin_id = plugin_id,
+  };
+  if (error_message) error_message->clear();
+  return true;
+}
+
 bool ParseToolRegistration(lua_State* state,
                            const std::string& plugin_id,
                            ToolRegistration* out,

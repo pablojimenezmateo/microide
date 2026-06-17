@@ -1055,6 +1055,16 @@
   LspManager& CurrentLspManager();
   const LspManager& CurrentLspManager() const;
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
+  // Thin forwarders to debug_service_ (see src/workspace/DebugService.*).
+  DapManager& CurrentDapManager();
+  const DapManager& CurrentDapManager() const;
+  DapManager& EnsureProjectDapManager(ProjectWorkspaceState& state);
+  void ConsumeDapCallbacks();
+  bool StartDebugging(const LaunchConfig& config, const std::string& cwd = {});
+  void StopDebugging();
+  bool IsDebugSessionActive() const;
+  void AppendDebugConsoleOutput(const dap_protocol::DapOutputEvent& output);
+  void ShowDebugConsole();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
   std::string ActiveLspStatusText(bool ensure_started = true);
@@ -1428,6 +1438,7 @@
   mutable int settings_overlay_max_scroll_row_ = 0;
   AssistService assist_service_;
   LspService lsp_service_;
+  DebugService debug_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {
     std::filesystem::path project_root;
@@ -1448,6 +1459,7 @@
   Uint32 project_file_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
   Uint32 lsp_event_type_ = 0;
+  Uint32 dap_event_type_ = 0;
   Uint32 plugin_async_process_event_type_ = 0;
   Uint32 highlight_prefetch_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;

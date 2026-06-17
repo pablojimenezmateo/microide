@@ -203,6 +203,19 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     lsp_event_type_ = 0;
   }
 
+  dap_event_type_ = SDL_RegisterEvents(1);
+  if (dap_event_type_ != static_cast<Uint32>(-1)) {
+    debug_service_.SetWakeEventType(dap_event_type_);
+    EnsureProjectDapManager(context_.current_project_state).SetWakeEventType(dap_event_type_);
+    for (const auto& entry : context_.project_catalog.entries) {
+      if (entry != nullptr) {
+        EnsureProjectDapManager(*entry).SetWakeEventType(dap_event_type_);
+      }
+    }
+  } else {
+    dap_event_type_ = 0;
+  }
+
   plugin_async_process_event_type_ = SDL_RegisterEvents(1);
   if (plugin_async_process_event_type_ != static_cast<Uint32>(-1)) {
     plugin_runtime_.SetAsyncProcessEventType(plugin_async_process_event_type_);

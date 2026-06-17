@@ -110,6 +110,22 @@ bool RegisterLanguageServer(lua_State* state,
   return true;
 }
 
+bool RegisterDebugAdapter(lua_State* state,
+                          std::string_view plugin_id,
+                          std::vector<PluginHost::ContributedDebugAdapter>* adapters,
+                          std::string* error_message) {
+  if (adapters == nullptr) {
+    return false;
+  }
+  registration_parsers::DebugAdapterRegistration registration;
+  if (!registration_parsers::ParseDebugAdapterRegistration(state, std::string(plugin_id),
+                                                            &registration, error_message)) {
+    return false;
+  }
+  adapters->push_back(std::move(registration.contributed));
+  return true;
+}
+
 bool RegisterTool(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTool>* tools,

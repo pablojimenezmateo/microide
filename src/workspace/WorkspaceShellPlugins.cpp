@@ -89,6 +89,18 @@ WorkspaceShell::WorkspaceShell() {
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
       });
+  debug_service_.Configure(
+      context_,
+      DebugService::Operations{
+          .append_console_output =
+              [this](const dap_protocol::DapOutputEvent& output) {
+                AppendDebugConsoleOutput(output);
+              },
+          .notify_session_state_changed =
+              [this](DebugSession::State /*state*/) { RequestChromeRedraw(); },
+          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+      });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
       AssistService::Operations{
@@ -299,6 +311,20 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
                                          language_server.settings, language_server.sandbox);
     }
     CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
+
+    // Debug adapters are reconciled on the same gate: their definitions are
+    // cheap (no process spawns until a session starts), but RetainAdaptersIn
+    // must not run with an empty contributed set on reactivation, or it would
+    // drop a reactivated project's adapters.
+    std::unordered_set<std::string> active_debug_adapter_types;
+    for (const auto& adapter : host.ContributedDebugAdapters()) {
+      if (adapter.command.empty() || adapter.type.empty()) {
+        continue;
+      }
+      active_debug_adapter_types.insert(adapter.type);
+      CurrentDapManager().RegisterAdapter(adapter.type, adapter.command, adapter.sandbox);
+    }
+    CurrentDapManager().RetainAdaptersIn(active_debug_adapter_types);
   }
   for (const auto& tool : host.ContributedTools()) {
     tool_registry_.Register(ToolSpec{

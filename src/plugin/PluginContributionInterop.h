@@ -47,6 +47,11 @@ bool RegisterLanguageServer(lua_State* state,
                             std::vector<PluginHost::ContributedLanguageServer>* servers,
                             std::string* error_message);
 
+bool RegisterDebugAdapter(lua_State* state,
+                          std::string_view plugin_id,
+                          std::vector<PluginHost::ContributedDebugAdapter>* adapters,
+                          std::string* error_message);
+
 bool RegisterTool(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTool>* tools,

@@ -131,6 +131,20 @@ class PluginHost {
     platform::SubprocessSandbox sandbox;
   };
 
+  struct ContributedDebugAdapter {
+    std::string id;
+    // DAP adapter type id matched by a LaunchConfig's `type` (mirrors how an
+    // LSP `language_id` selects a server). A single project may contribute
+    // several adapters (debugpy, lldb, ...), each with its own type.
+    std::string type;
+    std::vector<std::string> command;
+    std::string plugin_id;
+    // Kernel-confinement descriptor resolved at registration. Debug adapters
+    // typically need ptrace + broad fs access, so the resolved sandbox is more
+    // permissive than the LSP/formatter default.
+    platform::SubprocessSandbox sandbox;
+  };
+
   struct ContributedTask {
     std::string id;
     std::string label;
@@ -424,6 +438,7 @@ class PluginHost {
   const std::vector<ContributedCompletion>& ContributedCompletions() const;
   const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
   const std::vector<ContributedLanguageServer>& ContributedLanguageServers() const;
+  const std::vector<ContributedDebugAdapter>& ContributedDebugAdapters() const;
   const std::vector<ContributedTask>& ContributedTasks() const;
   const std::vector<ContributedTool>& ContributedTools() const;
   const std::vector<ContributedTestProvider>& ContributedTestProviders() const;

@@ -112,6 +112,7 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedCodeAction> code_actions;
   std::vector<CodeActionRuntime> code_action_runtimes;
   std::vector<PluginHost::ContributedLanguageServer> language_servers;
+  std::vector<PluginHost::ContributedDebugAdapter> debug_adapters;
   std::vector<PluginHost::ContributedTask> tasks;
   std::vector<PluginHost::ContributedTool> tools;
   std::vector<PluginHost::ContributedTestProvider> test_providers;
