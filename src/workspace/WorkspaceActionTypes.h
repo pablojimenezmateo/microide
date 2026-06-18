@@ -160,6 +160,21 @@ enum class ActionId {
   DebugBreakpointEditHitCondition,
   DebugBreakpointEditLogMessage,
   DebugBreakpointRemove,
+  // Headless breakpoint control (control channel + cold-start spec). Unlike the
+  // context-menu modifiers above, these take an explicit `<file> <line>` (1-based
+  // line) so an external caller can place/edit breakpoints anywhere. Gated on
+  // `debug.enabled`; work with or without a live session.
+  BreakpointSet,
+  BreakpointRemove,
+  BreakpointEnable,
+  BreakpointDisable,
+  BreakpointCondition,
+  BreakpointHitCondition,
+  BreakpointLogMessage,
+  BreakpointClear,
+  // Start a debug session for a named launch config (control channel + spec).
+  // No arg starts the selected/default config. Gated on `debug.enabled`.
+  DebugLaunch,
   // Right-side debug pane (toggle + surface switching). Gated on `debug.enabled`.
   DebugPaneToggle,
   DebugPaneShowCallStack,

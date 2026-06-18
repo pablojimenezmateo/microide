@@ -181,6 +181,7 @@ set(MICROIDE_CORE_SOURCES
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
   src/platform/AsyncSubprocess.cpp
+  src/platform/ControlSocketServer.cpp
   src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
@@ -297,6 +298,9 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceActionServicesContextFactory.cpp
   src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
+  src/workspace/ControlChannelService.cpp
+  src/workspace/ControlProtocol.cpp
+  src/workspace/ControlSpec.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
   src/workspace/WorkspaceEditActionExecutor.cpp
@@ -525,6 +529,8 @@ if(UNIX AND NOT APPLE)
   )
 
   install(TARGETS microide RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/microide.1"
+          DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/"
             DESTINATION "${CMAKE_INSTALL_DATADIR}/microide/assets")
@@ -567,6 +573,9 @@ add_executable(microide_tests
   tests/AppDirectoriesTests.cpp
   tests/AppStartupOptionsTests.cpp
   src/app/AppStartupOptions.cpp
+  tests/ControlProtocolTests.cpp
+  tests/ControlSpecTests.cpp
+  tests/ControlChannelServiceTests.cpp
   tests/CompareModelTests.cpp
   tests/CompareReviewTests.cpp
   tests/BranchReviewStateTests.cpp

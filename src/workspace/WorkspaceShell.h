@@ -55,6 +55,8 @@
 #include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceEventResult.h"
 #include "workspace/AssistService.h"
+#include "workspace/ControlChannelService.h"
+#include "workspace/ControlSpec.h"
 #include "workspace/DebugService.h"
 #include "workspace/LspService.h"
 #include "workspace/EditorBlameOverlayService.h"

@@ -98,6 +98,7 @@ WorkspaceShell::WorkspaceShell() {
               [this](int session_id, const std::string& label,
                      const dap_protocol::DapOutputEvent& output) {
                 AppendDebugConsoleOutput(session_id, label, output);
+                control_channel_service_.OnDebugOutput(output.category, output.output);
               },
           .show_debug_console =
               [this](int session_id, const std::string& label) {
@@ -105,7 +106,16 @@ WorkspaceShell::WorkspaceShell() {
               },
           .remove_debug_console = [this](int session_id) { RemoveDebugConsole(session_id); },
           .notify_session_state_changed =
-              [this](DebugSession::State /*state*/) { RequestChromeRedraw(); },
+              [this](DebugSession::State state) {
+                RequestChromeRedraw();
+                // Mirror stop/terminate to the control channel. ProjectStop has
+                // already rebuilt debug_execution by the time it reports Stopped.
+                if (state == DebugSession::State::Stopped) {
+                  control_channel_service_.OnDebugStopped();
+                } else if (state == DebugSession::State::Terminated) {
+                  control_channel_service_.OnDebugTerminated(0);
+                }
+              },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
           .request_editor_redraw = [this]() { RequestEditorSurfaceRedraw(); },
@@ -125,6 +135,12 @@ WorkspaceShell::WorkspaceShell() {
                 // but don't yank the user off another surface on every subsequent step.
                 OpenDebugPaneOnStop();
               },
+      });
+  control_channel_service_.Configure(
+      context_,
+      ControlChannelService::Operations{
+          .execute_command_line =
+              [this](const std::string& line) { return ExecuteControlCommand(line); },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

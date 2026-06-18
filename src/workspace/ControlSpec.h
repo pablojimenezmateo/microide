@@ -1,0 +1,52 @@
+#pragma once
+
+#include <cstddef>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace microide::workspace {
+
+// One breakpoint from a cold-start spec. `line` is 1-based as authored; the
+// 1-based -> 0-based conversion happens once, in the breakpoint-command
+// executor, so every developer-facing surface (spec, commands, events) stays
+// 1-based.
+struct ControlSpecBreakpoint {
+  std::string file;  // relative (to project root) or absolute, as authored
+  std::size_t line = 0;
+  bool enabled = true;
+  std::optional<std::string> condition;
+  std::optional<std::string> hit_condition;
+  std::optional<std::string> log_message;
+};
+
+// Parsed `--control-spec <file.json>` document. See ControlChannelHelpText() for
+// the schema. On a parse error, `valid` is false and `parse_error` explains why.
+struct ControlSpec {
+  bool valid = false;
+  std::string parse_error;
+  std::optional<std::filesystem::path> project;
+  std::vector<ControlSpecBreakpoint> breakpoints;
+  std::vector<std::string> open;
+  std::optional<std::string> launch;
+  std::vector<std::string> commands;
+};
+
+// The recognized top-level spec keys. Shared by the help text / drift guard.
+std::span<const std::string_view> ControlSpecKeys();
+
+// Decode spec JSON. Never throws; malformed input yields {valid=false,...}.
+ControlSpec ParseControlSpec(std::string_view json);
+
+// Translate a spec into the command lines that apply it, in order:
+// breakpoints (set + modifiers + disable), file reveals, optional launch, then
+// the spec's raw `commands`. Relative `file`/`open` paths resolve against
+// `project_root`. Every produced line is safe to feed to ParseCommandLine /
+// ExecuteCommandLine (arguments are quoted via QuoteCommandArg).
+std::vector<std::string> ControlSpecToCommands(const ControlSpec& spec,
+                                               const std::filesystem::path& project_root);
+
+}  // namespace microide::workspace

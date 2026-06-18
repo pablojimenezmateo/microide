@@ -151,6 +151,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .project_file_event_type = shell->project_file_event_type_,
           .lsp_event_type = shell->lsp_event_type_,
           .dap_event_type = shell->dap_event_type_,
+          .control_event_type = shell->control_event_type_,
           .plugin_async_process_event_type = shell->plugin_async_process_event_type_,
           .highlight_prefetch_event_type = shell->highlight_prefetch_event_type_,
       },
@@ -187,6 +188,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->ConsumeLspCallbacks(); },
           .consume_dap_callbacks =
               [shell]() { shell->ConsumeDapCallbacks(); },
+          .consume_control_callbacks =
+              [shell]() { shell->ConsumeControlCallbacks(); },
           .consume_plugin_async_process_callbacks =
               [shell]() { shell->ConsumePluginAsyncProcessCallbacks(); },
           .consume_terminal_session_updates =

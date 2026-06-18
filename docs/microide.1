@@ -1,0 +1,93 @@
+.TH MICROIDE 1 "2026-06-18" "microide" "User Commands"
+.SH NAME
+microide \- compact native desktop IDE shell
+.SH SYNOPSIS
+.B microide
+[\fB--disable-plugins\fR] [\fB--safe-mode\fR] [\fB--control-spec\fR \fIfile\fR] [\fIproject-path\fR]
+.br
+.B microide control-help
+.br
+.B microide control-commands
+.br
+.B microide control-list
+.br
+.B microide dump-state
+.I persisted-file
+.SH DESCRIPTION
+.B microide
+is a single-window desktop editor and IDE shell (editor, compare, merge,
+search, git, terminal, plugin, and debugger workflows). With no
+.I project-path
+it opens the current working directory.
+.SH OPTIONS
+.TP
+.B --disable-plugins
+Start without loading the Lua plugin runtime.
+.TP
+.B --safe-mode
+Start without plugins and without restoring the previous session.
+.TP
+.B --control-spec \fIfile\fR
+Apply a cold-start control spec at launch: open a project with breakpoints
+already set (and optionally reveal files / start a debug session) before the
+window becomes interactive. The spec's
+.I project
+field, when present, selects the project to open. See
+.B microide control-help
+for the JSON schema. Spec line numbers are 1-based; relative paths resolve
+against the project root.
+.SH CONTROL CHANNEL
+An external tool (such as an LLM) can drive a running instance over a private
+Unix-domain socket: set breakpoints (including conditional, hit-count and
+logpoint), step through a debug session, open/close files, switch projects,
+open terminals, and observe where execution stopped.
+.PP
+The channel is OFF by default. Enable the
+.B control.enabled
+setting (Settings overlay, Ctrl+, or the
+.B settings
+command); it starts immediately on the running instance with no restart. The
+socket is created mode 0600 under
+.IR $XDG_RUNTIME_DIR/microide/ ,
+and a descriptor file is written to
+.IR $XDG_RUNTIME_DIR/microide/instances/<pid>.json .
+.PP
+Requests and responses are newline-delimited JSON. A request is either
+.RB { \(dqcommand\(dq : \(dq...\(dq }
+(run any command \(em see
+.BR "microide control-commands" )
+or
+.RB { \(dqquery\(dq : \(dq...\(dq }
+(read state: \fBdebug-state\fR, \fBbreakpoints\fR, \fBtabs\fR, \fBprojects\fR,
+\fBstatus\fR). The server also pushes unsolicited \fBstopped\fR, \fBterminated\fR
+and \fBoutput\fR events so a client can wait for execution to stop.
+.SH SUBCOMMANDS
+.TP
+.B control-help
+Print the full control-channel protocol, query verbs, spec schema, and the list
+of runnable commands.
+.TP
+.B control-commands
+Print every runnable command name and its usage.
+.TP
+.B control-list
+Print the descriptor of each running instance that has the control channel
+enabled (pid, socket path, project).
+.TP
+.B dump-state \fIpersisted-file\fR
+Decode and print a microide persisted-state file.
+.SH FILES
+.TP
+.I $XDG_RUNTIME_DIR/microide/<pid>.sock
+Per-instance control socket (mode 0600).
+.TP
+.I $XDG_RUNTIME_DIR/microide/instances/<pid>.json
+Per-instance discovery descriptor.
+.SH SECURITY
+The control channel grants a connecting client the same power as the command
+palette. It is off by default, the socket is user-private (0600) under the
+per-user runtime directory, and it must be explicitly enabled per instance.
+.SH SEE ALSO
+Project documentation under \fIdev-docs/\fR, in particular
+\fIdev-docs/control/control-channel.md\fR and
+\fIdev-docs/debugger/dap-integration.md\fR.

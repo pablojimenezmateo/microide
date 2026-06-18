@@ -193,6 +193,12 @@ class WorkspaceActionContext {
     // Right-side debug pane: toggle visibility, or show a specific surface.
     std::function<void()> toggle_debug_pane;
     std::function<void(DebugPaneMode)> show_debug_pane_mode;
+    // Headless breakpoint control (control channel + cold-start spec): re-send a
+    // file's breakpoints to the active session after the store is mutated.
+    std::function<void(const std::filesystem::path&)> resend_breakpoints_for_file;
+    // Start a debug session for a named launch config (empty name → the
+    // selected/default config). Returns an error string (empty on success).
+    std::function<std::string(const std::string&)> start_named_debug_config;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -357,6 +363,11 @@ class WorkspaceActionContext {
   // target line; open a prompt seeded with the current field / remove the bp.
   void EditBreakpointModifierFromMenu(ActionId id);
   void RemoveBreakpointFromMenu();
+  // Headless breakpoint control: the project breakpoint store, a resend hook,
+  // and named-launch start. Used by the breakpoint-* / debug-launch commands.
+  editor::BreakpointStore& MutableBreakpointStore();
+  void ResendBreakpoints(const std::filesystem::path& path);
+  std::string StartNamedDebugConfig(const std::string& name);
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free

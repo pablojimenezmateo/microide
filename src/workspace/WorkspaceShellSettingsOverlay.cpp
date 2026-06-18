@@ -331,6 +331,9 @@ void WorkspaceShell::TogglePluginEnabled(std::string_view plugin_id) {
 }
 
 void WorkspaceShell::ApplyLiveSettings() {
+  // Start/stop the control channel when `control.enabled` is toggled at runtime.
+  // The wake-event plumbing is already bound; only the listener is gated.
+  MaybeStartControlChannel();
   if (const auto value = GetSettingValue("ui.show_status_bar"); value.has_value()) {
     layout_mode_service_.SetStatusBarVisible(*value != "false" && *value != "0" && *value != "off");
   }

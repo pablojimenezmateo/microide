@@ -456,6 +456,15 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `debug-pane-variables`
 - `debug-pane-watch`
 - `debug-pane-breakpoints`
+- `breakpoint-set <file> <line> [condition]`
+- `breakpoint-remove <file> <line>`
+- `breakpoint-enable <file> <line>`
+- `breakpoint-disable <file> <line>`
+- `breakpoint-condition <file> <line> [expr]`
+- `breakpoint-hit-condition <file> <line> [expr]`
+- `breakpoint-logmessage <file> <line> [message]`
+- `breakpoint-clear [file]`
+- `debug-launch [name]`
 - `quit`
 - `reopen`
 - `save`

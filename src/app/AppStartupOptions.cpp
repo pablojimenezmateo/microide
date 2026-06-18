@@ -35,8 +35,24 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       result.options.disable_plugins = true;
       continue;
     }
+    if (arg == "--control-spec") {
+      if (i + 1 >= argc || argv[i + 1] == nullptr) {
+        std::cerr << "--control-spec requires a file path\n";
+        result.exit_code = 2;
+        return result;
+      }
+      result.options.control_spec_path = std::filesystem::path(argv[++i]);
+      continue;
+    }
     if (arg == "--help" || arg == "-h") {
-      std::cerr << "usage: microide [--disable-plugins] [--safe-mode] [project-path]\n";
+      std::cerr << "usage: microide [--disable-plugins] [--safe-mode] "
+                   "[--control-spec <file>] [project-path]\n"
+                   "       microide control-help        protocol + spec reference\n"
+                   "       microide control-commands     list runnable command names\n"
+                   "       microide control-list         running instances + sockets\n"
+                   "\n"
+                   "Live remote control is gated on the `control.enabled` setting "
+                   "(off by default).\n";
       result.show_usage = true;
       return result;
     }

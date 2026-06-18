@@ -95,6 +95,9 @@
   void SetStartupOptions(WorkspaceStartupOptions options);
   const WorkspaceStartupOptions& StartupOptions() const { return startup_options_; }
   bool Initialize(const std::filesystem::path& project_root);
+  // Apply a cold-start control spec (set breakpoints, reveal files, optionally
+  // start debugging). Public: invoked by Application right after Initialize.
+  void ApplyControlSpec(const ControlSpec& spec);
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
@@ -1126,11 +1129,23 @@
   const DapManager& CurrentDapManager() const;
   DapManager& EnsureProjectDapManager(ProjectWorkspaceState& state);
   void ConsumeDapCallbacks();
+  // Control channel (live remote control). ConsumeControlCallbacks drains the
+  // socket server on the control wake event; ExecuteControlCommand runs one
+  // command line through the in-app command chokepoint and reports the outcome;
+  // ApplyControlSpec applies a cold-start spec; MaybeStartControlChannel starts
+  // the listener when the `control.enabled` setting is on.
+  void ConsumeControlCallbacks();
+  ControlChannelService::CommandOutcome ExecuteControlCommand(const std::string& command_line);
+  void MaybeStartControlChannel();
   bool StartDebugging(const LaunchConfig& config, const std::string& cwd = {});
   // Builds a minimal launch config from a registered adapter and starts it.
   // Returns an error string (empty on success). Launch-config selection /
   // persistence is a later phase; Phase 1 launches the first registered adapter.
   std::string StartDebuggingWithDefaultConfig();
+  // Start a session for the launch config named `name` (case-insensitive). An
+  // empty name defers to StartDebuggingWithDefaultConfig(). Returns an error
+  // string (empty on success). Drives the `debug-launch` command / spec field.
+  std::string StartNamedDebugConfig(const std::string& name);
   void StopDebugging();
   void ResendBreakpointsForFile(const std::filesystem::path& path);
   bool IsDebugSessionActive() const;
@@ -1564,6 +1579,7 @@
   AssistService assist_service_;
   LspService lsp_service_;
   DebugService debug_service_;
+  ControlChannelService control_channel_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {
     std::filesystem::path project_root;
@@ -1585,6 +1601,7 @@
   Uint32 project_open_dialog_event_type_ = 0;
   Uint32 lsp_event_type_ = 0;
   Uint32 dap_event_type_ = 0;
+  Uint32 control_event_type_ = 0;
   Uint32 plugin_async_process_event_type_ = 0;
   Uint32 highlight_prefetch_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;

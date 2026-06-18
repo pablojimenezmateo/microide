@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceActionCoordinator.h"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -9,6 +10,33 @@
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceCommandParsing.h"
 namespace microide::workspace {
+
+namespace {
+
+// Parse a `<file> <line>` breakpoint-command target. `line` is 1-based on the
+// wire and returned 0-based to match the BreakpointStore. Relative paths
+// resolve against the project root. Returns nullopt with *error on bad input.
+std::optional<std::pair<std::filesystem::path, std::size_t>> ParseBreakpointTarget(
+    const std::filesystem::path& project_root,
+    const std::vector<std::string>& args,
+    std::string* error) {
+  if (args.size() < 2) {
+    *error = "expected <file> <line>";
+    return std::nullopt;
+  }
+  const std::optional<std::size_t> line = util::ParseSize(args[1]);
+  if (!line.has_value() || *line < 1) {
+    *error = "<line> must be an integer >= 1";
+    return std::nullopt;
+  }
+  std::filesystem::path path(args[0]);
+  if (!path.is_absolute()) {
+    path = project_root / path;
+  }
+  return std::make_pair(path.lexically_normal(), *line - 1);
+}
+
+}  // namespace
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                                   const std::vector<std::string>& args,
@@ -266,6 +294,111 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::Quit:
       context_.RequestQuit();
       return DispatchResult::Handled;
+    case ActionId::BreakpointSet: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      std::string error;
+      const auto target = ParseBreakpointTarget(context_.ProjectRoot(), args, &error);
+      if (!target.has_value()) {
+        return reject("breakpoint-set: " + error);
+      }
+      context_.MutableBreakpointStore().Set(target->first, target->second);
+      const std::string condition = JoinCommandArguments(args, 2);
+      if (!condition.empty()) {
+        context_.MutableBreakpointStore().SetCondition(target->first, target->second, condition);
+      }
+      context_.ResendBreakpoints(target->first);
+      return DispatchResult::Handled;
+    }
+    case ActionId::BreakpointRemove: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      std::string error;
+      const auto target = ParseBreakpointTarget(context_.ProjectRoot(), args, &error);
+      if (!target.has_value()) {
+        return reject("breakpoint-remove: " + error);
+      }
+      context_.MutableBreakpointStore().Remove(target->first, target->second);
+      context_.ResendBreakpoints(target->first);
+      return DispatchResult::Handled;
+    }
+    case ActionId::BreakpointEnable:
+    case ActionId::BreakpointDisable: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      std::string error;
+      const auto target = ParseBreakpointTarget(context_.ProjectRoot(), args, &error);
+      if (!target.has_value()) {
+        return reject("breakpoint-enable/disable: " + error);
+      }
+      context_.MutableBreakpointStore().Set(target->first, target->second,
+                                            id == ActionId::BreakpointEnable);
+      context_.ResendBreakpoints(target->first);
+      return DispatchResult::Handled;
+    }
+    case ActionId::BreakpointCondition:
+    case ActionId::BreakpointHitCondition:
+    case ActionId::BreakpointLogMessage: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      std::string error;
+      const auto target = ParseBreakpointTarget(context_.ProjectRoot(), args, &error);
+      if (!target.has_value()) {
+        return reject("breakpoint modifier: " + error);
+      }
+      const std::string expr = JoinCommandArguments(args, 2);
+      std::optional<std::string> value =
+          expr.empty() ? std::nullopt : std::optional<std::string>(expr);
+      editor::BreakpointStore& store = context_.MutableBreakpointStore();
+      if (id == ActionId::BreakpointCondition) {
+        store.SetCondition(target->first, target->second, std::move(value));
+      } else if (id == ActionId::BreakpointHitCondition) {
+        store.SetHitCondition(target->first, target->second, std::move(value));
+      } else {
+        store.SetLogMessage(target->first, target->second, std::move(value));
+      }
+      context_.ResendBreakpoints(target->first);
+      return DispatchResult::Handled;
+    }
+    case ActionId::BreakpointClear: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      editor::BreakpointStore& store = context_.MutableBreakpointStore();
+      if (args.empty()) {
+        // Clear everything, then push an empty set to each previously-affected
+        // file so a live session drops them too.
+        const std::vector<editor::BreakpointStore::FileBreakpoints> files = store.SnapshotAll();
+        store.Clear();
+        for (const editor::BreakpointStore::FileBreakpoints& file : files) {
+          context_.ResendBreakpoints(file.path);
+        }
+        return DispatchResult::Handled;
+      }
+      std::filesystem::path path(args[0]);
+      if (!path.is_absolute()) {
+        path = context_.ProjectRoot() / path;
+      }
+      path = path.lexically_normal();
+      store.ClearFile(path);
+      context_.ResendBreakpoints(path);
+      return DispatchResult::Handled;
+    }
+    case ActionId::DebugLaunch: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      const std::string name = JoinCommandArguments(args, 0);
+      const std::string error = context_.StartNamedDebugConfig(name);
+      if (!error.empty()) {
+        return reject(error);
+      }
+      return DispatchResult::Handled;
+    }
     default:
       return DispatchResult::Unhandled;
   }

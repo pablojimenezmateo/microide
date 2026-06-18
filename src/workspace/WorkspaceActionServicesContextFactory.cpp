@@ -162,6 +162,23 @@ void WorkspaceActionContext::RemoveBreakpointFromMenu() {
   }
 }
 
+editor::BreakpointStore& WorkspaceActionContext::MutableBreakpointStore() {
+  return state_.breakpoint_store;
+}
+
+void WorkspaceActionContext::ResendBreakpoints(const std::filesystem::path& path) {
+  if (operations_.resend_breakpoints_for_file) {
+    operations_.resend_breakpoints_for_file(path);
+  }
+}
+
+std::string WorkspaceActionContext::StartNamedDebugConfig(const std::string& name) {
+  if (operations_.start_named_debug_config) {
+    return operations_.start_named_debug_config(name);
+  }
+  return "debug launch unavailable";
+}
+
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
   return WorkspaceActionContext(
       context_.project_catalog,
@@ -456,6 +473,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
           .toggle_debug_pane = [this]() { ToggleDebugPane(); },
           .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
+          .resend_breakpoints_for_file =
+              [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
+          .start_named_debug_config =
+              [this](const std::string& name) { return StartNamedDebugConfig(name); },
       });
 }
 

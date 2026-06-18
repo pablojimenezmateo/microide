@@ -6,6 +6,9 @@
 #include <string_view>
 #include <vector>
 
+#include "workspace/ControlSpec.h"
+#include "workspace/WorkspaceCommandPromptCoordinator.h"
+
 // Thin forwarders to the host-owned protocol-client services so existing
 // render/menu/plugin call sites stay unchanged. The LSP glue lives in
 // LspService (src/workspace/LspService.*); the DAP glue lives in DebugService
@@ -15,6 +18,10 @@
 namespace microide::workspace {
 
 namespace {
+bool ControlSettingIsOn(const std::optional<std::string>& value) {
+  return value.has_value() && *value != "false" && *value != "0" && *value != "off";
+}
+
 // One console channel per debug session, keyed by session id. The label defaults
 // to the session name; a generic fallback covers an unnamed session.
 std::string DebugConsoleChannelId(int session_id) {
@@ -108,6 +115,42 @@ DapManager& WorkspaceShell::EnsureProjectDapManager(ProjectWorkspaceState& state
 
 void WorkspaceShell::ConsumeDapCallbacks() { debug_service_.ConsumeDapCallbacks(); }
 
+void WorkspaceShell::ConsumeControlCallbacks() {
+  control_channel_service_.ConsumeControlCallbacks();
+}
+
+ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
+    const std::string& command_line) {
+  ControlChannelService::CommandOutcome outcome;
+  outcome.ok = MakeCommandPromptCoordinator().ExecuteCommandLine(command_line);
+  const std::string& feedback = context_.current_project_state.panel.command.feedback_text;
+  if (outcome.ok) {
+    outcome.feedback = feedback;
+  } else {
+    outcome.error = feedback.empty() ? "command failed" : feedback;
+  }
+  return outcome;
+}
+
+void WorkspaceShell::ApplyControlSpec(const ControlSpec& spec) {
+  if (!spec.valid) {
+    return;
+  }
+  const std::vector<std::string> commands =
+      ControlSpecToCommands(spec, context_.current_project_state.root);
+  for (const std::string& command : commands) {
+    MakeCommandPromptCoordinator().ExecuteCommandLine(command);
+  }
+}
+
+void WorkspaceShell::MaybeStartControlChannel() {
+  if (ControlSettingIsOn(GetSettingValue("control.enabled"))) {
+    control_channel_service_.Start(context_.current_project_state.root);
+  } else {
+    control_channel_service_.Stop();
+  }
+}
+
 bool WorkspaceShell::StartDebugging(const LaunchConfig& config, const std::string& cwd) {
   // DebugService surfaces the new session's console channel via the show_debug_console
   // operation, so no separate ShowDebugConsole() call is needed here.
@@ -144,6 +187,24 @@ std::string WorkspaceShell::StartDebuggingWithDefaultConfig() {
     return error.empty() ? "failed to start debug session" : error;
   }
   return {};
+}
+
+std::string WorkspaceShell::StartNamedDebugConfig(const std::string& name) {
+  if (name.empty()) {
+    return StartDebuggingWithDefaultConfig();
+  }
+  const std::vector<LaunchConfig>& configs = context_.current_project_state.launch_configs;
+  for (std::size_t i = 0; i < configs.size(); ++i) {
+    if (configs[i].name == name) {
+      context_.current_project_state.selected_launch_config_index = i;
+      if (!StartDebugging(configs[i], context_.current_project_state.root.generic_string())) {
+        const std::string error = debug_service_.LastError();
+        return error.empty() ? "failed to start debug session" : error;
+      }
+      return {};
+    }
+  }
+  return "no launch config named \"" + name + "\"";
 }
 
 namespace {
