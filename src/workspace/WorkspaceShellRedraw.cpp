@@ -766,6 +766,14 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
     supplemental.tree_rescan_requested = true;
   }
 
+  // Surface a one-time notice when the project tree is too large to live-watch
+  // (native watch unavailable + polling suppressed). Done before the early returns
+  // below so it fires even when there is no change batch to apply.
+  if (project_file_monitor_.ConsumeTreeTooLargeNotice()) {
+    notification_service_.Show(NotificationService::Tone::Warning,
+                               "Project too large for live file watching", SDL_GetTicks());
+  }
+
   if (!supplemental.repository_changes.empty() || supplemental.tree_rescan_requested) {
     project_change_coalescer_.Ingest(std::move(supplemental));
   }

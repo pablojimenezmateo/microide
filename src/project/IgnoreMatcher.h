@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace microide::project {
@@ -15,12 +16,15 @@ class IgnoreMatcher {
  private:
   struct Rule {
     std::string base_relative;
+    // base_relative + "/" precomputed once at parse time; empty when the rule has
+    // no base directory (root .gitignore) so Matches avoids a per-call allocation.
+    std::string base_prefix;
     std::string pattern;
     bool negated = false;
     bool directory_only = false;
     bool match_basename = false;
 
-    bool Matches(std::string relative_path, bool is_directory) const;
+    bool Matches(std::string_view relative_path, bool is_directory) const;
   };
 
   static bool ParseRule(std::string base_relative, std::string line, Rule& out_rule);

@@ -162,24 +162,21 @@ bool IgnoreMatcher::Ignored(const std::filesystem::path& relative_path, bool is_
   return ignored;
 }
 
-bool IgnoreMatcher::Rule::Matches(std::string relative_path, bool is_directory) const {
+bool IgnoreMatcher::Rule::Matches(std::string_view relative_path, bool is_directory) const {
   if (directory_only && !is_directory) {
     return false;
   }
 
-  std::string base = base_relative;
-  if (base == ".") {
-    base.clear();
-  }
-  if (!base.empty()) {
-    if (relative_path == base) {
+  // base_prefix is empty when base_relative is empty or ".", i.e. the rule applies
+  // from the root and needs no path stripping.
+  if (!base_prefix.empty()) {
+    if (relative_path == base_relative) {
       return false;
     }
-    const std::string prefix = base + "/";
-    if (!relative_path.starts_with(prefix)) {
+    if (!relative_path.starts_with(base_prefix)) {
       return false;
     }
-    relative_path.erase(0, prefix.size());
+    relative_path.remove_prefix(base_prefix.size());
   }
 
   if (relative_path.empty()) {
@@ -190,13 +187,13 @@ bool IgnoreMatcher::Rule::Matches(std::string relative_path, bool is_directory) 
     std::size_t start = 0;
     while (start < relative_path.size()) {
       const std::size_t end = relative_path.find('/', start);
-      const std::string_view part = end == std::string::npos
-                                        ? std::string_view(relative_path).substr(start)
-                                        : std::string_view(relative_path).substr(start, end - start);
+      const std::string_view part = end == std::string_view::npos
+                                        ? relative_path.substr(start)
+                                        : relative_path.substr(start, end - start);
       if (GlobMatches(pattern, part)) {
         return true;
       }
-      if (end == std::string::npos) {
+      if (end == std::string_view::npos) {
         break;
       }
       start = end + 1;
@@ -209,9 +206,8 @@ bool IgnoreMatcher::Rule::Matches(std::string relative_path, bool is_directory) 
   }
 
   std::size_t slash = relative_path.find('/');
-  while (slash != std::string::npos) {
-    const std::string_view suffix(relative_path.c_str() + slash + 1,
-                                  relative_path.size() - slash - 1);
+  while (slash != std::string_view::npos) {
+    const std::string_view suffix = relative_path.substr(slash + 1);
     if (GlobMatches(pattern, suffix)) {
       return true;
     }
@@ -246,8 +242,15 @@ bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule&
     return false;
   }
 
+  std::string base = ToSlash(std::filesystem::path(std::move(base_relative)));
+  std::string base_prefix;
+  if (!base.empty() && base != ".") {
+    base_prefix = base + "/";
+  }
+
   out_rule = Rule{
-      .base_relative = ToSlash(std::filesystem::path(std::move(base_relative))),
+      .base_relative = std::move(base),
+      .base_prefix = std::move(base_prefix),
       .pattern = pattern,
       .negated = negated,
       .directory_only = directory_only,

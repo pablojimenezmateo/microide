@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -30,8 +32,17 @@ class FileTreeWatcher {
   void SetRoots(std::vector<std::filesystem::path> roots);
   void Clear();
 
+  // Override the per-walk entry budget (defaults to kTreeTraversalEntryBudget).
+  // Primarily a testing seam so fixtures can trip the "too large" path cheaply.
+  void SetEntryBudget(std::size_t max_entries);
+
   std::optional<std::chrono::milliseconds> NextPollDelay() const;
   bool Poll();
+
+  // True once a tree exceeded the entry budget: native watching is disabled and
+  // periodic polling is suppressed (NextPollDelay returns nullopt). Reset by
+  // SetRoots/Clear.
+  bool TreeTooLarge() const;
 
   const std::vector<std::filesystem::path>& roots() const { return roots_; }
 
@@ -46,6 +57,7 @@ class FileTreeWatcher {
   struct PreparedNativeBackend {
     std::unique_ptr<NativeBackend> backend;
     bool polling_required = true;
+    bool tree_too_large = false;
   };
 
   PreparedNativeBackend PrepareNativeBackend(const std::vector<std::filesystem::path>& roots,
@@ -65,6 +77,8 @@ class FileTreeWatcher {
   bool snapshot_valid_ = false;
   bool pending_change_ = false;
   bool polling_required_ = true;
+  bool tree_too_large_ = false;
+  std::atomic<std::size_t> entry_budget_{kTreeTraversalEntryBudget};
   std::chrono::steady_clock::time_point next_poll_at_ = std::chrono::steady_clock::time_point::min();
 };
 

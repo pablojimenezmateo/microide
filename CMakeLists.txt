@@ -576,6 +576,8 @@ add_executable(microide_tests
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
+  tests/IgnoreMatcherTests.cpp
+  tests/WorkspaceProjectFileMonitorTests.cpp
   tests/FileFinderTests.cpp
   tests/FileIndexTests.cpp
   tests/FileOperationServiceTests.cpp

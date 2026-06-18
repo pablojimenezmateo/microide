@@ -7,11 +7,13 @@
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
+#include <string>
 #include <thread>
 
 namespace microide::tests {
 namespace {
 
+using microide::platform::CaptureTreeSnapshot;
 using microide::platform::DirectoryEntry;
 using microide::platform::FileTreeWatcher;
 using microide::platform::ListDirectory;
@@ -101,6 +103,44 @@ void TestFileWatcherEntryFilterSkipsIgnoredDirectories() {
 
   WriteFile(root / "src" / "main.ts", "export const main = 2;\nexport {};\n");
   Expect(watcher.Poll(), "entry filters should still allow visible project changes");
+}
+
+void TestCaptureTreeSnapshotRespectsEntryBudget() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "tree";
+  for (int i = 0; i < 12; ++i) {
+    WriteFile(root / ("file_" + std::to_string(i) + ".txt"), "x\n");
+  }
+
+  bool truncated = true;
+  const auto full = CaptureTreeSnapshot({root}, {}, 0, &truncated);
+  Expect(full.size() == 12, "unbounded snapshot should capture every file");
+  Expect(!truncated, "unbounded snapshot should not report truncation");
+
+  truncated = false;
+  const auto bounded = CaptureTreeSnapshot({root}, {}, 5, &truncated);
+  Expect(truncated, "snapshot should report truncation when the entry budget is exceeded");
+  Expect(bounded.size() <= 5, "snapshot should not exceed the entry budget");
+}
+
+void TestFileWatcherTreeTooLargeSuppressesPolling() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "huge";
+  std::filesystem::create_directories(root);
+  for (int i = 0; i < 12; ++i) {
+    WriteFile(root / ("dir_" + std::to_string(i)) / "f.txt", "x\n");
+  }
+
+  FileTreeWatcher watcher(std::chrono::milliseconds(500));
+  watcher.SetEntryBudget(4);  // trip the budget well below the tree size
+  watcher.SetRoots({root});
+  Expect(watcher.TreeTooLarge(), "watcher should flag a tree that exceeds the entry budget");
+  Expect(!watcher.NextPollDelay().has_value(),
+         "a too-large watcher should never schedule a periodic poll");
+  Expect(!watcher.Poll(), "a too-large watcher should not report spurious changes");
+
+  watcher.Clear();
+  Expect(!watcher.TreeTooLarge(), "Clear should reset the too-large flag");
 }
 
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
@@ -234,6 +274,10 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestFileWatcherDetectsCreationOfMissingRoots);
   AddTest(tests, "FileWatcher/EntryFilterSkipsIgnoredDirectories",
           TestFileWatcherEntryFilterSkipsIgnoredDirectories);
+  AddTest(tests, "Filesystem/CaptureTreeSnapshotRespectsEntryBudget",
+          TestCaptureTreeSnapshotRespectsEntryBudget);
+  AddTest(tests, "FileWatcher/TreeTooLargeSuppressesPolling",
+          TestFileWatcherTreeTooLargeSuppressesPolling);
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   AddTest(tests, "FileWatcher/WakeCallbackSignalsNestedChanges",
           TestFileWatcherWakeCallbackSignalsNestedChanges);

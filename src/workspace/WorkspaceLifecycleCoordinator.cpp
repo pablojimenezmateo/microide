@@ -184,6 +184,12 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (project_file_event_type_ == static_cast<Uint32>(-1)) {
     project_file_event_type_ = 0;
   }
+  // Run the project file monitor's recursive tree walks off the shell thread, so a
+  // large project never stalls the UI while polling for external changes.
+  project_file_monitor_.SetBackgroundPoster(
+      [this](std::string key, std::function<void()> task) {
+        project_background_executor_.PostLatest(std::move(key), std::move(task));
+      });
 
   project_open_dialog_event_type_ = SDL_RegisterEvents(1);
   if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
