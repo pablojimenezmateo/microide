@@ -90,9 +90,15 @@ bool DebugSession::Start(const std::vector<std::string>& command, const LaunchCo
   }
 
   SetState(State::Initializing);
-  // The launch/attach request is queued now; the client flushes it once the
-  // `initialize` response arrives (DapClient defers pre-initialize requests).
-  SendLaunchRequest();
+  // NB: the launch/attach request is NOT sent here. It is deferred until the
+  // configuration phase completes (breakpoints + configurationDone) in the
+  // `initialized` handler. Some adapters (notably gdb's `--interpreter=dap`) run
+  // the debuggee *during* the launch request rather than waiting for
+  // configurationDone, so sending launch early would let the program race past
+  // breakpoints before they are armed (and make configurationDone fail with
+  // `notStopped`). Sending launch last arms breakpoints first and is accepted by
+  // adapters that emit `initialized` independently of launch (gdb, lldb-dap,
+  // debugpy, and the in-tree mock adapter all do).
   return true;
 }
 
@@ -112,9 +118,10 @@ void DebugSession::SendLaunchRequest() {
                                 client_->BeginShutdown();
                                 return;
                               }
-                              // Per the DAP handshake the launch response usually
-                              // arrives after configurationDone, but some adapters
-                              // need no configuration phase — converge to Running.
+                              // Launch is sent after configurationDone; for adapters
+                              // that run on launch, a `stopped` event may already have
+                              // moved us to Stopped before this response. Only converge
+                              // to Running if still mid-handshake.
                               if (state_ == State::Initializing || state_ == State::Configuring) {
                                 SetState(State::Running);
                               }
@@ -254,6 +261,10 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     SendAllBreakpoints();
     SendExceptionFilters();
     SendConfigurationDone();
+    // Launch/attach goes out last — after breakpoints + configurationDone — so an
+    // adapter that starts the debuggee on the launch request (e.g. gdb DAP) runs
+    // with breakpoints already armed. See the note in Start().
+    SendLaunchRequest();
   } else if (event == "output") {
     if (callbacks_.on_output) {
       callbacks_.on_output(dap_protocol::ParseOutputEvent(body));
@@ -268,6 +279,11 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     stopped_thread_id_ = stop.thread_id;
     last_stop_ = stop;
     SetState(State::Stopped);
+    // Report the halt immediately with the real reason/thread, before the async
+    // stackTrace round-trip — push observers must not wait for a slow adapter.
+    if (callbacks_.on_stop_began) {
+      callbacks_.on_stop_began(stop);
+    }
     // Resolve the call stack for the stopped thread, then hand the focused
     // frames up so the host can highlight the execution line + fill the panel.
     RequestStackTrace(stop);
@@ -381,18 +397,23 @@ void DebugSession::SetVariable(int variables_reference, const std::string& name,
 void DebugSession::RequestEvaluate(
     const std::string& expression, int frame_id, const std::string& context,
     std::function<void(bool, dap_protocol::DapEvaluateResult)> callback) {
-  // Gate hover evaluation on the adapter capability so we never send a request it
-  // would reject; non-hover contexts (watch/repl, later phases) are always allowed.
-  const bool hover = context == "hover";
-  if (expression.empty() || !client_->IsInitialized() ||
-      (hover && !client_->Capabilities().supports_evaluate_for_hovers)) {
+  if (expression.empty() || !client_->IsInitialized()) {
     if (callback) {
       callback(false, dap_protocol::DapEvaluateResult{});
     }
     return;
   }
+  // Hover-to-inspect: the DAP spec says clients should only send context "hover"
+  // when the adapter advertises supportsEvaluateForHovers, but several common
+  // adapters (notably GDB) evaluate fine without advertising it. Rather than drop
+  // the request, fall back to the universally-supported "repl" context so hovering
+  // a symbol still resolves a value. (GDB resolves statics/members this way too.)
+  std::string effective_context = context;
+  if (context == "hover" && !client_->Capabilities().supports_evaluate_for_hovers) {
+    effective_context = "repl";
+  }
   client_->SendRequestAsync(
-      "evaluate", dap_protocol::MakeEvaluateArguments(expression, frame_id, context),
+      "evaluate", dap_protocol::MakeEvaluateArguments(expression, frame_id, effective_context),
       [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
         if (!callback) {
           return;

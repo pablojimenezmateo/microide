@@ -180,6 +180,12 @@ void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
   if (operations_.request_bottom_panel_redraw) {
     operations_.request_bottom_panel_redraw();
   }
+  // The execution view is now fully populated (file/line/frames): report the
+  // resolved stop to push observers. ProjectStop runs only for the active
+  // session, so this fires exactly once per visible stop.
+  if (operations_.notify_stop_resolved) {
+    operations_.notify_stop_resolved();
+  }
 }
 
 DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
@@ -207,6 +213,14 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     }
     if (operations_.request_bottom_panel_redraw) {
       operations_.request_bottom_panel_redraw();
+    }
+  };
+  // Immediate halt notification (real reason/thread, before frames resolve).
+  // Only the active session drives the shared push broadcast — a background stop
+  // does not project into the shared views, so it must not report one either.
+  callbacks.on_stop_began = [this, session_id](const dap_protocol::DapStoppedEvent& stop) {
+    if (IsActiveSession(session_id) && operations_.notify_stop_began) {
+      operations_.notify_stop_began(stop.reason, stop.thread_id);
     }
   };
   // On every stop: the active session projects into the shared views; a background
@@ -536,11 +550,16 @@ void DebugService::FocusFrame(int frame_id) {
   session->RequestScopes(frame_id, [this](std::vector<dap_protocol::DapScope> scopes) {
     DebugVariablesModel& model = CurrentProjectState().debug_variables;
     model.ApplyScopes(scopes);
-    // Auto-expand the first scope (conventionally "Locals") for immediate
-    // visibility; this issues one `variables` request via ToggleVariableRow.
-    if (!model.Rows().empty()) {
-      ToggleVariableRow(0);
-    }
+    // Scopes are installed collapsed; their variables are fetched lazily when the
+    // user expands a row (ToggleVariableRow). We deliberately do NOT auto-expand
+    // on every stop: a stop frequently lands where in-scope locals are not yet
+    // constructed (function entry, `stopAtBeginningOfMainSubprogram`, any line
+    // before a declaration), and formatting that uninitialized memory can make a
+    // single-threaded adapter spin for an unbounded time (gdb's STL
+    // pretty-printers loop on garbage container pointers). Because the adapter
+    // serializes requests, that spin would block the *next* execution-control
+    // request (continue/step/pause) — i.e. stepping would silently stop working.
+    // Lazy expansion keeps the stop cheap and execution control responsive.
     if (operations_.request_bottom_panel_redraw) {
       operations_.request_bottom_panel_redraw();
     }

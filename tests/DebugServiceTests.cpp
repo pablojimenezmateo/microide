@@ -4,11 +4,13 @@
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugBreakpointsModel.h"
+#include "workspace/DebugService.h"
 #include "workspace/DebugSession.h"
 #include "workspace/DebugVariablesModel.h"
 #include "workspace/DebugViewModel.h"
 #include "workspace/DebugWatchModel.h"
 #include "workspace/LaunchConfig.h"
+#include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceDapManager.h"
 
 #include <algorithm>
@@ -415,6 +417,15 @@ void TestDebugSessionSendsBreakpointsBeforeConfigurationDone() {
   const std::size_t cfg_pos = captured.output.find("configurationDone", order_pos);
   Expect(set_pos != std::string::npos && cfg_pos != std::string::npos && set_pos < cfg_pos,
          "setBreakpoints must be sent before configurationDone");
+  // launch/attach must be sent AFTER configurationDone (and after breakpoints).
+  // Some adapters (gdb's --interpreter=dap) start the debuggee on the launch
+  // request rather than waiting for configurationDone; sending launch last means
+  // breakpoints are armed before the program runs (otherwise it races past them).
+  // finish_launch() emits this command list while handling configurationDone, so
+  // launch has not been recorded yet — it must not appear before configurationDone.
+  const std::size_t launch_pos = captured.output.find("launch", order_pos);
+  Expect(launch_pos == std::string::npos || launch_pos > cfg_pos,
+         "launch/attach must be sent after configurationDone, never before");
   manager.ShutdownAll();
 }
 
@@ -798,9 +809,11 @@ void TestDebugSessionReplEvaluate() {
   manager.ShutdownAll();
 }
 
-// The session-level capability gate: an adapter without supportsEvaluateForHovers
-// rejects a hover evaluate without sending anything on the wire.
-void TestDebugSessionEvaluateGatedOnCapability() {
+// Hover-to-inspect without supportsEvaluateForHovers must NOT be dropped: the
+// session falls back to the universally-supported "repl" context so hovering a
+// symbol still resolves a value. (GDB-style adapters omit the capability but
+// evaluate fine; silently gating left users with no hover value at all.)
+void TestDebugSessionHoverFallsBackToReplWithoutCapability() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
@@ -817,18 +830,25 @@ void TestDebugSessionEvaluateGatedOnCapability() {
   config.request = "launch";
   Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+  Expect(!captured.last_frames.empty(), "a stack frame should resolve on stop");
+  const int frame_id = captured.last_frames[0].id;
 
   bool callback_fired = false;
-  bool callback_ok = true;
+  bool callback_ok = false;
+  std::string value;
   manager.ActiveSession()->RequestEvaluate(
-      "count", captured.last_frames.empty() ? 0 : captured.last_frames[0].id, "hover",
-      [&](bool ok, codec::DapEvaluateResult) {
+      "count", frame_id, "hover", [&](bool ok, codec::DapEvaluateResult result) {
         callback_fired = true;
         callback_ok = ok;
+        if (ok) {
+          value = result.result;
+        }
       });
   Expect(PollUntil(manager, [&]() { return callback_fired; }),
-         "hover evaluate callback should fire even when unsupported");
-  Expect(!callback_ok, "hover evaluate should report failure without the capability");
+         "hover evaluate callback should fire");
+  Expect(callback_ok, "hover evaluate should succeed via the repl fallback without the capability");
+  Expect(value == "count@" + std::to_string(frame_id),
+         "the fallback evaluate echoes the expression evaluated in the frame");
   manager.ShutdownAll();
 }
 
@@ -1377,6 +1397,153 @@ void TestDebugManagerStopAllSessions() {
   Expect(manager.ActiveSessionId() == 0, "no active session id remains after Stop All");
 }
 
+// Two-phase stop reporting at the DebugService level: notify_stop_began must fire
+// once with the real reason/thread BEFORE frames resolve, and notify_stop_resolved
+// must fire once AFTER ProjectStop populates the execution view. Regression for the
+// empty/late control-channel `stopped` event (the immediate phase let a headless
+// agent learn of the halt while a slow adapter still resolved the stack).
+void TestDebugServiceTwoPhaseStopReporting() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = temp_dir.path();
+
+  microide::workspace::DebugService service;
+  struct Capture {
+    int began = 0;
+    int resolved = 0;
+    std::string began_reason;
+    int began_thread = 0;
+    bool stopped_at_began = true;       // sentinel: should read false (not yet resolved)
+    std::size_t frames_at_began = 99;   // sentinel: should read 0 (not yet resolved)
+    bool stopped_at_resolved = false;
+    std::size_t frames_at_resolved = 0;
+    int order_began = 0;
+    int order_resolved = 0;
+    int tick = 0;
+  } cap;
+  const auto& exec = context.current_project_state.debug_execution;
+  service.Configure(
+      context,
+      microide::workspace::DebugService::Operations{
+          .notify_stop_began =
+              [&](const std::string& reason, int thread_id) {
+                ++cap.began;
+                cap.began_reason = reason;
+                cap.began_thread = thread_id;
+                cap.stopped_at_began = exec.stopped;
+                cap.frames_at_began = exec.frames.size();
+                cap.order_began = ++cap.tick;
+              },
+          .notify_stop_resolved =
+              [&]() {
+                ++cap.resolved;
+                cap.stopped_at_resolved = exec.stopped;
+                cap.frames_at_resolved = exec.frames.size();
+                cap.order_resolved = ++cap.tick;
+              },
+      });
+  service.CurrentDapManager().RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+
+  LaunchConfig config;
+  config.name = "session";
+  config.type = "mock";
+  config.request = "launch";
+  Expect(service.StartDebugging(config), "the session should start");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4000);
+  while (std::chrono::steady_clock::now() < deadline && cap.resolved == 0) {
+    service.ConsumeDapCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  service.ConsumeDapCallbacks();
+
+  Expect(cap.began == 1, "notify_stop_began should fire exactly once");
+  Expect(cap.began_reason == "breakpoint", "the immediate stop carries the real reason");
+  Expect(cap.began_thread == 1, "the immediate stop carries the real thread id");
+  Expect(!cap.stopped_at_began && cap.frames_at_began == 0,
+         "notify_stop_began fires before frames resolve (execution view still empty)");
+  Expect(cap.resolved == 1, "notify_stop_resolved should fire exactly once");
+  Expect(cap.stopped_at_resolved && cap.frames_at_resolved > 0,
+         "notify_stop_resolved fires after the execution view is populated");
+  Expect(cap.order_began != 0 && cap.order_began < cap.order_resolved,
+         "the immediate event precedes the resolved one");
+
+  service.StopAllDebugging();
+}
+
+// Multi-session: a background session's stop must NOT drive the shared immediate
+// broadcast — notify_stop_began fires for the active session only (mirrors the
+// active-session guard the shared thread/stop selector already enforces).
+void TestDebugServiceBackgroundStopDoesNotBroadcast() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = temp_dir.path();
+
+  microide::workspace::DebugService service;
+  int began = 0;
+  service.Configure(context, microide::workspace::DebugService::Operations{
+                                 .notify_stop_began = [&](const std::string&, int) { ++began; },
+                                 .notify_stop_resolved = [&]() {}});
+  service.CurrentDapManager().RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+
+  DapManager& manager = service.CurrentDapManager();
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+
+  // Session A starts, stops, and stays parked (active + Stopped).
+  config.name = "A";
+  Expect(service.StartDebugging(config), "session A should start");
+  const int id_a = manager.ActiveSessionId();
+  {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4000);
+    while (std::chrono::steady_clock::now() < deadline &&
+           service.SessionState() != DebugSession::State::Stopped) {
+      service.ConsumeDapCallbacks();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  Expect(service.SessionState() == DebugSession::State::Stopped, "session A is parked at a stop");
+  began = 0;  // ignore A's (active) immediate broadcast; isolate B's behavior.
+
+  // Session B starts (active on launch); immediately re-focus A so A stays the
+  // active/parked session and B's incoming stop drains as a background stop.
+  config.name = "B";
+  Expect(service.StartDebugging(config), "session B should start");
+  const int id_b = manager.ActiveSessionId();
+  Expect(id_b != id_a, "B is a distinct session");
+  service.FocusSession(id_a);
+  Expect(manager.ActiveSessionId() == id_a, "A is re-activated before B's stop drains");
+
+  {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4000);
+    while (std::chrono::steady_clock::now() < deadline &&
+           (manager.SessionById(id_b) == nullptr ||
+            manager.SessionById(id_b)->CurrentState() != DebugSession::State::Stopped)) {
+      service.ConsumeDapCallbacks();
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  Expect(manager.SessionById(id_b) != nullptr &&
+             manager.SessionById(id_b)->CurrentState() == DebugSession::State::Stopped,
+         "session B reached a background stop");
+  Expect(began == 0, "a background session's stop does not drive the shared immediate broadcast");
+
+  service.StopAllDebugging();
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
@@ -1404,8 +1571,11 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionWatchEvaluate", TestDebugSessionWatchEvaluate);
   AddTest(tests, "DebugService/SessionReplEvaluate", TestDebugSessionReplEvaluate);
   AddTest(tests, "DebugService/ManagerStopAllSessions", TestDebugManagerStopAllSessions);
-  AddTest(tests, "DebugService/SessionEvaluateGatedOnCapability",
-          TestDebugSessionEvaluateGatedOnCapability);
+  AddTest(tests, "DebugService/TwoPhaseStopReporting", TestDebugServiceTwoPhaseStopReporting);
+  AddTest(tests, "DebugService/BackgroundStopDoesNotBroadcast",
+          TestDebugServiceBackgroundStopDoesNotBroadcast);
+  AddTest(tests, "DebugService/HoverFallsBackToReplWithoutCapability",
+          TestDebugSessionHoverFallsBackToReplWithoutCapability);
   AddTest(tests, "DebugService/HoverModelBehavior", TestDebugHoverModelBehavior);
   AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
           TestDebugSessionSetVariableGatedOnCapability);
