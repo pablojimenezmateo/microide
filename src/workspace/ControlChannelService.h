@@ -35,6 +35,12 @@ class ControlChannelService {
   struct Operations {
     // Run a command line through the same path as the in-app command prompt.
     std::function<CommandOutcome(const std::string&)> execute_command_line;
+    // Write one JSONL line to the stdout mirror (the `--control` headless
+    // stream). Wired to std::cout; left null in tests / non-headless runs.
+    std::function<void(const std::string&)> emit_jsonl;
+    // Registered debug-adapter type ids (for the `adapters` query). Kept behind a
+    // callback so the service stays free of DapManager/DebugService coupling.
+    std::function<std::vector<std::string>()> adapter_types;
   };
 
   ControlChannelService() = default;
@@ -45,8 +51,18 @@ class ControlChannelService {
   void Configure(WorkspaceContext& context, Operations operations);
   void SetWakeEventType(std::uint32_t event_type);
 
+  // Mirror responses/events to stdout as JSONL (the `--control` stream). When on,
+  // debug events surface even with zero socket clients.
+  void SetStdoutMirror(bool on) { stdout_mirror_ = on; }
+  bool StdoutMirrorEnabled() const { return stdout_mirror_; }
+
+  // Emit one already-serialized JSONL line to the stdout mirror (no-op when the
+  // mirror is off or no sink is wired). Used for cold-start `applied` lines.
+  void EmitJsonLine(const std::string& line) const;
+
   // Start/stop the listener for `project_root`. Start binds the socket and
   // writes the per-instance descriptor; Stop removes the descriptor. Idempotent.
+  // On a fresh bind a `{"event":"ready",...}` line is mirrored to stdout.
   bool Start(const std::filesystem::path& project_root);
   void Stop();
   bool IsRunning() const;
@@ -70,12 +86,19 @@ class ControlChannelService {
   util::JsonValue BuildTabs() const;
   util::JsonValue BuildProjects() const;
   util::JsonValue BuildStatus() const;
+  util::JsonValue BuildLaunchConfigs() const;
+  util::JsonValue BuildAdapters() const;
+
+  // Broadcast an event to connected clients (when running) and mirror it to
+  // stdout (when mirroring). Surfaces events even with no socket client.
+  void EmitEvent(util::JsonValue event);
 
   WorkspaceContext* context_ = nullptr;
   Operations operations_{};
   platform::ControlSocketServer server_;
   std::uint32_t wake_event_type_ = 0;
   std::filesystem::path descriptor_path_;
+  bool stdout_mirror_ = false;
 };
 
 }  // namespace microide::workspace

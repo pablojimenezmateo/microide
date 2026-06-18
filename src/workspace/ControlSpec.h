@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace microide::workspace {
@@ -29,6 +30,9 @@ struct ControlSpec {
   bool valid = false;
   std::string parse_error;
   std::optional<std::filesystem::path> project;
+  // Transient setting overrides, applied first (never persisted). Escape hatch so
+  // a spec can turn on control.enabled / debug.enabled through the chokepoint.
+  std::vector<std::pair<std::string, std::string>> settings;
   std::vector<ControlSpecBreakpoint> breakpoints;
   std::vector<std::string> open;
   std::optional<std::string> launch;

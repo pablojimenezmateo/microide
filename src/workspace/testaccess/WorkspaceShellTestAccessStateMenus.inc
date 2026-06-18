@@ -494,6 +494,23 @@
   static bool SetSettingValue(WorkspaceShell& shell, std::string_view id, std::string value) {
     return shell.SetSettingValue(id, std::move(value));
   }
+  static bool SetSettingValueTransient(WorkspaceShell& shell, std::string_view id,
+                                       std::string value) {
+    return shell.SetSettingValue(id, std::move(value), /*persist=*/false);
+  }
+  static bool IsSettingTransient(const WorkspaceShell& shell, std::string_view id) {
+    return shell.context_.transient_setting_keys.count(std::string(id)) != 0;
+  }
+  static std::optional<std::string> GetSettingValue(const WorkspaceShell& shell,
+                                                    std::string_view id) {
+    return shell.GetSettingValue(id);
+  }
+  static void SaveUserConfig(WorkspaceShell& shell) {
+    shell.MakePersistenceCoordinator().SaveUserConfig();
+  }
+  static void ApplyStartupSettingOverrides(WorkspaceShell& shell) {
+    shell.ApplyStartupSettingOverrides();
+  }
   static std::optional<std::string> ProjectStoredSettingValue(const WorkspaceShell& shell,
                                                               std::string_view id) {
     const auto& settings = shell.context_.current_project_state.settings;

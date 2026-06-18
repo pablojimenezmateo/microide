@@ -299,6 +299,17 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::Quit:
       context_.RequestQuit();
       return DispatchResult::Handled;
+    case ActionId::SetSetting: {
+      if (args.empty()) {
+        return reject("set-setting requires <id> <value>");
+      }
+      // value is the remainder so string settings can carry spaces.
+      const std::string value = JoinCommandArguments(args, 1);
+      if (!context_.SetSettingValue(args[0], value)) {
+        return reject("set-setting: unknown setting or invalid value for \"" + args[0] + "\"");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::BreakpointSet: {
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");

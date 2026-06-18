@@ -32,6 +32,10 @@ enum class ActionId {
   OpenHelpAbout,
   OpenKeyboardShortcuts,
   OpenSettings,
+  // Deterministic setting write (control channel / headless). `set-setting <id>
+  // <value>` routes through the SetSettingValue chokepoint; unknown id / invalid
+  // value rejects. Always available (not gated).
+  SetSetting,
   ProjectClose,
   ProjectNext,
   ProjectOpen,

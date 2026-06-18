@@ -66,6 +66,39 @@ void TestParseSafeModeImpliesDisablePlugins() {
          "positional project path should be captured");
 }
 
+void TestParseControlFlag() {
+  std::vector<std::string> args = {"microide", "--control"};
+  auto argv = ArgvFromStrings(args);
+  const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+  Expect(parsed.exit_code == 0, "--control should parse cleanly");
+  Expect(parsed.options.control_stdout, "--control should set control_stdout");
+}
+
+void TestParseSetOverridesAreRepeatable() {
+  std::vector<std::string> args = {"microide", "--set",     "control.enabled", "true",
+                                   "--set",    "debug.enabled", "true",        "/tmp/project"};
+  auto argv = ArgvFromStrings(args);
+  const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+  Expect(parsed.exit_code == 0, "repeated --set should parse cleanly");
+  Expect(parsed.options.setting_overrides.size() == 2, "two overrides expected");
+  Expect(parsed.options.setting_overrides[0] ==
+             std::pair<std::string, std::string>("control.enabled", "true"),
+         "first override should be control.enabled=true");
+  Expect(parsed.options.setting_overrides[1] ==
+             std::pair<std::string, std::string>("debug.enabled", "true"),
+         "second override should be debug.enabled=true");
+  Expect(parsed.options.project_path.has_value() &&
+             parsed.options.project_path->generic_string() == "/tmp/project",
+         "positional path after --set pairs should still be captured");
+}
+
+void TestParseSetMissingTokensFails() {
+  std::vector<std::string> args = {"microide", "--set", "only-id"};
+  auto argv = ArgvFromStrings(args);
+  const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+  Expect(parsed.exit_code == 2, "--set with a missing value token should exit 2");
+}
+
 void TestDisablePluginsSkipsUserPluginsAndSyntax() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -145,6 +178,10 @@ void TestSafeModeSurfacesStartupState() {
 void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "AppStartupOptions/ParseDisablePlugins", TestParseDisablePluginsFlag);
   AddTest(tests, "AppStartupOptions/ParseSafeMode", TestParseSafeModeImpliesDisablePlugins);
+  AddTest(tests, "AppStartupOptions/ParseControlFlag", TestParseControlFlag);
+  AddTest(tests, "AppStartupOptions/ParseSetOverridesAreRepeatable",
+          TestParseSetOverridesAreRepeatable);
+  AddTest(tests, "AppStartupOptions/ParseSetMissingTokensFails", TestParseSetMissingTokensFails);
   AddTest(tests, "AppStartupOptions/DisablePluginsSkipsPluginsAndSyntax",
           TestDisablePluginsSkipsUserPluginsAndSyntax);
   AddTest(tests, "AppStartupOptions/SafeModeSurfacesStartupState",

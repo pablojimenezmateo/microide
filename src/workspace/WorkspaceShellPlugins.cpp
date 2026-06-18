@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <iostream>
 #include <set>
 #include <string_view>
 #include <unordered_set>
@@ -141,6 +142,8 @@ WorkspaceShell::WorkspaceShell() {
       ControlChannelService::Operations{
           .execute_command_line =
               [this](const std::string& line) { return ExecuteControlCommand(line); },
+          .emit_jsonl = [](const std::string& line) { std::cout << line << '\n' << std::flush; },
+          .adapter_types = [this]() { return CurrentDapManager().AdapterTypes(); },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

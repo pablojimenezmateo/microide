@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/JsonValue.h"
 #include "workspace/ControlSpec.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 
@@ -136,11 +137,56 @@ void WorkspaceShell::ApplyControlSpec(const ControlSpec& spec) {
   if (!spec.valid) {
     return;
   }
+  const auto emit_applied = [this](const std::string& command,
+                                   const ControlChannelService::CommandOutcome& outcome) {
+    // Surface one line per applied spec entry on the JSONL mirror so a headless
+    // driver can see exactly what succeeded / failed (no more silent swallow).
+    util::JsonObject object;
+    object["applied"] = util::JsonValue(command);
+    object["ok"] = util::JsonValue(outcome.ok);
+    if (!outcome.ok && !outcome.error.empty()) {
+      object["error"] = util::JsonValue(outcome.error);
+    }
+    control_channel_service_.EmitJsonLine(
+        util::SerializeJson(util::JsonValue(std::move(object))));
+  };
+  const auto apply_setting = [&](const std::string& id, const std::string& value) {
+    ControlChannelService::CommandOutcome outcome;
+    outcome.ok = SetSettingValue(id, value, /*persist=*/false);
+    if (!outcome.ok) {
+      outcome.error = "unknown setting or invalid value";
+    }
+    emit_applied("set-setting " + id + " " + value, outcome);
+  };
+
+  // Spec `settings` apply transiently (never persisted) and first, so the spec can
+  // turn on control.enabled / debug.enabled through the chokepoint without
+  // clobbering the user's saved config.
+  for (const auto& [id, value] : spec.settings) {
+    apply_setting(id, value);
+  }
+
+  // Auto-enable the debugger when the spec needs it but it is still off — removes
+  // the ordering trap where structured breakpoints/launch silently no-op.
+  if ((!spec.breakpoints.empty() || spec.launch.has_value()) && !DebugEnabled()) {
+    apply_setting("debug.enabled", "true");
+  }
+
   const std::vector<std::string> commands =
       ControlSpecToCommands(spec, context_.current_project_state.root);
   for (const std::string& command : commands) {
-    MakeCommandPromptCoordinator().ExecuteCommandLine(command);
+    emit_applied(command, ExecuteControlCommand(command));
   }
+}
+
+void WorkspaceShell::ForceStartControlChannel() {
+  if (!startup_options_.control_stdout) {
+    return;
+  }
+  // Bypass the `control.enabled` gate: turn on the stdout JSONL mirror and bind
+  // the socket directly. Start() emits the `ready` handshake line.
+  control_channel_service_.SetStdoutMirror(true);
+  control_channel_service_.Start(context_.current_project_state.root);
 }
 
 void WorkspaceShell::MaybeStartControlChannel() {

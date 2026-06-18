@@ -10,8 +10,8 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::array<std::string_view, 5> kSpecKeys = {
-    "project", "breakpoints", "open", "launch", "commands",
+constexpr std::array<std::string_view, 6> kSpecKeys = {
+    "project", "settings", "breakpoints", "open", "launch", "commands",
 };
 
 // Resolve an authored path against the project root. Absolute paths pass
@@ -53,6 +53,33 @@ ControlSpec ParseControlSpec(std::string_view json) {
       spec.project = std::filesystem::path(*project);
     } else if (!(*parsed)["project"].IsNull()) {
       spec.parse_error = "\"project\" must be a non-empty string";
+      return spec;
+    }
+  }
+
+  if (parsed->HasKey("settings")) {
+    // Two accepted forms: an object {"id":"value",...} or an array of [id, value]
+    // string pairs (preserves order). Values must be strings.
+    const util::JsonValue& settings = (*parsed)["settings"];
+    if (settings.IsObject()) {
+      for (const auto& [id, value] : settings.AsObject()) {
+        if (!value.IsString()) {
+          spec.parse_error = "\"settings\" values must be strings";
+          return spec;
+        }
+        spec.settings.emplace_back(id, value.AsString());
+      }
+    } else if (settings.IsArray()) {
+      for (const util::JsonValue& entry : settings.AsArray()) {
+        if (!entry.IsArray() || entry.AsArray().size() != 2 || !entry.AsArray()[0].IsString() ||
+            !entry.AsArray()[1].IsString() || entry.AsArray()[0].AsString().empty()) {
+          spec.parse_error = "\"settings\" array entries must be [\"id\", \"value\"] string pairs";
+          return spec;
+        }
+        spec.settings.emplace_back(entry.AsArray()[0].AsString(), entry.AsArray()[1].AsString());
+      }
+    } else {
+      spec.parse_error = "\"settings\" must be an object or an array of [id, value] pairs";
       return spec;
     }
   }

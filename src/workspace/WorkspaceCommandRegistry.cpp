@@ -110,6 +110,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Clear Breakpoints", ""},
       ActionSpec{ActionId::DebugLaunch, "debug-launch", "debug-launch [name]",
                  "Start Debugging (Launch Config)", ""},
+      ActionSpec{ActionId::SetSetting, "set-setting", "set-setting <id> <value>", "Set Setting",
+                 ""},
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
       ActionSpec{ActionId::RenamePath, "", "", "Rename...", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},

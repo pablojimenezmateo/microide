@@ -44,15 +44,32 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       result.options.control_spec_path = std::filesystem::path(argv[++i]);
       continue;
     }
+    if (arg == "--control") {
+      result.options.control_stdout = true;
+      continue;
+    }
+    if (arg == "--set") {
+      if (i + 2 >= argc || argv[i + 1] == nullptr || argv[i + 2] == nullptr) {
+        std::cerr << "--set requires <id> <value>\n";
+        result.exit_code = 2;
+        return result;
+      }
+      result.options.setting_overrides.emplace_back(argv[i + 1], argv[i + 2]);
+      i += 2;
+      continue;
+    }
     if (arg == "--help" || arg == "-h") {
-      std::cerr << "usage: microide [--disable-plugins] [--safe-mode] "
-                   "[--control-spec <file>] [project-path]\n"
-                   "       microide control-help        protocol + spec reference\n"
+      std::cerr << "usage: microide [--disable-plugins] [--safe-mode] [--control] "
+                   "[--set <id> <value>]...\n"
+                   "                [--control-spec <file>] [project-path]\n"
+                   "       microide control-help         protocol + spec reference\n"
                    "       microide control-commands     list runnable command names\n"
                    "       microide control-list         running instances + sockets\n"
                    "\n"
-                   "Live remote control is gated on the `control.enabled` setting "
-                   "(off by default).\n";
+                   "--control force-starts the control channel and mirrors responses/events to\n"
+                   "stdout as JSONL (the headless entry point). Otherwise the live channel is\n"
+                   "gated on the `control.enabled` setting (off by default). --set applies a\n"
+                   "transient (never-persisted) setting override and may be repeated.\n";
       result.show_usage = true;
       return result;
     }

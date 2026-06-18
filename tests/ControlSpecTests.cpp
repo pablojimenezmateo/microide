@@ -78,12 +78,45 @@ void TestToCommandsResolvesAndConverts() {
   Expect(ContainsCommand(commands, "goto 42"), "first breakpoint line should be revealed");
 }
 
+void TestParseSettingsArrayForm() {
+  const ControlSpec spec = ParseControlSpec(R"({
+    "settings": [["control.enabled", "true"], ["debug.enabled", "true"]],
+    "breakpoints": [{"file": "src/main.cpp", "line": 1}]
+  })");
+  Expect(spec.valid, "spec with settings array should parse");
+  Expect(spec.settings.size() == 2, "two settings expected");
+  Expect(spec.settings[0] == std::pair<std::string, std::string>("control.enabled", "true"),
+         "first setting should preserve id/value/order");
+  Expect(spec.settings[1] == std::pair<std::string, std::string>("debug.enabled", "true"),
+         "second setting should preserve id/value/order");
+}
+
+void TestParseSettingsObjectForm() {
+  const ControlSpec spec = ParseControlSpec(R"({"settings": {"control.enabled": "true"}})");
+  Expect(spec.valid, "spec with settings object should parse");
+  Expect(spec.settings.size() == 1 &&
+             spec.settings[0] == std::pair<std::string, std::string>("control.enabled", "true"),
+         "object-form setting should parse");
+}
+
+void TestParseSettingsRejectsBadShape() {
+  Expect(!ParseControlSpec(R"({"settings": [["only-one"]]})").valid,
+         "settings pair with one element should be rejected");
+  Expect(!ParseControlSpec(R"({"settings": {"k": 1}})").valid,
+         "non-string settings value should be rejected");
+  Expect(!ParseControlSpec(R"({"settings": "nope"})").valid,
+         "scalar settings should be rejected");
+}
+
 }  // namespace
 
 void RegisterControlSpecTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlSpec/ParseFullSpec", TestParseFullSpec);
   AddTest(tests, "ControlSpec/ParseRejectsBadInput", TestParseRejectsBadInput);
   AddTest(tests, "ControlSpec/ToCommandsResolvesAndConverts", TestToCommandsResolvesAndConverts);
+  AddTest(tests, "ControlSpec/ParseSettingsArrayForm", TestParseSettingsArrayForm);
+  AddTest(tests, "ControlSpec/ParseSettingsObjectForm", TestParseSettingsObjectForm);
+  AddTest(tests, "ControlSpec/ParseSettingsRejectsBadShape", TestParseSettingsRejectsBadShape);
 }
 
 }  // namespace microide::tests

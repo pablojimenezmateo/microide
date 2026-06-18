@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <set>
+#include <string>
 
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
@@ -20,6 +22,12 @@ struct WorkspaceContext {
   std::vector<std::pair<std::string, std::string>> user_settings;
   std::vector<std::string> disabled_keybinding_ids;
   std::vector<std::string> disabled_plugin_ids;
+  // Setting ids written transiently this session (`--set`, `--control-spec`
+  // settings, debug auto-enable). They live in user_settings / project settings
+  // so GetSettingValue + live application see them, but the persistence
+  // coordinator strips them before serializing so a headless drive never
+  // clobbers the user's saved config.
+  std::set<std::string> transient_setting_keys;
 
   WorkspaceContext() { RebindProjectState(current_project_state); }
 

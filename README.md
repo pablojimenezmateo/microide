@@ -466,6 +466,7 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `breakpoint-logmessage <file> <line> [message]`
 - `breakpoint-clear [file]`
 - `debug-launch [name]`
+- `set-setting <id> <value>`
 - `quit`
 - `reopen`
 - `save`

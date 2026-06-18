@@ -202,6 +202,18 @@ bool PersistenceCoordinator::RestoreUserConfig() {
   return applied_scale;
 }
 
+void PersistenceCoordinator::StripTransientSettings(
+    std::vector<std::pair<std::string, std::string>>& settings) const {
+  if (context_.transient_setting_keys.empty()) {
+    return;
+  }
+  settings.erase(std::remove_if(settings.begin(), settings.end(),
+                                [&](const auto& entry) {
+                                  return context_.transient_setting_keys.count(entry.first) != 0;
+                                }),
+                 settings.end());
+}
+
 void PersistenceCoordinator::SaveUserConfig() const {
   const std::filesystem::path config_path = operations_.user_config_path();
   if (config_path.empty() || operations_.persistence_service == nullptr) {
@@ -214,6 +226,7 @@ void PersistenceCoordinator::SaveUserConfig() const {
       .disabled_keybinding_ids = context_.disabled_keybinding_ids,
       .disabled_plugin_ids = context_.disabled_plugin_ids,
   };
+  StripTransientSettings(state.settings);
   operations_.persistence_service->SaveUserConfig(config_path, state);
 }
 
@@ -294,6 +307,7 @@ void PersistenceCoordinator::SaveConfigState() const {
     };
   }
   SyncCanonicalProjectSettings(persisted.settings, state);
+  StripTransientSettings(persisted.settings);
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }
 

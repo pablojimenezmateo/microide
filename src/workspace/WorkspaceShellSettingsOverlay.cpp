@@ -231,7 +231,7 @@ std::string NextSettingValue(const SettingSpec& spec,
 
 }  // namespace
 
-bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
+bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value, bool persist) {
   const auto info = FindSettingInfo(id, plugin_runtime_.Host());
   if (!info.has_value()) {
     return false;
@@ -286,6 +286,13 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
   if (builtin != nullptr && !parsed_builtin_value.has_value()) {
     return false;
   }
+  // Track / untrack the transient marker before the value is moved-from. A later
+  // persisting write of the same id promotes it back to durable storage.
+  if (persist) {
+    context_.transient_setting_keys.erase(std::string(id));
+  } else {
+    context_.transient_setting_keys.insert(std::string(id));
+  }
   if (info->scope == SettingScope::User) {
     UpsertSetting(context_.user_settings, std::string(id), std::move(value));
     if (id == "ui.scale") {
@@ -293,16 +300,28 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
         MakePersistenceCoordinator().ApplyUiScale(*parsed, false, false);
       }
     }
-    MakePersistenceCoordinator().SaveUserConfig();
+    if (persist) {
+      MakePersistenceCoordinator().SaveUserConfig();
+    }
   } else {
     apply_project_canonical_setting();
     UpsertSetting(context_.current_project_state.settings, std::string(id), std::move(value));
-    MakePersistenceCoordinator().SaveConfigState();
+    if (persist) {
+      MakePersistenceCoordinator().SaveConfigState();
+    }
   }
   ApplyLiveSettings();
   MarkLayoutDirty();
   RequestWindowRedraw();
   return true;
+}
+
+void WorkspaceShell::ApplyStartupSettingOverrides() {
+  for (const auto& [id, value] : startup_options_.setting_overrides) {
+    if (!SetSettingValue(id, value, /*persist=*/false)) {
+      SDL_Log("--set: unknown setting or invalid value for \"%s\"", id.c_str());
+    }
+  }
 }
 
 void WorkspaceShell::RefreshSettingsOverlayCatalog() {

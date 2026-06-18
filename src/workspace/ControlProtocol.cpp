@@ -6,8 +6,9 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::array<std::string_view, 5> kQueryVerbs = {
-    "debug-state", "breakpoints", "tabs", "projects", "status",
+constexpr std::array<std::string_view, 7> kQueryVerbs = {
+    "debug-state", "breakpoints",    "tabs",     "projects",
+    "status",      "launch-configs", "adapters",
 };
 
 }  // namespace
@@ -100,9 +101,22 @@ std::string ControlChannelHelpText() {
       "\n"
       "Enabling\n"
       "--------\n"
-      "The channel is OFF by default. Turn on the `control.enabled` setting (Settings\n"
-      "overlay, Ctrl+, or the `settings` command). It starts immediately on the running\n"
-      "instance -- no restart needed.\n"
+      "The channel is OFF by default. Three ways to turn it on:\n"
+      "  microide --control                 force-start + mirror JSONL to stdout (headless)\n"
+      "  microide --set control.enabled true start the socket (transient, not persisted)\n"
+      "  Settings overlay (Ctrl+,)          flip `control.enabled` (persisted)\n"
+      "It starts immediately on the running instance -- no restart needed.\n"
+      "\n"
+      "Headless agent stream (microide --control [--control-spec <file>])\n"
+      "-----------------------------------------------------------------\n"
+      "--control force-starts the channel AND mirrors every response/event to stdout as\n"
+      "JSONL, so an agent can drive the instance with no socket client. The stream order:\n"
+      "  {\"event\":\"ready\",\"pid\":..,\"socket\":\"..\",\"project_root\":\"..\"}  (handshake, first)\n"
+      "  {\"applied\":\"<command>\",\"ok\":true|false,\"error\":\"..\"}        (one per spec entry)\n"
+      "  {\"event\":\"output\"|\"stopped\"|\"terminated\",...}              (as the session runs)\n"
+      "--set <id> <value> applies a transient (never-persisted) setting override and may\n"
+      "be repeated; an explicit project (positional path or spec `project`) wins over a\n"
+      "restored session.\n"
       "\n"
       "Discovery\n"
       "---------\n"
@@ -159,6 +173,7 @@ std::string ControlChannelHelpText() {
       "Open a project with breakpoints already set before the window is interactive:\n"
       "  {\n"
       "    \"project\": \"/path/to/project\",          // optional; selects the project\n"
+      "    \"settings\": [[\"control.enabled\",\"true\"]], // optional transient overrides\n"
       "    \"breakpoints\": [\n"
       "      {\"file\":\"src/main.cpp\",\"line\":42},\n"
       "      {\"file\":\"src/util.cpp\",\"line\":120,\"condition\":\"x>10\"},\n"
@@ -170,7 +185,10 @@ std::string ControlChannelHelpText() {
       "    \"commands\": [\"sidebar-hide\"]            // optional raw command lines, run last\n"
       "  }\n"
       "Spec line numbers are 1-based; relative file paths resolve against the project\n"
-      "root.\n";
+      "root. `settings` apply transiently and first; the debugger auto-enables when the\n"
+      "spec has breakpoints or a launch. `settings` also accepts an object form\n"
+      "({\"id\":\"value\"}). Discover names without reading plugin source via the\n"
+      "`launch-configs` and `adapters` queries.\n";
   return text;
 }
 

@@ -385,6 +385,10 @@ class WorkspaceActionContext {
   void NotifyEditorCaretMoved();
   void ToggleEditorEssentialsCapability(ActionId id);
   std::optional<std::string> GetSettingValue(std::string_view id) const;
+  // Deterministic setting write through the host SetSettingValue chokepoint.
+  // Returns false when no sink is wired, the id is unknown, or the value is
+  // invalid for the setting's type. Backs the `set-setting` command.
+  bool SetSettingValue(std::string_view id, std::string value);
 
  private:
   ProjectCatalogState& project_catalog_;

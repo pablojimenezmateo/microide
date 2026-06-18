@@ -90,6 +90,12 @@ class PersistenceCoordinator {
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
 
+  // Drop session-only setting overrides (context_.transient_setting_keys) from a
+  // settings list before it is serialized, so `--set` / cold-start spec settings
+  // never persist to the user's saved config.
+  void StripTransientSettings(
+      std::vector<std::pair<std::string, std::string>>& settings) const;
+
   WorkspaceContext& context_;
   render::Theme& theme_;
   std::vector<std::string>& available_colorscheme_names_;

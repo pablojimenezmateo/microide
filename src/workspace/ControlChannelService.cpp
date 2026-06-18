@@ -154,7 +154,31 @@ bool ControlChannelService::Start(const std::filesystem::path& project_root) {
   if (out) {
     out << util::SerializeJson(util::JsonValue(std::move(descriptor)));
   }
+
+  // Handshake line for the headless agent: announce pid + socket + project so the
+  // stream's first line tells a driver what it is attached to. Mirrored to stdout
+  // only (no clients are connected at bind time).
+  util::JsonObject ready;
+  ready["event"] = util::JsonValue(std::string("ready"));
+  ready["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
+  ready["socket"] = util::JsonValue(socket_path.generic_string());
+  ready["project_root"] = util::JsonValue(project_root.generic_string());
+  EmitJsonLine(SerializeControlEvent(util::JsonValue(std::move(ready))));
   return true;
+}
+
+void ControlChannelService::EmitJsonLine(const std::string& line) const {
+  if (stdout_mirror_ && operations_.emit_jsonl) {
+    operations_.emit_jsonl(line);
+  }
+}
+
+void ControlChannelService::EmitEvent(util::JsonValue event) {
+  const std::string line = SerializeControlEvent(event);
+  if (server_.IsRunning()) {
+    server_.Broadcast(line);
+  }
+  EmitJsonLine(line);
 }
 
 void ControlChannelService::Stop() {
@@ -200,7 +224,9 @@ void ControlChannelService::ConsumeControlCallbacks() {
         response.error = error;
       }
     }
-    server_.SendLine(message.connection_id, SerializeControlResponse(response));
+    const std::string serialized = SerializeControlResponse(response);
+    server_.SendLine(message.connection_id, serialized);
+    EmitJsonLine(serialized);
   }
 }
 
@@ -223,6 +249,12 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   }
   if (verb == "status") {
     return BuildStatus();
+  }
+  if (verb == "launch-configs") {
+    return BuildLaunchConfigs();
+  }
+  if (verb == "adapters") {
+    return BuildAdapters();
   }
   *ok = false;
   *error = "unknown query \"" + verb + "\"";
@@ -328,6 +360,34 @@ util::JsonValue ControlChannelService::BuildProjects() const {
   return util::JsonValue(std::move(projects));
 }
 
+util::JsonValue ControlChannelService::BuildLaunchConfigs() const {
+  util::JsonArray configs;
+  if (context_ == nullptr) {
+    return util::JsonValue(std::move(configs));
+  }
+  const ProjectWorkspaceState& state = context_->current_project_state;
+  for (std::size_t i = 0; i < state.launch_configs.size(); ++i) {
+    const LaunchConfig& config = state.launch_configs[i];
+    util::JsonObject object;
+    object["name"] = util::JsonValue(config.name);
+    object["type"] = util::JsonValue(config.type);
+    object["request"] = util::JsonValue(config.request);
+    object["selected"] = util::JsonValue(i == state.selected_launch_config_index);
+    configs.push_back(util::JsonValue(std::move(object)));
+  }
+  return util::JsonValue(std::move(configs));
+}
+
+util::JsonValue ControlChannelService::BuildAdapters() const {
+  util::JsonArray adapters;
+  if (operations_.adapter_types) {
+    for (const std::string& type : operations_.adapter_types()) {
+      adapters.push_back(util::JsonValue(type));
+    }
+  }
+  return util::JsonValue(std::move(adapters));
+}
+
 util::JsonValue ControlChannelService::BuildStatus() const {
   util::JsonObject object;
   if (context_ == nullptr) {
@@ -342,7 +402,7 @@ util::JsonValue ControlChannelService::BuildStatus() const {
 }
 
 void ControlChannelService::OnDebugStopped() {
-  if (!server_.IsRunning() || context_ == nullptr) {
+  if (context_ == nullptr || (!server_.IsRunning() && !stdout_mirror_)) {
     return;
   }
   const DebugExecutionView& exec = context_->current_project_state.debug_execution;
@@ -364,28 +424,28 @@ void ControlChannelService::OnDebugStopped() {
     frames.push_back(util::JsonValue(std::move(frame_object)));
   }
   event["frames"] = util::JsonValue(std::move(frames));
-  server_.Broadcast(SerializeControlEvent(util::JsonValue(std::move(event))));
+  EmitEvent(util::JsonValue(std::move(event)));
 }
 
 void ControlChannelService::OnDebugTerminated(int session_id) {
-  if (!server_.IsRunning()) {
+  if (!server_.IsRunning() && !stdout_mirror_) {
     return;
   }
   util::JsonObject event;
   event["event"] = util::JsonValue(std::string("terminated"));
   event["sessionId"] = util::JsonValue(static_cast<std::int64_t>(session_id));
-  server_.Broadcast(SerializeControlEvent(util::JsonValue(std::move(event))));
+  EmitEvent(util::JsonValue(std::move(event)));
 }
 
 void ControlChannelService::OnDebugOutput(const std::string& category, const std::string& text) {
-  if (!server_.IsRunning()) {
+  if (!server_.IsRunning() && !stdout_mirror_) {
     return;
   }
   util::JsonObject event;
   event["event"] = util::JsonValue(std::string("output"));
   event["category"] = util::JsonValue(category);
   event["text"] = util::JsonValue(text);
-  server_.Broadcast(SerializeControlEvent(util::JsonValue(std::move(event))));
+  EmitEvent(util::JsonValue(std::move(event)));
 }
 
 }  // namespace microide::workspace

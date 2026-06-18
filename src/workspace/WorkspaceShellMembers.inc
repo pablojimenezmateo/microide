@@ -98,6 +98,13 @@
   // Apply a cold-start control spec (set breakpoints, reveal files, optionally
   // start debugging). Public: invoked by Application right after Initialize.
   void ApplyControlSpec(const ControlSpec& spec);
+  // Force-start the control channel + stdout JSONL mirror when `--control` was
+  // passed (startup_options_.control_stdout). No-op otherwise. Invoked by
+  // Application right after Initialize, before the cold-start spec.
+  void ForceStartControlChannel();
+  // Apply the `--set <id> <value>` startup overrides transiently (persist=false).
+  // Invoked by Application after Initialize.
+  void ApplyStartupSettingOverrides();
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
@@ -1304,7 +1311,12 @@
   void RenderNotifications(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RefreshStatusBar();
   void ApplyLiveSettings();
-  bool SetSettingValue(std::string_view id, std::string value);
+  // Write a setting through the canonical chokepoint. When persist is false the
+  // value is applied live (UpsertSetting + ApplyLiveSettings) but never saved to
+  // disk, and the id is recorded so the persistence coordinator strips it on
+  // shutdown — the transient path used by `--set`, cold-start spec settings, and
+  // debug auto-enable so headless drives never clobber the user's saved config.
+  bool SetSettingValue(std::string_view id, std::string value, bool persist = true);
   bool ResetSettingValue(std::string_view id);
   void RefreshSettingsOverlayCatalog();
   void OpenSettingsOverlay();

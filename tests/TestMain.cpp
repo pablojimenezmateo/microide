@@ -88,6 +88,7 @@ void RegisterParseTests(std::vector<TestCase>& tests);
 void RegisterControlProtocolTests(std::vector<TestCase>& tests);
 void RegisterControlSpecTests(std::vector<TestCase>& tests);
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests);
+void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests);
 void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests);
 void RegisterSingleLineEditorTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests);
@@ -316,6 +317,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterControlProtocolTests(tests);
   microide::tests::RegisterControlSpecTests(tests);
   microide::tests::RegisterControlChannelServiceTests(tests);
+  microide::tests::RegisterWorkspaceShellControlSettingsTests(tests);
   microide::tests::RegisterArchitectureInvariantsTests(tests);
   microide::tests::RegisterSingleLineEditorTests(tests);
   microide::tests::RegisterPersistedRecordIoTests(tests);

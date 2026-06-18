@@ -10,6 +10,7 @@
 
 #include "util/JsonValue.h"
 #include "workspace/ControlChannelService.h"
+#include "workspace/LaunchConfig.h"
 #include "workspace/WorkspaceContext.h"
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -60,6 +61,70 @@ std::string ExchangeLine(microide::workspace::ControlChannelService& service, in
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   return received;
+}
+
+void TestLaunchConfigsAndAdaptersOverSocket() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-discovery-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+  microide::workspace::LaunchConfig config;
+  config.name = "Run pytest";
+  config.type = "debugpy";
+  config.request = "launch";
+  context.current_project_state.launch_configs.push_back(config);
+  context.current_project_state.selected_launch_config_index = 0;
+
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context,
+      microide::workspace::ControlChannelService::Operations{
+          .execute_command_line =
+              [](const std::string&) {
+                return microide::workspace::ControlChannelService::CommandOutcome{.ok = true};
+              },
+          .adapter_types = []() { return std::vector<std::string>{"debugpy", "lldb"}; },
+      });
+  service.SetWakeEventType(0);
+  Expect(service.Start("/tmp/proj"), "service should start");
+
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect");
+
+  const auto configs = util::ParseJson(ExchangeLine(service, fd, R"({"query":"launch-configs"})"));
+  Expect(configs.has_value() && (*configs)["ok"].AsBool(), "launch-configs query should succeed");
+  const util::JsonValue& configs_result = (*configs)["result"];
+  Expect(configs_result.IsArray() && configs_result.AsArray().size() == 1,
+         "one launch config expected");
+  Expect(configs_result.AsArray()[0]["name"].AsString() == "Run pytest", "config name should match");
+  Expect(configs_result.AsArray()[0]["type"].AsString() == "debugpy", "config type should match");
+  Expect(configs_result.AsArray()[0]["selected"].AsBool(), "config should report selected");
+
+  const auto adapters = util::ParseJson(ExchangeLine(service, fd, R"({"query":"adapters"})"));
+  Expect(adapters.has_value() && (*adapters)["ok"].AsBool(), "adapters query should succeed");
+  const util::JsonValue& adapters_result = (*adapters)["result"];
+  Expect(adapters_result.IsArray() && adapters_result.AsArray().size() == 2,
+         "two adapter types expected");
+  Expect(adapters_result.AsArray()[0].AsString() == "debugpy", "first adapter should match");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
 }
 
 void TestQueryAndCommandOverSocket() {
@@ -165,8 +230,51 @@ void TestControlListFiltersDeadPids() {
 
 void TestQueryAndCommandOverSocket() {}
 void TestControlListFiltersDeadPids() {}
+void TestLaunchConfigsAndAdaptersOverSocket() {}
 
 #endif
+
+// Cross-platform: the stdout JSONL mirror must surface debug events even when no
+// socket client is connected (the whole point of `--control`).
+void TestStdoutMirrorEmitsWithoutConnections() {
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+
+  std::vector<std::string> emitted;
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context,
+      microide::workspace::ControlChannelService::Operations{
+          .execute_command_line =
+              [](const std::string&) {
+                return microide::workspace::ControlChannelService::CommandOutcome{.ok = true};
+              },
+          .emit_jsonl = [&emitted](const std::string& line) { emitted.push_back(line); },
+      });
+  // No Start(): the socket server is not running and there are zero connections.
+  Expect(!service.IsRunning(), "service should not be running");
+
+  // Mirror off → no emission.
+  service.OnDebugOutput("stdout", "ignored");
+  Expect(emitted.empty(), "events should not emit while the mirror is off");
+
+  service.SetStdoutMirror(true);
+  service.OnDebugOutput("stdout", "hello");
+  service.OnDebugStopped();
+  service.OnDebugTerminated(1);
+  Expect(emitted.size() == 3, "three events should mirror to stdout with no client");
+
+  const auto output = util::ParseJson(emitted[0]);
+  Expect(output.has_value() && (*output)["event"].AsString() == "output",
+         "first mirrored line should be the output event");
+  Expect((*output)["text"].AsString() == "hello", "output text should round-trip");
+  const auto stopped = util::ParseJson(emitted[1]);
+  Expect(stopped.has_value() && (*stopped)["event"].AsString() == "stopped",
+         "second mirrored line should be the stopped event");
+  const auto terminated = util::ParseJson(emitted[2]);
+  Expect(terminated.has_value() && (*terminated)["event"].AsString() == "terminated",
+         "third mirrored line should be the terminated event");
+}
 
 }  // namespace
 
@@ -175,6 +283,10 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestQueryAndCommandOverSocket);
   AddTest(tests, "ControlChannelService/ControlListFiltersDeadPids",
           TestControlListFiltersDeadPids);
+  AddTest(tests, "ControlChannelService/LaunchConfigsAndAdaptersOverSocket",
+          TestLaunchConfigsAndAdaptersOverSocket);
+  AddTest(tests, "ControlChannelService/StdoutMirrorEmitsWithoutConnections",
+          TestStdoutMirrorEmitsWithoutConnections);
 }
 
 }  // namespace microide::tests

@@ -2,7 +2,9 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace microide::app {
 
@@ -15,6 +17,13 @@ struct AppStartupOptions {
   // / a debug session started) before the window is interactive. See
   // ControlChannelHelpText() for the schema.
   std::optional<std::filesystem::path> control_spec_path;
+  // `--control`: force-start the live control channel (bypassing the
+  // `control.enabled` gate) and mirror every response/event/applied line to
+  // stdout as JSONL. The headless agent-driving entry point.
+  bool control_stdout = false;
+  // `--set <id> <value>` (repeatable): transient setting overrides applied at
+  // startup. Never persisted to the user's saved config.
+  std::vector<std::pair<std::string, std::string>> setting_overrides;
   // The shipping binary fast-exits via std::quick_exit() at the end of
   // Shutdown() to skip destructor chains. Tests set this false so they can run
   // Initialize()/Shutdown() in-process and verify clean teardown under ASAN.
