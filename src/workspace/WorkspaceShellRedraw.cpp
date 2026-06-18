@@ -131,6 +131,14 @@ void WorkspaceShell::RequestFullRedraw() {
   QueueEditorHoverRefresh();
 }
 
+void WorkspaceShell::Notify(NotificationService::Tone tone, std::string message) {
+  notification_service_.Show(tone, std::move(message), SDL_GetTicks());
+  // Notifications are infrequent, event-driven posts (never per-frame polling),
+  // so a full redraw here never spins the CPU. The shell schedules a single wake
+  // at the toast's expiry (see NextAnimationDelayMs) to retire it.
+  RequestFullRedraw();
+}
+
 void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   if (pending_render_invalidation_.full || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
@@ -770,8 +778,7 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   // (native watch unavailable + polling suppressed). Done before the early returns
   // below so it fires even when there is no change batch to apply.
   if (project_file_monitor_.ConsumeTreeTooLargeNotice()) {
-    notification_service_.Show(NotificationService::Tone::Warning,
-                               "Project too large for live file watching", SDL_GetTicks());
+    Notify(NotificationService::Tone::Warning, "Project too large for live file watching");
   }
 
   if (!supplemental.repository_changes.empty() || supplemental.tree_rescan_requested) {

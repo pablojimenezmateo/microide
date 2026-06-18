@@ -1415,6 +1415,9 @@
   const WindowChromeState& CurrentWindowChromeState() const;
   void MarkLayoutDirty();
   void RequestFullRedraw();
+  // Post a transient notification toast and schedule a full redraw so it paints.
+  // The single host-owned entry point for toasts (plugins + built-in callers).
+  void Notify(NotificationService::Tone tone, std::string message);
   void RequestRedrawRect(const SDL_FRect& rect);
   void RequestWindowRedraw();
   void RequestChromeRedraw();

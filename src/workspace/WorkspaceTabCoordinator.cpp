@@ -108,6 +108,9 @@ bool TabCoordinator::Save(std::size_t index) {
       return false;
     }
     if (!compare_tab.right_viewport.Save()) {
+      if (operations_.notify_save_failed) {
+        operations_.notify_save_failed(compare_tab.right_viewport.path());
+      }
       return false;
     }
     refresh_directory_tree();
@@ -130,6 +133,9 @@ bool TabCoordinator::Save(std::size_t index) {
       return false;
     }
     if (!merge_tab.result_viewport.Save()) {
+      if (operations_.notify_save_failed) {
+        operations_.notify_save_failed(merge_tab.result_viewport.path());
+      }
       return false;
     }
     merge_tab.persisted_output_baseline =
@@ -178,6 +184,9 @@ bool TabCoordinator::Save(std::size_t index) {
       return false;
     }
     if (!candidate->Save()) {
+      if (operations_.notify_save_failed) {
+        operations_.notify_save_failed(candidate->path());
+      }
       return false;
     }
     attempted_save = true;

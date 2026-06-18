@@ -175,6 +175,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
   });
   static const auto kDebugItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::DebugToggleEnabled, "Enable Debugger", {}, {}, 0, true),
+      MenuSeparator(),
       MenuItem(ActionId::StartDebugging, "Start Debugging"),
       MenuItem(ActionId::PickLaunchConfig, "Select Launch Configuration…"),
       MenuItem(ActionId::StopDebugging, "Stop Debugging"),

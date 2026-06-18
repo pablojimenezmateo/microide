@@ -11,6 +11,7 @@
 #include "project/ProjectBackgroundExecutor.h"
 #include "workspace/CommitWorkflowPersistence.h"
 #include "workspace/CommitWorkflowState.h"
+#include "workspace/NotificationService.h"
 
 namespace microide::workspace {
 
@@ -24,6 +25,9 @@ class CommitWorkflowService {
         append_output;
     std::function<void(std::string_view)> show_output_panel;
     std::function<void(std::string_view)> set_command_feedback;
+    // Post a transient toast for the commit outcome (always-visible feedback,
+    // unlike set_command_feedback which only shows in the command panel).
+    std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> persist_commit_draft;
     std::function<void()> clear_persisted_commit_draft;
     std::function<std::optional<PersistedCommitDraftState>()> load_persisted_commit_draft;

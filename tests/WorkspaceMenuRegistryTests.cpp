@@ -91,6 +91,27 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
          "Help menu should no longer expose a separate About microide item");
 }
 
+void TestMenuRegistryDebugMenuLeadsWithEnableToggle() {
+  using microide::workspace::ActionId;
+  const auto* spec = FindWorkspaceMenuSpec(MenuId::Debug);
+  Expect(spec != nullptr, "Debug menu should exist in the registry");
+  if (spec == nullptr || spec->items.empty()) {
+    return;
+  }
+  const MenuItemSpec& first = spec->items.front();
+  Expect(first.action == ActionId::DebugToggleEnabled,
+         "Debug menu's first item should be the enable/disable toggle");
+  Expect(first.label == "Enable Debugger",
+         "Debug toggle should be labelled 'Enable Debugger'");
+  Expect(first.checkable, "Debug toggle should be a checkable item");
+  Expect(spec->items.size() > 1 && spec->items[1].separator,
+         "a separator should follow the Debug enable toggle");
+  // The toggle must resolve to a registered command so it is reachable from the
+  // palette and dispatches correctly.
+  Expect(FindWorkspaceActionSpec(ActionId::DebugToggleEnabled) != nullptr,
+         "the Debug enable toggle should resolve to a registered command spec");
+}
+
 // Every actionable menu item must resolve to a live command spec. This guards
 // against future rewrites leaving a menu entry pointing at a removed ActionId.
 void TestMenuRegistryEveryItemIsWired() {
@@ -131,6 +152,8 @@ void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
           TestMenuRegistryTopLevelSnapshot);
   AddTest(tests, "WorkspaceMenuRegistry/ExpandedMenusExposeExpectedEntries",
           TestMenuRegistryExpandedMenusExposeExpectedEntries);
+  AddTest(tests, "WorkspaceMenuRegistry/DebugMenuLeadsWithEnableToggle",
+          TestMenuRegistryDebugMenuLeadsWithEnableToggle);
   AddTest(tests, "WorkspaceMenuRegistry/EveryItemIsWired",
           TestMenuRegistryEveryItemIsWired);
 }

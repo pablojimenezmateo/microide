@@ -129,6 +129,9 @@ enum class ActionId {
   ClearBranchReviewState,
   EditBranchReviewNote,
   // Debugger (DAP). Gated on the `debug.enabled` master toggle.
+  // Master enable/disable toggle for the whole debugger feature. NOT gated on
+  // `debug.enabled` — it flips that very setting, so it is always available.
+  DebugToggleEnabled,
   StartDebugging,
   StopDebugging,
   // Execution control (Phase 3). Gated on `debug.enabled` + an active session;

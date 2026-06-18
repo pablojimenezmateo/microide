@@ -25,6 +25,10 @@ void WorkspaceShell::InitializeCommitWorkflowService() {
           [this](const std::string_view feedback) {
             context_.current_project_state.panel.command.feedback_text = std::string(feedback);
           },
+      .notify =
+          [this](NotificationService::Tone tone, std::string message) {
+            Notify(tone, std::move(message));
+          },
       .persist_commit_draft = [this]() { MakePersistenceCoordinator().SaveConfigState(); },
       .clear_persisted_commit_draft =
           [this]() {

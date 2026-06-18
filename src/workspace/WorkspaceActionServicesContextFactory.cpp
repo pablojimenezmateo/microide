@@ -32,7 +32,17 @@ bool WorkspaceActionContext::PluginRuntimeEnabled() const {
 
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
   operations_.reload_plugins_for_current_project();
-  state_.panel.command.feedback_text = operations_.plugin_runtime_reload_summary();
+  std::string summary = operations_.plugin_runtime_reload_summary();
+  state_.panel.command.feedback_text = summary;
+  if (operations_.notify && !summary.empty()) {
+    // Heuristic: surface failures/warnings as Warning, otherwise Info.
+    const bool looks_problematic =
+        summary.find("error") != std::string::npos || summary.find("fail") != std::string::npos ||
+        summary.find("warn") != std::string::npos;
+    operations_.notify(looks_problematic ? NotificationService::Tone::Warning
+                                         : NotificationService::Tone::Info,
+                       std::move(summary));
+  }
 }
 
 void WorkspaceActionContext::RequestQuit() {
@@ -50,6 +60,17 @@ bool WorkspaceActionContext::DebuggerEnabled() const {
   return !(*value == "false" || *value == "0" || *value == "off" || value->empty());
 }
 
+void WorkspaceActionContext::ToggleDebuggerEnabled() {
+  const bool was_enabled = DebuggerEnabled();
+  if (operations_.set_setting_value) {
+    operations_.set_setting_value("debug.enabled", was_enabled ? "false" : "true");
+  }
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Tone::Info,
+                       was_enabled ? "Debugger disabled" : "Debugger enabled");
+  }
+}
+
 void WorkspaceActionContext::StartDebuggingWithFeedback() {
   if (!operations_.start_debugging) {
     return;
@@ -57,6 +78,11 @@ void WorkspaceActionContext::StartDebuggingWithFeedback() {
   const std::string error = operations_.start_debugging();
   state_.panel.command.feedback_text =
       error.empty() ? std::string("Debugging started") : ("Debug: " + error);
+  if (operations_.notify) {
+    operations_.notify(error.empty() ? NotificationService::Tone::Info
+                                     : NotificationService::Tone::Error,
+                       error.empty() ? std::string("Debugging started") : ("Debug: " + error));
+  }
 }
 
 void WorkspaceActionContext::StopDebuggingWithFeedback() {
@@ -64,6 +90,9 @@ void WorkspaceActionContext::StopDebuggingWithFeedback() {
     operations_.stop_debugging();
   }
   state_.panel.command.feedback_text = "Debugging stopped";
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Tone::Info, "Debugging stopped");
+  }
 }
 
 bool WorkspaceActionContext::DebugSessionActive() const {
@@ -435,6 +464,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .set_setting_value =
               [this](std::string_view id, std::string value) {
                 return SetSettingValue(id, std::move(value));
+              },
+          .notify =
+              [this](NotificationService::Tone tone, std::string message) {
+                Notify(tone, std::move(message));
               },
           .normalize_sidebar_view_selection = [this]() { NormalizeSidebarViewSelection(); },
           .apply_ui_scale =

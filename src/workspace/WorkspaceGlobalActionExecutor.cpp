@@ -156,6 +156,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.ReloadPluginsWithFeedback();
       return DispatchResult::Handled;
+    case ActionId::DebugToggleEnabled:
+      // The master toggle is intentionally ungated: it flips `debug.enabled`
+      // itself and reports the new state via a toast.
+      context_.ToggleDebuggerEnabled();
+      return DispatchResult::Handled;
     case ActionId::StartDebugging:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");

@@ -67,6 +67,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SidebarShow:
     case ActionId::SidebarToggle:
       return true;
+    case ActionId::DebugToggleEnabled:
+      // The master enable/disable toggle is itself never gated — it must work
+      // precisely when the debugger is off so the user can turn it on.
+      return true;
     case ActionId::StartDebugging:
     case ActionId::StopDebugging:
       // Gated on the master debugger toggle; the executor reports adapter/

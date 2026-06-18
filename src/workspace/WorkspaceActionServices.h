@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "workspace/NotificationService.h"
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceMenuState.h"
@@ -145,6 +146,8 @@ class WorkspaceActionContext {
     std::function<void()> save_config_state;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<bool(std::string_view, std::string)> set_setting_value;
+    // Post a transient host notification toast (and schedule a redraw).
+    std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> normalize_sidebar_view_selection;
     std::function<void(float)> apply_ui_scale;
     std::function<void()> mark_layout_dirty;
@@ -336,6 +339,8 @@ class WorkspaceActionContext {
   void RequestQuit();
   // Debugger (DAP). DebuggerEnabled reflects the `debug.enabled` master toggle.
   bool DebuggerEnabled() const;
+  // Flip the `debug.enabled` master toggle and announce the new state via toast.
+  void ToggleDebuggerEnabled();
   bool DebugSessionActive() const;
   bool DebugSessionStopped() const;
   void StartDebuggingWithFeedback();

@@ -37,6 +37,23 @@ std::string ResultFeedback(const project::CommitOperationResult& result) {
   }
 }
 
+NotificationService::Tone ResultTone(project::CommitOperationResultCategory category) {
+  switch (category) {
+    case project::CommitOperationResultCategory::Success:
+      return NotificationService::Tone::Info;
+    case project::CommitOperationResultCategory::HookFailed:
+    case project::CommitOperationResultCategory::DirtyWorktree:
+    case project::CommitOperationResultCategory::RefreshFailedAfterSuccess:
+      return NotificationService::Tone::Warning;
+    case project::CommitOperationResultCategory::AuthFailed:
+    case project::CommitOperationResultCategory::RepoLocked:
+    case project::CommitOperationResultCategory::Conflict:
+      return NotificationService::Tone::Error;
+    default:
+      return NotificationService::Tone::Error;
+  }
+}
+
 }  // namespace
 
 CommitWorkflowService::CommitWorkflowService(
@@ -283,6 +300,9 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
   RefreshDerivedState(state);
   if (callbacks_.set_command_feedback != nullptr) {
     callbacks_.set_command_feedback(state.status_message);
+  }
+  if (callbacks_.notify != nullptr) {
+    callbacks_.notify(ResultTone(result.category), state.status_message);
   }
 }
 

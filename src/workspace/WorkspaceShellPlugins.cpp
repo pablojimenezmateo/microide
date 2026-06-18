@@ -282,11 +282,7 @@ WorkspaceShell::WorkspaceShell() {
           },
       .show_notification =
           [this](const std::string& level, const std::string& message) {
-            notification_service_.Show(NotificationService::ToneFromLevel(level), message,
-                                       SDL_GetTicks());
-            // A full redraw is fine here: notifications are infrequent, event-driven
-            // posts (never per-frame polling), so this never spins the CPU.
-            RequestFullRedraw();
+            Notify(NotificationService::ToneFromLevel(level), message);
           },
   });
 }

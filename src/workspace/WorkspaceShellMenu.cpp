@@ -20,19 +20,18 @@ bool IsMenuBarTopLevelMenu(MenuId id) {
          id != MenuId::ProjectTabContext;
 }
 
+// A bool-typed setting value reads as "on" unless it is one of the falsey tokens.
+bool SettingTruthy(const std::optional<std::string>& value) {
+  return value.has_value() && !(*value == "false" || *value == "0" || *value == "off");
+}
+
 }  // namespace
 
 bool WorkspaceShell::IsMenuBarMenuVisible(MenuId id) const {
-  if (!IsMenuBarTopLevelMenu(id)) {
-    return false;
-  }
-  // The Debug menu only appears when the debugger feature is enabled, so the
-  // shell shows no debug affordances at all in the default (debugger-off) state.
-  if (id == MenuId::Debug) {
-    const auto value = GetSettingValue("debug.enabled");
-    return value.has_value() && !(*value == "false" || *value == "0" || *value == "off");
-  }
-  return true;
+  // Every top-level menu (including Debug) is always visible. The Debug menu's
+  // first item is the master enable/disable toggle; the remaining debug items
+  // grey out via IsMenuItemEnabled when `debug.enabled` is off.
+  return IsMenuBarTopLevelMenu(id);
 }
 
 std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMenuBarItems(
@@ -459,6 +458,9 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   }
   if (item.action == ActionId::DebugPaneToggle) {
     return context_.current_project_state.debug_pane.visible;
+  }
+  if (item.action == ActionId::DebugToggleEnabled) {
+    return SettingTruthy(GetSettingValue("debug.enabled"));
   }
   if (item.action == ActionId::Wrap) {
     return context_.current_project_state.editor_preferences.soft_wrap;
