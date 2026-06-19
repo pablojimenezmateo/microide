@@ -1194,6 +1194,9 @@
   void AppendDebugConsoleOutput(int session_id, const std::string& label,
                                 const dap_protocol::DapOutputEvent& output);
   void ShowDebugConsole(int session_id, const std::string& label);
+  // Surface the active debug session's console output in the bottom panel on
+  // demand (Debug → Show Output / Ctrl+Shift+5). No-op without an active session.
+  void ShowDebugOutput();
   // Remove a pruned session's console channel + close its tab (Phase 10).
   void RemoveDebugConsole(int session_id);
   // Stop every live debug session and close the debug pane (Phase 10).
@@ -1322,6 +1325,10 @@
                                                   std::size_t line_count) const;
   // Row count + clamped scroll for the currently active debug-pane surface.
   std::size_t DebugPaneActiveRowCount() const;
+  // True when a click on `row` of the active surface does something (frame/thread/
+  // session focus, variable/watch expand or edit, breakpoint navigate, filter
+  // toggle). Drives the hover-cursor pointer/default decision for the pane.
+  bool DebugPaneRowIsActionable(std::size_t row) const;
   int DebugPaneScrollRow(std::size_t line_count, int visible_rows) const;
   void SetDebugPaneScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
@@ -1687,6 +1694,7 @@
     bool overlay_visible = false;
     bool settings_overlay_visible = false;
     bool bottom_panel_visible = false;
+    bool debug_toolbar_visible = false;
     bool chrome_custom_enabled = false;
     bool chrome_maximized = false;
     bool chrome_fullscreen = false;

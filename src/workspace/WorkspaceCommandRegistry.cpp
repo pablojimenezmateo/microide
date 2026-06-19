@@ -92,6 +92,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Show Watch", ""},
       ActionSpec{ActionId::DebugPaneShowBreakpoints, "debug-pane-breakpoints",
                  "debug-pane-breakpoints", "Show Breakpoints", ""},
+      ActionSpec{ActionId::DebugShowOutput, "debug-show-output", "debug-show-output",
+                 "Show Debug Output", "Ctrl+Shift+5"},
       ActionSpec{ActionId::BreakpointSet, "breakpoint-set",
                  "breakpoint-set <file> <line> [condition]", "Set Breakpoint", ""},
       ActionSpec{ActionId::BreakpointRemove, "breakpoint-remove",

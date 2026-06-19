@@ -195,6 +195,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::DebugPaneShowVariables, "Variables", "Ctrl+Shift+2"),
       MenuItem(ActionId::DebugPaneShowWatch, "Watch", "Ctrl+Shift+3"),
       MenuItem(ActionId::DebugPaneShowBreakpoints, "Breakpoints", "Ctrl+Shift+4"),
+      MenuItem(ActionId::DebugShowOutput, "Show Output", "Ctrl+Shift+5"),
   });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),

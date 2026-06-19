@@ -398,8 +398,11 @@ Wiring:
   `PluginLuaContextInterop.*`, gated on `capabilities.process.exec` + contribution
   sandbox; teardown prunes a plugin's adapters on unload. Reconciled into the
   per-project `DapManager` in `WorkspaceShellPlugins.cpp`.
-- Console: DAP `output` events stream into the `debug.console` output channel;
-  `ShowDebugConsole` surfaces it on session start.
+- Console: DAP `output` events stream into the `debug.console.<id>` output channel
+  (all categories — stdout/stderr/console — are appended unfiltered);
+  `ShowDebugConsole` surfaces it on session start, and `ActionId::DebugShowOutput`
+  (`debug-show-output`, Ctrl+Shift+5, Debug → Show Output) re-surfaces the active
+  session's channel on demand so it stays reachable after the tab is switched away.
 - Toggle + commands: `debug.enabled` (user scope, default off);
   `ActionId::StartDebugging`/`StopDebugging` (`debug-start`/`debug-stop`), gated on
   the toggle.

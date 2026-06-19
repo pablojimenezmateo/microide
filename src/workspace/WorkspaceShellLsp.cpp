@@ -420,6 +420,17 @@ void WorkspaceShell::ShowDebugConsole(int session_id, const std::string& label) 
   RequestBottomPanelRedraw();
 }
 
+void WorkspaceShell::ShowDebugOutput() {
+  const int session_id = debug_service_.ActiveSessionId();
+  if (session_id == 0) {
+    return;  // no active debug session — nothing to surface
+  }
+  // Reuse the auto-show recipe (open the channel tab + select it) and stick to the
+  // tail so the latest output is visible immediately.
+  ShowDebugConsole(session_id, debug_service_.ActiveSessionLabel());
+  context_.current_project_state.panel.output.follow_tail = true;
+}
+
 void WorkspaceShell::RemoveDebugConsole(int session_id) {
   const std::string channel_id = DebugConsoleChannelId(session_id);
   // Close the tab first (advances the active output channel if this was it), then

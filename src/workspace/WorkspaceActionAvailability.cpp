@@ -131,8 +131,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::DebugPaneShowVariables:
     case ActionId::DebugPaneShowWatch:
     case ActionId::DebugPaneShowBreakpoints:
-      // Right-side debug pane: available whenever the debugger is enabled (the
-      // breakpoints/watch surfaces are useful before a session starts).
+    case ActionId::DebugShowOutput:
+      // Right-side debug pane + bottom-panel debug output: available whenever the
+      // debugger is enabled (the breakpoints/watch surfaces are useful before a
+      // session starts; Show Output no-ops gracefully without a live session).
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::CloseActiveTab:
       return !context_.current_project_state.open_tabs.empty();

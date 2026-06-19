@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 #include "workspace/DebugPaneMouseCoordinator.h"
 #include "workspace/DebugPaneRegistry.h"
@@ -37,6 +39,31 @@ SDL_FRect DebugPaneContentRect(const SDL_FRect& pane) {
 }
 
 }  // namespace
+
+DebugPaneRowHit DebugPaneRowAtPoint(const SDL_FRect& content_rect, float text_y, float line_height,
+                                    int visible_rows, int vertical_scroll, std::size_t line_count,
+                                    float x, float y) {
+  DebugPaneRowHit hit;
+  if (line_height <= 0.0f || !Contains(content_rect, x, y)) {
+    return hit;  // row_index = -1, in_content = false
+  }
+  hit.in_content = true;
+  // The top text inset (content_rect.y .. text_y) belongs to the first visible row
+  // rather than rejecting the click — this is the dead-zone fix.
+  int relative = 0;
+  if (y > text_y) {
+    relative = static_cast<int>(std::floor((y - text_y) / line_height));
+  }
+  if (relative < 0 || relative >= visible_rows) {
+    return hit;  // inside content but below the last visible row
+  }
+  const int absolute = vertical_scroll + relative;
+  if (absolute < 0 || static_cast<std::size_t>(absolute) >= line_count) {
+    return hit;
+  }
+  hit.row_index = absolute;
+  return hit;
+}
 
 DebugPaneModeRowLayout WorkspaceShell::DebugPaneModeRow(const SDL_FRect& pane_rect) const {
   DebugPaneModeRowLayout layout;
@@ -101,6 +128,48 @@ std::size_t WorkspaceShell::DebugPaneActiveRowCount() const {
       return ps.debug_breakpoints_panel.RowCount();
   }
   return 0;
+}
+
+bool WorkspaceShell::DebugPaneRowIsActionable(std::size_t row) const {
+  const ProjectWorkspaceState& ps = context_.current_project_state;
+  switch (ps.debug_pane.mode) {
+    case DebugPaneMode::CallStack:
+      // Every panel row (session / thread / frame) focuses or navigates.
+      return row < ps.debug_execution.PanelRowCount();
+    case DebugPaneMode::Variables: {
+      const std::vector<DebugVariableRowView>& rows = ps.debug_variables.Rows();
+      if (row >= rows.size()) {
+        return false;
+      }
+      const DebugVariableRowView& r = rows[row];
+      return !r.is_placeholder && (r.has_children || r.is_show_more || r.editable);
+    }
+    case DebugPaneMode::Watch: {
+      const std::vector<DebugVariableRowView>& rows = ps.debug_watch.Rows();
+      if (row >= rows.size()) {
+        return false;
+      }
+      const DebugVariableRowView& r = rows[row];
+      return !r.is_placeholder &&
+             (r.has_children || r.is_show_more || r.editable ||
+              ps.debug_watch.ExpressionIndexForRow(row).has_value());
+    }
+    case DebugPaneMode::Breakpoints: {
+      const std::vector<DebugBreakpointRowView>& rows = ps.debug_breakpoints_panel.Rows();
+      if (row >= rows.size()) {
+        return false;
+      }
+      const DebugBreakpointRowView& r = rows[row];
+      if (r.kind == DebugBreakpointRowView::Kind::ExceptionFilter) {
+        return true;
+      }
+      if (r.kind == DebugBreakpointRowView::Kind::Breakpoint) {
+        return !r.path.empty();
+      }
+      return false;  // section header
+    }
+  }
+  return false;
 }
 
 int WorkspaceShell::DebugPaneScrollRow(std::size_t line_count, int visible_rows) const {

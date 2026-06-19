@@ -161,6 +161,12 @@ void WorkspaceActionContext::ShowDebugPaneSurface(DebugPaneMode mode) {
   }
 }
 
+void WorkspaceActionContext::ShowDebugOutput() {
+  if (operations_.show_debug_output) {
+    operations_.show_debug_output();
+  }
+}
+
 void WorkspaceActionContext::StopAllDebugSessions() {
   if (operations_.stop_all_debug_sessions) {
     operations_.stop_all_debug_sessions();
@@ -506,6 +512,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
           .toggle_debug_pane = [this]() { ToggleDebugPane(); },
           .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
+          .show_debug_output = [this]() { ShowDebugOutput(); },
           .resend_breakpoints_for_file =
               [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
           .start_named_debug_config =

@@ -273,6 +273,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.ShowDebugPaneSurface(mode);
       return DispatchResult::Handled;
     }
+    case ActionId::DebugShowOutput:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.ShowDebugOutput();
+      return DispatchResult::Handled;
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:

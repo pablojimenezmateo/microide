@@ -196,6 +196,8 @@ class WorkspaceActionContext {
     // Right-side debug pane: toggle visibility, or show a specific surface.
     std::function<void()> toggle_debug_pane;
     std::function<void(DebugPaneMode)> show_debug_pane_mode;
+    // Surface the active debug session's console output in the bottom panel.
+    std::function<void()> show_debug_output;
     // Headless breakpoint control (control channel + cold-start spec): re-send a
     // file's breakpoints to the active session after the store is mutated.
     std::function<void(const std::filesystem::path&)> resend_breakpoints_for_file;
@@ -364,6 +366,8 @@ class WorkspaceActionContext {
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();
   void ShowDebugPaneSurface(DebugPaneMode mode);
+  // Surface the active debug session's console output in the bottom panel.
+  void ShowDebugOutput();
   // Breakpoint modifiers (Phase 6). Read the breakpoint-gutter context menu's
   // target line; open a prompt seeded with the current field / remove the bp.
   void EditBreakpointModifierFromMenu(ActionId id);

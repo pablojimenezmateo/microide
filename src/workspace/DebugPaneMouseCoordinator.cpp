@@ -8,11 +8,19 @@ namespace microide::workspace {
 
 namespace {
 
+// Resolve a click to an absolute row in the active surface, sharing the exact
+// geometry the render and cursor paths use (DebugPaneRowAtPoint) so they cannot
+// drift and the top text inset is not a dead-zone.
 std::optional<std::size_t> DebugPaneLineIndexAtPoint(
-    const WorkspaceShell::LogSurfaceLayout& panel_layout, float y, std::size_t line_count) {
-  return BottomPanelLineIndexAtY(panel_layout.text_y, panel_layout.line_height,
-                                 panel_layout.scroll.visible_rows,
-                                 panel_layout.scroll.vertical_scroll, y, line_count);
+    const WorkspaceShell::LogSurfaceLayout& panel_layout, float x, float y,
+    std::size_t line_count) {
+  const DebugPaneRowHit hit = DebugPaneRowAtPoint(
+      panel_layout.content_rect, panel_layout.text_y, panel_layout.line_height,
+      panel_layout.scroll.visible_rows, panel_layout.scroll.vertical_scroll, line_count, x, y);
+  if (hit.row_index < 0) {
+    return std::nullopt;
+  }
+  return static_cast<std::size_t>(hit.row_index);
 }
 
 }  // namespace
@@ -66,7 +74,8 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       return false;
     }
     const auto line_index =
-        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y), row_count);
+        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.x),
+                                  static_cast<float>(event.button.y), row_count);
     if (!line_index.has_value() || *line_index >= row_count) {
       state_.surface.focus = FocusTarget::DebugPane;
       return true;
@@ -114,7 +123,8 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       return false;
     }
     const auto line_index =
-        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y), rows.size());
+        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.x),
+                                  static_cast<float>(event.button.y), rows.size());
     if (line_index.has_value() && *line_index < rows.size()) {
       model.SetSelectedRow(*line_index);
       const DebugVariableRowView& row = rows[*line_index];
@@ -142,7 +152,8 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       return false;
     }
     const auto line_index =
-        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y), rows.size());
+        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.x),
+                                  static_cast<float>(event.button.y), rows.size());
     if (line_index.has_value() && *line_index < rows.size()) {
       model.SetSelectedRow(*line_index);
       const DebugVariableRowView& row = rows[*line_index];
@@ -179,7 +190,8 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       return false;
     }
     const auto line_index =
-        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.y), rows.size());
+        DebugPaneLineIndexAtPoint(panel_layout, static_cast<float>(event.button.x),
+                                  static_cast<float>(event.button.y), rows.size());
     if (line_index.has_value() && *line_index < rows.size()) {
       const DebugBreakpointRowView& row = rows[*line_index];
       if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter &&

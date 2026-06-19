@@ -567,6 +567,30 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
+  if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
+      Contains(layout.right_pane, x, y)) {
+    // Mode-row tab buttons are always clickable.
+    const DebugPaneModeRowLayout mode_row = DebugPaneModeRow(layout.right_pane);
+    for (int i = 0; i < mode_row.tab_count; ++i) {
+      if (Contains(mode_row.tabs[static_cast<std::size_t>(i)].rect, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    const std::size_t row_count = DebugPaneActiveRowCount();
+    const auto panel_layout = ComputeDebugPaneListLayout(layout, row_count);
+    if (panel_layout.scroll.vertical_scrollbar.has_value() &&
+        Contains(panel_layout.scroll.vertical_scrollbar->track, x, y)) {
+      return CursorKind::Default;
+    }
+    const DebugPaneRowHit hit = DebugPaneRowAtPoint(
+        panel_layout.content_rect, panel_layout.text_y, panel_layout.line_height,
+        panel_layout.scroll.visible_rows, panel_layout.scroll.vertical_scroll, row_count, x, y);
+    if (hit.row_index >= 0 && DebugPaneRowIsActionable(static_cast<std::size_t>(hit.row_index))) {
+      return CursorKind::Pointer;
+    }
+    return CursorKind::Default;
+  }
+
   if (BottomPanelVisible() && Contains(layout.bottom_panel, x, y)) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
@@ -637,6 +661,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     if (Contains(popup->rect, x, y)) {
       return CursorKind::Default;
+    }
+  }
+
+  // Floating debug toolbar (continue / step / stop) renders over the top of the
+  // editor and must claim the cursor before the editor surface does.
+  if (DebugToolbarVisible()) {
+    const DebugToolbarLayout toolbar =
+        ComputeDebugToolbarLayout(layout.editor_surface, DebugToolbarAvoidBelowY(layout));
+    if (Contains(toolbar.widget, x, y)) {
+      for (const SDL_FRect& button : toolbar.buttons) {
+        if (Contains(button, x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Default;  // card padding between buttons
     }
   }
 
@@ -971,6 +1010,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       .overlay_visible = context_.current_project_state.overlay.visible,
       .settings_overlay_visible = settings_overlay_service_.Visible(),
       .bottom_panel_visible = BottomPanelVisible(),
+      .debug_toolbar_visible = DebugToolbarVisible(),
       .chrome_custom_enabled = window_presentation_.chrome.custom_enabled,
       .chrome_maximized = window_presentation_.chrome.maximized,
       .chrome_fullscreen = window_presentation_.chrome.fullscreen,
@@ -998,6 +1038,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       cursor_kind_fingerprint_.overlay_visible == next_fp.overlay_visible &&
       cursor_kind_fingerprint_.settings_overlay_visible == next_fp.settings_overlay_visible &&
       cursor_kind_fingerprint_.bottom_panel_visible == next_fp.bottom_panel_visible &&
+      cursor_kind_fingerprint_.debug_toolbar_visible == next_fp.debug_toolbar_visible &&
       cursor_kind_fingerprint_.chrome_custom_enabled == next_fp.chrome_custom_enabled &&
       cursor_kind_fingerprint_.chrome_maximized == next_fp.chrome_maximized &&
       cursor_kind_fingerprint_.chrome_fullscreen == next_fp.chrome_fullscreen &&

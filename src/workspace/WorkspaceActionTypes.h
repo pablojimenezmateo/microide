@@ -188,6 +188,9 @@ enum class ActionId {
   DebugPaneShowVariables,
   DebugPaneShowWatch,
   DebugPaneShowBreakpoints,
+  // Surface the active debug session's console output in the bottom panel. Gated
+  // on `debug.enabled`; a no-op when no session is active.
+  DebugShowOutput,
 };
 
 enum class ActionSource {

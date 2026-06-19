@@ -964,6 +964,18 @@ bool DebugService::IsSessionActive() const {
   return session != nullptr && session->IsActive();
 }
 
+int DebugService::ActiveSessionId() const { return CurrentDapManager().ActiveSessionId(); }
+
+std::string DebugService::ActiveSessionLabel() const {
+  const int id = ActiveSessionId();
+  for (const DapSessionInfo& info : Sessions()) {
+    if (info.id == id) {
+      return info.name;
+    }
+  }
+  return {};
+}
+
 DebugSession::State DebugService::SessionState() const {
   const DebugSession* session = CurrentDapManager().ActiveSession();
   return session == nullptr ? DebugSession::State::Inactive : session->CurrentState();

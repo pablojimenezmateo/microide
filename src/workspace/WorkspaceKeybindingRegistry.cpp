@@ -237,6 +237,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      KeybindingSpec{
+          .id = "debug-show-output",
+          .action = ActionId::DebugShowOutput,
+          .key = SDLK_5,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       // Editor context
       KeybindingSpec{
           .id = "undo",

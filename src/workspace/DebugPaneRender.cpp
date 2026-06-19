@@ -193,9 +193,9 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                               panel_layout.content_rect.w, panel_layout.line_height),
                      background);
     }
-    const float indent = static_cast<float>(var_row.depth) * 14.0f;
+    const float indent = static_cast<float>(var_row.depth) * kDebugPaneTreeIndentStep;
     const float row_x = panel_layout.text_x + indent;
-    const float name_x = row_x + 14.0f;
+    const float name_x = row_x + kDebugPaneTreeDisclosureSlot;
     const float content_right = panel_layout.text_x + panel_layout.text_width;
     const float name_avail = content_right - name_x;
     if (name_avail <= 0.0f) {
@@ -384,9 +384,10 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                                                   panel_layout.text_width - box_w));
         continue;
       }
-      draw_two_column_row(panel_layout.text_x + 16.0f, panel_layout.text_width - 16.0f,
-                          bp_row.display, theme_.text_secondary, bp_row.secondary,
-                          theme_.text_muted, line_y, theme_.surface_background);
+      draw_two_column_row(panel_layout.text_x + kDebugPaneBreakpointIndent,
+                          panel_layout.text_width - kDebugPaneBreakpointIndent, bp_row.display,
+                          theme_.text_secondary, bp_row.secondary, theme_.text_muted, line_y,
+                          theme_.surface_background);
       continue;
     }
   }

@@ -176,6 +176,10 @@ class DebugService {
   bool EvaluateRepl(const std::string& expression);
 
   bool IsSessionActive() const;
+  // The active (UI-projected) session's id (0 when none) and its prebuilt console
+  // label. Used to surface the active session's output channel on demand.
+  int ActiveSessionId() const;
+  std::string ActiveSessionLabel() const;
   DebugSession::State SessionState() const;
   std::string LastError() const;
 
