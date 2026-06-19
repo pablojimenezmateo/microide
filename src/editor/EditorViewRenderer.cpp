@@ -11,6 +11,7 @@
 #include "editor/BreakpointRender.h"
 #include "editor/DiagnosticsRender.h"
 #include "editor/ExecutionLineRender.h"
+#include "editor/GutterMetrics.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceUiText.h"
@@ -24,7 +25,10 @@ const DecoratedTextGridRenderer kDecoratedRowRenderer;
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count) {
   char buf[20];
   const auto [end, _] = std::to_chars(buf, buf + sizeof(buf), std::max<std::size_t>(1, line_count));
-  return std::max(48.0f, text_renderer.MeasureWidth(std::string_view{buf, end}) + 18.0f);
+  // Digits begin after the reserved marker strip (kGutterLineNumberInset), so the
+  // gutter must be wide enough for both the markers and the widest line number.
+  const float digits_width = text_renderer.MeasureWidth(std::string_view{buf, end});
+  return std::max(56.0f, kGutterLineNumberInset + digits_width + kGutterRightPad);
 }
 
 // Draws the single fold control: a small square button with a `+` glyph when
@@ -939,7 +943,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (!soft_wrap || row_meta.visual_start == 0) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                                           line_index + 1);
-      text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
+      text_renderer.DrawStringOn(renderer, gutter.x + kGutterLineNumberInset, y,
                                  selected ? theme.current_line_number : theme.line_number,
                                  selected ? theme.row_highlight : theme.gutter_background,
                                  std::string_view{line_number_buf, end});

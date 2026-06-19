@@ -32,16 +32,24 @@ class DebugVariablesModel {
   }
   int FrameId() const { return frame_id_; }
 
-  // Install the focused frame's scopes as collapsed top-level rows.
-  void ApplyScopes(const std::vector<dap_protocol::DapScope>& scopes);
+  // Install the focused frame's scopes as collapsed top-level rows, re-expanding
+  // any the user had open before this stop. Returns the bounded fetches the
+  // service must issue to repopulate those restored containers.
+  std::vector<DebugValueTree::ChildFetch> ApplyScopes(
+      const std::vector<dap_protocol::DapScope>& scopes);
 
-  // Toggle expansion of the row at `row_index` (see DebugValueTree::ToggleRow).
-  int ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
+  // Toggle expansion / load-more for the row at `row_index` (see
+  // DebugValueTree::ToggleRow).
+  DebugValueTree::ChildFetch ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
 
-  void ApplyVariables(int variables_reference,
-                      const std::vector<dap_protocol::DapVariable>& variables) {
-    tree_.ApplyVariables(variables_reference, variables);
+  // Attach fetched children; returns the bounded fetches for any restored
+  // descendants the user had expanded (empty in the common case).
+  std::vector<DebugValueTree::ChildFetch> ApplyVariables(
+      int variables_reference, const std::vector<dap_protocol::DapVariable>& variables, int start) {
+    return tree_.ApplyVariables(variables_reference, variables, start);
   }
+
+  void MarkChildrenError(int variables_reference) { tree_.MarkChildrenError(variables_reference); }
 
   void ApplySetVariable(std::uint32_t node_id, const dap_protocol::DapSetVariableResult& result) {
     tree_.ApplySetVariable(node_id, result);

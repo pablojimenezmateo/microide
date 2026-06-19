@@ -48,6 +48,16 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       result.options.control_stdout = true;
       continue;
     }
+    if (arg == "--dap-log") {
+      // Optional path argument: consume the next token only when it is not
+      // itself a flag, mirroring how --control-spec validates its argument.
+      if (i + 1 < argc && argv[i + 1] != nullptr && !IsFlag(argv[i + 1])) {
+        result.options.dap_log_path = std::filesystem::path(argv[++i]);
+      } else {
+        result.options.dap_log_path = std::filesystem::path("/tmp/microide-dap.log");
+      }
+      continue;
+    }
     if (arg == "--set") {
       if (i + 2 >= argc || argv[i + 1] == nullptr || argv[i + 2] == nullptr) {
         std::cerr << "--set requires <id> <value>\n";
@@ -61,7 +71,7 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
     if (arg == "--help" || arg == "-h") {
       std::cerr << "usage: microide [--disable-plugins] [--safe-mode] [--control] "
                    "[--set <id> <value>]...\n"
-                   "                [--control-spec <file>] [project-path]\n"
+                   "                [--control-spec <file>] [--dap-log [path]] [project-path]\n"
                    "       microide control-help         protocol + spec reference\n"
                    "       microide control-commands     list runnable command names\n"
                    "       microide control-list         running instances + sockets\n"

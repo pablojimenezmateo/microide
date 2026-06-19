@@ -208,8 +208,10 @@ int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_row
     return 0;
   }
   if (BottomPanelShowsOutput()) {
-    return ClampScrollRowToContent(context_.current_project_state.panel.output.scroll_row,
-                                   line_count, visible_rows);
+    const auto& output = context_.current_project_state.panel.output;
+    return output.follow_tail
+               ? max_scroll
+               : ClampScrollRowToContent(output.scroll_row, line_count, visible_rows);
   }
   if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
     return terminal_tab->follow_tail ? max_scroll
@@ -281,7 +283,9 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
     return;
   }
   if (BottomPanelShowsOutput()) {
-    context_.current_project_state.panel.output.scroll_row = clamped_scroll;
+    auto& output = context_.current_project_state.panel.output;
+    output.scroll_row = clamped_scroll;
+    output.follow_tail = clamped_scroll >= max_scroll;
     return;
   }
   if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {

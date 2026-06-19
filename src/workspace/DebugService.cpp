@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/DebugTrace.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectState.h"
 
@@ -136,8 +137,8 @@ void DebugService::ConsumeDapCallbacks() {
       }
     }
     SyncSessionsPanel();
-    if (operations_.request_bottom_panel_redraw) {
-      operations_.request_bottom_panel_redraw();
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
     }
   }
 }
@@ -177,8 +178,8 @@ void DebugService::ProjectStop(const dap_protocol::DapStoppedEvent& stop,
   if (operations_.request_editor_redraw) {
     operations_.request_editor_redraw();
   }
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
   // The execution view is now fully populated (file/line/frames): report the
   // resolved stop to push observers. ProjectStop runs only for the active
@@ -198,8 +199,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     if (operations_.append_console_output) {
       operations_.append_console_output(session_id, session_label, output);
     }
-    if (operations_.request_bottom_panel_redraw) {
-      operations_.request_bottom_panel_redraw();
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
     }
   };
   callbacks.on_state_changed = [this](DebugSession::State state) {
@@ -211,8 +212,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     if (operations_.request_chrome_redraw) {
       operations_.request_chrome_redraw();
     }
-    if (operations_.request_bottom_panel_redraw) {
-      operations_.request_bottom_panel_redraw();
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
     }
   };
   // Immediate halt notification (real reason/thread, before frames resolve).
@@ -254,8 +255,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       ProjectStop(stop, frames);
     }
     SyncSessionsPanel();
-    if (operations_.request_bottom_panel_redraw) {
-      operations_.request_bottom_panel_redraw();
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
     }
   };
   // On resume: the active session drops its execution view; a background resume
@@ -266,8 +267,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     } else {
       CurrentDapManager().SetSessionAttention(session_id, false);
       SyncSessionsPanel();
-      if (operations_.request_bottom_panel_redraw) {
-        operations_.request_bottom_panel_redraw();
+      if (operations_.request_debug_pane_redraw) {
+        operations_.request_debug_pane_redraw();
       }
     }
   };
@@ -283,8 +284,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     if (state.debug_execution.focused_thread_id == 0) {
       state.debug_execution.focused_thread_id = state.debug_execution.thread_id;
     }
-    if (operations_.request_bottom_panel_redraw) {
-      operations_.request_bottom_panel_redraw();
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
     }
   };
   // The session pulls the breakpoint snapshot at `initialized` and on each live
@@ -317,8 +318,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       [this](const std::vector<dap_protocol::DapExceptionFilter>& filters) {
         CurrentProjectState().debug_breakpoints_panel.SetAdvertisedFilters(filters);
         SyncBreakpointsPanel();
-        if (operations_.request_bottom_panel_redraw) {
-          operations_.request_bottom_panel_redraw();
+        if (operations_.request_debug_pane_redraw) {
+          operations_.request_debug_pane_redraw();
         }
       };
   // The session pulls the enabled filter ids at `initialized` and on live re-send.
@@ -338,8 +339,8 @@ void DebugService::ClearTransientDebugViews() {
   if (operations_.request_editor_redraw) {
     operations_.request_editor_redraw();
   }
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -528,8 +529,8 @@ void DebugService::ToggleExceptionFilter(const std::string& filter_id) {
       session != nullptr && session->IsActive()) {
     session->ResendExceptionFilters();
   }
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -545,11 +546,18 @@ void DebugService::FocusFrame(int frame_id) {
   }
   // Hover values are frame-scoped: a frame switch must not serve a value (or let a
   // still-in-flight request resolve) keyed to the previously focused frame.
+  util::DebugTrace::Note("locals", "focus-frame request-scopes frame",
+                         static_cast<long long>(frame_id));
   CurrentProjectState().debug_hover.Clear();
   CurrentProjectState().debug_variables.BeginFrame(frame_id);
   session->RequestScopes(frame_id, [this](std::vector<dap_protocol::DapScope> scopes) {
     DebugVariablesModel& model = CurrentProjectState().debug_variables;
-    model.ApplyScopes(scopes);
+    // ApplyScopes re-expands the scopes the user had open before this stop and
+    // returns the bounded fetches needed to repopulate them; issue each (children
+    // that arrive cascade further) so a step does not collapse the tree.
+    for (const DebugValueTree::ChildFetch& fetch : model.ApplyScopes(scopes)) {
+      FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
+    }
     // Scopes are installed collapsed; their variables are fetched lazily when the
     // user expands a row (ToggleVariableRow). We deliberately do NOT auto-expand
     // on every stop: a stop frequently lands where in-scope locals are not yet
@@ -560,8 +568,8 @@ void DebugService::FocusFrame(int frame_id) {
     // serializes requests, that spin would block the *next* execution-control
     // request (continue/step/pause) — i.e. stepping would silently stop working.
     // Lazy expansion keeps the stop cheap and execution control responsive.
-    if (operations_.request_bottom_panel_redraw) {
-      operations_.request_bottom_panel_redraw();
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
     }
   });
   // Re-evaluate watch expressions in the (now focused) frame's scope. Runs on
@@ -570,21 +578,45 @@ void DebugService::FocusFrame(int frame_id) {
 }
 
 void DebugService::ToggleVariableRow(std::size_t row) {
-  const int reference = CurrentProjectState().debug_variables.ToggleRow(row);
-  if (reference > 0) {
-    if (DebugSession* session = CurrentDapManager().ActiveSession(); session != nullptr) {
-      session->RequestVariables(
-          reference, [this, reference](std::vector<dap_protocol::DapVariable> variables) {
-            CurrentProjectState().debug_variables.ApplyVariables(reference, variables);
-            if (operations_.request_bottom_panel_redraw) {
-              operations_.request_bottom_panel_redraw();
-            }
-          });
-    }
+  const DebugValueTree::ChildFetch fetch = CurrentProjectState().debug_variables.ToggleRow(row);
+  util::DebugTrace::Note("locals", "toggle-row ref", static_cast<long long>(fetch.reference),
+                         static_cast<long long>(fetch.start));
+  if (fetch.reference > 0) {
+    FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
   }
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
+}
+
+void DebugService::FetchVariablesPage(int reference, int start, int count) {
+  if (reference <= 0) {
+    return;
+  }
+  DebugSession* session = CurrentDapManager().ActiveSession();
+  if (session == nullptr) {
+    // No live session to service the fetch: clear the loading state so the row
+    // does not spin forever.
+    CurrentProjectState().debug_variables.MarkChildrenError(reference);
+    return;
+  }
+  session->RequestVariables(
+      reference, start, count,
+      [this, reference, start](bool ok, std::vector<dap_protocol::DapVariable> variables) {
+        if (ok) {
+          // Restoring expansion can cascade: applying a page may re-expand
+          // descendants the user had open, whose own pages we fetch in turn.
+          for (const DebugValueTree::ChildFetch& fetch :
+               CurrentProjectState().debug_variables.ApplyVariables(reference, variables, start)) {
+            FetchVariablesPage(fetch.reference, fetch.start, fetch.count);
+          }
+        } else {
+          CurrentProjectState().debug_variables.MarkChildrenError(reference);
+        }
+        if (operations_.request_debug_pane_redraw) {
+          operations_.request_debug_pane_redraw();
+        }
+      });
 }
 
 void DebugService::BeginVariableEdit(std::size_t row) {
@@ -595,8 +627,8 @@ void DebugService::BeginVariableEdit(std::size_t row) {
     return;
   }
   if (CurrentProjectState().debug_variables.BeginEdit(row) &&
-      operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+      operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -615,22 +647,22 @@ void DebugService::CommitVariableEdit() {
           if (ok) {
             CurrentProjectState().debug_variables.ApplySetVariable(node_id, result);
           }
-          if (operations_.request_bottom_panel_redraw) {
-            operations_.request_bottom_panel_redraw();
+          if (operations_.request_debug_pane_redraw) {
+            operations_.request_debug_pane_redraw();
           }
         });
   }
   // Leave edit mode immediately; the row's value updates when the response lands.
   model.CancelEdit();
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
 void DebugService::CancelVariableEdit() {
   CurrentProjectState().debug_variables.CancelEdit();
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -673,8 +705,8 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
       [this, session_id, label](bool ok, dap_protocol::DapEvaluateResult result) {
         if (!ok) {
           AppendConsoleLine(session_id, label, "error: could not evaluate expression");
-          if (operations_.request_bottom_panel_redraw) {
-            operations_.request_bottom_panel_redraw();
+          if (operations_.request_debug_pane_redraw) {
+            operations_.request_debug_pane_redraw();
           }
           return;
         }
@@ -691,31 +723,37 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
           if (DebugSession* child_session = CurrentDapManager().SessionById(session_id);
               child_session != nullptr) {
             child_session->RequestVariables(
-                result.variables_reference,
-                [this, session_id, label](std::vector<dap_protocol::DapVariable> variables) {
+                result.variables_reference, 0, DebugValueTree::kChildPageSize,
+                [this, session_id, label](bool ok, std::vector<dap_protocol::DapVariable> variables) {
+                  if (!ok) {
+                    return;
+                  }
                   for (const dap_protocol::DapVariable& variable : variables) {
                     AppendConsoleLine(session_id, label, "    " + variable.name + ": " +
                                                              variable.value);
                   }
-                  if (operations_.request_bottom_panel_redraw) {
-                    operations_.request_bottom_panel_redraw();
+                  if (operations_.request_debug_pane_redraw) {
+                    operations_.request_debug_pane_redraw();
                   }
                 });
           }
         }
-        if (operations_.request_bottom_panel_redraw) {
-          operations_.request_bottom_panel_redraw();
+        if (operations_.request_debug_pane_redraw) {
+          operations_.request_debug_pane_redraw();
         }
       });
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
   return true;
 }
 
 int DebugService::FocusedFrameId() const {
   const DebugStackFrameView* frame = CurrentProjectState().debug_execution.FocusedFrame();
-  return frame != nullptr ? frame->id : 0;
+  // -1 (not 0) when no frame is focused: frame id 0 is gdb's valid top frame, so a
+  // 0 here would wrongly request evaluation in a real frame. -1 means "no frame"
+  // and MakeEvaluateArguments omits frameId (global-scope evaluate while running).
+  return frame != nullptr ? frame->id : -1;
 }
 
 void DebugService::EvaluateWatches(int frame_id) {
@@ -733,14 +771,14 @@ void DebugService::EvaluateWatches(int frame_id) {
             if (ok) {
               CurrentProjectState().debug_watch.ApplyEvaluate(i, result);
             }
-            if (operations_.request_bottom_panel_redraw) {
-              operations_.request_bottom_panel_redraw();
+            if (operations_.request_debug_pane_redraw) {
+              operations_.request_debug_pane_redraw();
             }
           });
     }
   }
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -761,20 +799,30 @@ void DebugService::RemoveWatch(std::size_t index) {
 }
 
 void DebugService::ToggleWatchRow(std::size_t row) {
-  const int reference = CurrentProjectState().debug_watch.ToggleRow(row);
-  if (reference > 0) {
-    if (DebugSession* session = CurrentDapManager().ActiveSession(); session != nullptr) {
+  const DebugValueTree::ChildFetch fetch = CurrentProjectState().debug_watch.ToggleRow(row);
+  if (fetch.reference > 0) {
+    DebugSession* session = CurrentDapManager().ActiveSession();
+    if (session != nullptr) {
+      const int reference = fetch.reference;
+      const int start = fetch.start;
       session->RequestVariables(
-          reference, [this, reference](std::vector<dap_protocol::DapVariable> variables) {
-            CurrentProjectState().debug_watch.ApplyVariables(reference, variables);
-            if (operations_.request_bottom_panel_redraw) {
-              operations_.request_bottom_panel_redraw();
+          reference, start, fetch.count,
+          [this, reference, start](bool ok, std::vector<dap_protocol::DapVariable> variables) {
+            if (ok) {
+              CurrentProjectState().debug_watch.ApplyVariables(reference, variables, start);
+            } else {
+              CurrentProjectState().debug_watch.MarkChildrenError(reference);
+            }
+            if (operations_.request_debug_pane_redraw) {
+              operations_.request_debug_pane_redraw();
             }
           });
+    } else {
+      CurrentProjectState().debug_watch.MarkChildrenError(fetch.reference);
     }
   }
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -783,8 +831,8 @@ void DebugService::BeginWatchEdit(std::size_t row) {
   if (session == nullptr || !session->Client().Capabilities().supports_set_variable) {
     return;
   }
-  if (CurrentProjectState().debug_watch.BeginEdit(row) && operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (CurrentProjectState().debug_watch.BeginEdit(row) && operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -800,21 +848,21 @@ void DebugService::CommitWatchEdit() {
                            if (ok) {
                              CurrentProjectState().debug_watch.ApplySetVariable(node_id, result);
                            }
-                           if (operations_.request_bottom_panel_redraw) {
-                             operations_.request_bottom_panel_redraw();
+                           if (operations_.request_debug_pane_redraw) {
+                             operations_.request_debug_pane_redraw();
                            }
                          });
   }
   model.CancelEdit();
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
 void DebugService::CancelWatchEdit() {
   CurrentProjectState().debug_watch.CancelEdit();
-  if (operations_.request_bottom_panel_redraw) {
-    operations_.request_bottom_panel_redraw();
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
   }
 }
 
@@ -828,17 +876,29 @@ void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
   // ask for a given (frame, expression) issues a request. Pending/Resolved/Failed
   // for the same key are all served (or suppressed) without re-issuing.
   if (hover.Classify(frame_id, expression) != DebugHoverModel::Lookup::Miss) {
+    util::DebugTrace::Note("hover", "evaluate suppressed (not a miss) expr", expression,
+                           static_cast<long long>(frame_id));
     return;
   }
+  util::DebugTrace::Note("hover", "evaluate begin expr", expression,
+                         static_cast<long long>(frame_id));
   const std::uint64_t generation = hover.Begin(frame_id, expression);
   session->RequestEvaluate(
       expression, frame_id, "hover",
       [this, generation](bool ok, dap_protocol::DapEvaluateResult result) {
         DebugHoverModel& model = CurrentProjectState().debug_hover;
         if (ok) {
+          util::DebugTrace::Note("hover", "evaluate resolved value", result.result);
           model.Resolve(generation, std::move(result.result), std::move(result.type));
         } else {
+          util::DebugTrace::Note("hover", "evaluate FAILED");
           model.Fail(generation);
+        }
+        // Queue a hover refresh first so the redraw re-resolves the now-cached
+        // value into an active popup (mirrors ClearDiagnosticsForPath). Without
+        // this the value sits in the cache and the tooltip never appears.
+        if (operations_.queue_editor_hover_refresh) {
+          operations_.queue_editor_hover_refresh();
         }
         if (operations_.request_editor_redraw) {
           operations_.request_editor_redraw();
@@ -849,6 +909,17 @@ void DebugService::EvaluateHover(int frame_id, const std::string& expression) {
 bool DebugService::SupportsEvaluateForHovers() const {
   const DebugSession* session = CurrentDapManager().ActiveSession();
   return session != nullptr && session->Client().Capabilities().supports_evaluate_for_hovers;
+}
+
+bool DebugService::HasInFlightDapWork() const {
+  // Read the manager directly (no EnsureProjectDapManager) so this query, called
+  // from the idle loop, has no side effects.
+  const ProjectWorkspaceState& state = CurrentProjectState();
+  if (state.dap_manager == nullptr) {
+    return false;
+  }
+  const DebugSession* session = state.dap_manager->ActiveSession();
+  return session != nullptr && session->IsActive() && session->Client().HasPendingRequests();
 }
 
 void DebugService::ResendBreakpointsForFile(const std::filesystem::path& path) {

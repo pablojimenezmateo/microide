@@ -72,6 +72,13 @@ class ControlChannelService {
 
   // Main thread: push debug notifications to connected clients. No-ops when the
   // server is not running.
+  //
+  // A stop is reported in two phases: `OnDebugStopBegan` fires the instant the
+  // adapter halts, carrying the real reason/thread with `framesPending:true`
+  // (file/line/frames omitted); `OnDebugStopped` fires once the stack resolves,
+  // carrying the populated frames with `framesPending:false`. Agents disambiguate
+  // on the `framesPending` flag.
+  void OnDebugStopBegan(const std::string& reason, int thread_id);
   void OnDebugStopped();
   void OnDebugTerminated(int session_id);
   void OnDebugOutput(const std::string& category, const std::string& text);
@@ -93,11 +100,17 @@ class ControlChannelService {
   // stdout (when mirroring). Surfaces events even with no socket client.
   void EmitEvent(util::JsonValue event);
 
+  // (Re)write the per-instance discovery descriptor (`instances/<pid>.json`).
+  // Called at Start and again when the socket server re-binds after the socket
+  // (and descriptor) vanished mid-run. Main thread only.
+  void WriteDescriptor();
+
   WorkspaceContext* context_ = nullptr;
   Operations operations_{};
   platform::ControlSocketServer server_;
   std::uint32_t wake_event_type_ = 0;
   std::filesystem::path descriptor_path_;
+  std::filesystem::path project_root_;
   bool stdout_mirror_ = false;
 };
 

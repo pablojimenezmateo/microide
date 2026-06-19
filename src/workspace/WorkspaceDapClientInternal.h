@@ -2,6 +2,7 @@
 
 #include "workspace/DapProtocol.h"
 #include "workspace/WorkspaceDapClient.h"
+#include "util/DebugTrace.h"
 
 #include <atomic>
 #include <charconv>
@@ -27,6 +28,28 @@
 namespace microide::workspace {
 
 namespace {
+
+// A DAP request that gets no response within its deadline is failed
+// synthetically, so a wedged or silent adapter can never leave a request — and the
+// UI's loading state — pending forever. The deadline is command-aware: startup
+// requests can legitimately take many seconds (loading symbols, launching a large
+// program), while a value fetch on a paused target should be near-instant. A slow
+// value fetch is the runaway signature (gdb formatting a garbage container), so we
+// fail it fast — both to surface "<unavailable>" promptly and to bound how long
+// the adapter churns before we stop waiting on it.
+constexpr std::chrono::milliseconds kStartupRequestTimeout{30000};
+constexpr std::chrono::milliseconds kInteractiveRequestTimeout{6000};
+
+// Longer deadline only for the handshake/run-control requests that can be
+// genuinely slow; everything else (variables/evaluate/scopes/stackTrace/
+// setVariable/…) uses the short interactive deadline.
+inline std::chrono::milliseconds RequestTimeoutFor(const std::string& command) {
+  if (command == "launch" || command == "attach" || command == "initialize" ||
+      command == "configurationDone" || command == "restart") {
+    return kStartupRequestTimeout;
+  }
+  return kInteractiveRequestTimeout;
+}
 
 bool DapLifecycleTraceEnabled() {
   static const bool enabled = []() {
@@ -112,8 +135,14 @@ struct DapClient::Impl {
   bool shutdown_response_received = false;
   int shutdown_request_seq = 0;
 
+  // A registered request awaiting its response: the raw response handler plus the
+  // deadline after which the request is failed synthetically.
+  struct PendingRequest {
+    std::function<void(util::JsonValue)> callback;
+    std::chrono::steady_clock::time_point deadline;
+  };
   // Pending request callbacks keyed by request seq, guarded by mutex.
-  std::unordered_map<int, std::function<void(util::JsonValue)>> pending_requests;
+  std::unordered_map<int, PendingRequest> pending_requests;
   // Ready callbacks drained on the main thread, guarded by mutex.
   std::vector<std::function<void()>> ready_callbacks;
 
@@ -144,6 +173,9 @@ struct DapClient::Impl {
   }
 
   std::string SerializeMessage(const util::JsonValue& msg) const {
+    // Single funnel for every outbound message (requests, the initialize /
+    // disconnect handshake, and reverse-request responses).
+    util::DebugTrace::Message("send", msg);
     const std::string json = util::SerializeJson(msg);
     std::string framed;
     framed.reserve(32 + json.size());
@@ -396,6 +428,11 @@ struct DapClient::Impl {
     while (!stop_io.load(std::memory_order_acquire)) {
       ParseBufferedMessages();
       DrainOutbound();
+      // WaitStdoutReadable wakes at least once per second, so this sweeps timed-out
+      // requests within ~1s even when the adapter sends nothing.
+      if (!shutting_down.load(std::memory_order_acquire)) {
+        FailPendingRequests(/*only_expired=*/true);
+      }
       if (stop_io.load(std::memory_order_acquire)) {
         break;
       }
@@ -412,10 +449,17 @@ struct DapClient::Impl {
     }
     ParseBufferedMessages();
     DrainOutbound();
+    // The adapter is gone (EOF / exited / killed by the memory cap): fail any
+    // still-pending requests so the UI clears instead of waiting forever.
+    if (!shutting_down.load(std::memory_order_acquire)) {
+      FailPendingRequests(/*only_expired=*/false);
+    }
   }
 
   // --- dispatch -------------------------------------------------------------
   void DispatchMessage(util::JsonValue msg) {
+    // Single funnel for every inbound message (responses, events, reverse requests).
+    util::DebugTrace::Message("recv", msg);
     const std::string type = msg["type"].IsString() ? msg["type"].AsString() : "";
     if (type == "response") {
       HandleResponse(std::move(msg));
@@ -441,7 +485,7 @@ struct DapClient::Impl {
       std::lock_guard lock(mutex);
       auto it = pending_requests.find(request_seq);
       if (it != pending_requests.end()) {
-        cb = std::move(it->second);
+        cb = std::move(it->second.callback);
         pending_requests.erase(it);
       }
     }
@@ -480,16 +524,52 @@ struct DapClient::Impl {
         util::JsonValue(nullptr)));
   }
 
-  int RegisterPendingRequest(std::function<void(util::JsonValue)> cb) {
+  int RegisterPendingRequest(std::function<void(util::JsonValue)> cb,
+                             std::chrono::milliseconds timeout) {
     std::lock_guard lock(mutex);
     const int seq = next_seq++;
-    pending_requests[seq] = std::move(cb);
+    pending_requests[seq] = PendingRequest{
+        .callback = std::move(cb),
+        .deadline = std::chrono::steady_clock::now() + timeout,
+    };
     return seq;
   }
 
   void RemovePendingRequest(int seq) {
     std::lock_guard lock(mutex);
     pending_requests.erase(seq);
+  }
+
+  // Synthesize failure responses for pending requests so a non-responding adapter
+  // never strands a request (and the UI's loading state). `only_expired` fails
+  // just those past their deadline (the periodic timeout sweep); otherwise fails
+  // all (the adapter has exited and no response can ever arrive). Runs on the I/O
+  // thread; pushes the handlers onto the main-thread ready queue and wakes it.
+  void FailPendingRequests(bool only_expired) {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lock(mutex);
+    bool any = false;
+    for (auto it = pending_requests.begin(); it != pending_requests.end();) {
+      if (only_expired && now < it->second.deadline) {
+        ++it;
+        continue;
+      }
+      // The runaway/<unavailable> smoking gun: correlate this seq with the
+      // matching outbound "send" line to see which request the adapter dropped.
+      util::DebugTrace::Note("dap", only_expired ? "request-timeout seq" : "adapter-gone seq",
+                             static_cast<long long>(it->first));
+      auto cb = std::move(it->second.callback);
+      it = pending_requests.erase(it);
+      util::JsonValue envelope = dap_protocol::MakeResponse(
+          0, 0, std::string{}, false, "debug adapter did not respond", util::JsonValue(nullptr));
+      ready_callbacks.push_back([cb = std::move(cb), envelope = std::move(envelope)]() mutable {
+        cb(std::move(envelope));
+      });
+      any = true;
+    }
+    if (any) {
+      PushWakeEvent();
+    }
   }
 
   // Register the response handler, send the request, and on send failure clean up
@@ -501,7 +581,7 @@ struct DapClient::Impl {
       return DispatchRequestStub(command, std::move(arguments), std::move(response_handler),
                                  std::move(on_send_failure));
     }
-    const int seq = RegisterPendingRequest(std::move(response_handler));
+    const int seq = RegisterPendingRequest(std::move(response_handler), RequestTimeoutFor(command));
     if (!SendMessageAfterInitialize(dap_protocol::MakeRequest(seq, command, arguments))) {
       RemovePendingRequest(seq);
       on_send_failure();

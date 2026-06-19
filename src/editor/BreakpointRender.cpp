@@ -4,14 +4,17 @@
 #include <cmath>
 #include <vector>
 
+#include "editor/GutterMetrics.h"
+
 namespace microide::editor {
 
 SDL_FRect BreakpointGutterMarkerRect(float gutter_x, float y, float gutter_width,
                                      float line_height) {
-  // Diameter scales with line height but stays in a tidy range; the dot sits a
-  // few px in from the gutter's left edge and centers vertically on the row.
-  const float diameter = std::clamp(line_height * 0.55f, 6.0f, 12.0f);
-  const float x = gutter_x + 4.0f;
+  // Diameter scales with line height but stays within the reserved marker strip;
+  // the dot sits a few px in from the gutter's left edge, left of the line numbers
+  // (which begin at kGutterLineNumberInset), and centers vertically on the row.
+  const float diameter = std::clamp(line_height * 0.55f, 6.0f, kGutterMarkerMaxExtent);
+  const float x = gutter_x + kGutterMarkerInset;
   const float top = y + std::max(0.0f, (line_height - diameter) * 0.5f);
   return SDL_FRect{x, top, diameter, diameter};
 }

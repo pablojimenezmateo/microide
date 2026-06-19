@@ -48,6 +48,12 @@ class DebugSession {
     // Every adapter event verbatim, for phases that react to stopped/continued/
     // breakpoint/thread events. Delivered after the built-in lifecycle handling.
     std::function<void(const std::string& event, const util::JsonValue& body)> on_event;
+    // Fired the instant a `stopped` event arrives, carrying the real reason +
+    // thread straight from the DAP event — before the async `stackTrace` resolves
+    // frames. Lets push-based observers (the control channel) report the halt
+    // within ms even while a slow adapter (e.g. gdb indexing DWARF) resolves the
+    // stack. The populated follow-up arrives via `on_stopped`.
+    std::function<void(const dap_protocol::DapStoppedEvent& stop)> on_stop_began;
     // Fired after a `stopped` event's `stackTrace` response resolves: the host
     // gets the stop metadata plus the focused thread's frames (top frame first)
     // so it can drive the execution-line highlight and Call Stack panel.
@@ -147,9 +153,14 @@ class DebugSession {
   // Fetch the scopes for one focused frame.
   void RequestScopes(int frame_id,
                      std::function<void(std::vector<dap_protocol::DapScope>)> callback);
-  // Fetch the children of a structured variable/scope (variablesReference > 0).
-  void RequestVariables(int variables_reference,
-                        std::function<void(std::vector<dap_protocol::DapVariable>)> callback);
+  // Fetch a bounded page of children of a structured variable/scope
+  // (variablesReference > 0): `count` children starting at `start` (DAP variable
+  // paging). Bounding the request is what prevents the adapter from enumerating a
+  // garbage / billions-long container in one shot. The callback's `ok` is false on
+  // an adapter error / send failure / not-yet-initialized so the caller can clear
+  // the loading state instead of waiting forever.
+  void RequestVariables(int variables_reference, int start, int count,
+                        std::function<void(bool ok, std::vector<dap_protocol::DapVariable>)> callback);
   // Mutate a variable's value. Gated on `supportsSetVariable`; when unsupported the
   // callback fires immediately with ok=false. On success the adapter echoes the
   // (possibly normalized) value/type/reference.
@@ -192,6 +203,10 @@ class DebugSession {
   void SendBreakpointsForFile(const editor::BreakpointStore::FileBreakpoints& file);
   void SendExceptionFilters();
   void SendConfigurationDone();
+  // Send gdb-specific value-formatting ceilings (print elements/repeats,
+  // max-value-size) so an uninitialized/corrupt container cannot drive gdb into
+  // unbounded formatting. No-op for non-gdb adapters. Best-effort (errors ignored).
+  void SendDebuggerValueLimits();
   void SetState(State state);
 
   std::unique_ptr<DapClient> client_;
@@ -201,6 +216,9 @@ class DebugSession {
   std::string last_error_;
   bool launch_sent_ = false;
   bool configuration_done_sent_ = false;
+  // True when the adapter command looks like gdb (`gdb --interpreter=dap`); gates
+  // the gdb-specific value-formatting limits.
+  bool is_gdb_adapter_ = false;
   // Thread id from the most recent `stopped` event; the target for stackTrace
   // and continue/step requests.
   int stopped_thread_id_ = 0;

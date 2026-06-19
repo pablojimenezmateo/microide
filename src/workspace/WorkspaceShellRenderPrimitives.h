@@ -346,6 +346,157 @@ inline void DrawArrowGlyph(SDL_Renderer* renderer,
   }
 }
 
+// --- Debug-toolbar control glyphs ----------------------------------------------
+// Simple line/scanline glyphs (matching the existing gutter/arrow style) for the
+// floating debug control bar. Each is centered in its button rect. (DrawGlyphDot
+// is defined further down; forward-declared here so these can use it.)
+
+inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color color);
+
+// Right-pointing filled triangle (Continue / play).
+inline void DrawPlayGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  const float base_x = std::floor(rect.x + rect.w * 0.38f);
+  const float tip_x = std::floor(rect.x + rect.w * 0.66f);
+  const float half_h = std::floor(rect.h * 0.22f);
+  const int rows = static_cast<int>(half_h * 2.0f);
+  for (int i = 0; i <= rows; ++i) {
+    const float row_y = cy - half_h + static_cast<float>(i);
+    const float t = half_h > 0.0f ? std::fabs(row_y - cy) / half_h : 0.0f;
+    const float right = tip_x - (tip_x - base_x) * t;
+    if (right <= base_x) {
+      continue;
+    }
+    const SDL_FRect span{base_x, row_y, right - base_x, 1.0f};
+    SDL_RenderFillRect(renderer, &span);
+  }
+}
+
+// Two vertical bars (Pause).
+inline void DrawPauseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  const float bar_h = std::floor(rect.h * 0.34f);
+  const SDL_FRect left{cx - 4.0f, cy - bar_h * 0.5f, 2.0f, bar_h};
+  const SDL_FRect right{cx + 2.0f, cy - bar_h * 0.5f, 2.0f, bar_h};
+  SDL_RenderFillRect(renderer, &left);
+  SDL_RenderFillRect(renderer, &right);
+}
+
+// Filled square (Stop / terminate).
+inline void DrawStopGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float side = std::floor(rect.h * 0.34f);
+  const SDL_FRect square{std::floor(rect.x + (rect.w - side) * 0.5f),
+                         std::floor(rect.y + (rect.h - side) * 0.5f), side, side};
+  SDL_RenderFillRect(renderer, &square);
+}
+
+// Arc arrow over a dot (Step Over).
+inline void DrawStepOverGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.46f);
+  const float r = std::floor(rect.w * 0.22f);
+  constexpr float kPi = 3.14159265f;
+  const int segs = 10;
+  float prev_x = 0.0f;
+  float prev_y = 0.0f;
+  bool have_prev = false;
+  for (int i = 0; i <= segs; ++i) {
+    const float ang = kPi * static_cast<float>(i) / static_cast<float>(segs);
+    const float px = cx - r * std::cos(ang);
+    const float py = cy - r * std::sin(ang);
+    if (have_prev) {
+      SDL_RenderLine(renderer, prev_x, prev_y, px, py);
+    }
+    prev_x = px;
+    prev_y = py;
+    have_prev = true;
+  }
+  // Arrowhead at the right end, pointing down.
+  SDL_RenderLine(renderer, cx + r - 3.0f, cy - 3.0f, cx + r, cy);
+  SDL_RenderLine(renderer, cx + r + 3.0f, cy - 3.0f, cx + r, cy);
+  DrawGlyphDot(renderer, cx, cy + r + 3.0f, color);
+}
+
+// Down arrow into a dot (Step Into).
+inline void DrawStepIntoGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float top = std::floor(rect.y + rect.h * 0.30f);
+  const float tip = std::floor(rect.y + rect.h * 0.58f);
+  SDL_RenderLine(renderer, cx, top, cx, tip);
+  SDL_RenderLine(renderer, cx - 3.0f, tip - 3.0f, cx, tip);
+  SDL_RenderLine(renderer, cx + 3.0f, tip - 3.0f, cx, tip);
+  DrawGlyphDot(renderer, cx, std::floor(rect.y + rect.h * 0.76f), color);
+}
+
+// Up arrow out of a dot (Step Out).
+inline void DrawStepOutGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float bottom = std::floor(rect.y + rect.h * 0.56f);
+  const float tip = std::floor(rect.y + rect.h * 0.28f);
+  SDL_RenderLine(renderer, cx, bottom, cx, tip);
+  SDL_RenderLine(renderer, cx - 3.0f, tip + 3.0f, cx, tip);
+  SDL_RenderLine(renderer, cx + 3.0f, tip + 3.0f, cx, tip);
+  DrawGlyphDot(renderer, cx, std::floor(rect.y + rect.h * 0.76f), color);
+}
+
+// Open circular arrow (Restart).
+inline void DrawRestartGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  const float r = std::floor(rect.h * 0.26f);
+  const int segs = 16;
+  const float start = -0.4f;
+  const float end = 5.4f;
+  float prev_x = 0.0f;
+  float prev_y = 0.0f;
+  bool have_prev = false;
+  for (int i = 0; i <= segs; ++i) {
+    const float ang = start + (end - start) * static_cast<float>(i) / static_cast<float>(segs);
+    const float px = cx + r * std::cos(ang);
+    const float py = cy + r * std::sin(ang);
+    if (have_prev) {
+      SDL_RenderLine(renderer, prev_x, prev_y, px, py);
+    }
+    prev_x = px;
+    prev_y = py;
+    have_prev = true;
+  }
+  // Arrowhead at the arc's start, hinting the rotation direction.
+  const float sx = cx + r * std::cos(start);
+  const float sy = cy + r * std::sin(start);
+  SDL_RenderLine(renderer, sx, sy, sx - 4.0f, sy - 1.0f);
+  SDL_RenderLine(renderer, sx, sy, sx - 1.0f, sy - 4.0f);
+}
+
 inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;

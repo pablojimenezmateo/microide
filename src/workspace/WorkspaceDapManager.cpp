@@ -6,6 +6,18 @@ namespace microide::workspace {
 
 namespace {
 
+// Host-imposed virtual-address-space ceiling for every debug adapter (and, by
+// inheritance, the debuggee it spawns). A debug adapter can be driven into
+// unbounded allocation — notably gdb formatting an uninitialized STL container
+// whose garbage size field reads as billions of elements — which would otherwise
+// swap the whole machine to a freeze. Capping RLIMIT_AS turns that into a clean
+// ENOMEM on the adapter instead of a host lockup. Sized to comfortably fit normal
+// debugging (gdb + a loaded debuginfo index) yet small enough that a pathological
+// runaway ENOMEMs within ~1 s instead of thrashing the host toward swap — a higher
+// ceiling (we shipped 8 GiB) lets a runaway climb for many seconds first. Applied
+// only when the contributed adapter did not already set a tighter limit.
+constexpr long kDefaultAdapterAddressSpaceBytes = 3L * 1024 * 1024 * 1024 / 2;  // 1.5 GiB
+
 std::string JoinCommand(const std::vector<std::string>& command) {
   std::string joined;
   for (std::size_t i = 0; i < command.size(); ++i) {
@@ -95,7 +107,14 @@ int DapManager::StartSession(const LaunchConfig& config,
   sessions_.push_back(std::move(session_entry));
   active_session_id_ = id;
   DebugSession& session = *sessions_.back().session;
-  if (!session.Start(entry.command, config, cwd, entry.sandbox)) {
+  // Force a memory ceiling on the adapter so a runaway (e.g. gdb formatting a
+  // garbage container) fails with ENOMEM instead of freezing the host. Respect a
+  // tighter contributed limit if one was set.
+  platform::SubprocessSandbox spawn_sandbox = entry.sandbox;
+  if (spawn_sandbox.limits.address_space_bytes <= 0) {
+    spawn_sandbox.limits.address_space_bytes = kDefaultAdapterAddressSpaceBytes;
+  }
+  if (!session.Start(entry.command, config, cwd, spawn_sandbox)) {
     last_error_ = session.LastError();
     if (last_error_.empty()) {
       last_error_ = "debug adapter failed to start";

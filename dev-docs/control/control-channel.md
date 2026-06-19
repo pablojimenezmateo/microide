@@ -14,7 +14,10 @@ vocabulary, not a parallel control path.
   ForceStartControlChannel` → `ControlChannelService::SetStdoutMirror`). This is
   the entry point for an LLM/agent: it can drive the instance and observe results
   from one stdout stream, with or without ever opening the socket. The real window
-  stays running and fully interactive.
+  stays running and fully interactive. Because `--control` owns the channel
+  lifecycle for the whole run, a live settings change (e.g. a spec's `set-setting
+  debug.enabled true`) never tears the socket down — `MaybeStartControlChannel`
+  early-returns when `control_stdout` is set, so the advertised socket persists.
 - **Live channel** — a per-instance AF_UNIX socket. Gated on the
   `control.enabled` setting (off by default); toggling it on starts the listener
   immediately (no restart), because the SDL wake event is always registered and
@@ -64,8 +67,9 @@ The stdout JSONL stream, in order:
 1. `{"event":"ready","pid":..,"socket":"..","project_root":".."}` — handshake.
 2. one `{"applied":"<command>","ok":true|false,"error":".."}` per spec entry
    (settings, auto-enable, breakpoints, opens, launch, raw commands).
-3. `{"event":"output",...}` / `{"event":"stopped",file,line,reason,frames}` /
-   `{"event":"terminated",...}` as the session runs.
+3. `{"event":"output",...}` / `{"event":"stopped",...}` /
+   `{"event":"terminated",...}` as the session runs. Each stop emits the `stopped`
+   event **twice** (see below).
 
 Discover names without reading plugin source by connecting to the socket
 (`socat - UNIX-CONNECT:<socket>`) and sending `{"query":"launch-configs"}` or
@@ -115,7 +119,8 @@ Newline-delimited JSON, one object per line.
 | request (query)   | `{"id":2,"query":"debug-state"}` |
 | response (command)| `{"id":1,"ok":true,"feedback":"..."}` / `{"id":1,"ok":false,"error":"..."}` |
 | response (query)  | `{"id":2,"ok":true,"result":{...}}` |
-| event             | `{"event":"stopped","file":"x.py","line":42,"reason":"breakpoint","frames":[...]}` |
+| event (stop began)| `{"event":"stopped","reason":"breakpoint","threadId":1,"framesPending":true}` |
+| event (stop resolved)| `{"event":"stopped","file":"x.py","line":42,"reason":"breakpoint","threadId":1,"frames":[...],"framesPending":false}` |
 | ready (stdout)    | `{"event":"ready","pid":..,"socket":"..","project_root":".."}` |
 | applied (stdout)  | `{"applied":"breakpoint-set ..","ok":true}` |
 
@@ -124,6 +129,14 @@ Query verbs: `debug-state`, `breakpoints`, `tabs`, `projects`, `status`,
 Events: `stopped`, `terminated`, `output`. With `--control` (stdout mirror on),
 events surface even with zero socket clients; responses and `applied` lines are
 mirrored too. `ready`/`applied` lines are stdout-only.
+
+**Two-phase `stopped`.** Every stop emits the `stopped` event twice, disambiguated
+by `framesPending`. The first lands the instant the adapter halts, carrying the
+real `reason`/`threadId` with `framesPending:true` (no `file`/`line`/`frames`) — so
+an agent learns it stopped within ms even while a slow adapter (e.g. gdb indexing
+DWARF for minutes) resolves the call stack. The second lands once the stack
+resolves, carrying `file`/`line`/`frames` with `framesPending:false`. Only the
+active session broadcasts; a background-session stop does not emit either phase.
 
 Line numbers are 1-based on every developer-facing surface (commands, spec,
 events, queries); the single 1-based→0-based conversion lives in the

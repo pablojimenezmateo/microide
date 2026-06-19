@@ -6,11 +6,14 @@
 namespace microide::workspace {
 
 std::span<const DebugPaneSurfaceSpec> BuiltinDebugPaneSurfaceSpecs() {
+  // Display order: Variables first (the most-used surface while stepping), then
+  // Breakpoints, Watch, Call Stack. The order is purely presentational; the
+  // DebugPaneMode enum and the Ctrl+Shift+1..4 shortcuts map by mode, not index.
   static const auto kSpecs = std::to_array<DebugPaneSurfaceSpec>({
-      DebugPaneSurfaceSpec{"callstack", "Call Stack", DebugPaneMode::CallStack},
       DebugPaneSurfaceSpec{"variables", "Variables", DebugPaneMode::Variables},
-      DebugPaneSurfaceSpec{"watch", "Watch", DebugPaneMode::Watch},
       DebugPaneSurfaceSpec{"breakpoints", "Breakpoints", DebugPaneMode::Breakpoints},
+      DebugPaneSurfaceSpec{"watch", "Watch", DebugPaneMode::Watch},
+      DebugPaneSurfaceSpec{"callstack", "Call Stack", DebugPaneMode::CallStack},
   });
   return kSpecs;
 }

@@ -450,6 +450,20 @@ void WorkspaceShell::RequestBottomPanelRedraw() {
   RequestWindowRedraw();
 }
 
+void WorkspaceShell::RequestDebugPaneRedraw() {
+  // The debug surfaces (Call Stack / Variables / Watch / Breakpoints) render in the
+  // right-side dock (layout.right_pane), not the bottom panel. DAP callbacks deliver
+  // variable/stack data asynchronously, so each must invalidate the dock it actually
+  // paints into; targeting the bottom panel here would leave the right pane showing a
+  // stale "Loading…" until some unrelated redraw repainted the window.
+  if (const auto layout = CurrentWorkspaceLayout();
+      layout.has_value() && context_.current_project_state.debug_pane.visible) {
+    RequestRedrawRect(layout->right_pane);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
 void WorkspaceShell::RequestBottomPanelCommandRedraw() {
   if (const auto rect = CurrentBottomPanelCommandRedrawRect(); rect.has_value()) {
     RequestRedrawRect(*rect);
@@ -739,10 +753,22 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
 }
 
 WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
+  std::optional<Uint32> wait_ms;
   if (const auto next_delay = NextAnimationDelayMs(); next_delay.has_value()) {
+    wait_ms = std::max<Uint32>(1, *next_delay);
+  }
+  // While a debug-adapter request is in flight, poll on a short interval so the
+  // async response is applied promptly. Otherwise a fully-idle blocking wait
+  // relies solely on the cross-thread SDL wake to deliver it, which can defer the
+  // scopes/variables/evaluate result by seconds and makes expansion feel frozen.
+  if (debug_service_.HasInFlightDapWork()) {
+    constexpr Uint32 kDapPollMs = 16;
+    wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
+  }
+  if (wait_ms.has_value()) {
     return IdleWaitState{
         .hint = IdleHint::CaretOnly,
-        .caret_remaining_ms = std::max<Uint32>(1, *next_delay),
+        .caret_remaining_ms = *wait_ms,
     };
   }
 

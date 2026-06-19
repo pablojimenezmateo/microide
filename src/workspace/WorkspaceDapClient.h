@@ -64,6 +64,12 @@ class DapClient {
   // Call from the main thread each frame to dispatch pending callbacks/events.
   void DrainCallbacks();
 
+  // True when a request is in flight (awaiting a response) or a response has
+  // arrived but not yet been drained. The idle loop uses this to poll on a short
+  // interval so an async response is delivered promptly even when otherwise fully
+  // idle (a blocking wait would otherwise rely solely on a cross-thread wake).
+  bool HasPendingRequests() const;
+
   // Send a DAP request. `arguments` is forwarded verbatim (Null to omit). The
   // response is delivered to `callback` on the main thread. Requests sent before
   // the initialize response are deferred and flushed once initialized. Returns

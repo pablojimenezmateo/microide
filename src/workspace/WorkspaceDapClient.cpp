@@ -79,6 +79,11 @@ void DapClient::DrainCallbacks() {
   }
 }
 
+bool DapClient::HasPendingRequests() const {
+  std::lock_guard lock(impl_->mutex);
+  return !impl_->pending_requests.empty() || !impl_->ready_callbacks.empty();
+}
+
 bool DapClient::SendRequestAsync(const std::string& command, util::JsonValue arguments,
                                  ResponseCallback callback) {
   if (!callback) {

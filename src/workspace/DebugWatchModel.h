@@ -47,11 +47,12 @@ class DebugWatchModel {
 
   // Tree pass-throughs (lazy expand + child setVariable edit reuse the shared
   // DebugValueTree verbatim).
-  int ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
+  DebugValueTree::ChildFetch ToggleRow(std::size_t row_index) { return tree_.ToggleRow(row_index); }
   void ApplyVariables(int variables_reference,
-                      const std::vector<dap_protocol::DapVariable>& variables) {
-    tree_.ApplyVariables(variables_reference, variables);
+                      const std::vector<dap_protocol::DapVariable>& variables, int start) {
+    tree_.ApplyVariables(variables_reference, variables, start);
   }
+  void MarkChildrenError(int variables_reference) { tree_.MarkChildrenError(variables_reference); }
   void ApplySetVariable(std::uint32_t node_id, const dap_protocol::DapSetVariableResult& result) {
     tree_.ApplySetVariable(node_id, result);
   }

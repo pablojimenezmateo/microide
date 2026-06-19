@@ -6,6 +6,9 @@
     return *shell.context_.project_catalog.entries.at(index);
   }
   static void ConsumeLspCallbacks(WorkspaceShell& shell) { shell.ConsumeLspCallbacks(); }
+  static bool IsControlChannelRunning(const WorkspaceShell& shell) {
+    return shell.control_channel_service_.IsRunning();
+  }
   // Launch-config picker (Phase 9): seed configs, drive the picker, and read back
   // its filtered matches / the persisted selection on confirm.
   static void SeedLaunchConfigs(WorkspaceShell& shell,

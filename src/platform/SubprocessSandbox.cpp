@@ -195,12 +195,18 @@ void ApplyNetworkBlock() {
 }  // namespace
 
 void ApplyChildSandbox(const SubprocessSandbox& sandbox) {
-  if (!sandbox.enabled) {
-    return;
-  }
+  // Resource ceilings are independent of the filesystem/network confinement: a
+  // memory/CPU cap is a safety limit we want even when the child is otherwise
+  // unconfined (e.g. a debug adapter, which must keep writing its debuginfo index
+  // cache to ~/.cache and so cannot run under the Landlock write ruleset). Limits
+  // default to 0 (= inherit the parent's), so this is a no-op unless a caller set
+  // one.
 #if defined(__unix__) || defined(__APPLE__)
   ApplyResourceLimits(sandbox.limits);
 #endif
+  if (!sandbox.enabled) {
+    return;
+  }
 #if defined(MICROIDE_HAS_LANDLOCK)
   ApplyLandlock(sandbox.read_roots, sandbox.write_roots);
 #endif

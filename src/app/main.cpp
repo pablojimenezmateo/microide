@@ -2,6 +2,7 @@
 #include "app/Application.h"
 #include "persistence/PersistedRecordDump.h"
 #include "platform/HostPlatform.h"
+#include "util/DebugTrace.h"
 #include "workspace/ControlChannelService.h"
 #include "workspace/ControlProtocol.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -61,6 +62,13 @@ int main(int argc, char** argv) {
   }
   if (parsed.exit_code != 0) {
     return parsed.exit_code;
+  }
+
+  // Enable the DAP/debug tracer before any window or debug session exists so the
+  // initialize handshake is captured from the very first message.
+  if (parsed.options.dap_log_path.has_value()) {
+    microide::util::DebugTrace::EnableToFile(*parsed.options.dap_log_path);
+    std::cerr << "DAP trace \xE2\x86\x92 " << parsed.options.dap_log_path->string() << '\n';
   }
 
   microide::app::Application application(parsed.options);

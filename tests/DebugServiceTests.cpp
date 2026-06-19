@@ -27,6 +27,8 @@ using microide::util::JsonValue;
 using microide::workspace::DapManager;
 using microide::workspace::DebugSession;
 using microide::workspace::DebugHoverModel;
+using microide::workspace::DebugValueKind;
+using microide::workspace::DebugValueTree;
 using microide::workspace::DebugVariablesModel;
 using microide::workspace::DebugWatchModel;
 using microide::workspace::LaunchConfig;
@@ -193,6 +195,13 @@ while True:
         args = msg.get("arguments", {})
         # Echo the expression + frame so the test can assert both reached the wire.
         expr = args.get("expression", "")
+        # Surface gdb value-formatting limit commands (and whether a frameId rode
+        # along) so a test can assert they were sent with the safe values and with
+        # no frameId (a present frameId:0 pre-launch makes gdb error).
+        if expr.startswith("set "):
+            event("output", {"category": "stdout",
+                             "output": "limit:" + expr + "|frameId=" +
+                                       str(args.get("frameId", "none")) + "\n"})
         value = expr + "@" + str(args.get("frameId", 0))
         # "obj" yields a structured result (variablesReference 1001) so the REPL can
         # expand one level via a follow-up variables request; everything else is a leaf.
@@ -226,6 +235,14 @@ while True:
 std::vector<std::string> MockAdapterCommand(const std::filesystem::path& server_path,
                                             const std::string& mode) {
   return {"python3", server_path.string(), mode};
+}
+
+// Same mock, but with a trailing "gdb" token (ignored by the script, which only
+// reads argv[1]) so DebugSession flags it as a gdb adapter and emits the
+// value-formatting limit commands on `initialized`.
+std::vector<std::string> GdbFlavoredAdapterCommand(const std::filesystem::path& server_path,
+                                                   const std::string& mode) {
+  return {"python3", server_path.string(), mode, "gdb"};
 }
 
 bool PollUntil(DapManager& manager, const std::function<bool()>& predicate, int timeout_ms = 4000) {
@@ -561,13 +578,15 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
          "first scope should be an expandable Locals row");
 
   // Expand Locals → fetch its variables (x scalar, obj structured).
-  const int locals_ref = model.ToggleRow(0);
+  const int locals_ref = model.ToggleRow(0).reference;
   Expect(locals_ref == 1000, "expanding Locals should request its variablesReference");
   bool locals_done = false;
-  session->RequestVariables(locals_ref, [&](std::vector<codec::DapVariable> vars) {
-    model.ApplyVariables(locals_ref, vars);
-    locals_done = true;
-  });
+  session->RequestVariables(locals_ref, 0, DebugValueTree::kChildPageSize,
+                            [&](bool ok, std::vector<codec::DapVariable> vars) {
+                              (void)ok;
+                              model.ApplyVariables(locals_ref, vars, 0);
+                              locals_done = true;
+                            });
   Expect(PollUntil(manager, [&]() { return locals_done; }), "Locals variables should resolve");
   Expect(model.Rows().size() == 4, "Locals + x + obj + Globals should flatten to four rows");
   Expect(model.Rows()[1].display_name == "x" && model.Rows()[1].depth == 1 &&
@@ -577,18 +596,20 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
          "obj should be an expandable child");
 
   // Expand obj → nested child at depth 2; collapsing removes it.
-  const int obj_ref = model.ToggleRow(2);
+  const int obj_ref = model.ToggleRow(2).reference;
   Expect(obj_ref == 1001, "expanding obj should request its variablesReference");
   bool obj_done = false;
-  session->RequestVariables(obj_ref, [&](std::vector<codec::DapVariable> vars) {
-    model.ApplyVariables(obj_ref, vars);
-    obj_done = true;
-  });
+  session->RequestVariables(obj_ref, 0, DebugValueTree::kChildPageSize,
+                            [&](bool ok, std::vector<codec::DapVariable> vars) {
+                              (void)ok;
+                              model.ApplyVariables(obj_ref, vars, 0);
+                              obj_done = true;
+                            });
   Expect(PollUntil(manager, [&]() { return obj_done; }), "obj variables should resolve");
   Expect(model.Rows().size() == 5 && model.Rows()[3].display_name == "field" &&
              model.Rows()[3].depth == 2,
          "obj's field should appear nested at depth 2");
-  Expect(model.ToggleRow(2) == 0 && model.Rows().size() == 4,
+  Expect(model.ToggleRow(2).reference == 0 && model.Rows().size() == 4,
          "collapsing obj should drop its children without a refetch");
 
   // setVariable on x → the adapter echoes the new value, applied authoritatively.
@@ -798,10 +819,12 @@ void TestDebugSessionReplEvaluate() {
   Expect(struct_ref == 1001, "a structured repl result carries a variablesReference to expand");
   bool children_resolved = false;
   std::vector<codec::DapVariable> children;
-  session->RequestVariables(struct_ref, [&](std::vector<codec::DapVariable> vars) {
-    children = std::move(vars);
-    children_resolved = true;
-  });
+  session->RequestVariables(struct_ref, 0, DebugValueTree::kChildPageSize,
+                            [&](bool ok, std::vector<codec::DapVariable> vars) {
+                              (void)ok;
+                              children = std::move(vars);
+                              children_resolved = true;
+                            });
   Expect(PollUntil(manager, [&]() { return children_resolved; }),
          "the follow-up variables request should resolve the structured children");
   Expect(children.size() == 1 && children[0].name == "field" && children[0].value == "7",
@@ -899,21 +922,29 @@ void TestDebugVariablesModelTreeBehavior() {
   Expect(model.Rows()[0].has_children && !model.Rows()[0].expanded && !model.Rows()[0].editable,
          "a scope row is expandable, collapsed, and not editable");
 
-  Expect(model.ToggleRow(0) == 1000, "expanding a not-loaded scope returns its reference to fetch");
-  model.ApplyVariables(1000, {
-      codec::DapVariable{.name = "x", .value = "1", .type = "int", .variables_reference = 0},
-      codec::DapVariable{.name = "obj", .value = "{...}", .type = "Obj", .variables_reference = 1001},
-  });
+  Expect(model.ToggleRow(0).reference == 1000,
+         "expanding a not-loaded scope returns its reference to fetch");
+  model.ApplyVariables(1000,
+                       {
+                           codec::DapVariable{
+                               .name = "x", .value = "1", .type = "int", .variables_reference = 0},
+                           codec::DapVariable{.name = "obj",
+                                              .value = "{...}",
+                                              .type = "Obj",
+                                              .variables_reference = 1001},
+                       },
+                       0);
   Expect(model.Rows().size() == 4, "expanded Locals interleaves its children before Globals");
   Expect(model.Rows()[1].display_name == "x" && model.Rows()[1].depth == 1,
          "child x sits at depth 1");
 
-  Expect(model.ToggleRow(2) == 1001, "expanding obj returns its reference");
-  model.ApplyVariables(1001,
-                       {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}});
+  Expect(model.ToggleRow(2).reference == 1001, "expanding obj returns its reference");
+  model.ApplyVariables(
+      1001, {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}}, 0);
   Expect(model.Rows().size() == 5 && model.Rows()[3].depth == 2, "nested field flattens at depth 2");
-  Expect(model.ToggleRow(2) == 0 && model.Rows().size() == 4, "collapse removes the subtree");
-  Expect(model.ToggleRow(2) == 0 && model.Rows().size() == 5,
+  Expect(model.ToggleRow(2).reference == 0 && model.Rows().size() == 4,
+         "collapse removes the subtree");
+  Expect(model.ToggleRow(2).reference == 0 && model.Rows().size() == 5,
          "re-expanding a loaded node does not refetch");
 
   // Inline edit targeting + setVariable application.
@@ -937,6 +968,282 @@ void TestDebugVariablesModelTreeBehavior() {
 
   model.Clear();
   Expect(model.Empty() && model.Rows().empty(), "Clear empties the tree");
+}
+
+// Value-kind classification (drives render coloring) and the synthetic
+// "loading…" placeholder shown while a node's children are in flight.
+void TestDebugVariablesValueKindAndPlaceholder() {
+  DebugVariablesModel model;
+  model.BeginFrame(1);
+  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
+  Expect(model.Rows()[0].kind == DebugValueKind::Scope, "a scope row classifies as Scope");
+
+  // Expanding before the children arrive shows exactly one placeholder child.
+  Expect(model.ToggleRow(0).reference == 1000, "expanding Locals returns its reference to fetch");
+  Expect(model.Rows().size() == 2, "an unloaded expanded scope shows one placeholder child");
+  Expect(model.Rows()[1].is_placeholder && model.Rows()[1].kind == DebugValueKind::Pending &&
+             model.Rows()[1].depth == 1 && !model.Rows()[1].has_children,
+         "the placeholder is a dim, non-expandable depth-1 row");
+
+  // The response replaces the placeholder with the real children, each classified.
+  model.ApplyVariables(
+      1000,
+      {
+          codec::DapVariable{.name = "i", .value = "42", .type = "int"},
+          codec::DapVariable{.name = "ratio", .value = "0.5", .type = "double"},
+          codec::DapVariable{.name = "label", .value = "\"hi\"", .type = "std::string"},
+          codec::DapVariable{.name = "ok", .value = "true", .type = "bool"},
+          codec::DapVariable{.name = "name", .value = "0x5555 \"a\"", .type = "const char *"},
+          codec::DapVariable{
+              .name = "pt", .value = "{...}", .type = "Point", .variables_reference = 1001},
+      },
+      0);
+  Expect(model.Rows().size() == 7, "the placeholder is replaced by the six fetched children");
+  const auto kind_of = [&](const char* name) {
+    for (const auto& row : model.Rows()) {
+      if (row.display_name == name) {
+        return row.kind;
+      }
+    }
+    return DebugValueKind::Plain;
+  };
+  Expect(kind_of("i") == DebugValueKind::Number, "an integer value classifies as Number");
+  Expect(kind_of("ratio") == DebugValueKind::Number, "a float value classifies as Number");
+  Expect(kind_of("label") == DebugValueKind::String, "a quoted value classifies as String");
+  Expect(kind_of("ok") == DebugValueKind::Boolean, "true/false classifies as Boolean");
+  Expect(kind_of("name") == DebugValueKind::Pointer, "a 0x… value classifies as Pointer");
+  Expect(kind_of("pt") == DebugValueKind::Aggregate, "a structured value classifies as Aggregate");
+
+  // A loaded, expanded node recurses to children — no placeholder reappears.
+  Expect(model.ToggleRow(6).reference == 1001, "expanding pt returns its reference");
+  Expect(model.Rows().back().is_placeholder, "pt's children are still pending → placeholder");
+  model.ApplyVariables(1001, {codec::DapVariable{.name = "x", .value = "1", .type = "int"}}, 0);
+  Expect(!model.Rows().back().is_placeholder && model.Rows().back().display_name == "x",
+         "pt's fetched child replaces its placeholder");
+}
+
+// Bounded paging (the freeze fix), the in-flight guard, and the failure path. A
+// container is fetched in bounded pages — never all at once — so an adapter can
+// never be asked to enumerate a (possibly garbage / billions-long) container in
+// one shot; a failed fetch ends in an error row, never a permanent spinner.
+void TestDebugVariablesPagingAndErrors() {
+  constexpr int kPage = DebugValueTree::kChildPageSize;
+  DebugVariablesModel model;
+  model.BeginFrame(1);
+  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
+  Expect(model.ToggleRow(0).reference == 1000, "expanding Locals requests its children");
+  // Locals holds one big array that reports 300 indexed children (gdb reports
+  // indexedVariables; a garbage container would report billions here).
+  model.ApplyVariables(1000,
+                       {codec::DapVariable{.name = "arr",
+                                           .value = "{...}",
+                                           .type = "int[300]",
+                                           .variables_reference = 1001,
+                                           .indexed_variables = 300,
+                                           .count_reported = true}},
+                       0);
+  Expect(model.Rows().size() == 2 && model.Rows()[1].display_name == "arr",
+         "the array child is present under Locals");
+
+  // Expanding the array must fetch only a bounded first page, NOT all 300.
+  const DebugValueTree::ChildFetch first = model.ToggleRow(1);
+  Expect(first.reference == 1001 && first.start == 0 && first.count == kPage,
+         "expanding a 300-element array fetches a bounded first page, not the whole container");
+
+  std::vector<codec::DapVariable> page0;
+  for (int i = 0; i < kPage; ++i) {
+    page0.push_back(codec::DapVariable{.name = "[" + std::to_string(i) + "]", .value = "0"});
+  }
+  model.ApplyVariables(1001, page0, 0);
+  // Locals + arr + kPage children + one trailing "show more…" row.
+  Expect(model.Rows().size() == static_cast<std::size_t>(kPage) + 3,
+         "the first page is followed by a clickable 'show more' row (300 > kPage)");
+  Expect(model.Rows().back().is_show_more && !model.Rows().back().is_placeholder,
+         "the trailing row is the 'show more' affordance");
+
+  // Clicking 'show more' fetches the next page at the loaded offset, clamped to the
+  // children that remain (300 - kPage) so we never ask gdb for more than exist (its
+  // DAP throws "list index out of range" on count > available).
+  const DebugValueTree::ChildFetch more = model.ToggleRow(model.Rows().size() - 1);
+  Expect(more.reference == 1001 && more.start == kPage && more.count == 300 - kPage,
+         "'show more' fetches the remaining children at the loaded offset, clamped to the total");
+  Expect(model.Rows().back().is_placeholder && !model.Rows().back().is_show_more,
+         "the 'show more' row becomes a loading row while the next page is in flight");
+  // The in-flight loading row is inert — no duplicate fetch on a second click.
+  Expect(model.ToggleRow(model.Rows().size() - 1).reference == 0,
+         "an in-flight loading row issues no duplicate fetch (request-storm guard)");
+
+  // The final 100-element page reaches the reported total → paging stops.
+  std::vector<codec::DapVariable> page1;
+  for (int i = kPage; i < 300; ++i) {
+    page1.push_back(codec::DapVariable{.name = "[" + std::to_string(i) + "]", .value = "0"});
+  }
+  model.ApplyVariables(1001, page1, kPage);
+  Expect(model.Rows().size() == static_cast<std::size_t>(300) + 2,
+         "the final page appends to 300 children with no further 'show more'");
+  Expect(model.Rows().back().display_name == "[299]" && !model.Rows().back().is_show_more,
+         "paging stops once the adapter-reported total is reached");
+
+  // Failure path: a first-page fetch that errors ends in a finite error row.
+  DebugVariablesModel errored;
+  errored.BeginFrame(1);
+  errored.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 2000}});
+  Expect(errored.ToggleRow(0).reference == 2000, "expanding requests the scope's children");
+  Expect(errored.Rows().size() == 2 && errored.Rows()[1].kind == DebugValueKind::Pending,
+         "before the response the child is a loading placeholder");
+  errored.MarkChildrenError(2000);
+  Expect(errored.Rows().size() == 2 && errored.Rows()[1].is_placeholder &&
+             errored.Rows()[1].kind == DebugValueKind::Error,
+         "a failed fetch replaces the spinner with a finite error row");
+
+  // Regression: a Locals scope that reports only 9 children must not be expanded
+  // with count = kPage. gdb's DAP throws "list index out of range" when the request
+  // asks for more children than exist, which is what left Locals showing
+  // "<unavailable>". The fetch count is clamped to the scope's reported total.
+  DebugVariablesModel small_scope;
+  small_scope.BeginFrame(1);
+  small_scope.ApplyScopes({codec::DapScope{.name = "Locals",
+                                           .variables_reference = 3000,
+                                           .named_variables = 9,
+                                           .count_reported = true}});
+  const DebugValueTree::ChildFetch scoped = small_scope.ToggleRow(0);
+  Expect(scoped.reference == 3000 && scoped.start == 0 && scoped.count == 9,
+         "expanding a 9-variable Locals scope requests exactly 9, not kPage (gdb count clamp)");
+
+  // Regression: an empty container (adapter reports zero children, e.g. an empty
+  // std::vector) is known-empty — expanding it must NOT fetch (a count request
+  // would make gdb throw "list index out of range"); it reads as expanded-empty.
+  DebugVariablesModel empty_child;
+  empty_child.BeginFrame(1);
+  empty_child.ApplyScopes(
+      {codec::DapScope{.name = "Locals", .variables_reference = 4000, .named_variables = 1}});
+  empty_child.ToggleRow(0);
+  empty_child.ApplyVariables(4000,
+                             {codec::DapVariable{.name = "v",
+                                                 .value = "std::vector of length 0",
+                                                 .type = "std::vector<int>",
+                                                 .variables_reference = 4001,
+                                                 .indexed_variables = 0,
+                                                 .count_reported = true}},
+                             0);
+  const DebugValueTree::ChildFetch empty_fetch = empty_child.ToggleRow(1);  // expand "v"
+  Expect(empty_fetch.reference == 0,
+         "expanding a known-empty container issues no fetch (gdb would reject a count request)");
+
+  // Regression: expansion survives a stop. Variables references are NOT stable
+  // across stops, so expansion is tracked by path. Expand Locals → a struct child,
+  // then re-apply scopes with DIFFERENT refs (a new stop) and confirm the model
+  // asks to repopulate exactly the paths that were open, cascading into the child.
+  DebugVariablesModel keep;
+  keep.BeginFrame(1);
+  Expect(keep.ApplyScopes({codec::DapScope{
+                              .name = "Locals", .variables_reference = 1, .named_variables = 2}})
+                 .empty(),
+         "first stop: nothing was expanded yet, so nothing to restore");
+  keep.ToggleRow(0);  // expand Locals (ref 1)
+  keep.ApplyVariables(1,
+                      {codec::DapVariable{.name = "n", .value = "5", .type = "int"},
+                       codec::DapVariable{.name = "pt",
+                                          .value = "",
+                                          .type = "Point",
+                                          .variables_reference = 9,
+                                          .named_variables = 2}},
+                      0);
+  keep.ToggleRow(2);  // expand "pt" (ref 9)
+  keep.ApplyVariables(9,
+                      {codec::DapVariable{.name = "x", .value = "1", .type = "int"},
+                       codec::DapVariable{.name = "y", .value = "2", .type = "int"}},
+                      0);
+  Expect(keep.Rows().size() == 5, "Locals > {n, pt > {x, y}} is fully expanded");
+
+  // Next stop: same names, brand-new references (gdb reassigns them).
+  const std::vector<DebugValueTree::ChildFetch> restore = keep.ApplyScopes(
+      {codec::DapScope{.name = "Locals", .variables_reference = 100, .named_variables = 2}});
+  Expect(restore.size() == 1 && restore[0].reference == 100,
+         "the re-expanded Locals scope (new ref) is queued for repopulation");
+  const std::vector<DebugValueTree::ChildFetch> restore_children =
+      keep.ApplyVariables(100,
+                          {codec::DapVariable{.name = "n", .value = "6", .type = "int"},
+                           codec::DapVariable{.name = "pt",
+                                              .value = "",
+                                              .type = "Point",
+                                              .variables_reference = 109,
+                                              .named_variables = 2}},
+                          0);
+  Expect(restore_children.size() == 1 && restore_children[0].reference == 109,
+         "the previously-expanded 'pt' child (new ref) cascades into a follow-up fetch");
+  keep.ApplyVariables(109,
+                      {codec::DapVariable{.name = "x", .value = "1", .type = "int"},
+                       codec::DapVariable{.name = "y", .value = "2", .type = "int"}},
+                      0);
+  Expect(keep.Rows().size() == 5,
+         "after the stop the tree is restored to Locals > {n, pt > {x, y}}");
+}
+
+// A gdb adapter must clamp value formatting on `initialized` (before the program
+// runs) so the first expand of an uninitialized/garbage STL container cannot drive
+// gdb into unbounded formatting (the host-freeze signature). The limits ride DAP
+// `evaluate` "repl" commands with the safe values and, critically, NO frameId — a
+// present frameId:0 pre-launch makes gdb's DAP error "list index out of range" and
+// the limits would silently never apply. A non-gdb adapter must send none.
+void TestGdbAdapterClampsValueFormatting() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  // gdb-flavored adapter: the limit commands must be on the wire with safe values.
+  {
+    DapManager manager;
+    manager.RegisterAdapter("gdb-mock", GdbFlavoredAdapterCommand(server_path, "no_config_done"));
+    CapturedSession captured;
+    LaunchConfig config;
+    config.type = "gdb-mock";
+    config.request = "launch";
+    Expect(manager.StartSession(config, MakeCallbacks(captured)), "gdb session should start");
+    Expect(PollUntil(manager,
+                     [&]() {
+                       const auto* session = manager.ActiveSession();
+                       return session != nullptr &&
+                              session->CurrentState() == DebugSession::State::Terminated;
+                     }),
+           "gdb session should reach Terminated");
+    const std::string& out = captured.output;
+    Expect(out.find("limit:set max-value-size 65536|frameId=none") != std::string::npos,
+           "gdb adapter clamps max-value-size to the safe value with no frameId");
+    Expect(out.find("limit:set print elements 200|frameId=none") != std::string::npos,
+           "gdb adapter clamps print elements with no frameId");
+    Expect(out.find("limit:set print characters 200|frameId=none") != std::string::npos,
+           "gdb adapter clamps print characters with no frameId");
+    Expect(out.find("limit:set print repeats 10|frameId=none") != std::string::npos,
+           "gdb adapter clamps print repeats with no frameId");
+    Expect(out.find("max-value-size 1048576") == std::string::npos,
+           "the old unsafe 1 MiB max-value-size is no longer sent");
+    manager.ShutdownAll();
+  }
+
+  // Non-gdb adapter: no value-limit commands at all.
+  {
+    DapManager manager;
+    manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "no_config_done"));
+    CapturedSession captured;
+    LaunchConfig config;
+    config.type = "mock";
+    config.request = "launch";
+    Expect(manager.StartSession(config, MakeCallbacks(captured)), "mock session should start");
+    Expect(PollUntil(manager,
+                     [&]() {
+                       const auto* session = manager.ActiveSession();
+                       return session != nullptr &&
+                              session->CurrentState() == DebugSession::State::Terminated;
+                     }),
+           "mock session should reach Terminated");
+    Expect(captured.output.find("limit:") == std::string::npos,
+           "a non-gdb adapter receives no value-formatting limit commands");
+    manager.ShutdownAll();
+  }
 }
 
 // Pure DebugWatchModel behavior (no adapter): persistent expression list +
@@ -968,9 +1275,10 @@ void TestDebugWatchModelBehavior() {
          "row 0 maps back to expression 0");
 
   // Expand the structured watch root via the shared tree machinery.
-  Expect(model.ToggleRow(1) == 900, "expanding a structured root returns its reference to fetch");
+  Expect(model.ToggleRow(1).reference == 900,
+         "expanding a structured root returns its reference to fetch");
   model.ApplyVariables(
-      900, {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}});
+      900, {codec::DapVariable{.name = "field", .value = "7", .variables_reference = 0}}, 0);
   Expect(model.Rows().size() == 3 && model.Rows()[2].depth == 1, "the child folds at depth 1");
   Expect(!model.ExpressionIndexForRow(2).has_value(), "a child row is not an expression root");
 
@@ -1580,6 +1888,11 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
           TestDebugSessionSetVariableGatedOnCapability);
   AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);
+  AddTest(tests, "DebugService/VariablesValueKindAndPlaceholder",
+          TestDebugVariablesValueKindAndPlaceholder);
+  AddTest(tests, "DebugService/VariablesPagingAndErrors", TestDebugVariablesPagingAndErrors);
+  AddTest(tests, "DebugService/GdbAdapterClampsValueFormatting",
+          TestGdbAdapterClampsValueFormatting);
   AddTest(tests, "DebugService/WatchModelBehavior", TestDebugWatchModelBehavior);
   AddTest(tests, "DebugService/ManagerRejectsUnknownAdapterType",
           TestDebugManagerRejectsUnknownAdapterType);

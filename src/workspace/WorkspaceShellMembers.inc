@@ -1290,6 +1290,24 @@
                             const OverlaySurfaceViewModel& overlay_vm);
   void RenderFindWidget(SDL_Renderer* renderer, const WorkspaceLayout& layout,
                         const OverlaySurfaceViewModel& overlay_vm);
+  // Floating, icon-only debug control bar (Continue/Pause, Step Over/In/Out,
+  // Restart, Stop) anchored top-right of the editor area while a session is
+  // active. Mirrors the find-widget pattern. Defined in
+  // WorkspaceShellDebugToolbar.cpp (not a render-named TU, so it may read state
+  // for the hit-test alongside the render).
+  void RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceLayout& layout,
+                          bool session_stopped, std::optional<float> avoid_below_y) const;
+  // y below which the toolbar must sit (find widget's bottom when the buffer
+  // search/replace widget is visible), so the two floating bars stack instead of
+  // overlapping. std::nullopt anchors the toolbar at the editor top.
+  std::optional<float> DebugToolbarAvoidBelowY(const WorkspaceLayout& layout) const;
+  // Left-click hit-test for the debug toolbar. Returns true (consuming the click)
+  // when the bar is showing and the point lands on it; dispatches the button's
+  // action. No-op when debugging is disabled or no session is active.
+  bool HandleDebugToolbarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  // Whether the debug toolbar is currently shown (debugger enabled + active
+  // session). Used to gate rendering and hit-testing.
+  bool DebugToolbarVisible() const;
   void RenderBottomPanelSurface(SDL_Renderer* renderer,
                                 const WorkspaceLayout& layout,
                                 std::size_t terminal_line_count);
@@ -1455,6 +1473,7 @@
   void RequestMergeResultLineToBottomRedraw(std::size_t start_line);
   void RequestMergeConflictRedraw(std::size_t conflict_index);
   void RequestBottomPanelRedraw();
+  void RequestDebugPaneRedraw();
   void RequestBottomPanelCommandRedraw();
   void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBottomPanelContentRedraw();

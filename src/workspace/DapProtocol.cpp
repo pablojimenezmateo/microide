@@ -97,7 +97,11 @@ JsonValue MakeEvaluateArguments(const std::string& expression, int frame_id,
                                 const std::string& context) {
   JsonObject args;
   args["expression"] = JsonValue(expression);
-  if (frame_id != 0) {
+  // gdb numbers the *top* stack frame as id 0, so frame 0 is a real, evaluable
+  // frame — omitting its frameId makes gdb evaluate locals in global scope ("No
+  // symbol in current context"). Only a negative id means "no frame" (e.g.
+  // pre-launch REPL settings, or evaluate while running): then omit frameId.
+  if (frame_id >= 0) {
     args["frameId"] = JsonValue(static_cast<std::int64_t>(frame_id));
   }
   if (!context.empty()) {
@@ -228,6 +232,9 @@ DapScope ParseScope(const JsonValue& value) {
   scope.variables_reference = AsInt(value["variablesReference"]);
   scope.expensive = value["expensive"].AsBool(false);
   scope.presentation_hint = AsString(value["presentationHint"]);
+  scope.named_variables = AsInt(value["namedVariables"]);
+  scope.indexed_variables = AsInt(value["indexedVariables"]);
+  scope.count_reported = value.HasKey("namedVariables") || value.HasKey("indexedVariables");
   return scope;
 }
 
@@ -250,6 +257,7 @@ DapVariable ParseVariable(const JsonValue& value) {
   variable.variables_reference = AsInt(value["variablesReference"]);
   variable.named_variables = AsInt(value["namedVariables"]);
   variable.indexed_variables = AsInt(value["indexedVariables"]);
+  variable.count_reported = value.HasKey("namedVariables") || value.HasKey("indexedVariables");
   return variable;
 }
 

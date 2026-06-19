@@ -231,6 +231,10 @@ struct OutputPanelState {
   std::string channel_id = "plugins.log";
   std::vector<std::string> open_channel_ids;
   int scroll_row = 0;
+  // Stick to the newest line as content streams in (e.g. debug-adapter / gdb
+  // output), the same way a terminal tab follows its tail. Detaches when the
+  // user scrolls up and re-attaches when they scroll back to the bottom.
+  bool follow_tail = true;
 };
 
 // Right-side debug pane (mirrors the left SidebarState). The four debug surfaces
@@ -241,7 +245,7 @@ struct OutputPanelState {
 struct DebugPaneState {
   bool visible = false;
   float width = 288.0f;  // mirror SidebarState default
-  DebugPaneMode mode = DebugPaneMode::CallStack;
+  DebugPaneMode mode = DebugPaneMode::Variables;
   int call_stack_scroll_row = 0;
   int variables_scroll_row = 0;
   int watch_scroll_row = 0;

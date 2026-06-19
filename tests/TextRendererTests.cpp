@@ -709,19 +709,22 @@ void TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecorated
              b == theme.row_highlight.b && a == theme.row_highlight.a,
          "selected editor rows should paint the whole row highlight across the gutter");
 
-  Expect(SDL_ReadSurfacePixel(pixels, 61, 10, &r, &g, &b, &a),
+  // Text-region pixels sit 8px further right than before: the gutter reserves a
+  // marker column so breakpoint/execution markers no longer overlap line numbers,
+  // widening it from 48 to 56 here (see editor/GutterMetrics.h).
+  Expect(SDL_ReadSurfacePixel(pixels, 69, 10, &r, &g, &b, &a),
          "editor renderer test should read the active search pixel");
   Expect(r == theme.search_match_active.r && g == theme.search_match_active.g &&
              b == theme.search_match_active.b && a == theme.search_match_active.a,
          "active search matches should sit above the row fill inside the shared decorated grid");
 
-  Expect(SDL_ReadSurfacePixel(pixels, 67, 10, &r, &g, &b, &a),
+  Expect(SDL_ReadSurfacePixel(pixels, 75, 10, &r, &g, &b, &a),
          "editor renderer test should read the selection pixel");
   Expect(r == theme.selection_fill.r && g == theme.selection_fill.g &&
              b == theme.selection_fill.b && a == theme.selection_fill.a,
          "editor selections should paint as inline fills on top of the selected-row background");
 
-  Expect(SDL_ReadSurfacePixel(pixels, 71, 10, &r, &g, &b, &a),
+  Expect(SDL_ReadSurfacePixel(pixels, 79, 10, &r, &g, &b, &a),
          "editor renderer test should read the plain selected-row pixel");
   Expect(r == theme.row_highlight.r && g == theme.row_highlight.g &&
              b == theme.row_highlight.b && a == theme.row_highlight.a,

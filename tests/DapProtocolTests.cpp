@@ -118,9 +118,11 @@ void TestDapProtocolParsesThreadsAndStackAndScopesAndVariables() {
   Expect(frames[0].id == 1000 && frames[0].line == 12, "frame id/line");
   Expect(frames[0].source.path == "/tmp/a.c", "frame source path");
 
-  const auto scopes = codec::ParseScopes(
-      Json(R"({"scopes":[{"name":"Locals","variablesReference":42,"expensive":false}]})"));
+  const auto scopes = codec::ParseScopes(Json(
+      R"({"scopes":[{"name":"Locals","variablesReference":42,"expensive":false,"namedVariables":9}]})"));
   Expect(scopes.size() == 1 && scopes[0].variables_reference == 42, "scope ref");
+  Expect(scopes[0].named_variables == 9,
+         "scope namedVariables parsed (used to clamp the variables fetch count)");
 
   const auto variables = codec::ParseVariables(
       Json(R"({"variables":[{"name":"x","value":"5","type":"int","variablesReference":0},
@@ -171,13 +173,18 @@ void TestDapProtocolEncodesVariablesRequests() {
   Expect(result.value == "99" && result.type == "int" && result.variables_reference == 0,
          "setVariable result parsed");
 
-  // evaluate (hover-to-inspect): expression + context always present; frameId omitted when 0.
+  // evaluate (hover-to-inspect): expression + context always present. frameId is
+  // sent for any id >= 0 (gdb's top frame is id 0, so frame 0 must be evaluated in
+  // that frame, not global scope) and omitted only for the -1 "no frame" sentinel.
   const JsonValue eval = codec::MakeEvaluateArguments("count", 7, "hover");
   Expect(eval["expression"].AsString() == "count" && eval["frameId"].AsInt() == 7 &&
              eval["context"].AsString() == "hover",
          "evaluate arguments carry expression, frameId, and context");
-  const JsonValue eval_no_frame = codec::MakeEvaluateArguments("count", 0, "hover");
-  Expect(!eval_no_frame.HasKey("frameId"), "evaluate omits frameId when zero");
+  const JsonValue eval_frame_zero = codec::MakeEvaluateArguments("count", 0, "hover");
+  Expect(eval_frame_zero.HasKey("frameId") && eval_frame_zero["frameId"].AsInt() == 0,
+         "evaluate sends frameId for frame 0 (gdb top frame is id 0)");
+  const JsonValue eval_no_frame = codec::MakeEvaluateArguments("count", -1, "repl");
+  Expect(!eval_no_frame.HasKey("frameId"), "evaluate omits frameId for the -1 no-frame sentinel");
   // Watch expressions reuse the same encoder with context "watch" (Phase 6).
   const JsonValue watch = codec::MakeEvaluateArguments("arr[i]", 7, "watch");
   Expect(watch["expression"].AsString() == "arr[i]" && watch["frameId"].AsInt() == 7 &&

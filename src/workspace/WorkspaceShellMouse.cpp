@@ -220,7 +220,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (MakeDebugPaneMouseCoordinator().HandleButtonDown(event, layout)) {
-    ensure_redraw([this]() { RequestWindowRedraw(); });
+    ensure_redraw([this]() { RequestDebugPaneRedraw(); });
     return true;
   }
 
@@ -348,6 +348,13 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
+  }
+
+  // Floating debug control bar sits over the top-right of the editor; intercept
+  // its clicks before the editor coordinator turns them into text selection.
+  if (HandleDebugToolbarButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    return true;
   }
 
   util::PerformanceTrace::Scope editor_scope("WorkspaceShell::HandleMouseButtonDown::Editor");

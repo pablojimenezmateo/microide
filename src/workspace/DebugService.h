@@ -42,10 +42,24 @@ class DebugService {
     std::function<void(int session_id)> remove_debug_console;
     // Notify on session state changes (drives status text / redraw).
     std::function<void(DebugSession::State state)> notify_session_state_changed;
+    // Two-phase stop reporting for push observers (the control channel). Fired
+    // for the active session only. `notify_stop_began` lands the instant the
+    // adapter halts, carrying the real reason/thread before frames resolve;
+    // `notify_stop_resolved` fires once `ProjectStop` has rebuilt the execution
+    // view (file/line/frames populated).
+    std::function<void(const std::string& reason, int thread_id)> notify_stop_began;
+    std::function<void()> notify_stop_resolved;
     std::function<void()> request_chrome_redraw;
-    std::function<void()> request_bottom_panel_redraw;
+    // Repaint the right-side debug dock (Call Stack / Variables / Watch /
+    // Breakpoints). DAP responses arrive asynchronously, so every handler that
+    // mutates a debug model must invalidate the dock it paints into.
+    std::function<void()> request_debug_pane_redraw;
     // Repaint the editor gutter after breakpoint verification reflects back.
     std::function<void()> request_editor_redraw;
+    // Re-run editor hover resolution on the next paint. Needed when an async
+    // hover-eval value lands while the cursor is still: the redraw alone repaints
+    // but does not re-derive the popup unless a hover refresh is queued.
+    std::function<void()> queue_editor_hover_refresh;
     // Open + focus the active editor at a stopped frame (0-based line). Used on
     // each stop to jump to the top frame, and on a Call Stack row click.
     std::function<void(const std::filesystem::path& path, std::size_t line)> focus_source_location;
@@ -165,6 +179,12 @@ class DebugService {
   DebugSession::State SessionState() const;
   std::string LastError() const;
 
+  // True when the active session has a DAP request in flight (or an undrained
+  // response). The idle loop polls on a short interval while this holds so async
+  // responses (scopes/variables/evaluate) are applied promptly instead of waiting
+  // on a fully-blocking event wait.
+  bool HasInFlightDapWork() const;
+
  private:
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
@@ -178,6 +198,11 @@ class DebugService {
   // its callbacks, surface its console, and sync the switcher. Returns the new id
   // (0 on failure). Shared by StartDebugging and the restart relaunch fallback.
   int LaunchSession(const LaunchConfig& config, const std::string& cwd, bool replace);
+  // Issue one bounded `variables` page request on the active session and feed the
+  // result back into the model. Applying a page can cascade (restoring expansion
+  // re-opens descendants), so the callback re-invokes this for each returned fetch.
+  // Used by both manual expand (ToggleVariableRow) and stop-time expansion restore.
+  void FetchVariablesPage(int reference, int start, int count);
   // Project a stop (call stack + focused frame) of the active session into the
   // shared transient views: build the execution view, focus the top frame, surface
   // the Call Stack panel, and jump the editor to the top frame.

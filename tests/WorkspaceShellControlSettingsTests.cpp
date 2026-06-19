@@ -156,9 +156,40 @@ void TestExplicitProjectWinsOverRestore() {
   }
 }
 
+// Regression: headless `--control` force-starts the channel independent of the
+// `control.enabled` setting. A live settings change — e.g. a cold-start spec's
+// `set-setting debug.enabled true` — runs ApplyLiveSettings -> MaybeStartControlChannel,
+// which must NOT tear the force-started socket down. Before the fix, this stranded
+// the headless driver: the advertised socket vanished mid-run.
+void TestForceStartedControlChannelSurvivesSettingChange() {
+  TemporaryDirectory temp;
+  ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
+  // Isolate the runtime dir so the socket path is test-local.
+  std::filesystem::create_directories(temp.path() / "run");
+  ScopedEnvVar xdg_runtime("XDG_RUNTIME_DIR", (temp.path() / "run").string());
+
+  WorkspaceShell shell;
+  microide::workspace::WorkspaceStartupOptions options;
+  options.control_stdout = true;  // mirror `--control`
+  shell.SetStartupOptions(std::move(options));
+  shell.Initialize({});
+  shell.ForceStartControlChannel();
+  Expect(WorkspaceShellTestAccess::IsControlChannelRunning(shell),
+         "--control force-starts the control channel socket");
+
+  // control.enabled is OFF (only the --control flag is set). A live setting change
+  // must leave the force-started channel running.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "set-setting debug.enabled true"),
+         "the live setting change applies");
+  Expect(WorkspaceShellTestAccess::IsControlChannelRunning(shell),
+         "the force-started control channel survives a live settings change");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShellControlSettings/ForceStartedControlChannelSurvivesSettingChange",
+          TestForceStartedControlChannelSurvivesSettingChange);
   AddTest(tests, "WorkspaceShellControlSettings/SetSettingCommandFlipsAndRejects",
           TestSetSettingCommandFlipsAndRejects);
   AddTest(tests, "WorkspaceShellControlSettings/TransientSettingNotPersisted",

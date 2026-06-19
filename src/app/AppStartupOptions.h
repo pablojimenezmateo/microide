@@ -24,6 +24,10 @@ struct AppStartupOptions {
   // `--set <id> <value>` (repeatable): transient setting overrides applied at
   // startup. Never persisted to the user's saved config.
   std::vector<std::pair<std::string, std::string>> setting_overrides;
+  // `--dap-log [path]`: open a debugger/DAP trace sink at `path` (default
+  // /tmp/microide-dap.log) capturing every DAP message plus key debug-subsystem
+  // decisions. Diagnostic only; see util::DebugTrace.
+  std::optional<std::filesystem::path> dap_log_path;
   // The shipping binary fast-exits via std::quick_exit() at the end of
   // Shutdown() to skip destructor chains. Tests set this false so they can run
   // Initialize()/Shutdown() in-process and verify clean teardown under ASAN.

@@ -501,4 +501,27 @@ struct FindWidgetLayout {
 SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode);
 FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool replace_mode);
 
+// Floating, icon-only debug control bar anchored top-right of the editor area
+// while a session is active. Like FindWidgetLayout, a single shared layout drives
+// both the renderer and the mouse hit-test so they cannot drift apart.
+enum class DebugToolbarButton : std::uint8_t {
+  ContinuePause = 0,  // Continue when stopped, Pause when running
+  StepOver,
+  StepInto,
+  StepOut,
+  Restart,
+  Stop,
+  Count,
+};
+
+struct DebugToolbarLayout {
+  SDL_FRect widget{};
+  std::array<SDL_FRect, static_cast<std::size_t>(DebugToolbarButton::Count)> buttons{};
+};
+
+// `avoid_below_y`, when set, anchors the bar just below that y so it stacks under
+// the find widget when both are visible; otherwise it sits at the editor top.
+DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
+                                             std::optional<float> avoid_below_y);
+
 }  // namespace microide::workspace

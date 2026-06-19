@@ -50,6 +50,12 @@ class ControlSocketServer {
 
   std::size_t ConnectionCount() const;
 
+  // Main thread: true (once) when the I/O thread re-bound the listener after the
+  // advertised socket file vanished out from under a live process (external
+  // $XDG_RUNTIME_DIR cleanup). The host re-writes its discovery descriptor in
+  // response. Self-clears on read.
+  bool ConsumeRebound();
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;

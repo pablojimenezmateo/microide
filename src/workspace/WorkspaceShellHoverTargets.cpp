@@ -8,6 +8,7 @@
 
 #include "editor/DiagnosticsRender.h"
 #include "editor/TextLayout.h"
+#include "util/DebugTrace.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
@@ -15,6 +16,29 @@
 namespace microide::workspace {
 
 namespace {
+
+// The debug-hover path runs on every mouse-move frame, so an unguarded trace
+// would flood the log. These dedupe on the reason's string-literal identity and
+// only emit when the furthest-reached gate changes, keeping the log readable
+// while still showing exactly where (and why) a debug hover stops short of a
+// popup. No string materialization here keeps the render-string lint satisfied.
+void LogHoverGate(const char* reason) {
+  static const char* last = nullptr;
+  if (!util::DebugTrace::Enabled() || reason == last) {
+    return;
+  }
+  last = reason;
+  util::DebugTrace::Note("hover-gate", reason);
+}
+
+void LogHoverGate(const char* reason, std::string_view expr) {
+  static const char* last_reason = nullptr;
+  if (!util::DebugTrace::Enabled() || reason == last_reason) {
+    return;
+  }
+  last_reason = reason;
+  util::DebugTrace::Note("hover-gate", reason, expr);
+}
 
 TextGridInteractionLayout BuildEditorInteractionLayout(
     const render::TextRenderer& text_renderer,
@@ -438,11 +462,13 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   const HoverTargetsViewModel hover_targets_vm =
       RenderViewModelBuilder(context_).BuildHoverTargets(/*debug_hover_enabled=*/true);
   if (hover_targets_vm.debug_execution == nullptr || hover_targets_vm.debug_hover == nullptr) {
+    LogHoverGate("vm-debug-state-null");
     return std::nullopt;
   }
   const DebugExecutionView& execution = *hover_targets_vm.debug_execution;
   const DebugStackFrameView* frame = execution.FocusedFrame();
   if (frame == nullptr) {
+    LogHoverGate("no-focused-frame");
     return std::nullopt;
   }
   // Only evaluate in the focused frame's source file: evaluate(frameId) resolves
@@ -451,6 +477,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   // marker does (lexically-normalized generic strings).
   if (viewport.path().lexically_normal().generic_string() !=
       execution.FocusedPath().lexically_normal().generic_string()) {
+    LogHoverGate("file-not-focused-frame");
     return std::nullopt;
   }
 
@@ -490,11 +517,16 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   const int frame_id = frame->id;
   switch (hover.Classify(frame_id, expression)) {
     case DebugHoverModel::Lookup::Hit:
+      LogHoverGate("cache-hit -> popup", expression);
       break;
     case DebugHoverModel::Lookup::Pending:
+      LogHoverGate("cache-pending", expression);
+      return std::nullopt;
     case DebugHoverModel::Lookup::Failed:
+      LogHoverGate("cache-failed", expression);
       return std::nullopt;
     case DebugHoverModel::Lookup::Miss:
+      LogHoverGate("cache-miss -> kickoff", expression);
       pending_hover_eval_ = PendingHoverEval{frame_id, std::move(expression), true};
       return std::nullopt;
   }
@@ -521,12 +553,23 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
     float x,
     float y) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::DebugValueHoverTargetAtPosition");
-  // Cheap session-level gates first: only paused, debugger-enabled sessions whose
-  // adapter advertises hover evaluation, and only over editor tabs. (The focused-
-  // frame and per-viewport checks live in DebugValueHoverTargetForViewport, which
-  // reads the gated debug state through the view model.)
-  if (!DebugEnabled() || !IsDebugSessionStopped() || !debug_service_.SupportsEvaluateForHovers() ||
-      !ActiveTabIsEditor()) {
+  // Cheap session-level gates first: only paused, debugger-enabled sessions, and
+  // only over editor tabs. We intentionally do NOT require the adapter to
+  // advertise supportsEvaluateForHovers — RequestEvaluate falls back to the "repl"
+  // context for adapters (e.g. GDB) that omit the capability but still evaluate.
+  // (The focused-frame and per-viewport checks live in
+  // DebugValueHoverTargetForViewport, which reads gated debug state via the view
+  // model.)
+  if (!DebugEnabled()) {
+    LogHoverGate("debug-disabled");
+    return std::nullopt;
+  }
+  if (!IsDebugSessionStopped()) {
+    LogHoverGate("not-stopped");
+    return std::nullopt;
+  }
+  if (!ActiveTabIsEditor()) {
+    LogHoverGate("not-editor-tab");
     return std::nullopt;
   }
   const auto layout_state = CurrentWorkspaceLayout();

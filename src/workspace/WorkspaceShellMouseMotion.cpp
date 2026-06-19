@@ -456,6 +456,34 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
       status_segment_hover_changed = true;
     }
+
+    // Floating debug toolbar: repaint on hover enter/leave so the button
+    // highlight and tooltip track the pointer like the other chrome buttons.
+    if (DebugToolbarVisible()) {
+      const DebugToolbarLayout tb =
+          ComputeDebugToolbarLayout(layout.editor_surface, DebugToolbarAvoidBelowY(layout));
+      const auto hovered_button = [&](float px, float py) -> int {
+        if (!Contains(tb.widget, px, py)) {
+          return -1;
+        }
+        for (std::size_t i = 0; i < tb.buttons.size(); ++i) {
+          if (Contains(tb.buttons[i], px, py)) {
+            return static_cast<int>(i);
+          }
+        }
+        return -2;  // over the bar but between buttons
+      };
+      const int previous_button =
+          previous_mouse_position_valid ? hovered_button(previous_mouse_x, previous_mouse_y) : -1;
+      const int current_button = hovered_button(static_cast<float>(event.motion.x),
+                                                static_cast<float>(event.motion.y));
+      if (previous_button != current_button && (previous_button != -1 || current_button != -1)) {
+        // Pad below the bar to cover the tooltip card that pops under a button.
+        RequestRedrawRect(MakeRect(tb.widget.x - 2.0f, tb.widget.y - 2.0f, tb.widget.w + 4.0f,
+                                   tb.widget.h + 40.0f));
+        hover_visual_changed = true;
+      }
+    }
   }
 
   const auto request_tooltip_redraw_if_changed =
@@ -621,7 +649,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   }
 
   if (MakeDebugPaneMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
-    ensure_redraw([this]() { RequestWindowRedraw(); });
+    ensure_redraw([this]() { RequestDebugPaneRedraw(); });
     return true;
   }
 

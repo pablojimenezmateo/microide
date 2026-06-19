@@ -92,6 +92,31 @@ void TestParseSetOverridesAreRepeatable() {
          "positional path after --set pairs should still be captured");
 }
 
+void TestParseDapLogDefaultsPath() {
+  std::vector<std::string> args = {"microide", "--dap-log", "/tmp/project"};
+  auto argv = ArgvFromStrings(args);
+  const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+  Expect(parsed.exit_code == 0, "--dap-log should parse cleanly");
+  // A following non-flag token is the project path, not the log path, so the log
+  // path falls back to the default.
+  Expect(parsed.options.dap_log_path.has_value() &&
+             parsed.options.dap_log_path->generic_string() == "/tmp/project",
+         "--dap-log should consume a non-flag token as its path");
+  Expect(!parsed.options.project_path.has_value(),
+         "the consumed token is the log path, not a project path");
+}
+
+void TestParseDapLogBeforeFlagUsesDefault() {
+  std::vector<std::string> args = {"microide", "--dap-log", "--disable-plugins"};
+  auto argv = ArgvFromStrings(args);
+  const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+  Expect(parsed.exit_code == 0, "--dap-log followed by a flag should parse cleanly");
+  Expect(parsed.options.dap_log_path.has_value() &&
+             parsed.options.dap_log_path->generic_string() == "/tmp/microide-dap.log",
+         "--dap-log should default its path when the next token is a flag");
+  Expect(parsed.options.disable_plugins, "the following flag should still be parsed");
+}
+
 void TestParseSetMissingTokensFails() {
   std::vector<std::string> args = {"microide", "--set", "only-id"};
   auto argv = ArgvFromStrings(args);
@@ -182,6 +207,9 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "AppStartupOptions/ParseSetOverridesAreRepeatable",
           TestParseSetOverridesAreRepeatable);
   AddTest(tests, "AppStartupOptions/ParseSetMissingTokensFails", TestParseSetMissingTokensFails);
+  AddTest(tests, "AppStartupOptions/ParseDapLogDefaultsPath", TestParseDapLogDefaultsPath);
+  AddTest(tests, "AppStartupOptions/ParseDapLogBeforeFlagUsesDefault",
+          TestParseDapLogBeforeFlagUsesDefault);
   AddTest(tests, "AppStartupOptions/DisablePluginsSkipsPluginsAndSyntax",
           TestDisablePluginsSkipsUserPluginsAndSyntax);
   AddTest(tests, "AppStartupOptions/SafeModeSurfacesStartupState",

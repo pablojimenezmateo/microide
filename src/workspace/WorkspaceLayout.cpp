@@ -947,6 +947,12 @@ constexpr float kFindWidgetReplaceButtonWidth = 70.0f;
 constexpr float kFindWidgetReplaceAllWidth = 40.0f;
 constexpr float kFindWidgetMinWidth = 280.0f;
 constexpr float kFindWidgetMaxWidth = 460.0f;
+
+constexpr float kDebugToolbarMargin = 12.0f;
+constexpr float kDebugToolbarPad = 6.0f;
+constexpr float kDebugToolbarButton = 26.0f;
+constexpr float kDebugToolbarButtonGap = 4.0f;
+constexpr float kDebugToolbarStackGap = 8.0f;
 }  // namespace
 
 SDL_FRect ComputeFindWidgetRect(const SDL_FRect& editor_area, bool replace_mode) {
@@ -996,6 +1002,28 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool repl
         MakeRect(field_x, row2_y,
                  std::max(0.0f, layout.replace_button.x - kFindWidgetButtonGap - field_x),
                  kFindWidgetRowHeight);
+  }
+  return layout;
+}
+
+DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
+                                             std::optional<float> avoid_below_y) {
+  DebugToolbarLayout layout;
+  constexpr auto kCount = static_cast<float>(DebugToolbarButton::Count);
+  const float width = 2.0f * kDebugToolbarPad + kCount * kDebugToolbarButton +
+                      (kCount - 1.0f) * kDebugToolbarButtonGap;
+  const float height = 2.0f * kDebugToolbarPad + kDebugToolbarButton;
+  const float x = editor_area.x + editor_area.w - width - kDebugToolbarMargin;
+  // Stack below the find widget when present, otherwise anchor at the editor top.
+  const float y = avoid_below_y.has_value() ? *avoid_below_y + kDebugToolbarStackGap
+                                            : editor_area.y + kDebugToolbarMargin;
+  layout.widget = MakeRect(std::floor(x), std::floor(y), std::floor(width), std::floor(height));
+
+  float bx = layout.widget.x + kDebugToolbarPad;
+  const float by = layout.widget.y + kDebugToolbarPad;
+  for (auto& button : layout.buttons) {
+    button = MakeRect(bx, by, kDebugToolbarButton, kDebugToolbarButton);
+    bx += kDebugToolbarButton + kDebugToolbarButtonGap;
   }
   return layout;
 }

@@ -190,6 +190,14 @@ void WorkspaceShell::ForceStartControlChannel() {
 }
 
 void WorkspaceShell::MaybeStartControlChannel() {
+  // Headless `--control` force-starts the channel independently of the
+  // `control.enabled` setting (see ForceStartControlChannel). A live settings
+  // change — e.g. the cold-start spec's `set-setting debug.enabled true` — must
+  // never tear that socket down: doing so strands the headless driver, which
+  // owns the channel lifecycle for the whole run. Leave it running.
+  if (startup_options_.control_stdout) {
+    return;
+  }
   if (ControlSettingIsOn(GetSettingValue("control.enabled"))) {
     control_channel_service_.Start(context_.current_project_state.root);
   } else {

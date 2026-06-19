@@ -109,17 +109,24 @@ WorkspaceShell::WorkspaceShell() {
           .notify_session_state_changed =
               [this](DebugSession::State state) {
                 RequestChromeRedraw();
-                // Mirror stop/terminate to the control channel. ProjectStop has
-                // already rebuilt debug_execution by the time it reports Stopped.
-                if (state == DebugSession::State::Stopped) {
-                  control_channel_service_.OnDebugStopped();
-                } else if (state == DebugSession::State::Terminated) {
+                // Stops mirror to the control channel via the two-phase
+                // notify_stop_began/notify_stop_resolved seam (below) — the bare
+                // Stopped transition fires before frames resolve, so it cannot be
+                // used to broadcast a populated stop. Terminate has no such split.
+                if (state == DebugSession::State::Terminated) {
                   control_channel_service_.OnDebugTerminated(0);
                 }
               },
+          .notify_stop_began =
+              [this](const std::string& reason, int thread_id) {
+                control_channel_service_.OnDebugStopBegan(reason, thread_id);
+              },
+          .notify_stop_resolved =
+              [this]() { control_channel_service_.OnDebugStopped(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
-          .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+          .request_debug_pane_redraw = [this]() { RequestDebugPaneRedraw(); },
           .request_editor_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .queue_editor_hover_refresh = [this]() { QueueEditorHoverRefresh(); },
           .focus_source_location =
               [this](const std::filesystem::path& path, std::size_t line) {
                 OpenFile(path);

@@ -141,19 +141,8 @@ bool ControlChannelService::Start(const std::filesystem::path& project_root) {
   // Write the discovery descriptor so an external tool can locate this socket by
   // project. One file per process, so no cross-process locking is needed.
   descriptor_path_ = DescriptorPathForPid(pid);
-  std::error_code ec;
-  std::filesystem::create_directories(descriptor_path_.parent_path(), ec);
-  util::JsonObject descriptor;
-  descriptor["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
-  descriptor["socket"] = util::JsonValue(socket_path.generic_string());
-  descriptor["project_root"] = util::JsonValue(project_root.generic_string());
-  descriptor["project_hash"] =
-      util::JsonValue(project_root.empty() ? std::string()
-                                           : ProjectStateDirectoryName(project_root));
-  std::ofstream out(descriptor_path_, std::ios::trunc);
-  if (out) {
-    out << util::SerializeJson(util::JsonValue(std::move(descriptor)));
-  }
+  project_root_ = project_root;
+  WriteDescriptor();
 
   // Handshake line for the headless agent: announce pid + socket + project so the
   // stream's first line tells a driver what it is attached to. Mirrored to stdout
@@ -165,6 +154,26 @@ bool ControlChannelService::Start(const std::filesystem::path& project_root) {
   ready["project_root"] = util::JsonValue(project_root.generic_string());
   EmitJsonLine(SerializeControlEvent(util::JsonValue(std::move(ready))));
   return true;
+}
+
+void ControlChannelService::WriteDescriptor() {
+  if (descriptor_path_.empty()) {
+    return;
+  }
+  const int pid = CurrentProcessId();
+  std::error_code ec;
+  std::filesystem::create_directories(descriptor_path_.parent_path(), ec);
+  util::JsonObject descriptor;
+  descriptor["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
+  descriptor["socket"] = util::JsonValue(SocketPathForPid(pid).generic_string());
+  descriptor["project_root"] = util::JsonValue(project_root_.generic_string());
+  descriptor["project_hash"] =
+      util::JsonValue(project_root_.empty() ? std::string()
+                                            : ProjectStateDirectoryName(project_root_));
+  std::ofstream out(descriptor_path_, std::ios::trunc);
+  if (out) {
+    out << util::SerializeJson(util::JsonValue(std::move(descriptor)));
+  }
 }
 
 void ControlChannelService::EmitJsonLine(const std::string& line) const {
@@ -195,6 +204,12 @@ bool ControlChannelService::IsRunning() const { return server_.IsRunning(); }
 std::size_t ControlChannelService::ConnectionCount() const { return server_.ConnectionCount(); }
 
 void ControlChannelService::ConsumeControlCallbacks() {
+  // The I/O thread re-binds the listener when the advertised socket vanishes
+  // mid-run; re-publish the discovery descriptor (which vanished with it) so
+  // external tooling can rediscover the socket.
+  if (server_.ConsumeRebound()) {
+    WriteDescriptor();
+  }
   const std::vector<platform::ControlInboundMessage> messages = server_.TakeInbound();
   for (const platform::ControlInboundMessage& message : messages) {
     const ControlRequest request = ParseControlRequest(message.line);
@@ -401,6 +416,20 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   return util::JsonValue(std::move(object));
 }
 
+void ControlChannelService::OnDebugStopBegan(const std::string& reason, int thread_id) {
+  if (context_ == nullptr || (!server_.IsRunning() && !stdout_mirror_)) {
+    return;
+  }
+  // The immediate phase carries only what the DAP `stopped` event already knows;
+  // file/line/frames follow in OnDebugStopped once the stack resolves.
+  util::JsonObject event;
+  event["event"] = util::JsonValue(std::string("stopped"));
+  event["reason"] = util::JsonValue(reason);
+  event["threadId"] = util::JsonValue(static_cast<std::int64_t>(thread_id));
+  event["framesPending"] = util::JsonValue(true);
+  EmitEvent(util::JsonValue(std::move(event)));
+}
+
 void ControlChannelService::OnDebugStopped() {
   if (context_ == nullptr || (!server_.IsRunning() && !stdout_mirror_)) {
     return;
@@ -424,6 +453,7 @@ void ControlChannelService::OnDebugStopped() {
     frames.push_back(util::JsonValue(std::move(frame_object)));
   }
   event["frames"] = util::JsonValue(std::move(frames));
+  event["framesPending"] = util::JsonValue(false);
   EmitEvent(util::JsonValue(std::move(event)));
 }
 

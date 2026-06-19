@@ -226,11 +226,83 @@ void TestControlListFiltersDeadPids() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// Self-heal: some environments delete $XDG_RUNTIME_DIR contents while a process
+// is still alive, silently severing the advertised socket. The I/O thread must
+// detect the missing socket on its idle poll and re-bind a fresh listener at the
+// same path; the host re-writes the discovery descriptor on the next drain. After
+// the heal a new client must be able to connect and query.
+void TestSocketSelfHealsAfterExternalDeletion() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-selfheal-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context, microide::workspace::ControlChannelService::Operations{
+                   .execute_command_line =
+                       [](const std::string&) {
+                         return microide::workspace::ControlChannelService::CommandOutcome{.ok =
+                                                                                               true};
+                       }});
+  service.SetWakeEventType(0);  // no SDL push; the test polls / drains explicitly.
+  Expect(service.Start("/tmp/proj"), "control service should start");
+
+  const std::filesystem::path socket_path =
+      runtime / "microide" / (std::to_string(::getpid()) + ".sock");
+  const std::filesystem::path descriptor_path =
+      runtime / "microide" / "instances" / (std::to_string(::getpid()) + ".json");
+  Expect(std::filesystem::exists(descriptor_path), "the discovery descriptor is written at start");
+
+  // A client connects before the deletion (sanity).
+  int fd = ConnectUnix(socket_path.string());
+  Expect(fd >= 0, "client connects to the original socket");
+  ::close(fd);
+
+  // Simulate the external runtime-dir cleanup: drop both the socket and descriptor
+  // while the process keeps running.
+  ::unlink(socket_path.string().c_str());
+  std::filesystem::remove(descriptor_path, ec);
+  Expect(!std::filesystem::exists(socket_path), "socket removed out from under the live process");
+
+  // The I/O thread re-binds on its next idle poll (≤1s). Poll a fresh connect.
+  int healed_fd = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+  while (healed_fd < 0 && std::chrono::steady_clock::now() < deadline) {
+    healed_fd = ConnectUnix(socket_path.string());
+    if (healed_fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  }
+  Expect(healed_fd >= 0, "a new client connects after the listener self-heals");
+
+  // Draining the control callbacks observes the rebind and re-writes the descriptor.
+  service.ConsumeControlCallbacks();
+  Expect(std::filesystem::exists(descriptor_path),
+         "the discovery descriptor is re-published after the rebind");
+
+  // The healed listener still serves queries end-to-end.
+  const auto status = util::ParseJson(ExchangeLine(service, healed_fd, R"({"id":1,"query":"status"})"));
+  Expect(status.has_value() && (*status)["ok"].AsBool(),
+         "the rebound socket answers queries");
+
+  ::close(healed_fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 #else
 
 void TestQueryAndCommandOverSocket() {}
 void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
+void TestSocketSelfHealsAfterExternalDeletion() {}
 
 #endif
 
@@ -276,6 +348,74 @@ void TestStdoutMirrorEmitsWithoutConnections() {
          "third mirrored line should be the terminated event");
 }
 
+// Regression: the resolved `stopped` event must carry the populated execution view
+// (reason/threadId/file/line/frames) and framesPending:false. The original bug
+// fired this against an empty debug_execution, yielding reason="",threadId=0,
+// frames=[] — this asserts the populated payload.
+void TestStoppedEventCarriesPopulatedExecutionView() {
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+  auto& exec = context.current_project_state.debug_execution;
+  exec.stopped = true;
+  exec.thread_id = 7;
+  exec.stop_reason = "breakpoint";
+  exec.focused_frame_index = 0;
+  microide::workspace::DebugStackFrameView frame;
+  frame.source_path = "/tmp/proj/main.cpp";
+  frame.line = 41;  // 0-based; the event reports 1-based (42)
+  frame.display_primary = "main";
+  exec.frames.push_back(frame);
+
+  std::vector<std::string> emitted;
+  microide::workspace::ControlChannelService service;
+  service.Configure(context, microide::workspace::ControlChannelService::Operations{
+                                 .emit_jsonl = [&emitted](const std::string& line) {
+                                   emitted.push_back(line);
+                                 }});
+  service.SetStdoutMirror(true);
+  service.OnDebugStopped();
+  Expect(emitted.size() == 1, "the resolved stop should mirror one event");
+
+  const auto stopped = util::ParseJson(emitted[0]);
+  Expect(stopped.has_value(), "stopped event should parse");
+  Expect((*stopped)["event"].AsString() == "stopped", "event should be 'stopped'");
+  Expect((*stopped)["reason"].AsString() == "breakpoint", "reason should be populated");
+  Expect((*stopped)["threadId"].AsInt() == 7, "threadId should be populated");
+  Expect((*stopped)["file"].AsString() == "/tmp/proj/main.cpp", "file should be populated");
+  Expect((*stopped)["line"].AsInt() == 42, "line should be 1-based and populated");
+  Expect((*stopped)["frames"].AsArray().size() == 1, "frames should be populated");
+  Expect((*stopped)["framesPending"].AsBool() == false,
+         "resolved stop should report framesPending:false");
+}
+
+// The immediate stop event carries the real reason/thread with framesPending:true
+// and no file/line/frames, even with an empty (not-yet-resolved) execution view.
+void TestStopBeganEmitsImmediatePendingEvent() {
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+  // debug_execution intentionally left empty: the immediate phase fires before
+  // ProjectStop rebuilds it.
+
+  std::vector<std::string> emitted;
+  microide::workspace::ControlChannelService service;
+  service.Configure(context, microide::workspace::ControlChannelService::Operations{
+                                 .emit_jsonl = [&emitted](const std::string& line) {
+                                   emitted.push_back(line);
+                                 }});
+  service.SetStdoutMirror(true);
+  service.OnDebugStopBegan("breakpoint", 1);
+  Expect(emitted.size() == 1, "stop-began should mirror one event");
+
+  const auto event = util::ParseJson(emitted[0]);
+  Expect(event.has_value(), "stop-began event should parse");
+  Expect((*event)["event"].AsString() == "stopped", "event should be 'stopped'");
+  Expect((*event)["reason"].AsString() == "breakpoint", "reason should be carried");
+  Expect((*event)["threadId"].AsInt() == 1, "threadId should be carried");
+  Expect((*event)["framesPending"].AsBool() == true, "immediate stop is framesPending:true");
+  Expect(!(*event).AsObject().count("file"), "immediate stop omits file");
+  Expect(!(*event).AsObject().count("frames"), "immediate stop omits frames");
+}
+
 }  // namespace
 
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
@@ -287,6 +427,12 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestLaunchConfigsAndAdaptersOverSocket);
   AddTest(tests, "ControlChannelService/StdoutMirrorEmitsWithoutConnections",
           TestStdoutMirrorEmitsWithoutConnections);
+  AddTest(tests, "ControlChannelService/StoppedEventCarriesPopulatedExecutionView",
+          TestStoppedEventCarriesPopulatedExecutionView);
+  AddTest(tests, "ControlChannelService/StopBeganEmitsImmediatePendingEvent",
+          TestStopBeganEmitsImmediatePendingEvent);
+  AddTest(tests, "ControlChannelService/SocketSelfHealsAfterExternalDeletion",
+          TestSocketSelfHealsAfterExternalDeletion);
 }
 
 }  // namespace microide::tests

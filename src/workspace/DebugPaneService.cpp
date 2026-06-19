@@ -61,7 +61,9 @@ void DebugPaneService::OpenOnStop() {
   if (state_.debug_pane.visible) {
     return;
   }
-  Activate(DebugPaneMode::CallStack);
+  // Open on the Variables inspector by default — inspecting locals is the common
+  // first action at a stop; the user can switch to Call Stack when needed.
+  Activate(DebugPaneMode::Variables);
 }
 
 void DebugPaneService::SetWidth(float width) {

@@ -156,9 +156,31 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       }
     }
   };
+  // Map a value's kind to its display color. Reuses the editor syntax palette so
+  // numbers / strings / pointers read the same in the debugger as in source.
+  const auto value_kind_color = [&](DebugValueKind kind) -> SDL_Color {
+    switch (kind) {
+      case DebugValueKind::Number:
+        return theme_.syntax_number;
+      case DebugValueKind::String:
+        return theme_.syntax_string;
+      case DebugValueKind::Pointer:
+        return theme_.syntax_constant;
+      case DebugValueKind::Boolean:
+        return theme_.syntax_keyword;
+      case DebugValueKind::Aggregate:
+      case DebugValueKind::Plain:
+      case DebugValueKind::Scope:
+      case DebugValueKind::Pending:
+      case DebugValueKind::Error:
+        return theme_.text_secondary;
+    }
+    return theme_.text_secondary;
+  };
   // Shared row painter for the lazy value-tree surfaces (Variables + Watch): an
-  // indented disclosure for expandable rows, then name + value, with an inline
-  // setVariable editor over the value column while a leaf is being edited.
+  // indented disclosure for expandable rows, then name + value + a dim trailing
+  // type hint, with an inline setVariable editor over the value column while a
+  // leaf is being edited.
   const auto draw_value_tree_row = [&](const auto& model, std::size_t row_index, float line_y) {
     const std::vector<DebugVariableRowView>& rows = model.Rows();
     const DebugVariableRowView& var_row = rows[row_index];
@@ -173,13 +195,27 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     }
     const float indent = static_cast<float>(var_row.depth) * 14.0f;
     const float row_x = panel_layout.text_x + indent;
-    if (var_row.has_children) {
-      draw_disclosure(row_x, line_y, var_row.expanded, theme_.text_muted);
-    }
     const float name_x = row_x + 14.0f;
-    const float name_avail = panel_layout.text_x + panel_layout.text_width - name_x;
+    const float content_right = panel_layout.text_x + panel_layout.text_width;
+    const float name_avail = content_right - name_x;
     if (name_avail <= 0.0f) {
       return;
+    }
+    // Synthetic "loading…"/"<unavailable>" placeholder: dim, no disclosure, inert.
+    if (var_row.is_placeholder) {
+      DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_muted, background,
+                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+      return;
+    }
+    // Synthetic "show more…" affordance: accented to read as clickable; the click
+    // routes through ToggleRow like any other row and fetches the next page.
+    if (var_row.is_show_more) {
+      DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.accent, background,
+                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+      return;
+    }
+    if (var_row.has_children) {
+      draw_disclosure(row_x, line_y, var_row.expanded, theme_.text_muted);
     }
     const bool editing = model.IsEditing() && model.EditingNodeId().has_value() &&
                          *model.EditingNodeId() == var_row.node_id;
@@ -221,8 +257,42 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       }
       return;
     }
-    draw_two_column_row(name_x, name_avail, var_row.display_name, theme_.text_primary,
-                        var_row.display_value, theme_.text_secondary, line_y, background);
+    // Scope rows (Locals / Registers) read as section headers: accent name, no
+    // value/type. Variable rows draw name | kind-colored value | dim type hint,
+    // with the value column loosely aligned and the type hint dropped first when
+    // space is tight, then the value, then the name.
+    if (var_row.kind == DebugValueKind::Scope) {
+      DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.accent, background,
+                 text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+      return;
+    }
+    const float name_w = text_renderer_.MeasureWidth(var_row.display_name);
+    DrawTextOn(text_renderer_, renderer, name_x, line_y, theme_.text_primary, background,
+               text_renderer_.TruncateToWidth(var_row.display_name, name_avail));
+    // Reserve a dim, right-aligned type hint when one is present and fits.
+    float values_right = content_right;
+    if (!var_row.display_type.empty()) {
+      const float type_w = text_renderer_.MeasureWidth(var_row.display_type);
+      const float type_x = content_right - type_w;
+      const float min_value_room = 48.0f;  // keep the value legible before showing a type
+      if (type_x > name_x + name_w + 12.0f + min_value_room) {
+        DrawTextOn(text_renderer_, renderer, type_x, line_y, theme_.text_muted, background,
+                   var_row.display_type);
+        values_right = type_x - 8.0f;
+      }
+    }
+    if (var_row.display_value.empty()) {
+      return;
+    }
+    // Loosely align the value column (~40% in); never let it overlap a long name.
+    const float aligned_value_x =
+        panel_layout.text_x + std::max(120.0f, panel_layout.text_width * 0.40f);
+    const float value_x = std::max(aligned_value_x, name_x + name_w + 12.0f);
+    const float value_w = values_right - value_x;
+    if (value_w > 0.0f) {
+      DrawTextOn(text_renderer_, renderer, value_x, line_y, value_kind_color(var_row.kind),
+                 background, text_renderer_.TruncateToWidth(var_row.display_value, value_w));
+    }
   };
 
   for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {

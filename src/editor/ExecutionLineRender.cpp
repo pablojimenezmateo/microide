@@ -4,14 +4,16 @@
 #include <cmath>
 #include <vector>
 
+#include "editor/GutterMetrics.h"
+
 namespace microide::editor {
 
 SDL_FRect ExecutionLineGutterMarkerRect(float gutter_x, float y, float gutter_width,
                                         float line_height) {
   // Match the breakpoint dot's footprint so the arrow overlays it cleanly when a
-  // session stops on a breakpoint.
-  const float side = std::clamp(line_height * 0.55f, 6.0f, 12.0f);
-  const float x = gutter_x + 4.0f;
+  // session stops on a breakpoint, staying within the reserved marker strip.
+  const float side = std::clamp(line_height * 0.55f, 6.0f, kGutterMarkerMaxExtent);
+  const float x = gutter_x + kGutterMarkerInset;
   const float top = y + std::max(0.0f, (line_height - side) * 0.5f);
   return SDL_FRect{x, top, side, side};
 }

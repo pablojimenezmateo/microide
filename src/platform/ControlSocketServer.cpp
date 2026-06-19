@@ -52,6 +52,7 @@ struct ControlSocketServer::Impl {
   std::thread io_thread;
   std::atomic<bool> stop{false};
   std::atomic<bool> running{false};
+  std::atomic<bool> rebound{false};
   std::atomic<std::uint32_t> wake_event_type{0};
 
   std::mutex conn_mutex;
@@ -164,6 +165,12 @@ struct ControlSocketServer::Impl {
         break;
       }
       if (ready <= 0) {
+        // On an idle wake (poll timeout) check the advertised socket still
+        // exists; some environments delete $XDG_RUNTIME_DIR contents while the
+        // process lives, silently severing the query path. Re-bind if so.
+        if (ready == 0) {
+          MaybeRebindSocket();
+        }
         continue;
       }
 
@@ -213,6 +220,55 @@ struct ControlSocketServer::Impl {
         }
       }
     }
+  }
+
+  // Runs on the I/O thread (so listen_fd is mutated only here, between poll
+  // iterations — no cross-thread race; Stop() touches listen_fd only after the
+  // I/O thread joins). If the advertised socket file disappeared while we are
+  // still running, re-bind a fresh listener at the same path and swap listen_fd.
+  // Existing live connections keep their own fds and are unaffected.
+  void MaybeRebindSocket() {
+    if (!running.load(std::memory_order_acquire) || socket_path.empty()) {
+      return;
+    }
+    const std::string path_string = socket_path.string();
+    struct stat st {};
+    if (::stat(path_string.c_str(), &st) == 0) {
+      return;  // the socket file is still present
+    }
+    if (path_string.size() + 1 > sizeof(sockaddr_un::sun_path)) {
+      return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(socket_path.parent_path(), ec);
+    ::unlink(path_string.c_str());
+
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+      return;
+    }
+    sockaddr_un address{};
+    address.sun_family = AF_UNIX;
+    std::memcpy(address.sun_path, path_string.c_str(), path_string.size() + 1);
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+      ::close(fd);
+      return;
+    }
+    ::chmod(path_string.c_str(), S_IRUSR | S_IWUSR);
+    if (::listen(fd, 8) != 0) {
+      ::close(fd);
+      ::unlink(path_string.c_str());
+      return;
+    }
+    SetNonBlocking(fd);
+    if (listen_fd >= 0) {
+      ::close(listen_fd);
+    }
+    listen_fd = fd;
+    // Signal the main thread to re-write the discovery descriptor (it vanished
+    // with the socket) on its next control drain.
+    rebound.store(true, std::memory_order_release);
+    PushWakeEvent();
   }
 
   void AcceptPending() {
@@ -399,6 +455,10 @@ std::size_t ControlSocketServer::ConnectionCount() const {
   return impl_->connections.size();
 }
 
+bool ControlSocketServer::ConsumeRebound() {
+  return impl_->rebound.exchange(false, std::memory_order_acq_rel);
+}
+
 #else  // non-POSIX: control channel unsupported.
 
 struct ControlSocketServer::Impl {};
@@ -412,6 +472,7 @@ std::vector<ControlInboundMessage> ControlSocketServer::TakeInbound() { return {
 void ControlSocketServer::SendLine(std::uint64_t, const std::string&) {}
 void ControlSocketServer::Broadcast(const std::string&) {}
 std::size_t ControlSocketServer::ConnectionCount() const { return 0; }
+bool ControlSocketServer::ConsumeRebound() { return false; }
 
 #endif
 

@@ -80,6 +80,15 @@ struct DapScope {
   int variables_reference = 0;
   bool expensive = false;
   std::string presentation_hint;
+  // Adapter-reported child counts (gdb populates namedVariables for scopes). Used
+  // to clamp the variables fetch count: gdb's DAP throws "list index out of range"
+  // when a request asks for more children than the scope actually has.
+  int named_variables = 0;
+  int indexed_variables = 0;
+  // Whether the adapter actually reported a count (namedVariables/indexedVariables
+  // are optional in DAP). Distinguishes a true 0 (empty) from "unknown": only when
+  // reported may we clamp/treat-as-empty; otherwise we use a bounded page fetch.
+  bool count_reported = false;
 };
 
 struct DapVariable {
@@ -90,6 +99,8 @@ struct DapVariable {
   int variables_reference = 0;  // > 0 means structured/expandable
   int named_variables = 0;
   int indexed_variables = 0;
+  // Whether the adapter reported a child count (optional in DAP); see DapScope.
+  bool count_reported = false;
 };
 
 struct DapBreakpoint {

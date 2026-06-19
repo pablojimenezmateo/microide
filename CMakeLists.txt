@@ -272,6 +272,7 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalMouseEncoder.cpp
   src/terminal/TerminalOscClipboard.cpp
   src/terminal/TerminalProcessControl.cpp
+  src/util/DebugTrace.cpp
   src/util/DurableFile.cpp
   src/util/JsonValue.cpp
   src/util/GitConflictMarkers.cpp
@@ -358,6 +359,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellHoverTargets.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
+  src/workspace/DebugToolbarSurface.cpp
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp

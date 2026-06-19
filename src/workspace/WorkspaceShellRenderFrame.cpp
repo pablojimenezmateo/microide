@@ -599,6 +599,14 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   if (project_state.surface.focus == FocusTarget::Editor) {
     DrawSurfaceFocusRing(renderer, layout.editor_surface);
   }
+
+  // Floating debug control bar, drawn over the editor whenever a session is live.
+  // Stacks below the find widget (which renders later, in the overlay layer) when
+  // both are visible, so draw order between them is irrelevant.
+  if (render_editor_surface && DebugToolbarVisible()) {
+    RenderDebugToolbar(renderer, layout, IsDebugSessionStopped(),
+                       DebugToolbarAvoidBelowY(layout));
+  }
 }
 
 }  // namespace microide::workspace

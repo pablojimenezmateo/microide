@@ -1,9 +1,12 @@
 #include "workspace/DebugSession.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <utility>
 
 #include "util/JsonValue.h"
+#include "util/PerformanceTrace.h"
 
 namespace microide::workspace {
 
@@ -76,6 +79,13 @@ bool DebugSession::Start(const std::vector<std::string>& command, const LaunchCo
   launch_sent_ = false;
   configuration_done_sent_ = false;
   last_error_.clear();
+  is_gdb_adapter_ = false;
+  for (const std::string& token : command) {
+    if (token.find("gdb") != std::string::npos) {
+      is_gdb_adapter_ = true;
+      break;
+    }
+  }
 
   client_->SetEventCallback(
       [this](const std::string& event, const util::JsonValue& body) { HandleEvent(event, body); });
@@ -156,6 +166,35 @@ void DebugSession::SendConfigurationDone() {
                                 SetState(State::Running);
                               }
                             });
+}
+
+void DebugSession::SendDebuggerValueLimits() {
+  if (!is_gdb_adapter_) {
+    return;
+  }
+  // Bound how much gdb will format/read for a single value. An uninitialized or
+  // corrupt STL container reads a garbage size (the probe saw a std::vector report
+  // a length of billions); formatting that unbounded is what froze the host. The
+  // load-bearing cap is `max-value-size`: with it at 1 MiB a top-of-`main` expand
+  // (locals still uninitialized) took 15 s+; at 64 KiB the same expand returned in
+  // ~0.3 s. The `print` caps bound aggregate/string/repeat expansion on top.
+  // These are global gdb settings, issued as REPL commands before the program runs.
+  // Pass frame_id = -1 so `MakeEvaluateArguments` omits `frameId`: a present
+  // `frameId:0` before launch (no frames exist yet) makes gdb's DAP error with
+  // "list index out of range", so the omission is required for the settings to
+  // actually apply. (Frame 0 is a valid frame *after* stopping; -1 means "no frame".)
+  // No callback — best-effort; a non-gdb adapter never reaches here.
+  static constexpr const char* kLimitCommands[] = {
+      "set max-value-size 65536",
+      "set print elements 200",
+      "set print characters 200",
+      "set print repeats 10",
+  };
+  for (const char* command : kLimitCommands) {
+    client_->SendRequestAsync("evaluate",
+                              dap_protocol::MakeEvaluateArguments(command, /*frame_id=*/-1, "repl"),
+                              {});
+  }
 }
 
 void DebugSession::SendAllBreakpoints() {
@@ -258,6 +297,9 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     if (callbacks_.on_exception_filters_available) {
       callbacks_.on_exception_filters_available(client_->Capabilities().exception_filters);
     }
+    // Clamp gdb value formatting before the program runs, so the first expand of a
+    // (possibly uninitialized) local cannot trigger unbounded formatting.
+    SendDebuggerValueLimits();
     SendAllBreakpoints();
     SendExceptionFilters();
     SendConfigurationDone();
@@ -354,17 +396,39 @@ void DebugSession::RequestScopes(int frame_id,
 }
 
 void DebugSession::RequestVariables(
-    int variables_reference, std::function<void(std::vector<dap_protocol::DapVariable>)> callback) {
-  if (!callback || variables_reference <= 0 || !client_->IsInitialized()) {
+    int variables_reference, int start, int count,
+    std::function<void(bool, std::vector<dap_protocol::DapVariable>)> callback) {
+  if (!callback) {
     return;
   }
+  if (variables_reference <= 0 || !client_->IsInitialized()) {
+    callback(false, {});
+    return;
+  }
+  const auto request_started = std::chrono::steady_clock::now();
   client_->SendRequestAsync(
-      "variables", dap_protocol::MakeVariablesArguments(variables_reference, 0, 0),
-      [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
+      "variables", dap_protocol::MakeVariablesArguments(variables_reference, start, count),
+      [callback = std::move(callback), variables_reference,
+       request_started](const dap_protocol::DapResponse& response) {
         if (!response.success) {
+          // Surface the failure so the caller clears the loading placeholder
+          // instead of leaving a spinner that never resolves.
+          callback(false, {});
           return;
         }
-        callback(dap_protocol::ParseVariables(response.body));
+        std::vector<dap_protocol::DapVariable> variables =
+            dap_protocol::ParseVariables(response.body);
+        // Round-trip timing (adapter-side cost) is the suspect for slow expands.
+        // Env-gated so it is silent unless MICROIDE_PERF_TRACE is set.
+        if (util::PerformanceTrace::Enabled()) {
+          const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                        std::chrono::steady_clock::now() - request_started)
+                                        .count();
+          std::fprintf(stderr, "[perf] %8.2f ms | dap variables ref=%d children=%zu\n", elapsed_ms,
+                       variables_reference, variables.size());
+          std::fflush(stderr);
+        }
+        callback(true, std::move(variables));
       });
 }
 
