@@ -923,7 +923,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                                ? BreakpointGutterKind::Conditional
                                                : BreakpointGutterKind::Plain;
       DrawBreakpointGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
-                                 bp_mark.verified, bp_kind);
+                                 bp_mark.verified, bp_kind, bp_mark.enabled);
       ++breakpoint_gutter_mark_index;
     }
     if (is_execution_line) {

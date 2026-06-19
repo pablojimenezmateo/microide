@@ -166,6 +166,8 @@ enum class ActionId {
   DebugBreakpointEditCondition,
   DebugBreakpointEditHitCondition,
   DebugBreakpointEditLogMessage,
+  DebugBreakpointClearCondition,
+  DebugBreakpointToggleEnabled,
   DebugBreakpointRemove,
   // Headless breakpoint control (control channel + cold-start spec). Unlike the
   // context-menu modifiers above, these take an explicit `<file> <line>` (1-based

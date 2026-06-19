@@ -191,6 +191,12 @@ void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
   }
 }
 
+void WorkspaceActionContext::BreakpointQuickActionFromMenu(ActionId id) {
+  if (operations_.breakpoint_quick_action_from_menu) {
+    operations_.breakpoint_quick_action_from_menu(id);
+  }
+}
+
 void WorkspaceActionContext::RemoveBreakpointFromMenu() {
   if (operations_.remove_breakpoint_from_menu) {
     operations_.remove_breakpoint_from_menu();
@@ -509,6 +515,8 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .open_launch_config_picker = [this]() { OpenLaunchConfigPicker(); },
           .edit_breakpoint_modifier_from_menu =
               [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
+          .breakpoint_quick_action_from_menu =
+              [this](ActionId id) { BreakpointQuickActionFromMenu(id); },
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
           .toggle_debug_pane = [this]() { ToggleDebugPane(); },
           .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },

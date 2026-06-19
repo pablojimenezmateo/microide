@@ -94,6 +94,25 @@
                                          const std::filesystem::path& path) {
     shell.MakeMenuCoordinator().OpenTreeContextMenu(target, path, SDL_FRect{0, 0, 0, 0});
   }
+  static editor::BreakpointStore& BreakpointStore(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.breakpoint_store;
+  }
+  static void OpenBreakpointContextMenu(WorkspaceShell& shell, const std::filesystem::path& path,
+                                        std::size_t line) {
+    shell.OpenBreakpointContextMenu(path, line, SDL_FRect{0, 0, 0, 0});
+  }
+  static bool BreakpointContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.tree_context_menu.open &&
+           shell.context_.menu_state.tree_context_menu.target ==
+               TreeContextTargetKind::BreakpointLine;
+  }
+  static bool BreakpointContextMenuEnabledFlag(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.tree_context_menu.breakpoint_enabled;
+  }
+  static bool ExecuteBreakpointMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return ActionCoordinator(shell.MakeActionContext())
+        .Execute(id, {}, WorkspaceShell::ActionSource::ContextMenu);
+  }
   static bool ExecuteShowInFileExplorer(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::ShowInFileExplorer, {},

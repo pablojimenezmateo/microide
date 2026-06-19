@@ -176,7 +176,7 @@ void TestBreakpointStoreModifierSetters() {
   const std::filesystem::path path = "/tmp/project/mod.py";
 
   // Setting a modifier on a bare line materializes the breakpoint (so the
-  // context menu's "Edit Condition…" doubles as "Add Conditional Breakpoint").
+  // context menu's "Set Condition…" doubles as "Add Conditional Breakpoint").
   store.SetCondition(path, 12, "i > 5");
   Expect(store.HasBreakpoint(path, 12), "setting a condition creates the breakpoint");
   const auto* bps = store.FindByPath(path);
@@ -190,10 +190,15 @@ void TestBreakpointStoreModifierSetters() {
              (*after)[0].log_message == std::optional<std::string>("value={x}"),
          "hit condition + log message are stored");
 
-  // A nullopt clears the field (an empty prompt commit).
+  // A nullopt clears the field (an empty prompt commit / "Clear Condition"). The
+  // MATLAB-style menu clears only the condition; hit-count + log message persist.
   const std::uint64_t before_clear = store.revision();
   store.SetCondition(path, 12, std::nullopt);
-  Expect(!(*store.FindByPath(path))[0].condition.has_value(), "nullopt clears the condition");
+  const auto* cleared = store.FindByPath(path);
+  Expect(!(*cleared)[0].condition.has_value(), "nullopt clears the condition");
+  Expect((*cleared)[0].hit_condition == std::optional<std::string>(">10") &&
+             (*cleared)[0].log_message == std::optional<std::string>("value={x}"),
+         "clearing the condition keeps the hit-count and log-message modifiers");
   Expect(store.revision() != before_clear, "clearing a modifier bumps the revision");
 
   // A no-op assignment does not bump the revision.

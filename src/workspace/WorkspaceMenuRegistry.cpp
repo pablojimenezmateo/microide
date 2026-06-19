@@ -293,12 +293,13 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuSeparator(),
       MenuItem(ActionId::TreeRefresh, "Refresh"),
   });
-  // Breakpoint gutter context menu (Phase 6). Editing a modifier on a bare line
-  // materializes the breakpoint, so these double as "add conditional / logpoint".
+  // Breakpoint gutter context menu (MATLAB-style). The menu only opens on an
+  // existing breakpoint; the toggle item's label flips between "Disable" and
+  // "Enable" in WorkspaceShell::MenuItemLabel based on the breakpoint's state.
   static const auto kBreakpointItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::DebugBreakpointEditCondition, "Edit Condition…"),
-      MenuItem(ActionId::DebugBreakpointEditHitCondition, "Edit Hit Count…"),
-      MenuItem(ActionId::DebugBreakpointEditLogMessage, "Edit Log Message…"),
+      MenuItem(ActionId::DebugBreakpointToggleEnabled, "Disable Breakpoint"),
+      MenuItem(ActionId::DebugBreakpointEditCondition, "Set Condition…"),
+      MenuItem(ActionId::DebugBreakpointClearCondition, "Clear Condition"),
       MenuSeparator(),
       MenuItem(ActionId::DebugBreakpointRemove, "Remove Breakpoint"),
   });

@@ -342,6 +342,12 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
 }
 
 std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
+  // The breakpoint gutter menu's enable/disable item flips its verb based on the
+  // breakpoint's current state, captured into the menu when it opened.
+  if (item.action == ActionId::DebugBreakpointToggleEnabled) {
+    return context_.menu_state.tree_context_menu.breakpoint_enabled ? "Disable Breakpoint"
+                                                                     : "Enable Breakpoint";
+  }
   const ActionSpec* command_action =
       item.command_name.empty() ? nullptr : FindActionByCommand(item.command_name);
   const ActionId effective_action =

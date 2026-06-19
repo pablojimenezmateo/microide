@@ -21,7 +21,7 @@ SDL_FRect BreakpointGutterMarkerRect(float gutter_x, float y, float /*gutter_wid
 
 void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& theme, float gutter_x,
                                 float y, float gutter_width, float line_height, bool verified,
-                                BreakpointGutterKind kind) {
+                                BreakpointGutterKind kind, bool enabled) {
   if (renderer == nullptr || gutter_width <= 0.0f || line_height <= 0.0f) {
     return;
   }
@@ -44,19 +44,36 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
   // Fill the shape as horizontal spans (one rect per scanline). The marker is tiny
   // (≤12px), so this is a handful of fills coalesced by SDL's batcher. A disc uses
   // a circular half-width; a logpoint diamond uses a linear one (peaks at center).
+  // A disabled breakpoint draws only the outline ring: subtract an inner shape of
+  // radius `radius - thickness`, leaving two edge rects per scanline (a single
+  // solid rect at the top/bottom caps where the inner shape has no extent).
   const bool diamond = kind == BreakpointGutterKind::Logpoint;
+  const float thickness = enabled ? 0.0f : std::clamp(radius * 0.45f, 1.0f, 2.5f);
+  const float inner_radius = radius - thickness;
+  const auto half_width_at = [&](float dy, float r) {
+    if (r <= 0.0f || std::fabs(dy) > r) {
+      return 0.0f;
+    }
+    return diamond ? std::max(0.0f, r - std::fabs(dy))
+                   : std::sqrt(std::max(0.0f, r * r - dy * dy));
+  };
   const int rows = static_cast<int>(std::ceil(bounds.h));
   std::vector<SDL_FRect> spans;
-  spans.reserve(static_cast<std::size_t>(std::max(1, rows)));
+  spans.reserve(static_cast<std::size_t>(std::max(1, rows)) * (enabled ? 1 : 2));
   for (int i = 0; i < rows; ++i) {
     const float row_y = bounds.y + static_cast<float>(i);
     const float dy = (row_y + 0.5f) - cy;
-    if (std::fabs(dy) > radius) {
+    const float outer = half_width_at(dy, radius);
+    if (outer <= 0.0f) {
       continue;
     }
-    const float half_width = diamond ? std::max(0.0f, radius - std::fabs(dy))
-                                      : std::sqrt(std::max(0.0f, radius * radius - dy * dy));
-    spans.push_back(SDL_FRect{cx - half_width, row_y, half_width * 2.0f, 1.0f});
+    const float inner = enabled ? 0.0f : half_width_at(dy, inner_radius);
+    if (inner <= 0.0f) {
+      spans.push_back(SDL_FRect{cx - outer, row_y, outer * 2.0f, 1.0f});
+    } else {
+      spans.push_back(SDL_FRect{cx - outer, row_y, outer - inner, 1.0f});
+      spans.push_back(SDL_FRect{cx + inner, row_y, outer - inner, 1.0f});
+    }
   }
   if (!spans.empty()) {
     SDL_RenderFillRects(renderer, spans.data(), static_cast<int>(spans.size()));

@@ -1180,6 +1180,8 @@
   void OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
                                  const SDL_FRect& anchor_rect);
   void EditBreakpointModifierFromMenu(ActionId id);
+  // Prompt-less gutter-menu actions: toggle enabled / clear the condition.
+  void BreakpointQuickActionFromMenu(ActionId id);
   void RemoveBreakpointFromMenu();
   // Commit a SetBreakpoint* prompt: write the field (empty clears) + live-resend.
   void CommitBreakpointModifierPrompt();

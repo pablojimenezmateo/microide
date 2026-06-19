@@ -403,8 +403,25 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
 
 void WorkspaceShell::OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
                                                const SDL_FRect& anchor_rect) {
+  // MATLAB-style: the gutter menu acts on an existing breakpoint only. Right-click
+  // on a bare line is inert (left-click still sets a plain breakpoint).
+  const editor::Breakpoint* existing = nullptr;
+  if (const std::vector<editor::Breakpoint>* bps =
+          context_.current_project_state.breakpoint_store.FindByPath(path);
+      bps != nullptr) {
+    for (const editor::Breakpoint& bp : *bps) {
+      if (bp.line == line) {
+        existing = &bp;
+        break;
+      }
+    }
+  }
+  if (existing == nullptr) {
+    return;
+  }
   MakeMenuCoordinator().OpenTreeContextMenu(TreeContextTargetKind::BreakpointLine, path,
                                             anchor_rect, line);
+  context_.menu_state.tree_context_menu.breakpoint_enabled = existing->enabled;
 }
 
 void WorkspaceShell::EditBreakpointModifierFromMenu(ActionId id) {
@@ -482,6 +499,28 @@ void WorkspaceShell::RemoveBreakpointFromMenu() {
     return;
   }
   context_.current_project_state.breakpoint_store.Remove(path, line);
+  ResendBreakpointsForFile(path);
+  RequestFocusedEditorRedraw();
+}
+
+void WorkspaceShell::BreakpointQuickActionFromMenu(ActionId id) {
+  const std::filesystem::path path = context_.menu_state.tree_context_menu.path;
+  const std::size_t line = context_.menu_state.tree_context_menu.line;
+  if (path.empty()) {
+    return;
+  }
+  editor::BreakpointStore& store = context_.current_project_state.breakpoint_store;
+  switch (id) {
+    case ActionId::DebugBreakpointToggleEnabled:
+      store.ToggleEnabled(path, line);
+      break;
+    case ActionId::DebugBreakpointClearCondition:
+      // Clears only the condition; hit-count / log-message modifiers are kept.
+      store.SetCondition(path, line, std::nullopt);
+      break;
+    default:
+      return;
+  }
   ResendBreakpointsForFile(path);
   RequestFocusedEditorRedraw();
 }

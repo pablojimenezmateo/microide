@@ -257,6 +257,18 @@ tab) re-evaluates each expression with `evaluate(context:"watch")` on every stop
 and frame switch. The Variables + Watch trees now share an extracted
 `DebugValueTree` core (dedup).
 
+**MATLAB-style breakpoints (2026-06-19).** The gutter context menu was reshaped to
+match MATLAB: a plain breakpoint renders red, a conditional one **yellow**
+(`theme.breakpoint_conditional`), and a **disabled** breakpoint draws as a hollow
+outline ring (same color, `DrawBreakpointGutterMarker(..., enabled=false)`). The
+menu — which now opens **only on an existing breakpoint** — offers *Disable/Enable
+Breakpoint* (dynamic label seeded from `TreeContextMenuState::breakpoint_enabled`),
+*Set Condition…*, *Clear Condition*, and *Remove Breakpoint*. Disable/Clear are
+prompt-less (`WorkspaceShell::BreakpointQuickActionFromMenu` →
+`BreakpointStore::ToggleEnabled` / `SetCondition(nullopt)`); Clear drops only the
+condition, keeping hit-count/log-message. Hit-count/logpoint editing actions remain
+in the codebase but are no longer surfaced in the gutter menu.
+
 Original plan, retained for reference:
 
 - Breakpoint context menu sets condition/hit/log (fields already on `BreakpointStore`;

@@ -19,9 +19,12 @@ enum class BreakpointGutterKind { Plain, Conditional, Logpoint };
 
 // Paint the breakpoint marker. `verified` picks the solid theme color; otherwise
 // the dimmed unverified color is used (breakpoint set but not adapter-bound).
-// `kind` selects the shape/tint (see BreakpointGutterKind).
+// `kind` selects the shape/tint (see BreakpointGutterKind). When `enabled` is
+// false the shape is drawn as a hollow outline ring (MATLAB-style "off" cue)
+// instead of a filled glyph, keeping its red/yellow color identity.
 void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& theme, float gutter_x,
                                 float y, float gutter_width, float line_height, bool verified,
-                                BreakpointGutterKind kind = BreakpointGutterKind::Plain);
+                                BreakpointGutterKind kind = BreakpointGutterKind::Plain,
+                                bool enabled = true);
 
 }  // namespace microide::editor

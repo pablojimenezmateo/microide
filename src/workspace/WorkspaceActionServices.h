@@ -192,6 +192,7 @@ class WorkspaceActionContext {
     // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
+    std::function<void(ActionId)> breakpoint_quick_action_from_menu;
     std::function<void()> remove_breakpoint_from_menu;
     // Right-side debug pane: toggle visibility, or show a specific surface.
     std::function<void()> toggle_debug_pane;
@@ -371,6 +372,7 @@ class WorkspaceActionContext {
   // Breakpoint modifiers (Phase 6). Read the breakpoint-gutter context menu's
   // target line; open a prompt seeded with the current field / remove the bp.
   void EditBreakpointModifierFromMenu(ActionId id);
+  void BreakpointQuickActionFromMenu(ActionId id);
   void RemoveBreakpointFromMenu();
   // Headless breakpoint control: the project breakpoint store, a resend hook,
   // and named-launch start. Used by the breakpoint-* / debug-launch commands.

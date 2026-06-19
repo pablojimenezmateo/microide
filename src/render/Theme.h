@@ -59,9 +59,9 @@ struct Theme {
   // dimmed `breakpoint_unverified` otherwise (set but not yet bound / no session).
   SDL_Color breakpoint;
   SDL_Color breakpoint_unverified;
-  // Conditional / hit-count breakpoint dot (Phase 9): a distinct tint so a
-  // breakpoint carrying a condition reads differently from a plain one. Logpoints
-  // instead render as a diamond (shape, not color) in `breakpoint`.
+  // Conditional / hit-count breakpoint dot: yellow (MATLAB-style) so a breakpoint
+  // carrying a condition reads differently from a plain red one. Logpoints instead
+  // render as a diamond (shape, not color) in `breakpoint`.
   SDL_Color breakpoint_conditional;
   // Debugger execution line: full-width row fill + gutter arrow painted on the
   // frame the session is stopped at (Phase 3).

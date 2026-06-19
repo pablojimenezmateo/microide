@@ -282,6 +282,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:
+    case ActionId::DebugBreakpointClearCondition:
+    case ActionId::DebugBreakpointToggleEnabled:
     case ActionId::DebugBreakpointRemove:
       // Context-menu only: the breakpoint gutter menu supplies the target line.
       if (source != ActionSource::ContextMenu || !context_.DebuggerEnabled()) {
@@ -289,6 +291,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       if (id == ActionId::DebugBreakpointRemove) {
         context_.RemoveBreakpointFromMenu();
+      } else if (id == ActionId::DebugBreakpointClearCondition ||
+                 id == ActionId::DebugBreakpointToggleEnabled) {
+        context_.BreakpointQuickActionFromMenu(id);
       } else {
         context_.EditBreakpointModifierFromMenu(id);
       }

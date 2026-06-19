@@ -112,6 +112,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::DebugBreakpointEditCondition:
     case ActionId::DebugBreakpointEditHitCondition:
     case ActionId::DebugBreakpointEditLogMessage:
+    case ActionId::DebugBreakpointClearCondition:
+    case ActionId::DebugBreakpointToggleEnabled:
     case ActionId::DebugBreakpointRemove:
       // Breakpoint-gutter context-menu items; the menu only opens when the
       // debugger is enabled, and editing works with or without a live session.
