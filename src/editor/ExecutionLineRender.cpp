@@ -8,7 +8,7 @@
 
 namespace microide::editor {
 
-SDL_FRect ExecutionLineGutterMarkerRect(float gutter_x, float y, float gutter_width,
+SDL_FRect ExecutionLineGutterMarkerRect(float gutter_x, float y, float /*gutter_width*/,
                                         float line_height) {
   // Match the breakpoint dot's footprint so the arrow overlays it cleanly when a
   // session stops on a breakpoint, staying within the reserved marker strip.

@@ -269,6 +269,15 @@ DebugPaneMouseCoordinator WorkspaceShell::MakeDebugPaneMouseCoordinator() {
               [this](const std::string& filter_id) {
                 debug_service_.ToggleExceptionFilter(filter_id);
               },
+          .toggle_debug_breakpoint_enabled =
+              [this](const std::filesystem::path& path, std::size_t line) {
+                if (context_.current_project_state.breakpoint_store.ToggleEnabled(path, line)) {
+                  // Re-send the file's breakpoints (a disabled one drops off the
+                  // adapter) and rebuild the panel + gutter.
+                  ResendBreakpointsForFile(path);
+                  RequestFocusedEditorRedraw();
+                }
+              },
       });
 }
 

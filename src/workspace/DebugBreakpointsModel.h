@@ -23,6 +23,11 @@ struct DebugBreakpointRowView {
   // Breakpoint rows (navigation target):
   std::filesystem::path path;
   std::size_t line = 0;  // 0-based buffer line
+  // True when the active adapter responded but did NOT verify this breakpoint
+  // (e.g. no code at the line, or a rejected condition). Drives a warning tint;
+  // the reason, when the adapter gave one, is folded into `secondary`. False when
+  // verified or when no session has responded yet (a plain not-yet-bound dot).
+  bool failed = false;
 };
 
 // Backs the "Breakpoints" peer bottom-panel tab (Phase 7): a list of the

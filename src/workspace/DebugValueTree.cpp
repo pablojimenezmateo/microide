@@ -97,7 +97,11 @@ void DebugValueTree::Clear() {
   reference_to_node_.clear();
   roots_.clear();
   rows_.clear();
-  next_id_ = 1;
+  // next_id_ is intentionally NOT reset: node ids stay globally monotonic for the
+  // life of the tree so a stale async response (a setVariable/variables reply
+  // issued against a previous stop/frame) can never alias a freshly-created node
+  // that happens to reuse the same id. This is defense in depth behind the
+  // per-stop / per-eval generation guards in DebugService.
   selected_row_ = 0;
   editing_node_.reset();
   edit_buffer_.SetText({});
@@ -107,7 +111,7 @@ void DebugValueTree::ClearRoots() {
   nodes_.clear();
   reference_to_node_.clear();
   roots_.clear();
-  next_id_ = 1;
+  // next_id_ stays monotonic across rebuilds — see Clear().
   editing_node_.reset();
 }
 

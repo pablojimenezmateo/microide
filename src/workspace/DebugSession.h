@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -45,9 +46,6 @@ class DebugSession {
     std::function<void(const dap_protocol::DapOutputEvent& output)> on_output;
     // Fired whenever CurrentState() changes (drives status text / redraw).
     std::function<void(State state)> on_state_changed;
-    // Every adapter event verbatim, for phases that react to stopped/continued/
-    // breakpoint/thread events. Delivered after the built-in lifecycle handling.
-    std::function<void(const std::string& event, const util::JsonValue& body)> on_event;
     // Fired the instant a `stopped` event arrives, carrying the real reason +
     // thread straight from the DAP event — before the async `stackTrace` resolves
     // frames. Lets push-based observers (the control channel) report the halt
@@ -70,11 +68,23 @@ class DebugSession {
     // Pulled when the adapter is ready for configuration (the `initialized`
     // event) and on every live re-send, to get the breakpoints to install.
     std::function<std::vector<editor::BreakpointStore::FileBreakpoints>()> breakpoint_provider;
-    // Pushed with the adapter's verified/rejected breakpoints for one file,
-    // positional to the setBreakpoints request, so the host can reflect state.
+    // Pushed with the adapter's verified/rejected breakpoints for one file. The
+    // response is positional to the setBreakpoints request, so `requested_lines`
+    // carries the 1-based lines that were sent (same order) — the host matches each
+    // result back to a breakpoint by its requested line, not by array index against
+    // the (possibly since-changed) store.
     std::function<void(const std::filesystem::path& path,
+                       const std::vector<int>& requested_lines,
                        const std::vector<dap_protocol::DapBreakpoint>& breakpoints)>
         on_breakpoints_verified;
+    // Pushed for an asynchronous DAP `breakpoint` event (the adapter binding,
+    // relocating, or invalidating a breakpoint after the initial response). `path`
+    // is the event's source path (empty when the adapter omits it). Lets the host
+    // update verification/diagnostics that the synchronous setBreakpoints response
+    // could not yet report.
+    std::function<void(const std::filesystem::path& path,
+                       const dap_protocol::DapBreakpoint& breakpoint)>
+        on_breakpoint_changed;
     // Pushed with the adapter's advertised exception-breakpoint filters when the
     // session initializes (Phase 7), so the host can populate the Breakpoints tab
     // and seed the enabled set from each filter's default.
@@ -112,6 +122,14 @@ class DebugSession {
   // Request graceful teardown: `terminate` when the adapter supports it (lets a
   // launched debuggee shut down cleanly), otherwise `disconnect`.
   void RequestStop();
+
+  // Force a terminal transition when the adapter process has exited WITHOUT a DAP
+  // `terminated`/`exited` event — a crash, an external kill, or the host's own
+  // RLIMIT_AS cap firing on a runaway adapter. Without this such a session would
+  // stay stuck "running"/"paused" forever (PruneTerminated only reaps terminal
+  // sessions), leaving a zombie row and a dead active slot. No-op when the session
+  // is already terminal/inactive. Drives on_state_changed so the UI updates.
+  void NotifyProcessExited();
 
   // Execution control (Phase 3). continue/step are valid only while Stopped and
   // target the most recently stopped thread; each optimistically resumes (fires
@@ -225,6 +243,15 @@ class DebugSession {
   // The most recent `stopped` event, retained so SwitchThread can re-emit
   // on_stopped with the original stop reason for a different thread's frames.
   dap_protocol::DapStoppedEvent last_stop_{};
+  // Monotonic counter bumped on each new stop context (a `stopped` event or a
+  // Reactivate re-projection). The async `threads` request issued for a stop
+  // captures this; a response that arrives after a newer stop superseded it is
+  // dropped, so the thread selector can never be populated for the wrong stop.
+  std::uint64_t stop_epoch_ = 0;
+  // Set once RequestStop has asked the adapter to terminate, so a subsequent
+  // process exit detected by NotifyProcessExited is reported as a clean Terminated
+  // rather than a Failed (which would surface a spurious error).
+  bool stop_requested_ = false;
 };
 
 // Stable name for a session state (status text, tracing, tests).

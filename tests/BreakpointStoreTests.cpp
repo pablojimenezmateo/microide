@@ -79,6 +79,74 @@ void TestBreakpointStoreApplyVerificationByIndex() {
   Expect(!(*store.FindByPath(path))[0].verified, "ResetVerification should clear verified flags");
 }
 
+// The verification race fix: a setBreakpoints response is positional to the
+// REQUEST, so the caller passes each result's requested line. Matching by that
+// line (not by current-store index) means a stale response — sent before the user
+// toggled another breakpoint in the same file — still lands on the right lines.
+void TestBreakpointStoreApplyVerificationMatchesByLineNotIndex() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  // Current store: 0-based lines 20 and 30 (the user removed line 10 a moment ago).
+  store.Toggle(path, 20);
+  store.Toggle(path, 30);
+
+  // A stale response for the OLD [10,20,30] request (1-based lines 11,21,31). The
+  // first result is for the now-removed line; index-matching would have shifted it
+  // onto line 20.
+  store.ApplyVerification(
+      path, {
+                VerifiedBreakpoint{.id = 1, .verified = false, .line = 11, .message = "gone"},
+                VerifiedBreakpoint{.id = 2, .verified = true, .line = 21},
+                VerifiedBreakpoint{.id = 3, .verified = true, .line = 31},
+            });
+
+  const auto* bps = store.FindByPath(path);  // sorted ascending: [20, 30]
+  Expect(bps != nullptr && bps->size() == 2, "two breakpoints expected");
+  Expect((*bps)[0].line == 20 && (*bps)[0].verified && (*bps)[0].adapter_id == 2,
+         "line 20 should match by requested line (id 2), not by index");
+  Expect((*bps)[0].verify_message.empty(),
+         "the removed-line result must not bleed onto a neighbouring breakpoint");
+  Expect((*bps)[1].line == 30 && (*bps)[1].verified && (*bps)[1].adapter_id == 3,
+         "line 30 should match by requested line (id 3)");
+}
+
+// The async DAP `breakpoint` event updates verification after the initial
+// response: matched by the adapter id assigned at setBreakpoints time.
+void TestBreakpointStoreApplyBreakpointEvent() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  store.Toggle(path, 20);  // 0-based line 20 → 1-based 21
+  store.ApplyVerification(path, {VerifiedBreakpoint{.id = 7, .verified = false, .line = 21,
+                                                    .message = "pending bind"}});
+  Expect(!(*store.FindByPath(path))[0].verified, "starts unverified");
+
+  // The adapter later binds the breakpoint and emits a `breakpoint` event (id 7).
+  store.ApplyBreakpointEvent(path, VerifiedBreakpoint{.id = 7, .verified = true, .line = 21});
+  const auto* bps = store.FindByPath(path);
+  Expect(bps != nullptr && (*bps)[0].verified && (*bps)[0].verify_message.empty(),
+         "the breakpoint event should flip the breakpoint to verified");
+
+  // With no source path on the event, the id still locates it across files.
+  store.ApplyBreakpointEvent({}, VerifiedBreakpoint{.id = 7, .verified = false, .line = 21,
+                                                    .message = "invalidated"});
+  Expect(!(*store.FindByPath(path))[0].verified &&
+             (*store.FindByPath(path))[0].verify_message == "invalidated",
+         "a path-less event should match by adapter id across all files");
+}
+
+void TestBreakpointStoreToggleEnabled() {
+  BreakpointStore store;
+  const std::filesystem::path path = "/tmp/project/main.py";
+  Expect(!store.ToggleEnabled(path, 5), "toggling a non-existent breakpoint is a no-op");
+  store.Toggle(path, 5);
+  Expect((*store.FindByPath(path))[0].enabled, "a new breakpoint is enabled");
+  Expect(store.ToggleEnabled(path, 5), "toggling an existing breakpoint returns true");
+  Expect(!(*store.FindByPath(path))[0].enabled, "ToggleEnabled disables an enabled breakpoint");
+  Expect(store.ToggleEnabled(path, 5) && (*store.FindByPath(path))[0].enabled,
+         "toggling again re-enables it");
+  Expect(store.HasBreakpoint(path, 5), "ToggleEnabled never removes the breakpoint");
+}
+
 void TestBreakpointStoreReplaceAllResetsTransientState() {
   BreakpointStore store;
   std::vector<BreakpointStore::FileBreakpoints> files;
@@ -146,6 +214,10 @@ void RegisterBreakpointStoreTests(std::vector<TestCase>& tests) {
           TestBreakpointStoreSnapshotAllIsDeterministic);
   AddTest(tests, "BreakpointStore/ApplyVerificationByIndex",
           TestBreakpointStoreApplyVerificationByIndex);
+  AddTest(tests, "BreakpointStore/ApplyVerificationMatchesByLineNotIndex",
+          TestBreakpointStoreApplyVerificationMatchesByLineNotIndex);
+  AddTest(tests, "BreakpointStore/ApplyBreakpointEvent", TestBreakpointStoreApplyBreakpointEvent);
+  AddTest(tests, "BreakpointStore/ToggleEnabled", TestBreakpointStoreToggleEnabled);
   AddTest(tests, "BreakpointStore/ReplaceAllResetsTransientState",
           TestBreakpointStoreReplaceAllResetsTransientState);
   AddTest(tests, "BreakpointStore/RevisionBumps", TestBreakpointStoreRevisionBumps);

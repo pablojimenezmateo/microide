@@ -8,7 +8,7 @@
 
 namespace microide::editor {
 
-SDL_FRect BreakpointGutterMarkerRect(float gutter_x, float y, float gutter_width,
+SDL_FRect BreakpointGutterMarkerRect(float gutter_x, float y, float /*gutter_width*/,
                                      float line_height) {
   // Diameter scales with line height but stays within the reserved marker strip;
   // the dot sits a few px in from the gutter's left edge, left of the line numbers

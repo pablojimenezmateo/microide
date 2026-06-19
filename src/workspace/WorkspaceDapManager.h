@@ -103,6 +103,13 @@ class DapManager {
   // Drop the active session object outright (blocking shutdown if still running),
   // repointing the active session to the most recent survivor.
   void ClearSession();
+  // Reconcile sessions whose adapter process has exited WITHOUT a DAP
+  // `terminated`/`exited` event (crash / external kill / RLIMIT_AS cap). Each such
+  // session is forced to a terminal state so the following PruneTerminated() can
+  // reap it; otherwise it would linger forever as a zombie row. Returns true when
+  // any session transitioned (the caller re-syncs the UI). Call before
+  // PruneTerminated each frame.
+  bool ReapExitedSessions();
   // Drop sessions whose adapter has terminated/failed *and* whose I/O thread has
   // joined (so we never destroy a session inside its own callback). Repoints the
   // active session when it was the one removed. Returns the ids that were removed

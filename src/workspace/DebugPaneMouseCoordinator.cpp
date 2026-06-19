@@ -198,6 +198,15 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
           operations_.toggle_debug_exception_filter) {
         operations_.toggle_debug_exception_filter(row.filter_id);
       } else if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && !row.path.empty()) {
+        // Double-click toggles enabled (manage from the panel); single-click
+        // navigates to the breakpoint's source line.
+        if (event.button.clicks >= 2) {
+          if (operations_.toggle_debug_breakpoint_enabled) {
+            operations_.toggle_debug_breakpoint_enabled(row.path, row.line);
+          }
+          state_.surface.focus = FocusTarget::DebugPane;
+          return true;
+        }
         operations_.open_file(row.path);
         if (editor::TextViewport* viewport = operations_.active_editor_viewport();
             viewport != nullptr) {

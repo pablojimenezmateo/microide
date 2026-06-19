@@ -47,7 +47,7 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # config_done / stop / pause / variables / evaluate / restart / threads / exception
 # all advertise configurationDone support.
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
-                                "restart", "threads", "exception")
+                                "restart", "threads", "exception", "die")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
@@ -55,7 +55,10 @@ multi_thread = (mode == "threads")     # `threads` returns two threads + per-thr
 exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters
 # emit `stopped` after configurationDone
 stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception")
-running_no_stop = (mode == "pause")   # stay running so the test can pause
+running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
+# `die`: reach Running (respond to launch) then exit WITHOUT a terminated event, to
+# exercise the host's dead-adapter reconciliation (no zombie session).
+die_after_launch = (mode == "die")
 seq = 0
 
 def read_message():
@@ -142,6 +145,11 @@ while True:
         respond(msg, {})
         if not supports_config_done:
             finish_launch()
+        elif die_after_launch:
+            # Now Running (launch acknowledged); exit abruptly with NO terminated
+            # event, simulating a crash / external kill / RLIMIT_AS cap.
+            sys.stdout.flush()
+            sys.exit(0)
     elif command == "configurationDone":
         respond(msg, {})
         if stop_on_config:
@@ -277,9 +285,7 @@ DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
   };
   callbacks.on_state_changed = [&captured](DebugSession::State state) {
     captured.states.push_back(state);
-  };
-  callbacks.on_event = [&captured](const std::string& event, const JsonValue&) {
-    if (event == "terminated") {
+    if (state == DebugSession::State::Terminated) {
       captured.got_terminated_event = true;
     }
   };
@@ -340,7 +346,7 @@ void TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone() {
   Expect(SawState(captured, DebugSession::State::Terminated), "session should end Terminated");
   Expect(captured.output.find("hello from adapter") != std::string::npos,
          "adapter output event should reach the console callback");
-  Expect(captured.got_terminated_event, "raw terminated event should reach on_event");
+  Expect(captured.got_terminated_event, "terminated should drive the session to Terminated");
   manager.ShutdownAll();
 }
 
@@ -399,10 +405,13 @@ void TestDebugSessionSendsBreakpointsBeforeConfigurationDone() {
     return std::vector<editor::BreakpointStore::FileBreakpoints>{file};
   };
   std::vector<codec::DapBreakpoint> verified;
+  std::vector<int> verified_requested_lines;
   std::filesystem::path verified_path;
   callbacks.on_breakpoints_verified =
-      [&](const std::filesystem::path& path, const std::vector<codec::DapBreakpoint>& breakpoints) {
+      [&](const std::filesystem::path& path, const std::vector<int>& requested_lines,
+          const std::vector<codec::DapBreakpoint>& breakpoints) {
         verified_path = path;
+        verified_requested_lines = requested_lines;
         verified = breakpoints;
       };
 
@@ -426,6 +435,8 @@ void TestDebugSessionSendsBreakpointsBeforeConfigurationDone() {
     Expect(verified[0].verified && verified[1].verified, "breakpoints should report verified");
   }
   Expect(verified_path == source_path, "verification should carry the source path");
+  Expect(verified_requested_lines == std::vector<int>({5, 10}),
+         "verification should carry the requested 1-based lines in send order");
 
   // The recorded command order must place setBreakpoints before configurationDone.
   const std::size_t order_pos = captured.output.find("commands:");
@@ -1852,9 +1863,76 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
   service.StopAllDebugging();
 }
 
+// Phase A defense-in-depth: node ids stay globally monotonic across the tree
+// rebuilds a frame switch / stop triggers, so a stale async response can never
+// alias a freshly-created node that would otherwise have reused the same id.
+void TestDebugValueTreeNodeIdsAreMonotonic() {
+  DebugVariablesModel model;
+  model.BeginFrame(1);
+  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
+  Expect(!model.Rows().empty(), "first frame builds a scope row");
+  const std::uint32_t first_id = model.Rows()[0].node_id;
+
+  // A new frame Clears + rebuilds the tree. Ids must not restart at 1.
+  model.BeginFrame(2);
+  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
+  Expect(!model.Rows().empty(), "second frame builds a scope row");
+  const std::uint32_t second_id = model.Rows()[0].node_id;
+  Expect(second_id > first_id, "node ids stay globally monotonic across rebuilds");
+}
+
+// Phase C / Finding 1: an adapter that reaches Running and then exits WITHOUT a
+// DAP terminated/exited event must be reconciled to a terminal state and pruned,
+// not left as a zombie session forever.
+void TestDebugSessionReconciledWhenAdapterDiesSilently() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "die"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+
+  // The adapter acknowledges launch (reaching Running) then exits silently.
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const DebugSession* s = manager.ActiveSession();
+                     return s != nullptr && !s->Client().IsRunning();
+                   }),
+         "adapter process should exit after reaching Running");
+
+  // With no terminated event and no pending requests, nothing has moved the session
+  // terminal: PruneTerminated alone would leave it forever.
+  Expect(manager.PruneTerminated().empty(), "a non-terminal session is not prunable on its own");
+  const DebugSession* before = manager.ActiveSession();
+  Expect(before != nullptr && before->CurrentState() != DebugSession::State::Terminated &&
+             before->CurrentState() != DebugSession::State::Failed,
+         "the dead-but-unreconciled session is still non-terminal");
+
+  // Reconciliation transitions it to Failed (no stop was requested), then it prunes.
+  Expect(manager.ReapExitedSessions(), "ReapExitedSessions should transition the dead session");
+  const DebugSession* after = manager.ActiveSession();
+  Expect(after != nullptr && after->CurrentState() == DebugSession::State::Failed,
+         "a silently-dead adapter session becomes Failed");
+  Expect(!manager.PruneTerminated().empty(), "the reconciled session is then pruned");
+  Expect(manager.SessionCount() == 0, "no zombie session remains");
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DebugService/ValueTreeNodeIdsAreMonotonic",
+          TestDebugValueTreeNodeIdsAreMonotonic);
+  AddTest(tests, "DebugService/SessionReconciledWhenAdapterDiesSilently",
+          TestDebugSessionReconciledWhenAdapterDiesSilently);
   AddTest(tests, "DebugService/SessionDrivesLaunchLifecycleWithConfigurationDone",
           TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone);
   AddTest(tests, "DebugService/SessionRunsWithoutConfigurationDoneSupport",

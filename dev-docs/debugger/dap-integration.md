@@ -1170,5 +1170,58 @@ Opportunistic cleanup carried forward (per the dedup / tech-debt / UI-UX goals):
 - The Phase 9 launch-config picker is a *read* UI over `launch_configs`; a future
   config *editor* (create/edit, native `PersistedRecord`) is the natural complement.
 
+## Hardening pass — what shipped (2026-06-19)
+
+A correctness/UX audit (technical + UI/UX) found the transport layer already
+sound (lock-free I/O hot path, bounded buffers, prebuilt render strings) but
+surfaced a class of real bugs; this pass fixed them.
+
+- **Async stale-apply guards.** Every `scopes`/`variables`/`setVariable`/watch-
+  `evaluate` apply now captures a generation token and drops a response that
+  arrives after a frame switch, a new stop, a resume, or a watch re-evaluation —
+  the same discipline `DebugHoverModel` already used, generalized via
+  `DebugService::frame_generation_` / `watch_generation_`. The adapter recycles
+  `variablesReference` across stops and watch passes rebuild their root id list, so
+  an ungated late response could attach children to the wrong node or stamp a value
+  onto a different expression. Defense in depth: `DebugValueTree` node ids are now
+  globally monotonic (no `next_id_` reset on `Clear`/`BeginFrame`/`BeginEvaluation`)
+  so a stale id can never alias a live node. The `threads` request is guarded by a
+  per-stop epoch in `DebugSession` (`stop_epoch_`).
+- **Breakpoint verification is no longer write-only.** The reverse DAP `breakpoint`
+  event is now handled (`DebugSession` → `on_breakpoint_changed` →
+  `BreakpointStore::ApplyBreakpointEvent`, matched by adapter id), so an
+  asynchronously-bound/relocated/invalidated breakpoint updates instead of staying
+  silently dimmed. The dead `on_event` callback was removed. `verify_message` now
+  reaches the UI: a breakpoint the adapter rejected renders in the warning tint with
+  the reason in the Breakpoints-panel trailer. Verification matching is now by the
+  **requested line** (carried alongside the positional response) instead of the
+  current-store index, so toggling another breakpoint in the same file while a
+  `setBreakpoints` is in flight no longer mis-marks neighbouring lines.
+- **No more zombie sessions.** An adapter that exits *without* a DAP
+  `terminated`/`exited` event (crash, external kill, or the host's own RLIMIT_AS
+  cap) is reconciled to a terminal state by `DapManager::ReapExitedSessions()`
+  (called each frame in `ConsumeDapCallbacks` before the prune) and then pruned,
+  instead of lingering forever as a "running" row that swallows execution control.
+  A clean stop-requested exit reports `Terminated`; an unexpected one reports
+  `Failed`. A failed spawn no longer leaves a phantom session row.
+- **UX.** Breakpoints-panel rows show an enabled checkbox and double-click toggles
+  enable/disable from the panel (`BreakpointStore::ToggleEnabled`); disabled debug-
+  toolbar step buttons now show a "Pause to step" tooltip instead of going silent.
+
+Regression coverage: `BreakpointStore` line-matched verification + reverse event +
+`ToggleEnabled`; `DebugService` monotonic node ids + silent-adapter-death
+reconciliation (a new `die` mock-adapter mode); `PersistedStateRecord` special-
+character (quotes/newlines/Unicode) watch/condition round-trip.
+
+### Known limitation — breakpoint lines do not track source edits
+
+Inserting/deleting lines above a breakpoint does not yet shift it; on the next
+`setBreakpoints` it arms the original buffer line. Fixing this safely requires
+hooking the editor edit/undo/redo machinery (forward edits coalesce through
+`PushHistoryEntry`/`RecordEntry`; undo/redo replay through `ApplyHistoryEntry`),
+which is a larger, test-heavy change deferred to a dedicated follow-up — a
+half-correct version that moves a breakpoint to the wrong line is worse than the
+current stays-put behaviour.
+
 All debugger work lands on the canonical `feat/dap` branch; do not merge to
 `main` until the effort is complete.

@@ -59,6 +59,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
     case ActionId::OpenSettings:
+    case ActionId::SetSetting:  // deterministic setting write; never gated
     case ActionId::PluginsReload:
     case ActionId::ProjectOpen:
     case ActionId::Quit:

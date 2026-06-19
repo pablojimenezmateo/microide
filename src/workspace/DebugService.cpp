@@ -110,6 +110,13 @@ void DebugService::ConsumeDapCallbacks() {
   DapManager& manager = CurrentDapManager();
   const int active_before = manager.ActiveSessionId();
   manager.DrainCallbacks();
+  // Reconcile any session whose adapter process died without a DAP terminated/
+  // exited event (crash / external kill / RLIMIT_AS cap) so it transitions terminal
+  // and can be pruned below instead of lingering as a zombie row. Done after
+  // DrainCallbacks (so a real terminated event wins) and before PruneTerminated.
+  // A reconciled session is always dead (IsRunning() already false), so the prune
+  // below removes it the same frame; its row also re-syncs via on_state_changed.
+  manager.ReapExitedSessions();
   // Prune sessions whose adapter has terminated and whose I/O thread has joined
   // (done outside DrainCallbacks so a session is never destroyed inside its own
   // callback). When the *active* session was the one removed, re-project the new
@@ -294,15 +301,22 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     return CurrentProjectState().breakpoint_store.SnapshotAll();
   };
   callbacks.on_breakpoints_verified =
-      [this](const std::filesystem::path& path,
+      [this](const std::filesystem::path& path, const std::vector<int>& requested_lines,
              const std::vector<dap_protocol::DapBreakpoint>& breakpoints) {
         std::vector<editor::VerifiedBreakpoint> results;
         results.reserve(breakpoints.size());
-        for (const dap_protocol::DapBreakpoint& breakpoint : breakpoints) {
+        for (std::size_t i = 0; i < breakpoints.size(); ++i) {
+          const dap_protocol::DapBreakpoint& breakpoint = breakpoints[i];
+          // The response is positional to the request, so match by the line we
+          // requested at this index (the store may have changed while in flight).
+          // Fall back to the adapter-reported line for a non-conformant adapter
+          // that returns a shorter array.
+          const int match_line =
+              i < requested_lines.size() ? requested_lines[i] : breakpoint.line;
           results.push_back(editor::VerifiedBreakpoint{
               .id = breakpoint.id,
               .verified = breakpoint.verified,
-              .line = breakpoint.line,
+              .line = match_line,
               .message = breakpoint.message,
           });
         }
@@ -312,6 +326,23 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
           operations_.request_editor_redraw();
         }
       };
+  callbacks.on_breakpoint_changed = [this](const std::filesystem::path& path,
+                                           const dap_protocol::DapBreakpoint& breakpoint) {
+    CurrentProjectState().breakpoint_store.ApplyBreakpointEvent(
+        path, editor::VerifiedBreakpoint{
+                  .id = breakpoint.id,
+                  .verified = breakpoint.verified,
+                  .line = breakpoint.line,
+                  .message = breakpoint.message,
+              });
+    SyncBreakpointsPanel();
+    if (operations_.request_editor_redraw) {
+      operations_.request_editor_redraw();
+    }
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
+    }
+  };
   // Advertised exception filters arrive at `initialized`: populate the Breakpoints
   // panel (seeding the enabled set from adapter defaults the first time).
   callbacks.on_exception_filters_available =
@@ -330,6 +361,10 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
 }
 
 void DebugService::ClearTransientDebugViews() {
+  // Invalidate any in-flight scopes/variables/setVariable/watch responses: they
+  // belong to the stop being torn down and must not apply to the cleared models.
+  ++frame_generation_;
+  ++watch_generation_;
   ProjectWorkspaceState& state = CurrentProjectState();
   state.debug_execution.Clear();
   state.debug_variables.Clear();
@@ -357,8 +392,12 @@ int DebugService::LaunchSession(const LaunchConfig& config, const std::string& c
     if (operations_.show_debug_console) {
       operations_.show_debug_console(id, label);
     }
-    SyncSessionsPanel();
   }
+  // Re-sync unconditionally: on spawn failure the failing session fired a
+  // synchronous Failed state-change (and a SyncSessionsPanel) while it was still in
+  // the manager's list, then was popped — so the panel holds a phantom row until we
+  // rebuild from the now-current session set.
+  SyncSessionsPanel();
   return id;
 }
 
@@ -550,7 +589,13 @@ void DebugService::FocusFrame(int frame_id) {
                          static_cast<long long>(frame_id));
   CurrentProjectState().debug_hover.Clear();
   CurrentProjectState().debug_variables.BeginFrame(frame_id);
-  session->RequestScopes(frame_id, [this](std::vector<dap_protocol::DapScope> scopes) {
+  // A new frame context: in-flight scopes/variables/setVariable for the prior frame
+  // (whose variablesReference values the adapter may now recycle) must not apply.
+  const std::uint64_t generation = ++frame_generation_;
+  session->RequestScopes(frame_id, [this, generation](std::vector<dap_protocol::DapScope> scopes) {
+    if (generation != frame_generation_) {
+      return;  // a newer frame focus / stop / clear superseded this request
+    }
     DebugVariablesModel& model = CurrentProjectState().debug_variables;
     // ApplyScopes re-expands the scopes the user had open before this stop and
     // returns the bounded fetches needed to repopulate them; issue each (children
@@ -600,9 +645,18 @@ void DebugService::FetchVariablesPage(int reference, int start, int count) {
     CurrentProjectState().debug_variables.MarkChildrenError(reference);
     return;
   }
+  // Bind this fetch to the current frame generation. A page that returns after a
+  // frame switch / stop / clear is dropped — the adapter recycles
+  // variablesReference values, so applying it could attach children to an unrelated
+  // node of the new frame.
+  const std::uint64_t generation = frame_generation_;
   session->RequestVariables(
       reference, start, count,
-      [this, reference, start](bool ok, std::vector<dap_protocol::DapVariable> variables) {
+      [this, reference, start, generation](bool ok,
+                                           std::vector<dap_protocol::DapVariable> variables) {
+        if (generation != frame_generation_) {
+          return;
+        }
         if (ok) {
           // Restoring expansion can cascade: applying a page may re-expand
           // descendants the user had open, whose own pages we fetch in turn.
@@ -639,9 +693,16 @@ void DebugService::CommitVariableEdit() {
   if (target.has_value() && session != nullptr) {
     const std::string value = model.EditBuffer().text();
     const std::uint32_t node_id = target->node_id;
+    const std::uint64_t generation = frame_generation_;
     session->SetVariable(
         target->container_reference, target->name, value,
-        [this, node_id](bool ok, dap_protocol::DapSetVariableResult result) {
+        [this, node_id, generation](bool ok, dap_protocol::DapSetVariableResult result) {
+          // Drop a response that lands after a frame switch / stop: node ids are
+          // globally monotonic so a stale id can no longer alias a live node, but
+          // guarding here also avoids a pointless rebuild of a superseded tree.
+          if (generation != frame_generation_) {
+            return;
+          }
           // Authoritative: apply only the adapter's returned (possibly normalized)
           // value, never the raw typed text.
           if (ok) {
@@ -761,13 +822,21 @@ void DebugService::EvaluateWatches(int frame_id) {
   // Rebuild one placeholder root per expression so rows stay stable/ordered while
   // the (async) results stream in by index.
   watch.BeginEvaluation();
+  // Each pass clears + rebuilds expression_root_ids_; a result from a prior pass
+  // (the user added/removed/edited a watch, or stepped) would otherwise land on a
+  // reshuffled index and stamp a value onto the wrong expression. Bind every
+  // evaluate to this pass's generation and drop late ones.
+  const std::uint64_t generation = ++watch_generation_;
   DebugSession* session = CurrentDapManager().ActiveSession();
   if (session != nullptr) {
     const std::vector<std::string> expressions = watch.Expressions();
     for (std::size_t i = 0; i < expressions.size(); ++i) {
       session->RequestEvaluate(
           expressions[i], frame_id, "watch",
-          [this, i](bool ok, dap_protocol::DapEvaluateResult result) {
+          [this, i, generation](bool ok, dap_protocol::DapEvaluateResult result) {
+            if (generation != watch_generation_) {
+              return;
+            }
             if (ok) {
               CurrentProjectState().debug_watch.ApplyEvaluate(i, result);
             }
@@ -805,9 +874,16 @@ void DebugService::ToggleWatchRow(std::size_t row) {
     if (session != nullptr) {
       const int reference = fetch.reference;
       const int start = fetch.start;
+      // A re-evaluation pass (add/remove/edit/step) clears the watch tree and the
+      // adapter recycles references; drop a child page that returns after one.
+      const std::uint64_t generation = watch_generation_;
       session->RequestVariables(
           reference, start, fetch.count,
-          [this, reference, start](bool ok, std::vector<dap_protocol::DapVariable> variables) {
+          [this, reference, start, generation](bool ok,
+                                               std::vector<dap_protocol::DapVariable> variables) {
+            if (generation != watch_generation_) {
+              return;
+            }
             if (ok) {
               CurrentProjectState().debug_watch.ApplyVariables(reference, variables, start);
             } else {
@@ -843,8 +919,13 @@ void DebugService::CommitWatchEdit() {
   if (target.has_value() && session != nullptr) {
     const std::string value = model.EditBuffer().text();
     const std::uint32_t node_id = target->node_id;
+    const std::uint64_t generation = watch_generation_;
     session->SetVariable(target->container_reference, target->name, value,
-                         [this, node_id](bool ok, dap_protocol::DapSetVariableResult result) {
+                         [this, node_id, generation](
+                             bool ok, dap_protocol::DapSetVariableResult result) {
+                           if (generation != watch_generation_) {
+                             return;
+                           }
                            if (ok) {
                              CurrentProjectState().debug_watch.ApplySetVariable(node_id, result);
                            }

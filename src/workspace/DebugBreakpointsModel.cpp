@@ -107,8 +107,19 @@ void DebugBreakpointsModel::Rebuild(const editor::BreakpointStore& breakpoints) 
         } else if (breakpoint.hit_condition && !breakpoint.hit_condition->empty()) {
           row.secondary = "hits " + *breakpoint.hit_condition;
         }
-        if (!breakpoint.enabled) {
-          row.secondary = row.secondary.empty() ? "disabled" : (row.secondary + " (disabled)");
+        // Enabled state is shown by the row's checkbox (set below), not the trailer.
+        row.enabled = breakpoint.enabled;
+        // Surface adapter verification: when the adapter has responded for this
+        // breakpoint but did not bind it, mark it failed and show why (so the user
+        // is not left with a silently dimmed dot). "Responded" = verified, an
+        // assigned adapter id, or a message — never true before a session binds.
+        const bool adapter_responded = breakpoint.verified || breakpoint.adapter_id != 0 ||
+                                       !breakpoint.verify_message.empty();
+        if (adapter_responded && !breakpoint.verified) {
+          row.failed = true;
+          const std::string reason =
+              !breakpoint.verify_message.empty() ? breakpoint.verify_message : "unverified";
+          row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
         }
         row.path = file.path;
         row.line = breakpoint.line;

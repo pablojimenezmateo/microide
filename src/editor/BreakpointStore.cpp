@@ -72,6 +72,21 @@ void BreakpointStore::Set(const std::filesystem::path& path, std::size_t line, b
   BumpRevision();
 }
 
+bool BreakpointStore::ToggleEnabled(const std::filesystem::path& path, std::size_t line) {
+  std::vector<Breakpoint>* breakpoints = MutableForKey(PathKey(path));
+  if (breakpoints == nullptr) {
+    return false;
+  }
+  const auto it = std::find_if(breakpoints->begin(), breakpoints->end(),
+                               [line](const Breakpoint& bp) { return bp.line == line; });
+  if (it == breakpoints->end()) {
+    return false;
+  }
+  it->enabled = !it->enabled;
+  BumpRevision();
+  return true;
+}
+
 Breakpoint* BreakpointStore::MutableBreakpoint(const std::filesystem::path& path,
                                                std::size_t line) {
   const std::filesystem::path normalized = path.lexically_normal();
@@ -193,27 +208,76 @@ void BreakpointStore::ApplyVerification(const std::filesystem::path& path,
   if (breakpoints == nullptr) {
     return;
   }
-  for (std::size_t i = 0; i < results.size(); ++i) {
-    const VerifiedBreakpoint& result = results[i];
+  for (const VerifiedBreakpoint& result : results) {
+    if (result.line <= 0) {
+      continue;  // nothing to match on
+    }
+    // Match by the requested line, not by array index: the user may have toggled
+    // another breakpoint in this file while the response was in flight, so the
+    // current store order need not align with the request order.
+    const std::size_t line = static_cast<std::size_t>(result.line - 1);
+    const auto it = std::find_if(breakpoints->begin(), breakpoints->end(),
+                                 [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == breakpoints->end()) {
+      continue;  // line was removed while the response was in flight
+    }
+    it->verified = result.verified;
+    it->adapter_id = result.id;
+    it->verify_message = result.message;
+  }
+  BumpRevision();
+}
+
+void BreakpointStore::ApplyBreakpointEvent(const std::filesystem::path& path,
+                                           const VerifiedBreakpoint& result) {
+  auto apply_in = [&result](std::vector<Breakpoint>& breakpoints) -> bool {
     Breakpoint* target = nullptr;
-    if (i < breakpoints->size()) {
-      target = &(*breakpoints)[i];  // positional match (DAP guarantees order)
-    } else if (result.line > 0) {
+    if (result.id != 0) {
+      const auto it = std::find_if(breakpoints.begin(), breakpoints.end(),
+                                   [&result](const Breakpoint& bp) {
+                                     return bp.adapter_id == result.id;
+                                   });
+      if (it != breakpoints.end()) {
+        target = &(*it);
+      }
+    }
+    if (target == nullptr && result.line > 0) {
       const std::size_t line = static_cast<std::size_t>(result.line - 1);
-      const auto it = std::find_if(breakpoints->begin(), breakpoints->end(),
+      const auto it = std::find_if(breakpoints.begin(), breakpoints.end(),
                                    [line](const Breakpoint& bp) { return bp.line == line; });
-      if (it != breakpoints->end()) {
+      if (it != breakpoints.end()) {
         target = &(*it);
       }
     }
     if (target == nullptr) {
-      continue;
+      return false;
     }
     target->verified = result.verified;
-    target->adapter_id = result.id;
+    if (result.id != 0) {
+      target->adapter_id = result.id;
+    }
     target->verify_message = result.message;
+    return true;
+  };
+
+  bool changed = false;
+  if (!path.empty()) {
+    if (std::vector<Breakpoint>* breakpoints = MutableForKey(PathKey(path));
+        breakpoints != nullptr) {
+      changed = apply_in(*breakpoints);
+    }
+  } else {
+    // No source path on the event: locate the breakpoint by adapter id anywhere.
+    for (auto& [key, entry] : by_path_) {
+      if (apply_in(entry.breakpoints)) {
+        changed = true;
+        break;
+      }
+    }
   }
-  BumpRevision();
+  if (changed) {
+    BumpRevision();
+  }
 }
 
 void BreakpointStore::ResetVerification() {

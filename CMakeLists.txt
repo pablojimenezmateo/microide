@@ -516,7 +516,11 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic)
+  # -Wno-missing-field-initializers: the codebase uses C++20 designated initializers
+  # pervasively and intentionally omits trailing fields (they zero-initialize). The
+  # -Wextra sub-warning flags every such site as a false positive, so disable it
+  # rather than litter hundreds of call sites with explicit zero-inits.
+  target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide PRIVATE -Werror)
   endif()
@@ -709,7 +713,7 @@ target_compile_definitions(microide_tests PRIVATE
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(microide_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_tests PRIVATE -Werror)
   endif()
@@ -844,7 +848,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   )
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(microide_perf PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(microide_perf PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
     if(MICROIDE_WARNINGS_AS_ERRORS)
       target_compile_options(microide_perf PRIVATE -Werror)
     endif()
@@ -915,7 +919,7 @@ target_include_directories(microide_diff_bench PRIVATE src)
 target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_diff_bench PRIVATE -Werror)
   endif()
@@ -938,7 +942,7 @@ target_include_directories(microide_search_bench PRIVATE src)
 target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_search_bench PRIVATE -Werror)
   endif()

@@ -39,6 +39,8 @@ class DebugPaneMouseCoordinator {
     std::function<void()> add_debug_watch_expression;
     std::function<void(std::size_t)> edit_debug_watch_expression;
     std::function<void(const std::string&)> toggle_debug_exception_filter;
+    // Enable/disable a line breakpoint from the Breakpoints panel (double-click).
+    std::function<void(const std::filesystem::path&, std::size_t)> toggle_debug_breakpoint_enabled;
   };
 
   DebugPaneMouseCoordinator(ProjectWorkspaceState& state, Operations operations);

@@ -226,6 +226,27 @@ void DapManager::ClearActiveEntry() {
 
 void DapManager::ClearSession() { ClearActiveEntry(); }
 
+bool DapManager::ReapExitedSessions() {
+  bool changed = false;
+  for (SessionEntry& entry : sessions_) {
+    DebugSession& session = *entry.session;
+    const DebugSession::State state = session.CurrentState();
+    const bool terminal =
+        state == DebugSession::State::Terminated || state == DebugSession::State::Failed;
+    if (state == DebugSession::State::Inactive || terminal) {
+      continue;
+    }
+    // A live session always spawned a process; once IsRunning() goes false the
+    // adapter has exited. If no `terminated`/`exited` event drove the transition,
+    // force it here so the session can be pruned.
+    if (!session.Client().IsRunning()) {
+      session.NotifyProcessExited();
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 std::vector<int> DapManager::PruneTerminated() {
   std::vector<int> removed;
   for (auto it = sessions_.begin(); it != sessions_.end();) {

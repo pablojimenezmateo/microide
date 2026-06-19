@@ -41,7 +41,12 @@ struct Breakpoint {
 struct VerifiedBreakpoint {
   int id = 0;
   bool verified = false;
-  int line = 0;  // adapter-reported 1-based line (0 when absent)
+  // 1-based line used to match this result back to a stored breakpoint (0 when
+  // absent). For setBreakpoints responses the caller fills this with the line it
+  // *requested* (the response is positional to the request), so verification lands
+  // on the right line even if the user changed the breakpoint set while the
+  // response was in flight. For an async `breakpoint` event it is the adapter line.
+  int line = 0;
   std::string message;
 };
 
@@ -61,6 +66,10 @@ class BreakpointStore {
   bool Toggle(const std::filesystem::path& path, std::size_t line);
   void Set(const std::filesystem::path& path, std::size_t line, bool enabled = true);
   void Remove(const std::filesystem::path& path, std::size_t line);
+  // Flip the enabled state of an existing breakpoint on `path:line` (does NOT
+  // create one). Returns true when a breakpoint was found and toggled. Used by the
+  // Breakpoints panel so the user can disable/enable without leaving the panel.
+  bool ToggleEnabled(const std::filesystem::path& path, std::size_t line);
 
   // Edit the Phase 6 modifier fields. Each finds-or-creates the breakpoint on
   // `path:line` (so setting a condition on a bare line materializes a real
@@ -82,11 +91,20 @@ class BreakpointStore {
   // Every file with at least one breakpoint (for the launch snapshot).
   std::vector<FileBreakpoints> SnapshotAll() const;
 
-  // Reflect adapter verification for one file. The DAP response array is
-  // positional to the setBreakpoints request, so we match by index first and
-  // fall back to line when an adapter reorders/moves breakpoints.
+  // Reflect adapter verification for one file. Each result is matched to a stored
+  // breakpoint by its (requested) line — NOT by array index — so a setBreakpoints
+  // response that arrives after the user has toggled another breakpoint in the same
+  // file still verifies the correct lines instead of shifting onto its neighbours.
+  // A result whose line no longer has a breakpoint (removed while in flight) is
+  // dropped.
   void ApplyVerification(const std::filesystem::path& path,
                          const std::vector<VerifiedBreakpoint>& results);
+  // Reflect a single asynchronous DAP `breakpoint` event (an adapter binding,
+  // relocating, or invalidating a breakpoint after the initial response). Matches
+  // by the adapter id assigned at setBreakpoints time, falling back to the reported
+  // line. No-op when nothing matches. When `path` is empty, all files are searched
+  // by id.
+  void ApplyBreakpointEvent(const std::filesystem::path& path, const VerifiedBreakpoint& result);
   // Drop all transient verification state (e.g. when a session terminates).
   void ResetVerification();
 

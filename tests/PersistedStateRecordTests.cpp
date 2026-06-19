@@ -372,6 +372,41 @@ void TestPersistedStateDebugStateBackwardCompatNoWatch() {
   Expect(decoded.selected_launch_config_index == 2, "selected index survives a watch-free record");
 }
 
+// Watch expressions, conditions, and log messages can contain quotes, newlines,
+// and non-ASCII — the length-prefixed binary format must round-trip them verbatim
+// (a previous concern was special characters corrupting the record).
+void TestPersistedStateDebugStateSpecialCharacters() {
+  PersistedDebugState state;
+  PersistedFileBreakpoints file;
+  file.path = "/proj/π/main.py";  // non-ASCII path component
+  file.breakpoints.push_back(PersistedBreakpoint{
+      .line = 7,
+      .enabled = true,
+      .condition = std::string("s == \"a\\tb\" && n > 0\nx"),  // quotes, tab, newline
+      .log_message = std::string("héllo {x}\nline2"),          // unicode + newline
+  });
+  state.files.push_back(std::move(file));
+  state.watch_expressions = {"\"quoted\"", "a\nb", "ünïcödé", "tab\tsep", ""};
+
+  std::vector<std::byte> encoded;
+  Expect(EncodeDebugStateRecord(state, &encoded), "special-character debug state should encode");
+
+  PersistedDebugState decoded;
+  Expect(DecodeDebugStateRecord(encoded, &decoded), "special-character debug state should decode");
+  Expect(decoded.watch_expressions.size() == 5 && decoded.watch_expressions[0] == "\"quoted\"" &&
+             decoded.watch_expressions[1] == "a\nb" && decoded.watch_expressions[2] == "ünïcödé" &&
+             decoded.watch_expressions[3] == "tab\tsep" && decoded.watch_expressions[4].empty(),
+         "watch expressions round-trip special characters verbatim");
+  Expect(decoded.files.size() == 1 &&
+             decoded.files[0].path == std::filesystem::path("/proj/π/main.py"),
+         "a non-ASCII path round-trips");
+  const auto& bp = decoded.files[0].breakpoints[0];
+  Expect(bp.condition.has_value() && *bp.condition == "s == \"a\\tb\" && n > 0\nx",
+         "a condition with quotes/tab/newline round-trips verbatim");
+  Expect(bp.log_message.has_value() && *bp.log_message == "héllo {x}\nline2",
+         "a log message with unicode + newline round-trips verbatim");
+}
+
 void TestPersistedStateDebugStateRequiresSchema() {
   // A body without the Schema tag must be rejected (mirrors project-session).
   std::vector<std::byte> body;
@@ -425,6 +460,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PersistedStateRecord/DebugStateRoundTrip", TestPersistedStateDebugStateRoundTrip);
   AddTest(tests, "PersistedStateRecord/DebugStateBackwardCompatNoWatch",
           TestPersistedStateDebugStateBackwardCompatNoWatch);
+  AddTest(tests, "PersistedStateRecord/DebugStateSpecialCharacters",
+          TestPersistedStateDebugStateSpecialCharacters);
   AddTest(tests, "PersistedStateRecord/DebugStateRequiresSchema",
           TestPersistedStateDebugStateRequiresSchema);
 }

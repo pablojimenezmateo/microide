@@ -91,13 +91,20 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
   };
 
   std::optional<std::size_t> hovered_index;
+  // A disabled button gets no highlight but still shows a tooltip, so the user can
+  // learn *why* it is inert (e.g. step controls need the program paused first).
+  std::optional<std::size_t> tooltip_index;
   for (std::size_t i = 0; i < tb.buttons.size(); ++i) {
     const auto button = static_cast<DebugToolbarButton>(i);
     const SDL_FRect& rect = tb.buttons[i];
     const bool enabled = button_enabled(button);
-    const bool hovered = enabled && is_hovered(rect);
+    const bool pointer_over = is_hovered(rect);
+    const bool hovered = enabled && pointer_over;
     if (hovered) {
       hovered_index = i;
+    }
+    if (pointer_over) {
+      tooltip_index = i;
     }
 
     ButtonTone tone = ButtonTone::Neutral;
@@ -149,11 +156,17 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
   }
 
   // Tooltip on top, anchored under the hovered button and clamped to the editor.
-  if (hovered_index.has_value()) {
-    const SDL_FRect& rect = tb.buttons[*hovered_index];
-    std::string_view label = kButtonSpecs[*hovered_index].tooltip;
-    if (*hovered_index == Index(DebugToolbarButton::ContinuePause) && !session_stopped) {
+  if (tooltip_index.has_value()) {
+    const SDL_FRect& rect = tb.buttons[*tooltip_index];
+    const auto button = static_cast<DebugToolbarButton>(*tooltip_index);
+    std::string_view label = kButtonSpecs[*tooltip_index].tooltip;
+    if (button == DebugToolbarButton::ContinuePause && !session_stopped) {
       label = "Pause";
+    } else if (!session_stopped && (button == DebugToolbarButton::StepOver ||
+                                    button == DebugToolbarButton::StepInto ||
+                                    button == DebugToolbarButton::StepOut)) {
+      // Step controls are disabled while running: explain rather than stay silent.
+      label = "Pause to step";
     }
     TooltipLayout tip = BuildTooltipLayout(text_renderer_, label, 240.0f, 80.0f);
     float tip_x = rect.x;

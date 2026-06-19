@@ -384,9 +384,20 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                                                   panel_layout.text_width - box_w));
         continue;
       }
-      draw_two_column_row(panel_layout.text_x + kDebugPaneBreakpointIndent,
-                          panel_layout.text_width - kDebugPaneBreakpointIndent, bp_row.display,
-                          theme_.text_secondary, bp_row.secondary, theme_.text_muted, line_y,
+      // Enabled checkbox prefix (double-click toggles it). A disabled breakpoint
+      // dims; one the adapter rejected reads in the warning tint with the reason in
+      // the muted trailer.
+      const char* bp_checkbox = bp_row.enabled ? "[x] " : "[ ] ";
+      const float bp_box_w = text_renderer_.MeasureWidth(bp_checkbox);
+      const float bp_x = panel_layout.text_x + kDebugPaneBreakpointIndent;
+      const SDL_Color bp_primary = bp_row.failed       ? theme_.diagnostic_warning
+                                   : bp_row.enabled    ? theme_.text_secondary
+                                                       : theme_.text_disabled;
+      DrawTextOn(text_renderer_, renderer, bp_x, line_y, bp_primary, theme_.surface_background,
+                 bp_checkbox);
+      draw_two_column_row(bp_x + bp_box_w,
+                          panel_layout.text_width - kDebugPaneBreakpointIndent - bp_box_w,
+                          bp_row.display, bp_primary, bp_row.secondary, theme_.text_muted, line_y,
                           theme_.surface_background);
       continue;
     }

@@ -236,11 +236,22 @@ void DebugSession::SendBreakpointsForFile(const editor::BreakpointStore::FileBre
   }
 
   const std::filesystem::path path = file.path;
+  // Capture the requested 1-based lines (send order). The setBreakpoints response
+  // is positional to this list, so the host matches each result to a breakpoint by
+  // its requested line — robust to the user toggling another breakpoint in the same
+  // file while this request is in flight.
+  std::vector<int> requested_lines;
+  requested_lines.reserve(inputs.size());
+  for (const dap_protocol::SetBreakpointInput& input : inputs) {
+    requested_lines.push_back(input.line);
+  }
   client_->SendRequestAsync(
       "setBreakpoints", dap_protocol::MakeSetBreakpointsArguments(source_path, inputs),
-      [this, path](const dap_protocol::DapResponse& response) {
+      [this, path, requested_lines = std::move(requested_lines)](
+          const dap_protocol::DapResponse& response) {
         if (response.success && callbacks_.on_breakpoints_verified) {
-          callbacks_.on_breakpoints_verified(path, dap_protocol::ParseBreakpoints(response.body));
+          callbacks_.on_breakpoints_verified(path, requested_lines,
+                                             dap_protocol::ParseBreakpoints(response.body));
         }
       });
 }
@@ -320,6 +331,7 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     const dap_protocol::DapStoppedEvent stop = dap_protocol::ParseStoppedEvent(body);
     stopped_thread_id_ = stop.thread_id;
     last_stop_ = stop;
+    ++stop_epoch_;
     SetState(State::Stopped);
     // Report the halt immediately with the real reason/thread, before the async
     // stackTrace round-trip — push observers must not wait for a slow adapter.
@@ -339,14 +351,25 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       }
       SetState(State::Running);
     }
-  }
-
-  if (callbacks_.on_event) {
-    callbacks_.on_event(event, body);
+  } else if (event == "breakpoint") {
+    // Async breakpoint update: the adapter bound, relocated, or invalidated a
+    // breakpoint after the initial setBreakpoints response (e.g. a shared library
+    // loaded later, or a condition was rejected). Reflect it so the gutter/panel
+    // stop showing a stale "unverified" state with no explanation.
+    if (callbacks_.on_breakpoint_changed) {
+      const util::JsonValue& bp = body["breakpoint"];
+      const util::JsonValue& source_path = bp["source"]["path"];
+      std::filesystem::path path;
+      if (source_path.IsString() && !source_path.AsString().empty()) {
+        path = std::filesystem::path(source_path.AsString());
+      }
+      callbacks_.on_breakpoint_changed(path, dap_protocol::ParseBreakpoint(bp));
+    }
   }
 }
 
 void DebugSession::RequestStop() {
+  stop_requested_ = true;
   if (state_ == State::Inactive || IsTerminalState(state_)) {
     if (client_->IsRunning() && !client_->IsShuttingDown()) {
       client_->BeginShutdown();
@@ -361,6 +384,27 @@ void DebugSession::RequestStop() {
   } else {
     client_->BeginShutdown();
     SetState(State::Terminated);
+  }
+}
+
+void DebugSession::NotifyProcessExited() {
+  if (state_ == State::Inactive || IsTerminalState(state_)) {
+    return;  // already terminal, or never started — nothing to reconcile
+  }
+  // The adapter process is gone but no DAP `terminated`/`exited` arrived. A clean
+  // exit after we asked to stop is Terminated; an exit while we still expected the
+  // adapter alive (crash / external kill / RLIMIT_AS) is a Failed with a reason.
+  if (stop_requested_) {
+    SetState(State::Terminated);
+  } else {
+    if (last_error_.empty()) {
+      last_error_ = "debug adapter exited unexpectedly";
+    }
+    SetState(State::Failed);
+  }
+  // Ensure the I/O thread is joined so PruneTerminated can reap the session.
+  if (!client_->IsShuttingDown()) {
+    client_->BeginShutdown();
   }
 }
 
@@ -562,7 +606,14 @@ void DebugSession::RequestThreadsForStop() {
   if (!callbacks_.on_threads) {
     return;
   }
-  RequestThreads([this](std::vector<dap_protocol::DapThread> threads) {
+  // Capture the stop this list belongs to. If a newer stop (or thread switch /
+  // reactivate) lands before this async response, drop it so the selector is never
+  // repopulated for a superseded stop.
+  const std::uint64_t epoch = stop_epoch_;
+  RequestThreads([this, epoch](std::vector<dap_protocol::DapThread> threads) {
+    if (epoch != stop_epoch_) {
+      return;
+    }
     if (callbacks_.on_threads) {
       callbacks_.on_threads(threads);
     }
@@ -588,7 +639,9 @@ void DebugSession::Reactivate() {
   }
   // Re-resolve the call stack + thread list for the retained stop so the shared
   // execution view (which another session may have overwritten while this one was
-  // in the background) rebuilds for this session's current location.
+  // in the background) rebuilds for this session's current location. Bump the stop
+  // epoch so this re-projection's thread list supersedes any still-in-flight one.
+  ++stop_epoch_;
   RequestStackTrace(last_stop_);
   RequestThreadsForStop();
 }

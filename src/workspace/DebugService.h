@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -229,6 +230,18 @@ class DebugService {
   // Remembered for the terminate+relaunch restart fallback.
   LaunchConfig last_launch_config_{};
   std::string last_cwd_;
+  // Generation guards for async stale-state. DAP responses arrive a frame or more
+  // after their request; by then the user may have switched frame/thread/session
+  // or the adapter may have resumed and re-stopped, and the adapter recycles
+  // `variablesReference` values across stops. Each generation is bumped at every
+  // invalidation point and captured into the dispatching callback; a response whose
+  // captured generation no longer matches is dropped instead of applied to the
+  // wrong model. `frame_generation_` covers scopes/variables/setVariable (bumped on
+  // frame focus + every transient-view clear); `watch_generation_` covers watch
+  // evaluates (bumped on each evaluation pass + clear). This generalizes the
+  // pattern DebugHoverModel already uses for hover-eval.
+  std::uint64_t frame_generation_ = 0;
+  std::uint64_t watch_generation_ = 0;
 };
 
 }  // namespace microide::workspace
