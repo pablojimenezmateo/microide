@@ -247,8 +247,8 @@ bool DapManager::ReapExitedSessions() {
   return changed;
 }
 
-std::vector<int> DapManager::PruneTerminated() {
-  std::vector<int> removed;
+std::vector<PrunedSession> DapManager::PruneTerminated() {
+  std::vector<PrunedSession> removed;
   for (auto it = sessions_.begin(); it != sessions_.end();) {
     DebugSession& session = *it->session;
     const DebugSession::State state = session.CurrentState();
@@ -256,7 +256,14 @@ std::vector<int> DapManager::PruneTerminated() {
         state == DebugSession::State::Terminated || state == DebugSession::State::Failed;
     if (terminal && !session.Client().IsRunning()) {
       const bool was_active = it->id == active_session_id_;
-      removed.push_back(it->id);
+      // Capture the caller's console bookkeeping before the session is destroyed.
+      const std::string& name = session.Config().name;
+      removed.push_back(PrunedSession{
+          .id = it->id,
+          .failed = state == DebugSession::State::Failed,
+          .console_label = !name.empty() ? name : session.Config().type,
+          .error = session.LastError(),
+      });
       it = sessions_.erase(it);
       if (was_active) {
         active_session_id_ = sessions_.empty() ? 0 : sessions_.back().id;

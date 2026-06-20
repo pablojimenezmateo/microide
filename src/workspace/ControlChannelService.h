@@ -80,7 +80,10 @@ class ControlChannelService {
   // on the `framesPending` flag.
   void OnDebugStopBegan(const std::string& reason, int thread_id);
   void OnDebugStopped();
-  void OnDebugTerminated(int session_id);
+  // `reason` carries the teardown message on a non-clean end (crash / kill /
+  // launch rejection); it is emitted as a `reason` field when non-empty and omitted
+  // for a clean exit.
+  void OnDebugTerminated(int session_id, const std::string& reason = {});
   void OnDebugOutput(const std::string& category, const std::string& text);
 
   std::size_t ConnectionCount() const;

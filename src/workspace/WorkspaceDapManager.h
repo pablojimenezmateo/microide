@@ -26,6 +26,16 @@ struct DapSessionInfo {
   bool attention = false;
 };
 
+// A session dropped by PruneTerminated, captured before the session object is
+// destroyed so the caller can finish console bookkeeping. `failed` marks a
+// non-clean end (crash / kill / launch rejection); `error` is its teardown reason.
+struct PrunedSession {
+  int id = 0;
+  bool failed = false;
+  std::string console_label;
+  std::string error;
+};
+
 // Per-project registry of contributed debug adapters (keyed by adapter `type`,
 // mirroring how LspManager keys servers by language id) plus ownership of the
 // live debug sessions. A debug session is transient — created on "Start
@@ -112,10 +122,11 @@ class DapManager {
   bool ReapExitedSessions();
   // Drop sessions whose adapter has terminated/failed *and* whose I/O thread has
   // joined (so we never destroy a session inside its own callback). Repoints the
-  // active session when it was the one removed. Returns the ids that were removed
-  // (empty when nothing changed) so the caller can re-sync the UI / drop console
-  // channels.
-  std::vector<int> PruneTerminated();
+  // active session when it was the one removed. Returns one entry per removed
+  // session (empty when nothing changed) so the caller can re-sync the UI and decide
+  // each console's fate — a failed session's console is kept (and annotated) so the
+  // crash stays inspectable, a clean one's is dropped.
+  std::vector<PrunedSession> PruneTerminated();
 
   const std::string& LastError() const { return last_error_; }
 

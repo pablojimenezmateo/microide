@@ -333,7 +333,7 @@ void TestStdoutMirrorEmitsWithoutConnections() {
   service.SetStdoutMirror(true);
   service.OnDebugOutput("stdout", "hello");
   service.OnDebugStopped();
-  service.OnDebugTerminated(1);
+  service.OnDebugTerminated(1, "debug adapter exited unexpectedly");
   Expect(emitted.size() == 3, "three events should mirror to stdout with no client");
 
   const auto output = util::ParseJson(emitted[0]);
@@ -346,6 +346,9 @@ void TestStdoutMirrorEmitsWithoutConnections() {
   const auto terminated = util::ParseJson(emitted[2]);
   Expect(terminated.has_value() && (*terminated)["event"].AsString() == "terminated",
          "third mirrored line should be the terminated event");
+  Expect((*terminated)["sessionId"].AsInt() == 1, "terminated event carries the real session id");
+  Expect((*terminated)["reason"].AsString() == "debug adapter exited unexpectedly",
+         "a non-clean end carries its reason so observers can distinguish a crash");
 }
 
 // Regression: the resolved `stopped` event must carry the populated execution view

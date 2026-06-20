@@ -457,13 +457,16 @@ void ControlChannelService::OnDebugStopped() {
   EmitEvent(util::JsonValue(std::move(event)));
 }
 
-void ControlChannelService::OnDebugTerminated(int session_id) {
+void ControlChannelService::OnDebugTerminated(int session_id, const std::string& reason) {
   if (!server_.IsRunning() && !stdout_mirror_) {
     return;
   }
   util::JsonObject event;
   event["event"] = util::JsonValue(std::string("terminated"));
   event["sessionId"] = util::JsonValue(static_cast<std::int64_t>(session_id));
+  if (!reason.empty()) {
+    event["reason"] = util::JsonValue(reason);
+  }
   EmitEvent(util::JsonValue(std::move(event)));
 }
 

@@ -316,16 +316,31 @@ last planned slice; the debugger is feature-complete.
 
 ### Beyond Phase 10 — out of scope (future, only if asked)
 
-Not planned; listed so a future agent knows they were considered:
+Not planned; listed so a future agent knows they were considered. The DAP-surface
+audit (2026-06-20) confirmed the only correctness defect was launch ordering (fixed);
+the items below are *parsed-but-unwired* capabilities or extra requests that each need
+a new data model and/or UI surface, so they are deferred to a dedicated feature pass
+rather than mixed into a fix. Priority order:
 
+- **Function breakpoints** (`setFunctionBreakpoints`; `supports_function_breakpoints`
+  already parsed) — needs a function/symbol-breakpoint model in `BreakpointStore`
+  (today line-based only) plus a UI entry point. Highest value.
+- **Reverse execution** (`stepBack` / `reverseContinue`; `supports_step_back` parsed)
+  — gdb supports it via `record`; needs toolbar buttons + capability gating.
+- **Exception-filter conditions** (`supports_exception_filter_options` and per-filter
+  `supports_condition`, both parsed) — small once a condition-entry affordance exists.
+- **Data / instruction breakpoints, `readMemory` / `disassemble`** — advanced; each a
+  new panel. Lowest priority.
 - **Launch-config editor** — Phase 9 added a *picker* over `launch_configs`; a small
   create/edit UI (native `PersistedRecord`, no `.vscode/launch.json`) would let a
   user author configs without a plugin contributing them.
-- **Function / data breakpoints** — surface `supportsFunctionBreakpoints` /
-  `supportsDataBreakpoints` if an adapter advertises them.
 - **Deep (lazy, multi-level) REPL value expansion** — Phase 10 expands one level
   into the text console; a true tree would need a dedicated value-tree surface
   (build it on the existing `DebugValueTree` if ever wanted).
+
+`process` / `module` events are emitted by gdb but purely informational; microide
+ignores them safely. gdb does not emit `capabilities` or `invalidated`, so neither is
+handled.
 
 ## Phase 0 — what shipped (2026-06-17)
 
@@ -448,12 +463,31 @@ Files added:
 
 Key decisions (locked):
 
-- **`setBreakpoints` fires in stream order, not awaited.** On the `initialized`
-  event `DebugSession` sends one `setBreakpoints` per file, then
-  `configurationDone`. The single ordered `DapClient` stream guarantees the
-  adapter receives them in order (the DAP handshake requires send-order, not
-  response-order); verification reflects back asynchronously via
-  `on_breakpoints_verified`. Confirmed against real debugpy (see validation).
+- **Handshake order: `launch` → `setBreakpoints` → `configurationDone`.** On the
+  `initialized` event `DebugSession` sends the launch/attach request *first* (when
+  the adapter advertises `supportsConfigurationDoneRequest`), then one
+  `setBreakpoints` per file, then `configurationDone`. This is the DAP-spec flow: a
+  spec-compliant adapter (gdb, lldb-dap, debugpy) defers running the debuggee until
+  `configurationDone` and **rejects a `configurationDone` that arrives with no
+  launch pending** — gdb's DAP raises `"launch or attach not specified"` and then
+  never answers the late launch, so the session hangs until the request deadline
+  fires `"debug adapter did not respond"`. Because the run is gated on
+  `configurationDone`, breakpoints sent in between are still armed before the
+  program starts. (This supersedes the earlier "launch last" workaround, which
+  targeted gdb 15.1's non-spec behavior of running the debuggee *during* `launch`.)
+  An adapter with no configuration phase starts the debuggee on `launch` itself, so
+  there `setBreakpoints` precedes `launch`. Pinned by
+  `DebugService/SessionLaunchHandshakeOrder` against a mock that enforces the gdb
+  rule.
+- **`setBreakpoints` fires in stream order, not awaited.** The single ordered
+  `DapClient` stream guarantees the adapter receives requests in send order (the
+  DAP handshake requires send-order, not response-order); verification reflects back
+  asynchronously via `on_breakpoints_verified`. Confirmed against real debugpy.
+- **`thread` events refresh the thread list.** Beyond the per-stop fetch, a
+  `thread` (started/exited) event triggers `RefreshThreadList()` so the Call Stack
+  thread selector tracks live changes between stops; the stop-epoch guard drops a
+  refresh superseded by a new stop. Pinned by
+  `DebugService/SessionThreadEventRefreshesThreadList`.
 - **Rendering via the view model (R1).** `EditorViewModel.breakpoint_gutter_marks`
   is populated by `RenderViewModelBuilder::BuildEditorViewModelInto` (gated on
   `debug.enabled` + a `BreakpointStore*`), consumed by `EditorViewRenderer`'s
@@ -1216,13 +1250,27 @@ surfaced a class of real bugs; this pass fixed them.
   instead of lingering forever as a "running" row that swallows execution control.
   A clean stop-requested exit reports `Terminated`; an unexpected one reports
   `Failed`. A failed spawn no longer leaves a phantom session row.
+- **Crash is observable, not silent.** Every terminal transition routes through one
+  `DebugSession::TransitionToTerminal(state, reason)` chokepoint (the five former
+  ad-hoc `SetState`+shutdown sites collapsed into it) which fires a single
+  `on_terminated(state, reason)` callback. The control channel broadcasts
+  `terminated` (with `reason`) for *any* end — including a `Failed` crash that sends
+  no DAP event — so a headless observer is never stranded (previously the broadcast
+  was gated on `Terminated` only and a crash emitted nothing). In the GUI,
+  `PruneTerminated()` now reports each dropped session's `{failed, console_label,
+  error}`: a failed session's console is **kept** and annotated with `[debug]
+  <reason>` so the adapter's output stays inspectable, while a clean exit's console is
+  dropped as before.
 - **UX.** Breakpoints-panel rows show an enabled checkbox and double-click toggles
   enable/disable from the panel (`BreakpointStore::ToggleEnabled`); disabled debug-
   toolbar step buttons now show a "Pause to step" tooltip instead of going silent.
 
 Regression coverage: `BreakpointStore` line-matched verification + reverse event +
 `ToggleEnabled`; `DebugService` monotonic node ids + silent-adapter-death
-reconciliation (a new `die` mock-adapter mode); `PersistedStateRecord` special-
+reconciliation (a new `die` mock-adapter mode) now also asserting `on_terminated`
+fires with `failed=true` + a populated reason on a crash and `failed=false`/empty on
+a clean exit, plus the `PruneTerminated()` failed/reason payload; `ControlChannel`
+`terminated` event carries `sessionId` + `reason`; `PersistedStateRecord` special-
 character (quotes/newlines/Unicode) watch/condition round-trip.
 
 ### Known limitation — breakpoint lines do not track source edits

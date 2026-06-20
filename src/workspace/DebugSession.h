@@ -46,6 +46,12 @@ class DebugSession {
     std::function<void(const dap_protocol::DapOutputEvent& output)> on_output;
     // Fired whenever CurrentState() changes (drives status text / redraw).
     std::function<void(State state)> on_state_changed;
+    // Fired once, when the session reaches a terminal state (Terminated/Failed),
+    // carrying the terminal state and the teardown reason (`last_error_`, empty for
+    // a clean exit). Lets push observers (the control channel) emit a `terminated`
+    // event for *any* end — including a crash/kill (Failed) — not just a clean DAP
+    // `terminated`/`exited`. The absorbing terminal guard means it fires at most once.
+    std::function<void(State terminal_state, const std::string& reason)> on_terminated;
     // Fired the instant a `stopped` event arrives, carrying the real reason +
     // thread straight from the DAP event — before the async `stackTrace` resolves
     // frames. Lets push-based observers (the control channel) report the halt
@@ -210,9 +216,10 @@ class DebugSession {
  private:
   void HandleEvent(const std::string& event, const util::JsonValue& body);
   void RequestStackTrace(const dap_protocol::DapStoppedEvent& stop);
-  // Fetch the thread list and forward it through `on_threads` (augments the
-  // Call Stack panel a beat after the stack itself resolves; keeps the stop fast).
-  void RequestThreadsForStop();
+  // Fetch the thread list and forward it through `on_threads`, guarded by the stop
+  // epoch so a superseded response is dropped. Called a beat after a stop's stack
+  // resolves (keeps the stop fast) and on `thread` events to track live changes.
+  void RefreshThreadList();
   // Shared by continue/step: guard on Stopped, send `command{threadId}`, then
   // optimistically resume.
   void SendResumeRequest(const char* command);
@@ -221,6 +228,14 @@ class DebugSession {
   void SendBreakpointsForFile(const editor::BreakpointStore::FileBreakpoints& file);
   void SendExceptionFilters();
   void SendConfigurationDone();
+  // Single chokepoint for every terminal transition (spawn failure, launch/attach
+  // rejection, clean `terminated`/`exited`, the no-terminate-capability stop
+  // fallback, and process-death reconciliation). Absorbing: a no-op once already
+  // terminal. Records `reason` into `last_error_` when non-empty, drives SetState
+  // (which fires on_state_changed), then fires on_terminated exactly once. Callers
+  // keep their own client shutdown, which differs per site (none for a never-started
+  // spawn failure, joined-on-exit for a dead adapter, graceful otherwise).
+  void TransitionToTerminal(State terminal_state, std::string reason);
   // Send gdb-specific value-formatting ceilings (print elements/repeats,
   // max-value-size) so an uninitialized/corrupt container cannot drive gdb into
   // unbounded formatting. No-op for non-gdb adapters. Best-effort (errors ignored).

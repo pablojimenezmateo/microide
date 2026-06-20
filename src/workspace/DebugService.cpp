@@ -121,14 +121,21 @@ void DebugService::ConsumeDapCallbacks() {
   // (done outside DrainCallbacks so a session is never destroyed inside its own
   // callback). When the *active* session was the one removed, re-project the new
   // active session; a background prune leaves the active view untouched.
-  const std::vector<int> removed = manager.PruneTerminated();
+  const std::vector<PrunedSession> removed = manager.PruneTerminated();
   if (!removed.empty()) {
-    // Drop each pruned session's console channel + tab so dead consoles do not
-    // accumulate (Phase 10). Done before re-projecting the survivor so the active
-    // console switch below lands on a still-live channel.
-    if (operations_.remove_debug_console) {
-      for (const int id : removed) {
-        operations_.remove_debug_console(id);
+    // Settle each pruned session's console. A clean exit drops its channel + tab so
+    // dead consoles do not accumulate (Phase 10). A non-clean end (crash / kill /
+    // launch rejection) keeps its console so the adapter's output stays inspectable,
+    // and appends why it ended — otherwise the session would vanish silently. Done
+    // before re-projecting the survivor so the active console switch below lands on
+    // a still-live channel.
+    for (const PrunedSession& pruned : removed) {
+      if (pruned.failed) {
+        if (!pruned.error.empty()) {
+          AppendConsoleLine(pruned.id, pruned.console_label, "[debug] " + pruned.error);
+        }
+      } else if (operations_.remove_debug_console) {
+        operations_.remove_debug_console(pruned.id);
       }
     }
     if (manager.ActiveSessionId() != active_before) {
@@ -221,6 +228,15 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
     }
     if (operations_.request_debug_pane_redraw) {
       operations_.request_debug_pane_redraw();
+    }
+  };
+  // Fired once on the terminal transition (incl. a crash/kill, which reaches Failed
+  // without a DAP `terminated`). Drives the control-channel broadcast for every end.
+  callbacks.on_terminated = [this, session_id](DebugSession::State terminal_state,
+                                               const std::string& reason) {
+    if (operations_.notify_session_terminated) {
+      operations_.notify_session_terminated(session_id,
+                                            terminal_state == DebugSession::State::Failed, reason);
     }
   };
   // Immediate halt notification (real reason/thread, before frames resolve).

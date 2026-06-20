@@ -449,10 +449,16 @@ struct DapClient::Impl {
     }
     ParseBufferedMessages();
     DrainOutbound();
-    // The adapter is gone (EOF / exited / killed by the memory cap): fail any
-    // still-pending requests so the UI clears instead of waiting forever.
+    // The adapter is gone (EOF / exited / killed by the memory cap). When this is an
+    // unexpected death rather than a shutdown we requested, fail any still-pending
+    // requests so the UI clears instead of waiting forever, and — crucially — wake
+    // the main thread even if there were none pending: an idle *stopped* session has
+    // no in-flight request, so without this nudge ConsumeDapCallbacks would never run
+    // ReapExitedSessions and the dead session would linger (no `terminated` event,
+    // stale "paused" UI) until some unrelated event happened to drive a frame.
     if (!shutting_down.load(std::memory_order_acquire)) {
       FailPendingRequests(/*only_expired=*/false);
+      PushWakeEvent();
     }
   }
 

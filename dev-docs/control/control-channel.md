@@ -121,6 +121,7 @@ Newline-delimited JSON, one object per line.
 | response (query)  | `{"id":2,"ok":true,"result":{...}}` |
 | event (stop began)| `{"event":"stopped","reason":"breakpoint","threadId":1,"framesPending":true}` |
 | event (stop resolved)| `{"event":"stopped","file":"x.py","line":42,"reason":"breakpoint","threadId":1,"frames":[...],"framesPending":false}` |
+| event (terminated)| `{"event":"terminated","sessionId":1}` (clean) / `{"event":"terminated","sessionId":1,"reason":"debug adapter exited unexpectedly"}` (crash/kill/launch-reject) |
 | ready (stdout)    | `{"event":"ready","pid":..,"socket":"..","project_root":".."}` |
 | applied (stdout)  | `{"applied":"breakpoint-set ..","ok":true}` |
 
@@ -137,6 +138,14 @@ an agent learns it stopped within ms even while a slow adapter (e.g. gdb indexin
 DWARF for minutes) resolves the call stack. The second lands once the stack
 resolves, carrying `file`/`line`/`frames` with `framesPending:false`. Only the
 active session broadcasts; a background-session stop does not emit either phase.
+
+**`terminated` fires for every end.** A session broadcasts `terminated` on *any*
+terminal transition — a clean DAP `terminated`/`exited`, a launch/attach rejection,
+or the adapter process dying with no DAP event (crash / external kill / RLIMIT_AS
+cap). A non-clean end carries a `reason`; a clean exit omits it. This is driven off
+the `DebugSession::on_terminated` callback (fired once via the absorbing terminal
+guard), so an observer is never stranded waiting on a `terminated` that a crashing
+adapter never sent. The `sessionId` is the real session id.
 
 Line numbers are 1-based on every developer-facing surface (commands, spec,
 events, queries); the single 1-based→0-based conversion lives in the

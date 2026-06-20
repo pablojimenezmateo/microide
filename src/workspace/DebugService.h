@@ -43,6 +43,13 @@ class DebugService {
     std::function<void(int session_id)> remove_debug_console;
     // Notify on session state changes (drives status text / redraw).
     std::function<void(DebugSession::State state)> notify_session_state_changed;
+    // Notify when a session reaches a terminal state (Terminated/Failed). `failed`
+    // distinguishes an unexpected end (crash / kill / launch rejection) from a clean
+    // exit; `reason` carries the teardown message (empty for a clean exit). Drives
+    // the control-channel `terminated` broadcast for *every* end, not just clean DAP
+    // termination — so an observer is never stranded when an adapter crashes.
+    std::function<void(int session_id, bool failed, const std::string& reason)>
+        notify_session_terminated;
     // Two-phase stop reporting for push observers (the control channel). Fired
     // for the active session only. `notify_stop_began` lands the instant the
     // adapter halts, carrying the real reason/thread before frames resolve;

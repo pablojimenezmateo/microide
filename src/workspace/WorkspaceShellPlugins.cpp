@@ -107,14 +107,21 @@ WorkspaceShell::WorkspaceShell() {
               },
           .remove_debug_console = [this](int session_id) { RemoveDebugConsole(session_id); },
           .notify_session_state_changed =
-              [this](DebugSession::State state) {
-                RequestChromeRedraw();
-                // Stops mirror to the control channel via the two-phase
-                // notify_stop_began/notify_stop_resolved seam (below) — the bare
-                // Stopped transition fires before frames resolve, so it cannot be
-                // used to broadcast a populated stop. Terminate has no such split.
-                if (state == DebugSession::State::Terminated) {
-                  control_channel_service_.OnDebugTerminated(0);
+              [this](DebugSession::State /*state*/) { RequestChromeRedraw(); },
+          // A terminal end (clean exit OR a crash/kill/launch-rejection) mirrors to
+          // the control channel here, so an observer is never stranded waiting on a
+          // `terminated` that a non-clean death never sent.
+          .notify_session_terminated =
+              [this](int session_id, bool failed, const std::string& reason) {
+                control_channel_service_.OnDebugTerminated(session_id, reason);
+                // A non-clean end (crash / kill / launch rejection) is easy to miss:
+                // the session row + transient views disappear. Surface an error toast
+                // so the user knows the debugger died and why, not just that it
+                // silently vanished. A clean exit needs no toast (it was expected).
+                if (failed) {
+                  Notify(NotificationService::Tone::Error,
+                         reason.empty() ? std::string("Debug adapter exited unexpectedly")
+                                        : reason);
                 }
               },
           .notify_stop_began =

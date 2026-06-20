@@ -91,24 +91,21 @@ bool DebugSession::Start(const std::vector<std::string>& command, const LaunchCo
       [this](const std::string& event, const util::JsonValue& body) { HandleEvent(event, body); });
 
   if (!client_->Start(command, config_.type, cwd, sandbox)) {
-    last_error_ = client_->LastError();
-    if (last_error_.empty()) {
-      last_error_ = "debug adapter failed to start";
+    std::string reason = client_->LastError();
+    if (reason.empty()) {
+      reason = "debug adapter failed to start";
     }
-    SetState(State::Failed);
+    // The client never started, so there is no I/O thread to shut down.
+    TransitionToTerminal(State::Failed, std::move(reason));
     return false;
   }
 
   SetState(State::Initializing);
-  // NB: the launch/attach request is NOT sent here. It is deferred until the
-  // configuration phase completes (breakpoints + configurationDone) in the
-  // `initialized` handler. Some adapters (notably gdb's `--interpreter=dap`) run
-  // the debuggee *during* the launch request rather than waiting for
-  // configurationDone, so sending launch early would let the program race past
-  // breakpoints before they are armed (and make configurationDone fail with
-  // `notStopped`). Sending launch last arms breakpoints first and is accepted by
-  // adapters that emit `initialized` independently of launch (gdb, lldb-dap,
-  // debugpy, and the in-tree mock adapter all do).
+  // NB: the launch/attach request is NOT sent here. The full launch/configuration
+  // handshake is driven from the `initialized` event handler, where the adapter's
+  // capabilities are known. A spec-compliant adapter emits `initialized` from the
+  // `initialize` request (independent of launch), so deferring launch to that
+  // handler is safe; see the ordering rationale there.
   return true;
 }
 
@@ -121,17 +118,17 @@ void DebugSession::SendLaunchRequest() {
   client_->SendRequestAsync(verb, config_.arguments,
                             [this, verb](const dap_protocol::DapResponse& response) {
                               if (!response.success) {
-                                last_error_ = response.message.empty()
-                                                  ? (verb + " request was rejected")
-                                                  : response.message;
-                                SetState(State::Failed);
+                                TransitionToTerminal(
+                                    State::Failed,
+                                    response.message.empty() ? (verb + " request was rejected")
+                                                             : response.message);
                                 client_->BeginShutdown();
                                 return;
                               }
-                              // Launch is sent after configurationDone; for adapters
-                              // that run on launch, a `stopped` event may already have
-                              // moved us to Stopped before this response. Only converge
-                              // to Running if still mid-handshake.
+                              // Launch is sent before configurationDone; the adapter
+                              // runs the debuggee on configurationDone, so a `stopped`
+                              // event may already have moved us to Stopped before this
+                              // response. Only converge to Running if still mid-handshake.
                               if (state_ == State::Initializing || state_ == State::Configuring) {
                                 SetState(State::Running);
                               }
@@ -300,33 +297,43 @@ void DebugSession::ResendExceptionFilters() {
 void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& body) {
   if (event == "initialized") {
     // The adapter is ready for configuration. Surface its advertised exception
-    // filters (so the host can seed/show them), install breakpoints + exception
-    // filters, then finalize with configurationDone. All ride the client's single
-    // ordered stream, so configurationDone reaches the adapter last (the DAP
-    // handshake requires send-order, not response-order); verification reflects
-    // back asynchronously.
+    // filters (so the host can seed/show them), then run the DAP configuration
+    // handshake. All requests ride the client's single ordered stream, so they
+    // reach the adapter in call order (the handshake requires send-order, not
+    // response-order); verification reflects back asynchronously.
     if (callbacks_.on_exception_filters_available) {
       callbacks_.on_exception_filters_available(client_->Capabilities().exception_filters);
     }
     // Clamp gdb value formatting before the program runs, so the first expand of a
     // (possibly uninitialized) local cannot trigger unbounded formatting.
     SendDebuggerValueLimits();
+    // DAP handshake ordering: the launch/attach request must be in flight *before*
+    // configurationDone. A spec-compliant adapter (gdb, lldb-dap, debugpy) defers
+    // running the debuggee until configurationDone and rejects a configurationDone
+    // that arrives with no launch pending — gdb's DAP raises "launch or attach not
+    // specified" and then never answers the late launch, hanging the session. Since
+    // the run is gated on configurationDone, breakpoints sent in between are still
+    // armed first. An adapter with no configuration phase starts the debuggee on
+    // the launch request itself, so there breakpoints must precede launch.
+    const bool launch_first = client_->Capabilities().supports_configuration_done_request;
+    if (launch_first) {
+      SendLaunchRequest();
+    }
     SendAllBreakpoints();
     SendExceptionFilters();
+    if (!launch_first) {
+      SendLaunchRequest();
+    }
     SendConfigurationDone();
-    // Launch/attach goes out last — after breakpoints + configurationDone — so an
-    // adapter that starts the debuggee on the launch request (e.g. gdb DAP) runs
-    // with breakpoints already armed. See the note in Start().
-    SendLaunchRequest();
   } else if (event == "output") {
     if (callbacks_.on_output) {
       callbacks_.on_output(dap_protocol::ParseOutputEvent(body));
     }
   } else if (event == "terminated" || event == "exited") {
-    if (state_ != State::Terminated) {
-      SetState(State::Terminated);
-      client_->BeginShutdown();
-    }
+    // Clean end: no reason. TransitionToTerminal absorbs a duplicate event, and
+    // BeginShutdown is idempotent.
+    TransitionToTerminal(State::Terminated, {});
+    client_->BeginShutdown();
   } else if (event == "stopped") {
     const dap_protocol::DapStoppedEvent stop = dap_protocol::ParseStoppedEvent(body);
     stopped_thread_id_ = stop.thread_id;
@@ -343,7 +350,7 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     RequestStackTrace(stop);
     // Fetch the thread list as a second request so the Call Stack panel can show
     // a thread selector; it lands a beat later and never delays the stack.
-    RequestThreadsForStop();
+    RefreshThreadList();
   } else if (event == "continued") {
     if (state_ == State::Stopped) {
       if (callbacks_.on_resumed) {
@@ -365,6 +372,11 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       }
       callbacks_.on_breakpoint_changed(path, dap_protocol::ParseBreakpoint(bp));
     }
+  } else if (event == "thread") {
+    // A thread started or exited. Refresh the thread list so the Call Stack thread
+    // selector stays current between stops (a stop already refreshes it). Reuses
+    // the stop-epoch guard, so a refresh superseded by a new stop is dropped.
+    RefreshThreadList();
   }
 }
 
@@ -383,7 +395,7 @@ void DebugSession::RequestStop() {
     client_->SendRequestAsync("terminate", util::JsonValue(nullptr), {});
   } else {
     client_->BeginShutdown();
-    SetState(State::Terminated);
+    TransitionToTerminal(State::Terminated, {});
   }
 }
 
@@ -395,12 +407,12 @@ void DebugSession::NotifyProcessExited() {
   // exit after we asked to stop is Terminated; an exit while we still expected the
   // adapter alive (crash / external kill / RLIMIT_AS) is a Failed with a reason.
   if (stop_requested_) {
-    SetState(State::Terminated);
+    TransitionToTerminal(State::Terminated, {});
   } else {
-    if (last_error_.empty()) {
-      last_error_ = "debug adapter exited unexpectedly";
-    }
-    SetState(State::Failed);
+    // Keep an earlier, more specific error if one was already recorded; otherwise
+    // fall back to the generic reason. (Empty reason leaves last_error_ untouched.)
+    TransitionToTerminal(State::Failed,
+                         last_error_.empty() ? "debug adapter exited unexpectedly" : std::string());
   }
   // Ensure the I/O thread is joined so PruneTerminated can reap the session.
   if (!client_->IsShuttingDown()) {
@@ -602,7 +614,7 @@ void DebugSession::RequestThreads(
       });
 }
 
-void DebugSession::RequestThreadsForStop() {
+void DebugSession::RefreshThreadList() {
   if (!callbacks_.on_threads) {
     return;
   }
@@ -643,7 +655,7 @@ void DebugSession::Reactivate() {
   // epoch so this re-projection's thread list supersedes any still-in-flight one.
   ++stop_epoch_;
   RequestStackTrace(last_stop_);
-  RequestThreadsForStop();
+  RefreshThreadList();
 }
 
 void DebugSession::DrainCallbacks() { client_->DrainCallbacks(); }
@@ -659,6 +671,20 @@ void DebugSession::SetState(State state) {
   state_ = state;
   if (callbacks_.on_state_changed) {
     callbacks_.on_state_changed(state_);
+  }
+}
+
+void DebugSession::TransitionToTerminal(State terminal_state, std::string reason) {
+  // Absorbing: the first terminal transition wins, so on_terminated fires once.
+  if (IsTerminalState(state_)) {
+    return;
+  }
+  if (!reason.empty()) {
+    last_error_ = std::move(reason);
+  }
+  SetState(terminal_state);
+  if (callbacks_.on_terminated) {
+    callbacks_.on_terminated(terminal_state, last_error_);
   }
 }
 

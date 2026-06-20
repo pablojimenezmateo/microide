@@ -47,14 +47,19 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # config_done / stop / pause / variables / evaluate / restart / threads / exception
 # all advertise configurationDone support.
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
-                                "restart", "threads", "exception", "die")
+                                "restart", "threads", "exception", "die", "thread_event")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
 multi_thread = (mode == "threads")     # `threads` returns two threads + per-thread frames
 exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters
+# `thread_event`: a worker thread spawns after the first `threads` fetch; the mock
+# emits a `thread` started event so the host must refresh the list a second time.
+thread_event_mode = (mode == "thread_event")
+thread_started = False
 # emit `stopped` after configurationDone
-stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception")
+stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception",
+                          "thread_event")
 running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
 # `die`: reach Running (respond to launch) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
@@ -151,6 +156,12 @@ while True:
             sys.stdout.flush()
             sys.exit(0)
     elif command == "configurationDone":
+        # Spec-compliant adapters (gdb 17.2, lldb-dap, debugpy) defer the run to
+        # configurationDone and reject it if no launch/attach is pending. Mirror
+        # that so a regression to "launch last" fails loudly here.
+        if "launch" not in received and "attach" not in received:
+            respond(msg, success=False, message="configurationDone before launch")
+            continue
         respond(msg, {})
         if stop_on_config:
             emit_stop()
@@ -219,6 +230,14 @@ while True:
     elif command == "threads":
         if multi_thread:
             respond(msg, {"threads": [{"id": 1, "name": "main"}, {"id": 2, "name": "worker"}]})
+        elif thread_event_mode and not thread_started:
+            # First fetch (from the stop): only main exists. A worker then spawns,
+            # announced via a `thread` event so the host refreshes the list again.
+            respond(msg, {"threads": [{"id": 1, "name": "main"}]})
+            thread_started = True
+            event("thread", {"reason": "started", "threadId": 2})
+        elif thread_event_mode:
+            respond(msg, {"threads": [{"id": 1, "name": "main"}, {"id": 2, "name": "worker"}]})
         else:
             respond(msg, {"threads": [{"id": 1, "name": "main"}]})
     elif command == "setExceptionBreakpoints":
@@ -270,6 +289,9 @@ struct CapturedSession {
   std::vector<DebugSession::State> states;
   std::string output;
   bool got_terminated_event = false;
+  bool got_terminated_callback = false;
+  bool terminated_failed = false;
+  std::string terminated_reason;
   std::vector<codec::DapStackFrame> last_frames;
   std::string last_stop_reason;
   int stop_count = 0;
@@ -288,6 +310,12 @@ DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
     if (state == DebugSession::State::Terminated) {
       captured.got_terminated_event = true;
     }
+  };
+  callbacks.on_terminated = [&captured](DebugSession::State terminal_state,
+                                        const std::string& reason) {
+    captured.got_terminated_callback = true;
+    captured.terminated_failed = terminal_state == DebugSession::State::Failed;
+    captured.terminated_reason = reason;
   };
   callbacks.on_stopped = [&captured](const codec::DapStoppedEvent& stop,
                                      const std::vector<codec::DapStackFrame>& frames) {
@@ -347,6 +375,12 @@ void TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone() {
   Expect(captured.output.find("hello from adapter") != std::string::npos,
          "adapter output event should reach the console callback");
   Expect(captured.got_terminated_event, "terminated should drive the session to Terminated");
+  // A clean DAP terminated also fires on_terminated, but reports failed=false with no
+  // reason — so the control channel emits a plain `terminated` and the console is
+  // dropped rather than retained.
+  Expect(captured.got_terminated_callback, "on_terminated fires on a clean terminated event");
+  Expect(!captured.terminated_failed, "a clean exit reports failed=false");
+  Expect(captured.terminated_reason.empty(), "a clean exit carries no reason");
   manager.ShutdownAll();
 }
 
@@ -381,7 +415,7 @@ void TestDebugSessionRunsWithoutConfigurationDoneSupport() {
   manager.ShutdownAll();
 }
 
-void TestDebugSessionSendsBreakpointsBeforeConfigurationDone() {
+void TestDebugSessionLaunchHandshakeOrder() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
@@ -438,22 +472,27 @@ void TestDebugSessionSendsBreakpointsBeforeConfigurationDone() {
   Expect(verified_requested_lines == std::vector<int>({5, 10}),
          "verification should carry the requested 1-based lines in send order");
 
-  // The recorded command order must place setBreakpoints before configurationDone.
+  // The strict mock rejects configurationDone that arrives before launch (as gdb
+  // 17.2 does), so reaching Terminated cleanly already proves launch preceded it.
+  Expect(!captured.terminated_failed, "spec-compliant handshake must not fail the session");
+
+  // Pin the DAP handshake order: launch  ->  setBreakpoints  ->  configurationDone.
+  // gdb's DAP defers running the debuggee until configurationDone and rejects a
+  // configurationDone with no launch pending, so launch must be in flight first;
+  // breakpoints still precede configurationDone, so they are armed before the run.
+  // finish_launch() emits this command list while handling configurationDone, so
+  // by then launch, setBreakpoints, and configurationDone have all been recorded.
   const std::size_t order_pos = captured.output.find("commands:");
   Expect(order_pos != std::string::npos, "adapter should emit its command order");
+  const std::size_t launch_pos = captured.output.find("launch", order_pos);
   const std::size_t set_pos = captured.output.find("setBreakpoints", order_pos);
   const std::size_t cfg_pos = captured.output.find("configurationDone", order_pos);
-  Expect(set_pos != std::string::npos && cfg_pos != std::string::npos && set_pos < cfg_pos,
-         "setBreakpoints must be sent before configurationDone");
-  // launch/attach must be sent AFTER configurationDone (and after breakpoints).
-  // Some adapters (gdb's --interpreter=dap) start the debuggee on the launch
-  // request rather than waiting for configurationDone; sending launch last means
-  // breakpoints are armed before the program runs (otherwise it races past them).
-  // finish_launch() emits this command list while handling configurationDone, so
-  // launch has not been recorded yet — it must not appear before configurationDone.
-  const std::size_t launch_pos = captured.output.find("launch", order_pos);
-  Expect(launch_pos == std::string::npos || launch_pos > cfg_pos,
-         "launch/attach must be sent after configurationDone, never before");
+  Expect(launch_pos != std::string::npos && set_pos != std::string::npos &&
+             cfg_pos != std::string::npos,
+         "adapter should record launch, setBreakpoints, and configurationDone");
+  Expect(launch_pos < set_pos, "launch must be sent before setBreakpoints");
+  Expect(launch_pos < cfg_pos, "launch must be sent before configurationDone");
+  Expect(set_pos < cfg_pos, "setBreakpoints must be sent before configurationDone");
   manager.ShutdownAll();
 }
 
@@ -1417,6 +1456,36 @@ void TestDebugSessionThreadsCachedAndSwitch() {
   manager.ShutdownAll();
 }
 
+// A `thread` event (a thread started/exited mid-run) refreshes the cached thread
+// list, so the Call Stack thread selector stays current between stops. The adapter
+// reports a single thread at the stop, then announces a worker via a `thread`
+// event; the host must fetch the list a second time and grow it to two.
+void TestDebugSessionThreadEventRefreshesThreadList() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "thread_event"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+  // First fetch (from the stop) sees one thread; the `thread` event then drives a
+  // second fetch that adds the worker. Reaching two proves the event refreshed it.
+  Expect(PollUntil(manager, [&]() { return captured.last_threads.size() == 2; }),
+         "a thread event should refresh the cached thread list");
+  Expect(captured.last_threads[1].id == 2 && captured.last_threads[1].name == "worker",
+         "the refreshed list should include the newly started thread");
+  manager.ShutdownAll();
+}
+
 // Exception filters: the adapter advertises filters at initialize; the session
 // surfaces them and sends the enabled ids via setExceptionBreakpoints on launch;
 // a live re-send reflects a toggle.
@@ -1922,7 +1991,19 @@ void TestDebugSessionReconciledWhenAdapterDiesSilently() {
   const DebugSession* after = manager.ActiveSession();
   Expect(after != nullptr && after->CurrentState() == DebugSession::State::Failed,
          "a silently-dead adapter session becomes Failed");
-  Expect(!manager.PruneTerminated().empty(), "the reconciled session is then pruned");
+  // The terminal transition must fire on_terminated so a push observer (the control
+  // channel) emits `terminated` even though the adapter never sent a DAP terminated
+  // event. `failed` + a non-empty reason distinguish the crash from a clean exit.
+  Expect(captured.got_terminated_callback,
+         "on_terminated fires when the adapter dies without a DAP terminated event");
+  Expect(captured.terminated_failed, "a silent adapter death reports failed=true");
+  Expect(!captured.terminated_reason.empty(), "the terminated reason is populated for a crash");
+  Expect(!captured.got_terminated_event,
+         "no clean DAP terminated arrived, so the Terminated-state flag stays false");
+  const std::vector<microide::workspace::PrunedSession> pruned = manager.PruneTerminated();
+  Expect(pruned.size() == 1, "the reconciled session is then pruned");
+  Expect(pruned.front().failed, "the pruned entry is marked failed so its console is kept");
+  Expect(!pruned.front().error.empty(), "the pruned entry carries the failure reason");
   Expect(manager.SessionCount() == 0, "no zombie session remains");
 }
 
@@ -1937,8 +2018,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone);
   AddTest(tests, "DebugService/SessionRunsWithoutConfigurationDoneSupport",
           TestDebugSessionRunsWithoutConfigurationDoneSupport);
-  AddTest(tests, "DebugService/SessionSendsBreakpointsBeforeConfigurationDone",
-          TestDebugSessionSendsBreakpointsBeforeConfigurationDone);
+  AddTest(tests, "DebugService/SessionLaunchHandshakeOrder",
+          TestDebugSessionLaunchHandshakeOrder);
   AddTest(tests, "DebugService/SessionResolvesStackOnStopAndStepsResume",
           TestDebugSessionResolvesStackOnStopAndStepsResume);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
@@ -1948,6 +2029,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionRestartNoOpWithoutCapability);
   AddTest(tests, "DebugService/SessionThreadsCachedAndSwitch",
           TestDebugSessionThreadsCachedAndSwitch);
+  AddTest(tests, "DebugService/SessionThreadEventRefreshesThreadList",
+          TestDebugSessionThreadEventRefreshesThreadList);
   AddTest(tests, "DebugService/SessionExceptionFiltersSentOnLaunchAndToggle",
           TestDebugSessionExceptionFiltersSentOnLaunchAndToggle);
   AddTest(tests, "DebugService/BreakpointsModelBehavior", TestDebugBreakpointsModelBehavior);
