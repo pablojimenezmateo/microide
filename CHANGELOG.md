@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.0.1] - 2026-06-20
+
+Patch release adding agent-driven **review verbs** to the control channel. Three new commands
+bulk-open the diff/merge tabs needed to review changes, switching to the Source Control view,
+deduping against already-open tabs, and cleaning stale (clean) review tabs while preserving any
+dirty/edited ones.
+
+### Control channel
+- `review-conflicts` — open one merge tab per conflicted working-tree file (non-mutating; pair it
+  with your own `git merge`).
+- `review-branch [ref]` — open one compare tab (working tree vs `ref`) per differing file; `ref` is
+  any commit-ish and defaults to the repo base branch.
+- `review-commit [commit]` — open one compare tab (`commit~1` vs `commit`) per file the commit
+  changed; defaults to `HEAD`, accepts any commit hash.
+- Verbs, recipes, and the generated man page document the new workflows; tab reconciliation is a
+  pure, tested `ComputeReviewTabPlan` driven by a host-owned `ReviewSessionCoordinator`.
+
+### Fixes
+- Fix a stack-use-after-scope in the merge-tab conflict classifier (`string_view`s were bound to
+  `SerializeLines` temporaries), caught by the new AddressSanitizer coverage.
+- `tools/run-checks.sh` now folds sanitizer runtime reports into the main log so failures are
+  captured in one place.
+
 ## [2.0.0] - 2026-06-20
 
 Major release introducing an integrated **debugger**. microide now speaks the Debug Adapter
