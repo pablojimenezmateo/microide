@@ -139,6 +139,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/BracketScanner.cpp
   src/editor/BreakpointRender.cpp
   src/editor/BreakpointStore.cpp
+  src/editor/FunctionBreakpointStore.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/ExecutionLineRender.cpp
   src/editor/DiagnosticsRender.cpp

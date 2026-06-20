@@ -415,6 +415,57 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.ResendBreakpoints(path);
       return DispatchResult::Handled;
     }
+    case ActionId::BreakpointFunctionAdd: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      const std::string name = JoinCommandArguments(args, 0);
+      if (name.empty()) {
+        return reject("breakpoint-function-add: a function name is required");
+      }
+      context_.AddFunctionBreakpoint(name);
+      return DispatchResult::Handled;
+    }
+    case ActionId::BreakpointFunctionRemove:
+    case ActionId::BreakpointFunctionToggle: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      const std::string name = JoinCommandArguments(args, 0);
+      if (name.empty()) {
+        return reject("breakpoint-function: a function name is required");
+      }
+      if (id == ActionId::BreakpointFunctionRemove) {
+        context_.RemoveFunctionBreakpoint(name);
+      } else {
+        context_.ToggleFunctionBreakpoint(name);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::BreakpointFunctionCondition: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      if (args.empty() || args[0].empty()) {
+        return reject("breakpoint-function-condition: a function name is required");
+      }
+      const std::string expr = JoinCommandArguments(args, 1);
+      context_.SetFunctionBreakpointCondition(
+          args[0], expr.empty() ? std::nullopt : std::optional<std::string>(expr));
+      return DispatchResult::Handled;
+    }
+    case ActionId::BreakpointExceptionCondition: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      if (args.empty() || args[0].empty()) {
+        return reject("breakpoint-exception-condition: a filter id is required");
+      }
+      const std::string expr = JoinCommandArguments(args, 1);
+      context_.SetExceptionFilterCondition(
+          args[0], expr.empty() ? std::nullopt : std::optional<std::string>(expr));
+      return DispatchResult::Handled;
+    }
     case ActionId::DebugLaunch: {
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");

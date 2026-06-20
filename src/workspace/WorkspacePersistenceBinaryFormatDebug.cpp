@@ -156,6 +156,97 @@ bool DecodeLaunchConfig(std::span<const std::byte> input, PersistedLaunchConfig*
       });
 }
 
+bool EncodeFunctionBreakpoint(const PersistedFunctionBreakpoint& breakpoint,
+                              std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  return AppendRecord(FunctionBreakpointTag::Name,
+                      [&](PrimitiveWriter& w) { return w.WriteString(breakpoint.name); }, out) &&
+         AppendRecord(FunctionBreakpointTag::Enabled,
+                      [&](PrimitiveWriter& w) { return w.WriteBool(breakpoint.enabled); }, out) &&
+         AppendRecord(FunctionBreakpointTag::Condition,
+                      [&](PrimitiveWriter& w) {
+                        return w.WriteOptional(breakpoint.condition,
+                                               [](PrimitiveWriter& wr, const std::string& value) {
+                                                 return wr.WriteString(value);
+                                               });
+                      },
+                      out) &&
+         AppendRecord(FunctionBreakpointTag::HitCondition,
+                      [&](PrimitiveWriter& w) {
+                        return w.WriteOptional(breakpoint.hit_condition,
+                                               [](PrimitiveWriter& wr, const std::string& value) {
+                                                 return wr.WriteString(value);
+                                               });
+                      },
+                      out);
+}
+
+bool DecodeFunctionBreakpoint(std::span<const std::byte> input,
+                              PersistedFunctionBreakpoint* breakpoint) {
+  if (breakpoint == nullptr) {
+    return false;
+  }
+  *breakpoint = PersistedFunctionBreakpoint{};
+  return ParseRecordStream<FunctionBreakpointTag>(
+      input, [&](FunctionBreakpointTag tag, std::span<const std::byte> payload) {
+        PrimitiveReader reader(payload);
+        switch (tag) {
+          case FunctionBreakpointTag::Name:
+            return reader.ReadString(&breakpoint->name) && reader.remaining() == 0;
+          case FunctionBreakpointTag::Enabled:
+            return reader.ReadBool(&breakpoint->enabled) && reader.remaining() == 0;
+          case FunctionBreakpointTag::Condition:
+            return reader.ReadOptional(&breakpoint->condition,
+                                       [](PrimitiveReader& r, std::string* value) {
+                                         return r.ReadString(value);
+                                       }) &&
+                   reader.remaining() == 0;
+          case FunctionBreakpointTag::HitCondition:
+            return reader.ReadOptional(&breakpoint->hit_condition,
+                                       [](PrimitiveReader& r, std::string* value) {
+                                         return r.ReadString(value);
+                                       }) &&
+                   reader.remaining() == 0;
+        }
+        return true;
+      });
+}
+
+bool EncodeExceptionFilterCondition(const std::string& filter_id, const std::string& condition,
+                                    std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  return AppendRecord(ExceptionFilterConditionTag::FilterId,
+                      [&](PrimitiveWriter& w) { return w.WriteString(filter_id); }, out) &&
+         AppendRecord(ExceptionFilterConditionTag::Condition,
+                      [&](PrimitiveWriter& w) { return w.WriteString(condition); }, out);
+}
+
+bool DecodeExceptionFilterCondition(std::span<const std::byte> input, std::string* filter_id,
+                                    std::string* condition) {
+  if (filter_id == nullptr || condition == nullptr) {
+    return false;
+  }
+  filter_id->clear();
+  condition->clear();
+  return ParseRecordStream<ExceptionFilterConditionTag>(
+      input, [&](ExceptionFilterConditionTag tag, std::span<const std::byte> payload) {
+        PrimitiveReader reader(payload);
+        switch (tag) {
+          case ExceptionFilterConditionTag::FilterId:
+            return reader.ReadString(filter_id) && reader.remaining() == 0;
+          case ExceptionFilterConditionTag::Condition:
+            return reader.ReadString(condition) && reader.remaining() == 0;
+        }
+        return true;
+      });
+}
+
 }  // namespace
 
 bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::byte>* out) {
@@ -203,6 +294,22 @@ bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::b
       !AppendRecord(DebugStateTag::ExceptionFiltersSeeded,
                     [&](PrimitiveWriter& w) { return w.WriteBool(true); }, out)) {
     return false;
+  }
+  for (const PersistedFunctionBreakpoint& breakpoint : state.function_breakpoints) {
+    std::vector<std::byte> payload;
+    if (!EncodeFunctionBreakpoint(breakpoint, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(DebugStateTag::FunctionBreakpoint), payload,
+                            out)) {
+      return false;
+    }
+  }
+  for (const auto& [filter_id, condition] : state.exception_filter_conditions) {
+    std::vector<std::byte> payload;
+    if (!EncodeExceptionFilterCondition(filter_id, condition, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(DebugStateTag::ExceptionFilterCondition),
+                            payload, out)) {
+      return false;
+    }
   }
   return true;
 }
@@ -264,6 +371,23 @@ bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugStat
                  case DebugStateTag::ExceptionFiltersSeeded:
                    return reader.ReadBool(&state->exception_filters_seeded) &&
                           reader.remaining() == 0;
+                 case DebugStateTag::FunctionBreakpoint: {
+                   PersistedFunctionBreakpoint breakpoint;
+                   if (!DecodeFunctionBreakpoint(payload, &breakpoint)) {
+                     return false;
+                   }
+                   state->function_breakpoints.push_back(std::move(breakpoint));
+                   return true;
+                 }
+                 case DebugStateTag::ExceptionFilterCondition: {
+                   std::string filter_id;
+                   std::string condition;
+                   if (!DecodeExceptionFilterCondition(payload, &filter_id, &condition)) {
+                     return false;
+                   }
+                   state->exception_filter_conditions[std::move(filter_id)] = std::move(condition);
+                   return true;
+                 }
                }
                return true;
              }) &&

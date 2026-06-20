@@ -11,6 +11,7 @@
 #include <filesystem>
 
 #include "editor/BreakpointStore.h"
+#include "editor/FunctionBreakpointStore.h"
 #include "platform/SubprocessSandbox.h"
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
@@ -29,6 +30,15 @@ namespace microide::workspace {
 // Phase 1 implements the lifecycle and streams `output` events to the console.
 // Breakpoints (Phase 2), execution control / `stopped` (Phase 3), variables
 // (Phase 4) and the rest layer on through the same client + event callback.
+// One exception filter the host wants enabled, paired with an optional condition.
+// The condition is honored only when the adapter advertises
+// `supportsExceptionFilterOptions` and the specific filter advertises
+// `supportsCondition`; otherwise the filter is sent plain.
+struct ExceptionFilterRequest {
+  std::string id;
+  std::string condition;
+};
+
 class DebugSession {
  public:
   enum class State {
@@ -91,14 +101,25 @@ class DebugSession {
     std::function<void(const std::filesystem::path& path,
                        const dap_protocol::DapBreakpoint& breakpoint)>
         on_breakpoint_changed;
+    // Pulled at `initialized` + on every live re-send to get the function (symbol)
+    // breakpoints to install via setFunctionBreakpoints (gated on
+    // `supportsFunctionBreakpoints`).
+    std::function<std::vector<editor::FunctionBreakpoint>()> function_breakpoint_provider;
+    // Pushed with the adapter's verification for the function breakpoints. The
+    // response is positional to the request, so `requested_names` carries the names
+    // sent (same order) — the host matches each result back by its requested name.
+    std::function<void(const std::vector<std::string>& requested_names,
+                       const std::vector<dap_protocol::DapBreakpoint>& breakpoints)>
+        on_function_breakpoints_verified;
     // Pushed with the adapter's advertised exception-breakpoint filters when the
     // session initializes (Phase 7), so the host can populate the Breakpoints tab
     // and seed the enabled set from each filter's default.
     std::function<void(const std::vector<dap_protocol::DapExceptionFilter>& filters)>
         on_exception_filters_available;
     // Pulled at `initialized` and on every live re-send to get the enabled
-    // exception-filter ids to install via setExceptionBreakpoints.
-    std::function<std::vector<std::string>()> exception_filter_provider;
+    // exception filters (id + optional condition) to install via
+    // setExceptionBreakpoints.
+    std::function<std::vector<ExceptionFilterRequest>()> exception_filter_provider;
   };
 
   DebugSession();
@@ -204,6 +225,12 @@ class DebugSession {
   // adapter is initialized.
   void ResendBreakpointsForFile(const std::filesystem::path& path);
 
+  // Re-send `setFunctionBreakpoints` with the current function-breakpoint set while
+  // the session is live (e.g. the user added/removed/toggled one). Pulls the
+  // snapshot from `function_breakpoint_provider`; an empty set clears them. No-op
+  // until the adapter is initialized or when the adapter lacks the capability.
+  void ResendFunctionBreakpoints();
+
   // Re-send `setExceptionBreakpoints` with the current enabled filter set while
   // the session is live (e.g. the user toggled a filter). Pulls the enabled ids
   // from `exception_filter_provider` and intersects them with the adapter's
@@ -226,6 +253,7 @@ class DebugSession {
   void SendLaunchRequest();
   void SendAllBreakpoints();
   void SendBreakpointsForFile(const editor::BreakpointStore::FileBreakpoints& file);
+  void SendFunctionBreakpoints();
   void SendExceptionFilters();
   void SendConfigurationDone();
   // Single chokepoint for every terminal transition (spawn failure, launch/attach

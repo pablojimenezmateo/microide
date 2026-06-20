@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/BreakpointStore.h"
+#include "editor/FunctionBreakpointStore.h"
 #include "util/JsonValue.h"
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugBreakpointsModel.h"
@@ -15,6 +16,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <thread>
@@ -47,19 +51,21 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # config_done / stop / pause / variables / evaluate / restart / threads / exception
 # all advertise configurationDone support.
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
-                                "restart", "threads", "exception", "die", "thread_event")
+                                "restart", "threads", "exception", "die", "thread_event",
+                                "function")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
+supports_function = (mode == "function")  # advertise supportsFunctionBreakpoints
 multi_thread = (mode == "threads")     # `threads` returns two threads + per-thread frames
-exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters
+exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters (+ filter options)
 # `thread_event`: a worker thread spawns after the first `threads` fetch; the mock
 # emits a `thread` started event so the host must refresh the list a second time.
 thread_event_mode = (mode == "thread_event")
 thread_started = False
 # emit `stopped` after configurationDone
 stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception",
-                          "thread_event")
+                          "thread_event", "function")
 running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
 # `die`: reach Running (respond to launch) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
@@ -132,11 +138,16 @@ while True:
                 "supportsSetVariable": supports_set_variable,
                 "supportsEvaluateForHovers": supports_evaluate,
                 "supportsRestartRequest": supports_restart,
+                "supportsFunctionBreakpoints": supports_function,
+                "supportsConditionalBreakpoints": supports_function,
                 "supportsTerminateRequest": True}
         if exception_mode:
+            caps["supportsExceptionFilterOptions"] = True
             caps["exceptionBreakpointFilters"] = [
-                {"filter": "raised", "label": "Raised Exceptions", "default": False},
-                {"filter": "uncaught", "label": "Uncaught Exceptions", "default": True},
+                {"filter": "raised", "label": "Raised Exceptions", "default": False,
+                 "supportsCondition": True},
+                {"filter": "uncaught", "label": "Uncaught Exceptions", "default": True,
+                 "supportsCondition": True},
             ]
         respond(msg, caps)
         event("initialized")
@@ -164,6 +175,9 @@ while True:
             continue
         respond(msg, {})
         if stop_on_config:
+            # Echo the received command order (as finish_launch does) so stop-based
+            # tests can assert handshake ordering too.
+            event("output", {"category": "stdout", "output": "commands:" + ",".join(received) + "\n"})
             emit_stop()
         elif running_no_stop:
             pass  # stay running; the test will issue a pause
@@ -240,9 +254,22 @@ while True:
             respond(msg, {"threads": [{"id": 1, "name": "main"}, {"id": 2, "name": "worker"}]})
         else:
             respond(msg, {"threads": [{"id": 1, "name": "main"}]})
+    elif command == "setFunctionBreakpoints":
+        args = msg.get("arguments", {})
+        names = [bp.get("name", "") for bp in args.get("breakpoints", [])]
+        conds = [bp.get("condition", "") for bp in args.get("breakpoints", [])]
+        event("output", {"category": "stdout", "output": "fnbp:" + ",".join(names) + "\n"})
+        event("output", {"category": "stdout", "output": "fncond:" + ",".join(conds) + "\n"})
+        verified = [{"id": i + 1, "verified": True} for i, _ in enumerate(names)]
+        respond(msg, {"breakpoints": verified})
     elif command == "setExceptionBreakpoints":
-        filters = msg.get("arguments", {}).get("filters", [])
+        args = msg.get("arguments", {})
+        filters = args.get("filters", [])
         event("output", {"category": "stdout", "output": "exc:" + ",".join(filters) + "\n"})
+        opts = args.get("filterOptions", [])
+        if opts:
+            rendered = ",".join(o.get("filterId", "") + "=" + o.get("condition", "") for o in opts)
+            event("output", {"category": "stdout", "output": "excopt:" + rendered + "\n"})
         respond(msg, {})
     elif command == "pause":
         event("output", {"category": "stdout", "output": "cmd:pause\n"})
@@ -1505,7 +1532,13 @@ void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
   // The host's enabled-filter set (intersected with advertised filters by the
   // session). "bogus" must be filtered out; only "raised" should reach the wire.
   std::vector<std::string> enabled = {"raised", "bogus"};
-  callbacks.exception_filter_provider = [&enabled]() { return enabled; };
+  callbacks.exception_filter_provider = [&enabled]() {
+    std::vector<microide::workspace::ExceptionFilterRequest> requests;
+    for (const std::string& id : enabled) {
+      requests.push_back(microide::workspace::ExceptionFilterRequest{.id = id});
+    }
+    return requests;
+  };
 
   LaunchConfig config;
   config.type = "mock";
@@ -1561,7 +1594,8 @@ void TestDebugBreakpointsModelBehavior() {
   editor::BreakpointStore store;
   store.Set("/proj/a.py", 4);
   store.SetCondition("/proj/a.py", 9, "i > 3");
-  model.Rebuild(store);
+  editor::FunctionBreakpointStore function_store;
+  model.Rebuild(store, function_store);
   const std::vector<DebugBreakpointRowView>& rows = model.Rows();
   Expect(!rows.empty() && rows[0].kind == DebugBreakpointRowView::Kind::Header,
          "the first row is the exception-filters header");
@@ -1580,7 +1614,7 @@ void TestDebugBreakpointsModelBehavior() {
 
   // Clearing advertised filters (session stop) drops the filter section.
   model.ClearAdvertisedFilters();
-  model.Rebuild(store);
+  model.Rebuild(store, function_store);
   for (const DebugBreakpointRowView& row : model.Rows()) {
     Expect(row.kind != DebugBreakpointRowView::Kind::ExceptionFilter,
            "no exception-filter rows remain after the advertised set is cleared");
@@ -2007,6 +2041,235 @@ void TestDebugSessionReconciledWhenAdapterDiesSilently() {
   Expect(manager.SessionCount() == 0, "no zombie session remains");
 }
 
+// Function breakpoints reach the wire (mock adapter): installed after setBreakpoints
+// and before configurationDone (the gdb launch order), with verification reflected
+// back into a FunctionBreakpointStore by requested name.
+void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "function"));
+
+  editor::FunctionBreakpointStore fn_store;
+  fn_store.Add("add");
+  fn_store.Add("compute");
+  fn_store.SetCondition(1, "n > 0");
+
+  // A line breakpoint too, so the full ordering (setBreakpoints first) is observable.
+  editor::BreakpointStore line_store;
+  line_store.Set("/proj/main.c", 9);
+
+  CapturedSession captured;
+  DebugSession::Callbacks callbacks = MakeCallbacks(captured);
+  callbacks.breakpoint_provider = [&line_store]() { return line_store.SnapshotAll(); };
+  callbacks.function_breakpoint_provider = [&fn_store]() { return fn_store.All(); };
+  callbacks.on_function_breakpoints_verified =
+      [&fn_store](const std::vector<std::string>& names,
+                  const std::vector<codec::DapBreakpoint>& bps) {
+        std::vector<editor::VerifiedFunctionBreakpoint> results;
+        for (const codec::DapBreakpoint& bp : bps) {
+          results.push_back(editor::VerifiedFunctionBreakpoint{
+              .id = bp.id, .verified = bp.verified, .message = bp.message});
+        }
+        fn_store.ApplyVerification(names, results);
+      };
+
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, std::move(callbacks)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+
+  Expect(captured.output.find("fnbp:add,compute\n") != std::string::npos,
+         "both function breakpoints should reach the wire by name");
+  Expect(captured.output.find("fncond:,n > 0\n") != std::string::npos,
+         "the per-breakpoint condition rides along (empty for the first)");
+  // Ordering: setBreakpoints, then setFunctionBreakpoints, then configurationDone.
+  const std::string& out = captured.output;
+  const std::size_t commands_pos = out.find("commands:");
+  Expect(commands_pos != std::string::npos, "the adapter echoes its received command order");
+  const std::string commands = out.substr(commands_pos);
+  const std::size_t set_bp = commands.find("setBreakpoints");
+  const std::size_t set_fn = commands.find("setFunctionBreakpoints");
+  const std::size_t config_done = commands.find("configurationDone");
+  Expect(set_fn != std::string::npos && config_done != std::string::npos,
+         "setFunctionBreakpoints + configurationDone are both on the wire");
+  Expect(set_bp < set_fn && set_fn < config_done,
+         "setFunctionBreakpoints lands after setBreakpoints and before configurationDone");
+  Expect(fn_store.All().size() == 2 && fn_store.All()[0].verified && fn_store.All()[1].verified,
+         "verification reflects back onto both function breakpoints");
+  manager.ShutdownAll();
+}
+
+// Exception-filter conditions reach the wire as filterOptions when the adapter
+// advertises supportsExceptionFilterOptions + the filter advertises supportsCondition.
+void TestDebugSessionExceptionFilterConditionsSent() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "exception"));
+
+  CapturedSession captured;
+  DebugSession::Callbacks callbacks = MakeCallbacks(captured);
+  callbacks.exception_filter_provider = []() {
+    return std::vector<microide::workspace::ExceptionFilterRequest>{
+        microide::workspace::ExceptionFilterRequest{.id = "raised", .condition = "x == 2"},
+        microide::workspace::ExceptionFilterRequest{.id = "uncaught"},
+    };
+  };
+
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, std::move(callbacks)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+  Expect(captured.output.find("excopt:raised=x == 2\n") != std::string::npos,
+         "a conditioned filter is sent via filterOptions");
+  Expect(captured.output.find("exc:uncaught\n") != std::string::npos,
+         "an unconditioned filter stays in the plain filters array");
+  manager.ShutdownAll();
+}
+
+// Pure FunctionBreakpointStore behavior (no adapter): add/dedup/remove/toggle,
+// condition setters, and positional-by-name verification.
+void TestFunctionBreakpointStoreBehavior() {
+  editor::FunctionBreakpointStore store;
+  Expect(store.Add("main"), "adding a fresh name succeeds");
+  Expect(!store.Add("main"), "adding a duplicate name is a no-op");
+  Expect(!store.Add(""), "adding an empty name is a no-op");
+  Expect(store.Add("helper"), "adding a second distinct name succeeds");
+  Expect(store.Count() == 2, "two function breakpoints are stored");
+
+  store.SetCondition(0, "argc > 1");
+  Expect(store.All()[0].condition.has_value() && *store.All()[0].condition == "argc > 1",
+         "a condition is stored on the right breakpoint");
+  Expect(store.ToggleEnabled(1) && !store.All()[1].enabled, "toggling disables the second");
+
+  // Verification is positional to the requested names, matched by name (not index).
+  // Request in reverse order; results must still land on the right rows.
+  std::vector<std::string> requested = {"helper", "main"};
+  std::vector<editor::VerifiedFunctionBreakpoint> results = {
+      editor::VerifiedFunctionBreakpoint{.id = 7, .verified = false, .message = "pending"},
+      editor::VerifiedFunctionBreakpoint{.id = 8, .verified = true},
+  };
+  store.ApplyVerification(requested, results);
+  Expect(store.All()[0].name == "main" && store.All()[0].verified && store.All()[0].adapter_id == 8,
+         "main (requested second) verifies true with its adapter id");
+  Expect(store.All()[1].name == "helper" && !store.All()[1].verified &&
+             store.All()[1].verify_message == "pending",
+         "helper (requested first) reflects its pending reason");
+
+  store.ResetVerification();
+  Expect(!store.All()[0].verified && store.All()[0].adapter_id == 0,
+         "ResetVerification drops transient adapter state");
+  store.Remove(0);
+  Expect(store.Count() == 1 && store.All()[0].name == "helper", "Remove drops the right row");
+}
+
+// ---- Real gdb 17.x end-to-end (gated; skipped when gdb/gcc are unavailable) ----
+bool GdbDapAvailable() {
+  FILE* pipe = ::popen("gdb --version 2>/dev/null", "r");
+  if (pipe == nullptr) {
+    return false;
+  }
+  std::string out;
+  char buffer[256];
+  std::size_t n = 0;
+  while ((n = std::fread(buffer, 1, sizeof(buffer), pipe)) > 0) {
+    out.append(buffer, n);
+  }
+  ::pclose(pipe);
+  return out.find("GNU gdb") != std::string::npos;
+}
+
+bool CompileWithGcc(const std::filesystem::path& source, const std::filesystem::path& exe) {
+  const std::string command =
+      "gcc -g -O0 -o " + exe.string() + " " + source.string() + " 2>/dev/null";
+  return std::system(command.c_str()) == 0;
+}
+
+// Drive the real gdb 17.x DAP adapter through the production DapManager/DebugSession:
+// install a function breakpoint on `add`, launch a compiled C program, and assert
+// gdb stops inside add() with the breakpoint verified. This exercises the exact
+// launch ordering (launch -> setBreakpoints -> setFunctionBreakpoints ->
+// configurationDone) against the real adapter. Skipped when gdb/gcc are absent.
+void TestGdbRealFunctionBreakpointsE2E() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  if (!GdbDapAvailable()) {
+    return;  // gated: no gdb on this host
+  }
+  TemporaryDirectory temp_dir;
+  const auto source = temp_dir.path() / "prog.c";
+  WriteFile(source,
+            "#include <stdio.h>\n"
+            "int add(int a, int b){ int s = a + b; return s; }\n"
+            "int main(){ int x = 42, y = 58; int z = add(x, y); printf(\"%d\\n\", z); return 0; }\n");
+  const auto exe = temp_dir.path() / "prog";
+  if (!CompileWithGcc(source, exe)) {
+    return;  // gated: no working gcc
+  }
+
+  DapManager manager;
+  manager.RegisterAdapter("gdb", std::vector<std::string>{"gdb", "--interpreter=dap"});
+
+  editor::FunctionBreakpointStore fn_store;
+  fn_store.Add("add");
+
+  CapturedSession captured;
+  DebugSession::Callbacks callbacks = MakeCallbacks(captured);
+  callbacks.function_breakpoint_provider = [&fn_store]() { return fn_store.All(); };
+  callbacks.on_function_breakpoints_verified =
+      [&fn_store](const std::vector<std::string>& names,
+                  const std::vector<codec::DapBreakpoint>& bps) {
+        std::vector<editor::VerifiedFunctionBreakpoint> results;
+        for (const codec::DapBreakpoint& bp : bps) {
+          results.push_back(editor::VerifiedFunctionBreakpoint{
+              .id = bp.id, .verified = bp.verified, .message = bp.message});
+        }
+        fn_store.ApplyVerification(names, results);
+      };
+  // gdb reports a function breakpoint `pending` in the response, then verifies it
+  // via a `breakpoint` event once the inferior binds it — route that to the store.
+  callbacks.on_breakpoint_changed = [&fn_store](const std::filesystem::path&,
+                                                const codec::DapBreakpoint& bp) {
+    fn_store.ApplyBreakpointEvent(editor::VerifiedFunctionBreakpoint{
+        .id = bp.id, .verified = bp.verified, .message = bp.message});
+  };
+
+  LaunchConfig config;
+  config.type = "gdb";
+  config.request = "launch";
+  {
+    util::JsonObject args;
+    args["program"] = JsonValue(exe.string());
+    config.arguments = JsonValue(std::move(args));
+  }
+  Expect(manager.StartSession(config, std::move(callbacks)), "gdb session should start");
+  // gdb indexes DWARF + spawns the inferior; give it a generous window.
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }, 20000),
+         "gdb should stop at the 'add' function breakpoint");
+  Expect(!captured.last_frames.empty(), "the stop resolves a call stack");
+  Expect(!captured.last_frames.empty() &&
+             captured.last_frames[0].name.find("add") != std::string::npos,
+         "the top frame is inside add()");
+  Expect(PollUntil(manager,
+                   [&]() { return !fn_store.All().empty() && fn_store.All()[0].verified; }, 5000),
+         "the function breakpoint verifies against real gdb 17.x");
+  manager.ShutdownAll();
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
@@ -2033,6 +2296,13 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionThreadEventRefreshesThreadList);
   AddTest(tests, "DebugService/SessionExceptionFiltersSentOnLaunchAndToggle",
           TestDebugSessionExceptionFiltersSentOnLaunchAndToggle);
+  AddTest(tests, "DebugService/SessionFunctionBreakpointsSentOnLaunch",
+          TestDebugSessionFunctionBreakpointsSentOnLaunch);
+  AddTest(tests, "DebugService/SessionExceptionFilterConditionsSent",
+          TestDebugSessionExceptionFilterConditionsSent);
+  AddTest(tests, "DebugService/FunctionBreakpointStoreBehavior",
+          TestFunctionBreakpointStoreBehavior);
+  AddTest(tests, "DebugService/GdbRealFunctionBreakpointsE2E", TestGdbRealFunctionBreakpointsE2E);
   AddTest(tests, "DebugService/BreakpointsModelBehavior", TestDebugBreakpointsModelBehavior);
   AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",
           TestDebugSessionVariablesTreeAndSetVariable);

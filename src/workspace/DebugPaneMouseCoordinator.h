@@ -41,6 +41,9 @@ class DebugPaneMouseCoordinator {
     std::function<void(const std::string&)> toggle_debug_exception_filter;
     // Enable/disable a line breakpoint from the Breakpoints panel (double-click).
     std::function<void(const std::filesystem::path&, std::size_t)> toggle_debug_breakpoint_enabled;
+    // Enable/disable a function breakpoint from the Breakpoints panel (click toggles;
+    // there is no source location to navigate to).
+    std::function<void(std::size_t)> toggle_debug_function_breakpoint_enabled;
   };
 
   DebugPaneMouseCoordinator(ProjectWorkspaceState& state, Operations operations);

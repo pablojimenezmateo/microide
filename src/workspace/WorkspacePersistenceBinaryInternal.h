@@ -214,6 +214,20 @@ enum class DebugStateTag : std::uint16_t {
   WatchExpression = 5,            // Phase 6: repeated, one string record per expression
   ExceptionFilter = 6,            // Phase 7: repeated, one string record per enabled filter id
   ExceptionFiltersSeeded = 7,     // Phase 7: bool, whether adapter defaults were seeded once
+  FunctionBreakpoint = 8,         // additive: repeated, one nested record per function breakpoint
+  ExceptionFilterCondition = 9,   // additive: repeated, one nested {filterId, condition} record
+};
+
+enum class FunctionBreakpointTag : std::uint16_t {
+  Name = 1,
+  Enabled = 2,
+  Condition = 3,
+  HitCondition = 4,
+};
+
+enum class ExceptionFilterConditionTag : std::uint16_t {
+  FilterId = 1,
+  Condition = 2,
 };
 
 enum class FileBreakpointsTag : std::uint16_t {

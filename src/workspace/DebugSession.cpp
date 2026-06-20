@@ -268,23 +268,80 @@ void DebugSession::ResendBreakpointsForFile(const std::filesystem::path& path) {
   SendBreakpointsForFile(editor::BreakpointStore::FileBreakpoints{.path = path});
 }
 
+void DebugSession::SendFunctionBreakpoints() {
+  const dap_protocol::DapCapabilities& caps = client_->Capabilities();
+  if (!caps.supports_function_breakpoints || !callbacks_.function_breakpoint_provider) {
+    return;
+  }
+  std::vector<dap_protocol::SetFunctionBreakpointInput> inputs;
+  std::vector<std::string> requested_names;
+  for (const editor::FunctionBreakpoint& bp : callbacks_.function_breakpoint_provider()) {
+    if (!bp.enabled || bp.name.empty()) {
+      continue;
+    }
+    dap_protocol::SetFunctionBreakpointInput input;
+    input.name = bp.name;
+    if (caps.supports_conditional_breakpoints && bp.condition) {
+      input.condition = *bp.condition;
+    }
+    if (caps.supports_hit_conditional_breakpoints && bp.hit_condition) {
+      input.hit_condition = *bp.hit_condition;
+    }
+    requested_names.push_back(bp.name);
+    inputs.push_back(std::move(input));
+  }
+  // Always send (even an empty list) so a live re-send after removing the last
+  // function breakpoint clears them on the adapter. The response is positional to
+  // `requested_names`; the host matches each result back to a breakpoint by name.
+  client_->SendRequestAsync(
+      "setFunctionBreakpoints", dap_protocol::MakeSetFunctionBreakpointsArguments(inputs),
+      [this, requested_names = std::move(requested_names)](
+          const dap_protocol::DapResponse& response) {
+        if (response.success && callbacks_.on_function_breakpoints_verified) {
+          callbacks_.on_function_breakpoints_verified(requested_names,
+                                                      dap_protocol::ParseBreakpoints(response.body));
+        }
+      });
+}
+
+void DebugSession::ResendFunctionBreakpoints() {
+  if (!client_->IsInitialized()) {
+    return;
+  }
+  SendFunctionBreakpoints();
+}
+
 void DebugSession::SendExceptionFilters() {
-  const std::vector<dap_protocol::DapExceptionFilter>& advertised =
-      client_->Capabilities().exception_filters;
+  const dap_protocol::DapCapabilities& caps = client_->Capabilities();
+  const std::vector<dap_protocol::DapExceptionFilter>& advertised = caps.exception_filters;
   if (advertised.empty() || !callbacks_.exception_filter_provider) {
     return;
   }
-  const std::vector<std::string> enabled = callbacks_.exception_filter_provider();
+  const std::vector<ExceptionFilterRequest> enabled = callbacks_.exception_filter_provider();
   // Send only ids the adapter advertised, in advertised order, so we never push a
-  // filter id the adapter would reject.
+  // filter id the adapter would reject. A condition is honored only when both the
+  // adapter (supportsExceptionFilterOptions) and the specific filter
+  // (supportsCondition) accept it; otherwise the filter is sent plain.
   std::vector<std::string> ids;
+  std::vector<std::pair<std::string, std::string>> options;
   for (const dap_protocol::DapExceptionFilter& filter : advertised) {
-    if (std::find(enabled.begin(), enabled.end(), filter.filter) != enabled.end()) {
+    const auto it = std::find_if(
+        enabled.begin(), enabled.end(),
+        [&filter](const ExceptionFilterRequest& req) { return req.id == filter.filter; });
+    if (it == enabled.end()) {
+      continue;
+    }
+    if (caps.supports_exception_filter_options && filter.supports_condition &&
+        !it->condition.empty()) {
+      options.emplace_back(filter.filter, it->condition);
+    } else {
       ids.push_back(filter.filter);
     }
   }
-  client_->SendRequestAsync("setExceptionBreakpoints",
-                            dap_protocol::MakeSetExceptionBreakpointsArguments(ids), {});
+  const util::JsonValue arguments =
+      options.empty() ? dap_protocol::MakeSetExceptionBreakpointsArguments(ids)
+                      : dap_protocol::MakeSetExceptionBreakpointsArguments(ids, options);
+  client_->SendRequestAsync("setExceptionBreakpoints", arguments, {});
 }
 
 void DebugSession::ResendExceptionFilters() {
@@ -320,6 +377,7 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       SendLaunchRequest();
     }
     SendAllBreakpoints();
+    SendFunctionBreakpoints();
     SendExceptionFilters();
     if (!launch_first) {
       SendLaunchRequest();

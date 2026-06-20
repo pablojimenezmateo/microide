@@ -205,6 +205,15 @@ class WorkspaceActionContext {
     // Start a debug session for a named launch config (empty name → the
     // selected/default config). Returns an error string (empty on success).
     std::function<std::string(const std::string&)> start_named_debug_config;
+    // Function (symbol) breakpoints + exception-filter conditions (control channel
+    // + command line). Each mutates the per-project store + live re-sends.
+    std::function<void(const std::string&)> add_function_breakpoint;
+    std::function<void(const std::string&)> remove_function_breakpoint;
+    std::function<void(const std::string&)> toggle_function_breakpoint;
+    std::function<void(const std::string&, std::optional<std::string>)>
+        set_function_breakpoint_condition;
+    std::function<void(const std::string&, std::optional<std::string>)>
+        set_exception_filter_condition;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -379,6 +388,15 @@ class WorkspaceActionContext {
   editor::BreakpointStore& MutableBreakpointStore();
   void ResendBreakpoints(const std::filesystem::path& path);
   std::string StartNamedDebugConfig(const std::string& name);
+  // Function (symbol) breakpoints + exception-filter conditions (breakpoint-function-*
+  // / breakpoint-exception-condition commands). Name/id-keyed; no-op when not found.
+  void AddFunctionBreakpoint(const std::string& name);
+  void RemoveFunctionBreakpoint(const std::string& name);
+  void ToggleFunctionBreakpoint(const std::string& name);
+  void SetFunctionBreakpointCondition(const std::string& name,
+                                      std::optional<std::string> condition);
+  void SetExceptionFilterCondition(const std::string& filter_id,
+                                   std::optional<std::string> condition);
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free

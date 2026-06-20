@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "util/JsonValue.h"
@@ -162,6 +163,33 @@ util::JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
 // Build the `setExceptionBreakpoints` arguments object (Phase 7):
 //   {"filters":["filterId", ...]}
 util::JsonValue MakeSetExceptionBreakpointsArguments(const std::vector<std::string>& filter_ids);
+
+// Build the `setExceptionBreakpoints` arguments object with per-filter conditions
+// (`supportsExceptionFilterOptions`): plain (unconditioned) ids go in `filters`,
+// conditioned ones in `filterOptions`:
+//   {"filters":["id",...],"filterOptions":[{"filterId":"id","condition":"expr"},...]}
+// gdb 17.2 accepts this split. Callers gate the `filter_options` argument on the
+// adapter's `supports_exception_filter_options` capability; without it they use the
+// plain overload above.
+util::JsonValue MakeSetExceptionBreakpointsArguments(
+    const std::vector<std::string>& plain_filter_ids,
+    const std::vector<std::pair<std::string, std::string>>& filter_options);
+
+// ---- setFunctionBreakpoints request arguments -----------------------------
+// One function (symbol) breakpoint to send. `condition`/`hit_condition` are
+// emitted only when non-empty (mirrors SetBreakpointInput). Gated by the adapter's
+// `supportsFunctionBreakpoints` capability at the call site.
+struct SetFunctionBreakpointInput {
+  std::string name;
+  std::string condition;
+  std::string hit_condition;
+};
+
+// Build the `setFunctionBreakpoints` arguments object:
+//   {"breakpoints":[{"name":...,"condition":...,"hitCondition":...},...]}
+// The response body reuses ParseBreakpoints (positional to the request).
+util::JsonValue MakeSetFunctionBreakpointsArguments(
+    const std::vector<SetFunctionBreakpointInput>& breakpoints);
 
 // ---- Variables / scopes / setVariable request arguments (Phase 4) ----------
 // Build `stackTrace` arguments: {"threadId":N,"startFrame":S,"levels":L}. `levels`

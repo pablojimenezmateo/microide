@@ -351,6 +351,15 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
                   .line = breakpoint.line,
                   .message = breakpoint.message,
               });
+    // A function breakpoint binds asynchronously too (gdb reports it `pending` in the
+    // setFunctionBreakpoints response, then verifies it via a `breakpoint` event).
+    // Match by adapter id; a line event simply finds no function breakpoint.
+    CurrentProjectState().function_breakpoint_store.ApplyBreakpointEvent(
+        editor::VerifiedFunctionBreakpoint{
+            .id = breakpoint.id,
+            .verified = breakpoint.verified,
+            .message = breakpoint.message,
+        });
     SyncBreakpointsPanel();
     if (operations_.request_editor_redraw) {
       operations_.request_editor_redraw();
@@ -359,6 +368,29 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       operations_.request_debug_pane_redraw();
     }
   };
+  // The session pulls the function-breakpoint snapshot at `initialized` and on each
+  // live re-send; verification reflects back into the FunctionBreakpointStore.
+  callbacks.function_breakpoint_provider = [this]() {
+    return CurrentProjectState().function_breakpoint_store.All();
+  };
+  callbacks.on_function_breakpoints_verified =
+      [this](const std::vector<std::string>& requested_names,
+             const std::vector<dap_protocol::DapBreakpoint>& breakpoints) {
+        std::vector<editor::VerifiedFunctionBreakpoint> results;
+        results.reserve(breakpoints.size());
+        for (const dap_protocol::DapBreakpoint& breakpoint : breakpoints) {
+          results.push_back(editor::VerifiedFunctionBreakpoint{
+              .id = breakpoint.id,
+              .verified = breakpoint.verified,
+              .message = breakpoint.message,
+          });
+        }
+        CurrentProjectState().function_breakpoint_store.ApplyVerification(requested_names, results);
+        SyncBreakpointsPanel();
+        if (operations_.request_debug_pane_redraw) {
+          operations_.request_debug_pane_redraw();
+        }
+      };
   // Advertised exception filters arrive at `initialized`: populate the Breakpoints
   // panel (seeding the enabled set from adapter defaults the first time).
   callbacks.on_exception_filters_available =
@@ -369,9 +401,15 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
           operations_.request_debug_pane_redraw();
         }
       };
-  // The session pulls the enabled filter ids at `initialized` and on live re-send.
+  // The session pulls the enabled filters (id + optional condition) at `initialized`
+  // and on live re-send.
   callbacks.exception_filter_provider = [this]() {
-    return CurrentProjectState().debug_breakpoints_panel.EnabledAdvertisedIds();
+    std::vector<ExceptionFilterRequest> requests;
+    for (const auto& [id, condition] :
+         CurrentProjectState().debug_breakpoints_panel.EnabledFilterOptions()) {
+      requests.push_back(ExceptionFilterRequest{.id = id, .condition = condition});
+    }
+    return requests;
   };
   return callbacks;
 }
@@ -432,6 +470,7 @@ void DebugService::StopDebugging() {
     // Verification state is tied to the adapter; drop it so a fresh session
     // re-verifies from scratch and the gutter shows unverified until then.
     CurrentProjectState().breakpoint_store.ResetVerification();
+    CurrentProjectState().function_breakpoint_store.ResetVerification();
     // The advertised exception filters belong to the (now dead) adapter; drop them
     // so the Breakpoints tab shows only line breakpoints until a new session binds.
     CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
@@ -455,6 +494,7 @@ void DebugService::StopAllDebugging() {
   // All sessions are gone, so reset the project-shared adapter state (same as
   // StopDebugging's last-session branch).
   CurrentProjectState().breakpoint_store.ResetVerification();
+  CurrentProjectState().function_breakpoint_store.ResetVerification();
   CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
   SyncBreakpointsPanel();
   ClearTransientDebugViews();
@@ -477,6 +517,7 @@ void DebugService::Restart() {
   // session in place so no second session row appears. ReplaceActiveSession blocks
   // on the prior session's shutdown, so this is a clean synchronous relaunch.
   CurrentProjectState().breakpoint_store.ResetVerification();
+  CurrentProjectState().function_breakpoint_store.ResetVerification();
   ClearTransientDebugViews();
   LaunchSession(last_launch_config_, last_cwd_, /*replace=*/true);
 }
@@ -589,9 +630,102 @@ void DebugService::ToggleExceptionFilter(const std::string& filter_id) {
   }
 }
 
+void DebugService::SetExceptionFilterCondition(const std::string& filter_id,
+                                               std::optional<std::string> condition) {
+  DebugBreakpointsModel& panel = CurrentProjectState().debug_breakpoints_panel;
+  if (!panel.SetFilterCondition(filter_id, std::move(condition))) {
+    return;
+  }
+  SyncBreakpointsPanel();
+  // Live re-send (the filter must be enabled for the condition to take effect).
+  if (DebugSession* session = CurrentDapManager().ActiveSession();
+      session != nullptr && session->IsActive()) {
+    session->ResendExceptionFilters();
+  }
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
+  }
+}
+
+void DebugService::AddFunctionBreakpoint(std::string name) {
+  if (!CurrentProjectState().function_breakpoint_store.Add(std::move(name))) {
+    return;
+  }
+  ResendFunctionBreakpointsAndSync();
+}
+
+void DebugService::RemoveFunctionBreakpoint(std::size_t index) {
+  CurrentProjectState().function_breakpoint_store.Remove(index);
+  ResendFunctionBreakpointsAndSync();
+}
+
+void DebugService::ToggleFunctionBreakpointEnabled(std::size_t index) {
+  if (!CurrentProjectState().function_breakpoint_store.ToggleEnabled(index)) {
+    return;
+  }
+  ResendFunctionBreakpointsAndSync();
+}
+
+void DebugService::SetFunctionBreakpointCondition(std::size_t index,
+                                                  std::optional<std::string> condition) {
+  CurrentProjectState().function_breakpoint_store.SetCondition(index, std::move(condition));
+  ResendFunctionBreakpointsAndSync();
+}
+
+namespace {
+
+std::optional<std::size_t> FindFunctionBreakpointIndex(
+    const editor::FunctionBreakpointStore& store, const std::string& name) {
+  const std::vector<editor::FunctionBreakpoint>& all = store.All();
+  for (std::size_t i = 0; i < all.size(); ++i) {
+    if (all[i].name == name) {
+      return i;
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+void DebugService::RemoveFunctionBreakpointByName(const std::string& name) {
+  if (const auto index =
+          FindFunctionBreakpointIndex(CurrentProjectState().function_breakpoint_store, name);
+      index.has_value()) {
+    RemoveFunctionBreakpoint(*index);
+  }
+}
+
+void DebugService::ToggleFunctionBreakpointByName(const std::string& name) {
+  if (const auto index =
+          FindFunctionBreakpointIndex(CurrentProjectState().function_breakpoint_store, name);
+      index.has_value()) {
+    ToggleFunctionBreakpointEnabled(*index);
+  }
+}
+
+void DebugService::SetFunctionBreakpointConditionByName(const std::string& name,
+                                                        std::optional<std::string> condition) {
+  if (const auto index =
+          FindFunctionBreakpointIndex(CurrentProjectState().function_breakpoint_store, name);
+      index.has_value()) {
+    SetFunctionBreakpointCondition(*index, std::move(condition));
+  }
+}
+
+void DebugService::ResendFunctionBreakpointsAndSync() {
+  SyncBreakpointsPanel();
+  if (DebugSession* session = CurrentDapManager().ActiveSession();
+      session != nullptr && session->IsActive()) {
+    session->ResendFunctionBreakpoints();
+  }
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
+  }
+}
+
 void DebugService::SyncBreakpointsPanel() {
   ProjectWorkspaceState& state = CurrentProjectState();
-  state.debug_breakpoints_panel.Rebuild(state.breakpoint_store);
+  state.debug_breakpoints_panel.Rebuild(state.breakpoint_store, state.function_breakpoint_store);
 }
 
 void DebugService::FocusFrame(int frame_id) {

@@ -69,7 +69,48 @@ std::vector<std::string> DebugBreakpointsModel::EnabledAdvertisedIds() const {
   return ids;
 }
 
-void DebugBreakpointsModel::Rebuild(const editor::BreakpointStore& breakpoints) {
+void DebugBreakpointsModel::SetFilterConditions(std::map<std::string, std::string> conditions) {
+  filter_conditions_ = std::move(conditions);
+}
+
+bool DebugBreakpointsModel::SetFilterCondition(const std::string& filter_id,
+                                               std::optional<std::string> condition) {
+  const bool advertised =
+      std::any_of(advertised_.begin(), advertised_.end(),
+                  [&](const dap_protocol::DapExceptionFilter& f) { return f.filter == filter_id; });
+  if (!advertised) {
+    return false;
+  }
+  if (!condition || condition->empty()) {
+    return filter_conditions_.erase(filter_id) > 0;
+  }
+  auto [it, inserted] = filter_conditions_.try_emplace(filter_id, *condition);
+  if (!inserted) {
+    if (it->second == *condition) {
+      return false;
+    }
+    it->second = *condition;
+  }
+  return true;
+}
+
+std::vector<std::pair<std::string, std::string>> DebugBreakpointsModel::EnabledFilterOptions()
+    const {
+  std::vector<std::pair<std::string, std::string>> options;
+  for (const dap_protocol::DapExceptionFilter& filter : advertised_) {
+    if (!Contains(enabled_filter_ids_, filter.filter)) {
+      continue;
+    }
+    const auto it = filter_conditions_.find(filter.filter);
+    const std::string condition = it != filter_conditions_.end() ? it->second : std::string{};
+    options.emplace_back(filter.filter, condition);
+  }
+  return options;
+}
+
+void DebugBreakpointsModel::Rebuild(
+    const editor::BreakpointStore& breakpoints,
+    const editor::FunctionBreakpointStore& function_breakpoints) {
   rows_.clear();
 
   if (!advertised_.empty()) {
@@ -82,7 +123,43 @@ void DebugBreakpointsModel::Rebuild(const editor::BreakpointStore& breakpoints) 
       row.kind = DebugBreakpointRowView::Kind::ExceptionFilter;
       row.display = filter.label;
       row.filter_id = filter.filter;
+      row.supports_condition = filter.supports_condition;
       row.enabled = Contains(enabled_filter_ids_, filter.filter);
+      if (const auto it = filter_conditions_.find(filter.filter);
+          it != filter_conditions_.end() && !it->second.empty()) {
+        row.secondary = "when " + it->second;
+      }
+      rows_.push_back(std::move(row));
+    }
+  }
+
+  const std::vector<editor::FunctionBreakpoint>& functions = function_breakpoints.All();
+  if (!functions.empty()) {
+    DebugBreakpointRowView header;
+    header.kind = DebugBreakpointRowView::Kind::Header;
+    header.display = "Function Breakpoints";
+    rows_.push_back(std::move(header));
+    for (std::size_t i = 0; i < functions.size(); ++i) {
+      const editor::FunctionBreakpoint& fn = functions[i];
+      DebugBreakpointRowView row;
+      row.kind = DebugBreakpointRowView::Kind::FunctionBreakpoint;
+      row.display = fn.name;
+      row.function_name = fn.name;
+      row.function_index = i;
+      row.enabled = fn.enabled;
+      if (fn.condition && !fn.condition->empty()) {
+        row.secondary = "when " + *fn.condition;
+      } else if (fn.hit_condition && !fn.hit_condition->empty()) {
+        row.secondary = "hits " + *fn.hit_condition;
+      }
+      const bool adapter_responded =
+          fn.verified || fn.adapter_id != 0 || !fn.verify_message.empty();
+      if (adapter_responded && !fn.verified) {
+        row.failed = true;
+        const std::string reason =
+            !fn.verify_message.empty() ? fn.verify_message : "unverified";
+        row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
+      }
       rows_.push_back(std::move(row));
     }
   }

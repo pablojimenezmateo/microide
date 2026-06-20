@@ -466,6 +466,11 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `breakpoint-hit-condition <file> <line> [expr]`
 - `breakpoint-logmessage <file> <line> [message]`
 - `breakpoint-clear [file]`
+- `breakpoint-function-add <name>`
+- `breakpoint-function-remove <name>`
+- `breakpoint-function-toggle <name>`
+- `breakpoint-function-condition <name> [expr]`
+- `breakpoint-exception-condition <filterId> [expr]`
 - `debug-launch [name]`
 - `set-setting <id> <value>`
 - `quit`

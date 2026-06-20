@@ -93,6 +93,8 @@ class ControlChannelService {
                               std::string* error) const;
   util::JsonValue BuildDebugState() const;
   util::JsonValue BuildBreakpoints() const;
+  util::JsonValue BuildFunctionBreakpoints() const;
+  util::JsonValue BuildExceptionFilters() const;
   util::JsonValue BuildTabs() const;
   util::JsonValue BuildProjects() const;
   util::JsonValue BuildStatus() const;

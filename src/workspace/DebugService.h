@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -136,6 +137,28 @@ class DebugService {
   // panel's prebuilt rows from the current breakpoints + advertised filters
   // (called by the shell whenever the breakpoint set or filters change).
   void ToggleExceptionFilter(const std::string& filter_id);
+  // Set or clear (nullopt) a per-filter exception condition and live re-send
+  // `setExceptionBreakpoints` (gated at the wire on the adapter's
+  // supportsExceptionFilterOptions + the filter's supportsCondition). No-op when the
+  // filter id is not advertised.
+  void SetExceptionFilterCondition(const std::string& filter_id,
+                                   std::optional<std::string> condition);
+
+  // Function (symbol) breakpoints. Each mutates the per-project
+  // FunctionBreakpointStore, rebuilds the Breakpoints panel, and live re-sends
+  // `setFunctionBreakpoints` to the active session (gated on
+  // supportsFunctionBreakpoints). Add is a no-op for an empty/duplicate name.
+  void AddFunctionBreakpoint(std::string name);
+  void RemoveFunctionBreakpoint(std::size_t index);
+  void ToggleFunctionBreakpointEnabled(std::size_t index);
+  void SetFunctionBreakpointCondition(std::size_t index, std::optional<std::string> condition);
+  // Name-keyed variants for the command line / control channel (resolve the name to
+  // an index in the FunctionBreakpointStore). No-op when the name is not found.
+  void RemoveFunctionBreakpointByName(const std::string& name);
+  void ToggleFunctionBreakpointByName(const std::string& name);
+  void SetFunctionBreakpointConditionByName(const std::string& name,
+                                            std::optional<std::string> condition);
+
   void SyncBreakpointsPanel();
 
   // Variables panel (Phase 4). Focus a frame → fetch its scopes (and auto-expand
@@ -223,6 +246,9 @@ class DebugService {
   // Rebuild the session-selector rows on `debug_execution` from the manager's live
   // sessions + active id (prebuilt display strings; survives resume).
   void SyncSessionsPanel();
+  // Rebuild the Breakpoints panel + live re-send function breakpoints to the active
+  // session + request a redraw. Shared by the function-breakpoint mutators.
+  void ResendFunctionBreakpointsAndSync();
   // Drop all transient debug view models (execution / variables / hover / watch
   // results) and request redraws. Shared by stop / resume / restart / switch.
   void ClearTransientDebugViews();

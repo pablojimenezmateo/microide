@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -176,6 +177,15 @@ struct PersistedFileBreakpoints {
   std::vector<PersistedBreakpoint> breakpoints;
 };
 
+// Function (symbol) breakpoint (additive; empty on old records). No file/line —
+// the adapter resolves `name`.
+struct PersistedFunctionBreakpoint {
+  std::string name;
+  bool enabled = true;
+  std::optional<std::string> condition;
+  std::optional<std::string> hit_condition;
+};
+
 struct PersistedLaunchConfig {
   std::string name;
   std::string type;
@@ -193,6 +203,11 @@ struct PersistedDebugState {
   // seeded once (so "all filters off" persists rather than re-seeding).
   std::vector<std::string> enabled_exception_filters;
   bool exception_filters_seeded = false;
+  // Function (symbol) breakpoints (additive; empty on old records).
+  std::vector<PersistedFunctionBreakpoint> function_breakpoints;
+  // Per-filter exception conditions (additive; empty on old records). Ordered map
+  // for deterministic encoding. filterId -> condition expression.
+  std::map<std::string, std::string> exception_filter_conditions;
 };
 
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state,

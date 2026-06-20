@@ -256,6 +256,12 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "breakpoints") {
     return BuildBreakpoints();
   }
+  if (verb == "function-breakpoints") {
+    return BuildFunctionBreakpoints();
+  }
+  if (verb == "exception-filters") {
+    return BuildExceptionFilters();
+  }
   if (verb == "tabs") {
     return BuildTabs();
   }
@@ -333,6 +339,53 @@ util::JsonValue ControlChannelService::BuildBreakpoints() const {
     files.push_back(util::JsonValue(std::move(file_object)));
   }
   return util::JsonValue(std::move(files));
+}
+
+util::JsonValue ControlChannelService::BuildFunctionBreakpoints() const {
+  util::JsonArray breakpoints;
+  if (context_ == nullptr) {
+    return util::JsonValue(std::move(breakpoints));
+  }
+  for (const editor::FunctionBreakpoint& fn :
+       context_->current_project_state.function_breakpoint_store.All()) {
+    util::JsonObject object;
+    object["name"] = util::JsonValue(fn.name);
+    object["enabled"] = util::JsonValue(fn.enabled);
+    object["verified"] = util::JsonValue(fn.verified);
+    if (fn.condition) {
+      object["condition"] = util::JsonValue(*fn.condition);
+    }
+    if (fn.hit_condition) {
+      object["hitCondition"] = util::JsonValue(*fn.hit_condition);
+    }
+    if (!fn.verify_message.empty()) {
+      object["message"] = util::JsonValue(fn.verify_message);
+    }
+    breakpoints.push_back(util::JsonValue(std::move(object)));
+  }
+  return util::JsonValue(std::move(breakpoints));
+}
+
+util::JsonValue ControlChannelService::BuildExceptionFilters() const {
+  util::JsonArray filters;
+  if (context_ == nullptr) {
+    return util::JsonValue(std::move(filters));
+  }
+  const DebugBreakpointsModel& panel = context_->current_project_state.debug_breakpoints_panel;
+  const std::map<std::string, std::string>& conditions = panel.FilterConditions();
+  for (const dap_protocol::DapExceptionFilter& filter : panel.AdvertisedFilters()) {
+    util::JsonObject object;
+    object["id"] = util::JsonValue(filter.filter);
+    object["label"] = util::JsonValue(filter.label);
+    object["enabled"] = util::JsonValue(panel.IsEnabled(filter.filter));
+    object["supportsCondition"] = util::JsonValue(filter.supports_condition);
+    if (const auto it = conditions.find(filter.filter);
+        it != conditions.end() && !it->second.empty()) {
+      object["condition"] = util::JsonValue(it->second);
+    }
+    filters.push_back(util::JsonValue(std::move(object)));
+  }
+  return util::JsonValue(std::move(filters));
 }
 
 util::JsonValue ControlChannelService::BuildTabs() const {

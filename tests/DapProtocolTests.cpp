@@ -204,6 +204,55 @@ void TestDapProtocolEncodesVariablesRequests() {
          "an empty enabled set encodes an empty filters array");
 }
 
+void TestDapProtocolEncodesFunctionBreakpoints() {
+  std::vector<codec::SetFunctionBreakpointInput> inputs = {
+      codec::SetFunctionBreakpointInput{.name = "main"},
+      codec::SetFunctionBreakpointInput{.name = "compute", .condition = "n > 0",
+                                        .hit_condition = ">3"},
+  };
+  const JsonValue args = codec::MakeSetFunctionBreakpointsArguments(inputs);
+  Expect(args.HasKey("breakpoints") && args["breakpoints"].AsArray().size() == 2,
+         "setFunctionBreakpoints carries a breakpoints array");
+  const JsonValue& first = args["breakpoints"].AsArray()[0];
+  Expect(first["name"].AsString() == "main", "the first breakpoint carries its name");
+  Expect(!first.HasKey("condition") && !first.HasKey("hitCondition"),
+         "empty condition/hitCondition fields are omitted");
+  const JsonValue& second = args["breakpoints"].AsArray()[1];
+  Expect(second["name"].AsString() == "compute" && second["condition"].AsString() == "n > 0" &&
+             second["hitCondition"].AsString() == ">3",
+         "a conditioned function breakpoint carries condition + hitCondition");
+
+  // The response body reuses ParseBreakpoints; gdb reports `reason` not `message`.
+  const codec::DapBreakpoint pending =
+      codec::ParseBreakpoint(Json(R"({"id":4,"verified":false,"reason":"pending"})"));
+  Expect(pending.id == 4 && !pending.verified && pending.message == "pending",
+         "an unverified breakpoint surfaces gdb's reason as the message");
+}
+
+void TestDapProtocolEncodesExceptionFilterOptions() {
+  // Conditioned filters go in filterOptions; unconditioned ones stay in filters.
+  const JsonValue args = codec::MakeSetExceptionBreakpointsArguments(
+      {"uncaught"}, {{"throw", "x == 2"}, {"catch", ""}});
+  Expect(args["filters"].AsArray().size() == 1 &&
+             args["filters"].AsArray()[0].AsString() == "uncaught",
+         "plain (unconditioned) filters stay in the filters array");
+  Expect(args.HasKey("filterOptions") && args["filterOptions"].AsArray().size() == 2,
+         "conditioned filters are carried in filterOptions");
+  const JsonValue& opt = args["filterOptions"].AsArray()[0];
+  Expect(opt["filterId"].AsString() == "throw" && opt["condition"].AsString() == "x == 2",
+         "a filter option carries its filterId + condition");
+  const JsonValue& opt_empty = args["filterOptions"].AsArray()[1];
+  Expect(opt_empty["filterId"].AsString() == "catch" && !opt_empty.HasKey("condition"),
+         "an empty condition is omitted from the filter option");
+  // The capabilities parser reads supportsExceptionFilterOptions + per-filter
+  // supportsCondition (both gdb 17.2 advertises).
+  const codec::DapCapabilities caps = codec::ParseCapabilities(Json(
+      R"({"supportsExceptionFilterOptions":true,"exceptionBreakpointFilters":[{"filter":"throw","label":"Throw","supportsCondition":true}]})"));
+  Expect(caps.supports_exception_filter_options, "supportsExceptionFilterOptions parses");
+  Expect(caps.exception_filters.size() == 1 && caps.exception_filters[0].supports_condition,
+         "a filter's supportsCondition parses");
+}
+
 }  // namespace
 
 void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
@@ -218,6 +267,10 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapProtocol/ParsesBreakpointsAndEvaluate",
           TestDapProtocolParsesBreakpointsAndEvaluate);
   AddTest(tests, "DapProtocol/EncodesVariablesRequests", TestDapProtocolEncodesVariablesRequests);
+  AddTest(tests, "DapProtocol/EncodesFunctionBreakpoints",
+          TestDapProtocolEncodesFunctionBreakpoints);
+  AddTest(tests, "DapProtocol/EncodesExceptionFilterOptions",
+          TestDapProtocolEncodesExceptionFilterOptions);
 }
 
 }  // namespace microide::tests

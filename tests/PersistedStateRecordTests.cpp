@@ -27,6 +27,7 @@ using microide::workspace::PersistedDebugState;
 using microide::workspace::PersistedEditorTabState;
 using microide::workspace::PersistedEditorViewState;
 using microide::workspace::PersistedFileBreakpoints;
+using microide::workspace::PersistedFunctionBreakpoint;
 using microide::workspace::PersistedLaunchConfig;
 using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::PersistedProjectSessionState;
@@ -314,12 +315,26 @@ void TestPersistedStateDebugStateRoundTrip() {
   state.watch_expressions = {"i", "arr[i]", "node->next"};
   state.enabled_exception_filters = {"raised", "uncaught"};
   state.exception_filters_seeded = true;
+  state.function_breakpoints.push_back(PersistedFunctionBreakpoint{.name = "main"});
+  state.function_breakpoints.push_back(PersistedFunctionBreakpoint{
+      .name = "compute", .enabled = false, .condition = std::string("n > 0")});
+  state.exception_filter_conditions = {{"throw", "x == 2"}};
 
   std::vector<std::byte> encoded;
   Expect(EncodeDebugStateRecord(state, &encoded), "debug state should encode");
 
   PersistedDebugState decoded;
   Expect(DecodeDebugStateRecord(encoded, &decoded), "debug state should decode");
+  Expect(decoded.function_breakpoints.size() == 2 &&
+             decoded.function_breakpoints[0].name == "main" &&
+             decoded.function_breakpoints[1].name == "compute" &&
+             decoded.function_breakpoints[1].enabled == false &&
+             decoded.function_breakpoints[1].condition.has_value() &&
+             *decoded.function_breakpoints[1].condition == "n > 0",
+         "function breakpoints round-trip in order with their fields");
+  Expect(decoded.exception_filter_conditions.size() == 1 &&
+             decoded.exception_filter_conditions.at("throw") == "x == 2",
+         "per-filter exception conditions round-trip");
   Expect(decoded.watch_expressions.size() == 3 && decoded.watch_expressions[0] == "i" &&
              decoded.watch_expressions[2] == "node->next",
          "watch expressions round-trip in order");

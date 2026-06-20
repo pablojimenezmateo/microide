@@ -2,10 +2,14 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <map>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "editor/BreakpointStore.h"
+#include "editor/FunctionBreakpointStore.h"
 #include "workspace/DapProtocol.h"
 
 namespace microide::workspace {
@@ -13,16 +17,23 @@ namespace microide::workspace {
 // One row in the Breakpoints panel (Phase 7). Display strings are prebuilt so the
 // (lint-covered) bottom-panel render TU only draws — never materializes strings.
 struct DebugBreakpointRowView {
-  enum class Kind { Header, ExceptionFilter, Breakpoint };
+  enum class Kind { Header, ExceptionFilter, Breakpoint, FunctionBreakpoint };
   Kind kind = Kind::Breakpoint;
-  std::string display;    // prebuilt: section title / filter label / "file:line"
+  std::string display;    // prebuilt: section title / filter label / "file:line" / fn name
   std::string secondary;  // prebuilt muted trailer (e.g. "when x>0"), or empty
   // Exception-filter rows:
   std::string filter_id;
+  // True when the active filter advertises supportsCondition (drives the
+  // condition-edit affordance). Only meaningful for ExceptionFilter rows.
+  bool supports_condition = false;
   bool enabled = false;
   // Breakpoint rows (navigation target):
   std::filesystem::path path;
   std::size_t line = 0;  // 0-based buffer line
+  // FunctionBreakpoint rows: the symbol name + the index into the
+  // FunctionBreakpointStore (the toggle/remove/condition target).
+  std::string function_name;
+  std::size_t function_index = 0;
   // True when the active adapter responded but did NOT verify this breakpoint
   // (e.g. no code at the line, or a rejected condition). Drives a warning tint;
   // the reason, when the adapter gave one, is folded into `secondary`. False when
@@ -64,15 +75,29 @@ class DebugBreakpointsModel {
   // the exact `filters` array to send in setExceptionBreakpoints.
   std::vector<std::string> EnabledAdvertisedIds() const;
 
-  // Rebuild the prebuilt row list from the current line breakpoints + advertised
-  // filters. Cheap (breakpoint counts are small); called on any input change.
-  void Rebuild(const editor::BreakpointStore& breakpoints);
+  // Persisted: per-filter conditions (filterId -> condition expression). Set/cleared
+  // independently of the enabled set so a condition survives a disable/enable cycle.
+  const std::map<std::string, std::string>& FilterConditions() const { return filter_conditions_; }
+  void SetFilterConditions(std::map<std::string, std::string> conditions);
+  // Set or clear (nullopt / empty) one filter's condition. Returns true when it
+  // changed. No-op when the filter id is not advertised.
+  bool SetFilterCondition(const std::string& filter_id, std::optional<std::string> condition);
+  // Enabled+advertised filters paired with their condition (empty when none), in
+  // advertised order — the input to setExceptionBreakpoints with filterOptions.
+  std::vector<std::pair<std::string, std::string>> EnabledFilterOptions() const;
+
+  // Rebuild the prebuilt row list from the current line + function breakpoints +
+  // advertised filters. Cheap (breakpoint counts are small); called on any input
+  // change.
+  void Rebuild(const editor::BreakpointStore& breakpoints,
+               const editor::FunctionBreakpointStore& function_breakpoints);
 
   const std::vector<DebugBreakpointRowView>& Rows() const { return rows_; }
   std::size_t RowCount() const { return rows_.size(); }
 
  private:
   std::vector<std::string> enabled_filter_ids_;
+  std::map<std::string, std::string> filter_conditions_;
   bool seeded_ = false;
   std::vector<dap_protocol::DapExceptionFilter> advertised_;
   std::vector<DebugBreakpointRowView> rows_;

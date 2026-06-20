@@ -59,6 +59,52 @@ JsonValue MakeSetExceptionBreakpointsArguments(const std::vector<std::string>& f
   return JsonValue(std::move(args));
 }
 
+JsonValue MakeSetExceptionBreakpointsArguments(
+    const std::vector<std::string>& plain_filter_ids,
+    const std::vector<std::pair<std::string, std::string>>& filter_options) {
+  JsonArray filters;
+  filters.reserve(plain_filter_ids.size());
+  for (const std::string& id : plain_filter_ids) {
+    filters.push_back(JsonValue(id));
+  }
+  JsonObject args;
+  args["filters"] = JsonValue(std::move(filters));
+  if (!filter_options.empty()) {
+    JsonArray options;
+    options.reserve(filter_options.size());
+    for (const auto& [filter_id, condition] : filter_options) {
+      JsonObject option;
+      option["filterId"] = JsonValue(filter_id);
+      if (!condition.empty()) {
+        option["condition"] = JsonValue(condition);
+      }
+      options.push_back(JsonValue(std::move(option)));
+    }
+    args["filterOptions"] = JsonValue(std::move(options));
+  }
+  return JsonValue(std::move(args));
+}
+
+JsonValue MakeSetFunctionBreakpointsArguments(
+    const std::vector<SetFunctionBreakpointInput>& breakpoints) {
+  JsonArray entries;
+  entries.reserve(breakpoints.size());
+  for (const SetFunctionBreakpointInput& breakpoint : breakpoints) {
+    JsonObject entry;
+    entry["name"] = JsonValue(breakpoint.name);
+    if (!breakpoint.condition.empty()) {
+      entry["condition"] = JsonValue(breakpoint.condition);
+    }
+    if (!breakpoint.hit_condition.empty()) {
+      entry["hitCondition"] = JsonValue(breakpoint.hit_condition);
+    }
+    entries.push_back(JsonValue(std::move(entry)));
+  }
+  JsonObject args;
+  args["breakpoints"] = JsonValue(std::move(entries));
+  return JsonValue(std::move(args));
+}
+
 JsonValue MakeStackTraceArguments(int thread_id, int start_frame, int levels) {
   JsonObject args;
   args["threadId"] = JsonValue(static_cast<std::int64_t>(thread_id));
@@ -276,6 +322,11 @@ DapBreakpoint ParseBreakpoint(const JsonValue& value) {
   breakpoint.id = AsInt(value["id"]);
   breakpoint.verified = value["verified"].AsBool(false);
   breakpoint.message = AsString(value["message"]);
+  // gdb 17.2 omits `message` and instead reports `reason` ("pending"/"failed") for
+  // an unverified breakpoint; surface that as the message so the panel has a reason.
+  if (breakpoint.message.empty()) {
+    breakpoint.message = AsString(value["reason"]);
+  }
   breakpoint.line = AsInt(value["line"]);
   breakpoint.column = AsInt(value["column"]);
   return breakpoint;

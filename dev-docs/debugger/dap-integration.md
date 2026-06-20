@@ -314,23 +314,51 @@ Sessions"** command (`debug-stop-all`), and **structured REPL expansion** (a
 `variablesReference > 0` result expands one level into the console). This was the
 last planned slice; the debugger is feature-complete.
 
-### Beyond Phase 10 — out of scope (future, only if asked)
+### Beyond Phase 10
 
-Not planned; listed so a future agent knows they were considered. The DAP-surface
-audit (2026-06-20) confirmed the only correctness defect was launch ordering (fixed);
-the items below are *parsed-but-unwired* capabilities or extra requests that each need
-a new data model and/or UI surface, so they are deferred to a dedicated feature pass
-rather than mixed into a fix. Priority order:
+**Shipped (2026-06-20): function breakpoints + exception-filter conditions.** A probe
+of real gdb 17.2 (`gdb --interpreter=dap`) confirmed it advertises a large set of
+capabilities microide did not yet use; the two lowest-risk, highest-value ones (both
+extend the existing Breakpoints pane, no new pane mode) are now implemented:
 
-- **Function breakpoints** (`setFunctionBreakpoints`; `supports_function_breakpoints`
-  already parsed) — needs a function/symbol-breakpoint model in `BreakpointStore`
-  (today line-based only) plus a UI entry point. Highest value.
-- **Reverse execution** (`stepBack` / `reverseContinue`; `supports_step_back` parsed)
-  — gdb supports it via `record`; needs toolbar buttons + capability gating.
-- **Exception-filter conditions** (`supports_exception_filter_options` and per-filter
-  `supports_condition`, both parsed) — small once a condition-entry affordance exists.
-- **Data / instruction breakpoints, `readMemory` / `disassemble`** — advanced; each a
-  new panel. Lowest priority.
+- **Function breakpoints** (`setFunctionBreakpoints`) — new `editor::FunctionBreakpointStore`
+  (sibling to the line-based `BreakpointStore`, on `ProjectWorkspaceState`). Installed in
+  the `initialized` handshake between `setBreakpoints` and `setExceptionBreakpoints` (so the
+  order stays `launch → setBreakpoints → setFunctionBreakpoints → setExceptionBreakpoints →
+  configurationDone`). Verification matches positionally by requested name; gdb reports them
+  `pending` in the response then binds them via an async `breakpoint` event, routed to the
+  store by adapter id. Surfaced as a "Function Breakpoints" section in the Breakpoints pane
+  (click toggles enabled); driven by `breakpoint-function-add/-remove/-toggle/-condition`
+  commands + the `function-breakpoints` control-channel query. Persisted via additive
+  `DebugStateTag::FunctionBreakpoint`.
+- **Exception-filter conditions** (`supports_exception_filter_options` + per-filter
+  `supports_condition`) — `DebugBreakpointsModel` now carries per-filter conditions; enabled
+  conditioned filters ride in `filterOptions` (unconditioned stay in `filters`). Driven by
+  `breakpoint-exception-condition <filterId> [expr]` + the `exception-filters` control-channel
+  query. Persisted via additive `DebugStateTag::ExceptionFilterCondition`.
+
+End-to-end verified against real gdb 17.2 by the gated CTest
+`DebugService/GdbRealFunctionBreakpointsE2E` (compiles a C program, installs a function
+breakpoint, asserts gdb stops inside it and the breakpoint verifies; skips cleanly when
+gdb/gcc are absent).
+
+#### Still out of scope (future, only if asked)
+
+The items below are *parsed-but-unwired* capabilities or extra requests that each need
+a new data model and/or UI surface. gdb 17.2 advertises function breakpoints, disassembly,
+`readMemory`/`writeMemory`, instruction breakpoints, completions, modules, loadedSources,
+stepping granularity, value-formatting, and `setExpression`; it does **not** advertise
+reverse execution or data breakpoints at init. Priority order:
+
+- **Disassembly + instruction stepping + instruction breakpoints** (`disassemble`,
+  `granularity:"instruction"`, `setInstructionBreakpoints`) — a new Disassembly pane.
+- **Memory view** (`readMemory` / `writeMemory`) — a new hex-dump pane.
+- **REPL completions** (`completions`) — reuse the existing completion overlay.
+- **Value-formatting hex toggle** (`format:{hex:true}`) + **`setExpression`** (edit watch /
+  arbitrary lvalues) + **modules / loadedSources** views.
+- **Reverse execution** (`stepBack` / `reverseContinue`; `supports_step_back` parsed) —
+  gdb supports it only via `record`; needs toolbar buttons + capability gating.
+- **Data breakpoints** (`setDataBreakpoints`) — not advertised by gdb 17.2; lowest priority.
 - **Launch-config editor** — Phase 9 added a *picker* over `launch_configs`; a small
   create/edit UI (native `PersistedRecord`, no `.vscode/launch.json`) would let a
   user author configs without a plugin contributing them.

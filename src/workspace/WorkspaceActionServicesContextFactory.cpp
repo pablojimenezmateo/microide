@@ -220,6 +220,38 @@ std::string WorkspaceActionContext::StartNamedDebugConfig(const std::string& nam
   return "debug launch unavailable";
 }
 
+void WorkspaceActionContext::AddFunctionBreakpoint(const std::string& name) {
+  if (operations_.add_function_breakpoint) {
+    operations_.add_function_breakpoint(name);
+  }
+}
+
+void WorkspaceActionContext::RemoveFunctionBreakpoint(const std::string& name) {
+  if (operations_.remove_function_breakpoint) {
+    operations_.remove_function_breakpoint(name);
+  }
+}
+
+void WorkspaceActionContext::ToggleFunctionBreakpoint(const std::string& name) {
+  if (operations_.toggle_function_breakpoint) {
+    operations_.toggle_function_breakpoint(name);
+  }
+}
+
+void WorkspaceActionContext::SetFunctionBreakpointCondition(const std::string& name,
+                                                            std::optional<std::string> condition) {
+  if (operations_.set_function_breakpoint_condition) {
+    operations_.set_function_breakpoint_condition(name, std::move(condition));
+  }
+}
+
+void WorkspaceActionContext::SetExceptionFilterCondition(const std::string& filter_id,
+                                                         std::optional<std::string> condition) {
+  if (operations_.set_exception_filter_condition) {
+    operations_.set_exception_filter_condition(filter_id, std::move(condition));
+  }
+}
+
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
   return WorkspaceActionContext(
       context_.project_catalog,
@@ -525,6 +557,24 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
           .start_named_debug_config =
               [this](const std::string& name) { return StartNamedDebugConfig(name); },
+          .add_function_breakpoint =
+              [this](const std::string& name) { debug_service_.AddFunctionBreakpoint(name); },
+          .remove_function_breakpoint =
+              [this](const std::string& name) {
+                debug_service_.RemoveFunctionBreakpointByName(name);
+              },
+          .toggle_function_breakpoint =
+              [this](const std::string& name) {
+                debug_service_.ToggleFunctionBreakpointByName(name);
+              },
+          .set_function_breakpoint_condition =
+              [this](const std::string& name, std::optional<std::string> condition) {
+                debug_service_.SetFunctionBreakpointConditionByName(name, std::move(condition));
+              },
+          .set_exception_filter_condition =
+              [this](const std::string& filter_id, std::optional<std::string> condition) {
+                debug_service_.SetExceptionFilterCondition(filter_id, std::move(condition));
+              },
       });
 }
 

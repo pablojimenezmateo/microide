@@ -278,6 +278,10 @@ DebugPaneMouseCoordinator WorkspaceShell::MakeDebugPaneMouseCoordinator() {
                   RequestFocusedEditorRedraw();
                 }
               },
+          .toggle_debug_function_breakpoint_enabled =
+              [this](std::size_t index) {
+                debug_service_.ToggleFunctionBreakpointEnabled(index);
+              },
       });
 }
 

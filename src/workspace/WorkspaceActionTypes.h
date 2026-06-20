@@ -181,6 +181,13 @@ enum class ActionId {
   BreakpointHitCondition,
   BreakpointLogMessage,
   BreakpointClear,
+  // Function (symbol) breakpoints + per-filter exception conditions (control channel
+  // + command line + UI prompt). Gated on `debug.enabled`.
+  BreakpointFunctionAdd,
+  BreakpointFunctionRemove,
+  BreakpointFunctionToggle,
+  BreakpointFunctionCondition,
+  BreakpointExceptionCondition,
   // Start a debug session for a named launch config (control channel + spec).
   // No arg starts the selected/default config. Gated on `debug.enabled`.
   DebugLaunch,

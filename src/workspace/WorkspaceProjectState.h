@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "editor/BreakpointStore.h"
+#include "editor/FunctionBreakpointStore.h"
 #include "editor/DiagnosticsStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
@@ -317,6 +318,11 @@ struct ProjectWorkspaceState {
   // Mirrors `diagnostics_store`: survives session restarts, persists via the
   // `debug` PersistedRecord. Only meaningful when `debug.enabled` is ON.
   editor::BreakpointStore breakpoint_store;
+  // Per-project function (symbol) breakpoints. Adapter-agnostic sibling to
+  // `breakpoint_store`: snapshotted at launch (setFunctionBreakpoints) with
+  // verification reflected back. Persists via the `debug` PersistedRecord. Only
+  // meaningful when `debug.enabled` is ON.
+  editor::FunctionBreakpointStore function_breakpoint_store;
   // Transient execution state for the active debug session (current stop + call
   // stack + focused frame). Rebuilt on every `stopped`, cleared on resume/stop;
   // never persisted. Only meaningful when `debug.enabled` is ON.

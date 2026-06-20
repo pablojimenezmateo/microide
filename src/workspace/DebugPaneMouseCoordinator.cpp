@@ -197,6 +197,13 @@ bool DebugPaneMouseCoordinator::HandleRowClick(const SDL_Event& event,
       if (row.kind == DebugBreakpointRowView::Kind::ExceptionFilter &&
           operations_.toggle_debug_exception_filter) {
         operations_.toggle_debug_exception_filter(row.filter_id);
+      } else if (row.kind == DebugBreakpointRowView::Kind::FunctionBreakpoint) {
+        // No source location to navigate to: a click toggles enabled.
+        if (operations_.toggle_debug_function_breakpoint_enabled) {
+          operations_.toggle_debug_function_breakpoint_enabled(row.function_index);
+        }
+        state_.surface.focus = FocusTarget::DebugPane;
+        return true;
       } else if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && !row.path.empty()) {
         // Double-click toggles enabled (manage from the panel); single-click
         // navigates to the breakpoint's source line.
