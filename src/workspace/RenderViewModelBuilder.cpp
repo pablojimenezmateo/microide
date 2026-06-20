@@ -1,5 +1,6 @@
 #include "workspace/RenderViewModelBuilder.h"
 
+#include "workspace/DebugPaneRegistry.h"
 #include "workspace/GitSidebarCommandCenter.h"
 
 #include "editor/FoldingModel.h"
@@ -196,18 +197,20 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
         pos = found + 1;
       }
     } else {
-      for (std::size_t i = 0; i + lowered_needle.size() <= haystack.size(); ++i) {
-        bool match = true;
-        for (std::size_t j = 0; j < lowered_needle.size(); ++j) {
-          if (static_cast<char>(std::tolower(static_cast<unsigned char>(haystack[i + j]))) !=
-              lowered_needle[j]) {
-            match = false;
-            break;
-          }
+      // Lower the haystack once, then reuse the same fast find() as the
+      // case-sensitive branch — the previous nested loop re-lowered every
+      // haystack byte O(needle) times for each candidate position.
+      thread_local std::string lowered_haystack;
+      lowered_haystack.resize(haystack.size());
+      std::transform(haystack.begin(), haystack.end(), lowered_haystack.begin(),
+                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      for (std::size_t pos = 0; pos <= lowered_haystack.size();) {
+        const std::size_t found = lowered_haystack.find(lowered_needle, pos);
+        if (found == std::string::npos) {
+          break;
         }
-        if (match) {
-          emit(i, i + lowered_needle.size());
-        }
+        emit(found, found + lowered_needle.size());
+        pos = found + 1;
       }
     }
   };
@@ -485,6 +488,34 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
   };
 }
 
+DebugPaneSurfaceViewModel RenderViewModelBuilder::BuildDebugPaneSurface() const {
+  const DebugPaneState& pane = context_.current_project_state.debug_pane;
+  int scroll_row = 0;
+  switch (pane.mode) {
+    case DebugPaneMode::CallStack:
+      scroll_row = pane.call_stack_scroll_row;
+      break;
+    case DebugPaneMode::Variables:
+      scroll_row = pane.variables_scroll_row;
+      break;
+    case DebugPaneMode::Watch:
+      scroll_row = pane.watch_scroll_row;
+      break;
+    case DebugPaneMode::Breakpoints:
+      scroll_row = pane.breakpoints_scroll_row;
+      break;
+  }
+  const DebugPaneSurfaceSpec* spec = FindDebugPaneSurface(pane.mode);
+  return DebugPaneSurfaceViewModel{
+      .visible = pane.visible,
+      .mode = pane.mode,
+      .scroll_row = scroll_row,
+      .header_label = spec != nullptr ? spec->label : std::string_view{},
+      .focus = context_.current_project_state.surface.focus,
+      .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
+  };
+}
+
 void RenderViewModelBuilder::BuildEditorViewModelInto(
     editor::EditorViewModel& out,
     const editor::TextViewport& viewport,
@@ -494,9 +525,14 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     bool occurrences_case_sensitive,
     bool sticky_scroll_enabled,
     int sticky_max_depth,
-    bool render_whitespace_enabled) const {
+    bool render_whitespace_enabled,
+    bool debug_enabled,
+    const editor::BreakpointStore* breakpoints,
+    const DebugExecutionView* debug_execution) const {
   util::AddPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls);
   out.fold_gutter_marks.clear();
+  out.breakpoint_gutter_marks.clear();
+  out.execution_line_index.reset();
   out.sticky_lines = {};
   out.occurrence_ranges = {};
   out.whitespace_glyph_runs.clear();
@@ -521,6 +557,51 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
           .visual_row_index = visual_row_index,
           .collapsed = folding_model->IsCollapsedAtOpener(row_meta.line_index),
       });
+    }
+  }
+
+  // Breakpoint gutter dots, gated on the debugger being enabled. Mirrors the
+  // fold-mark loop: one mark per visible opener row, deduped to the first visual
+  // row of a wrapped line so a dot is not painted on every wrap fragment.
+  if (debug_enabled && breakpoints != nullptr && !viewport.is_placeholder()) {
+    if (const std::vector<editor::Breakpoint>* file = breakpoints->FindByPath(viewport.path());
+        file != nullptr && !file->empty()) {
+      out.breakpoint_gutter_marks.reserve(file->size());
+      for (std::size_t row = 0; row < visible_rows; ++row) {
+        const std::size_t visual_row_index = viewport.scroll_line() + row;
+        if (visual_row_index >= viewport.visual_line_count()) {
+          break;
+        }
+        const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
+        if (viewport.soft_wrap() && row_meta.visual_start != 0) {
+          continue;
+        }
+        const auto bp = std::lower_bound(
+            file->begin(), file->end(), row_meta.line_index,
+            [](const editor::Breakpoint& b, std::size_t line) { return b.line < line; });
+        if (bp == file->end() || bp->line != row_meta.line_index) {
+          continue;
+        }
+        out.breakpoint_gutter_marks.push_back(editor::BreakpointGutterMark{
+            .line_index = row_meta.line_index,
+            .visual_row_index = visual_row_index,
+            .enabled = bp->enabled,
+            .verified = bp->verified,
+            .has_condition = bp->condition.has_value() || bp->hit_condition.has_value(),
+            .is_logpoint = bp->log_message.has_value(),
+        });
+      }
+    }
+  }
+
+  // Execution-line marker: set only when a session is stopped on this viewport's
+  // file. Path-matched on lexically-normalized generic strings (the frame source
+  // was normalized the same way when the stop was recorded).
+  if (debug_enabled && debug_execution != nullptr && debug_execution->HasLocation() &&
+      !viewport.is_placeholder()) {
+    if (viewport.path().lexically_normal().generic_string() ==
+        debug_execution->FocusedPath().lexically_normal().generic_string()) {
+      out.execution_line_index = debug_execution->FocusedLine();
     }
   }
 
@@ -659,10 +740,13 @@ HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_targ
   };
 }
 
-HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets() const {
+HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets(bool debug_hover_enabled) const {
   return HoverTargetsViewModel{
       .hover_enabled = true,
       .diagnostics_store = &context_.current_project_state.diagnostics_store,
+      .debug_execution =
+          debug_hover_enabled ? &context_.current_project_state.debug_execution : nullptr,
+      .debug_hover = debug_hover_enabled ? &context_.current_project_state.debug_hover : nullptr,
   };
 }
 

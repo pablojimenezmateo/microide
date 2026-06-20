@@ -55,6 +55,18 @@ struct Theme {
   SDL_Color diagnostic_warning;
   SDL_Color diagnostic_info;
   SDL_Color diagnostic_hint;
+  // Breakpoint gutter dot: solid `breakpoint` when the adapter has verified it,
+  // dimmed `breakpoint_unverified` otherwise (set but not yet bound / no session).
+  SDL_Color breakpoint;
+  SDL_Color breakpoint_unverified;
+  // Conditional / hit-count breakpoint dot: yellow (MATLAB-style) so a breakpoint
+  // carrying a condition reads differently from a plain red one. Logpoints instead
+  // render as a diamond (shape, not color) in `breakpoint`.
+  SDL_Color breakpoint_conditional;
+  // Debugger execution line: full-width row fill + gutter arrow painted on the
+  // frame the session is stopped at (Phase 3).
+  SDL_Color debug_execution_line;
+  SDL_Color debug_execution_arrow;
 };
 
 Theme MakeDefaultTheme();

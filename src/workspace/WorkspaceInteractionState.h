@@ -13,6 +13,7 @@ namespace microide::workspace {
 enum class DragTarget {
   None,
   SidebarDivider,
+  RightPaneDivider,
   BottomPanelDivider,
   CompareDivider,
   MergeLeftDivider,

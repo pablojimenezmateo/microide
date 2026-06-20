@@ -170,6 +170,15 @@ void WorkspaceOutputChannels::Clear(std::string_view id) {
   it->second.current_reference_path.reset();
 }
 
+void WorkspaceOutputChannels::RemoveChannel(std::string_view id) {
+  const auto it = channels_.find(id);
+  if (it == channels_.end()) {
+    return;
+  }
+  channels_.erase(it);
+  MarkDirty();
+}
+
 void WorkspaceOutputChannels::MarkDirty() {
   channel_infos_dirty_ = true;
 }

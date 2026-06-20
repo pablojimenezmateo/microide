@@ -107,7 +107,7 @@ Hard-fail invariants (lint will reject the change):
 - The render translation units covered by `CheckRenderSurfaceStateAccess`
   (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`,
   `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`,
-  `WorkspaceShellHoverTargets`) consume view models built by `RenderViewModelBuilder`. Do not read
+  `WorkspaceShellHoverTargets`, `DebugPaneRender`) consume view models built by `RenderViewModelBuilder`. Do not read
   `context_.current_project_state` or call `CurrentTextInputSurface(...)` from these files.
 
 Policy invariants (no automated lint, but reviewers will reject):

@@ -2,6 +2,12 @@
 #include "app/Application.h"
 #include "persistence/PersistedRecordDump.h"
 #include "platform/HostPlatform.h"
+#include "util/DebugTrace.h"
+#include "workspace/ControlChannelService.h"
+#include "workspace/ControlClient.h"
+#include "workspace/ControlProtocol.h"
+#include "workspace/ManPage.h"
+#include "workspace/WorkspaceCommandRegistry.h"
 
 #include <filesystem>
 #include <iostream>
@@ -16,6 +22,31 @@ int main(int argc, char** argv) {
   if (argc >= 2) {
     const std::string_view command =
         argv[1] != nullptr ? std::string_view(argv[1]) : std::string_view{};
+    if (command == "control-help") {
+      std::cout << microide::workspace::ControlChannelHelpText();
+      std::cout << "\nRunnable commands\n-----------------\n";
+      for (const std::string& usage : microide::workspace::WorkspaceDocumentedCommandUsages()) {
+        std::cout << "  " << usage << '\n';
+      }
+      return 0;
+    }
+    if (command == "control-commands") {
+      for (const std::string& usage : microide::workspace::WorkspaceDocumentedCommandUsages()) {
+        std::cout << usage << '\n';
+      }
+      return 0;
+    }
+    if (command == "control-list") {
+      std::cout << microide::workspace::ControlListInstancesText();
+      return 0;
+    }
+    if (command == "control-send") {
+      return microide::workspace::RunControlSend(argc, argv);
+    }
+    if (command == "control-man") {
+      std::cout << microide::workspace::RenderManPage();
+      return 0;
+    }
     if (command == "dump-state" || command == "microide-dump-state") {
       if (argc != 3 || argv[2] == nullptr || std::string_view(argv[2]).empty()) {
         std::cerr << "usage: microide dump-state <persisted-file>\n";
@@ -40,6 +71,13 @@ int main(int argc, char** argv) {
   }
   if (parsed.exit_code != 0) {
     return parsed.exit_code;
+  }
+
+  // Enable the DAP/debug tracer before any window or debug session exists so the
+  // initialize handshake is captured from the very first message.
+  if (parsed.options.dap_log_path.has_value()) {
+    microide::util::DebugTrace::EnableToFile(*parsed.options.dap_log_path);
+    std::cerr << "DAP trace \xE2\x86\x92 " << parsed.options.dap_log_path->string() << '\n';
   }
 
   microide::app::Application application(parsed.options);

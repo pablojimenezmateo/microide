@@ -49,11 +49,18 @@ PathType PathTypeFromStatus(const std::filesystem::file_status& status) {
 std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
     const std::vector<std::filesystem::path>& roots,
     const TreeTraversalFilter& filter,
-    bool* polling_required) {
+    std::size_t max_entries,
+    bool* polling_required,
+    bool* truncated) {
   std::vector<std::filesystem::path> watch_paths;
   bool requires_polling = false;
+  bool budget_exhausted = false;
+  std::size_t visited = 0;
 
   for (const auto& root : roots) {
+    if (budget_exhausted) {
+      break;
+    }
     if (root.empty()) {
       continue;
     }
@@ -73,6 +80,10 @@ std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
     constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
     for (std::filesystem::recursive_directory_iterator it(root, options, error), end;
          !error && it != end; it.increment(error)) {
+      if (max_entries != 0 && ++visited > max_entries) {
+        budget_exhausted = true;
+        break;
+      }
       std::error_code status_error;
       const PathType type = PathTypeFromStatus(it->status(status_error));
       if (status_error) {
@@ -94,10 +105,19 @@ std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
     }
   }
 
+  // A tree we could not finish enumerating cannot be watched reliably: report
+  // truncation and force the polling fallback for whatever was collected.
+  if (budget_exhausted) {
+    requires_polling = true;
+  }
+
   std::sort(watch_paths.begin(), watch_paths.end());
   watch_paths.erase(std::unique(watch_paths.begin(), watch_paths.end()), watch_paths.end());
   if (polling_required != nullptr) {
     *polling_required = requires_polling;
+  }
+  if (truncated != nullptr) {
+    *truncated = budget_exhausted;
   }
   return watch_paths;
 }
@@ -501,6 +521,15 @@ void FileTreeWatcher::SetWakeCallback(WakeCallback callback) {
   wake_callback_ = std::move(callback);
 }
 
+void FileTreeWatcher::SetEntryBudget(std::size_t max_entries) {
+  entry_budget_.store(max_entries, std::memory_order_relaxed);
+}
+
+bool FileTreeWatcher::TreeTooLarge() const {
+  std::scoped_lock lock(mutex_);
+  return tree_too_large_;
+}
+
 void FileTreeWatcher::SetDeferInitialSnapshot(bool defer) {
   std::scoped_lock lock(mutex_);
   defer_initial_snapshot_ = defer;
@@ -538,11 +567,21 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
   // Build the native backend and (optionally) the snapshot WITHOUT holding the
   // lock so a peer SetRoots/Clear/Poll never blocks on this tree walk.
   PreparedNativeBackend prepared = PrepareNativeBackend(normalized_roots, filter);
-  const bool capture_snapshot =
+  bool capture_snapshot =
       !defer_initial_snapshot || prepared.polling_required || !has_wake_callback;
   std::vector<TreeSnapshotEntry> snapshot;
   if (capture_snapshot) {
-    snapshot = CaptureTreeSnapshot(normalized_roots, filter);
+    bool snapshot_truncated = false;
+    snapshot = CaptureTreeSnapshot(normalized_roots, filter,
+                                   entry_budget_.load(std::memory_order_relaxed),
+                                   &snapshot_truncated);
+    if (snapshot_truncated) {
+      prepared.tree_too_large = true;
+    }
+  }
+  if (prepared.tree_too_large) {
+    // A truncated snapshot can't be diffed reliably; don't retain it.
+    capture_snapshot = false;
   }
 
   std::unique_ptr<NativeBackend> old_backend;
@@ -572,6 +611,7 @@ void FileTreeWatcher::Clear() {
   snapshot_valid_ = false;
   pending_change_ = false;
   polling_required_ = true;
+  tree_too_large_ = false;
   old_backend = std::move(native_backend_);
   next_poll_at_ = std::chrono::steady_clock::time_point::min();
 }
@@ -579,6 +619,11 @@ void FileTreeWatcher::Clear() {
 std::optional<std::chrono::milliseconds> FileTreeWatcher::NextPollDelay() const {
   std::scoped_lock lock(mutex_);
   if (roots_.empty()) {
+    return std::nullopt;
+  }
+  if (tree_too_large_) {
+    // Native watching is off and the tree is unaffordable to poll: never schedule
+    // periodic full-tree walks. Changes are picked up only via explicit refresh.
     return std::nullopt;
   }
   if (pending_change_) {
@@ -622,35 +667,62 @@ bool FileTreeWatcher::Poll() {
     pending_change_ = false;
   }
 
+  const std::size_t entry_budget = entry_budget_.load(std::memory_order_relaxed);
+
   if (!snapshot_valid && !polling_required) {
     if (!pending_change) {
       return false;
     }
-    const std::vector<TreeSnapshotEntry> current_snapshot = CaptureTreeSnapshot(roots, filter);
+    bool snapshot_truncated = false;
+    const std::vector<TreeSnapshotEntry> current_snapshot =
+        CaptureTreeSnapshot(roots, filter, entry_budget, &snapshot_truncated);
     PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
+    if (snapshot_truncated) {
+      prepared.tree_too_large = true;
+    }
+    const bool too_large = prepared.tree_too_large;
     std::unique_ptr<NativeBackend> old_backend;
     std::scoped_lock lock(mutex_);
     if (roots != roots_) {
       return false;
     }
-    snapshot_ = current_snapshot;
-    snapshot_valid_ = true;
+    if (too_large) {
+      snapshot_.clear();
+      snapshot_valid_ = false;
+    } else {
+      snapshot_ = current_snapshot;
+      snapshot_valid_ = true;
+    }
     old_backend = InstallPreparedBackendLocked(std::move(prepared));
     ResetNextPollAt();
     return false;
   }
 
-  const std::vector<TreeSnapshotEntry> current_snapshot = CaptureTreeSnapshot(roots, filter);
-  const bool changed = current_snapshot != previous_snapshot;
+  bool snapshot_truncated = false;
+  const std::vector<TreeSnapshotEntry> current_snapshot =
+      CaptureTreeSnapshot(roots, filter, entry_budget, &snapshot_truncated);
 
   PreparedNativeBackend prepared = PrepareNativeBackend(roots, filter);
+  if (snapshot_truncated) {
+    prepared.tree_too_large = true;
+  }
+  const bool too_large = prepared.tree_too_large;
+  // A truncated snapshot is unreliable (recursive_directory_iterator order is not
+  // stable), so never report a change off a partial walk.
+  const bool changed = !too_large && current_snapshot != previous_snapshot;
+
   std::unique_ptr<NativeBackend> old_backend;
   std::scoped_lock lock(mutex_);
   if (roots != roots_) {
     return changed;
   }
-  snapshot_ = current_snapshot;
-  snapshot_valid_ = true;
+  if (too_large) {
+    snapshot_.clear();
+    snapshot_valid_ = false;
+  } else {
+    snapshot_ = current_snapshot;
+    snapshot_valid_ = true;
+  }
   old_backend = InstallPreparedBackendLocked(std::move(prepared));
   ResetNextPollAt();
   return changed;
@@ -664,8 +736,16 @@ FileTreeWatcher::PreparedNativeBackend FileTreeWatcher::PrepareNativeBackend(
 
 #if defined(__linux__) || defined(__APPLE__)
   bool requires_polling = false;
-  const std::vector<std::filesystem::path> watch_paths =
-      CollectRecursiveWatchPaths(roots, filter, &requires_polling);
+  bool truncated = false;
+  const std::vector<std::filesystem::path> watch_paths = CollectRecursiveWatchPaths(
+      roots, filter, entry_budget_.load(std::memory_order_relaxed), &requires_polling, &truncated);
+  if (truncated) {
+    // Tree too large to enumerate within budget: do not watch a partial set, and
+    // do not poll-walk the whole tree on a timer. Degrade to "too large" mode.
+    prepared.tree_too_large = true;
+    prepared.polling_required = false;
+    return prepared;
+  }
   if (watch_paths.empty()) {
     prepared.polling_required = requires_polling || !roots.empty();
     return prepared;
@@ -711,6 +791,7 @@ std::unique_ptr<FileTreeWatcher::NativeBackend> FileTreeWatcher::InstallPrepared
   std::unique_ptr<NativeBackend> old_backend = std::move(native_backend_);
   native_backend_ = std::move(prepared.backend);
   polling_required_ = prepared.polling_required;
+  tree_too_large_ = prepared.tree_too_large;
   return old_backend;
 }
 

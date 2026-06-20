@@ -13,10 +13,14 @@
 #include <string_view>
 #include <thread>
 
+#include <fstream>
+#include <iterator>
+
 #include "app/DirtyRegionPolicy.h"
 #include "app/ApplicationPresentationCache.h"
 #include "app/IdleWaitStrategy.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "workspace/ControlSpec.h"
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
 #include "util/WindowPresentation.h"
@@ -262,15 +266,45 @@ bool Application::Initialize() {
   SDL_RenderPresent(renderer_);
 
   {
+    // Parse a cold-start control spec (if any) up front: its `project` selects
+    // the project to open, overriding the positional path / cwd.
+    workspace::ControlSpec control_spec;
+    if (startup_options_.control_spec_path.has_value()) {
+      std::ifstream in(*startup_options_.control_spec_path);
+      if (in) {
+        const std::string json((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        control_spec = workspace::ParseControlSpec(json);
+        if (!control_spec.valid) {
+          SDL_Log("control spec parse error: %s", control_spec.parse_error.c_str());
+        }
+      } else {
+        SDL_Log("could not read control spec: %s",
+                startup_options_.control_spec_path->string().c_str());
+      }
+    }
+
+    // The explicit project (spec `project` wins over the positional path) makes
+    // the named project win over a saved session via skip-restore; leave it unset
+    // for the cwd fallback so a bare launch still restores the previous session.
+    std::optional<std::filesystem::path> explicit_project;
+    if (control_spec.valid && control_spec.project.has_value()) {
+      explicit_project = *control_spec.project;
+    } else if (startup_options_.project_path.has_value()) {
+      explicit_project = startup_options_.project_path;
+    }
+
     workspace::WorkspaceStartupOptions shell_startup;
     shell_startup.disable_plugins = startup_options_.disable_plugins;
     shell_startup.safe_mode = startup_options_.safe_mode;
-    shell_startup.project_path = startup_options_.project_path;
+    shell_startup.project_path = explicit_project;
+    shell_startup.control_stdout = startup_options_.control_stdout;
+    shell_startup.setting_overrides = startup_options_.setting_overrides;
     workspace_shell_.SetStartupOptions(std::move(shell_startup));
 
     std::filesystem::path initial_project;
-    if (startup_options_.project_path.has_value()) {
-      initial_project = startup_options_.project_path.value();
+    if (explicit_project.has_value()) {
+      initial_project = *explicit_project;
     } else if (!startup_options_.safe_mode) {
       initial_project = std::filesystem::current_path();
     }
@@ -279,6 +313,15 @@ bool Application::Initialize() {
     if (!workspace_shell_.Initialize(initial_project)) {
       SDL_Log("Workspace initialization failed");
       return false;
+    }
+
+    // Force-start the channel first (so the `ready` handshake leads the JSONL
+    // stream), then apply transient `--set` overrides, then the cold-start spec.
+    workspace_shell_.ForceStartControlChannel();
+    workspace_shell_.ApplyStartupSettingOverrides();
+    if (control_spec.valid) {
+      util::StartupTrace::Scope apply_spec_scope("WorkspaceShell::ApplyControlSpec");
+      workspace_shell_.ApplyControlSpec(control_spec);
     }
   }
   workspace_shell_.SetDialogWindow(window_);

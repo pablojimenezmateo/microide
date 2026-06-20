@@ -55,6 +55,9 @@
 #include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceEventResult.h"
 #include "workspace/AssistService.h"
+#include "workspace/ControlChannelService.h"
+#include "workspace/ControlSpec.h"
+#include "workspace/DebugService.h"
 #include "workspace/LspService.h"
 #include "workspace/EditorBlameOverlayService.h"
 #include "workspace/WorkspaceInteractionState.h"
@@ -67,6 +70,7 @@
 #include "workspace/PatchApplyService.h"
 #include "workspace/PersistenceService.h"
 #include "workspace/SettingsOverlayService.h"
+#include "workspace/SettingsStore.h"
 #include "workspace/StatusBarModelService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/TabStripService.h"
@@ -79,6 +83,8 @@
 #include "workspace/WorkspaceProjectFileMonitor.h"
 #include "workspace/WorkspaceProjectDialogState.h"
 #include "workspace/WorkspaceProjectState.h"
+#include "workspace/DebugPaneRegistry.h"
+#include "workspace/DebugPaneService.h"
 #include "workspace/WorkspaceProjectSearchRuntime.h"
 #include "workspace/WorkspacePromptState.h"
 #include "workspace/RenderViewModelBuilder.h"
@@ -117,6 +123,7 @@ class MergeMouseCoordinator;
 class TabMouseCoordinator;
 class SidebarMouseCoordinator;
 class PanelMouseCoordinator;
+class DebugPaneMouseCoordinator;
 
 class WorkspaceShell {
 #include "workspace/WorkspaceShellMembers.inc"

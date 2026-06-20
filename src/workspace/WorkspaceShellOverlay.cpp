@@ -116,6 +116,7 @@ float WorkspaceShell::OverlayListStartOffset() const {
       // Caret-anchored popups render header-less, so the list starts near the top.
       return 8.0f;
     case OverlayMode::CommitPicker:
+    case OverlayMode::LaunchConfigPicker:
       // Picker carries a richer header (title + context subtitle + query field +
       // result/hint line) so the list starts lower than the search overlays.
       return 108.0f;
@@ -140,6 +141,8 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       return context_.current_project_state.overlay.workflow.compare_picker.matches.size();
+    case OverlayMode::LaunchConfigPicker:
+      return context_.current_project_state.overlay.workflow.launch_config_picker.matches.size();
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
       return context_.current_project_state.overlay.workflow.buffer_search.matches.size();
@@ -159,6 +162,8 @@ std::size_t WorkspaceShell::OverlaySelectedIndex() const {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       return context_.current_project_state.overlay.workflow.compare_picker.selected_index;
+    case OverlayMode::LaunchConfigPicker:
+      return context_.current_project_state.overlay.workflow.launch_config_picker.selected_index;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
       return context_.current_project_state.overlay.workflow.buffer_search.selected_index;
@@ -183,6 +188,10 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       context_.current_project_state.overlay.workflow.compare_picker.selected_index = clamped_index;
+      break;
+    case OverlayMode::LaunchConfigPicker:
+      context_.current_project_state.overlay.workflow.launch_config_picker.selected_index =
+          clamped_index;
       break;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
@@ -239,6 +248,10 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       OpenSelectedCompareCommit();
       // Dismiss the picker so it does not stay painted on top of the comparison it
       // just opened (matches the FileFinder / BufferSearch activation paths below).
+      DismissOverlay(true);
+      return true;
+    case OverlayMode::LaunchConfigPicker:
+      ConfirmLaunchConfigSelection();
       DismissOverlay(true);
       return true;
     case OverlayMode::BufferSearch:

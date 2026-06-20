@@ -880,6 +880,48 @@ void TestWorkspaceSharedCompareCollapsedContextBlockRect() {
          "the old hit-test offset equals the scrollbar reserve plus the block inset");
 }
 
+void TestWorkspaceSharedRightPaneLayout() {
+  using microide::workspace::ClampRightPaneWidth;
+  using microide::workspace::RightPaneResizeHandleRect;
+
+  // Pane hidden by default: editor area spans the full width past the sidebar.
+  const auto hidden = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
+  Expect(hidden.right_pane.w == 0.0f, "right pane has zero width when not requested");
+
+  // Pane visible: it is carved off the right edge of the editor area, which shrinks
+  // by the pane width plus a divider.
+  const auto shown = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f,
+                                   microide::workspace::LayoutModeInputs{}, false, true, 288.0f);
+  Expect(shown.right_pane.w == 288.0f, "visible right pane preserves its width");
+  Expect(std::fabs((shown.right_pane.x) -
+                   (shown.editor_area.x + shown.editor_area.w + 1.0f)) < 0.001f,
+         "right pane sits to the right of the editor area past a 1px divider");
+  Expect(shown.right_pane.x + shown.right_pane.w <= 1280.0f + 0.001f,
+         "right pane stays within the window");
+  Expect(shown.editor_area.w < hidden.editor_area.w,
+         "showing the right pane shrinks the editor area");
+
+  // Compact mode suppresses the pane to protect the minimum editor width.
+  microide::workspace::LayoutModeInputs compact;
+  compact.user_override = microide::workspace::LayoutModeInputs::Override::Compact;
+  const auto compact_layout =
+      ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f, compact, false, true, 288.0f);
+  Expect(compact_layout.right_pane.w == 0.0f, "compact mode hides the right pane");
+
+  // Clamp keeps the editor above its minimum with both the sidebar and pane open.
+  Expect(ClampRightPaneWidth(120.0f, 800.0f, 200.0f) == 120.0f,
+         "right-pane width above the viable minimum is accepted");
+  const float clamped = ClampRightPaneWidth(700.0f, 800.0f, 200.0f);
+  Expect(800.0f - 200.0f - 1.0f - clamped - 1.0f >=
+             microide::workspace::kWorkspaceMinEditorAreaWidth - 1.0f,
+         "right-pane clamp preserves the minimum editor width alongside the sidebar");
+
+  Expect(RightPaneResizeHandleRect(hidden).w == 0.0f,
+         "no resize handle when the pane is hidden");
+  Expect(RightPaneResizeHandleRect(shown).w > 0.0f,
+         "resize handle exists when the pane is visible");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
@@ -920,6 +962,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedBottomPanelLineIndexAtY);
   AddTest(tests, "WorkspaceShared/CompareCollapsedContextBlockRect",
           TestWorkspaceSharedCompareCollapsedContextBlockRect);
+  AddTest(tests, "WorkspaceShared/RightPaneLayout", TestWorkspaceSharedRightPaneLayout);
 }
 
 }  // namespace microide::tests

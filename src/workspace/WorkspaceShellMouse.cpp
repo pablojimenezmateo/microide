@@ -10,6 +10,7 @@
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/DebugPaneMouseCoordinator.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceTabMouseCoordinator.h"
@@ -212,6 +213,17 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
+  if (event.button.button == SDL_BUTTON_LEFT && context_.current_project_state.debug_pane.visible &&
+      Contains(RightPaneResizeHitRect(layout), event.button.x, event.button.y)) {
+    context_.interaction_state.drag_target = DragTarget::RightPaneDivider;
+    return true;
+  }
+
+  if (MakeDebugPaneMouseCoordinator().HandleButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestDebugPaneRedraw(); });
+    return true;
+  }
+
   if (MakePanelMouseCoordinator().HandleResizeButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
@@ -233,6 +245,21 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (MakePanelMouseCoordinator().HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestBottomPanelRedraw(); });
     return true;
+  }
+
+  // Breakpoint gutter right-click opens the breakpoint context menu (Phase 6),
+  // taking precedence over the editor context menu. Declines (returns false)
+  // for any non-gutter right-click, so the editor context menu still works.
+  if (event.button.button == SDL_BUTTON_RIGHT && ActiveTabIsEditor() &&
+      Contains(layout.editor_surface, event.button.x, event.button.y)) {
+    SyncActiveEditorTab();
+    if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
+      NormalizeEditorSplitTree(*editor_tab);
+    }
+    if (MakeEditorMouseCoordinator().HandleGutterContextMenu(event, layout)) {
+      ensure_redraw([this]() { RequestChromeRedraw(); });
+      return true;
+    }
   }
 
   if (event.button.button == SDL_BUTTON_RIGHT &&
@@ -321,6 +348,13 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
+  }
+
+  // Floating debug control bar sits over the top-right of the editor; intercept
+  // its clicks before the editor coordinator turns them into text selection.
+  if (HandleDebugToolbarButtonDown(event, layout)) {
+    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    return true;
   }
 
   util::PerformanceTrace::Scope editor_scope("WorkspaceShell::HandleMouseButtonDown::Editor");

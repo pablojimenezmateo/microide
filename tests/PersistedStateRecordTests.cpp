@@ -2,6 +2,7 @@
 
 #include "persistence/PersistedRecord.h"
 #include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/WorkspaceProjectState.h"
 
 #include <cmath>
 #include <cstddef>
@@ -11,16 +12,23 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::DecodeDebugStateRecord;
 using microide::workspace::DecodeProjectConfigRecord;
 using microide::workspace::DecodeProjectSessionRecord;
 using microide::workspace::DecodeUserConfigRecord;
 using microide::workspace::DecodeWorkspaceSessionRecord;
+using microide::workspace::EncodeDebugStateRecord;
 using microide::workspace::EncodeProjectConfigRecord;
 using microide::workspace::EncodeProjectSessionRecord;
 using microide::workspace::EncodeUserConfigRecord;
 using microide::workspace::EncodeWorkspaceSessionRecord;
+using microide::workspace::PersistedBreakpoint;
+using microide::workspace::PersistedDebugState;
 using microide::workspace::PersistedEditorTabState;
 using microide::workspace::PersistedEditorViewState;
+using microide::workspace::PersistedFileBreakpoints;
+using microide::workspace::PersistedFunctionBreakpoint;
+using microide::workspace::PersistedLaunchConfig;
 using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedSidebarViewPolicy;
@@ -124,6 +132,9 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.outgoing_base_choice.custom_ref = "release/2.0";
   session.active_tab_index = 1;
   session.tabs = {editor_tab, compare_tab};
+  session.right_pane_visible = true;
+  session.right_pane_width = 312.0f;
+  session.right_pane_mode = static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch);
   return session;
 }
 
@@ -147,6 +158,27 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
              decoded_session.tabs[0].views.size() == 1 &&
              decoded_session.tabs[1].compare_right_ref == "WORKTREE",
          "project session tabs should round-trip");
+  Expect(decoded_session.right_pane_visible &&
+             std::fabs(decoded_session.right_pane_width - 312.0f) < 0.0001f &&
+             decoded_session.right_pane_mode ==
+                 static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch),
+         "project session right-pane fields should round-trip");
+
+  // A record stream lacking the right-pane tags (older session file) decodes to
+  // the struct defaults rather than failing.
+  PersistedProjectSessionState legacy = BuildProjectSessionFixture();
+  legacy.right_pane_visible = false;
+  legacy.right_pane_width = 288.0f;
+  legacy.right_pane_mode = 0;
+  std::vector<std::byte> legacy_record;
+  Expect(EncodeProjectSessionRecord(legacy, &legacy_record),
+         "legacy project session encode should succeed");
+  PersistedProjectSessionState decoded_legacy;
+  Expect(DecodeProjectSessionRecord(legacy_record, &decoded_legacy),
+         "legacy project session decode should succeed");
+  Expect(!decoded_legacy.right_pane_visible &&
+             decoded_legacy.right_pane_mode == 0,
+         "absent right-pane tags decode to defaults");
   std::size_t offset = 0;
   bool saw_chat_registry = false;
   while (offset < session_record.size()) {
@@ -260,6 +292,146 @@ void TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto() {
          "missing outgoing base fields should default to Auto");
 }
 
+void TestPersistedStateDebugStateRoundTrip() {
+  PersistedDebugState state;
+  PersistedFileBreakpoints file_a;
+  file_a.path = "/proj/main.py";
+  file_a.breakpoints.push_back(PersistedBreakpoint{.line = 4, .enabled = true});
+  file_a.breakpoints.push_back(
+      PersistedBreakpoint{.line = 9, .enabled = false, .condition = std::string("x > 5")});
+  PersistedFileBreakpoints file_b;
+  file_b.path = "/proj/util.py";
+  file_b.breakpoints.push_back(
+      PersistedBreakpoint{.line = 1, .log_message = std::string("hit {x}")});
+  state.files.push_back(std::move(file_a));
+  state.files.push_back(std::move(file_b));
+  state.launch_configs.push_back(PersistedLaunchConfig{
+      .name = "Debug main",
+      .type = "debugpy",
+      .request = "launch",
+      .arguments_json = R"({"program":"main.py","stopOnEntry":true})",
+  });
+  state.selected_launch_config_index = 0;
+  state.watch_expressions = {"i", "arr[i]", "node->next"};
+  state.enabled_exception_filters = {"raised", "uncaught"};
+  state.exception_filters_seeded = true;
+  state.function_breakpoints.push_back(PersistedFunctionBreakpoint{.name = "main"});
+  state.function_breakpoints.push_back(PersistedFunctionBreakpoint{
+      .name = "compute", .enabled = false, .condition = std::string("n > 0")});
+  state.exception_filter_conditions = {{"throw", "x == 2"}};
+
+  std::vector<std::byte> encoded;
+  Expect(EncodeDebugStateRecord(state, &encoded), "debug state should encode");
+
+  PersistedDebugState decoded;
+  Expect(DecodeDebugStateRecord(encoded, &decoded), "debug state should decode");
+  Expect(decoded.function_breakpoints.size() == 2 &&
+             decoded.function_breakpoints[0].name == "main" &&
+             decoded.function_breakpoints[1].name == "compute" &&
+             decoded.function_breakpoints[1].enabled == false &&
+             decoded.function_breakpoints[1].condition.has_value() &&
+             *decoded.function_breakpoints[1].condition == "n > 0",
+         "function breakpoints round-trip in order with their fields");
+  Expect(decoded.exception_filter_conditions.size() == 1 &&
+             decoded.exception_filter_conditions.at("throw") == "x == 2",
+         "per-filter exception conditions round-trip");
+  Expect(decoded.watch_expressions.size() == 3 && decoded.watch_expressions[0] == "i" &&
+             decoded.watch_expressions[2] == "node->next",
+         "watch expressions round-trip in order");
+  Expect(decoded.enabled_exception_filters.size() == 2 &&
+             decoded.enabled_exception_filters[0] == "raised" &&
+             decoded.enabled_exception_filters[1] == "uncaught",
+         "enabled exception filters round-trip in order (Phase 7)");
+  Expect(decoded.exception_filters_seeded, "the seeded flag round-trips (Phase 7)");
+  Expect(decoded.files.size() == 2, "two breakpoint files should round-trip");
+  Expect(decoded.files[0].path == std::filesystem::path("/proj/main.py"), "file path round-trips");
+  Expect(decoded.files[0].breakpoints.size() == 2, "two breakpoints on first file");
+  Expect(decoded.files[0].breakpoints[1].line == 9 &&
+             decoded.files[0].breakpoints[1].enabled == false &&
+             decoded.files[0].breakpoints[1].condition.has_value() &&
+             *decoded.files[0].breakpoints[1].condition == "x > 5",
+         "conditional breakpoint round-trips");
+  Expect(decoded.files[1].breakpoints[0].log_message.has_value() &&
+             *decoded.files[1].breakpoints[0].log_message == "hit {x}",
+         "logpoint message round-trips");
+  Expect(decoded.launch_configs.size() == 1 && decoded.launch_configs[0].type == "debugpy" &&
+             decoded.launch_configs[0].arguments_json ==
+                 R"({"program":"main.py","stopOnEntry":true})",
+         "launch config round-trips with verbatim arguments json");
+  Expect(decoded.selected_launch_config_index == 0, "selected index round-trips");
+}
+
+void TestPersistedStateDebugStateBackwardCompatNoWatch() {
+  // A pre-Phase-6 record carried no WatchExpression tags. The new encoder emits
+  // none when the list is empty, producing byte-identical output, so this also
+  // proves an old record decodes with the new (additive-tag) decoder: the
+  // breakpoints survive and watch_expressions defaults empty (no schema bump).
+  PersistedDebugState state;
+  PersistedFileBreakpoints file;
+  file.path = "/proj/legacy.py";
+  file.breakpoints.push_back(PersistedBreakpoint{.line = 3, .enabled = true});
+  state.files.push_back(std::move(file));
+  state.selected_launch_config_index = 2;
+
+  std::vector<std::byte> encoded;
+  Expect(EncodeDebugStateRecord(state, &encoded), "legacy-shaped debug state should encode");
+
+  PersistedDebugState decoded;
+  Expect(DecodeDebugStateRecord(encoded, &decoded), "a record without watch tags should decode");
+  Expect(decoded.watch_expressions.empty(), "missing watch tags default to an empty list");
+  Expect(decoded.enabled_exception_filters.empty() && !decoded.exception_filters_seeded,
+         "missing exception-filter tags default to empty/unseeded (Phase 7 additive)");
+  Expect(decoded.files.size() == 1 && decoded.files[0].breakpoints.size() == 1 &&
+             decoded.files[0].breakpoints[0].line == 3,
+         "breakpoints survive a watch-free record");
+  Expect(decoded.selected_launch_config_index == 2, "selected index survives a watch-free record");
+}
+
+// Watch expressions, conditions, and log messages can contain quotes, newlines,
+// and non-ASCII — the length-prefixed binary format must round-trip them verbatim
+// (a previous concern was special characters corrupting the record).
+void TestPersistedStateDebugStateSpecialCharacters() {
+  PersistedDebugState state;
+  PersistedFileBreakpoints file;
+  file.path = "/proj/π/main.py";  // non-ASCII path component
+  file.breakpoints.push_back(PersistedBreakpoint{
+      .line = 7,
+      .enabled = true,
+      .condition = std::string("s == \"a\\tb\" && n > 0\nx"),  // quotes, tab, newline
+      .log_message = std::string("héllo {x}\nline2"),          // unicode + newline
+  });
+  state.files.push_back(std::move(file));
+  state.watch_expressions = {"\"quoted\"", "a\nb", "ünïcödé", "tab\tsep", ""};
+
+  std::vector<std::byte> encoded;
+  Expect(EncodeDebugStateRecord(state, &encoded), "special-character debug state should encode");
+
+  PersistedDebugState decoded;
+  Expect(DecodeDebugStateRecord(encoded, &decoded), "special-character debug state should decode");
+  Expect(decoded.watch_expressions.size() == 5 && decoded.watch_expressions[0] == "\"quoted\"" &&
+             decoded.watch_expressions[1] == "a\nb" && decoded.watch_expressions[2] == "ünïcödé" &&
+             decoded.watch_expressions[3] == "tab\tsep" && decoded.watch_expressions[4].empty(),
+         "watch expressions round-trip special characters verbatim");
+  Expect(decoded.files.size() == 1 &&
+             decoded.files[0].path == std::filesystem::path("/proj/π/main.py"),
+         "a non-ASCII path round-trips");
+  const auto& bp = decoded.files[0].breakpoints[0];
+  Expect(bp.condition.has_value() && *bp.condition == "s == \"a\\tb\" && n > 0\nx",
+         "a condition with quotes/tab/newline round-trips verbatim");
+  Expect(bp.log_message.has_value() && *bp.log_message == "héllo {x}\nline2",
+         "a log message with unicode + newline round-trips verbatim");
+}
+
+void TestPersistedStateDebugStateRequiresSchema() {
+  // A body without the Schema tag must be rejected (mirrors project-session).
+  std::vector<std::byte> body;
+  PersistedDebugState empty;
+  // Encode then strip is awkward; instead decode an empty/garbage buffer.
+  PersistedDebugState decoded;
+  Expect(!DecodeDebugStateRecord(std::span<const std::byte>(body), &decoded),
+         "empty body (no schema tag) should fail to decode");
+}
+
 }  // namespace
 
 // Regression: a corrupt/adversarial length prefix must not drive an unbounded
@@ -300,6 +472,13 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateRecordDecodersSkipUnknownTags);
   AddTest(tests, "PersistedStateRecord/ProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto",
           TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto);
+  AddTest(tests, "PersistedStateRecord/DebugStateRoundTrip", TestPersistedStateDebugStateRoundTrip);
+  AddTest(tests, "PersistedStateRecord/DebugStateBackwardCompatNoWatch",
+          TestPersistedStateDebugStateBackwardCompatNoWatch);
+  AddTest(tests, "PersistedStateRecord/DebugStateSpecialCharacters",
+          TestPersistedStateDebugStateSpecialCharacters);
+  AddTest(tests, "PersistedStateRecord/DebugStateRequiresSchema",
+          TestPersistedStateDebugStateRequiresSchema);
 }
 
 }  // namespace microide::tests

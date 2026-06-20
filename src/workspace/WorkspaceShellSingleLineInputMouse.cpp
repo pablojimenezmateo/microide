@@ -211,6 +211,15 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         }
         break;
       }
+      case OverlayMode::LaunchConfigPicker: {
+        // Same query field geometry as the commit picker (overlay.y + 52).
+        const SDL_FRect r = overlay_field_rect(overlay.y + 52.0f);
+        if (Contains(r, x, y)) {
+          return FilledHit(TextInputSurface::LaunchConfigPicker, r, "> ",
+                           &state.overlay.workflow.launch_config_picker.query);
+        }
+        break;
+      }
       case OverlayMode::Completion:
       case OverlayMode::CodeActions:
         break;
@@ -355,6 +364,7 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     case TextInputSurface::BufferSearch:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
       context_.current_project_state.surface.focus = FocusTarget::Overlay;
       break;
     case TextInputSurface::SidebarSearchQuery:
@@ -365,6 +375,9 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
       break;
     case TextInputSurface::SettingsQuery:
       // The Settings overlay owns its own focus and mouse handling.
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables value field is entered/managed by the bottom-panel mouse
+      // coordinator, not the shared single-line hit-test path.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -417,6 +430,7 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace: {
       // Re-dispatch via FindSingleLineInputHit at the *current* pointer is wrong
@@ -467,6 +481,12 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
                             &proj.overlay.workflow.compare_picker.query);
           }
           break;
+        case TextInputSurface::LaunchConfigPicker:
+          if (proj.overlay.visible) {
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + 52.0f), "> ",
+                            &proj.overlay.workflow.launch_config_picker.query);
+          }
+          break;
         case TextInputSurface::SidebarSearchQuery:
           if (proj.sidebar.visible) {
             hit = FilledHit(surface, ProjectSearchQueryRect(layout.sidebar), "",
@@ -495,6 +515,8 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
       // The multi-line body manages its own drag selection.
     case TextInputSurface::SettingsQuery:
       // The Settings overlay manages its own drag selection.
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables value field has no shared drag-selection geometry.
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

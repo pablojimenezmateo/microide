@@ -174,6 +174,31 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::Term, "New Terminal"),
       MenuItem(ActionId::CopyLastTerminalCommand, "Copy Last Command"),
   });
+  static const auto kDebugItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::DebugToggleEnabled, "Enable Debugger", {}, {}, 0, true),
+      MenuSeparator(),
+      MenuItem(ActionId::StartDebugging, "Start Debugging"),
+      MenuItem(ActionId::PickLaunchConfig, "Select Launch Configuration…"),
+      MenuItem(ActionId::StopDebugging, "Stop Debugging"),
+      MenuItem(ActionId::DebugStopAllSessions, "Stop All Sessions"),
+      MenuSeparator(),
+      MenuItem(ActionId::DebugContinue, "Continue", "F5"),
+      MenuItem(ActionId::DebugStepOver, "Step Over", "F10"),
+      MenuItem(ActionId::DebugStepIn, "Step In", "F11"),
+      MenuItem(ActionId::DebugStepOut, "Step Out", "Shift+F11"),
+      MenuItem(ActionId::DebugPause, "Pause"),
+      MenuItem(ActionId::DebugReverseContinue, "Reverse Continue"),
+      MenuItem(ActionId::DebugStepBack, "Step Back"),
+      MenuItem(ActionId::DebugRestart, "Restart", "Ctrl+Shift+F5"),
+      MenuItem(ActionId::DebugConsoleRepl, "Evaluate in Console…"),
+      MenuSeparator(),
+      MenuItem(ActionId::DebugPaneToggle, "Show Debug Pane", "Ctrl+Shift+D", {}, 0, true),
+      MenuItem(ActionId::DebugPaneShowCallStack, "Call Stack", "Ctrl+Shift+1"),
+      MenuItem(ActionId::DebugPaneShowVariables, "Variables", "Ctrl+Shift+2"),
+      MenuItem(ActionId::DebugPaneShowWatch, "Watch", "Ctrl+Shift+3"),
+      MenuItem(ActionId::DebugPaneShowBreakpoints, "Breakpoints", "Ctrl+Shift+4"),
+      MenuItem(ActionId::DebugShowOutput, "Show Output", "Ctrl+Shift+5"),
+  });
   static const auto kHelpItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSettings, "Settings…", "Ctrl+,"),
       MenuItem(ActionId::PluginsReload, "Reload Plugins"),
@@ -209,6 +234,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::SidebarMode, "Sidebar Mode", {}},
       MenuSpec{MenuId::GitOutgoingBase, "Outgoing Base", {}},
       MenuSpec{MenuId::Terminal, "Terminal", kTerminalItems},
+      MenuSpec{MenuId::Debug, "Debug", kDebugItems},
       MenuSpec{MenuId::Help, "Help", kHelpItems},
       MenuSpec{MenuId::EditorContext, "Editor", kEditorContextItems},
       MenuSpec{MenuId::EditorTabContext, "Tabs", kEditorTabContextItems},
@@ -269,6 +295,16 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuSeparator(),
       MenuItem(ActionId::TreeRefresh, "Refresh"),
   });
+  // Breakpoint gutter context menu (MATLAB-style). The menu only opens on an
+  // existing breakpoint; the toggle item's label flips between "Disable" and
+  // "Enable" in WorkspaceShell::MenuItemLabel based on the breakpoint's state.
+  static const auto kBreakpointItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::DebugBreakpointToggleEnabled, "Disable Breakpoint"),
+      MenuItem(ActionId::DebugBreakpointEditCondition, "Set Condition…"),
+      MenuItem(ActionId::DebugBreakpointClearCondition, "Clear Condition"),
+      MenuSeparator(),
+      MenuItem(ActionId::DebugBreakpointRemove, "Remove Breakpoint"),
+  });
 
   switch (target) {
     case TreeContextTargetKind::File:
@@ -279,6 +315,8 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       return kRootItems;
     case TreeContextTargetKind::Background:
       return kBackgroundItems;
+    case TreeContextTargetKind::BreakpointLine:
+      return kBreakpointItems;
     case TreeContextTargetKind::None:
     default:
       return {};

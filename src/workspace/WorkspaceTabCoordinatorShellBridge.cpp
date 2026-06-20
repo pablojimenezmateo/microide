@@ -102,6 +102,12 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                                 EditorBannerState::Kind::ExternalChange, path);
                 RequestEditorSurfaceRedraw();
               },
+          .notify_save_failed =
+              [this](const std::filesystem::path& path) {
+                const std::string name =
+                    path.empty() ? std::string("file") : path.filename().string();
+                Notify(NotificationService::Tone::Error, "Failed to save " + name);
+              },
       });
 }
 
@@ -156,6 +162,10 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
           *error_message += ": " + result.stderr_text;
         }
       }
+      // The file still saves (unformatted); warn so the silent formatter failure
+      // is visible rather than swallowed.
+      Notify(NotificationService::Tone::Warning,
+             "Formatter '" + formatter->id + "' failed; saved unformatted");
       return true;
     }
     if (!result.stdout_text.empty()) {

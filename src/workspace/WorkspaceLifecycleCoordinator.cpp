@@ -82,6 +82,10 @@ void LifecycleCoordinator::Shutdown() {
   operations_.persist_inactive_projects_for_shutdown();
   operations_.save_workspace_session();
   operations_.shutdown_project_search_runtime();
+  // Stop the control listener and remove the discovery descriptor. Cheap (the
+  // I/O thread wakes via its self-pipe, so the join returns immediately) and off
+  // the visible path — the window is already destroyed before Shutdown() runs.
+  operations_.stop_control_channel();
   // Terminal session teardown and cursor cleanup are intentionally skipped here:
   // the process exits via quick_exit() immediately after, so the OS reclaims
   // all child processes and resources without per-terminal blocking waits.
@@ -184,6 +188,12 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   if (project_file_event_type_ == static_cast<Uint32>(-1)) {
     project_file_event_type_ = 0;
   }
+  // Run the project file monitor's recursive tree walks off the shell thread, so a
+  // large project never stalls the UI while polling for external changes.
+  project_file_monitor_.SetBackgroundPoster(
+      [this](std::string key, std::function<void()> task) {
+        project_background_executor_.PostLatest(std::move(key), std::move(task));
+      });
 
   project_open_dialog_event_type_ = SDL_RegisterEvents(1);
   if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
@@ -201,6 +211,19 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     }
   } else {
     lsp_event_type_ = 0;
+  }
+
+  dap_event_type_ = SDL_RegisterEvents(1);
+  if (dap_event_type_ != static_cast<Uint32>(-1)) {
+    debug_service_.SetWakeEventType(dap_event_type_);
+    EnsureProjectDapManager(context_.current_project_state).SetWakeEventType(dap_event_type_);
+    for (const auto& entry : context_.project_catalog.entries) {
+      if (entry != nullptr) {
+        EnsureProjectDapManager(*entry).SetWakeEventType(dap_event_type_);
+      }
+    }
+  } else {
+    dap_event_type_ = 0;
   }
 
   plugin_async_process_event_type_ = SDL_RegisterEvents(1);
@@ -224,6 +247,16 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     event.type = event_type;
     SDL_PushEvent(&event);
   });
+
+  // Control channel. Always allocate the wake event + bind it so the marshaling
+  // path is ready; only the socket listener is gated on `control.enabled`, which
+  // is what lets the channel be toggled on at runtime without a restart.
+  control_event_type_ = SDL_RegisterEvents(1);
+  if (control_event_type_ == static_cast<Uint32>(-1)) {
+    control_event_type_ = 0;
+  }
+  control_channel_service_.SetWakeEventType(control_event_type_);
+  MaybeStartControlChannel();
 }
 
 void WorkspaceShell::DestroyLifecycleCursors() {
@@ -329,6 +362,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
+          .stop_control_channel = [this]() { control_channel_service_.Stop(); },
           .clear_terminal_tabs =
               [this]() { context_.current_project_state.terminal_tabs.clear(); },
           .destroy_cursors = [this]() { DestroyLifecycleCursors(); },

@@ -58,7 +58,7 @@ LspClient::Diagnostic ParseDiagnostic(const JsonValue& value) {
   diagnostic.range = ParseRange(value["range"]);
   diagnostic.message = value["message"].AsString();
   diagnostic.severity = static_cast<int>(value["severity"].AsInt(1));
-  diagnostic.code = value["code"].IsString() ? value["code"].AsString() : "";
+  diagnostic.code = value["code"].AsString();
   return diagnostic;
 }
 
@@ -89,10 +89,8 @@ LspClient::DocumentSymbol ParseDocumentSymbol(const JsonValue& value) {
     symbol.selection_range =
         value.HasKey("selectionRange") ? ParseRange(value["selectionRange"]) : symbol.range;
   }
-  if (value["children"].IsArray()) {
-    for (const auto& child : value["children"].AsArray()) {
-      symbol.children.push_back(ParseDocumentSymbol(child));
-    }
+  for (const auto& child : value["children"].AsArray()) {
+    symbol.children.push_back(ParseDocumentSymbol(child));
   }
   return symbol;
 }

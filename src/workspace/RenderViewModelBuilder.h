@@ -5,6 +5,7 @@
 #include <string>
 
 #include "editor/EditorViewModel.h"
+#include "workspace/DebugViewModel.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/NotificationService.h"
 #include "workspace/WorkspaceContext.h"
@@ -121,6 +122,19 @@ struct BottomPanelSurfaceViewModel {
   BottomPanelTabDragViewModel tab_drag;
 };
 
+// Right-side debug pane surface (Call Stack / Variables / Watch / Breakpoints).
+// The backing models live on `project_state` and already hold prebuilt display
+// strings, so the view model only forwards the pointer + the active surface's
+// scroll and a static label string_view — no per-frame string materialization.
+struct DebugPaneSurfaceViewModel {
+  bool visible = false;
+  DebugPaneMode mode = DebugPaneMode::CallStack;
+  int scroll_row = 0;
+  std::string_view header_label;
+  FocusTarget focus = FocusTarget::Sidebar;
+  ProjectWorkspaceState* project_state = nullptr;
+};
+
 struct HoverPopupViewModel {
   bool visible = false;
   bool has_active_target = false;
@@ -129,6 +143,12 @@ struct HoverPopupViewModel {
 struct HoverTargetsViewModel {
   bool hover_enabled = false;
   const editor::DiagnosticsStore* diagnostics_store = nullptr;
+  // Debug hover-to-inspect (Phase 5): non-null only when the caller-supplied gate
+  // holds (debug.enabled + session Stopped + adapter advertises hover evaluation),
+  // so the render-surface resolver reads debug state through the view model rather
+  // than reaching into project state directly.
+  const DebugExecutionView* debug_execution = nullptr;
+  const DebugHoverModel* debug_hover = nullptr;
 };
 
 struct StatusBarSegmentViewModel {
@@ -208,6 +228,7 @@ class RenderViewModelBuilder {
   OverlaySurfaceViewModel BuildOverlaySurface() const;
   TextInputSurfaceViewModel BuildTextInputSurface() const;
   SidebarSurfaceViewModel BuildSidebarSurface() const;
+  DebugPaneSurfaceViewModel BuildDebugPaneSurface() const;
   /// Populates `out` with clear()+push_back / assign patterns so vector capacities are reused
   /// when the workspace render path retains the same `EditorViewModel` object across frames.
   void BuildEditorViewModelInto(editor::EditorViewModel& out,
@@ -218,7 +239,10 @@ class RenderViewModelBuilder {
                                 bool occurrences_case_sensitive,
                                 bool sticky_scroll_enabled = false,
                                 int sticky_max_depth = 3,
-                                bool render_whitespace_enabled = false) const;
+                                bool render_whitespace_enabled = false,
+                                bool debug_enabled = false,
+                                const editor::BreakpointStore* breakpoints = nullptr,
+                                const DebugExecutionView* debug_execution = nullptr) const;
 
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
                                                std::size_t visible_rows,
@@ -230,7 +254,10 @@ class RenderViewModelBuilder {
                                                bool render_whitespace_enabled = false) const;
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
   HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
-  HoverTargetsViewModel BuildHoverTargets() const;
+  // `debug_hover_enabled` is the shell-computed gate (debug.enabled + session
+  // Stopped + supportsEvaluateForHovers); when set, the returned view model carries
+  // the focused-frame execution view + the hover-eval cache for the resolver.
+  HoverTargetsViewModel BuildHoverTargets(bool debug_hover_enabled = false) const;
   StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
                                     const class StatusBarService& service) const;
   NotificationsViewModel BuildNotifications(const NotificationService& service) const;

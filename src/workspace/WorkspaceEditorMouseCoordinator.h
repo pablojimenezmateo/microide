@@ -40,6 +40,13 @@ class EditorMouseCoordinator {
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     // Dispatches a non-blocking external-change banner action (Reload/Overwrite/Keep).
     std::function<void(EditorBannerAction, const std::filesystem::path&)> editor_banner_action;
+    // Notifies that a breakpoint was toggled on `path` (live re-send to an
+    // active debug session). Only invoked when `debug.enabled` is ON.
+    std::function<void(const std::filesystem::path&)> on_breakpoint_toggled;
+    // Opens the breakpoint-gutter context menu for `path:line` (Phase 6).
+    // Only invoked on a gutter right-click when `debug.enabled` is ON.
+    std::function<void(const std::filesystem::path&, std::size_t, const SDL_FRect&)>
+        open_breakpoint_context_menu;
   };
 
   EditorMouseCoordinator(ProjectWorkspaceState& state,
@@ -48,6 +55,11 @@ class EditorMouseCoordinator {
                          Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  // Right-click on the breakpoint gutter → open the breakpoint context menu
+  // (Phase 6). Returns true only when it opened the menu; has no other side
+  // effects, so the caller can fall through to the editor context menu when it
+  // declines. Gated on `debug.enabled`.
+  bool HandleGutterContextMenu(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleSelectionMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleWheel(const SDL_Event& event,

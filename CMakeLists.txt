@@ -137,7 +137,11 @@ target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 set(MICROIDE_CORE_SOURCES
   src/app/BackgroundTaskCounter.cpp
   src/editor/BracketScanner.cpp
+  src/editor/BreakpointRender.cpp
+  src/editor/BreakpointStore.cpp
+  src/editor/FunctionBreakpointStore.cpp
   src/editor/DecoratedTextGridRenderer.cpp
+  src/editor/ExecutionLineRender.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
@@ -178,6 +182,8 @@ set(MICROIDE_CORE_SOURCES
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
   src/platform/AsyncSubprocess.cpp
+  src/platform/ControlSocketClient.cpp
+  src/platform/ControlSocketServer.cpp
   src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
@@ -268,6 +274,7 @@ set(MICROIDE_CORE_SOURCES
   src/terminal/TerminalMouseEncoder.cpp
   src/terminal/TerminalOscClipboard.cpp
   src/terminal/TerminalProcessControl.cpp
+  src/util/DebugTrace.cpp
   src/util/DurableFile.cpp
   src/util/JsonValue.cpp
   src/util/GitConflictMarkers.cpp
@@ -294,6 +301,11 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceActionServicesContextFactory.cpp
   src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
+  src/workspace/ControlChannelService.cpp
+  src/workspace/ControlClient.cpp
+  src/workspace/ControlProtocol.cpp
+  src/workspace/ControlSpec.cpp
+  src/workspace/ManPage.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
   src/workspace/WorkspaceEditActionExecutor.cpp
@@ -351,6 +363,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellHoverTargets.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
+  src/workspace/DebugToolbarSurface.cpp
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellTestAccess.cpp
   src/workspace/WorkspaceShellOutput.cpp
@@ -379,6 +392,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/TerminalPanelService.cpp
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
+  src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp
   src/workspace/GitRepositoryService.cpp
   src/workspace/PatchApplyService.cpp
   src/workspace/PersistenceService.cpp
@@ -425,6 +439,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLanguageContract.cpp
   src/workspace/WorkspaceFoldingRefresh.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
+  src/workspace/SettingsStore.cpp
   src/workspace/SettingsOverlayService.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
@@ -433,6 +448,24 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLspClient.cpp
   src/workspace/WorkspaceLspClientRequests.cpp
   src/workspace/WorkspaceLspManager.cpp
+  src/workspace/DapProtocol.cpp
+  src/workspace/WorkspaceDapClient.cpp
+  src/workspace/WorkspaceDapManager.cpp
+  src/workspace/DebugSession.cpp
+  src/workspace/DebugSessionBreakpoints.cpp
+  src/workspace/DebugService.cpp
+  src/workspace/DebugServiceBreakpoints.cpp
+  src/workspace/DebugServiceCallbacks.cpp
+  src/workspace/DebugServiceVariables.cpp
+  src/workspace/DebugBreakpointsModel.cpp
+  src/workspace/DebugValueTree.cpp
+  src/workspace/DebugVariablesModel.cpp
+  src/workspace/DebugWatchModel.cpp
+  src/workspace/DebugPaneRegistry.cpp
+  src/workspace/DebugPaneLayout.cpp
+  src/workspace/DebugPaneRender.cpp
+  src/workspace/DebugPaneService.cpp
+  src/workspace/DebugPaneMouseCoordinator.cpp
   src/workspace/WorkspaceFormatterRegistry.cpp
   src/workspace/WorkspaceSaveParticipants.cpp
   src/workspace/WorkspaceCompletionRegistry.cpp
@@ -492,7 +525,11 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic)
+  # -Wno-missing-field-initializers: the codebase uses C++20 designated initializers
+  # pervasively and intentionally omits trailing fields (they zero-initialize). The
+  # -Wextra sub-warning flags every such site as a false positive, so disable it
+  # rather than litter hundreds of call sites with explicit zero-inits.
+  target_compile_options(microide PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide PRIVATE -Werror)
   endif()
@@ -507,6 +544,8 @@ if(UNIX AND NOT APPLE)
   )
 
   install(TARGETS microide RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/microide.1"
+          DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/"
             DESTINATION "${CMAKE_INSTALL_DATADIR}/microide/assets")
@@ -549,14 +588,23 @@ add_executable(microide_tests
   tests/AppDirectoriesTests.cpp
   tests/AppStartupOptionsTests.cpp
   src/app/AppStartupOptions.cpp
+  tests/ControlSocketServerTests.cpp
+  tests/ControlClientTests.cpp
+  tests/ControlProtocolTests.cpp
+  tests/ControlSpecTests.cpp
+  tests/ControlChannelServiceTests.cpp
+  tests/WorkspaceShellControlSettingsTests.cpp
   tests/CompareModelTests.cpp
   tests/CompareReviewTests.cpp
   tests/BranchReviewStateTests.cpp
   tests/PatchApplyTests.cpp
+  tests/BreakpointStoreTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
+  tests/IgnoreMatcherTests.cpp
+  tests/WorkspaceProjectFileMonitorTests.cpp
   tests/FileFinderTests.cpp
   tests/FileIndexTests.cpp
   tests/FileOperationServiceTests.cpp
@@ -567,6 +615,9 @@ add_executable(microide_tests
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
   tests/LspProtocolTests.cpp
+  tests/WorkspaceDapClientTests.cpp
+  tests/DapProtocolTests.cpp
+  tests/DebugServiceTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
   tests/MergeConflictResolutionTests.cpp
@@ -605,6 +656,7 @@ add_executable(microide_tests
   tests/PersistedRecordDumpTests.cpp
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
+  tests/DebugPaneTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/StringUtilTests.cpp
   tests/SubprocessTests.cpp
@@ -618,6 +670,7 @@ add_executable(microide_tests
   tests/EditorMultiCaretTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
+  tests/SettingsStoreTests.cpp
   tests/WorkspaceSettingsRegistryTests.cpp
   tests/WorkspaceShellChromeTests.cpp
   tests/WorkspaceShellEditorBlameTests.cpp
@@ -672,7 +725,7 @@ target_compile_definitions(microide_tests PRIVATE
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_tests PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(microide_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_tests PRIVATE -Werror)
   endif()
@@ -704,6 +757,13 @@ if(MICROIDE_FUZZ)
     tests/fuzz/PersistedRecordReaderFuzz.cpp
   )
   microide_configure_fuzz_target(PersistedRecordReaderFuzz)
+
+  add_executable(DebugStateRecordFuzz
+    src/persistence/PersistedRecord.cpp
+    src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp
+    tests/fuzz/DebugStateRecordFuzz.cpp
+  )
+  microide_configure_fuzz_target(DebugStateRecordFuzz)
 
   add_executable(SearchRegexFuzz
     tests/fuzz/SearchRegexFuzz.cpp
@@ -774,6 +834,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/AdvisoryPerfScenarios.cpp
     tests/perf/GitWorkstationPerfScenarios.cpp
     tests/perf/EditorEssentialsPerfScenarios.cpp
+    tests/perf/DebugPerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )
 
@@ -800,7 +861,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   )
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(microide_perf PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(microide_perf PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
     if(MICROIDE_WARNINGS_AS_ERRORS)
       target_compile_options(microide_perf PRIVATE -Werror)
     endif()
@@ -814,10 +875,12 @@ endif()
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   src/editor/BracketScanner.cpp
+  src/editor/BreakpointRender.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
+  src/editor/ExecutionLineRender.cpp
   src/editor/FoldingModel.cpp
   src/editor/IndentGuides.cpp
   src/editor/RowDecorationBuilder.cpp
@@ -869,7 +932,7 @@ target_include_directories(microide_diff_bench PRIVATE src)
 target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_diff_bench PRIVATE -Werror)
   endif()
@@ -892,7 +955,7 @@ target_include_directories(microide_search_bench PRIVATE src)
 target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide_search_bench PRIVATE -Werror)
   endif()

@@ -23,12 +23,6 @@ class AnnotationRegistry {
   void Register(const AnnotationProviderSpec& spec);
   const std::vector<AnnotationProviderSpec>& Specs() const { return specs_; }
 
-  // Find providers by language_id.
-  std::vector<const AnnotationProviderSpec*> FindProviders(const std::string& language_id) const;
-
-  // Find providers by type (blame, decoration, margin).
-  std::vector<const AnnotationProviderSpec*> FindByType(const std::string& type) const;
-
  private:
   std::vector<AnnotationProviderSpec> specs_;
 };

@@ -109,7 +109,9 @@ std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
                        BottomPanelVisible(), context_.current_project_state.sidebar.width,
                        context_.current_project_state.panel.height,
                        layout_mode_service_.SnapshotInputs(),
-                       layout_mode_service_.StatusBarVisible());
+                       layout_mode_service_.StatusBarVisible(),
+                       context_.current_project_state.debug_pane.visible,
+                       context_.current_project_state.debug_pane.width);
 }
 
 const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeState() const {
@@ -127,6 +129,14 @@ void WorkspaceShell::RequestFullRedraw() {
   pending_render_invalidation_.full = true;
   pending_render_invalidation_.rects.clear();
   QueueEditorHoverRefresh();
+}
+
+void WorkspaceShell::Notify(NotificationService::Tone tone, std::string message) {
+  notification_service_.Show(tone, std::move(message), SDL_GetTicks());
+  // Notifications are infrequent, event-driven posts (never per-frame polling),
+  // so a full redraw here never spins the CPU. The shell schedules a single wake
+  // at the toast's expiry (see NextAnimationDelayMs) to retire it.
+  RequestFullRedraw();
 }
 
 void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
@@ -440,6 +450,20 @@ void WorkspaceShell::RequestBottomPanelRedraw() {
   RequestWindowRedraw();
 }
 
+void WorkspaceShell::RequestDebugPaneRedraw() {
+  // The debug surfaces (Call Stack / Variables / Watch / Breakpoints) render in the
+  // right-side dock (layout.right_pane), not the bottom panel. DAP callbacks deliver
+  // variable/stack data asynchronously, so each must invalidate the dock it actually
+  // paints into; targeting the bottom panel here would leave the right pane showing a
+  // stale "Loading…" until some unrelated redraw repainted the window.
+  if (const auto layout = CurrentWorkspaceLayout();
+      layout.has_value() && context_.current_project_state.debug_pane.visible) {
+    RequestRedrawRect(layout->right_pane);
+    return;
+  }
+  RequestWindowRedraw();
+}
+
 void WorkspaceShell::RequestBottomPanelCommandRedraw() {
   if (const auto rect = CurrentBottomPanelCommandRedrawRect(); rect.has_value()) {
     RequestRedrawRect(*rect);
@@ -729,10 +753,22 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
 }
 
 WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
+  std::optional<Uint32> wait_ms;
   if (const auto next_delay = NextAnimationDelayMs(); next_delay.has_value()) {
+    wait_ms = std::max<Uint32>(1, *next_delay);
+  }
+  // While a debug-adapter request is in flight, poll on a short interval so the
+  // async response is applied promptly. Otherwise a fully-idle blocking wait
+  // relies solely on the cross-thread SDL wake to deliver it, which can defer the
+  // scopes/variables/evaluate result by seconds and makes expansion feel frozen.
+  if (DebugEnabled() && debug_service_.HasInFlightDapWork()) {
+    constexpr Uint32 kDapPollMs = 16;
+    wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
+  }
+  if (wait_ms.has_value()) {
     return IdleWaitState{
         .hint = IdleHint::CaretOnly,
-        .caret_remaining_ms = std::max<Uint32>(1, *next_delay),
+        .caret_remaining_ms = *wait_ms,
     };
   }
 
@@ -762,6 +798,13 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   }();
   if (tree_polled) {
     supplemental.tree_rescan_requested = true;
+  }
+
+  // Surface a one-time notice when the project tree is too large to live-watch
+  // (native watch unavailable + polling suppressed). Done before the early returns
+  // below so it fires even when there is no change batch to apply.
+  if (project_file_monitor_.ConsumeTreeTooLargeNotice()) {
+    Notify(NotificationService::Tone::Warning, "Project too large for live file watching");
   }
 
   if (!supplemental.repository_changes.empty() || supplemental.tree_rescan_requested) {

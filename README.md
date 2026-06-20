@@ -439,6 +439,43 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `project-prev`
 - `project-search [query]`
 - `plugins-reload`
+- `debug-toggle-enabled`
+- `debug-start`
+- `debug-stop`
+- `debug-continue`
+- `debug-step-over`
+- `debug-step-in`
+- `debug-step-out`
+- `debug-pause`
+- `debug-reverse-continue`
+- `debug-step-back`
+- `debug-restart`
+- `debug-switch-session [n]`
+- `debug-stop-all`
+- `debug-repl`
+- `debug-pick-config`
+- `debug-pane-toggle`
+- `debug-pane-callstack`
+- `debug-pane-variables`
+- `debug-pane-watch`
+- `debug-pane-breakpoints`
+- `debug-show-output`
+- `breakpoint-set <file> <line> [condition]`
+- `breakpoint-remove <file> <line>`
+- `breakpoint-enable <file> <line>`
+- `breakpoint-disable <file> <line>`
+- `breakpoint-condition <file> <line> [expr]`
+- `breakpoint-hit-condition <file> <line> [expr]`
+- `breakpoint-logmessage <file> <line> [message]`
+- `breakpoint-clear [file]`
+- `breakpoint-function-add <name>`
+- `breakpoint-function-remove <name>`
+- `breakpoint-function-toggle <name>`
+- `breakpoint-function-condition <name> [expr]`
+- `breakpoint-exception-condition <filterId> [expr]`
+- `debug-launch [name]`
+- `debug-run [--type <adapter>] <program> [args...]`
+- `set-setting <id> <value>`
 - `quit`
 - `reopen`
 - `save`

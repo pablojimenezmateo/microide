@@ -18,7 +18,7 @@ class PanelMouseCoordinator {
   struct Operations {
     std::function<bool()> bottom_panel_visible;
     std::function<SDL_FRect(const WorkspaceLayout&)> bottom_panel_resize_handle_rect;
-    std::function<WorkspaceShell::BottomPanelLogLayout(const WorkspaceLayout&, std::size_t)>
+    std::function<WorkspaceShell::LogSurfaceLayout(const WorkspaceLayout&, std::size_t)>
         compute_bottom_panel_log_layout;
     std::function<std::size_t()> bottom_panel_line_count;
     std::function<void(int, std::size_t, int)> set_bottom_panel_scroll_row;
@@ -43,6 +43,27 @@ class PanelMouseCoordinator {
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<float(float, float)> clamp_bottom_panel_height;
     std::function<void()> sync_primary_selection_with_terminal_selection;
+    // Debug Variables panel (Phase 4): re-fetch scopes/variables when a different
+    // call-stack frame is focused; lazily expand/collapse a tree row; enter inline
+    // value edit on a leaf.
+    std::function<void(int)> on_debug_frame_focus_changed;
+    // Call Stack thread selector (Phase 7 multi-thread): switch the active thread,
+    // re-resolving its frames.
+    std::function<void(int)> on_debug_thread_focus_changed;
+    // Call Stack session selector (Phase 8 multi-session): switch the active
+    // session, re-projecting its stop.
+    std::function<void(int)> on_debug_session_focus_changed;
+    std::function<void(std::size_t)> toggle_debug_variable_row;
+    std::function<void(std::size_t)> begin_debug_variable_edit;
+    // Debug Watch panel (Phase 6): toggle a watched value's subtree; begin inline
+    // setVariable edit on a watched child leaf; add/edit a watch expression
+    // string (routed to a prompt on the shell side; `edit` takes its index).
+    std::function<void(std::size_t)> toggle_debug_watch_row;
+    std::function<void(std::size_t)> begin_debug_watch_edit;
+    std::function<void()> add_debug_watch_expression;
+    std::function<void(std::size_t)> edit_debug_watch_expression;
+    // Debug Breakpoints panel (Phase 7): toggle an exception-breakpoint filter.
+    std::function<void(const std::string&)> toggle_debug_exception_filter;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,

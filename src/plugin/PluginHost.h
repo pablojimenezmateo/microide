@@ -131,6 +131,33 @@ class PluginHost {
     platform::SubprocessSandbox sandbox;
   };
 
+  struct ContributedDebugAdapter {
+    std::string id;
+    // DAP adapter type id matched by a LaunchConfig's `type` (mirrors how an
+    // LSP `language_id` selects a server). A single project may contribute
+    // several adapters (debugpy, lldb, ...), each with its own type.
+    std::string type;
+    std::vector<std::string> command;
+    std::string plugin_id;
+    // Kernel-confinement descriptor resolved at registration. Debug adapters
+    // typically need ptrace + broad fs access, so the resolved sandbox is more
+    // permissive than the LSP/formatter default.
+    platform::SubprocessSandbox sandbox;
+  };
+
+  // A launch/attach configuration a plugin contributes via ctx.debug.addConfig.
+  // `type` selects a ContributedDebugAdapter; `arguments_json` is the verbatim
+  // launch/attach request body serialized as JSON text (the host parses it into
+  // a LaunchConfig). Persisted per-project alongside breakpoints.
+  struct ContributedLaunchConfig {
+    std::string id;
+    std::string name;
+    std::string type;
+    std::string request;  // "launch" or "attach"
+    std::string arguments_json;
+    std::string plugin_id;
+  };
+
   struct ContributedTask {
     std::string id;
     std::string label;
@@ -424,6 +451,8 @@ class PluginHost {
   const std::vector<ContributedCompletion>& ContributedCompletions() const;
   const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
   const std::vector<ContributedLanguageServer>& ContributedLanguageServers() const;
+  const std::vector<ContributedDebugAdapter>& ContributedDebugAdapters() const;
+  const std::vector<ContributedLaunchConfig>& ContributedLaunchConfigs() const;
   const std::vector<ContributedTask>& ContributedTasks() const;
   const std::vector<ContributedTool>& ContributedTools() const;
   const std::vector<ContributedTestProvider>& ContributedTestProviders() const;

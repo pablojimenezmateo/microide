@@ -70,6 +70,16 @@ history is recorded faithfully in `CHANGELOG.md` (user-facing) and `openspec/cha
 self-hosted perf-runner are descoped; non-Linux host backends are not being built) are recorded under
 **Deferred Or Out Of Scope** below. This section now describes only what is genuinely active.
 
+### 0. Debugger / DAP Support (promoted 2026-06-17)
+
+Full interactive debugging via the Debug Adapter Protocol, host-owned (mirroring the
+LSP client), behind a master "Enable debugger" toggle. Decomposed into independently
+shippable phases (protocol client → session lifecycle → breakpoints → execution
+control → variables → hover-inspect → conditional breakpoints/watches → polish).
+**Phase 0 (protocol client core: `DapClient` + `DapProtocol` + mock-adapter tests)
+is complete.** The full roadmap, status, and next steps live in
+`dev-docs/debugger/dap-integration.md` — read that before continuing the work.
+
 ### 1. Plugin Platform Expansion
 
 This is the dominant current phase and will be large.
@@ -519,6 +529,22 @@ inotify watch exhaustion on very large repos), where polling is the *only* way t
 changes. Forcing it off there would silently miss filesystem changes — a correctness
 regression — so the current behavior is correct as-is.
 
+Follow-up (2026-06-18): the polling fallback above could itself freeze the UI. Opening a
+project with a very large, unpruned tree (e.g. tens of thousands of dirs with no root
+`.gitignore`) exhausts inotify, drops to polling, and then re-walked the whole tree twice
+(`CaptureTreeSnapshot` + `CollectRecursiveWatchPaths`) **on the shell thread** every poll
+interval — pinning a core at ~100%. Fixed by: (1) bounding every recursive walk with
+`platform::kTreeTraversalEntryBudget` (50k entries) and reporting truncation; (2) when a
+tree exceeds the budget, `FileTreeWatcher` enters a "too large" mode where it skips native
+arming, never snapshot-diffs a truncated (order-unstable) walk, and returns `nullopt` from
+`NextPollDelay()` so periodic polling is suppressed entirely; (3) moving the remaining
+polling walks off the shell thread via `WorkspaceProjectFileMonitor::SetBackgroundPoster`
+(`ProjectBackgroundExecutor::PostLatest`), delivering results through the existing wake
+event; and (4) surfacing a one-time "Project too large for live file watching" notification
+(`ConsumeTreeTooLargeNotice`). Net: live watching still works for normal/large-but-pruned
+projects (directory `.gitignore` entries are skipped without descending, so they don't count
+against the budget); only pathologically large trees degrade to refresh-on-demand.
+
 ### 2. Terminal Hardening
 
 Current state:
@@ -610,7 +636,6 @@ Open work:
 
 These are not current project work unless deliberately promoted into their own phase:
 
-- debugger/DAP support
 - plugin marketplaces, remote install flows, and Micro-plugin compatibility
 - plugin sandboxing, marketplace trust, and project-local plugin loading (ships
   `--disable-plugins` / `--safe-mode` only; see `dev-docs/project/git-workstation.md`)

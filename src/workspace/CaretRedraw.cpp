@@ -59,6 +59,7 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:
@@ -67,6 +68,9 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::SettingsQuery:
       // The Settings overlay renders its own static (non-blinking) caret; it does
       // not participate in the shared caret-blink machinery.
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables value field likewise renders its own static caret in the
+      // bottom-panel TU, so it stays out of the blink machinery (no idle wake-ups).
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:
@@ -172,7 +176,7 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(
   }
 
   const std::size_t line_count = terminal_tab->session.LineCount();
-  const BottomPanelLogLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
+  const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(layout, line_count);
   if (cursor.row < static_cast<std::size_t>(panel_layout.scroll.vertical_scroll) ||
       cursor.row >= static_cast<std::size_t>(panel_layout.scroll.vertical_scroll +
                                             panel_layout.scroll.visible_rows)) {

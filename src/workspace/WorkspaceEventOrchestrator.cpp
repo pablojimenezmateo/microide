@@ -85,6 +85,16 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     operations_.consume_lsp_callbacks();
     return finish(true);
   }
+  if (runtime_.dap_event_type != 0 && event.type == runtime_.dap_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::DapEvent");
+    operations_.consume_dap_callbacks();
+    return finish(true);
+  }
+  if (runtime_.control_event_type != 0 && event.type == runtime_.control_event_type) {
+    util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ControlEvent");
+    operations_.consume_control_callbacks();
+    return finish(true);
+  }
   if (runtime_.plugin_async_process_event_type != 0 &&
       event.type == runtime_.plugin_async_process_event_type) {
     util::PerformanceTrace::Scope scope(

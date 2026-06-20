@@ -23,7 +23,9 @@ PathType PathTypeFromStatus(const std::filesystem::file_status& status) {
 
 void SortPaths(auto* entries) {
   std::sort(entries->begin(), entries->end(), [](const auto& lhs, const auto& rhs) {
-    return lhs.path.lexically_normal().generic_string() < rhs.path.lexically_normal().generic_string();
+    // Entries come from directory_iterator, so paths are already normal; native()
+    // returns a const reference, avoiding a per-comparison normalize + string alloc.
+    return lhs.path.native() < rhs.path.native();
   });
 }
 
@@ -59,8 +61,14 @@ std::vector<DirectoryEntry> ListDirectory(const std::filesystem::path& directory
 }
 
 std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesystem::path>& roots,
-                                                   const TreeTraversalFilter& filter) {
+                                                   const TreeTraversalFilter& filter,
+                                                   std::size_t max_entries, bool* truncated) {
+  if (truncated != nullptr) {
+    *truncated = false;
+  }
   std::vector<TreeSnapshotEntry> snapshot;
+  std::size_t visited = 0;
+  bool budget_exhausted = false;
   std::vector<std::filesystem::path> normalized_roots;
   normalized_roots.reserve(roots.size());
   for (const auto& root : roots) {
@@ -98,6 +106,9 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
   };
 
   for (const auto& root : normalized_roots) {
+    if (budget_exhausted) {
+      break;
+    }
     const PathType root_type = ReadPathType(root);
     if (root_type == PathType::Missing) {
       continue;
@@ -111,6 +122,10 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
     constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
     for (std::filesystem::recursive_directory_iterator it(root, options, error), end;
          !error && it != end; it.increment(error)) {
+      if (max_entries != 0 && ++visited > max_entries) {
+        budget_exhausted = true;
+        break;
+      }
       const std::filesystem::path path = it->path().lexically_normal();
       std::error_code status_error;
       const PathType type = PathTypeFromStatus(it->status(status_error));
@@ -130,6 +145,9 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
     }
   }
 
+  if (budget_exhausted && truncated != nullptr) {
+    *truncated = true;
+  }
   SortPaths(&snapshot);
   return snapshot;
 }

@@ -20,6 +20,7 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   run(CheckRenderSurfaceGeometryAccess);
   run(CheckWorkspaceShellCompanionTuCount);
   run(CheckCoordinatorTuSize);
+  run(CheckDebugTuSize);
   run(CheckViewModelBackReferences);
   run(CheckCompareRenderStructuralGate);
   run(CheckPerClipRenderPathDoesNotRunFramePrep);
@@ -28,7 +29,6 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   run(CheckLspDidOpenIsNonBlocking);
   run(CheckTextViewportNoCombinedLayoutRevision);
   run(CheckNoLegacyPersistenceSymbols);
-  run(CheckNoDebuggerDapSurface);
   run(CheckNoExecutorPostThenFutureGetInWorkspace);
   run(CheckNoSynchronousSubprocessInWorkspace);
   run(CheckNoDirectGitRepositoryInWorkspace);
@@ -51,6 +51,7 @@ std::vector<RuleResult> RunWorkspaceArchitectureRules(const std::filesystem::pat
   run(CheckSidebarSurfaceFallbackUsesStringView);
   run(CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings);
   run(CheckEditorViewModelStickyAndOccurrenceAreSpans);
+  run(CheckDebugSubsystemThreadingBehindDapClient);
   return results;
 }
 

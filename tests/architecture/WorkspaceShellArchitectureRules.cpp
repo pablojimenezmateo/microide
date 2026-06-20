@@ -99,6 +99,7 @@ RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root)
   }
   render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp");
   render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverTargets.cpp");
+  render_files.push_back(repo_root / "src/workspace/DebugPaneRender.cpp");
 
   const std::regex direct_state_pattern(R"(context_\.current_project_state)");
   const std::regex current_surface_pattern(R"(\bCurrentTextInputSurface\s*\()");
@@ -118,13 +119,14 @@ RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_ro
   result.label = "render surface geometry access";
   result.hard_fail = true;
 
-  const std::array<std::string_view, 6> render_tus = {
+  const std::array<std::string_view, 7> render_tus = {
       "src/workspace/WorkspaceShellRenderOverlay.cpp",
       "src/workspace/WorkspaceShellRenderTextInput.cpp",
       "src/workspace/WorkspaceShellRenderSidebar.cpp",
       "src/workspace/WorkspaceShellRenderBottomPanel.cpp",
       "src/workspace/WorkspaceShellHoverPopup.cpp",
       "src/workspace/WorkspaceShellHoverTargets.cpp",
+      "src/workspace/DebugPaneRender.cpp",
   };
   const std::regex compute_layout_pattern(R"(\bComputeLayout\s*\()");
   const std::regex direct_window_size_pattern(R"(context_\.window_size\b)");

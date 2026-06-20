@@ -77,6 +77,13 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   PushAddOnlyModule(state, host_upvalue, "completion", fns.completion_add);
   PushAddOnlyModule(state, host_upvalue, "code_actions", fns.code_action_add);
   PushAddOnlyModule(state, host_upvalue, "lsp", fns.lsp_add);
+
+  // ctx.debug exposes both adapter and launch-config contribution.
+  lua_createtable(state, 0, 2);
+  PushBoundFn(state, host_upvalue, fns.debug_add, "add");
+  PushBoundFn(state, host_upvalue, fns.debug_add_config, "addConfig");
+  lua_setfield(state, -2, "debug");
+
   PushAddOnlyModule(state, host_upvalue, "tasks", fns.task_add);
   PushAddOnlyModule(state, host_upvalue, "tools", fns.tool_add);
   PushAddOnlyModule(state, host_upvalue, "tests", fns.test_provider_add);

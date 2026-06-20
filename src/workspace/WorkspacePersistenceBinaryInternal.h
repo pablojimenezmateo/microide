@@ -155,6 +155,9 @@ enum class ProjectSessionTag : std::uint16_t {
   ChatRegistry = 7,
   OutgoingBaseKind = 8,
   OutgoingBaseCustomRef = 9,
+  RightPaneVisible = 10,
+  RightPaneWidth = 11,
+  RightPaneMode = 12,
 };
 
 enum class EditorTabTag : std::uint16_t {
@@ -201,6 +204,50 @@ enum class WorkspaceSessionTag : std::uint16_t {
   Schema = 1,
   ProjectRoot = 2,
   ActiveProjectIndex = 3,
+};
+
+enum class DebugStateTag : std::uint16_t {
+  Schema = 1,
+  FileBreakpoints = 2,            // repeated, one nested record per file
+  LaunchConfig = 3,               // repeated, one nested record per config
+  SelectedLaunchConfigIndex = 4,
+  WatchExpression = 5,            // Phase 6: repeated, one string record per expression
+  ExceptionFilter = 6,            // Phase 7: repeated, one string record per enabled filter id
+  ExceptionFiltersSeeded = 7,     // Phase 7: bool, whether adapter defaults were seeded once
+  FunctionBreakpoint = 8,         // additive: repeated, one nested record per function breakpoint
+  ExceptionFilterCondition = 9,   // additive: repeated, one nested {filterId, condition} record
+};
+
+enum class FunctionBreakpointTag : std::uint16_t {
+  Name = 1,
+  Enabled = 2,
+  Condition = 3,
+  HitCondition = 4,
+};
+
+enum class ExceptionFilterConditionTag : std::uint16_t {
+  FilterId = 1,
+  Condition = 2,
+};
+
+enum class FileBreakpointsTag : std::uint16_t {
+  Path = 1,
+  Breakpoint = 2,                 // repeated, one nested record per breakpoint
+};
+
+enum class BreakpointTag : std::uint16_t {
+  Line = 1,
+  Enabled = 2,
+  Condition = 3,
+  HitCondition = 4,
+  LogMessage = 5,
+};
+
+enum class LaunchConfigTag : std::uint16_t {
+  Name = 1,
+  Type = 2,
+  Request = 3,
+  ArgumentsJson = 4,
 };
 
 template <typename EnumTag, typename WritePayload>

@@ -1,10 +1,12 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "editor/BreakpointStore.h"
 #include "util/Parse.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/WorkspaceDirtyPromptCoordinator.h"
+#include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspacePathUtils.h"
 
@@ -184,6 +186,18 @@ std::string WorkspaceShell::PromptSurfaceTitle() const {
       return "Amend Commit";
     case PromptSurfaceState::Action::ConfirmCommitNoVerify:
       return "Commit Without Hooks";
+    case PromptSurfaceState::Action::SetBreakpointCondition:
+      return "Breakpoint Condition";
+    case PromptSurfaceState::Action::SetBreakpointHitCondition:
+      return "Breakpoint Hit Count";
+    case PromptSurfaceState::Action::SetBreakpointLogMessage:
+      return "Breakpoint Log Message";
+    case PromptSurfaceState::Action::AddWatchExpression:
+      return "Add Watch";
+    case PromptSurfaceState::Action::EditWatchExpression:
+      return "Edit Watch";
+    case PromptSurfaceState::Action::EvaluateReplInput:
+      return "Debug Console";
   }
   return "Prompt";
 }
@@ -224,6 +238,18 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
     case PromptSurfaceState::Action::ConfirmCommitAmend:
     case PromptSurfaceState::Action::ConfirmCommitNoVerify:
       return context_.prompts.surface.detail;
+    case PromptSurfaceState::Action::SetBreakpointCondition:
+      return "Stop only when this expression is true (empty clears).";
+    case PromptSurfaceState::Action::SetBreakpointHitCondition:
+      return "Stop after this many hits, e.g. 5 or >10 (empty clears).";
+    case PromptSurfaceState::Action::SetBreakpointLogMessage:
+      return "Log this message instead of stopping; {expr} interpolates (empty clears).";
+    case PromptSurfaceState::Action::AddWatchExpression:
+      return "Evaluate this expression on every stop.";
+    case PromptSurfaceState::Action::EditWatchExpression:
+      return "Edit this watch expression (empty removes it).";
+    case PromptSurfaceState::Action::EvaluateReplInput:
+      return "Evaluate in the active session; the result prints to the console.";
   }
   return {};
 }
@@ -262,6 +288,16 @@ std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
       return {"Amend", "Cancel"};
     case PromptSurfaceState::Action::ConfirmCommitNoVerify:
       return {"Commit", "Cancel"};
+    case PromptSurfaceState::Action::SetBreakpointCondition:
+    case PromptSurfaceState::Action::SetBreakpointHitCondition:
+    case PromptSurfaceState::Action::SetBreakpointLogMessage:
+      return {"Set", "Cancel"};
+    case PromptSurfaceState::Action::AddWatchExpression:
+      return {"Add", "Cancel"};
+    case PromptSurfaceState::Action::EditWatchExpression:
+      return {"Save", "Cancel"};
+    case PromptSurfaceState::Action::EvaluateReplInput:
+      return {"Evaluate", "Close"};
   }
   return {"OK", "Cancel"};
 }
@@ -342,9 +378,202 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     context_.current_project_state.surface.focus = FocusTarget::Sidebar;
     return;
   }
+  if (context_.prompts.surface_visible &&
+      (context_.prompts.surface.action == PromptSurfaceState::Action::SetBreakpointCondition ||
+       context_.prompts.surface.action == PromptSurfaceState::Action::SetBreakpointHitCondition ||
+       context_.prompts.surface.action == PromptSurfaceState::Action::SetBreakpointLogMessage)) {
+    CommitBreakpointModifierPrompt();
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      (context_.prompts.surface.action == PromptSurfaceState::Action::AddWatchExpression ||
+       context_.prompts.surface.action == PromptSurfaceState::Action::EditWatchExpression)) {
+    CommitWatchExpressionPrompt();
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::EvaluateReplInput) {
+    CommitDebugReplPrompt();
+    return;
+  }
   EditorTabService editor_tabs = MakeEditorTabService();
   PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
   MakePathMutationCoordinator(editor_tabs, prompt_surfaces).ConfirmPromptSurface(resolution);
+}
+
+void WorkspaceShell::OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
+                                               const SDL_FRect& anchor_rect) {
+  // MATLAB-style: the gutter menu acts on an existing breakpoint only. Right-click
+  // on a bare line is inert (left-click still sets a plain breakpoint).
+  const editor::Breakpoint* existing = nullptr;
+  if (const std::vector<editor::Breakpoint>* bps =
+          context_.current_project_state.breakpoint_store.FindByPath(path);
+      bps != nullptr) {
+    for (const editor::Breakpoint& bp : *bps) {
+      if (bp.line == line) {
+        existing = &bp;
+        break;
+      }
+    }
+  }
+  if (existing == nullptr) {
+    return;
+  }
+  MakeMenuCoordinator().OpenTreeContextMenu(TreeContextTargetKind::BreakpointLine, path,
+                                            anchor_rect, line);
+  context_.menu_state.tree_context_menu.breakpoint_enabled = existing->enabled;
+}
+
+void WorkspaceShell::EditBreakpointModifierFromMenu(ActionId id) {
+  const std::filesystem::path path = context_.menu_state.tree_context_menu.path;
+  const std::size_t line = context_.menu_state.tree_context_menu.line;
+  if (path.empty()) {
+    return;
+  }
+  // Seed the prompt with the current field value, if a breakpoint exists.
+  const editor::Breakpoint* existing = nullptr;
+  if (const std::vector<editor::Breakpoint>* bps =
+          context_.current_project_state.breakpoint_store.FindByPath(path);
+      bps != nullptr) {
+    for (const editor::Breakpoint& bp : *bps) {
+      if (bp.line == line) {
+        existing = &bp;
+        break;
+      }
+    }
+  }
+  PromptSurfaceState::Action action = PromptSurfaceState::Action::SetBreakpointCondition;
+  std::optional<std::string> current;
+  switch (id) {
+    case ActionId::DebugBreakpointEditCondition:
+      action = PromptSurfaceState::Action::SetBreakpointCondition;
+      current = existing != nullptr ? existing->condition : std::nullopt;
+      break;
+    case ActionId::DebugBreakpointEditHitCondition:
+      action = PromptSurfaceState::Action::SetBreakpointHitCondition;
+      current = existing != nullptr ? existing->hit_condition : std::nullopt;
+      break;
+    case ActionId::DebugBreakpointEditLogMessage:
+      action = PromptSurfaceState::Action::SetBreakpointLogMessage;
+      current = existing != nullptr ? existing->log_message : std::nullopt;
+      break;
+    default:
+      return;
+  }
+  MakePromptSurfaceService().OpenPromptSurface(action, PromptSurfaceState::Kind::TextInput, path,
+                                               current.value_or(std::string{}));
+  context_.prompts.surface.target_line = line;
+}
+
+void WorkspaceShell::CommitBreakpointModifierPrompt() {
+  const std::filesystem::path path = context_.prompts.surface.path;
+  const std::size_t line = context_.prompts.surface.target_line;
+  const std::string text = context_.prompts.surface.input.text();
+  std::optional<std::string> value;
+  if (!text.empty()) {
+    value = text;
+  }
+  editor::BreakpointStore& store = context_.current_project_state.breakpoint_store;
+  switch (context_.prompts.surface.action) {
+    case PromptSurfaceState::Action::SetBreakpointCondition:
+      store.SetCondition(path, line, std::move(value));
+      break;
+    case PromptSurfaceState::Action::SetBreakpointHitCondition:
+      store.SetHitCondition(path, line, std::move(value));
+      break;
+    case PromptSurfaceState::Action::SetBreakpointLogMessage:
+      store.SetLogMessage(path, line, std::move(value));
+      break;
+    default:
+      break;
+  }
+  MakePromptSurfaceService().DismissPromptSurface(true);
+  ResendBreakpointsForFile(path);
+  RequestFocusedEditorRedraw();
+}
+
+void WorkspaceShell::RemoveBreakpointFromMenu() {
+  const std::filesystem::path path = context_.menu_state.tree_context_menu.path;
+  const std::size_t line = context_.menu_state.tree_context_menu.line;
+  if (path.empty()) {
+    return;
+  }
+  context_.current_project_state.breakpoint_store.Remove(path, line);
+  ResendBreakpointsForFile(path);
+  RequestFocusedEditorRedraw();
+}
+
+void WorkspaceShell::BreakpointQuickActionFromMenu(ActionId id) {
+  const std::filesystem::path path = context_.menu_state.tree_context_menu.path;
+  const std::size_t line = context_.menu_state.tree_context_menu.line;
+  if (path.empty()) {
+    return;
+  }
+  editor::BreakpointStore& store = context_.current_project_state.breakpoint_store;
+  switch (id) {
+    case ActionId::DebugBreakpointToggleEnabled:
+      store.ToggleEnabled(path, line);
+      break;
+    case ActionId::DebugBreakpointClearCondition:
+      // Clears only the condition; hit-count / log-message modifiers are kept.
+      store.SetCondition(path, line, std::nullopt);
+      break;
+    default:
+      return;
+  }
+  ResendBreakpointsForFile(path);
+  RequestFocusedEditorRedraw();
+}
+
+void WorkspaceShell::OpenWatchExpressionPrompt(std::optional<std::size_t> index) {
+  const std::vector<std::string>& expressions =
+      context_.current_project_state.debug_watch.Expressions();
+  std::string seed;
+  PromptSurfaceState::Action action = PromptSurfaceState::Action::AddWatchExpression;
+  if (index.has_value() && *index < expressions.size()) {
+    action = PromptSurfaceState::Action::EditWatchExpression;
+    seed = expressions[*index];
+  }
+  // The watch list has no associated path; reuse the prompt's root path so the
+  // surface still resolves a sensible label, and carry the index in target_line.
+  MakePromptSurfaceService().OpenPromptSurface(action, PromptSurfaceState::Kind::TextInput,
+                                               context_.current_project_state.root, std::move(seed));
+  context_.prompts.surface.target_line = index.value_or(0);
+}
+
+void WorkspaceShell::CommitWatchExpressionPrompt() {
+  const std::string text = context_.prompts.surface.input.text();
+  const bool editing =
+      context_.prompts.surface.action == PromptSurfaceState::Action::EditWatchExpression;
+  const std::size_t index = context_.prompts.surface.target_line;
+  MakePromptSurfaceService().DismissPromptSurface(true);
+  if (editing) {
+    debug_service_.EditWatch(index, text);  // empty text removes the expression
+  } else if (!text.empty()) {
+    debug_service_.AddWatch(text);
+  }
+  RequestBottomPanelRedraw();
+}
+
+void WorkspaceShell::OpenDebugReplPrompt() {
+  // The REPL has no associated path; reuse the project root so the surface still
+  // resolves a sensible label.
+  MakePromptSurfaceService().OpenPromptSurface(PromptSurfaceState::Action::EvaluateReplInput,
+                                               PromptSurfaceState::Kind::TextInput,
+                                               context_.current_project_state.root, std::string{});
+}
+
+void WorkspaceShell::CommitDebugReplPrompt() {
+  const std::string text = context_.prompts.surface.input.text();
+  MakePromptSurfaceService().DismissPromptSurface(true);
+  if (text.empty()) {
+    // Empty input closes the REPL loop rather than evaluating nothing.
+    return;
+  }
+  debug_service_.EvaluateRepl(text);
+  // Re-open the prompt so the user can keep evaluating without re-triggering the
+  // command (REPL-like). A no-active-session evaluate is a no-op in the service.
+  OpenDebugReplPrompt();
 }
 
 }  // namespace microide::workspace

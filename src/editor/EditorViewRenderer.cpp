@@ -8,7 +8,10 @@
 #include <string>
 
 #include "editor/DecoratedTextGridRenderer.h"
+#include "editor/BreakpointRender.h"
 #include "editor/DiagnosticsRender.h"
+#include "editor/ExecutionLineRender.h"
+#include "editor/GutterMetrics.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceUiText.h"
@@ -22,7 +25,10 @@ const DecoratedTextGridRenderer kDecoratedRowRenderer;
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count) {
   char buf[20];
   const auto [end, _] = std::to_chars(buf, buf + sizeof(buf), std::max<std::size_t>(1, line_count));
-  return std::max(48.0f, text_renderer.MeasureWidth(std::string_view{buf, end}) + 18.0f);
+  // Digits begin after the reserved marker strip (kGutterLineNumberInset), so the
+  // gutter must be wide enough for both the markers and the widest line number.
+  const float digits_width = text_renderer.MeasureWidth(std::string_view{buf, end});
+  return std::max(56.0f, kGutterLineNumberInset + digits_width + kGutterRightPad);
 }
 
 // Draws the single fold control: a small square button with a `+` glyph when
@@ -428,6 +434,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const std::vector<FoldGutterMark>* fold_gutter_marks =
       view_model != nullptr ? &view_model->fold_gutter_marks : nullptr;
   std::size_t fold_gutter_mark_index = 0;
+  const std::vector<BreakpointGutterMark>* breakpoint_gutter_marks =
+      view_model != nullptr ? &view_model->breakpoint_gutter_marks : nullptr;
+  std::size_t breakpoint_gutter_mark_index = 0;
 
   // Build the visible-row→buffer-line map once so the indent-guides compute
   // and the per-row paint loop can both consume it. The visible-rows count is
@@ -623,6 +632,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     const float row_text_x =
         metrics.text_x + static_cast<float>(row_meta.indent) * text_renderer.CharWidth();
     const bool selected = line_index == cursor_line;
+    const bool is_execution_line = view_model != nullptr &&
+                                   view_model->execution_line_index.has_value() &&
+                                   *view_model->execution_line_index == line_index;
     const bool active_search_line =
         active_search_match.has_value() &&
         line_index >= active_search_match->start.line &&
@@ -867,8 +879,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.tokens = token_kinds;
     row_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
     row_input.layout = &row_layout;
-    row_input.has_background_fill = selected;
-    if (selected) {
+    // The execution line outranks the selected-row highlight so a paused frame
+    // stays visible even while it is the caret line.
+    row_input.has_background_fill = selected || is_execution_line;
+    if (is_execution_line) {
+      row_input.background_fill = DecoratedTextFill{
+          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .color = theme.debug_execution_line,
+      };
+    } else if (selected) {
       row_input.background_fill = DecoratedTextFill{
           .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
           .color = theme.row_highlight,
@@ -893,6 +912,25 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                  *severity);
     }
+    if (breakpoint_gutter_marks != nullptr &&
+        breakpoint_gutter_mark_index < breakpoint_gutter_marks->size() &&
+        (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].visual_row_index ==
+            visual_row_index) {
+      const BreakpointGutterMark& bp_mark =
+          (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index];
+      const BreakpointGutterKind bp_kind = bp_mark.is_logpoint ? BreakpointGutterKind::Logpoint
+                                           : bp_mark.has_condition
+                                               ? BreakpointGutterKind::Conditional
+                                               : BreakpointGutterKind::Plain;
+      DrawBreakpointGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
+                                 bp_mark.verified, bp_kind, bp_mark.enabled);
+      ++breakpoint_gutter_mark_index;
+    }
+    if (is_execution_line) {
+      // Drawn after the breakpoint dot so the arrow overlays it when a session
+      // stops on a breakpoint line.
+      DrawExecutionLineGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height);
+    }
     if (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&
         (*fold_gutter_marks)[fold_gutter_mark_index].visual_row_index == visual_row_index) {
       DrawFoldGutterMarker(renderer,
@@ -905,7 +943,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (!soft_wrap || row_meta.visual_start == 0) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                                           line_index + 1);
-      text_renderer.DrawStringOn(renderer, gutter.x + 10.0f, y,
+      text_renderer.DrawStringOn(renderer, gutter.x + kGutterLineNumberInset, y,
                                  selected ? theme.current_line_number : theme.line_number,
                                  selected ? theme.row_highlight : theme.gutter_background,
                                  std::string_view{line_number_buf, end});

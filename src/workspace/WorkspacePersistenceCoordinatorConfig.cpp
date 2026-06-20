@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "workspace/CommitWorkflowState.h"
+#include "workspace/SettingsStore.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
@@ -12,18 +13,6 @@
 namespace microide::workspace {
 
 namespace {
-
-void SetStoredSetting(std::vector<std::pair<std::string, std::string>>& settings,
-                      std::string id,
-                      std::string value) {
-  auto it = std::find_if(settings.begin(), settings.end(),
-                         [&](const auto& entry) { return entry.first == id; });
-  if (it != settings.end()) {
-    it->second = std::move(value);
-    return;
-  }
-  settings.emplace_back(std::move(id), std::move(value));
-}
 
 bool ApplyCanonicalProjectSetting(ProjectWorkspaceState& state,
                                   std::string_view id,
@@ -104,16 +93,17 @@ std::vector<SidebarViewPolicy> RuntimeSidebarPolicies(
 
 void SyncCanonicalProjectSettings(std::vector<std::pair<std::string, std::string>>& settings,
                                   const ProjectWorkspaceState& state) {
-  SetStoredSetting(settings, "editor.tab_size",
-                   SerializeSettingValue(static_cast<int>(state.editor_preferences.tab_size)));
-  SetStoredSetting(settings, "editor.indent_width",
-                   SerializeSettingValue(static_cast<int>(state.editor_preferences.indent_width)));
-  SetStoredSetting(settings, "editor.soft_tabs",
-                   SerializeSettingValue(state.editor_preferences.soft_tabs));
-  SetStoredSetting(settings, "editor.wrap",
-                   state.editor_preferences.soft_wrap ? "word" : "off");
-  SetStoredSetting(settings, "editor.colorscheme",
-                   SerializeSettingValue(state.active_colorscheme_name));
+  settings_layer::Upsert(settings, "editor.tab_size",
+                         SerializeSettingValue(static_cast<int>(state.editor_preferences.tab_size)));
+  settings_layer::Upsert(
+      settings, "editor.indent_width",
+      SerializeSettingValue(static_cast<int>(state.editor_preferences.indent_width)));
+  settings_layer::Upsert(settings, "editor.soft_tabs",
+                         SerializeSettingValue(state.editor_preferences.soft_tabs));
+  settings_layer::Upsert(settings, "editor.wrap",
+                         state.editor_preferences.soft_wrap ? "word" : "off");
+  settings_layer::Upsert(settings, "editor.colorscheme",
+                         SerializeSettingValue(state.active_colorscheme_name));
 }
 
 }  // namespace
@@ -191,15 +181,29 @@ bool PersistenceCoordinator::RestoreUserConfig() {
   context_.disabled_keybinding_ids = state.disabled_keybinding_ids;
   context_.disabled_plugin_ids = state.disabled_plugin_ids;
   for (const auto& [id, value] : state.settings) {
-    SetStoredSetting(context_.user_settings, id, value);
+    settings_layer::Upsert(context_.user_settings, id, value);
   }
 
   const bool applied_scale = ApplyUiScale(state.ui_scale, false, false);
   if (applied_scale) {
     // Keep overlay rows in sync with the canonical ui_scale field.
-    SetStoredSetting(context_.user_settings, "ui.scale", SerializeSettingValue(ui_scale_));
+    settings_layer::Upsert(context_.user_settings, "ui.scale", SerializeSettingValue(ui_scale_));
   }
+  // The user layer was reloaded in place; rebuild the store's resolved index.
+  settings_store_.Reindex();
   return applied_scale;
+}
+
+void PersistenceCoordinator::StripTransientSettings(
+    std::vector<std::pair<std::string, std::string>>& settings) const {
+  if (context_.transient_setting_keys.empty()) {
+    return;
+  }
+  settings.erase(std::remove_if(settings.begin(), settings.end(),
+                                [&](const auto& entry) {
+                                  return context_.transient_setting_keys.count(entry.first) != 0;
+                                }),
+                 settings.end());
 }
 
 void PersistenceCoordinator::SaveUserConfig() const {
@@ -214,6 +218,7 @@ void PersistenceCoordinator::SaveUserConfig() const {
       .disabled_keybinding_ids = context_.disabled_keybinding_ids,
       .disabled_plugin_ids = context_.disabled_plugin_ids,
   };
+  StripTransientSettings(state.settings);
   operations_.persistence_service->SaveUserConfig(config_path, state);
 }
 
@@ -251,15 +256,14 @@ bool PersistenceCoordinator::RestoreConfigState() {
   LoadBranchReviewStateFromPersisted(persisted_state.branch_review,
                                      &mutable_current.branch_review);
   for (const auto& [id, value] : persisted_state.settings) {
-    if (ApplyCanonicalProjectSetting(mutable_current, id, value)) {
-      SetStoredSetting(mutable_current.settings, id, value);
-      continue;
-    }
-    SetStoredSetting(mutable_current.settings, id, value);
+    ApplyCanonicalProjectSetting(mutable_current, id, value);
+    settings_layer::Upsert(mutable_current.settings, id, value);
   }
   operations_.apply_editor_preferences_to_all_tabs();
   ApplyColorscheme(persisted_state.colorscheme_name, false, false);
   SyncCanonicalProjectSettings(mutable_current.settings, mutable_current);
+  // The project layer was reloaded in place; rebuild the store's resolved index.
+  settings_store_.Reindex();
   return true;
 }
 
@@ -294,6 +298,7 @@ void PersistenceCoordinator::SaveConfigState() const {
     };
   }
   SyncCanonicalProjectSettings(persisted.settings, state);
+  StripTransientSettings(persisted.settings);
   operations_.persistence_service->SaveProjectConfig(config_path, persisted);
 }
 

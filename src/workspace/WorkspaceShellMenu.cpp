@@ -20,7 +20,19 @@ bool IsMenuBarTopLevelMenu(MenuId id) {
          id != MenuId::ProjectTabContext;
 }
 
+// A bool-typed setting value reads as "on" unless it is one of the falsey tokens.
+bool SettingTruthy(const std::optional<std::string>& value) {
+  return value.has_value() && !(*value == "false" || *value == "0" || *value == "off");
+}
+
 }  // namespace
+
+bool WorkspaceShell::IsMenuBarMenuVisible(MenuId id) const {
+  // Every top-level menu (including Debug) is always visible. The Debug menu's
+  // first item is the master enable/disable toggle; the remaining debug items
+  // grey out via IsMenuItemEnabled when `debug.enabled` is off.
+  return IsMenuBarTopLevelMenu(id);
+}
 
 std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMenuBarItems(
     const SDL_FRect& menu_bar) const {
@@ -49,7 +61,7 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
   float total_x = x;
   bool any_overflow = false;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (!IsMenuBarTopLevelMenu(spec.id)) {
+    if (!IsMenuBarMenuVisible(spec.id)) {
       continue;
     }
     const char* key = spec.label.data();
@@ -88,7 +100,7 @@ std::vector<MenuId> WorkspaceShell::ComputeOverflowMenuBarItems(
   std::vector<MenuId> overflow;
   std::size_t consumed = 0;
   for (const MenuSpec& spec : MenuSpecs()) {
-    if (!IsMenuBarTopLevelMenu(spec.id)) {
+    if (!IsMenuBarMenuVisible(spec.id)) {
       continue;
     }
     if (consumed < visible.size() && visible[consumed].id == spec.id) {
@@ -330,6 +342,12 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
 }
 
 std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
+  // The breakpoint gutter menu's enable/disable item flips its verb based on the
+  // breakpoint's current state, captured into the menu when it opened.
+  if (item.action == ActionId::DebugBreakpointToggleEnabled) {
+    return context_.menu_state.tree_context_menu.breakpoint_enabled ? "Disable Breakpoint"
+                                                                     : "Enable Breakpoint";
+  }
   const ActionSpec* command_action =
       item.command_name.empty() ? nullptr : FindActionByCommand(item.command_name);
   const ActionId effective_action =
@@ -443,6 +461,12 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
 
   if (item.action == ActionId::SidebarToggle) {
     return context_.current_project_state.sidebar.visible;
+  }
+  if (item.action == ActionId::DebugPaneToggle) {
+    return context_.current_project_state.debug_pane.visible;
+  }
+  if (item.action == ActionId::DebugToggleEnabled) {
+    return SettingTruthy(GetSettingValue("debug.enabled"));
   }
   if (item.action == ActionId::Wrap) {
     return context_.current_project_state.editor_preferences.soft_wrap;

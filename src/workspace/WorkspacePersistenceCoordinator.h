@@ -7,6 +7,7 @@
 
 #include "render/Theme.h"
 #include "workspace/PersistenceService.h"
+#include "workspace/SettingsStore.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 
@@ -48,12 +49,17 @@ class PersistenceCoordinator {
     std::function<void()> reset_project_catalog_to_welcome_state;
     std::function<bool(std::size_t, bool)> restore_project_catalog_after_removal;
     std::function<void()> ensure_active_project_visible;
+    // True when the `debug.enabled` setting is on; gates restoring the right-side
+    // debug pane visible (so a pane left open in a prior session stays hidden when
+    // the debugger feature is currently disabled).
+    std::function<bool()> debugger_enabled;
   };
 
   PersistenceCoordinator(WorkspaceContext& context,
                          render::Theme& theme,
                          std::vector<std::string>& available_colorscheme_names,
                          float& ui_scale,
+                         SettingsStore& settings_store,
                          Operations operations);
 
   void RefreshAvailableColorschemeNames();
@@ -71,6 +77,9 @@ class PersistenceCoordinator {
  private:
   std::filesystem::path SessionStatePath() const;
   std::filesystem::path WorkspaceSessionStatePath() const;
+  std::filesystem::path DebugStatePath() const;
+  void SaveDebugState();
+  void RestoreDebugState();
 
   std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(
       const TabEntry& tab) const;
@@ -83,10 +92,17 @@ class PersistenceCoordinator {
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
 
+  // Drop session-only setting overrides (context_.transient_setting_keys) from a
+  // settings list before it is serialized, so `--set` / cold-start spec settings
+  // never persist to the user's saved config.
+  void StripTransientSettings(
+      std::vector<std::pair<std::string, std::string>>& settings) const;
+
   WorkspaceContext& context_;
   render::Theme& theme_;
   std::vector<std::string>& available_colorscheme_names_;
   float& ui_scale_;
+  SettingsStore& settings_store_;
   Operations operations_;
 };
 

@@ -70,18 +70,6 @@ std::vector<SettingsOverlayRow> BuildPluginToggleRows(const plugin::PluginHost& 
   return rows;
 }
 
-void UpsertSetting(std::vector<std::pair<std::string, std::string>>& settings,
-                   std::string id,
-                   std::string value) {
-  auto it = std::find_if(settings.begin(), settings.end(),
-                         [&](const auto& entry) { return entry.first == id; });
-  if (it != settings.end()) {
-    it->second = std::move(value);
-    return;
-  }
-  settings.emplace_back(std::move(id), std::move(value));
-}
-
 void AppendStartupHelpRows(std::vector<HelpAboutRow>& rows,
                            const WorkspaceStartupOptions& startup_options) {
   if (startup_options.safe_mode) {
@@ -231,7 +219,7 @@ std::string NextSettingValue(const SettingSpec& spec,
 
 }  // namespace
 
-bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
+bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value, bool persist) {
   const auto info = FindSettingInfo(id, plugin_runtime_.Host());
   if (!info.has_value()) {
     return false;
@@ -286,23 +274,42 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value) {
   if (builtin != nullptr && !parsed_builtin_value.has_value()) {
     return false;
   }
+  // Track / untrack the transient marker before the value is moved-from. A later
+  // persisting write of the same id promotes it back to durable storage.
+  if (persist) {
+    context_.transient_setting_keys.erase(std::string(id));
+  } else {
+    context_.transient_setting_keys.insert(std::string(id));
+  }
   if (info->scope == SettingScope::User) {
-    UpsertSetting(context_.user_settings, std::string(id), std::move(value));
+    settings_store_.SetUser(id, std::move(value));
     if (id == "ui.scale") {
       if (const float* parsed = std::get_if<float>(&*parsed_builtin_value); parsed != nullptr) {
         MakePersistenceCoordinator().ApplyUiScale(*parsed, false, false);
       }
     }
-    MakePersistenceCoordinator().SaveUserConfig();
+    if (persist) {
+      MakePersistenceCoordinator().SaveUserConfig();
+    }
   } else {
     apply_project_canonical_setting();
-    UpsertSetting(context_.current_project_state.settings, std::string(id), std::move(value));
-    MakePersistenceCoordinator().SaveConfigState();
+    settings_store_.SetProject(id, std::move(value));
+    if (persist) {
+      MakePersistenceCoordinator().SaveConfigState();
+    }
   }
   ApplyLiveSettings();
   MarkLayoutDirty();
   RequestWindowRedraw();
   return true;
+}
+
+void WorkspaceShell::ApplyStartupSettingOverrides() {
+  for (const auto& [id, value] : startup_options_.setting_overrides) {
+    if (!SetSettingValue(id, value, /*persist=*/false)) {
+      SDL_Log("--set: unknown setting or invalid value for \"%s\"", id.c_str());
+    }
+  }
 }
 
 void WorkspaceShell::RefreshSettingsOverlayCatalog() {
@@ -331,6 +338,9 @@ void WorkspaceShell::TogglePluginEnabled(std::string_view plugin_id) {
 }
 
 void WorkspaceShell::ApplyLiveSettings() {
+  // Start/stop the control channel when `control.enabled` is toggled at runtime.
+  // The wake-event plumbing is already bound; only the listener is gated.
+  MaybeStartControlChannel();
   if (const auto value = GetSettingValue("ui.show_status_bar"); value.has_value()) {
     layout_mode_service_.SetStatusBarVisible(*value != "false" && *value != "0" && *value != "off");
   }
@@ -399,16 +409,11 @@ bool WorkspaceShell::ResetSettingValue(std::string_view id) {
   }
   SetSettingValue(id, default_value);
 
-  auto erase_from = [&](std::vector<std::pair<std::string, std::string>>& settings) {
-    settings.erase(std::remove_if(settings.begin(), settings.end(),
-                                  [&](const auto& entry) { return entry.first == id; }),
-                   settings.end());
-  };
   if (info->scope == SettingScope::User) {
-    erase_from(context_.user_settings);
+    settings_store_.ResetUser(id);
     MakePersistenceCoordinator().SaveUserConfig();
   } else {
-    erase_from(context_.current_project_state.settings);
+    settings_store_.ResetProject(id);
     MakePersistenceCoordinator().SaveConfigState();
   }
   ApplyLiveSettings();

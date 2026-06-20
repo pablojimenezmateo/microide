@@ -28,12 +28,11 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
         const auto& arr = result.IsArray() ? result.AsArray() : result["items"].AsArray();
         for (const auto& item : arr) {
           CompletionItem ci;
-          ci.label = item["label"].IsString() ? item["label"].AsString() : "";
+          ci.label = item["label"].AsString();
           ci.kind = item["kind"].AsInt(1);
-          ci.detail = item["detail"].IsString() ? item["detail"].AsString() : "";
-          ci.documentation =
-              item["documentation"].IsString() ? item["documentation"].AsString() : "";
-          ci.insert_text = item["insertText"].IsString() ? item["insertText"].AsString() : "";
+          ci.detail = item["detail"].AsString();
+          ci.documentation = item["documentation"].AsString();
+          ci.insert_text = item["insertText"].AsString();
           if (ci.insert_text.empty()) ci.insert_text = ci.label;
           ci.insert_text_format = item["insertTextFormat"].AsInt(1);
           items.push_back(std::move(ci));
@@ -58,17 +57,14 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range, CodeActionC
         std::vector<CodeAction> actions;
         for (const auto& action : resp["result"].AsArray()) {
           CodeAction ca;
-          ca.title = action["title"].IsString() ? action["title"].AsString() : "";
+          ca.title = action["title"].AsString();
           if (action["command"].IsString()) {
             ca.command = action["command"].AsString();
-            if (action["arguments"].IsArray()) ca.arguments = action["arguments"].AsArray();
+            ca.arguments = action["arguments"].AsArray();
           } else if (action["command"].HasKey("command")) {
-            ca.command = action["command"]["command"].IsString()
-                             ? action["command"]["command"].AsString()
-                             : "";
-            if (action["command"]["arguments"].IsArray()) {
-              ca.arguments = action["command"]["arguments"].AsArray();
-            }
+            const auto& command = action["command"];
+            ca.command = command["command"].AsString();
+            ca.arguments = command["arguments"].AsArray();
           }
           actions.push_back(std::move(ca));
         }
@@ -97,8 +93,7 @@ void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool inser
         }
         const auto& edits = resp["result"].AsArray();
         if (edits.empty()) { cb(std::optional<std::string>(std::string{})); return; }
-        cb(std::optional<std::string>(
-            edits.front()["newText"].IsString() ? edits.front()["newText"].AsString() : ""));
+        cb(std::optional<std::string>(edits.front()["newText"].AsString()));
       },
       [failure = std::move(failure)]() { failure(std::nullopt); });
 }
@@ -155,8 +150,7 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
           for (const auto& [file_uri, edits_val] : result["changes"].AsObject()) {
             auto& file_edits = edit.changes[file_uri];
             for (const auto& e : edits_val.AsArray()) {
-              std::string text = e["newText"].IsString() ? e["newText"].AsString() : "";
-              file_edits.emplace_back(lsp_protocol::ParseRange(e["range"]), std::move(text));
+              file_edits.emplace_back(lsp_protocol::ParseRange(e["range"]), e["newText"].AsString());
             }
           }
         }

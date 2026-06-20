@@ -121,7 +121,9 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
       ComputeLayout(window_width, window_height, context_.current_project_state.sidebar.visible, BottomPanelVisible(),
                     context_.current_project_state.sidebar.width, context_.current_project_state.panel.height,
                     layout_mode_service_.SnapshotInputs(),
-                    layout_mode_service_.StatusBarVisible());
+                    layout_mode_service_.StatusBarVisible(),
+                    context_.current_project_state.debug_pane.visible,
+                    context_.current_project_state.debug_pane.width);
   if (!Contains(layout.menu_bar, x, y)) {
     return false;
   }
@@ -355,7 +357,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         return CursorKind::Pointer;
       }
 
-      if (overlay_mode == OverlayMode::CommitPicker) {
+      if (overlay_mode == OverlayMode::CommitPicker ||
+          overlay_mode == OverlayMode::LaunchConfigPicker) {
         // Matches the picker query field y (overlay.y + 52) in WorkspaceShellRenderOverlay.cpp.
         return y >= overlay.y + 48.0f && y < overlay.y + 68.0f ? CursorKind::Text
                                                                 : CursorKind::Default;
@@ -370,6 +373,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
   if (context_.current_project_state.sidebar.visible &&
       Contains(SidebarResizeCursorRect(layout), x, y)) {
+    return CursorKind::EwResize;
+  }
+  if (context_.current_project_state.debug_pane.visible &&
+      Contains(RightPaneResizeCursorRect(layout), x, y)) {
     return CursorKind::EwResize;
   }
   if (BottomPanelVisible() && Contains(BottomPanelResizeCursorRect(layout), x, y)) {
@@ -560,6 +567,30 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
+  if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
+      Contains(layout.right_pane, x, y)) {
+    // Mode-row tab buttons are always clickable.
+    const DebugPaneModeRowLayout mode_row = DebugPaneModeRow(layout.right_pane);
+    for (int i = 0; i < mode_row.tab_count; ++i) {
+      if (Contains(mode_row.tabs[static_cast<std::size_t>(i)].rect, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    const std::size_t row_count = DebugPaneActiveRowCount();
+    const auto panel_layout = ComputeDebugPaneListLayout(layout, row_count);
+    if (panel_layout.scroll.vertical_scrollbar.has_value() &&
+        Contains(panel_layout.scroll.vertical_scrollbar->track, x, y)) {
+      return CursorKind::Default;
+    }
+    const DebugPaneRowHit hit = DebugPaneRowAtPoint(
+        panel_layout.content_rect, panel_layout.text_y, panel_layout.line_height,
+        panel_layout.scroll.visible_rows, panel_layout.scroll.vertical_scroll, row_count, x, y);
+    if (hit.row_index >= 0 && DebugPaneRowIsActionable(static_cast<std::size_t>(hit.row_index))) {
+      return CursorKind::Pointer;
+    }
+    return CursorKind::Default;
+  }
+
   if (BottomPanelVisible() && Contains(layout.bottom_panel, x, y)) {
     const SDL_FRect panel_header =
         MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
@@ -630,6 +661,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
     if (Contains(popup->rect, x, y)) {
       return CursorKind::Default;
+    }
+  }
+
+  // Floating debug toolbar (continue / step / stop) renders over the top of the
+  // editor and must claim the cursor before the editor surface does.
+  if (DebugToolbarVisible()) {
+    const DebugToolbarLayout toolbar = ComputeDebugToolbarLayout(
+        layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+    if (Contains(toolbar.widget, x, y)) {
+      for (std::size_t i = 0; i < toolbar.button_count; ++i) {
+        if (Contains(toolbar.buttons[i], x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Default;  // card padding between buttons
     }
   }
 
@@ -964,6 +1010,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       .overlay_visible = context_.current_project_state.overlay.visible,
       .settings_overlay_visible = settings_overlay_service_.Visible(),
       .bottom_panel_visible = BottomPanelVisible(),
+      .debug_toolbar_visible = DebugToolbarVisible(),
       .chrome_custom_enabled = window_presentation_.chrome.custom_enabled,
       .chrome_maximized = window_presentation_.chrome.maximized,
       .chrome_fullscreen = window_presentation_.chrome.fullscreen,
@@ -991,6 +1038,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       cursor_kind_fingerprint_.overlay_visible == next_fp.overlay_visible &&
       cursor_kind_fingerprint_.settings_overlay_visible == next_fp.settings_overlay_visible &&
       cursor_kind_fingerprint_.bottom_panel_visible == next_fp.bottom_panel_visible &&
+      cursor_kind_fingerprint_.debug_toolbar_visible == next_fp.debug_toolbar_visible &&
       cursor_kind_fingerprint_.chrome_custom_enabled == next_fp.chrome_custom_enabled &&
       cursor_kind_fingerprint_.chrome_maximized == next_fp.chrome_maximized &&
       cursor_kind_fingerprint_.chrome_fullscreen == next_fp.chrome_fullscreen &&
@@ -1089,6 +1137,10 @@ std::optional<SDL_FRect> WorkspaceShell::FocusSurfaceRect(const WorkspaceLayout&
       return layout.editor_surface;
     case FocusTarget::Panel:
       return BottomPanelVisible() ? std::optional<SDL_FRect>(layout.bottom_panel) : std::nullopt;
+    case FocusTarget::DebugPane:
+      return context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f
+                 ? std::optional<SDL_FRect>(layout.right_pane)
+                 : std::nullopt;
     case FocusTarget::Overlay:
     default:
       return std::nullopt;

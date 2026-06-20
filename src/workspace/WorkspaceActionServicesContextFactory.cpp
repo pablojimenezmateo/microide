@@ -32,11 +32,245 @@ bool WorkspaceActionContext::PluginRuntimeEnabled() const {
 
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
   operations_.reload_plugins_for_current_project();
-  state_.panel.command.feedback_text = operations_.plugin_runtime_reload_summary();
+  std::string summary = operations_.plugin_runtime_reload_summary();
+  state_.panel.command.feedback_text = summary;
+  if (operations_.notify && !summary.empty()) {
+    // Heuristic: surface failures/warnings as Warning, otherwise Info.
+    const bool looks_problematic =
+        summary.find("error") != std::string::npos || summary.find("fail") != std::string::npos ||
+        summary.find("warn") != std::string::npos;
+    operations_.notify(looks_problematic ? NotificationService::Tone::Warning
+                                         : NotificationService::Tone::Info,
+                       std::move(summary));
+  }
 }
 
 void WorkspaceActionContext::RequestQuit() {
   operations_.request_quit();
+}
+
+bool WorkspaceActionContext::DebuggerEnabled() const {
+  if (!operations_.get_setting_value) {
+    return false;
+  }
+  const auto value = operations_.get_setting_value("debug.enabled");
+  if (!value.has_value()) {
+    return false;
+  }
+  return !(*value == "false" || *value == "0" || *value == "off" || value->empty());
+}
+
+void WorkspaceActionContext::ToggleDebuggerEnabled() {
+  const bool was_enabled = DebuggerEnabled();
+  if (operations_.set_setting_value) {
+    operations_.set_setting_value("debug.enabled", was_enabled ? "false" : "true");
+  }
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Tone::Info,
+                       was_enabled ? "Debugger disabled" : "Debugger enabled");
+  }
+}
+
+void WorkspaceActionContext::StartDebuggingWithFeedback() {
+  if (!operations_.start_debugging) {
+    return;
+  }
+  const std::string error = operations_.start_debugging();
+  state_.panel.command.feedback_text =
+      error.empty() ? std::string("Debugging started") : ("Debug: " + error);
+  if (operations_.notify) {
+    operations_.notify(error.empty() ? NotificationService::Tone::Info
+                                     : NotificationService::Tone::Error,
+                       error.empty() ? std::string("Debugging started") : ("Debug: " + error));
+  }
+}
+
+void WorkspaceActionContext::StopDebuggingWithFeedback() {
+  if (operations_.stop_debugging) {
+    operations_.stop_debugging();
+  }
+  state_.panel.command.feedback_text = "Debugging stopped";
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Tone::Info, "Debugging stopped");
+  }
+}
+
+bool WorkspaceActionContext::DebugSessionActive() const {
+  return operations_.debug_session_active && operations_.debug_session_active();
+}
+
+bool WorkspaceActionContext::DebugSessionStopped() const {
+  return operations_.debug_session_stopped && operations_.debug_session_stopped();
+}
+
+void WorkspaceActionContext::DebugContinue() {
+  if (operations_.debug_continue) {
+    operations_.debug_continue();
+  }
+}
+
+void WorkspaceActionContext::DebugStepOver() {
+  if (operations_.debug_step_over) {
+    operations_.debug_step_over();
+  }
+}
+
+void WorkspaceActionContext::DebugStepIn() {
+  if (operations_.debug_step_in) {
+    operations_.debug_step_in();
+  }
+}
+
+void WorkspaceActionContext::DebugStepOut() {
+  if (operations_.debug_step_out) {
+    operations_.debug_step_out();
+  }
+}
+
+void WorkspaceActionContext::DebugPause() {
+  if (operations_.debug_pause) {
+    operations_.debug_pause();
+  }
+}
+
+void WorkspaceActionContext::DebugReverseContinue() {
+  if (operations_.debug_reverse_continue) {
+    operations_.debug_reverse_continue();
+  }
+}
+
+void WorkspaceActionContext::DebugStepBack() {
+  if (operations_.debug_step_back) {
+    operations_.debug_step_back();
+  }
+}
+
+void WorkspaceActionContext::DebugRestart() {
+  if (operations_.debug_restart) {
+    operations_.debug_restart();
+  }
+}
+
+std::size_t WorkspaceActionContext::DebugSessionCount() const {
+  return operations_.debug_session_count ? operations_.debug_session_count() : 0;
+}
+
+void WorkspaceActionContext::DebugSwitchSession(int index) {
+  if (operations_.debug_switch_session) {
+    operations_.debug_switch_session(index);
+  }
+}
+
+void WorkspaceActionContext::ToggleDebugPane() {
+  if (operations_.toggle_debug_pane) {
+    operations_.toggle_debug_pane();
+  }
+}
+
+void WorkspaceActionContext::ShowDebugPaneSurface(DebugPaneMode mode) {
+  if (operations_.show_debug_pane_mode) {
+    operations_.show_debug_pane_mode(mode);
+  }
+}
+
+void WorkspaceActionContext::ShowDebugOutput() {
+  if (operations_.show_debug_output) {
+    operations_.show_debug_output();
+  }
+}
+
+void WorkspaceActionContext::StopAllDebugSessions() {
+  if (operations_.stop_all_debug_sessions) {
+    operations_.stop_all_debug_sessions();
+  }
+}
+
+void WorkspaceActionContext::OpenDebugReplPrompt() {
+  if (operations_.open_debug_repl_prompt) {
+    operations_.open_debug_repl_prompt();
+  }
+}
+
+void WorkspaceActionContext::OpenLaunchConfigPicker() {
+  if (operations_.open_launch_config_picker) {
+    operations_.open_launch_config_picker();
+  }
+}
+
+void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
+  if (operations_.edit_breakpoint_modifier_from_menu) {
+    operations_.edit_breakpoint_modifier_from_menu(id);
+  }
+}
+
+void WorkspaceActionContext::BreakpointQuickActionFromMenu(ActionId id) {
+  if (operations_.breakpoint_quick_action_from_menu) {
+    operations_.breakpoint_quick_action_from_menu(id);
+  }
+}
+
+void WorkspaceActionContext::RemoveBreakpointFromMenu() {
+  if (operations_.remove_breakpoint_from_menu) {
+    operations_.remove_breakpoint_from_menu();
+  }
+}
+
+editor::BreakpointStore& WorkspaceActionContext::MutableBreakpointStore() {
+  return state_.breakpoint_store;
+}
+
+void WorkspaceActionContext::ResendBreakpoints(const std::filesystem::path& path) {
+  if (operations_.resend_breakpoints_for_file) {
+    operations_.resend_breakpoints_for_file(path);
+  }
+}
+
+std::string WorkspaceActionContext::StartNamedDebugConfig(const std::string& name) {
+  if (operations_.start_named_debug_config) {
+    return operations_.start_named_debug_config(name);
+  }
+  return "debug launch unavailable";
+}
+
+std::string WorkspaceActionContext::StartAdHocDebug(const std::string& program,
+                                                    const std::vector<std::string>& args,
+                                                    const std::string& type) {
+  if (operations_.start_ad_hoc_debug) {
+    return operations_.start_ad_hoc_debug(program, args, type);
+  }
+  return "debug launch unavailable";
+}
+
+void WorkspaceActionContext::AddFunctionBreakpoint(const std::string& name) {
+  if (operations_.add_function_breakpoint) {
+    operations_.add_function_breakpoint(name);
+  }
+}
+
+void WorkspaceActionContext::RemoveFunctionBreakpoint(const std::string& name) {
+  if (operations_.remove_function_breakpoint) {
+    operations_.remove_function_breakpoint(name);
+  }
+}
+
+void WorkspaceActionContext::ToggleFunctionBreakpoint(const std::string& name) {
+  if (operations_.toggle_function_breakpoint) {
+    operations_.toggle_function_breakpoint(name);
+  }
+}
+
+void WorkspaceActionContext::SetFunctionBreakpointCondition(const std::string& name,
+                                                            std::optional<std::string> condition) {
+  if (operations_.set_function_breakpoint_condition) {
+    operations_.set_function_breakpoint_condition(name, std::move(condition));
+  }
+}
+
+void WorkspaceActionContext::SetExceptionFilterCondition(const std::string& filter_id,
+                                                         std::optional<std::string> condition) {
+  if (operations_.set_exception_filter_condition) {
+    operations_.set_exception_filter_condition(filter_id, std::move(condition));
+  }
 }
 
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
@@ -296,6 +530,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](std::string_view id, std::string value) {
                 return SetSettingValue(id, std::move(value));
               },
+          .notify =
+              [this](NotificationService::Tone tone, std::string message) {
+                Notify(tone, std::move(message));
+              },
           .normalize_sidebar_view_selection = [this]() { NormalizeSidebarViewSelection(); },
           .apply_ui_scale =
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
@@ -312,6 +550,58 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
           .plugin_runtime_reload_summary = [this]() { return PluginRuntimeReloadSummary(); },
           .request_quit = [this]() { RequestQuit(); },
+          .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
+          .stop_debugging = [this]() { StopDebugging(); },
+          .has_debug_adapters = [this]() { return CurrentDapManager().HasRegisteredAdapters(); },
+          .debug_session_active = [this]() { return IsDebugSessionActive(); },
+          .debug_session_stopped = [this]() { return IsDebugSessionStopped(); },
+          .debug_continue = [this]() { DebugContinue(); },
+          .debug_step_over = [this]() { DebugStepOver(); },
+          .debug_step_in = [this]() { DebugStepIn(); },
+          .debug_step_out = [this]() { DebugStepOut(); },
+          .debug_pause = [this]() { DebugPause(); },
+          .debug_restart = [this]() { DebugRestart(); },
+          .debug_reverse_continue = [this]() { DebugReverseContinue(); },
+          .debug_step_back = [this]() { DebugStepBack(); },
+          .debug_supports_reverse = [this]() { return DebugSupportsReverse(); },
+          .debug_session_count = [this]() { return CurrentDapManager().SessionCount(); },
+          .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
+          .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
+          .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
+          .open_launch_config_picker = [this]() { OpenLaunchConfigPicker(); },
+          .edit_breakpoint_modifier_from_menu =
+              [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
+          .breakpoint_quick_action_from_menu =
+              [this](ActionId id) { BreakpointQuickActionFromMenu(id); },
+          .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
+          .toggle_debug_pane = [this]() { ToggleDebugPane(); },
+          .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
+          .show_debug_output = [this]() { ShowDebugOutput(); },
+          .resend_breakpoints_for_file =
+              [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
+          .start_named_debug_config =
+              [this](const std::string& name) { return StartNamedDebugConfig(name); },
+          .start_ad_hoc_debug =
+              [this](const std::string& program, const std::vector<std::string>& args,
+                     const std::string& type) { return StartAdHocDebug(program, args, type); },
+          .add_function_breakpoint =
+              [this](const std::string& name) { debug_service_.AddFunctionBreakpoint(name); },
+          .remove_function_breakpoint =
+              [this](const std::string& name) {
+                debug_service_.RemoveFunctionBreakpointByName(name);
+              },
+          .toggle_function_breakpoint =
+              [this](const std::string& name) {
+                debug_service_.ToggleFunctionBreakpointByName(name);
+              },
+          .set_function_breakpoint_condition =
+              [this](const std::string& name, std::optional<std::string> condition) {
+                debug_service_.SetFunctionBreakpointConditionByName(name, std::move(condition));
+              },
+          .set_exception_filter_condition =
+              [this](const std::string& filter_id, std::optional<std::string> condition) {
+                debug_service_.SetExceptionFilterCondition(filter_id, std::move(condition));
+              },
       });
 }
 

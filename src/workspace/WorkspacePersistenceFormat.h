@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -147,11 +148,66 @@ struct PersistedProjectSessionState {
   OutgoingBaseChoice outgoing_base_choice;
   std::size_t active_tab_index = 0;
   std::vector<PersistedEditorTabState> tabs;
+  // Right-side debug pane (visibility / width / active surface). Only restored
+  // when `debug.enabled` is on. `right_pane_mode` is a DebugPaneMode cast to u8.
+  bool right_pane_visible = false;
+  float right_pane_width = 288.0f;
+  std::uint8_t right_pane_mode = 0;
 };
 
 struct PersistedWorkspaceSessionState {
   std::vector<std::filesystem::path> project_roots;
   std::size_t active_project_index = 0;
+};
+
+// Per-project debug state: breakpoints (keyed by file) plus launch configs.
+// `arguments_json` holds the launch config's verbatim `arguments` serialized as
+// JSON text so this format carries no util::JsonValue dependency; the coordinator
+// (de)serializes it. Transient adapter verification is never persisted.
+struct PersistedBreakpoint {
+  std::size_t line = 0;  // 0-based buffer line index
+  bool enabled = true;
+  std::optional<std::string> condition;
+  std::optional<std::string> hit_condition;
+  std::optional<std::string> log_message;
+};
+
+struct PersistedFileBreakpoints {
+  std::filesystem::path path;
+  std::vector<PersistedBreakpoint> breakpoints;
+};
+
+// Function (symbol) breakpoint (additive; empty on old records). No file/line —
+// the adapter resolves `name`.
+struct PersistedFunctionBreakpoint {
+  std::string name;
+  bool enabled = true;
+  std::optional<std::string> condition;
+  std::optional<std::string> hit_condition;
+};
+
+struct PersistedLaunchConfig {
+  std::string name;
+  std::string type;
+  std::string request = "launch";
+  std::string arguments_json;  // serialized launch/attach `arguments`, or empty
+};
+
+struct PersistedDebugState {
+  std::vector<PersistedFileBreakpoints> files;
+  std::vector<PersistedLaunchConfig> launch_configs;
+  std::size_t selected_launch_config_index = 0;
+  std::vector<std::string> watch_expressions;  // Phase 6 (additive; empty on old records)
+  // Phase 7 (additive; empty/false on old records): the user's enabled
+  // exception-breakpoint filter ids, and whether adapter defaults have been
+  // seeded once (so "all filters off" persists rather than re-seeding).
+  std::vector<std::string> enabled_exception_filters;
+  bool exception_filters_seeded = false;
+  // Function (symbol) breakpoints (additive; empty on old records).
+  std::vector<PersistedFunctionBreakpoint> function_breakpoints;
+  // Per-filter exception conditions (additive; empty on old records). Ordered map
+  // for deterministic encoding. filterId -> condition expression.
+  std::map<std::string, std::string> exception_filter_conditions;
 };
 
 bool EncodeUserConfigRecord(const PersistedUserConfigState& state,
@@ -170,5 +226,7 @@ bool EncodeWorkspaceSessionRecord(const PersistedWorkspaceSessionState& state,
                                   std::vector<std::byte>* out);
 bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                                   PersistedWorkspaceSessionState* state);
+bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::byte>* out);
+bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugState* state);
 
 }  // namespace microide::workspace

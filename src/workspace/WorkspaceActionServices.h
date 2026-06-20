@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "workspace/NotificationService.h"
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceMenuState.h"
@@ -145,6 +146,8 @@ class WorkspaceActionContext {
     std::function<void()> save_config_state;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<bool(std::string_view, std::string)> set_setting_value;
+    // Post a transient host notification toast (and schedule a redraw).
+    std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> normalize_sidebar_view_selection;
     std::function<void(float)> apply_ui_scale;
     std::function<void()> mark_layout_dirty;
@@ -156,6 +159,70 @@ class WorkspaceActionContext {
     std::function<void()> reload_plugins_for_current_project;
     std::function<std::string()> plugin_runtime_reload_summary;
     std::function<void()> request_quit;
+    // Debugger (DAP). start_debugging builds a default launch config from the
+    // current project's registered adapters; it returns an error string (empty
+    // on success). has_debug_adapters reports whether any adapter is registered.
+    std::function<std::string()> start_debugging;
+    std::function<void()> stop_debugging;
+    std::function<bool()> has_debug_adapters;
+    std::function<bool()> debug_session_active;
+    // True when the active session is paused (`stopped`); gates continue/step
+    // (require stopped) vs. pause (requires running). Execution-control verbs
+    // forward to the active session (no-op when none / wrong state).
+    std::function<bool()> debug_session_stopped;
+    std::function<void()> debug_continue;
+    std::function<void()> debug_step_over;
+    std::function<void()> debug_step_in;
+    std::function<void()> debug_step_out;
+    std::function<void()> debug_pause;
+    std::function<void()> debug_restart;
+    // Reverse execution. Forward to the active session (no-op when none / wrong
+    // state / adapter lacks `supportsStepBack`). debug_supports_reverse reports the
+    // capability so availability can hide the verbs for non-recording adapters.
+    std::function<void()> debug_reverse_continue;
+    std::function<void()> debug_step_back;
+    std::function<bool()> debug_supports_reverse;
+    // Multi-session switcher (Phase 8). debug_session_count reports how many live
+    // sessions exist (gates the switch command); debug_switch_session cycles to the
+    // next session (index < 0) or selects a 1-based index.
+    std::function<std::size_t()> debug_session_count;
+    std::function<void(int index)> debug_switch_session;
+    // Stop every live debug session (Phase 10).
+    std::function<void()> stop_all_debug_sessions;
+    // Debug-console REPL (Phase 9): open the single-line prompt that evaluates an
+    // expression in the active session and appends the result to the console.
+    std::function<void()> open_debug_repl_prompt;
+    // Launch-config picker (Phase 9): open the fuzzy picker over the project's
+    // launch configs.
+    std::function<void()> open_launch_config_picker;
+    // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
+    // menu's target line on the shell side.
+    std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
+    std::function<void(ActionId)> breakpoint_quick_action_from_menu;
+    std::function<void()> remove_breakpoint_from_menu;
+    // Right-side debug pane: toggle visibility, or show a specific surface.
+    std::function<void()> toggle_debug_pane;
+    std::function<void(DebugPaneMode)> show_debug_pane_mode;
+    // Surface the active debug session's console output in the bottom panel.
+    std::function<void()> show_debug_output;
+    // Headless breakpoint control (control channel + cold-start spec): re-send a
+    // file's breakpoints to the active session after the store is mutated.
+    std::function<void(const std::filesystem::path&)> resend_breakpoints_for_file;
+    // Start a debug session for a named launch config (empty name → the
+    // selected/default config). Returns an error string (empty on success).
+    std::function<std::string(const std::string&)> start_named_debug_config;
+    std::function<std::string(const std::string&, const std::vector<std::string>&,
+                              const std::string&)>
+        start_ad_hoc_debug;
+    // Function (symbol) breakpoints + exception-filter conditions (control channel
+    // + command line). Each mutates the per-project store + live re-sends.
+    std::function<void(const std::string&)> add_function_breakpoint;
+    std::function<void(const std::string&)> remove_function_breakpoint;
+    std::function<void(const std::string&)> toggle_function_breakpoint;
+    std::function<void(const std::string&, std::optional<std::string>)>
+        set_function_breakpoint_condition;
+    std::function<void(const std::string&, std::optional<std::string>)>
+        set_exception_filter_condition;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -291,6 +358,62 @@ class WorkspaceActionContext {
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
   void RequestQuit();
+  // Debugger (DAP). DebuggerEnabled reflects the `debug.enabled` master toggle.
+  bool DebuggerEnabled() const;
+  // Flip the `debug.enabled` master toggle and announce the new state via toast.
+  void ToggleDebuggerEnabled();
+  bool DebugSessionActive() const;
+  bool DebugSessionStopped() const;
+  void StartDebuggingWithFeedback();
+  void StopDebuggingWithFeedback();
+  // Execution control (Phase 3). No-op when no session / wrong state.
+  void DebugContinue();
+  void DebugStepOver();
+  void DebugStepIn();
+  void DebugStepOut();
+  void DebugPause();
+  void DebugReverseContinue();
+  void DebugStepBack();
+  void DebugRestart();
+  // Multi-session switcher (Phase 8). Count of live sessions; switch to the next
+  // (index < 0) or a 1-based session index.
+  std::size_t DebugSessionCount() const;
+  void DebugSwitchSession(int index);
+  // Stop every live debug session (Phase 10).
+  void StopAllDebugSessions();
+  // Debug-console REPL + launch-config picker (Phase 9).
+  void OpenDebugReplPrompt();
+  void OpenLaunchConfigPicker();
+  // Right-side debug pane (toggle / surface switch).
+  void ToggleDebugPane();
+  void ShowDebugPaneSurface(DebugPaneMode mode);
+  // Surface the active debug session's console output in the bottom panel.
+  void ShowDebugOutput();
+  // Breakpoint modifiers (Phase 6). Read the breakpoint-gutter context menu's
+  // target line; open a prompt seeded with the current field / remove the bp.
+  void EditBreakpointModifierFromMenu(ActionId id);
+  void BreakpointQuickActionFromMenu(ActionId id);
+  void RemoveBreakpointFromMenu();
+  // Headless breakpoint control: the project breakpoint store, a resend hook,
+  // and named-launch start. Used by the breakpoint-* / debug-launch commands.
+  editor::BreakpointStore& MutableBreakpointStore();
+  void ResendBreakpoints(const std::filesystem::path& path);
+  std::string StartNamedDebugConfig(const std::string& name);
+  // Ad-hoc launch by program path (debug-run). Synthesizes a transient launch
+  // config from `program` (resolved against the project root) + `args`, using
+  // `type` or the sole registered adapter. Returns an error string (empty on
+  // success).
+  std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
+                              const std::string& type);
+  // Function (symbol) breakpoints + exception-filter conditions (breakpoint-function-*
+  // / breakpoint-exception-condition commands). Name/id-keyed; no-op when not found.
+  void AddFunctionBreakpoint(const std::string& name);
+  void RemoveFunctionBreakpoint(const std::string& name);
+  void ToggleFunctionBreakpoint(const std::string& name);
+  void SetFunctionBreakpointCondition(const std::string& name,
+                                      std::optional<std::string> condition);
+  void SetExceptionFilterCondition(const std::string& filter_id,
+                                   std::optional<std::string> condition);
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free
@@ -303,6 +426,10 @@ class WorkspaceActionContext {
   void NotifyEditorCaretMoved();
   void ToggleEditorEssentialsCapability(ActionId id);
   std::optional<std::string> GetSettingValue(std::string_view id) const;
+  // Deterministic setting write through the host SetSettingValue chokepoint.
+  // Returns false when no sink is wired, the id is unknown, or the value is
+  // invalid for the setting's type. Backs the `set-setting` command.
+  bool SetSettingValue(std::string_view id, std::string value);
 
  private:
   ProjectCatalogState& project_catalog_;

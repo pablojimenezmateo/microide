@@ -54,11 +54,24 @@ struct PromptSurfaceState {
     OpenExternalUrl,
     ConfirmCommitAmend,
     ConfirmCommitNoVerify,
+    // Debugger (Phase 6): edit a breakpoint modifier on `path:target_line`.
+    SetBreakpointCondition,
+    SetBreakpointHitCondition,
+    SetBreakpointLogMessage,
+    // Debugger (Phase 6): add a watch expression, or edit the one at
+    // `target_line` (reused as the watch-expression index).
+    AddWatchExpression,
+    EditWatchExpression,
+    // Debugger (Phase 9): evaluate an expression in the active session via
+    // `evaluate(context:"repl")`; the result is appended to the debug console.
+    EvaluateReplInput,
   };
 
   Kind kind = Kind::None;
   Action action = Action::CreateFile;
   std::filesystem::path path;
+  // 0-based buffer line a breakpoint-modifier prompt targets (Set* actions).
+  std::size_t target_line = 0;
   editor::SingleLineEditor input;
   std::string detail;
   std::string provider_id;

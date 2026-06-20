@@ -51,7 +51,7 @@ void TestArchitectureInvariants() {
   run_rule("CheckShellFileSize(WorkspaceShellMembers.inc)",
            [&](const std::filesystem::path& root) {
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1538);
+                                                     1553);
            });
 
   bool hard_failure = false;
@@ -131,15 +131,12 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "  return 0;\n"
             "}\n");
   WriteFile(root / "tests/LegacySymbolFixture.cpp", "void X(){ WorkspacePersistenceLegacyFormat x; }\n");
-  WriteFile(root / "src/workspace/WorkspaceDapManager.cpp", "void X(){ DapManager* m = nullptr; }\n");
 
   Expect(!architecture::CheckEssentialEditorCppModulesDoNotTouchLuaState(root).violations.empty(),
          "lua_State pointers should not appear in FoldingModel.cpp fixture");
 
   Expect(!architecture::CheckNoLegacyPersistenceSymbols(root).violations.empty(),
          "legacy-persistence rule should catch legacy symbols");
-  Expect(!architecture::CheckNoDebuggerDapSurface(root).violations.empty(),
-         "debugger/DAP rule should catch removed surface symbols");
   Expect(!architecture::CheckNoSynchronousSubprocessInWorkspace(root).violations.empty(),
          "workspace subprocess rule should catch synchronous subprocess calls");
 

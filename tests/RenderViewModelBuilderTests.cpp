@@ -1,5 +1,9 @@
 #include "TestSupport.h"
 
+#include "editor/BreakpointStore.h"
+#include "editor/EditorViewModel.h"
+#include "editor/TextViewport.h"
+#include "workspace/DebugViewModel.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarService.h"
@@ -126,6 +130,90 @@ void TestBuilderStatusBarSurfacesTooltipFromService() {
          "status bar VM should forward the segment tooltip so the render path can paint it");
 }
 
+void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
+  WorkspaceContext ctx;
+  RenderViewModelBuilder builder(ctx);
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("line0\nline1\nline2\nline3\n", "/proj/main.py");
+  viewport.SetViewportSize(8, 80);
+
+  microide::workspace::DebugExecutionView exec;
+  exec.stopped = true;
+  exec.thread_id = 1;
+  microide::workspace::DebugStackFrameView frame;
+  frame.source_path = std::filesystem::path("/proj/main.py").lexically_normal();
+  frame.line = 2;  // 0-based
+  exec.frames.push_back(frame);
+
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr,
+                                   /*occurrences_highlight_enabled=*/false,
+                                   /*occurrences_case_sensitive=*/false,
+                                   /*sticky_scroll_enabled=*/false, /*sticky_max_depth=*/3,
+                                   /*render_whitespace_enabled=*/false,
+                                   /*debug_enabled=*/true, /*breakpoints=*/nullptr, &exec);
+  Expect(vm.execution_line_index.has_value() && *vm.execution_line_index == 2,
+         "execution line should be marked on the focused frame's line for the matching file");
+
+  // Debugger disabled -> no execution-line mark even with a stopped session.
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
+                                   /*debug_enabled=*/false, nullptr, &exec);
+  Expect(!vm.execution_line_index.has_value(),
+         "execution line should not be marked when the debugger is disabled");
+
+  // A frame in a different file leaves this viewport unmarked.
+  exec.frames[0].source_path = std::filesystem::path("/proj/other.py").lexically_normal();
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
+                                   /*debug_enabled=*/true, nullptr, &exec);
+  Expect(!vm.execution_line_index.has_value(),
+         "execution line should not be marked when the focused frame is in another file");
+}
+
+void TestBuilderMarksConditionalAndLogpointGutterDots() {
+  WorkspaceContext ctx;
+  RenderViewModelBuilder builder(ctx);
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("line0\nline1\nline2\nline3\n", "/proj/main.py");
+  viewport.SetViewportSize(8, 80);
+
+  // Line 0: plain, line 1: conditional, line 2: hit-count, line 3: logpoint.
+  microide::editor::BreakpointStore store;
+  const std::filesystem::path path("/proj/main.py");
+  store.Set(path, 0);
+  store.SetCondition(path, 1, "x > 0");
+  store.SetHitCondition(path, 2, ">5");
+  store.SetLogMessage(path, 3, "hit {x}");
+
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
+                                   /*debug_enabled=*/true, &store, nullptr);
+  Expect(vm.breakpoint_gutter_marks.size() == 4,
+         "all four breakpoints should surface gutter marks for the matching file");
+
+  const auto mark_for = [&](std::size_t line) -> const microide::editor::BreakpointGutterMark* {
+    for (const auto& mark : vm.breakpoint_gutter_marks) {
+      if (mark.line_index == line) {
+        return &mark;
+      }
+    }
+    return nullptr;
+  };
+  const auto* plain = mark_for(0);
+  const auto* conditional = mark_for(1);
+  const auto* hit = mark_for(2);
+  const auto* logpoint = mark_for(3);
+  Expect(plain != nullptr && !plain->has_condition && !plain->is_logpoint,
+         "a plain breakpoint carries neither the conditional nor the logpoint flag");
+  Expect(conditional != nullptr && conditional->has_condition && !conditional->is_logpoint,
+         "a condition makes the mark read as conditional, not a logpoint");
+  Expect(hit != nullptr && hit->has_condition && !hit->is_logpoint,
+         "a hit-count condition also reads as conditional");
+  Expect(logpoint != nullptr && logpoint->is_logpoint,
+         "a log message makes the mark read as a logpoint");
+}
+
 }  // namespace
 
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
@@ -135,6 +223,10 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage);
   AddTest(tests, "RenderViewModelBuilder/StatusBarSurfacesTooltipFromService",
           TestBuilderStatusBarSurfacesTooltipFromService);
+  AddTest(tests, "RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile",
+          TestBuilderMarksExecutionLineOnlyForMatchingFile);
+  AddTest(tests, "RenderViewModelBuilder/MarksConditionalAndLogpointGutterDots",
+          TestBuilderMarksConditionalAndLogpointGutterDots);
 }
 
 }  // namespace microide::tests

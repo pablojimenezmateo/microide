@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "project/GitCommandUtil.h"
+#include "util/TransparentStringHash.h"
 #include "util/Parse.h"
 #include "util/TaskExecutor.h"
 
@@ -279,7 +280,7 @@ struct GitBlameService::Impl {
   }
 
   std::uint64_t CurrentFileGenerationLocked(std::string_view file_key) const {
-    const auto it = file_generations.find(std::string(file_key));
+    const auto it = file_generations.find(file_key);  // transparent: no temp std::string
     return it == file_generations.end() ? 0 : it->second;
   }
 
@@ -690,7 +691,8 @@ struct GitBlameService::Impl {
   std::unordered_map<std::string, std::string> pending_request_files;
   std::string active_request_key;
   std::unordered_map<std::string, FileCache> file_caches;
-  std::unordered_map<std::string, std::uint64_t> file_generations;
+  std::unordered_map<std::string, std::uint64_t, util::TransparentStringHash, std::equal_to<>>
+      file_generations;
   std::unordered_map<std::string, std::string> latest_request_keys;
   std::uint64_t clear_generation = 0;
   std::uint64_t access_generation = 0;

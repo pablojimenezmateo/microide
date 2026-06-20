@@ -59,6 +59,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
     case ActionId::OpenSettings:
+    case ActionId::SetSetting:  // deterministic setting write; never gated
     case ActionId::PluginsReload:
     case ActionId::ProjectOpen:
     case ActionId::Quit:
@@ -67,6 +68,90 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SidebarShow:
     case ActionId::SidebarToggle:
       return true;
+    case ActionId::DebugToggleEnabled:
+      // The master enable/disable toggle is itself never gated — it must work
+      // precisely when the debugger is off so the user can turn it on.
+      return true;
+    case ActionId::StartDebugging:
+    case ActionId::StopDebugging:
+      // Gated on the master debugger toggle; the executor reports adapter/
+      // session preconditions as command feedback.
+      return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::DebugContinue:
+    case ActionId::DebugStepOver:
+    case ActionId::DebugStepIn:
+    case ActionId::DebugStepOut:
+      // Resume/step are valid only while the session is paused.
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active() &&
+             operations_.debug_session_stopped && operations_.debug_session_stopped();
+    case ActionId::DebugReverseContinue:
+    case ActionId::DebugStepBack:
+      // Reverse execution: paused session AND a recording adapter that advertises
+      // `supportsStepBack` (so these stay hidden/greyed for ordinary adapters).
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active() &&
+             operations_.debug_session_stopped && operations_.debug_session_stopped() &&
+             operations_.debug_supports_reverse && operations_.debug_supports_reverse();
+    case ActionId::DebugPause:
+      // Pause is valid only while the session is running (active, not stopped).
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active() &&
+             !(operations_.debug_session_stopped && operations_.debug_session_stopped());
+    case ActionId::DebugRestart:
+      // Restart is valid whenever a session is active (running or stopped).
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active();
+    case ActionId::DebugSwitchSession:
+      // Switching only makes sense with more than one live session.
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_count && operations_.debug_session_count() > 1;
+    case ActionId::DebugStopAllSessions:
+      // Stopping everything only makes sense with at least one live session.
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active();
+    case ActionId::DebugConsoleRepl:
+      // REPL evaluation needs a live session (frame 0 when running).
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active();
+    case ActionId::PickLaunchConfig:
+      // The picker is useful whenever the debugger is enabled (it can launch).
+      return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::DebugBreakpointEditCondition:
+    case ActionId::DebugBreakpointEditHitCondition:
+    case ActionId::DebugBreakpointEditLogMessage:
+    case ActionId::DebugBreakpointClearCondition:
+    case ActionId::DebugBreakpointToggleEnabled:
+    case ActionId::DebugBreakpointRemove:
+      // Breakpoint-gutter context-menu items; the menu only opens when the
+      // debugger is enabled, and editing works with or without a live session.
+      return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::BreakpointSet:
+    case ActionId::BreakpointRemove:
+    case ActionId::BreakpointEnable:
+    case ActionId::BreakpointDisable:
+    case ActionId::BreakpointCondition:
+    case ActionId::BreakpointHitCondition:
+    case ActionId::BreakpointLogMessage:
+    case ActionId::BreakpointClear:
+    case ActionId::BreakpointFunctionAdd:
+    case ActionId::BreakpointFunctionRemove:
+    case ActionId::BreakpointFunctionToggle:
+    case ActionId::BreakpointFunctionCondition:
+    case ActionId::BreakpointExceptionCondition:
+    case ActionId::DebugLaunch:
+      // Headless breakpoint/launch control; valid whenever the debugger is on.
+      return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::DebugPaneToggle:
+    case ActionId::DebugPaneShowCallStack:
+    case ActionId::DebugPaneShowVariables:
+    case ActionId::DebugPaneShowWatch:
+    case ActionId::DebugPaneShowBreakpoints:
+    case ActionId::DebugShowOutput:
+      // Right-side debug pane + bottom-panel debug output: available whenever the
+      // debugger is enabled (the breakpoints/watch surfaces are useful before a
+      // session starts; Show Output no-ops gracefully without a live session).
+      return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::CloseActiveTab:
       return !context_.current_project_state.open_tabs.empty();
     case ActionId::CloseAllTabs:

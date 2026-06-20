@@ -78,6 +78,17 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     }
 
     if (!result.ok) {
+      if (operations_.notify) {
+        const char* verb = state.action == PromptSurfaceState::Action::CreateFile  ? "create file"
+                           : state.action == PromptSurfaceState::Action::CreateDirectory
+                               ? "create folder"
+                               : "rename";
+        std::string message = std::string("Could not ") + verb;
+        if (!result.error_message.empty()) {
+          message += ": " + result.error_message;
+        }
+        operations_.notify(NotificationService::Tone::Error, std::move(message));
+      }
       return;
     }
 
@@ -142,6 +153,13 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
 
   const project::FileOperationResult result = project::FileOperationService::TrashPath(state.path);
   if (!result.ok) {
+    if (operations_.notify) {
+      std::string message = "Could not delete";
+      if (!result.error_message.empty()) {
+        message += ": " + result.error_message;
+      }
+      operations_.notify(NotificationService::Tone::Error, std::move(message));
+    }
     return;
   }
 
@@ -166,6 +184,10 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
       PathMutationCoordinator::Operations{
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .clear_editor_blame = [this]() { ClearEditorBlame(); },
+          .notify =
+              [this](NotificationService::Tone tone, std::string message) {
+                Notify(tone, std::move(message));
+              },
           .discard_all_git_sidebar_entries = [this]() { return DiscardAllGitSidebarEntries(); },
           .discard_git_sidebar_entry =
               [this](std::size_t index) { return DiscardGitSidebarEntry(index); },

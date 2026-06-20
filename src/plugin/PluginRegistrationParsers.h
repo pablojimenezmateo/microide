@@ -62,6 +62,14 @@ struct LanguageServerRegistration {
   PluginHost::ContributedLanguageServer contributed;
 };
 
+struct DebugAdapterRegistration {
+  PluginHost::ContributedDebugAdapter contributed;
+};
+
+struct LaunchConfigRegistration {
+  PluginHost::ContributedLaunchConfig contributed;
+};
+
 struct ToolRegistration {
   PluginHost::ContributedTool contributed;
 };
@@ -169,6 +177,16 @@ bool ParseLanguageServerRegistration(lua_State* state,
                                      const std::string& plugin_id,
                                      LanguageServerRegistration* out,
                                      std::string* error_message);
+
+bool ParseDebugAdapterRegistration(lua_State* state,
+                                   const std::string& plugin_id,
+                                   DebugAdapterRegistration* out,
+                                   std::string* error_message);
+
+bool ParseLaunchConfigRegistration(lua_State* state,
+                                   const std::string& plugin_id,
+                                   LaunchConfigRegistration* out,
+                                   std::string* error_message);
 
 bool ParseToolRegistration(lua_State* state,
                            const std::string& plugin_id,

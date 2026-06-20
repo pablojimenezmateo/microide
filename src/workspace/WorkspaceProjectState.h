@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "editor/BreakpointStore.h"
+#include "editor/FunctionBreakpointStore.h"
 #include "editor/DiagnosticsStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
@@ -17,6 +19,12 @@
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
 #include "project/ProjectSearchService.h"
+#include "workspace/DebugBreakpointsModel.h"
+#include "workspace/DebugVariablesModel.h"
+#include "workspace/DebugViewModel.h"
+#include "workspace/DebugWatchModel.h"
+#include "workspace/LaunchConfig.h"
+#include "workspace/WorkspaceDapManager.h"
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceSidebarState.h"
@@ -29,6 +37,7 @@ enum class FocusTarget {
   Editor,
   Panel,
   Overlay,
+  DebugPane,
 };
 
 enum class OverlayMode {
@@ -37,6 +46,7 @@ enum class OverlayMode {
   BufferReplace,
   ProjectSearch,
   CommitPicker,
+  LaunchConfigPicker,
   Completion,
   CodeActions,
 };
@@ -45,6 +55,17 @@ enum class PanelContentKind {
   None,
   Terminal,
   Output,
+};
+
+// The four structured debug surfaces shown in the right-side debug pane. Selected
+// by the pane's mode-row (a button switcher); only one is visible at a time. The
+// backing data lives on `ProjectWorkspaceState` (`debug_execution`,
+// `debug_variables`, `debug_watch`, `debug_breakpoints_panel`) and is reused as-is.
+enum class DebugPaneMode {
+  CallStack,
+  Variables,
+  Watch,
+  Breakpoints,
 };
 
 enum class BufferSearchField {
@@ -139,6 +160,24 @@ struct ComparePickerState {
   std::size_t selected_index = 0;
 };
 
+// One selectable row in the launch-config picker (Phase 9). `config_index` points
+// back into ProjectWorkspaceState.launch_configs; display strings are precomputed
+// when the list is built so the render TU only draws them.
+struct LaunchConfigPickerItem {
+  std::size_t config_index = 0;
+  std::string primary_label;    // launch config name (left column)
+  std::string secondary_label;  // "type · request" (muted, right column)
+};
+
+struct LaunchConfigPickerState {
+  std::string title = "Select Launch Configuration";
+  std::string summary_line;  // "<matches> of <total>" precomputed on refresh
+  editor::SingleLineEditor query;
+  std::vector<LaunchConfigPickerItem> items;
+  std::vector<LaunchConfigPickerItem> matches;
+  std::size_t selected_index = 0;
+};
+
 struct CompletionSessionItem {
   std::string label;
   std::string detail;
@@ -172,6 +211,7 @@ struct OverlayWorkflowState {
   BufferSearchState buffer_search;
   ProjectSearchState project_search;
   ComparePickerState compare_picker;
+  LaunchConfigPickerState launch_config_picker;
   CompletionSessionState completion;
   CodeActionSessionState code_actions;
 };
@@ -192,6 +232,25 @@ struct OutputPanelState {
   std::string channel_id = "plugins.log";
   std::vector<std::string> open_channel_ids;
   int scroll_row = 0;
+  // Stick to the newest line as content streams in (e.g. debug-adapter / gdb
+  // output), the same way a terminal tab follows its tail. Detaches when the
+  // user scrolls up and re-attaches when they scroll back to the bottom.
+  bool follow_tail = true;
+};
+
+// Right-side debug pane (mirrors the left SidebarState). The four debug surfaces
+// share this pane via a mode-row button switcher; each keeps its own scroll so a
+// surface switch preserves position. `visible` gates the whole pane (auto-opened
+// on the first stop, toggled from the Debug menu); meaningful only when the
+// `debug.enabled` setting is ON. Width is persisted per project.
+struct DebugPaneState {
+  bool visible = false;
+  float width = 288.0f;  // mirror SidebarState default
+  DebugPaneMode mode = DebugPaneMode::Variables;
+  int call_stack_scroll_row = 0;
+  int variables_scroll_row = 0;
+  int watch_scroll_row = 0;
+  int breakpoints_scroll_row = 0;
 };
 
 struct LspUiState {
@@ -254,8 +313,56 @@ struct ProjectWorkspaceState {
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
   editor::DiagnosticsStore diagnostics_store;
+  // Per-project breakpoints keyed by file path. Adapter-agnostic; the host
+  // snapshots it at launch (setBreakpoints) and reflects verification back.
+  // Mirrors `diagnostics_store`: survives session restarts, persists via the
+  // `debug` PersistedRecord. Only meaningful when `debug.enabled` is ON.
+  editor::BreakpointStore breakpoint_store;
+  // Per-project function (symbol) breakpoints. Adapter-agnostic sibling to
+  // `breakpoint_store`: snapshotted at launch (setFunctionBreakpoints) with
+  // verification reflected back. Persists via the `debug` PersistedRecord. Only
+  // meaningful when `debug.enabled` is ON.
+  editor::FunctionBreakpointStore function_breakpoint_store;
+  // Transient execution state for the active debug session (current stop + call
+  // stack + focused frame). Rebuilt on every `stopped`, cleared on resume/stop;
+  // never persisted. Only meaningful when `debug.enabled` is ON.
+  DebugExecutionView debug_execution;
+  // Transient lazy Variables/Scopes tree for the focused frame (Phase 4). Rebuilt
+  // on each `stopped`/frame focus, cleared on resume/stop; never persisted. Only
+  // meaningful when `debug.enabled` is ON.
+  DebugVariablesModel debug_variables;
+  // Transient hover-to-inspect cache (Phase 5): the in-flight / most recent
+  // `evaluate(context:"hover")` result for the focused frame. Cleared on
+  // resume/stop and on a focused-frame switch; never persisted. Only meaningful
+  // when `debug.enabled` is ON and the session is Stopped.
+  DebugHoverModel debug_hover;
+  // Watch expressions (Phase 6): a persisted list of expressions + their
+  // transient evaluated value tree. The expression list survives session
+  // restarts (persisted in the `debug` PersistedRecord); the evaluated values
+  // are re-fetched on each `stopped`. Only meaningful when `debug.enabled` is ON.
+  DebugWatchModel debug_watch;
+  // Breakpoints panel model (Phase 7): the persisted enabled exception-filter id
+  // set + the active session's advertised filters + a prebuilt row list (filter
+  // toggles followed by navigable line breakpoints). The enabled set persists in
+  // the `debug` PersistedRecord; advertised filters are transient. Only
+  // meaningful when `debug.enabled` is ON.
+  DebugBreakpointsModel debug_breakpoints_panel;
+  // Right-side debug pane UI state (visibility, width, active surface, per-surface
+  // scroll). The pane hosts the four structured debug surfaces; its data still
+  // comes from the debug_* models above. Visibility/width/mode persist per
+  // project. Only meaningful when `debug.enabled` is ON.
+  DebugPaneState debug_pane;
+  // Persisted + plugin-contributed launch/attach configurations and the
+  // currently selected index. Start Debugging targets the selected config when
+  // one exists, else falls back to the first registered adapter.
+  std::vector<LaunchConfig> launch_configs;
+  std::size_t selected_launch_config_index = 0;
   std::unique_ptr<LspManager> lsp_manager = std::make_unique<LspManager>();
   LspUiState lsp;
+  // Per-project debug-adapter registry + active debug session (DAP). Lazily
+  // populated by DebugService::EnsureProjectDapManager so a project that never
+  // debugs pays nothing; mirrors `lsp_manager`.
+  std::unique_ptr<DapManager> dap_manager = std::make_unique<DapManager>();
   std::string active_colorscheme_name = "default";
   std::optional<SDL_Color> project_base_color;
   EditorPreferences editor_preferences;

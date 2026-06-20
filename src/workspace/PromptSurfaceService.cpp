@@ -138,6 +138,7 @@ void PromptSurfaceService::OpenPromptSurface(PromptSurfaceState::Action action,
   prompts_.surface.kind = kind;
   prompts_.surface.action = action;
   prompts_.surface.path = path.lexically_normal();
+  prompts_.surface.target_line = 0;
   prompts_.surface.input.SetText(std::move(input));
   prompts_.surface.detail.clear();
   prompts_.surface.provider_id.clear();

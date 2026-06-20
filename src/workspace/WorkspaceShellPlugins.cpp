@@ -1,10 +1,13 @@
 #include "workspace/WorkspaceShell.h"
 
+#include <algorithm>
 #include <filesystem>
+#include <iostream>
 #include <set>
 #include <string_view>
 #include <unordered_set>
 
+#include "util/JsonValue.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceActionCoordinator.h"
@@ -51,6 +54,11 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
 }  // namespace
 
 WorkspaceShell::WorkspaceShell() {
+  // Bind the settings store to the layered backing vectors. The user layer is
+  // stable for the shell's lifetime; the project layer is re-bound whenever the
+  // active project state is moved (RebindProjectState / reset).
+  settings_store_.BindUserLayer(&context_.user_settings);
+  settings_store_.BindActiveProject(&context_.current_project_state.settings);
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
   tab_strip_chrome_.Configure(
@@ -88,6 +96,81 @@ WorkspaceShell::WorkspaceShell() {
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+      });
+  debug_service_.Configure(
+      context_,
+      DebugService::Operations{
+          .append_console_output =
+              [this](int session_id, const std::string& label,
+                     const dap_protocol::DapOutputEvent& output) {
+                AppendDebugConsoleOutput(session_id, label, output);
+                control_channel_service_.OnDebugOutput(output.category, output.output);
+              },
+          .show_debug_console =
+              [this](int session_id, const std::string& label) {
+                ShowDebugConsole(session_id, label);
+              },
+          .remove_debug_console = [this](int session_id) { RemoveDebugConsole(session_id); },
+          .notify_session_state_changed =
+              [this](DebugSession::State /*state*/) { RequestChromeRedraw(); },
+          // A terminal end (clean exit OR a crash/kill/launch-rejection) mirrors to
+          // the control channel here, so an observer is never stranded waiting on a
+          // `terminated` that a non-clean death never sent.
+          .notify_session_terminated =
+              [this](int session_id, bool failed, const std::string& reason) {
+                control_channel_service_.OnDebugTerminated(session_id, reason);
+                // A non-clean end (crash / kill / launch rejection) is easy to miss:
+                // the session row + transient views disappear. Surface an error toast
+                // so the user knows the debugger died and why, not just that it
+                // silently vanished. A clean exit needs no toast (it was expected).
+                if (failed) {
+                  Notify(NotificationService::Tone::Error,
+                         reason.empty() ? std::string("Debug adapter exited unexpectedly")
+                                        : reason);
+                }
+              },
+          .notify_stop_began =
+              [this](const std::string& reason, int thread_id) {
+                control_channel_service_.OnDebugStopBegan(reason, thread_id);
+              },
+          .notify_stop_resolved =
+              [this]() { control_channel_service_.OnDebugStopped(); },
+          .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .request_debug_pane_redraw = [this]() { RequestDebugPaneRedraw(); },
+          .request_editor_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .queue_editor_hover_refresh = [this]() { QueueEditorHoverRefresh(); },
+          .focus_source_location =
+              [this](const std::filesystem::path& path, std::size_t line) {
+                OpenFile(path);
+                if (editor::TextViewport* viewport = ActiveEditorViewport();
+                    viewport != nullptr) {
+                  viewport->MoveCursorTo(line, 0);
+                }
+                context_.current_project_state.surface.focus = FocusTarget::Editor;
+                RequestEditorSurfaceRedraw();
+              },
+          .show_call_stack_panel =
+              [this]() {
+                // Auto-open the right-side debug pane on the first stop (Call Stack),
+                // but don't yank the user off another surface on every subsequent step.
+                OpenDebugPaneOnStop();
+              },
+      });
+  control_channel_service_.Configure(
+      context_,
+      ControlChannelService::Operations{
+          .execute_command_line =
+              [this](const std::string& line) { return ExecuteControlCommand(line); },
+          .emit_jsonl = [](const std::string& line) { std::cout << line << '\n' << std::flush; },
+          .adapters =
+              [this]() {
+                std::vector<ControlAdapterInfo> adapters;
+                for (const auto& detail : CurrentDapManager().AdapterDetails()) {
+                  adapters.push_back(ControlAdapterInfo{detail.type, detail.command});
+                }
+                return adapters;
+              },
+          .ensure_debugger_enabled = [this]() { EnsureDebuggerEnabledTransiently(); },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
@@ -229,11 +312,7 @@ WorkspaceShell::WorkspaceShell() {
           },
       .show_notification =
           [this](const std::string& level, const std::string& message) {
-            notification_service_.Show(NotificationService::ToneFromLevel(level), message,
-                                       SDL_GetTicks());
-            // A full redraw is fine here: notifications are infrequent, event-driven
-            // posts (never per-frame polling), so this never spins the CPU.
-            RequestFullRedraw();
+            Notify(NotificationService::ToneFromLevel(level), message);
           },
   });
 }
@@ -299,6 +378,47 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
                                          language_server.settings, language_server.sandbox);
     }
     CurrentLspManager().BeginShutdownServersNotIn(active_language_servers);
+
+    // Debug adapters are reconciled on the same gate: their definitions are
+    // cheap (no process spawns until a session starts), but RetainAdaptersIn
+    // must not run with an empty contributed set on reactivation, or it would
+    // drop a reactivated project's adapters.
+    std::unordered_set<std::string> active_debug_adapter_types;
+    for (const auto& adapter : host.ContributedDebugAdapters()) {
+      if (adapter.command.empty() || adapter.type.empty()) {
+        continue;
+      }
+      active_debug_adapter_types.insert(adapter.type);
+      CurrentDapManager().RegisterAdapter(adapter.type, adapter.command, adapter.sandbox);
+    }
+    CurrentDapManager().RetainAdaptersIn(active_debug_adapter_types);
+
+    // Reconcile plugin-contributed launch configs into the project. Persistence
+    // restores configs before plugins reload (a fallback); once plugins are up,
+    // the live contributed set is authoritative. The user's selected index is
+    // preserved (clamped) so a re-reconcile does not reset the chosen config.
+    auto& project_state = context_.current_project_state;
+    const std::size_t previous_selected = project_state.selected_launch_config_index;
+    project_state.launch_configs.clear();
+    for (const auto& config : host.ContributedLaunchConfigs()) {
+      if (config.type.empty()) {
+        continue;
+      }
+      LaunchConfig launch_config;
+      launch_config.name = config.name;
+      launch_config.type = config.type;
+      launch_config.request = config.request.empty() ? std::string("launch") : config.request;
+      if (!config.arguments_json.empty()) {
+        if (auto parsed = util::ParseJson(config.arguments_json); parsed.has_value()) {
+          launch_config.arguments = std::move(*parsed);
+        }
+      }
+      project_state.launch_configs.push_back(std::move(launch_config));
+    }
+    project_state.selected_launch_config_index =
+        project_state.launch_configs.empty()
+            ? 0
+            : std::min(previous_selected, project_state.launch_configs.size() - 1);
   }
   for (const auto& tool : host.ContributedTools()) {
     tool_registry_.Register(ToolSpec{

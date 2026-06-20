@@ -918,6 +918,13 @@ std::optional<std::string> WorkspaceActionContext::GetSettingValue(std::string_v
   return operations_.get_setting_value(id);
 }
 
+bool WorkspaceActionContext::SetSettingValue(std::string_view id, std::string value) {
+  if (!operations_.set_setting_value) {
+    return false;
+  }
+  return operations_.set_setting_value(id, std::move(value));
+}
+
 void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {
   const char* key = EditorEssentialsCapabilitySettingKey(id);
   if (key == nullptr) {

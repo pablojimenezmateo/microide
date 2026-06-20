@@ -32,6 +32,10 @@ enum class ActionId {
   OpenHelpAbout,
   OpenKeyboardShortcuts,
   OpenSettings,
+  // Deterministic setting write (control channel / headless). `set-setting <id>
+  // <value>` routes through the SetSettingValue chokepoint; unknown id / invalid
+  // value rejects. Always available (not gated).
+  SetSetting,
   ProjectClose,
   ProjectNext,
   ProjectOpen,
@@ -128,6 +132,83 @@ enum class ActionId {
   MarkBranchHunkReviewed,
   ClearBranchReviewState,
   EditBranchReviewNote,
+  // Debugger (DAP). Gated on the `debug.enabled` master toggle.
+  // Master enable/disable toggle for the whole debugger feature. NOT gated on
+  // `debug.enabled` — it flips that very setting, so it is always available.
+  DebugToggleEnabled,
+  StartDebugging,
+  StopDebugging,
+  // Execution control (Phase 3). Gated on `debug.enabled` + an active session;
+  // continue/step additionally require the session to be Stopped, pause Running.
+  DebugContinue,
+  DebugStepOver,
+  DebugStepIn,
+  DebugStepOut,
+  DebugPause,
+  DebugRestart,
+  // Reverse execution. Gated on `debug.enabled` + an active+Stopped session AND
+  // the adapter advertising `supportsStepBack` (so they only appear for recording
+  // adapters, e.g. gdb under `record` / rr).
+  DebugReverseContinue,
+  DebugStepBack,
+  // Multi-session switcher (Phase 8). No arg cycles to the next session; an
+  // optional 1-based index selects a specific session. Gated on `debug.enabled`
+  // + more than one live session.
+  DebugSwitchSession,
+  // Stop every live debug session (Phase 10). Gated on `debug.enabled` + at least
+  // one active session.
+  DebugStopAllSessions,
+  // Debug-console REPL (Phase 9). Opens a single-line prompt that evaluates an
+  // expression in the active session and appends the result to the console.
+  // Gated on `debug.enabled` + an active session.
+  DebugConsoleRepl,
+  // Launch-config picker (Phase 9). Opens a fuzzy picker over the project's
+  // launch configs; choosing one persists the selection and starts a session.
+  // Gated on `debug.enabled`.
+  PickLaunchConfig,
+  // Breakpoint modifiers (Phase 6). Context-menu only: they read the breakpoint
+  // gutter menu's path + line, so palette/keybinding invocation is a no-op.
+  DebugBreakpointEditCondition,
+  DebugBreakpointEditHitCondition,
+  DebugBreakpointEditLogMessage,
+  DebugBreakpointClearCondition,
+  DebugBreakpointToggleEnabled,
+  DebugBreakpointRemove,
+  // Headless breakpoint control (control channel + cold-start spec). Unlike the
+  // context-menu modifiers above, these take an explicit `<file> <line>` (1-based
+  // line) so an external caller can place/edit breakpoints anywhere. Gated on
+  // `debug.enabled`; work with or without a live session.
+  BreakpointSet,
+  BreakpointRemove,
+  BreakpointEnable,
+  BreakpointDisable,
+  BreakpointCondition,
+  BreakpointHitCondition,
+  BreakpointLogMessage,
+  BreakpointClear,
+  // Function (symbol) breakpoints + per-filter exception conditions (control channel
+  // + command line + UI prompt). Gated on `debug.enabled`.
+  BreakpointFunctionAdd,
+  BreakpointFunctionRemove,
+  BreakpointFunctionToggle,
+  BreakpointFunctionCondition,
+  BreakpointExceptionCondition,
+  // Start a debug session for a named launch config (control channel + spec).
+  // No arg starts the selected/default config. Gated on `debug.enabled`.
+  DebugLaunch,
+  // Ad-hoc launch by program path: synthesizes a transient launch config from a
+  // binary path so a session can start with no pre-defined config. Gated on
+  // `debug.enabled`. `debug-run [--type <adapter>] <program> [args...]`.
+  DebugRun,
+  // Right-side debug pane (toggle + surface switching). Gated on `debug.enabled`.
+  DebugPaneToggle,
+  DebugPaneShowCallStack,
+  DebugPaneShowVariables,
+  DebugPaneShowWatch,
+  DebugPaneShowBreakpoints,
+  // Surface the active debug session's console output in the bottom panel. Gated
+  // on `debug.enabled`; a no-op when no session is active.
+  DebugShowOutput,
 };
 
 enum class ActionSource {

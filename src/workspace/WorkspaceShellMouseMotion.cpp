@@ -9,6 +9,7 @@
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/DebugPaneMouseCoordinator.h"
 #include "workspace/WorkspacePanelMouseCoordinator.h"
 #include "workspace/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/WorkspaceTabMouseCoordinator.h"
@@ -222,6 +223,19 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
       context_.current_project_state.sidebar.width = ClampSidebarWidth(static_cast<float>(event.motion.x), window_width);
       RequestSidebarLayoutChangeRedraw(drag_layout);
+      return true;
+    }
+
+    if (context_.interaction_state.drag_target == DragTarget::RightPaneDivider) {
+      const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
+      const float resolved_sidebar_width = context_.current_project_state.sidebar.visible
+                                               ? context_.current_project_state.sidebar.width
+                                               : 0.0f;
+      // The pane hugs the right edge, so its width grows as the divider moves left.
+      context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
+          window_width - static_cast<float>(event.motion.x), window_width, resolved_sidebar_width);
+      MarkLayoutDirty();
+      ensure_redraw([this]() { RequestWindowRedraw(); });
       return true;
     }
 
@@ -442,6 +456,34 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
       status_segment_hover_changed = true;
     }
+
+    // Floating debug toolbar: repaint on hover enter/leave so the button
+    // highlight and tooltip track the pointer like the other chrome buttons.
+    if (DebugToolbarVisible()) {
+      const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
+          layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+      const auto hovered_button = [&](float px, float py) -> int {
+        if (!Contains(tb.widget, px, py)) {
+          return -1;
+        }
+        for (std::size_t i = 0; i < tb.button_count; ++i) {
+          if (Contains(tb.buttons[i], px, py)) {
+            return static_cast<int>(i);
+          }
+        }
+        return -2;  // over the bar but between buttons
+      };
+      const int previous_button =
+          previous_mouse_position_valid ? hovered_button(previous_mouse_x, previous_mouse_y) : -1;
+      const int current_button = hovered_button(static_cast<float>(event.motion.x),
+                                                static_cast<float>(event.motion.y));
+      if (previous_button != current_button && (previous_button != -1 || current_button != -1)) {
+        // Pad below the bar to cover the tooltip card that pops under a button.
+        RequestRedrawRect(MakeRect(tb.widget.x - 2.0f, tb.widget.y - 2.0f, tb.widget.w + 4.0f,
+                                   tb.widget.h + 40.0f));
+        hover_visual_changed = true;
+      }
+    }
   }
 
   const auto request_tooltip_redraw_if_changed =
@@ -603,6 +645,11 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
 
   if (MakeSidebarMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
     ensure_redraw([this]() { RequestSidebarRedraw(); });
+    return true;
+  }
+
+  if (MakeDebugPaneMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
+    ensure_redraw([this]() { RequestDebugPaneRedraw(); });
     return true;
   }
 

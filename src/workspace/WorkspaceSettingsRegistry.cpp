@@ -304,6 +304,38 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = {},
       },
       SettingSpec{
+          .id = "debug.enabled",
+          .label = "Enable Debugger",
+          .description = "Master switch for debugging. When off, the editor has no breakpoint "
+                         "gutter, debug panels, debug commands, or hover-to-inspect. When on, "
+                         "the debug affordances and the Debug Adapter Protocol integration "
+                         "become available.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Debugger",
+      },
+      SettingSpec{
+          .id = "control.enabled",
+          .label = "Enable Control Channel",
+          .description = "Allow an external tool to drive this instance over a private Unix-domain "
+                         "socket (set breakpoints, step, open files/projects/terminals, observe "
+                         "stops). Off by default. When on, the socket is created 0600 under "
+                         "$XDG_RUNTIME_DIR; run `microide control-help` for the protocol.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Control",
+      },
+      SettingSpec{
           .id = "terminal.shell",
           .label = "Terminal Shell",
           .description = "Shell command used by new terminals (empty for platform default).",

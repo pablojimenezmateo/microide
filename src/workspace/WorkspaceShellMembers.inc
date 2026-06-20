@@ -95,6 +95,16 @@
   void SetStartupOptions(WorkspaceStartupOptions options);
   const WorkspaceStartupOptions& StartupOptions() const { return startup_options_; }
   bool Initialize(const std::filesystem::path& project_root);
+  // Apply a cold-start control spec (set breakpoints, reveal files, optionally
+  // start debugging). Public: invoked by Application right after Initialize.
+  void ApplyControlSpec(const ControlSpec& spec);
+  // Force-start the control channel + stdout JSONL mirror when `--control` was
+  // passed (startup_options_.control_stdout). No-op otherwise. Invoked by
+  // Application right after Initialize, before the cold-start spec.
+  void ForceStartControlChannel();
+  // Apply the `--set <id> <value>` startup overrides transiently (persist=false).
+  // Invoked by Application after Initialize.
+  void ApplyStartupSettingOverrides();
   void Shutdown();
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
@@ -322,7 +332,11 @@
   };
 
  public:
-  struct BottomPanelLogLayout {
+  // Geometry of a scrollable text/list surface (content rect + text origin +
+  // scroll surface). Shared by the bottom panel (terminal/output) and the
+  // right-side debug pane; computed by ComputeBottomPanelLogLayout /
+  // ComputeDebugPaneListLayout respectively.
+  struct LogSurfaceLayout {
     SDL_FRect content_rect{};
     float text_x = 0.0f;
     float text_y = 0.0f;
@@ -380,11 +394,21 @@
     SDL_FRect copy_sha_rect{};
   };
 
+  // Debug hover-to-inspect popup payload (Phase 5): the evaluated value + its type
+  // for the identifier under the cursor while a session is Stopped. Strings are
+  // prebuilt by DebugService (off the render path).
+  struct DebugHoverValue {
+    std::string value;
+    std::string type;
+    bool operator==(const DebugHoverValue&) const = default;
+  };
+
   struct EditorHoverTarget {
     enum class Kind {
       Blame,
       Diagnostic,
       Plugin,
+      DebugValue,
     };
 
     Kind kind = Kind::Blame;
@@ -392,13 +416,14 @@
     std::size_t blame_line_index = 0;
     std::optional<editor::PublishedDiagnostic> diagnostic;
     std::optional<plugin::PluginHost::HoverResult> plugin_hover;
+    std::optional<DebugHoverValue> debug_value;
 
     bool operator==(const EditorHoverTarget& other) const {
       return kind == other.kind && anchor_rect.x == other.anchor_rect.x &&
              anchor_rect.y == other.anchor_rect.y && anchor_rect.w == other.anchor_rect.w &&
              anchor_rect.h == other.anchor_rect.h &&
              blame_line_index == other.blame_line_index && diagnostic == other.diagnostic &&
-             plugin_hover == other.plugin_hover;
+             plugin_hover == other.plugin_hover && debug_value == other.debug_value;
     }
   };
 
@@ -409,8 +434,20 @@
     std::size_t blame_line_index = 0;
     std::optional<editor::PublishedDiagnostic> diagnostic;
     std::optional<plugin::PluginHost::HoverResult> plugin_hover;
+    std::optional<DebugHoverValue> debug_value;
     std::optional<SDL_FRect> primary_action_rect;
   };
+
+  // Recorded by the (const) debug-value hover resolver when it classifies a cache
+  // MISS, and consumed by the non-const UpdateEditorHover to kick off the async
+  // `evaluate` request. Keeps the const resolver pure-read (no DAP I/O); the
+  // instance-scoped, cleaner analog of the thread_local cache the plugin hover uses.
+  struct PendingHoverEval {
+    int frame_id = 0;
+    std::string expression;
+    bool valid = false;
+  };
+  mutable PendingHoverEval pending_hover_eval_;
 
   enum class ProjectOpenDialogLaunchResult {
     Launched,
@@ -435,6 +472,9 @@
   static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
   std::vector<VisibleMenuBarItem> ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
   std::vector<MenuId> ComputeOverflowMenuBarItems(const SDL_FRect& menu_bar) const;
+  // True when a top-level menu should appear in the menu bar / hamburger overflow.
+  // Gates MenuId::Debug on the `debug.enabled` setting.
+  bool IsMenuBarMenuVisible(MenuId id) const;
   std::optional<SDL_FRect> MenuOverflowChevronRect(const SDL_FRect& menu_bar) const;
   std::vector<VisibleWindowControlButton> ComputeVisibleWindowControlButtons(
       const SDL_FRect& menu_bar) const;
@@ -496,6 +536,7 @@
   LifecycleCoordinator MakeLifecycleCoordinator();
   SidebarCoordinator MakeSidebarCoordinator();
   SidebarService MakeSidebarService();
+  DebugPaneService MakeDebugPaneService();
   KeyInputCoordinator MakeKeyInputCoordinator();
   TextInputCoordinator MakeTextInputCoordinator();
   EditorTabService MakeEditorTabService();
@@ -511,6 +552,7 @@
   bool HandleTabMouseWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks);
   SidebarMouseCoordinator MakeSidebarMouseCoordinator();
   PanelMouseCoordinator MakePanelMouseCoordinator();
+  DebugPaneMouseCoordinator MakeDebugPaneMouseCoordinator();
   TerminalPanelService MakeTerminalPanelService();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
@@ -750,6 +792,11 @@
   void RefreshComparePicker();
   void MoveComparePickerSelection(int delta);
   void OpenSelectedCompareCommit();
+  // Launch-config picker (Phase 9): open the fuzzy picker over the project's launch
+  // configs, re-filter on query change, and start a session for the chosen config.
+  void OpenLaunchConfigPicker();
+  void RefreshLaunchConfigPicker();
+  void ConfirmLaunchConfigSelection();
   void OpenComparison(const project::GitCommitEntry& commit);
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);
@@ -824,6 +871,11 @@
   void ShowGitSidebar();
   void ShowTestsSidebar();
   bool ShowPluginSidebar(std::string_view id, bool temporary = false);
+  // Right-side debug pane convenience wrappers (forward to MakeDebugPaneService()).
+  void ShowDebugPaneMode(DebugPaneMode mode);
+  void ToggleDebugPane();
+  void CloseDebugPane();
+  void OpenDebugPaneOnStop();
   SidebarModeRowLayout SidebarModeRow(const SDL_FRect& sidebar_rect) const;
   std::string HoveredSidebarModeTooltipLabel(const SDL_FRect& sidebar_rect) const;
   void CloseSidebar();
@@ -922,12 +974,36 @@
       const TextGridInteractionLayout& interaction,
       float x,
       float y) const;
+  // Debug hover-to-inspect (Phase 5). Resolves the identifier under (x,y) in the
+  // focused frame's source file and serves a cached `evaluate` value, recording a
+  // PendingHoverEval on a cache miss so UpdateEditorHover can kick off the request.
+  std::optional<EditorHoverTarget> DebugValueHoverTargetAtPosition(float x, float y) const;
+  std::optional<EditorHoverTarget> DebugValueHoverTargetForViewport(
+      const editor::TextViewport& viewport,
+      const TextGridInteractionLayout& interaction,
+      float x,
+      float y) const;
   std::optional<EditorHoverPopupLayout> ActiveEditorHoverPopupLayout() const;
   SDL_FRect EditorHoverPopupPrimaryActionHitRect(const EditorHoverPopupLayout& popup) const;
   bool EditorHoverPopupPrimaryActionHovered(float x, float y) const;
   std::vector<std::string> WrapEditorHoverPopupText(std::string_view text,
                                                     float max_width,
                                                     std::size_t max_lines) const;
+  // Shared "secondary title line(s) + gap + primary content line(s)" hover-card
+  // shape used by the Plugin (title/content) and DebugValue (type/value) popups.
+  // Compute the positioned card rect, and draw the two stacked text blocks.
+  SDL_FRect ComputeTwoBlockHoverCardRect(std::string_view title,
+                                         std::string_view content,
+                                         std::size_t max_title_lines,
+                                         std::size_t max_content_lines,
+                                         const SDL_FRect& anchor_rect,
+                                         const SDL_FRect& editor_surface) const;
+  void DrawTwoBlockHoverCard(SDL_Renderer* renderer,
+                             const SDL_FRect& card_rect,
+                             std::string_view title,
+                             std::string_view content,
+                             std::size_t max_title_lines,
+                             std::size_t max_content_lines) const;
   void UpdateEditorHover(float x, float y);
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
   SDL_FRect EditorBlamePopupCopyShaHitRect(const EditorBlamePopupLayout& popup) const;
@@ -1055,6 +1131,95 @@
   LspManager& CurrentLspManager();
   const LspManager& CurrentLspManager() const;
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);
+  // Thin forwarders to debug_service_ (see src/workspace/DebugService.*).
+  DapManager& CurrentDapManager();
+  const DapManager& CurrentDapManager() const;
+  DapManager& EnsureProjectDapManager(ProjectWorkspaceState& state);
+  void ConsumeDapCallbacks();
+  // Control channel (live remote control). ConsumeControlCallbacks drains the
+  // socket server on the control wake event; ExecuteControlCommand runs one
+  // command line through the in-app command chokepoint and reports the outcome;
+  // ApplyControlSpec applies a cold-start spec; MaybeStartControlChannel starts
+  // the listener when the `control.enabled` setting is on.
+  void ConsumeControlCallbacks();
+  ControlChannelService::CommandOutcome ExecuteControlCommand(const std::string& command_line);
+  void MaybeStartControlChannel();
+  bool StartDebugging(const LaunchConfig& config, const std::string& cwd = {});
+  // Builds a minimal launch config from a registered adapter and starts it.
+  // Returns an error string (empty on success). Launch-config selection /
+  // persistence is a later phase; Phase 1 launches the first registered adapter.
+  std::string StartDebuggingWithDefaultConfig();
+  // Start a session for the launch config named `name` (case-insensitive). An
+  // empty name defers to StartDebuggingWithDefaultConfig(). Returns an error
+  // string (empty on success). Drives the `debug-launch` command / spec field.
+  std::string StartNamedDebugConfig(const std::string& name);
+  // Ad-hoc launch by program path (the `debug-run` command). Synthesizes a
+  // transient LaunchConfig from `program` (resolved against the project root) +
+  // `args`, using `type` (or the sole registered adapter when empty), then starts
+  // it. Returns an error string (empty on success). No pre-defined config needed.
+  std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
+                              const std::string& type);
+  void StopDebugging();
+  void ResendBreakpointsForFile(const std::filesystem::path& path);
+  bool IsDebugSessionActive() const;
+  bool IsDebugSessionStopped() const;
+  // Canonical read of the master `debug.enabled` toggle (default off). The one
+  // place that interprets the stored setting string as a bool for shell code.
+  bool DebugEnabled() const;
+  // Turn the debugger on transiently (never persisted) when it is off. Shared by
+  // the cold-start spec and the control channel so a headless driver never needs
+  // a separate `set-setting debug.enabled true` prelude before breakpoint-/debug-
+  // commands. Returns true when it flipped the setting on.
+  bool EnsureDebuggerEnabledTransiently();
+  // Execution control (Phase 3); forward to debug_service_ / the active session.
+  void DebugContinue();
+  void DebugStepOver();
+  void DebugStepIn();
+  void DebugStepOut();
+  void DebugPause();
+  // Reverse execution; forward to debug_service_ (no-op unless the adapter
+  // advertises `supportsStepBack`). DebugSupportsReverse reports the capability,
+  // gating the reverse commands + their toolbar buttons.
+  void DebugReverseContinue();
+  void DebugStepBack();
+  bool DebugSupportsReverse() const;
+  // Restart the active session (Phase 7); DAP `restart` or terminate+relaunch.
+  void DebugRestart();
+  // Focus a thread in the Call Stack thread selector (Phase 7 multi-thread).
+  void DebugFocusThread(int thread_id);
+  // Make a session active (by id, for the Call Stack session-row click) or switch
+  // by 1-based index / cycle (index < 0) for the command (Phase 8 multi-session).
+  void DebugFocusSession(int session_id);
+  void DebugSwitchSession(int index);
+  // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
+  // menu's target path+line; open a seeded prompt for a condition/hit/log field
+  // (mapped from the ActionId) or remove the breakpoint and live-resend.
+  void OpenBreakpointContextMenu(const std::filesystem::path& path, std::size_t line,
+                                 const SDL_FRect& anchor_rect);
+  void EditBreakpointModifierFromMenu(ActionId id);
+  // Prompt-less gutter-menu actions: toggle enabled / clear the condition.
+  void BreakpointQuickActionFromMenu(ActionId id);
+  void RemoveBreakpointFromMenu();
+  // Commit a SetBreakpoint* prompt: write the field (empty clears) + live-resend.
+  void CommitBreakpointModifierPrompt();
+  // Watch panel (Phase 6): open the add/edit-expression prompt (nullopt = add),
+  // and commit it into the watch model (edit with empty text removes).
+  void OpenWatchExpressionPrompt(std::optional<std::size_t> index);
+  void CommitWatchExpressionPrompt();
+  // Debug-console REPL (Phase 9): open the single-line evaluate prompt, and commit
+  // it (evaluate in the active session, then re-open for the next expression).
+  void OpenDebugReplPrompt();
+  void CommitDebugReplPrompt();
+  void AppendDebugConsoleOutput(int session_id, const std::string& label,
+                                const dap_protocol::DapOutputEvent& output);
+  void ShowDebugConsole(int session_id, const std::string& label);
+  // Surface the active debug session's console output in the bottom panel on
+  // demand (Debug → Show Output / Ctrl+Shift+5). No-op without an active session.
+  void ShowDebugOutput();
+  // Remove a pruned session's console channel + close its tab (Phase 10).
+  void RemoveDebugConsole(int session_id);
+  // Stop every live debug session and close the debug pane (Phase 10).
+  void StopAllDebugSessions();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip);
   std::string ActiveLspStatusText(bool ensure_started = true);
@@ -1090,7 +1255,7 @@
   bool BottomPanelVisible() const;
   bool BottomPanelShowsTerminal() const;
   bool BottomPanelShowsOutput() const;
-  BottomPanelLogLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
+  LogSurfaceLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
   int BottomPanelScrollRow(std::size_t line_count, int visible_rows) const;
@@ -1147,15 +1312,55 @@
                             const OverlaySurfaceViewModel& overlay_vm);
   void RenderFindWidget(SDL_Renderer* renderer, const WorkspaceLayout& layout,
                         const OverlaySurfaceViewModel& overlay_vm);
+  // Floating, icon-only debug control bar (Continue/Pause, Step Over/In/Out,
+  // Restart, Stop) anchored top-right of the editor area while a session is
+  // active. Mirrors the find-widget pattern. Defined in
+  // WorkspaceShellDebugToolbar.cpp (not a render-named TU, so it may read state
+  // for the hit-test alongside the render).
+  void RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceLayout& layout,
+                          bool session_stopped, std::optional<float> avoid_below_y) const;
+  // y below which the toolbar must sit (find widget's bottom when the buffer
+  // search/replace widget is visible), so the two floating bars stack instead of
+  // overlapping. std::nullopt anchors the toolbar at the editor top.
+  std::optional<float> DebugToolbarAvoidBelowY(const WorkspaceLayout& layout) const;
+  // Left-click hit-test for the debug toolbar. Returns true (consuming the click)
+  // when the bar is showing and the point lands on it; dispatches the button's
+  // action. No-op when debugging is disabled or no session is active.
+  bool HandleDebugToolbarButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  // Whether the debug toolbar is currently shown (debugger enabled + active
+  // session). Used to gate rendering and hit-testing.
+  bool DebugToolbarVisible() const;
   void RenderBottomPanelSurface(SDL_Renderer* renderer,
                                 const WorkspaceLayout& layout,
                                 std::size_t terminal_line_count);
+  // Right-side debug pane (Call Stack / Variables / Watch / Breakpoints). Defined in
+  // DebugPaneRender.cpp; the four structured debug surfaces moved here from the
+  // bottom panel.
+  void RenderDebugPaneSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
+  DebugPaneModeRowLayout DebugPaneModeRow(const SDL_FRect& pane_rect) const;
+  // List geometry below the mode-row, anchored to layout.right_pane. Reuses the
+  // LogSurfaceLayout shape (content rect + text origin + scroll surface).
+  LogSurfaceLayout ComputeDebugPaneListLayout(const WorkspaceLayout& layout,
+                                                  std::size_t line_count) const;
+  // Row count + clamped scroll for the currently active debug-pane surface.
+  std::size_t DebugPaneActiveRowCount() const;
+  // True when a click on `row` of the active surface does something (frame/thread/
+  // session focus, variable/watch expand or edit, breakpoint navigate, filter
+  // toggle). Drives the hover-cursor pointer/default decision for the pane.
+  bool DebugPaneRowIsActionable(std::size_t row) const;
+  int DebugPaneScrollRow(std::size_t line_count, int visible_rows) const;
+  void SetDebugPaneScrollRow(int scroll_row, std::size_t line_count, int visible_rows);
   void RenderMenuPopups(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderNotifications(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RefreshStatusBar();
   void ApplyLiveSettings();
-  bool SetSettingValue(std::string_view id, std::string value);
+  // Write a setting through the canonical chokepoint. When persist is false the
+  // value is applied live (UpsertSetting + ApplyLiveSettings) but never saved to
+  // disk, and the id is recorded so the persistence coordinator strips it on
+  // shutdown — the transient path used by `--set`, cold-start spec settings, and
+  // debug auto-enable so headless drives never clobber the user's saved config.
+  bool SetSettingValue(std::string_view id, std::string value, bool persist = true);
   bool ResetSettingValue(std::string_view id);
   void RefreshSettingsOverlayCatalog();
   void OpenSettingsOverlay();
@@ -1266,6 +1471,9 @@
   const WindowChromeState& CurrentWindowChromeState() const;
   void MarkLayoutDirty();
   void RequestFullRedraw();
+  // Post a transient notification toast and schedule a full redraw so it paints.
+  // The single host-owned entry point for toasts (plugins + built-in callers).
+  void Notify(NotificationService::Tone tone, std::string message);
   void RequestRedrawRect(const SDL_FRect& rect);
   void RequestWindowRedraw();
   void RequestChromeRedraw();
@@ -1291,6 +1499,7 @@
   void RequestMergeResultLineToBottomRedraw(std::size_t start_line);
   void RequestMergeConflictRedraw(std::size_t conflict_index);
   void RequestBottomPanelRedraw();
+  void RequestDebugPaneRedraw();
   void RequestBottomPanelCommandRedraw();
   void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBottomPanelContentRedraw();
@@ -1346,6 +1555,11 @@
   render::TextRenderer text_renderer_;
   editor::EditorViewRenderer editor_view_renderer_;
   WorkspaceContext context_;
+  // Single owner of settings resolution + mutation. Binds non-owning pointers to
+  // the user / active-project layers in context_ and keeps an O(1) resolved
+  // index. Bound in the constructor and re-bound on every project switch
+  // (RebindProjectState / ResetCurrentProjectStateStorage).
+  SettingsStore settings_store_;
   WindowPresentationState window_presentation_;
   struct SidebarModeMenuEntry {
     std::string label;
@@ -1399,6 +1613,7 @@
   mutable std::optional<OverlaySurfaceViewModel> clip_cached_overlay_vm_;
   mutable std::optional<SidebarSurfaceViewModel> prepare_cached_sidebar_vm_;
   mutable std::optional<BottomPanelSurfaceViewModel> prepare_cached_bottom_panel_vm_;
+  mutable std::optional<DebugPaneSurfaceViewModel> prepare_cached_debug_pane_vm_;
   mutable std::optional<TextInputSurfaceViewModel> prepare_cached_text_input_vm_;
   // Last bottom-panel rect for which ResizeTerminalToPanel was invoked. When
   // the panel rect is unchanged between frames there's nothing to recompute,
@@ -1428,6 +1643,8 @@
   mutable int settings_overlay_max_scroll_row_ = 0;
   AssistService assist_service_;
   LspService lsp_service_;
+  DebugService debug_service_;
+  ControlChannelService control_channel_service_;
   WorkspaceLanguageContract language_contract_;
   struct LiveSettingsEditorSnapshot {
     std::filesystem::path project_root;
@@ -1448,6 +1665,8 @@
   Uint32 project_file_event_type_ = 0;
   Uint32 project_open_dialog_event_type_ = 0;
   Uint32 lsp_event_type_ = 0;
+  Uint32 dap_event_type_ = 0;
+  Uint32 control_event_type_ = 0;
   Uint32 plugin_async_process_event_type_ = 0;
   Uint32 highlight_prefetch_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;
@@ -1499,6 +1718,7 @@
     bool overlay_visible = false;
     bool settings_overlay_visible = false;
     bool bottom_panel_visible = false;
+    bool debug_toolbar_visible = false;
     bool chrome_custom_enabled = false;
     bool chrome_maximized = false;
     bool chrome_fullscreen = false;

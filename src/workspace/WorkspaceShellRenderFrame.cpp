@@ -74,6 +74,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   clip_frame_overlay_view_models_valid_ = false;
   prepare_cached_sidebar_vm_.reset();
   prepare_cached_bottom_panel_vm_.reset();
+  prepare_cached_debug_pane_vm_.reset();
   prepare_cached_text_input_vm_.reset();
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
@@ -86,6 +87,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const RenderViewModelBuilder view_models(context_);
   prepare_cached_sidebar_vm_.emplace(view_models.BuildSidebarSurface());
   prepare_cached_bottom_panel_vm_.emplace(view_models.BuildBottomPanelSurface());
+  // The debug pane can only ever be visible when the debugger is enabled, so skip
+  // building its view model entirely in the common debug-off case. RenderDebugPane
+  // tolerates the empty optional.
+  if (DebugEnabled()) {
+    prepare_cached_debug_pane_vm_.emplace(view_models.BuildDebugPaneSurface());
+  }
   const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
@@ -95,12 +102,17 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
   const float clamped_panel_height =
       ClampBottomPanelHeight(project_state.panel.height, static_cast<float>(height));
+  const float resolved_sidebar_width = sidebar_vm.visible ? clamped_sidebar_width : 0.0f;
+  const float clamped_right_pane_width = ClampRightPaneWidth(
+      project_state.debug_pane.width, static_cast<float>(width), resolved_sidebar_width);
   if (clamped_sidebar_width != project_state.sidebar.width ||
-      clamped_panel_height != project_state.panel.height) {
+      clamped_panel_height != project_state.panel.height ||
+      clamped_right_pane_width != project_state.debug_pane.width) {
     layout_dirty_ = true;
   }
   project_state.sidebar.width = clamped_sidebar_width;
   project_state.panel.height = clamped_panel_height;
+  project_state.debug_pane.width = clamped_right_pane_width;
 
   WorkspaceLayout layout;
   bool workspace_layout_recomputed = false;
@@ -109,7 +121,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
                            panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
                            project_state.sidebar.width, project_state.panel.height,
                            layout_mode_service_.SnapshotInputs(),
-                           layout_mode_service_.StatusBarVisible());
+                           layout_mode_service_.StatusBarVisible(),
+                           project_state.debug_pane.visible, project_state.debug_pane.width);
     layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
     layout_dirty_ = false;
@@ -379,6 +392,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.occurrences.enabled", true);
     const bool occurrences_case_sensitive =
         setting_enabled("editor.search.case_sensitive", false);
+    // Breakpoint gutter dots only render when the debugger is enabled (default
+    // off), keeping the editor byte-for-byte unchanged for non-debug users.
+    const bool debug_enabled = DebugEnabled();
+    const editor::BreakpointStore* breakpoint_store =
+        debug_enabled ? &project_state.breakpoint_store : nullptr;
+    const DebugExecutionView* debug_execution =
+        debug_enabled ? &project_state.debug_execution : nullptr;
     const editor::FoldingModel* active_folding_model = nullptr;
     if (!fold_enabled) {
       if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
@@ -413,7 +433,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_render_builder.BuildEditorViewModelInto(
           tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
           occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-          sticky_scroll_max_depth, render_whitespace_enabled);
+          sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution);
       if (!tls_editor_surface_vm.sticky_lines.empty()) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
             text_renderer_, *active_viewport, layout.editor_surface,
@@ -422,7 +442,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-            sticky_scroll_max_depth, render_whitespace_enabled);
+            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution);
       }
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
@@ -459,7 +479,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_render_builder.BuildEditorViewModelInto(
           tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
           occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
-          render_whitespace_enabled);
+          render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution);
       if (!tls_editor_surface_vm.sticky_lines.empty()) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
             text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
@@ -467,7 +487,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
             occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
-            render_whitespace_enabled);
+            render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution);
       }
       tls_pane_scroll_metrics[pane_index] = metrics;
       tls_pane_scroll_metrics_valid[pane_index] = 1;
@@ -583,6 +603,14 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
 
   if (project_state.surface.focus == FocusTarget::Editor) {
     DrawSurfaceFocusRing(renderer, layout.editor_surface);
+  }
+
+  // Floating debug control bar, drawn over the editor whenever a session is live.
+  // Stacks below the find widget (which renders later, in the overlay layer) when
+  // both are visible, so draw order between them is irrelevant.
+  if (render_editor_surface && DebugToolbarVisible()) {
+    RenderDebugToolbar(renderer, layout, IsDebugSessionStopped(),
+                       DebugToolbarAvoidBelowY(layout));
   }
 }
 

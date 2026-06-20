@@ -18,6 +18,8 @@ class WorkspaceEventDispatcher {
     Uint32 terminal_event_type = 0;
     Uint32 project_file_event_type = 0;
     Uint32 lsp_event_type = 0;
+    Uint32 dap_event_type = 0;
+    Uint32 control_event_type = 0;
     Uint32 plugin_async_process_event_type = 0;
     Uint32 highlight_prefetch_event_type = 0;
   };
@@ -40,6 +42,8 @@ class WorkspaceEventDispatcher {
     std::function<void()> consume_git_sidebar_refresh;
     std::function<void()> consume_highlight_prefetch_results;
     std::function<void()> consume_lsp_callbacks;
+    std::function<void()> consume_dap_callbacks;
+    std::function<void()> consume_control_callbacks;
     std::function<void()> consume_plugin_async_process_callbacks;
     std::function<void()> consume_terminal_session_updates;
     std::function<void(SDL_Window*)> sync_text_input_surface;

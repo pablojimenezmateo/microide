@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "workspace/EditorTabService.h"
+#include "workspace/NotificationService.h"
 #include "workspace/WorkspaceContext.h"
 
 namespace microide::workspace {
@@ -18,6 +19,8 @@ class PathMutationCoordinator {
   struct Operations {
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<void()> clear_editor_blame;
+    // Post a transient notification toast (used to surface file-op failures).
+    std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<bool()> discard_all_git_sidebar_entries;
     std::function<bool(std::size_t)> discard_git_sidebar_entry;
     std::function<bool()> confirm_discard_patch_preview;

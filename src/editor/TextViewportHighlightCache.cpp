@@ -261,16 +261,18 @@ void TextViewport::InstallPrefetchedHighlights(const HighlightPrefetchResult& re
         line_highlight_states_valid_through_ = line + 1;
       }
     }
-    if (highlight_cache_.find(line) != highlight_cache_.end()) {
+    // Single hash lookup: emplace reports whether the line was already cached,
+    // so we skip the separate find() probe.
+    auto [it, inserted] = highlight_cache_.emplace(line, result.tokens[offset]);
+    if (!inserted) {
       continue;
     }
-    if (highlight_cache_.size() >= kHighlightCacheLimit) {
+    highlight_cache_order_.push_back(line);
+    if (highlight_cache_.size() > kHighlightCacheLimit) {
       highlight_cache_.erase(highlight_cache_order_.front());
       highlight_cache_order_.pop_front();
       util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
     }
-    highlight_cache_.emplace(line, result.tokens[offset]);
-    highlight_cache_order_.push_back(line);
   }
 }
 

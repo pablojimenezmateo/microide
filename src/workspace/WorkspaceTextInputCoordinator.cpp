@@ -75,6 +75,10 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::Command:
       operations_.request_bottom_panel_command_redraw();
       break;
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables inline edit now lives in the right-side debug pane.
+      operations_.request_window_redraw();
+      break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:
@@ -87,6 +91,7 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::SettingsQuery:
       operations_.request_overlay_redraw();
       break;
@@ -107,6 +112,8 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
       return &state_.panel.command.input;
     case TextInputSurface::CommitPicker:
       return &state_.overlay.workflow.compare_picker.query;
+    case TextInputSurface::LaunchConfigPicker:
+      return &state_.overlay.workflow.launch_config_picker.query;
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
       return &state_.overlay.workflow.buffer_search.query;
@@ -121,6 +128,8 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
       return &state_.overlay.workflow.project_search.edit_buffer;
+    case TextInputSurface::DebugVariableEdit:
+      return &state_.debug_variables.EditBuffer();
     case TextInputSurface::CommitSubject:
       return &state_.sidebar.git.commit_workflow.subject;
     case TextInputSurface::CommitBody:
@@ -157,6 +166,13 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
     case TextInputSurface::CommitPicker:
       if (text_changed) {
         operations_.refresh_compare_picker();
+      } else {
+        operations_.request_overlay_redraw();
+      }
+      break;
+    case TextInputSurface::LaunchConfigPicker:
+      if (text_changed) {
+        operations_.refresh_launch_config_picker();
       } else {
         operations_.request_overlay_redraw();
       }
@@ -202,6 +218,10 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       // pre-check + draft-persist refresh happens on coarser events (field switch,
       // close) so each keystroke stays cheap.
       operations_.request_sidebar_redraw();
+      break;
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables inline edit now lives in the right-side debug pane.
+      operations_.request_window_redraw();
       break;
     case TextInputSurface::None:
     case TextInputSurface::Editor:
@@ -283,11 +303,13 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::DebugVariableEdit:
     case TextInputSurface::CommitSubject:
-      // CommitSubject is a single-line editor handled by ActiveSingleLineTextState above;
+      // These are single-line editors handled by ActiveSingleLineTextState above;
       // reaching here means it had no backing state, so there is nothing to insert.
       return false;
     case TextInputSurface::CommitBody: {

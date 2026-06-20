@@ -134,6 +134,10 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           },
           .get_setting_value =
               [shell](std::string_view id) { return shell->GetSettingValue(id); },
+          .debug_session_active = [shell]() { return shell->IsDebugSessionActive(); },
+          .debug_session_stopped = [shell]() { return shell->IsDebugSessionStopped(); },
+          .debug_supports_reverse = [shell]() { return shell->DebugSupportsReverse(); },
+          .debug_session_count = [shell]() { return shell->CurrentDapManager().SessionCount(); },
       });
 }
 
@@ -147,6 +151,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .terminal_event_type = shell->terminal_event_type_,
           .project_file_event_type = shell->project_file_event_type_,
           .lsp_event_type = shell->lsp_event_type_,
+          .dap_event_type = shell->dap_event_type_,
+          .control_event_type = shell->control_event_type_,
           .plugin_async_process_event_type = shell->plugin_async_process_event_type_,
           .highlight_prefetch_event_type = shell->highlight_prefetch_event_type_,
       },
@@ -181,6 +187,10 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->ConsumeHighlightPrefetchResults(); },
           .consume_lsp_callbacks =
               [shell]() { shell->ConsumeLspCallbacks(); },
+          .consume_dap_callbacks =
+              [shell]() { shell->ConsumeDapCallbacks(); },
+          .consume_control_callbacks =
+              [shell]() { shell->ConsumeControlCallbacks(); },
           .consume_plugin_async_process_callbacks =
               [shell]() { shell->ConsumePluginAsyncProcessCallbacks(); },
           .consume_terminal_session_updates =
@@ -244,7 +254,9 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
                                      shell->context_.current_project_state.sidebar.width,
                                      shell->context_.current_project_state.panel.height,
                                      shell->layout_mode_service_.SnapshotInputs(),
-                                     shell->layout_mode_service_.StatusBarVisible());
+                                     shell->layout_mode_service_.StatusBarVisible(),
+                                     shell->context_.current_project_state.debug_pane.visible,
+                                     shell->context_.current_project_state.debug_pane.width);
               },
           .reset_visible_editor_blame_overlay =
               [shell]() { shell->editor_blame_overlay_service_.ClearVisibleOverlay(); },

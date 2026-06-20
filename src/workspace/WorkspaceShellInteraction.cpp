@@ -135,6 +135,8 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
         return TextInputSurface::ProjectSearchOverlay;
       case OverlayMode::CommitPicker:
         return TextInputSurface::CommitPicker;
+      case OverlayMode::LaunchConfigPicker:
+        return TextInputSurface::LaunchConfigPicker;
       case OverlayMode::Completion:
       case OverlayMode::CodeActions:
         return TextInputSurface::None;
@@ -163,6 +165,12 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
 
   if (context_.current_project_state.surface.focus == FocusTarget::Editor && ActiveEditableViewport() != nullptr) {
     return TextInputSurface::Editor;
+  }
+
+  if (context_.current_project_state.surface.focus == FocusTarget::DebugPane &&
+      context_.current_project_state.debug_pane.mode == DebugPaneMode::Variables &&
+      context_.current_project_state.debug_variables.IsEditing()) {
+    return TextInputSurface::DebugVariableEdit;
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {

@@ -185,57 +185,41 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
       return std::nullopt;
     }
     const plugin::PluginHost::HoverResult& hover = *active_editor_hover_target_->plugin_hover;
-    const float title_width =
-        hover.title.empty()
-            ? 0.0f
-            : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
-                       text_renderer_.MeasureWidth(hover.title));
-    const float content_width =
-        hover.content.empty()
-            ? 0.0f
-            : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
-                       text_renderer_.MeasureWidth(hover.content));
-    const float preferred_width = std::max(
-        kEditorHoverPopupMinWidth,
-        std::max(title_width, content_width) + kEditorHoverPopupPadding * 2.0f);
-    const float minimum_width =
-        std::max(title_width, content_width) + kEditorHoverPopupPadding * 2.0f;
-    const float card_width = ClampPopupWidth(preferred_width, minimum_width, max_card_width);
-    const auto title_lines =
-        hover.title.empty()
-            ? std::vector<std::string>{}
-            : WrapEditorHoverPopupText(
-                  hover.title, std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f),
-                  kEditorHoverPopupMaxPluginTitleLines);
-    const auto content_lines =
-        hover.content.empty()
-            ? std::vector<std::string>{}
-            : WrapEditorHoverPopupText(
-                  hover.content, std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f),
-                  kEditorHoverPopupMaxPluginContentLines);
-    const float title_height =
-        static_cast<float>(title_lines.size()) * line_height +
-        (title_lines.empty() ? 0.0f
-                             : static_cast<float>(title_lines.size() - 1) *
-                                   kEditorHoverPopupLineGap);
-    const float content_height =
-        static_cast<float>(content_lines.size()) * line_height +
-        (content_lines.empty() ? 0.0f
-                               : static_cast<float>(content_lines.size() - 1) *
-                                     kEditorHoverPopupLineGap);
-    const float card_height =
-        kEditorHoverPopupPadding * 2.0f + title_height +
-        (title_lines.empty() || content_lines.empty() ? 0.0f : kEditorHoverPopupSectionGap) +
-        content_height;
-    const SDL_FRect card_rect = PositionHoverPopup(active_editor_hover_target_->anchor_rect,
-                                                   card_width, card_height, layout.editor_surface);
     return EditorHoverPopupLayout{
         .kind = EditorHoverTarget::Kind::Plugin,
         .anchor_rect = active_editor_hover_target_->anchor_rect,
-        .rect = card_rect,
+        .rect = ComputeTwoBlockHoverCardRect(
+            hover.title, hover.content, kEditorHoverPopupMaxPluginTitleLines,
+            kEditorHoverPopupMaxPluginContentLines, active_editor_hover_target_->anchor_rect,
+            layout.editor_surface),
         .blame_line_index = 0,
         .diagnostic = std::nullopt,
         .plugin_hover = hover,
+        .debug_value = std::nullopt,
+        .primary_action_rect = std::nullopt,
+    };
+  }
+
+  if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::DebugValue) {
+    if (!active_editor_hover_target_->debug_value.has_value()) {
+      return std::nullopt;
+    }
+    const DebugHoverValue& debug_value = *active_editor_hover_target_->debug_value;
+    if (debug_value.value.empty() && debug_value.type.empty()) {
+      return std::nullopt;
+    }
+    // The value is the primary content; the type (when present) is the muted title.
+    return EditorHoverPopupLayout{
+        .kind = EditorHoverTarget::Kind::DebugValue,
+        .anchor_rect = active_editor_hover_target_->anchor_rect,
+        .rect = ComputeTwoBlockHoverCardRect(
+            debug_value.type, debug_value.value, kEditorHoverPopupMaxPluginTitleLines,
+            kEditorHoverPopupMaxPluginContentLines, active_editor_hover_target_->anchor_rect,
+            layout.editor_surface),
+        .blame_line_index = 0,
+        .diagnostic = std::nullopt,
+        .plugin_hover = std::nullopt,
+        .debug_value = debug_value,
         .primary_action_rect = std::nullopt,
     };
   }
@@ -356,6 +340,70 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
   return lines;
 }
 
+SDL_FRect WorkspaceShell::ComputeTwoBlockHoverCardRect(std::string_view title,
+                                                       std::string_view content,
+                                                       std::size_t max_title_lines,
+                                                       std::size_t max_content_lines,
+                                                       const SDL_FRect& anchor_rect,
+                                                       const SDL_FRect& editor_surface) const {
+  const float available_width = std::max(220.0f, editor_surface.w - 16.0f);
+  const float max_card_width = std::min(kEditorHoverPopupMaxWidth, available_width);
+  const float line_height = text_renderer_.LineHeight();
+  const float title_width =
+      title.empty() ? 0.0f
+                    : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+                               text_renderer_.MeasureWidth(title));
+  const float content_width =
+      content.empty() ? 0.0f
+                      : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+                                 text_renderer_.MeasureWidth(content));
+  const float minimum_width =
+      std::max(title_width, content_width) + kEditorHoverPopupPadding * 2.0f;
+  const float preferred_width = std::max(kEditorHoverPopupMinWidth, minimum_width);
+  const float card_width = ClampPopupWidth(preferred_width, minimum_width, max_card_width);
+  const float wrap_width = std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f);
+  const auto title_lines = title.empty()
+                               ? std::vector<std::string>{}
+                               : WrapEditorHoverPopupText(title, wrap_width, max_title_lines);
+  const auto content_lines = content.empty()
+                                 ? std::vector<std::string>{}
+                                 : WrapEditorHoverPopupText(content, wrap_width, max_content_lines);
+  const auto block_height = [line_height](const std::vector<std::string>& lines) {
+    return static_cast<float>(lines.size()) * line_height +
+           (lines.empty() ? 0.0f
+                          : static_cast<float>(lines.size() - 1) * kEditorHoverPopupLineGap);
+  };
+  const float card_height =
+      kEditorHoverPopupPadding * 2.0f + block_height(title_lines) +
+      (title_lines.empty() || content_lines.empty() ? 0.0f : kEditorHoverPopupSectionGap) +
+      block_height(content_lines);
+  return PositionHoverPopup(anchor_rect, card_width, card_height, editor_surface);
+}
+
+void WorkspaceShell::DrawTwoBlockHoverCard(SDL_Renderer* renderer,
+                                           const SDL_FRect& card_rect,
+                                           std::string_view title,
+                                           std::string_view content,
+                                           std::size_t max_title_lines,
+                                           std::size_t max_content_lines) const {
+  const float text_x = card_rect.x + kEditorHoverPopupPadding;
+  const float text_width = std::max(0.0f, card_rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = card_rect.y + kEditorHoverPopupPadding;
+  const auto title_lines = title.empty()
+                               ? std::vector<std::string>{}
+                               : WrapEditorHoverPopupText(title, text_width, max_title_lines);
+  const auto content_lines = content.empty()
+                                 ? std::vector<std::string>{}
+                                 : WrapEditorHoverPopupText(content, text_width, max_content_lines);
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
+                      theme_.overlay_background, title_lines);
+  if (!title_lines.empty() && !content_lines.empty()) {
+    text_y += kEditorHoverPopupSectionGap;
+  }
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                      theme_.overlay_background, content_lines);
+}
+
 void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
   const auto popup = ActiveEditorHoverPopupLayout();
   if (!popup.has_value()) {
@@ -388,23 +436,14 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
       }
     }
   } else if (popup->kind == EditorHoverTarget::Kind::Plugin && popup->plugin_hover.has_value()) {
-    const auto title_lines =
-        popup->plugin_hover->title.empty()
-            ? std::vector<std::string>{}
-            : WrapEditorHoverPopupText(popup->plugin_hover->title, text_width,
-                                       kEditorHoverPopupMaxPluginTitleLines);
-    const auto content_lines =
-        popup->plugin_hover->content.empty()
-            ? std::vector<std::string>{}
-            : WrapEditorHoverPopupText(popup->plugin_hover->content, text_width,
-                                       kEditorHoverPopupMaxPluginContentLines);
-    DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
-                        theme_.overlay_background, title_lines);
-    if (!title_lines.empty() && !content_lines.empty()) {
-      text_y += kEditorHoverPopupSectionGap;
-    }
-    DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
-                        theme_.overlay_background, content_lines);
+    DrawTwoBlockHoverCard(renderer, popup->rect, popup->plugin_hover->title,
+                          popup->plugin_hover->content, kEditorHoverPopupMaxPluginTitleLines,
+                          kEditorHoverPopupMaxPluginContentLines);
+  } else if (popup->kind == EditorHoverTarget::Kind::DebugValue &&
+             popup->debug_value.has_value()) {
+    DrawTwoBlockHoverCard(renderer, popup->rect, popup->debug_value->type,
+                          popup->debug_value->value, kEditorHoverPopupMaxPluginTitleLines,
+                          kEditorHoverPopupMaxPluginContentLines);
   } else if (popup->diagnostic.has_value()) {
     const SDL_Color severity_color =
         editor::DiagnosticSeverityColor(theme_, popup->diagnostic->severity);
@@ -442,10 +481,19 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     return;
   }
   const std::optional<EditorHoverTarget> previous_target = active_editor_hover_target_;
+  // The (const) resolver records a debug-value cache miss here; clear it first so a
+  // stale request from a previous position is not re-issued.
+  pending_hover_eval_.valid = false;
   const auto target = [&]() -> std::optional<EditorHoverTarget> {
     util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateEditorHover::TargetAtPosition");
     return EditorHoverTargetAtPosition(x, y);
   }();
+  // Cache miss for a debug-value hover: kick off the async evaluate. Its completion
+  // requests an editor redraw, re-running this resolution into a cache hit.
+  if (pending_hover_eval_.valid) {
+    debug_service_.EvaluateHover(pending_hover_eval_.frame_id, pending_hover_eval_.expression);
+    pending_hover_eval_.valid = false;
+  }
   if (target.has_value()) {
     if (!previous_target.has_value() || *previous_target != *target) {
       ++editor_hover_target_generation_;

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "util/TransparentStringHash.h"
 
 namespace microide::editor {
 
@@ -96,9 +97,16 @@ class DiagnosticsStore {
   void BumpRevision();
   void RebuildPath(std::string_view path_key);
 
-  std::unordered_map<std::string, std::unordered_map<std::string, FileDiagnostics>>
+  // Transparent hashing lets find() accept a string_view without allocating a
+  // throwaway std::string key on every lookup.
+  std::unordered_map<std::string,
+                     std::unordered_map<std::string, FileDiagnostics,
+                                        util::TransparentStringHash, std::equal_to<>>,
+                     util::TransparentStringHash, std::equal_to<>>
       diagnostics_by_owner_;
-  std::unordered_map<std::string, FileDiagnostics> merged_by_path_;
+  std::unordered_map<std::string, FileDiagnostics, util::TransparentStringHash,
+                     std::equal_to<>>
+      merged_by_path_;
   std::size_t error_count_ = 0;
   std::size_t warning_count_ = 0;
   std::size_t info_count_ = 0;

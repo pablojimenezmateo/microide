@@ -2100,9 +2100,59 @@ void TestClosingTabsWhileScrolledRecomputesOverflowImmediately() {
          "closing tabs should recompute overflow immediately when the remaining tabs all fit");
 }
 
+// The MATLAB-style gutter menu opens only on an existing breakpoint, seeds the
+// enable/disable label from the breakpoint's state, and the disable / clear-
+// condition items act without a prompt (clearing keeps hit-count + log message).
+void TestWorkspaceShellBreakpointGutterMenu() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetSettingValue(shell, "debug.enabled", "true");
+  const std::filesystem::path path = "/tmp/project/main.cpp";
+
+  // Right-click on a bare line is inert (no breakpoint there yet).
+  WorkspaceShellTestAccess::OpenBreakpointContextMenu(shell, path, 9);
+  Expect(!WorkspaceShellTestAccess::BreakpointContextMenuOpen(shell),
+         "the gutter menu does not open on a line without a breakpoint");
+
+  auto& store = WorkspaceShellTestAccess::BreakpointStore(shell);
+  store.Toggle(path, 9);
+  store.SetCondition(path, 9, "i > 5");
+  store.SetHitCondition(path, 9, ">10");
+
+  // On a breakpoint line the menu opens and seeds the enabled flag (true here).
+  WorkspaceShellTestAccess::OpenBreakpointContextMenu(shell, path, 9);
+  Expect(WorkspaceShellTestAccess::BreakpointContextMenuOpen(shell),
+         "the gutter menu opens on an existing breakpoint");
+  Expect(WorkspaceShellTestAccess::BreakpointContextMenuEnabledFlag(shell),
+         "the menu seeds the enabled flag from an enabled breakpoint");
+
+  // Toggle-enabled disables the breakpoint without removing it.
+  Expect(WorkspaceShellTestAccess::ExecuteBreakpointMenuAction(
+             shell, ActionId::DebugBreakpointToggleEnabled),
+         "the toggle-enabled menu item executes");
+  const auto* bps = store.FindByPath(path);
+  Expect(bps != nullptr && bps->size() == 1 && !(*bps)[0].enabled,
+         "toggle-enabled disables the breakpoint, keeping it in the store");
+
+  // Reopening seeds the flag as disabled (drives the "Enable Breakpoint" label).
+  WorkspaceShellTestAccess::OpenBreakpointContextMenu(shell, path, 9);
+  Expect(!WorkspaceShellTestAccess::BreakpointContextMenuEnabledFlag(shell),
+         "the menu seeds the enabled flag from a disabled breakpoint");
+
+  // Clear-condition drops only the condition; hit-count is preserved.
+  Expect(WorkspaceShellTestAccess::ExecuteBreakpointMenuAction(
+             shell, ActionId::DebugBreakpointClearCondition),
+         "the clear-condition menu item executes");
+  const auto* cleared = store.FindByPath(path);
+  Expect(cleared != nullptr && !(*cleared)[0].condition.has_value(),
+         "clear-condition removes the condition");
+  Expect((*cleared)[0].hit_condition == std::optional<std::string>(">10"),
+         "clear-condition keeps the hit-count modifier");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/BreakpointGutterMenu", TestWorkspaceShellBreakpointGutterMenu);
   AddTest(tests, "WorkspaceShell/ViewMenuToggleReflectsBackingSetting",
           TestViewMenuToggleReflectsBackingSetting);
   AddTest(tests, "WorkspaceShell/EditorTabStripOverflowControlsScrollAndCount",

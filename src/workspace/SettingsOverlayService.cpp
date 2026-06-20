@@ -5,17 +5,11 @@
 
 #include "util/Parse.h"
 #include "util/StringUtil.h"
+#include "workspace/SettingsStore.h"
 
 namespace microide::workspace {
 
 namespace {
-
-const std::string* FindStoredValue(const std::vector<std::pair<std::string, std::string>>& values,
-                                   std::string_view id) {
-  const auto it = std::find_if(values.begin(), values.end(),
-                               [id](const auto& entry) { return entry.first == id; });
-  return it == values.end() ? nullptr : &it->second;
-}
 
 // Renders a float setting value without std::to_string's trailing zeros so the
 // overlay shows "1" / "1.25" instead of "1.000000".
@@ -98,8 +92,8 @@ void SettingsOverlayService::RebuildSettingsRows(
       continue;
     }
     const std::string* stored = setting.scope == SettingScope::User
-                                    ? FindStoredValue(user_settings, setting.id)
-                                    : FindStoredValue(project_settings, setting.id);
+                                    ? settings_layer::Find(user_settings, setting.id)
+                                    : settings_layer::Find(project_settings, setting.id);
     SettingsOverlayRow row;
     row.id = setting.id;
     row.label = setting.label;

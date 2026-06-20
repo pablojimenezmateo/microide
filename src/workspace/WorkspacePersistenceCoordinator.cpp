@@ -12,11 +12,13 @@ PersistenceCoordinator::PersistenceCoordinator(WorkspaceContext& context,
                                                render::Theme& theme,
                                                std::vector<std::string>& available_colorscheme_names,
                                                float& ui_scale,
+                                               SettingsStore& settings_store,
                                                Operations operations)
     : context_(context),
       theme_(theme),
       available_colorscheme_names_(available_colorscheme_names),
       ui_scale_(ui_scale),
+      settings_store_(settings_store),
       operations_(std::move(operations)) {}
 
 ProjectWorkspaceState& PersistenceCoordinator::CurrentProjectState() {
@@ -33,6 +35,7 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
       theme_,
       available_colorscheme_names_,
       ui_scale_,
+      settings_store_,
       PersistenceCoordinator::Operations{
           .config_state_path = [this]() { return ConfigStatePath(); },
           .user_config_path = [this]() { return UserConfigPath(); },
@@ -92,6 +95,12 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
                                                                        activate_restored_tab);
               },
           .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
+          .debugger_enabled =
+              [this]() {
+                const auto value = GetSettingValue("debug.enabled");
+                return value.has_value() &&
+                       !(*value == "false" || *value == "0" || *value == "off");
+              },
       });
 }
 

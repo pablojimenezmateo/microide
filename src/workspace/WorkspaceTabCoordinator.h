@@ -43,6 +43,10 @@ class TabCoordinator {
     // buffer was loaded/last saved. The host surfaces the external-change banner
     // so the user can Reload / Overwrite / Keep instead of silently clobbering.
     std::function<void(const std::filesystem::path&)> request_external_change_banner;
+    // Raised when a write actually fails (permission/disk error), as opposed to a
+    // refused-overwrite (which raises request_external_change_banner). The host
+    // posts an error toast so the failure is never silently swallowed.
+    std::function<void(const std::filesystem::path&)> notify_save_failed;
   };
 
   TabCoordinator(ProjectCatalogState& project_catalog,

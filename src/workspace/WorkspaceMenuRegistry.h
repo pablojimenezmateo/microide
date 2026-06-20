@@ -29,6 +29,7 @@ enum class MenuId {
   EditorTabContext,
   Project,
   Terminal,
+  Debug,
   Help,
   TerminalContext,
   TerminalTabContext,
@@ -41,6 +42,8 @@ enum class TreeContextTargetKind {
   Directory,
   Root,
   Background,
+  // Debugger (Phase 6): right-click on the breakpoint gutter for a source line.
+  BreakpointLine,
 };
 
 struct MenuItemSpec {

@@ -70,6 +70,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   // those — no need to peek at project state from a render TU.
   bool skip_editor_surface = DirtyHintSkips(dirty_rect_hint, layout.editor_surface);
   bool skip_sidebar = DirtyHintSkips(dirty_rect_hint, layout.sidebar);
+  bool skip_right_pane = DirtyHintSkips(dirty_rect_hint, layout.right_pane);
   bool skip_bottom_panel = DirtyHintSkips(dirty_rect_hint, layout.bottom_panel);
   // Window chrome spans menu bar, project/editor tab strips, and the
   // breadcrumb row. Skip the whole chrome pass when none intersect — popup
@@ -94,6 +95,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
         chrome_union.has_value() && RectContains(*chrome_union, *dirty_rect_hint)) {
       skip_editor_surface = true;
       skip_sidebar = true;
+      skip_right_pane = true;
       skip_bottom_panel = true;
       contained_in_chrome_union = true;
       traced_chrome_union = chrome_union;
@@ -119,6 +121,9 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   }
   if (!skip_sidebar) {
     RenderSidebarSurface(renderer, layout);
+  }
+  if (!skip_right_pane) {
+    RenderDebugPaneSurface(renderer, layout);
   }
   RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
   if (!skip_bottom_panel) {

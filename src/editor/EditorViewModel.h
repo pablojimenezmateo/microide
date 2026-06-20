@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -10,6 +11,18 @@ struct FoldGutterMark {
   std::size_t line_index = 0;
   std::size_t visual_row_index = 0;
   bool collapsed = false;
+};
+
+struct BreakpointGutterMark {
+  std::size_t line_index = 0;
+  std::size_t visual_row_index = 0;
+  bool enabled = true;
+  bool verified = false;
+  // Phase 9 gutter-dot distinction: a condition or hit-count makes the dot read
+  // as conditional (tinted); a log message makes it a logpoint (diamond shape).
+  // `is_logpoint` wins when both are set (a logpoint never pauses execution).
+  bool has_condition = false;
+  bool is_logpoint = false;
 };
 
 struct OccurrenceRange {
@@ -33,6 +46,8 @@ struct WhitespaceGlyphRun {
 
 struct EditorViewModel {
   std::vector<FoldGutterMark> fold_gutter_marks;
+  // Breakpoint dots for visible rows (empty unless the debugger is enabled).
+  std::vector<BreakpointGutterMark> breakpoint_gutter_marks;
   // `occurrence_ranges` and `sticky_lines` are views into thread_local builder caches owned by
   // `RenderViewModelBuilder`. They stay valid until the next BuildEditorViewModelInto on the
   // same thread, which matches the render-frame lifetime of this view model. The view-into-cache
@@ -41,6 +56,10 @@ struct EditorViewModel {
   // Logical opener line indices from outer enclosing fold to inner, pinned in the sticky band
   // (top row = outer scope). Empty when sticky scroll is disabled or no enclosing folds apply.
   std::span<const std::size_t> sticky_lines;
+  // 0-based buffer line of the debugger's current execution line, set only when
+  // a session is stopped on this viewport's file (debugger enabled). Drives the
+  // full-width execution-line fill + gutter arrow. Empty in the common case.
+  std::optional<std::size_t> execution_line_index;
   std::vector<WhitespaceGlyphRun> whitespace_glyph_runs;
   // CSR-style index into `whitespace_glyph_runs`: for visible row `r`, runs are in
   // [whitespace_row_offsets[r], whitespace_row_offsets[r+1]). Size is `visible_rows + 1` whenever

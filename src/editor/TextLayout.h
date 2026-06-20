@@ -72,6 +72,21 @@ class TextLayout {
   static std::size_t AdvanceVisualColumn(std::size_t visual_column,
                                          char character,
                                          std::size_t tab_size);
+
+  // A half-open byte range [start, end) within a line. Empty when start >= end.
+  struct ByteRange {
+    std::size_t start = 0;
+    std::size_t end = 0;
+    bool empty() const { return start >= end; }
+  };
+
+  // Identifier (`[A-Za-z0-9_]+`) range containing the byte at `text_column`, or an empty range
+  // when that byte is not an identifier character (whitespace, punctuation, past end-of-line).
+  // Used by debug hover-to-inspect to resolve the bare word under the cursor as an `evaluate`
+  // expression. Identifier bytes are ASCII, so multibyte UTF-8 bytes (>= 0x80) terminate the run.
+  // TODO(phase>5): optionally extend leftward across member-access (`.`/`->`) for richer
+  // expressions; the `evaluate` plumbing is identical either way.
+  static ByteRange IdentifierRangeAt(const std::string& line, std::size_t text_column);
 };
 
 }  // namespace microide::editor
