@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-06-17.
+Reviewed on 2026-06-20.
 
 This is the single source of truth for:
 
@@ -70,15 +70,18 @@ history is recorded faithfully in `CHANGELOG.md` (user-facing) and `openspec/cha
 self-hosted perf-runner are descoped; non-Linux host backends are not being built) are recorded under
 **Deferred Or Out Of Scope** below. This section now describes only what is genuinely active.
 
-### 0. Debugger / DAP Support (promoted 2026-06-17)
+### 0. Debugger / DAP Support — shipped in v2.0.0 (2026-06-20)
 
 Full interactive debugging via the Debug Adapter Protocol, host-owned (mirroring the
-LSP client), behind a master "Enable debugger" toggle. Decomposed into independently
-shippable phases (protocol client → session lifecycle → breakpoints → execution
-control → variables → hover-inspect → conditional breakpoints/watches → polish).
-**Phase 0 (protocol client core: `DapClient` + `DapProtocol` + mock-adapter tests)
-is complete.** The full roadmap, status, and next steps live in
-`dev-docs/debugger/dap-integration.md` — read that before continuing the work.
+LSP client), behind a master "Enable debugger" toggle. **Phases 0–10 are complete and
+shipped in the v2.0.0 release**: protocol client core, session lifecycle, breakpoints
+(conditional / hit-count / logpoint / function / exception filters), execution control
+(including capability-gated reverse execution), Variables/Scopes, hover-to-inspect,
+watches, multi-session debugging, the right-side debug pane, and console REPL — with a
+bundled `gdb-dap` plugin for gdb 17.2 and an external control channel for headless /
+agent-driven operation. The full roadmap and status live in
+`dev-docs/debugger/dap-integration.md`; future hardening and additional adapters continue
+from there.
 
 ### 1. Plugin Platform Expansion
 
