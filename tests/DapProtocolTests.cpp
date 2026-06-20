@@ -254,9 +254,63 @@ void TestDapProtocolEncodesExceptionFilterOptions() {
          "a filter's supportsCondition parses");
 }
 
+// Malformed / truncated / wrong-typed wire input must never crash the decoders:
+// a real adapter (or a corrupt stream) can send anything. The decoders are
+// defensive by contract (missing keys → defaults, wrong-typed arrays → empty),
+// and this pins that contract so a future "optimization" cannot reintroduce an
+// unchecked AsArray()/AsString() that segfaults on a hostile payload.
+void TestDapProtocolDecodeRobustness() {
+  // Missing payload arrays decode to empty, not a crash.
+  Expect(codec::ParseVariables(Json("{}")).empty(), "variables: missing array → empty");
+  Expect(codec::ParseScopes(Json("{}")).empty(), "scopes: missing array → empty");
+  Expect(codec::ParseStackFrames(Json("{}")).empty(), "stackFrames: missing array → empty");
+  Expect(codec::ParseThreads(Json("{}")).empty(), "threads: missing array → empty");
+  Expect(codec::ParseBreakpoints(Json("{}")).empty(), "breakpoints: missing array → empty");
+
+  // Wrong-typed payload fields (array key holding a scalar, or items of the wrong
+  // shape) degrade to empty / default rather than throwing.
+  Expect(codec::ParseVariables(Json(R"({"variables":42})")).empty(),
+         "variables: non-array → empty");
+  Expect(codec::ParseStackFrames(Json(R"({"stackFrames":"nope"})")).empty(),
+         "stackFrames: non-array → empty");
+  Expect(codec::ParseThreads(Json(R"({"threads":{}})")).empty(),
+         "threads: object-not-array → empty");
+
+  // Items with wrong-typed scalar fields fall back to defaults (no throw): a
+  // variablesReference sent as a string, a name sent as a number.
+  const auto vars = codec::ParseVariables(
+      Json(R"({"variables":[{"name":7,"value":null,"variablesReference":"x"},{}]})"));
+  Expect(vars.size() == 2, "two malformed variable items still parse positionally");
+  Expect(vars[0].variables_reference == 0, "string variablesReference → 0 fallback");
+  Expect(vars[0].name.empty() && vars[1].name.empty(), "non-string / missing name → empty");
+
+  // Response / event envelopes parsed from non-object roots (a bare array, a
+  // string, null) must not crash and must report failure / empty fields.
+  const codec::DapResponse arr_response = codec::ParseResponse(Json("[1,2,3]"));
+  Expect(!arr_response.success && arr_response.command.empty(),
+         "response parsed from a bare array → failure, empty command");
+  const codec::DapStoppedEvent null_stop = codec::ParseStoppedEvent(Json("null"));
+  Expect(null_stop.reason.empty() && null_stop.thread_id == 0,
+         "stopped event from null body → empty/default");
+  const codec::DapCapabilities str_caps = codec::ParseCapabilities(Json(R"("not-an-object")"));
+  Expect(!str_caps.supports_configuration_done_request && str_caps.exception_filters.empty(),
+         "capabilities from a string → all-false, no filters");
+
+  // A deeply nested / oversized value (200-level array) decodes without
+  // recursion blowups in the parser path that touches it.
+  std::string deep = "{\"variables\":[";
+  for (int i = 0; i < 200; ++i) {
+    if (i != 0) deep += ',';
+    deep += R"({"name":"v","value":"0","variablesReference":0})";
+  }
+  deep += "]}";
+  Expect(codec::ParseVariables(Json(deep)).size() == 200, "200-item variables body decodes fully");
+}
+
 }  // namespace
 
 void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DapProtocol/DecodeRobustness", TestDapProtocolDecodeRobustness);
   AddTest(tests, "DapProtocol/EncodesRequestEnvelope", TestDapProtocolEncodesRequestEnvelope);
   AddTest(tests, "DapProtocol/EncodesResponseEnvelope", TestDapProtocolEncodesResponseEnvelope);
   AddTest(tests, "DapProtocol/ParsesResponse", TestDapProtocolParsesResponse);

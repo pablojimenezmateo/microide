@@ -449,8 +449,10 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceDapClient.cpp
   src/workspace/WorkspaceDapManager.cpp
   src/workspace/DebugSession.cpp
+  src/workspace/DebugSessionBreakpoints.cpp
   src/workspace/DebugService.cpp
   src/workspace/DebugServiceBreakpoints.cpp
+  src/workspace/DebugServiceCallbacks.cpp
   src/workspace/DebugServiceVariables.cpp
   src/workspace/DebugBreakpointsModel.cpp
   src/workspace/DebugValueTree.cpp
@@ -827,6 +829,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/AdvisoryPerfScenarios.cpp
     tests/perf/GitWorkstationPerfScenarios.cpp
     tests/perf/EditorEssentialsPerfScenarios.cpp
+    tests/perf/DebugPerfScenarios.cpp
     tests/perf/PerfMain.cpp
   )
 

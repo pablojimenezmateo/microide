@@ -203,6 +203,34 @@ void TestDebugPaneClickFrameNavigates() {
   Expect(focused_frame == 7, "clicking the frame row focuses that DAP frame");
 }
 
+// Row geometry must stay correct at scale: a 5000-row tree scrolled deep still
+// maps each rendered band's center to the right absolute row, and a band past the
+// last populated row resolves to "in content, no row". Guards the geometry the
+// debug_pane_hittest_geometry perf scenario measures.
+void TestDebugPaneRowAtPointLargeScrolledList() {
+  const SDL_FRect content = MakeRect(0.0f, 30.0f, 240.0f, 800.0f);
+  const float text_y = 38.0f;
+  const float line_height = 16.0f;
+  const int visible_rows = 48;
+  const std::size_t line_count = 5000;
+  for (const int scroll : {0, 1, 100, 2500, 4990}) {
+    for (int band = 0; band < visible_rows; ++band) {
+      const float y = text_y + static_cast<float>(band) * line_height + line_height * 0.5f;
+      const DebugPaneRowHit hit = DebugPaneRowAtPoint(content, text_y, line_height, visible_rows,
+                                                      scroll, line_count, /*x=*/100.0f, y);
+      const std::size_t absolute = static_cast<std::size_t>(scroll) + static_cast<std::size_t>(band);
+      if (absolute < line_count) {
+        Expect(hit.in_content && hit.row_index == static_cast<int>(absolute),
+               "a visible band maps to its absolute row at any scroll depth");
+      } else {
+        // Scrolled so far that this band is past the last row: in content, no row.
+        Expect(hit.in_content && hit.row_index == -1,
+               "a band beyond the last populated row resolves to no row");
+      }
+    }
+  }
+}
+
 // Gutter markers must stay within the reserved marker strip and never overlap the
 // line-number digits, which begin at gutter_x + kGutterLineNumberInset. (Regression
 // for the breakpoint dot / execution arrow drawing over the line numbers.)
@@ -237,6 +265,7 @@ void RegisterDebugPaneTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugPane/RowAtPointTopBandIsRowZero", TestDebugPaneRowAtPointTopBandIsRowZero);
   AddTest(tests, "DebugPane/RowAtPointMisses", TestDebugPaneRowAtPointMisses);
   AddTest(tests, "DebugPane/RowAtPointHonorsScroll", TestDebugPaneRowAtPointHonorsScroll);
+  AddTest(tests, "DebugPane/RowAtPointLargeScrolledList", TestDebugPaneRowAtPointLargeScrolledList);
   AddTest(tests, "DebugPane/ClickFrameNavigates", TestDebugPaneClickFrameNavigates);
   AddTest(tests, "DebugPane/GutterMarkersClearLineNumbers", TestGutterMarkersClearLineNumbers);
 }

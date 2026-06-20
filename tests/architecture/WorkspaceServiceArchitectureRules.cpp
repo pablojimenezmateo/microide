@@ -51,6 +51,10 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   }
   render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp");
   render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverTargets.cpp");
+  // The debug pane's bottom-panel render TU is view-model-only like the editor
+  // render TUs: it draws prebuilt row strings (DebugVariableRowView /
+  // DebugBreakpointRowView) and must never format on the render hot path.
+  render_files.push_back(repo_root / "src/workspace/DebugPaneRender.cpp");
 
   const std::regex to_string_pattern(R"(\bstd::to_string\s*\()");
   const std::regex std_format_pattern(R"(\bstd::format\s*\()");
@@ -551,6 +555,41 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
         "thread_local scratch or compose the string in RenderViewModelBuilder");
   }
   (void)string_from_view_pattern;  // advisory; some derived-type constructors still match.
+  return result;
+}
+
+RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::path& repo_root) {
+  // The debug subsystem's entire threading model lives behind WorkspaceDapClient:
+  // it owns the adapter I/O thread (plus the init/shutdown threads) and marshals
+  // every response/event back to the main thread via a wake event +
+  // DrainCallbacks. DebugSession, DebugService, DapManager, the value tree, and
+  // the pane are therefore plain single-threaded main-thread code. Spawning a
+  // thread (or std::async) anywhere else in the subsystem would bypass that
+  // single-owner model and reintroduce exactly the data races TSAN guards (two
+  // adapter I/O threads, callbacks firing off-thread). Keep all concurrency
+  // behind the DAP client; this lint blocks the regression structurally rather
+  // than relying on TSAN catching it after the fact. WorkspaceDapClient.cpp is
+  // the sole exempt TU (it is the owner).
+  RuleResult result;
+  result.label = "debug subsystem threading stays behind WorkspaceDapClient";
+  result.hard_fail = true;
+  const std::regex pattern(R"(\bstd::(thread|jthread|async)\b)");
+  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    const bool in_subsystem = name.starts_with("Debug") || name.starts_with("WorkspaceDap");
+    if (!in_subsystem || name == "WorkspaceDapClient.cpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, pattern,
+        "debug/DAP code outside WorkspaceDapClient must not spawn threads or std::async; "
+        "all adapter concurrency lives behind the DAP client and marshals to the main "
+        "thread via DrainCallbacks");
+  }
   return result;
 }
 

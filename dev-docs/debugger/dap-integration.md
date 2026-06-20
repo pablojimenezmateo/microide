@@ -1243,6 +1243,36 @@ Note: `microide_perf_tests` budgets assume an optimized build; an unoptimized
 `build/` dir (empty `CMAKE_BUILD_TYPE`) or a busy CPU will overshoot them. That is
 unrelated to the debugger work.
 
+Debugger perf scenarios: `tests/perf/DebugPerfScenarios.cpp` (built into
+`microide_perf`, gated on `-DMICROIDE_PERF_HARNESS_BUILD=ON`) gives the subsystem
+perf-coverage parity with the editor. Six pure-unit micro-benchmarks measure the
+hot paths the step/render loop consumes — value-tree expand/rebuild/paging, DAP
+encode/decode, breakpoints-model rebuild, pane hit-test geometry — plus one live
+mock-adapter session scenario (`debug_session_stop_to_variables`). They are
+**advisory** (not in `--smoke`, no committed baseline); run them explicitly:
+
+```bash
+cmake -S . -B build-perf -DMICROIDE_PERF_HARNESS_BUILD=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-perf --target microide_perf -j8
+./build-perf/microide/microide_perf \
+  --scenarios=debug_value_tree_rebuild,dap_protocol_encode_decode,debug_session_stop_to_variables \
+  --report-json=/tmp/debug-perf.json
+```
+
+See `dev-docs/performance/perf-harness.md` § "Debugger / DAP scenarios" for the
+advisory→smoke promotion path.
+
+Architecture invariants (debug subsystem): three hard-fail lints in
+`tests/architecture/` keep the subsystem from regressing — a debug-TU size
+ratchet (`CheckDebugTuSize`, ≤530 code lines; split a companion TU rather than
+raising it, as `DebugSessionBreakpoints.cpp` / `DebugServiceCallbacks.cpp` do),
+the render-string ban extended to `DebugPaneRender.cpp`
+(`CheckRenderTuDoesNotCallToStringOrFormat`), and a threading-boundary lint
+(`CheckDebugSubsystemThreadingBehindDapClient`) that forbids `std::thread` /
+`std::async` anywhere in the subsystem except `WorkspaceDapClient.cpp`, so all
+adapter concurrency stays behind the DAP client and marshals to the main thread
+via `DrainCallbacks` (the structural guard behind the TSAN coverage above).
+
 ## Next steps
 
 Phases 0–10 are done; the debugger is **feature-complete** against the locked goals.

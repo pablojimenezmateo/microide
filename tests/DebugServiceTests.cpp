@@ -2125,6 +2125,112 @@ void TestDebugValueTreeNodeIdsAreMonotonic() {
   Expect(second_id > first_id, "node ids stay globally monotonic across rebuilds");
 }
 
+// A large indexed container (here 950 elements) must stream in bounded pages, not
+// in one shot — the bound is what stops a garbage/uninitialized container that
+// reports billions of elements from freezing the host. Walk the full paging
+// sequence and assert every fetch is bounded and the final page clamps to the
+// remainder.
+void TestDebugValueTreePagingBoundaries() {
+  DebugValueTree tree;
+  tree.AddRoot("arr", "[950]", "int[950]", /*variables_reference=*/2000, /*is_scope=*/false,
+               /*total_count=*/950, /*total_known=*/true);
+  tree.Rebuild();
+
+  DebugValueTree::ChildFetch fetch = tree.ToggleRow(0);
+  Expect(fetch.reference == 2000 && fetch.start == 0 &&
+             fetch.count == DebugValueTree::kChildPageSize,
+         "first expand fetches a bounded page (200), not all 950 children");
+
+  int loaded = 0;
+  int pages = 0;
+  std::vector<int> page_counts;
+  while (fetch.reference != 0) {
+    Expect(fetch.count <= DebugValueTree::kChildPageSize, "every page stays within the page bound");
+    Expect(fetch.start == loaded, "each page resumes exactly where the prior one ended");
+    std::vector<codec::DapVariable> vars;
+    vars.reserve(static_cast<std::size_t>(fetch.count));
+    for (int i = 0; i < fetch.count; ++i) {
+      codec::DapVariable v;
+      v.name = "e" + std::to_string(fetch.start + i);
+      v.value = "0";
+      vars.push_back(std::move(v));
+    }
+    tree.ApplyVariables(fetch.reference, vars, fetch.start);
+    loaded += fetch.count;
+    page_counts.push_back(fetch.count);
+    ++pages;
+    const auto& rows = tree.Rows();
+    if (!rows.empty() && rows.back().is_show_more) {
+      fetch = tree.ToggleRow(rows.size() - 1);
+    } else {
+      break;
+    }
+  }
+
+  Expect(loaded == 950, "the whole container loads across the page sequence");
+  Expect(pages == 5, "950 elements stream in 5 bounded pages (200*4 + 150)");
+  Expect(page_counts.back() == 150, "the final page clamps to the 150-element remainder");
+  Expect(tree.Rows().size() == 951, "container row + 950 children, no trailing show-more");
+  Expect(!tree.Rows().back().is_show_more, "no show-more affordance once fully paged");
+}
+
+// Variables references are not stable across stops, so expansion is tracked by
+// node path (the root→node name chain). A deep expansion (scope → struct → leaf)
+// must be restored on the next stop even though every reference is renumbered,
+// cascading down as each newly-attached child arrives.
+void TestDebugValueTreeDeepNestingRestoreAcrossStops() {
+  DebugValueTree tree;
+
+  // Stop 1: expand Locals → its child struct `node` → reveal `leaf`.
+  tree.AddRoot("Locals", /*value=*/{}, /*type=*/{}, /*variables_reference=*/1000, /*is_scope=*/true,
+               /*total_count=*/1, /*total_known=*/true);
+  tree.Rebuild();
+  Expect(tree.ToggleRow(0).reference == 1000, "expanding Locals fetches its scope ref");
+  codec::DapVariable node;
+  node.name = "node";
+  node.value = "{...}";
+  node.variables_reference = 1001;
+  node.named_variables = 1;
+  node.count_reported = true;
+  tree.ApplyVariables(1000, {node}, 0);
+  // Find and expand `node`.
+  std::size_t node_row = 0;
+  for (std::size_t r = 0; r < tree.Rows().size(); ++r) {
+    if (tree.Rows()[r].display_name == "node") {
+      node_row = r;
+    }
+  }
+  Expect(node_row != 0, "the struct child row is present after the first page");
+  Expect(tree.ToggleRow(node_row).reference == 1001, "expanding the struct fetches its child ref");
+  codec::DapVariable leaf;
+  leaf.name = "leaf";
+  leaf.value = "42";
+  tree.ApplyVariables(1001, {leaf}, 0);
+  Expect(tree.Rows().size() == 3, "Locals + node + leaf flatten to three rows");
+
+  // Stop 2: every reference is renumbered. Re-install the scope root with a fresh
+  // ref and restore the open tree by path.
+  tree.ClearRoots();
+  tree.AddRoot("Locals", {}, {}, /*variables_reference=*/2000, /*is_scope=*/true,
+               /*total_count=*/1, /*total_known=*/true);
+  const std::vector<DebugValueTree::ChildFetch> restore = tree.RestoreExpandedRoots();
+  tree.Rebuild();
+  Expect(restore.size() == 1 && restore[0].reference == 2000,
+         "the previously-expanded Locals scope re-expands against its new ref");
+
+  // The struct child comes back with a renumbered ref; the cascade must request it
+  // because the path Locals→node was open before the stop.
+  codec::DapVariable node2;
+  node2.name = "node";
+  node2.value = "{...}";
+  node2.variables_reference = 2001;
+  node2.named_variables = 1;
+  node2.count_reported = true;
+  const std::vector<DebugValueTree::ChildFetch> cascade = tree.ApplyVariables(2000, {node2}, 0);
+  Expect(cascade.size() == 1 && cascade[0].reference == 2001,
+         "nested expansion cascades to the renumbered struct ref by path tracking");
+}
+
 // Phase C / Finding 1: an adapter that reaches Running and then exits WITHOUT a
 // DAP terminated/exited event must be reconciled to a terminal state and pruned,
 // not left as a zombie session forever.
@@ -2416,6 +2522,9 @@ void TestGdbRealFunctionBreakpointsE2E() {
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/ValueTreeNodeIdsAreMonotonic",
           TestDebugValueTreeNodeIdsAreMonotonic);
+  AddTest(tests, "DebugService/ValueTreePagingBoundaries", TestDebugValueTreePagingBoundaries);
+  AddTest(tests, "DebugService/ValueTreeDeepNestingRestoreAcrossStops",
+          TestDebugValueTreeDeepNestingRestoreAcrossStops);
   AddTest(tests, "DebugService/SessionReconciledWhenAdapterDiesSilently",
           TestDebugSessionReconciledWhenAdapterDiesSilently);
   AddTest(tests, "DebugService/SessionDrivesLaunchLifecycleWithConfigurationDone",
