@@ -137,13 +137,16 @@ void GitPorcelainParser::RecordGitStatus(std::unordered_map<std::string, GitFile
   relative_path = relative_path.lexically_normal();
   const std::string normalized = relative_path.generic_string();
   if (!normalized.empty() && normalized != ".") {
-    statuses[normalized] = CombineGitStatus(statuses[normalized], status);
+    // Hoist the slot reference so operator[] runs once, not twice (read + assign).
+    GitFileStatus& slot = statuses[normalized];
+    slot = CombineGitStatus(slot, status);
   }
 
   std::filesystem::path dir = relative_path.parent_path();
   while (!dir.empty() && dir != ".") {
     const std::string key = dir.lexically_normal().generic_string();
-    statuses[key] = CombineGitStatus(statuses[key], status);
+    GitFileStatus& slot = statuses[key];
+    slot = CombineGitStatus(slot, status);
     const auto next = dir.parent_path();
     if (next == dir) {
       break;
@@ -179,7 +182,9 @@ std::vector<GitWorkingTreeEntry> GitPorcelainParser::ParseWorkingTreeEntries(std
     if (lhs.staged != rhs.staged) {
       return lhs.staged > rhs.staged;
     }
-    return lhs.relative_path.generic_string() < rhs.relative_path.generic_string();
+    // native() returns a const reference; generic_string() would allocate two
+    // throwaway strings per comparison. Ordering is for display stability only.
+    return lhs.relative_path.native() < rhs.relative_path.native();
   });
   return entries;
 }

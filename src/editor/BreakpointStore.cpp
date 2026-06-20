@@ -197,7 +197,8 @@ std::vector<BreakpointStore::FileBreakpoints> BreakpointStore::SnapshotAll() con
   }
   // Deterministic order for callers/tests.
   std::sort(files.begin(), files.end(), [](const FileBreakpoints& lhs, const FileBreakpoints& rhs) {
-    return lhs.path.generic_string() < rhs.path.generic_string();
+    // native() is a const reference; avoids per-comparison string allocations.
+    return lhs.path.native() < rhs.path.native();
   });
   return files;
 }

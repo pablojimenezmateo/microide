@@ -23,7 +23,9 @@ PathType PathTypeFromStatus(const std::filesystem::file_status& status) {
 
 void SortPaths(auto* entries) {
   std::sort(entries->begin(), entries->end(), [](const auto& lhs, const auto& rhs) {
-    return lhs.path.lexically_normal().generic_string() < rhs.path.lexically_normal().generic_string();
+    // Entries come from directory_iterator, so paths are already normal; native()
+    // returns a const reference, avoiding a per-comparison normalize + string alloc.
+    return lhs.path.native() < rhs.path.native();
   });
 }
 

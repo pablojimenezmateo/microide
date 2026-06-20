@@ -94,7 +94,8 @@ void DiagnosticsStore::SortDiagnostics(std::vector<PublishedDiagnostic>* diagnos
   std::sort(diagnostics->begin(), diagnostics->end(),
             [](const PublishedDiagnostic& lhs, const PublishedDiagnostic& rhs) {
               if (lhs.path != rhs.path) {
-                return lhs.path.generic_string() < rhs.path.generic_string();
+                // native() avoids the two per-comparison string allocations.
+                return lhs.path.native() < rhs.path.native();
               }
               if (lhs.range.start.line != rhs.range.start.line) {
                 return lhs.range.start.line < rhs.range.start.line;
@@ -167,7 +168,7 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
 
   FileDiagnostics merged;
   for (const auto& owner_entry : diagnostics_by_owner_) {
-    const auto it = owner_entry.second.find(std::string(path_key));
+    const auto it = owner_entry.second.find(path_key);
     if (it == owner_entry.second.end()) {
       continue;
     }
@@ -179,7 +180,7 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
   }
 
   if (merged.diagnostics.empty()) {
-    const auto existing = merged_by_path_.find(std::string(path_key));
+    const auto existing = merged_by_path_.find(path_key);
     if (existing != merged_by_path_.end()) {
       RemoveSummary(existing->second.summary);
       merged_by_path_.erase(existing);
@@ -190,7 +191,7 @@ void DiagnosticsStore::RebuildPath(std::string_view path_key) {
 
   SortDiagnostics(&merged.diagnostics);
   merged.summary = SummarizeDiagnostics(merged.diagnostics);
-  auto existing = merged_by_path_.find(std::string(path_key));
+  auto existing = merged_by_path_.find(path_key);
   if (existing == merged_by_path_.end()) {
     AddSummary(merged.summary);
     merged_by_path_[std::string(path_key)] = std::move(merged);
@@ -248,7 +249,7 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
 }
 
 bool DiagnosticsStore::ClearOwner(std::string_view owner) {
-  const auto owner_it = diagnostics_by_owner_.find(std::string(owner));
+  const auto owner_it = diagnostics_by_owner_.find(owner);
   if (owner_it == diagnostics_by_owner_.end()) {
     return false;
   }
@@ -413,7 +414,7 @@ std::vector<PublishedDiagnostic> DiagnosticsStore::SnapshotAll() const {
 }
 
 std::vector<PublishedDiagnostic> DiagnosticsStore::SnapshotForOwner(std::string_view owner) const {
-  const auto owner_it = diagnostics_by_owner_.find(std::string(owner));
+  const auto owner_it = diagnostics_by_owner_.find(owner);
   if (owner_it == diagnostics_by_owner_.end()) {
     return {};
   }

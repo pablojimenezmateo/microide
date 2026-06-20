@@ -297,7 +297,8 @@ std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view o
 
   std::sort(entries.begin(), entries.end(), [](const GitBranchFileEntry& lhs,
                                                const GitBranchFileEntry& rhs) {
-    return lhs.relative_path.generic_string() < rhs.relative_path.generic_string();
+    // native() is a const reference; generic_string() would allocate per comparison.
+    return lhs.relative_path.native() < rhs.relative_path.native();
   });
   return entries;
 }

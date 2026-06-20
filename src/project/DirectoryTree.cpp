@@ -360,7 +360,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     }
 
     const bool ignored = matcher.Ignored(relative, is_directory);
-    if (path.filename().string().starts_with('.') && !ignored) {
+    if (sort_key.starts_with('.') && !ignored) {
       iterator.increment(error);
       continue;
     }
