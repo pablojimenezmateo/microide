@@ -12,6 +12,7 @@
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
+#include "workspace/ReviewSessionCoordinator.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
@@ -274,6 +275,20 @@ void WorkspaceActionContext::SetExceptionFilterCondition(const std::string& filt
 }
 
 WorkspaceActionContext WorkspaceShell::MakeActionContext() {
+  // Builds a fresh review coordinator per verb invocation; it owns no shell
+  // access beyond these narrow callbacks (host-owned sidebar + tab lifecycle).
+  const auto make_review = [this]() {
+    return ReviewSessionCoordinator(
+        context_.current_project_state, MakeCompareMergeService(),
+        ReviewSessionCoordinator::Operations{
+            .show_git_sidebar = [this]() { ShowGitSidebar(); },
+            .request_close_tabs =
+                [this](std::vector<std::size_t> indices) {
+                  RequestCloseTabs(std::move(indices));
+                },
+            .tab_is_dirty = [this](std::size_t index) { return TabIsDirty(index); },
+        });
+  };
   return WorkspaceActionContext(
       context_.project_catalog,
       context_.current_project_state,
@@ -418,6 +433,11 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                      const std::filesystem::path& output_path) {
                 return OpenMergeEditor(base_path, incoming_path, current_path, output_path);
               },
+          .open_conflict_review = [make_review]() { return make_review().OpenConflictReview(); },
+          .open_branch_review =
+              [make_review](const std::string& ref) { return make_review().OpenBranchReview(ref); },
+          .open_commit_review =
+              [make_review](const std::string& ref) { return make_review().OpenCommitReview(ref); },
           .active_editor_tab = [this]() { return ActiveEditorTab(); },
           .ensure_active_folding_model_fresh =
               [this]() { return EnsureActiveFoldingModelFresh(); },

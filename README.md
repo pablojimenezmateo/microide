@@ -416,6 +416,9 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `insert-snippet`
 - `compare [path] [commit-prefix]`
 - `merge <base> <incoming> <current> [output]`
+- `review-conflicts`
+- `review-branch [ref]`
+- `review-commit [commit]`
 - `files [root]`
 - `find <query>`
 - `find-references`

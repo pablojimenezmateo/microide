@@ -11,6 +11,13 @@ enum class ActionId {
   Compare,
   CompareHead,
   Merge,
+  // Batch review verbs (control channel / command line). Each switches to the
+  // Source Control view and bulk-opens diff/merge tabs, deduping against open
+  // tabs and closing stale (clean) review tabs from a prior run. Gated on an
+  // active git project.
+  ReviewConflicts,  // a merge tab per conflicted working-tree file
+  ReviewBranch,     // a compare tab (worktree vs <ref>) per differing file
+  ReviewCommit,     // a compare tab (<ref>~1 vs <ref>) per file changed by <ref>, default HEAD
   CopyAbsolutePath,
   CopyRelativePath,
   CreateDirectory,

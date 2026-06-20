@@ -79,6 +79,23 @@ check_sanitizer() {
     ctest --test-dir '"$build_dir"' --output-on-failure
   '
   local rc=$?
+
+  # The sanitizer runtime writes its report (the stack-use-after-scope / leak /
+  # data-race dump) to the log_path file, NOT to stderr, so the tee'd log above
+  # never sees it. Fold every per-pid report into the main log so a single file
+  # has the full failure, then clean the scratch files up.
+  shopt -s nullglob
+  local rt_files=(/tmp/microide-"${san}"-rt.*)
+  if (( ${#rt_files[@]} )); then
+    {
+      echo
+      echo "=== ${san} sanitizer runtime reports (${#rt_files[@]} file(s)) ==="
+      cat "${rt_files[@]}"
+    } >> "$log"
+    rm -f "${rt_files[@]}"
+  fi
+  shopt -u nullglob
+
   echo "run-checks: ${san} finished (exit $rc); log at $log"
   return $rc
 }

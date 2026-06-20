@@ -193,6 +193,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Find:
     case ActionId::GitRefresh:
     case ActionId::Merge:
+    case ActionId::ReviewConflicts:
+    case ActionId::ReviewBranch:
+    case ActionId::ReviewCommit:
     case ActionId::Open:
     case ActionId::ProjectClose:
     case ActionId::ProjectSearch:

@@ -57,6 +57,10 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
 // Exposed for testing: handles paths containing spaces and rename/copy records
 // (status NUL old NUL new), which the previous whitespace-split parser corrupted.
 std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output);
+// Files differing between `ref` and the current working tree (two-dot diff, so
+// uncommitted edits are included). Backs the `review-branch` control verb.
+std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesystem::path& root,
+                                                              std::string_view ref);
 std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
                                                                 std::string_view commit_hash);
 

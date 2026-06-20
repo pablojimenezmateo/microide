@@ -58,6 +58,14 @@ struct MergeRequest {
 std::optional<MergeRequest> BuildMergeRequest(const std::vector<std::string>& args,
                                               const std::filesystem::path& project_root);
 
+// Result of a batch review verb (review-conflicts / review-branch / review-commit).
+// `message` is the human/agent-facing summary (file list on success, reason on
+// failure); it is surfaced as the control-channel feedback/error.
+struct ReviewOpenOutcome {
+  bool ok = false;
+  std::string message;
+};
+
 struct OpenPathRequest {
   std::filesystem::path path;
 };

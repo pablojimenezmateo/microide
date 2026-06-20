@@ -289,6 +289,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellCompare.cpp
   src/workspace/WorkspaceShellCompareMerge.cpp
   src/workspace/WorkspaceShellCompareRender.cpp
+  src/workspace/ReviewSessionCoordinator.cpp
+  src/workspace/ReviewTabPlan.cpp
   src/workspace/StatusBarModelService.cpp
   src/workspace/TabStripService.cpp
   src/workspace/WorkspaceTabStripChrome.cpp
@@ -622,6 +624,8 @@ add_executable(microide_tests
   tests/MergeModelTests.cpp
   tests/MergeConflictResolutionTests.cpp
   tests/GitMergeConflictFixtures.cpp
+  tests/ReviewTabPlanTests.cpp
+  tests/ReviewSessionTests.cpp
   tests/ProjectSearchServiceTests.cpp
   tests/ProjectChangeTests.cpp
   tests/ExternalRepoChangeTests.cpp

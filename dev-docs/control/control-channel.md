@@ -172,6 +172,38 @@ an agent is told only a function name: `breakpoint-function-add <name>`,
 `breakpoint-exception-condition <filterId> [expr]`. Query current state with the
 `function-breakpoints` and `exception-filters` verbs.
 
+## Review / diff commands
+
+Three verbs let an agent (or a human via the control channel) bulk-open the
+diff/merge tabs needed to review changes. Each one switches to the **Source
+Control** view, dedupes against already-open tabs, and closes stale *clean* review
+tabs from a prior run (dirty/edited review and merge tabs are always kept). The
+reply `feedback` summarizes counts and lists the opened files, e.g.
+`review-conflicts: opened 3, reused 1, closed 1 — src/a.cpp, src/b.cpp, src/c.cpp`.
+
+- `review-conflicts` — one **merge** tab per conflicted file in the working tree.
+  **Non-mutating**: it never runs `git merge`. Run the merge yourself first, then
+  open the conflicts:
+  ```bash
+  microide control-send term "git merge origin/main"
+  microide control-send review-conflicts
+  ```
+- `review-branch [ref]` — one **compare** tab (working tree vs `ref`) per differing
+  file, i.e. "what is different between local state and `ref`". `ref` is any
+  commit-ish (branch, tag, hash, `HEAD~3`). Omit it (or pass `origin`) to use the
+  repo base branch via `ResolveGitBaseReference` (origin/HEAD, else main/master,
+  else `@{upstream}`).
+- `review-commit [commit]` — one **compare** tab (`commit~1` vs `commit`) per file
+  that commit changed; `commit` is any commit-ish and defaults to `HEAD` (review the
+  last commit). Pass a hash to review any historical commit.
+
+The orchestration lives in `ReviewSessionCoordinator` (host-owned tab lifecycle +
+Source Control switch injected as callbacks); the pure open/reuse/close
+reconciliation is `ComputeReviewTabPlan` (`src/workspace/ReviewTabPlan.h`). File
+enumeration reuses `project::CollectGitWorkingTreeEntries` (conflicts),
+`CollectGitWorkingTreeDiffFiles` (branch), and `CollectGitCommitChangedFiles`
+(commit); tab opening reuses `CompareMergeService` (which dedupes internally).
+
 ## One-shot client (`microide control-send`)
 
 `microide control-send` is the reliable way to drive a running instance from a

@@ -171,6 +171,26 @@ Debug control: debug-start, debug-continue, debug-step-over, debug-step-in,
   (Over the control channel, any breakpoint-/debug- command auto-enables the
   debugger transiently -- no separate debug.enabled prelude is needed.)
 
+Review / diff workflows (open tabs to review changes)
+----------------------------------------------------
+These verbs switch to the Source Control view and bulk-open diff/merge tabs for
+review. They dedupe against already-open tabs and close stale (clean) review tabs
+from a prior run; dirty (edited) review/merge tabs are always kept. The reply
+feedback lists the files that were opened.
+  review-conflicts     one merge tab per conflicted file in the working tree.
+                       NON-MUTATING -- run the merge yourself first, then call it:
+                         microide control-send term "git merge origin/main"
+                         microide control-send review-conflicts
+  review-branch [ref]  one compare tab (working tree vs <ref>) per differing file
+                       -- "what is different between local state and <ref>". <ref>
+                       is any commit-ish (branch, tag, hash, HEAD~3). Omit it (or
+                       pass `origin`) to use the repo base branch (origin/HEAD,
+                       else main/master, else @{upstream}).
+  review-commit [commit]  one compare tab (<commit>~1 vs <commit>) per file that
+                       commit changed; <commit> is any commit-ish and defaults to
+                       HEAD (review the last commit). Pass a hash to review any
+                       historical commit.
+
 Recipes (end-to-end agent workflows)
 ------------------------------------
 1) Open a session, break in a function, hand the live window to the human:
@@ -187,6 +207,11 @@ Recipes (end-to-end agent workflows)
    # the debugger auto-enables; read launch names first via the launch-configs
    # query. Watch stdout for {"event":"stopped",..} then debug-continue/step.
    # (functionBreakpoints in the spec break by symbol name with no file/line.)
+3) Merge a branch and open every conflict for resolution:
+   microide control-send term "git merge origin/main"   # you run the merge
+   microide control-send review-conflicts                # opens a merge tab each
+4) Review what an agent just coded (the last commit):
+   microide control-send review-commit                   # HEAD~1 vs HEAD, one tab/file
 
 Cold-start spec (microide --control-spec <file.json>)
 -----------------------------------------------------
@@ -225,6 +250,9 @@ Every runnable command (also printed by
   insert-snippet
   compare [path] [commit-prefix]
   merge <base> <incoming> <current> [output]
+  review-conflicts
+  review-branch [ref]
+  review-commit [commit]
   files [root]
   find <query>
   find-references

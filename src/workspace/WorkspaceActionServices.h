@@ -85,6 +85,11 @@ class WorkspaceActionContext {
                        const std::filesystem::path&,
                        const std::filesystem::path&)>
         open_merge_editor;
+    // Batch review sessions: switch to Source Control and open diff/merge tabs,
+    // deduping + cleaning stale review tabs. Return a summary outcome.
+    std::function<ReviewOpenOutcome()> open_conflict_review;
+    std::function<ReviewOpenOutcome(const std::string&)> open_branch_review;
+    std::function<ReviewOpenOutcome(const std::string&)> open_commit_review;
     std::function<TabEntry::EditorTabState*()> active_editor_tab;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     std::function<bool(const editor::TextViewport&)> replace_active_editor_view;
@@ -310,6 +315,12 @@ class WorkspaceActionContext {
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,
                        const std::filesystem::path& output_path);
+  // Batch review verbs. Each switches to Source Control, opens the relevant
+  // diff/merge tabs (dedup + clean stale), sets the command feedback to the
+  // summary, and returns it. `ref` is any commit-ish (empty = sensible default).
+  ReviewOpenOutcome ReviewConflicts();
+  ReviewOpenOutcome ReviewBranch(const std::string& ref);
+  ReviewOpenOutcome ReviewCommit(const std::string& ref);
 
   bool OpenPath(const std::filesystem::path& path, std::string* error_message);
   bool OpenPathInNewTab(const std::filesystem::path& path);

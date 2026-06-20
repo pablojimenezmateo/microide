@@ -322,6 +322,25 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
   return ParseGitBranchDiffNameStatusZ(result.output);
 }
 
+std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesystem::path& root,
+                                                              std::string_view ref) {
+  const GitRepository repo(root);
+  if (ref.empty() || !repo.IsValid()) {
+    return {};
+  }
+
+  // Two-dot diff (no `...`): compares `ref` against the working tree, so it
+  // includes uncommitted edits — i.e. "what is different between local state and
+  // <ref>". `-z` keeps spaced paths and rename records intact.
+  const auto result =
+      repo.Execute({"diff", "--name-status", "-z", "--find-renames", std::string(ref)});
+  if (!result.success() || result.output.empty()) {
+    return {};
+  }
+
+  return ParseGitBranchDiffNameStatusZ(result.output);
+}
+
 std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
                                                                 std::string_view commit_hash) {
   const GitRepository repo(root);

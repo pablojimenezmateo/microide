@@ -729,16 +729,23 @@ void WorkspaceShell::FinalizeGitMergeTab(MergeTabState& merge_tab,
 
   const std::optional<project::GitRepositoryEntry> entry =
       FindConflictRepositoryEntry(repository_state, path);
-  compare::MergeConflictClassificationInput classification{
+  // The classification input holds string_views; keep the serialized buffers in
+  // named locals so the views stay valid through ClassifyMergeFileConflict (a
+  // temporary here would dangle — caught by AddressSanitizer).
+  const std::string base_content =
+      util::SerializeLines(merge_tab.model.base_lines, merge_tab.result_line_ending);
+  const std::string incoming_content =
+      util::SerializeLines(merge_tab.model.incoming_lines, merge_tab.result_line_ending);
+  const std::string current_content =
+      util::SerializeLines(merge_tab.model.current_lines, merge_tab.result_line_ending);
+  const compare::MergeConflictClassificationInput classification{
       .repository_entry = entry.has_value() ? &*entry : nullptr,
       .base_exists = !merge_tab.model.base_lines.empty(),
       .incoming_exists = !merge_tab.model.incoming_lines.empty(),
       .current_exists = !merge_tab.model.current_lines.empty(),
-      .base_content = util::SerializeLines(merge_tab.model.base_lines, merge_tab.result_line_ending),
-      .incoming_content =
-          util::SerializeLines(merge_tab.model.incoming_lines, merge_tab.result_line_ending),
-      .current_content =
-          util::SerializeLines(merge_tab.model.current_lines, merge_tab.result_line_ending),
+      .base_content = base_content,
+      .incoming_content = incoming_content,
+      .current_content = current_content,
   };
   merge_tab.model.file_conflict = compare::ClassifyMergeFileConflict(classification);
   merge_tab.file_conflict = merge_tab.model.file_conflict;

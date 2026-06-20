@@ -117,6 +117,38 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
                                request->output_path);
       return DispatchResult::Handled;
     }
+    case ActionId::ReviewConflicts: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const ReviewOpenOutcome outcome = context_.ReviewConflicts();
+      if (!outcome.ok) {
+        return reject(outcome.message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::ReviewBranch: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const ReviewOpenOutcome outcome =
+          context_.ReviewBranch(args.empty() ? std::string{} : args.front());
+      if (!outcome.ok) {
+        return reject(outcome.message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::ReviewCommit: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const ReviewOpenOutcome outcome =
+          context_.ReviewCommit(args.empty() ? std::string{} : args.front());
+      if (!outcome.ok) {
+        return reject(outcome.message);
+      }
+      return DispatchResult::Handled;
+    }
     default:
       return DispatchResult::Unhandled;
   }

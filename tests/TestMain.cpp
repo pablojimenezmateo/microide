@@ -43,6 +43,8 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests);
 void RegisterDebugServiceTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
+void RegisterReviewTabPlanTests(std::vector<TestCase>& tests);
+void RegisterReviewSessionTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
 void RegisterProjectChangeTests(std::vector<TestCase>& tests);
@@ -373,6 +375,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterDapProtocolTests(tests);
   microide::tests::RegisterDebugServiceTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
+  microide::tests::RegisterReviewTabPlanTests(tests);
+  microide::tests::RegisterReviewSessionTests(tests);
   microide::tests::RegisterMergeConflictResolutionTests(tests);
   microide::tests::RegisterFileOperationServiceTests(tests);
   microide::tests::RegisterContributionRegistryTests(tests);

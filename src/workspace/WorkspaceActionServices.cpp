@@ -402,6 +402,45 @@ void WorkspaceActionContext::OpenMergeEditor(const std::filesystem::path& base_p
   operations_.open_merge_editor(base_path, incoming_path, current_path, output_path);
 }
 
+namespace {
+
+ReviewOpenOutcome FinishReviewOutcome(ProjectWorkspaceState& state,
+                                      const WorkspaceActionContext::Operations& operations,
+                                      ReviewOpenOutcome outcome) {
+  // Always surface the summary as command feedback so the control channel
+  // reports it (as feedback on success, as error on failure).
+  state.panel.command.feedback_text = outcome.message;
+  if (operations.notify && !outcome.message.empty()) {
+    operations.notify(outcome.ok ? NotificationService::Tone::Info
+                                 : NotificationService::Tone::Warning,
+                      outcome.message);
+  }
+  return outcome;
+}
+
+}  // namespace
+
+ReviewOpenOutcome WorkspaceActionContext::ReviewConflicts() {
+  if (!operations_.open_conflict_review) {
+    return {false, "review-conflicts: unavailable"};
+  }
+  return FinishReviewOutcome(state_, operations_, operations_.open_conflict_review());
+}
+
+ReviewOpenOutcome WorkspaceActionContext::ReviewBranch(const std::string& ref) {
+  if (!operations_.open_branch_review) {
+    return {false, "review-branch: unavailable"};
+  }
+  return FinishReviewOutcome(state_, operations_, operations_.open_branch_review(ref));
+}
+
+ReviewOpenOutcome WorkspaceActionContext::ReviewCommit(const std::string& ref) {
+  if (!operations_.open_commit_review) {
+    return {false, "review-commit: unavailable"};
+  }
+  return FinishReviewOutcome(state_, operations_, operations_.open_commit_review(ref));
+}
+
 bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
                                       std::string* error_message) {
   if (auto* editor_tab = operations_.active_editor_tab();
