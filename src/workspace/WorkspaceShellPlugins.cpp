@@ -54,6 +54,11 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
 }  // namespace
 
 WorkspaceShell::WorkspaceShell() {
+  // Bind the settings store to the layered backing vectors. The user layer is
+  // stable for the shell's lifetime; the project layer is re-bound whenever the
+  // active project state is moved (RebindProjectState / reset).
+  settings_store_.BindUserLayer(&context_.user_settings);
+  settings_store_.BindActiveProject(&context_.current_project_state.settings);
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
   tab_strip_chrome_.Configure(

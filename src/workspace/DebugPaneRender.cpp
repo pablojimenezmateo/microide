@@ -20,6 +20,11 @@ using namespace detail;
 
 void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                                             const WorkspaceLayout& layout) {
+  // Skipped entirely when the debugger is disabled: PrepareFrameOnce leaves the
+  // cached view model empty in that case.
+  if (!prepare_cached_debug_pane_vm_.has_value()) {
+    return;
+  }
   const DebugPaneSurfaceViewModel& pane_vm = *prepare_cached_debug_pane_vm_;
   if (!pane_vm.visible || layout.right_pane.w <= 0.0f || layout.right_pane.h <= 0.0f ||
       pane_vm.project_state == nullptr) {

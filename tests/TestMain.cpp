@@ -62,6 +62,7 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests);
 void RegisterWindowPresentationTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests);
+void RegisterSettingsStoreTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests);
@@ -343,6 +344,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWindowPresentationTests(tests);
   microide::tests::RegisterWorkspaceMenuRegistryTests(tests);
   microide::tests::RegisterWorkspaceSettingsRegistryTests(tests);
+  microide::tests::RegisterSettingsStoreTests(tests);
   microide::tests::RegisterWorkspaceStatusBarTests(tests);
   microide::tests::RegisterNotificationServiceTests(tests);
   microide::tests::RegisterWorkspaceShellChromeTests(tests);

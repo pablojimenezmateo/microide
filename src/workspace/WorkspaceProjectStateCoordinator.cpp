@@ -156,6 +156,9 @@ bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
 
 void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
   WorkspaceContext::RebindProjectState(state);
+  // The active project's settings vector may have just been moved-into; re-point
+  // the store at the live vector and rebuild its resolved index.
+  settings_store_.BindActiveProject(&context_.current_project_state.settings);
 }
 
 void WorkspaceShell::ClearDragState() {
@@ -172,6 +175,9 @@ void WorkspaceShell::ResetTransientInteractionState() {
 
 void WorkspaceShell::ResetCurrentProjectStateStorage() {
   context_.ResetCurrentProjectStateStorage();
+  // The reset replaced current_project_state with a fresh instance, so the old
+  // settings-vector pointer dangles; re-bind the store to the new vector.
+  settings_store_.BindActiveProject(&context_.current_project_state.settings);
   ResetTransientInteractionState();
 }
 

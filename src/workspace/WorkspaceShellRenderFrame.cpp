@@ -87,7 +87,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const RenderViewModelBuilder view_models(context_);
   prepare_cached_sidebar_vm_.emplace(view_models.BuildSidebarSurface());
   prepare_cached_bottom_panel_vm_.emplace(view_models.BuildBottomPanelSurface());
-  prepare_cached_debug_pane_vm_.emplace(view_models.BuildDebugPaneSurface());
+  // The debug pane can only ever be visible when the debugger is enabled, so skip
+  // building its view model entirely in the common debug-off case. RenderDebugPane
+  // tolerates the empty optional.
+  if (DebugEnabled()) {
+    prepare_cached_debug_pane_vm_.emplace(view_models.BuildDebugPaneSurface());
+  }
   const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
@@ -389,7 +394,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.search.case_sensitive", false);
     // Breakpoint gutter dots only render when the debugger is enabled (default
     // off), keeping the editor byte-for-byte unchanged for non-debug users.
-    const bool debug_enabled = setting_enabled("debug.enabled", false);
+    const bool debug_enabled = DebugEnabled();
     const editor::BreakpointStore* breakpoint_store =
         debug_enabled ? &project_state.breakpoint_store : nullptr;
     const DebugExecutionView* debug_execution =

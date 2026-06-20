@@ -17,14 +17,6 @@ std::size_t MenuSlotIndex(WorkspaceShell::MenuId id) {
   return static_cast<std::size_t>(id);
 }
 
-const std::string* FindStoredSettingValue(
-    const std::vector<std::pair<std::string, std::string>>& settings,
-    std::string_view id) {
-  const auto it = std::find_if(settings.begin(), settings.end(),
-                               [id](const auto& entry) { return entry.first == id; });
-  return it == settings.end() ? nullptr : &it->second;
-}
-
 }  // namespace
 
 std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
@@ -307,14 +299,10 @@ std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) 
     return SerializeSettingValue(context_.current_project_state.active_colorscheme_name);
   }
 
-  if (const std::string* user_value = FindStoredSettingValue(context_.user_settings, id);
-      user_value != nullptr) {
-    return *user_value;
-  }
-  if (const std::string* project_value =
-          FindStoredSettingValue(context_.current_project_state.settings, id);
-      project_value != nullptr) {
-    return *project_value;
+  // Layered overrides (user wins over project), resolved in O(1) via the store's
+  // index rather than two linear scans — this is read 10+ times per frame.
+  if (const std::string* resolved = settings_store_.Resolve(id); resolved != nullptr) {
+    return *resolved;
   }
 
   if (const auto info = FindSettingInfo(id, plugin_runtime_.Host()); info.has_value()) {

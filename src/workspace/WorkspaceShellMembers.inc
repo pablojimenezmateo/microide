@@ -1544,6 +1544,11 @@
   render::TextRenderer text_renderer_;
   editor::EditorViewRenderer editor_view_renderer_;
   WorkspaceContext context_;
+  // Single owner of settings resolution + mutation. Binds non-owning pointers to
+  // the user / active-project layers in context_ and keeps an O(1) resolved
+  // index. Bound in the constructor and re-bound on every project switch
+  // (RebindProjectState / ResetCurrentProjectStateStorage).
+  SettingsStore settings_store_;
   WindowPresentationState window_presentation_;
   struct SidebarModeMenuEntry {
     std::string label;

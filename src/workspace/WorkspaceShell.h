@@ -70,6 +70,7 @@
 #include "workspace/PatchApplyService.h"
 #include "workspace/PersistenceService.h"
 #include "workspace/SettingsOverlayService.h"
+#include "workspace/SettingsStore.h"
 #include "workspace/StatusBarModelService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/TabStripService.h"

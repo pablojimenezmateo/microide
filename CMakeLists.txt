@@ -436,6 +436,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceLanguageContract.cpp
   src/workspace/WorkspaceFoldingRefresh.cpp
   src/workspace/WorkspaceSettingsRegistry.cpp
+  src/workspace/SettingsStore.cpp
   src/workspace/SettingsOverlayService.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
@@ -662,6 +663,7 @@ add_executable(microide_tests
   tests/EditorMultiCaretTests.cpp
   tests/WindowPresentationTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
+  tests/SettingsStoreTests.cpp
   tests/WorkspaceSettingsRegistryTests.cpp
   tests/WorkspaceShellChromeTests.cpp
   tests/WorkspaceShellEditorBlameTests.cpp

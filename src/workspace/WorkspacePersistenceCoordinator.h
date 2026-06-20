@@ -7,6 +7,7 @@
 
 #include "render/Theme.h"
 #include "workspace/PersistenceService.h"
+#include "workspace/SettingsStore.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 
@@ -58,6 +59,7 @@ class PersistenceCoordinator {
                          render::Theme& theme,
                          std::vector<std::string>& available_colorscheme_names,
                          float& ui_scale,
+                         SettingsStore& settings_store,
                          Operations operations);
 
   void RefreshAvailableColorschemeNames();
@@ -100,6 +102,7 @@ class PersistenceCoordinator {
   render::Theme& theme_;
   std::vector<std::string>& available_colorscheme_names_;
   float& ui_scale_;
+  SettingsStore& settings_store_;
   Operations operations_;
 };
 

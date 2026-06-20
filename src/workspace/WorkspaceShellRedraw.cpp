@@ -761,7 +761,7 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   // async response is applied promptly. Otherwise a fully-idle blocking wait
   // relies solely on the cross-thread SDL wake to deliver it, which can defer the
   // scopes/variables/evaluate result by seconds and makes expansion feel frozen.
-  if (debug_service_.HasInFlightDapWork()) {
+  if (DebugEnabled() && debug_service_.HasInFlightDapWork()) {
     constexpr Uint32 kDapPollMs = 16;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
   }
