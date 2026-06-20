@@ -105,6 +105,10 @@ void DebugValueTree::Clear() {
   selected_row_ = 0;
   editing_node_.reset();
   edit_buffer_.SetText({});
+  // NB: expanded_paths_ and the one-shot default-expansion flag intentionally survive
+  // Clear() — it runs on every stop/frame focus, so wiping them here would re-open the
+  // default scope on every stop and lose a user's collapse. Session-scoped reset lives
+  // in ResetExpansionForNewSession().
 }
 
 void DebugValueTree::ClearRoots() {
@@ -170,6 +174,20 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::CollectAutoExpand(
 }
 
 std::vector<DebugValueTree::ChildFetch> DebugValueTree::RestoreExpandedRoots() {
+  // Once per session, seed the default scope (Locals) so it auto-expands through the
+  // same bounded-fetch path a manual expand uses. Consuming the flag here means a
+  // later collapse (which prunes the path key) is honored for the rest of the session.
+  if (pending_default_expansion_) {
+    pending_default_expansion_ = false;
+    if (!default_expanded_scope_.empty()) {
+      for (const std::uint32_t id : roots_) {
+        const Node* node = FindNode(id);
+        if (node != nullptr && node->name == default_expanded_scope_) {
+          expanded_paths_.insert(PathKey(*node));
+        }
+      }
+    }
+  }
   return CollectAutoExpand(roots_);
 }
 

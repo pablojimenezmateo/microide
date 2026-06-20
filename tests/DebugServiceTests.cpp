@@ -643,20 +643,23 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   DebugVariablesModel model;
   model.BeginFrame(frame_id);
 
-  // scopes → two collapsed top-level rows.
+  // scopes → Locals is open by default (auto-expanded); a sibling scope stays
+  // collapsed. ApplyScopes returns the bounded fetch the default expansion needs.
+  std::vector<DebugValueTree::ChildFetch> scope_fetches;
   bool scopes_done = false;
   session->RequestScopes(frame_id, [&](std::vector<codec::DapScope> scopes) {
-    model.ApplyScopes(scopes);
+    scope_fetches = model.ApplyScopes(scopes);
     scopes_done = true;
   });
   Expect(PollUntil(manager, [&]() { return scopes_done; }), "scopes should resolve");
-  Expect(model.Rows().size() == 2, "two scopes should produce two rows");
-  Expect(model.Rows()[0].display_name == "Locals" && model.Rows()[0].has_children,
-         "first scope should be an expandable Locals row");
+  Expect(model.Rows()[0].display_name == "Locals" && model.Rows()[0].has_children &&
+             model.Rows()[0].expanded,
+         "Locals is the first scope and open by default");
 
-  // Expand Locals → fetch its variables (x scalar, obj structured).
-  const int locals_ref = model.ToggleRow(0).reference;
-  Expect(locals_ref == 1000, "expanding Locals should request its variablesReference");
+  // The default Locals expansion fetches its variables (x scalar, obj structured).
+  Expect(scope_fetches.size() == 1 && scope_fetches[0].reference == 1000,
+         "auto-expanding Locals requests its variablesReference exactly once");
+  const int locals_ref = scope_fetches[0].reference;
   bool locals_done = false;
   session->RequestVariables(locals_ref, 0, DebugValueTree::kChildPageSize,
                             [&](bool ok, std::vector<codec::DapVariable> vars) {
@@ -990,8 +993,10 @@ void TestDebugVariablesModelTreeBehavior() {
   model.BeginFrame(7);
   Expect(model.FrameId() == 7, "BeginFrame should record the focused frame id");
 
+  // Use non-default scope names so this generic mechanics test is unaffected by the
+  // Locals-open-by-default policy (covered separately).
   std::vector<codec::DapScope> scopes = {
-      codec::DapScope{.name = "Locals", .variables_reference = 1000},
+      codec::DapScope{.name = "Arguments", .variables_reference = 1000},
       codec::DapScope{.name = "Globals", .variables_reference = 2000},
   };
   model.ApplyScopes(scopes);
@@ -1011,7 +1016,7 @@ void TestDebugVariablesModelTreeBehavior() {
                                               .variables_reference = 1001},
                        },
                        0);
-  Expect(model.Rows().size() == 4, "expanded Locals interleaves its children before Globals");
+  Expect(model.Rows().size() == 4, "expanded Arguments interleaves its children before Globals");
   Expect(model.Rows()[1].display_name == "x" && model.Rows()[1].depth == 1,
          "child x sits at depth 1");
 
@@ -1047,16 +1052,66 @@ void TestDebugVariablesModelTreeBehavior() {
   Expect(model.Empty() && model.Rows().empty(), "Clear empties the tree");
 }
 
+// Locals is auto-expanded once per session (open by default) via the same bounded
+// re-expansion path a manual expand uses; a manual collapse is respected for the
+// rest of the session, and a new session (Clear) reopens it.
+void TestDebugVariablesLocalsOpenByDefault() {
+  DebugVariablesModel model;
+  model.BeginFrame(1);
+  const std::vector<codec::DapScope> scopes = {
+      codec::DapScope{.name = "Locals", .variables_reference = 1000},
+      codec::DapScope{.name = "Registers", .variables_reference = 2000},
+  };
+
+  // First stop: Locals comes up expanded with a fetch issued; a sibling scope stays
+  // collapsed. ApplyScopes returns the bounded fetch the service would issue. While
+  // the fetch is in flight Locals shows a loading placeholder, so the sibling scope
+  // is the last row.
+  std::vector<DebugValueTree::ChildFetch> fetches = model.ApplyScopes(scopes);
+  Expect(fetches.size() == 1 && fetches[0].reference == 1000,
+         "the default Locals scope auto-issues exactly one bounded child fetch");
+  Expect(model.Rows()[0].display_name == "Locals" && model.Rows()[0].expanded,
+         "Locals is expanded by default on the first stop");
+  Expect(model.Rows().back().display_name == "Registers" && !model.Rows().back().expanded,
+         "a non-default scope stays collapsed");
+
+  // Populate Locals, then the user collapses it.
+  model.ApplyVariables(
+      1000, {codec::DapVariable{.name = "x", .value = "1", .type = "int"}}, 0);
+  Expect(model.Rows()[0].expanded && model.Rows()[1].display_name == "x",
+         "Locals shows its child after the page arrives");
+  model.ToggleRow(0);
+  Expect(!model.Rows()[0].expanded, "the user collapses Locals");
+
+  // Next stop in the SAME session (BeginFrame clears the tree but not the remembered
+  // collapse): Locals stays closed, no auto-refetch.
+  model.BeginFrame(1);
+  fetches = model.ApplyScopes(scopes);
+  Expect(fetches.empty() && !model.Rows()[0].expanded,
+         "a collapsed Locals stays collapsed on the next stop (no auto-refetch)");
+
+  // A new session re-arms the one-shot (DebugService calls BeginSession on launch):
+  // Locals opens again.
+  model.BeginSession();
+  model.BeginFrame(1);
+  fetches = model.ApplyScopes(scopes);
+  Expect(fetches.size() == 1 && model.Rows()[0].expanded,
+         "a new session reopens Locals by default");
+}
+
 // Value-kind classification (drives render coloring) and the synthetic
 // "loading…" placeholder shown while a node's children are in flight.
 void TestDebugVariablesValueKindAndPlaceholder() {
   DebugVariablesModel model;
   model.BeginFrame(1);
-  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
+  // Non-default scope name keeps this placeholder test independent of the
+  // Locals-open-by-default policy.
+  model.ApplyScopes({codec::DapScope{.name = "Registers", .variables_reference = 1000}});
   Expect(model.Rows()[0].kind == DebugValueKind::Scope, "a scope row classifies as Scope");
 
   // Expanding before the children arrive shows exactly one placeholder child.
-  Expect(model.ToggleRow(0).reference == 1000, "expanding Locals returns its reference to fetch");
+  Expect(model.ToggleRow(0).reference == 1000,
+         "expanding a scope returns its reference to fetch");
   Expect(model.Rows().size() == 2, "an unloaded expanded scope shows one placeholder child");
   Expect(model.Rows()[1].is_placeholder && model.Rows()[1].kind == DebugValueKind::Pending &&
              model.Rows()[1].depth == 1 && !model.Rows()[1].has_children,
@@ -1107,9 +1162,11 @@ void TestDebugVariablesPagingAndErrors() {
   constexpr int kPage = DebugValueTree::kChildPageSize;
   DebugVariablesModel model;
   model.BeginFrame(1);
-  model.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 1000}});
-  Expect(model.ToggleRow(0).reference == 1000, "expanding Locals requests its children");
-  // Locals holds one big array that reports 300 indexed children (gdb reports
+  // A non-default scope name keeps these container-paging mechanics independent of
+  // the Locals-open-by-default policy (covered by VariablesLocalsOpenByDefault).
+  model.ApplyScopes({codec::DapScope{.name = "Registers", .variables_reference = 1000}});
+  Expect(model.ToggleRow(0).reference == 1000, "expanding the scope requests its children");
+  // The scope holds one big array that reports 300 indexed children (gdb reports
   // indexedVariables; a garbage container would report billions here).
   model.ApplyVariables(1000,
                        {codec::DapVariable{.name = "arr",
@@ -1120,7 +1177,7 @@ void TestDebugVariablesPagingAndErrors() {
                                            .count_reported = true}},
                        0);
   Expect(model.Rows().size() == 2 && model.Rows()[1].display_name == "arr",
-         "the array child is present under Locals");
+         "the array child is present under the scope");
 
   // Expanding the array must fetch only a bounded first page, NOT all 300.
   const DebugValueTree::ChildFetch first = model.ToggleRow(1);
@@ -1164,7 +1221,7 @@ void TestDebugVariablesPagingAndErrors() {
   // Failure path: a first-page fetch that errors ends in a finite error row.
   DebugVariablesModel errored;
   errored.BeginFrame(1);
-  errored.ApplyScopes({codec::DapScope{.name = "Locals", .variables_reference = 2000}});
+  errored.ApplyScopes({codec::DapScope{.name = "Registers", .variables_reference = 2000}});
   Expect(errored.ToggleRow(0).reference == 2000, "expanding requests the scope's children");
   Expect(errored.Rows().size() == 2 && errored.Rows()[1].kind == DebugValueKind::Pending,
          "before the response the child is a loading placeholder");
@@ -1173,19 +1230,19 @@ void TestDebugVariablesPagingAndErrors() {
              errored.Rows()[1].kind == DebugValueKind::Error,
          "a failed fetch replaces the spinner with a finite error row");
 
-  // Regression: a Locals scope that reports only 9 children must not be expanded
-  // with count = kPage. gdb's DAP throws "list index out of range" when the request
-  // asks for more children than exist, which is what left Locals showing
+  // Regression: a scope that reports only 9 children must not be expanded with
+  // count = kPage. gdb's DAP throws "list index out of range" when the request asks
+  // for more children than exist, which is what left the scope showing
   // "<unavailable>". The fetch count is clamped to the scope's reported total.
   DebugVariablesModel small_scope;
   small_scope.BeginFrame(1);
-  small_scope.ApplyScopes({codec::DapScope{.name = "Locals",
+  small_scope.ApplyScopes({codec::DapScope{.name = "Registers",
                                            .variables_reference = 3000,
                                            .named_variables = 9,
                                            .count_reported = true}});
   const DebugValueTree::ChildFetch scoped = small_scope.ToggleRow(0);
   Expect(scoped.reference == 3000 && scoped.start == 0 && scoped.count == 9,
-         "expanding a 9-variable Locals scope requests exactly 9, not kPage (gdb count clamp)");
+         "expanding a 9-variable scope requests exactly 9, not kPage (gdb count clamp)");
 
   // Regression: an empty container (adapter reports zero children, e.g. an empty
   // std::vector) is known-empty — expanding it must NOT fetch (a count request
@@ -1193,7 +1250,7 @@ void TestDebugVariablesPagingAndErrors() {
   DebugVariablesModel empty_child;
   empty_child.BeginFrame(1);
   empty_child.ApplyScopes(
-      {codec::DapScope{.name = "Locals", .variables_reference = 4000, .named_variables = 1}});
+      {codec::DapScope{.name = "Registers", .variables_reference = 4000, .named_variables = 1}});
   empty_child.ToggleRow(0);
   empty_child.ApplyVariables(4000,
                              {codec::DapVariable{.name = "v",
@@ -1208,16 +1265,17 @@ void TestDebugVariablesPagingAndErrors() {
          "expanding a known-empty container issues no fetch (gdb would reject a count request)");
 
   // Regression: expansion survives a stop. Variables references are NOT stable
-  // across stops, so expansion is tracked by path. Expand Locals → a struct child,
-  // then re-apply scopes with DIFFERENT refs (a new stop) and confirm the model
-  // asks to repopulate exactly the paths that were open, cascading into the child.
+  // across stops, so expansion is tracked by path. Expand the scope → a struct
+  // child, then re-apply scopes with DIFFERENT refs (a new stop) and confirm the
+  // model asks to repopulate exactly the paths that were open, cascading into the
+  // child. Uses a non-default scope so the restore (not the default-open) is tested.
   DebugVariablesModel keep;
   keep.BeginFrame(1);
   Expect(keep.ApplyScopes({codec::DapScope{
-                              .name = "Locals", .variables_reference = 1, .named_variables = 2}})
+                              .name = "Registers", .variables_reference = 1, .named_variables = 2}})
                  .empty(),
          "first stop: nothing was expanded yet, so nothing to restore");
-  keep.ToggleRow(0);  // expand Locals (ref 1)
+  keep.ToggleRow(0);  // expand the scope (ref 1)
   keep.ApplyVariables(1,
                       {codec::DapVariable{.name = "n", .value = "5", .type = "int"},
                        codec::DapVariable{.name = "pt",
@@ -1235,9 +1293,9 @@ void TestDebugVariablesPagingAndErrors() {
 
   // Next stop: same names, brand-new references (gdb reassigns them).
   const std::vector<DebugValueTree::ChildFetch> restore = keep.ApplyScopes(
-      {codec::DapScope{.name = "Locals", .variables_reference = 100, .named_variables = 2}});
+      {codec::DapScope{.name = "Registers", .variables_reference = 100, .named_variables = 2}});
   Expect(restore.size() == 1 && restore[0].reference == 100,
-         "the re-expanded Locals scope (new ref) is queued for repopulation");
+         "the re-expanded scope (new ref) is queued for repopulation");
   const std::vector<DebugValueTree::ChildFetch> restore_children =
       keep.ApplyVariables(100,
                           {codec::DapVariable{.name = "n", .value = "6", .type = "int"},
@@ -2319,6 +2377,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionSetVariableGatedOnCapability",
           TestDebugSessionSetVariableGatedOnCapability);
   AddTest(tests, "DebugService/VariablesModelTreeBehavior", TestDebugVariablesModelTreeBehavior);
+  AddTest(tests, "DebugService/VariablesLocalsOpenByDefault",
+          TestDebugVariablesLocalsOpenByDefault);
   AddTest(tests, "DebugService/VariablesValueKindAndPlaceholder",
           TestDebugVariablesValueKindAndPlaceholder);
   AddTest(tests, "DebugService/VariablesPagingAndErrors", TestDebugVariablesPagingAndErrors);

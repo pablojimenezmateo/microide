@@ -95,6 +95,28 @@ The LSP subsystem is the template at every layer. Concrete anchors:
 | Bottom panel | `PanelContentKind`/`PanelState` in `src/workspace/WorkspaceProjectState.h`; `TerminalPanelService`; `WorkspaceShellRenderBottomPanel.cpp` | debug panels (Phase 1/3/4/6) |
 | Persistence | `src/workspace/WorkspacePersistenceFormat.h` (`EncodeProjectSessionRecord`), `PersistenceService` | `PersistedDebugState` (Phase 2) |
 
+## Driving a debug session from an agent
+
+The whole subsystem is scriptable headlessly through the control channel — an LLM
+agent (or any tool) can open files, set source/function breakpoints, launch a
+session, step, and read where it stopped, all without repo access. The two canonical
+flows and the full command/query surface live in
+[`dev-docs/control/control-channel.md`](../control/control-channel.md) (see its
+"Breakpoint commands" and "Recipes" sections, and `microide control-help`):
+
+- **Interactive handoff** ("set a breakpoint in function A and give me control"):
+  `microide <project> --set control.enabled true &` opens a normal window with the
+  socket live; the agent sends `breakpoint-function-add A` + `debug-start`, then
+  leaves the window for the human.
+- **Headless investigation** ("break just before the crashing line"):
+  `microide <project> --control --control-spec spec.json` streams `applied`/`stopped`
+  JSONL on stdout.
+
+Variables UX note: the `Locals` scope is auto-expanded once per session (open by
+default) via the existing bounded re-expansion path (`DebugValueTree`
+`expanded_paths_` / `CollectAutoExpand`); an explicit collapse is respected for the
+rest of that session and a new session reopens it.
+
 ## Hard invariants the implementation must respect
 
 Enforced by `tests/ArchitectureInvariantsTests.cpp`:

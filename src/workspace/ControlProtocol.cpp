@@ -6,9 +6,10 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::array<std::string_view, 7> kQueryVerbs = {
-    "debug-state", "breakpoints",    "tabs",     "projects",
-    "status",      "launch-configs", "adapters",
+constexpr std::array<std::string_view, 9> kQueryVerbs = {
+    "debug-state",          "breakpoints", "function-breakpoints", "exception-filters",
+    "tabs",                 "projects",    "status",               "launch-configs",
+    "adapters",
 };
 
 }  // namespace
@@ -164,9 +165,35 @@ std::string ControlChannelHelpText() {
       "  breakpoint-hit-condition <file> <line> [expr]  (omit expr to clear)\n"
       "  breakpoint-logmessage <file> <line> [message]  (omit message to clear)\n"
       "  breakpoint-clear [file]                         (omit file to clear all)\n"
+      "Function breakpoints (break by symbol name -- no file/line needed):\n"
+      "  breakpoint-function-add <name>\n"
+      "  breakpoint-function-remove <name>\n"
+      "  breakpoint-function-toggle <name>\n"
+      "  breakpoint-function-condition <name> [expr]    (omit expr to clear)\n"
+      "  breakpoint-exception-condition <filterId> [expr]\n"
       "Debug control: debug-start, debug-continue, debug-step-over, debug-step-in,\n"
       "  debug-step-out, debug-pause, debug-restart, debug-stop. (Breakpoint and debug\n"
-      "  commands require the `debug.enabled` setting.)\n"
+      "  commands require the `debug.enabled` setting; set it with\n"
+      "  `set-setting debug.enabled true`.)\n"
+      "\n"
+      "Recipes (end-to-end agent workflows)\n"
+      "------------------------------------\n"
+      "1) Open a session, break in a function, hand the live window to the human:\n"
+      "   microide /path/to/project --set control.enabled true &   # normal window + socket\n"
+      "   microide control-list                                    # find this pid's socket\n"
+      "   # then send over the socket (one JSON object per line):\n"
+      "   {\"id\":1,\"command\":\"set-setting debug.enabled true\"}\n"
+      "   {\"id\":2,\"command\":\"breakpoint-function-add A\"}\n"
+      "   {\"id\":3,\"command\":\"debug-start\"}\n"
+      "   # leave the window open -- the human now drives it interactively.\n"
+      "   (--set control.enabled true opens a NORMAL interactive window with the socket\n"
+      "    live; that is the path for \"give me control\". --control, by contrast, is the\n"
+      "    headless stream below.)\n"
+      "2) Investigate a crash, break just before the suspect line (headless):\n"
+      "   microide /path/to/project --control --control-spec spec.json\n"
+      "   # spec: {\"breakpoints\":[{\"file\":\"src/foo.c\",\"line\":N}],\"launch\":\"<config>\"}\n"
+      "   # the debugger auto-enables; read launch names first via the launch-configs\n"
+      "   # query. Watch stdout for {\"event\":\"stopped\",..} then debug-continue/step.\n"
       "\n"
       "Cold-start spec (microide --control-spec <file.json>)\n"
       "-----------------------------------------------------\n"

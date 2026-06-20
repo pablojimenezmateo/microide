@@ -125,8 +125,8 @@ Newline-delimited JSON, one object per line.
 | ready (stdout)    | `{"event":"ready","pid":..,"socket":"..","project_root":".."}` |
 | applied (stdout)  | `{"applied":"breakpoint-set ..","ok":true}` |
 
-Query verbs: `debug-state`, `breakpoints`, `tabs`, `projects`, `status`,
-`launch-configs`, `adapters`.
+Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
+`exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`.
 Events: `stopped`, `terminated`, `output`. With `--control` (stdout mirror on),
 events surface even with zero socket clients; responses and `applied` lines are
 mirrored too. `ready`/`applied` lines are stdout-only.
@@ -160,6 +160,33 @@ breakpoint-command executor (`WorkspaceGlobalActionExecutor.cpp`).
 gutter line), are gated on `debug.enabled`, and re-send to a live session via
 `DebugService::ResendBreakpointsForFile`. Breakpoints placed this way persist
 through the normal `PersistedDebugState` path.
+
+**Function breakpoints** break on a symbol with no file/line — the right tool when
+an agent is told only a function name: `breakpoint-function-add <name>`,
+`breakpoint-function-remove <name>`, `breakpoint-function-toggle <name>`,
+`breakpoint-function-condition <name> [expr]`. Exception-filter conditions use
+`breakpoint-exception-condition <filterId> [expr]`. Query current state with the
+`function-breakpoints` and `exception-filters` verbs.
+
+## Recipes
+
+**Set up a session and hand the live window to the human** (the "give me control"
+request). `--set control.enabled true` *without* `--control` opens a normal
+interactive window with the socket live — the human keeps driving after the agent
+finishes:
+
+```bash
+microide /path/to/project --set control.enabled true &   # normal window + socket
+microide control-list                                    # find this pid's socket
+# then, over the socket (e.g. socat - UNIX-CONNECT:<socket>), one object per line:
+# {"id":1,"command":"set-setting debug.enabled true"}
+# {"id":2,"command":"breakpoint-function-add A"}
+# {"id":3,"command":"debug-start"}
+```
+
+**Investigate a crash, break just before the suspect line** (headless): use the
+runbook above with `--control --control-spec` and a `{file,line}` breakpoint, read
+launch names via the `launch-configs` query first, then watch for `stopped`.
 
 ## Discovery & security
 

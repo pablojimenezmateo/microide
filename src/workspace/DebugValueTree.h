@@ -82,6 +82,19 @@ class DebugValueTree {
   // gdb allocate without bound and freeze the host.
   static constexpr int kChildPageSize = 200;
 
+  // Name of the root scope auto-expanded once per session (open by default). Empty
+  // (the default) disables it; the Variables model sets "Locals". The shared tree is
+  // otherwise scope-agnostic, so the Watch panel never auto-expands.
+  void SetDefaultExpandedScope(std::string name) { default_expanded_scope_ = std::move(name); }
+
+  // Start a fresh debug session: forget remembered expansion and re-arm the one-shot
+  // default expansion so the default scope (Locals) opens on the session's first stop.
+  // Unlike Clear() (per stop), this is called only when a new session launches.
+  void ResetExpansionForNewSession() {
+    expanded_paths_.clear();
+    pending_default_expansion_ = true;
+  }
+
   // Clear everything (nodes, rows, selection, edit state).
   void Clear();
 
@@ -203,6 +216,14 @@ class DebugValueTree {
   // Path keys (root→node name chains) of containers the user has expanded. Tracked
   // across ClearRoots/Clear so expansion survives a stop; pruned on collapse.
   std::unordered_set<std::string> expanded_paths_;
+  // The root scope auto-expanded once at the start of each session (empty = none).
+  // The Variables model sets this to "Locals" (open by default); the shared tree
+  // itself is scope-agnostic so the Watch panel is unaffected. Seeded into
+  // expanded_paths_ on the first ApplyScopes after a Clear(), then left to the
+  // normal expanded_paths_ machinery — an explicit collapse within the session is
+  // respected, and a new session reopens it.
+  std::string default_expanded_scope_;
+  bool pending_default_expansion_ = true;
   std::vector<DebugVariableRowView> rows_;
   std::uint32_t next_id_ = 1;
   std::size_t selected_row_ = 0;

@@ -24,6 +24,14 @@ class DebugVariablesModel {
  public:
   using EditTarget = DebugValueTree::EditTarget;
 
+  // The Locals scope is open by default each session (open-on-stop UX); the shared
+  // tree handles the bounded re-expansion and respects an explicit collapse.
+  DebugVariablesModel() { tree_.SetDefaultExpandedScope("Locals"); }
+
+  // Called when a new debug session launches: forget the prior session's expansion
+  // and re-arm the Locals-open-by-default one-shot for this session's first stop.
+  void BeginSession() { tree_.ResetExpansionForNewSession(); }
+
   // Start a fresh tree for a focused frame. Clears everything; the service then
   // requests scopes for `frame_id`.
   void BeginFrame(int frame_id) {

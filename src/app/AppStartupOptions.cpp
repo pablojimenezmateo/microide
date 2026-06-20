@@ -79,7 +79,11 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
                    "--control force-starts the control channel and mirrors responses/events to\n"
                    "stdout as JSONL (the headless entry point). Otherwise the live channel is\n"
                    "gated on the `control.enabled` setting (off by default). --set applies a\n"
-                   "transient (never-persisted) setting override and may be repeated.\n";
+                   "transient (never-persisted) setting override and may be repeated.\n"
+                   "\n"
+                   "Driving microide from an agent (open files, set breakpoints, run a debug\n"
+                   "session, hand over the live window): see `microide control-help` for the\n"
+                   "full protocol, query verbs, commands, and end-to-end recipes.\n";
       result.show_usage = true;
       return result;
     }
