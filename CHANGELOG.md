@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.0.0] - 2026-06-20
+
+Major release introducing an integrated **debugger**. microide now speaks the Debug Adapter
+Protocol (DAP) end to end — breakpoints, stepping, call stacks, variable inspection, watches,
+and multi-session debugging are first-class host surfaces, with gdb 17.2 wired up via a bundled
+plugin. This release also adds an external **control channel** for headless and agent-driven
+operation, plus a round of hot-path performance work. The 1.3.1 rendering fix below is included.
+
+### Debugger (DAP)
+- Host-owned DAP protocol client and `DebugSession` / `DapManager` / `DebugService` core, with a
+  `ctx.debug.add` plugin seam and a bundled `gdb-dap` plugin for gdb 17.2.
+- `debug.enabled` toggle, Start/Stop Debugging, and an always-visible Debug menu.
+- Breakpoints with persistence: MATLAB-style gutter (yellow conditional, hollow disabled),
+  conditional / hit-count / logpoint breakpoints, function breakpoints, and exception filters
+  with conditions.
+- Execution control: continue / step over / step into / step out, plus capability-gated reverse
+  execution (`reverseContinue` / `stepBack`).
+- Stopped-event handling with call stack, multi-thread support, and a session switcher for
+  multiple concurrent sessions; restart and Stop All Sessions.
+- Variables / Scopes panel with `setVariable`, a richer value tree, Locals open by default, and
+  hover-to-inspect via `evaluate`.
+- Debug surfaces moved to a dedicated right-side pane: debug toolbar, watch panel, structured
+  console REPL, launch-config picker, and precise pane hitboxes with in-buffer cursors.
+- Robustness: launch-ordering fixes for gdb 17.2, async stale-apply guards, breakpoint
+  verification feedback, dead-adapter teardown, and a `terminated` broadcast on every session end.
+
+### Control channel
+- External control channel over a live AF_UNIX socket plus a cold-start `--control-spec` path.
+- Headless, deterministic, observable agent-driving entry point, with a one-shot control-send
+  client and an agent-drivable debug runbook.
+- Notification toasts wired to real shell events.
+
+### Performance
+- O(1) settings store and a debug-off fast path.
+- Dropped per-key allocations, redundant probes, and duplicate work across the DAP/LSP JSON paths.
+- Killed hot-path allocations in editor/project and git paths; deduped transparent hashing.
+
+### Fixes
+- Stop a large-tree project file monitor from freezing the UI.
+- Render caret and selection in the launch-config picker query field.
+- Snap glyph-texture origins onto the physical pixel grid so text stays crisp under fractional
+  display scaling (also released as 1.3.1 below).
+
 ## [1.3.1] - 2026-06-17
 
 Patch release fixing blurry text on centered overlays under fractional display scaling.
