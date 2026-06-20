@@ -113,6 +113,10 @@ class DapManager {
   void SetSessionAttention(int id, bool attention);
   // Live sessions in stable creation order (drives the session-switcher rows).
   std::vector<DapSessionInfo> Sessions() const;
+  // Display label for a single session (its launch-config name, falling back to
+  // the adapter type), or "" if no session has `id`. Cheaper than Sessions() for
+  // callers that only need one name — no vector or per-session string copies.
+  std::string SessionLabel(int id) const;
 
   // Request graceful teardown of the active session (terminate/disconnect). The
   // session object is retained until a later prune so terminal state stays

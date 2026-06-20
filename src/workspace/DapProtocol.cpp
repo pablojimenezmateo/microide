@@ -14,9 +14,10 @@ int AsInt(const JsonValue& value, int fallback = 0) {
   return static_cast<int>(value.AsInt(fallback));
 }
 
-std::string AsString(const JsonValue& value) {
-  return value.IsString() ? value.AsString() : std::string{};
-}
+// JsonValue::AsString() already returns a static empty string for non-string
+// values, so return its reference directly — no per-call copy across the ~29
+// Parse* field extractions (the field assignment at the call site copies once).
+const std::string& AsString(const JsonValue& value) { return value.AsString(); }
 
 }  // namespace
 
@@ -349,10 +350,8 @@ DapStoppedEvent ParseStoppedEvent(const JsonValue& body) {
   event.text = AsString(body["text"]);
   event.thread_id = AsInt(body["threadId"]);
   event.all_threads_stopped = body["allThreadsStopped"].AsBool(false);
-  if (body["hitBreakpointIds"].IsArray()) {
-    for (const auto& id : body["hitBreakpointIds"].AsArray()) {
-      event.hit_breakpoint_ids.push_back(AsInt(id));
-    }
+  for (const auto& id : body["hitBreakpointIds"].AsArray()) {
+    event.hit_breakpoint_ids.push_back(AsInt(id));
   }
   return event;
 }

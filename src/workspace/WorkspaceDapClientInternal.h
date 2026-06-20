@@ -466,7 +466,7 @@ struct DapClient::Impl {
   void DispatchMessage(util::JsonValue msg) {
     // Single funnel for every inbound message (responses, events, reverse requests).
     util::DebugTrace::Message("recv", msg);
-    const std::string type = msg["type"].IsString() ? msg["type"].AsString() : "";
+    const std::string& type = msg["type"].AsString();
     if (type == "response") {
       HandleResponse(std::move(msg));
     } else if (type == "event") {
@@ -505,7 +505,7 @@ struct DapClient::Impl {
   }
 
   void HandleEvent(util::JsonValue msg) {
-    std::string event = msg["event"].IsString() ? msg["event"].AsString() : "";
+    std::string event = msg["event"].AsString();
     util::JsonValue body = msg["body"];
     std::lock_guard lock(mutex);
     if (event_callback) {
@@ -523,7 +523,7 @@ struct DapClient::Impl {
   // reverse request that does arrive.
   void HandleReverseRequest(util::JsonValue msg) {
     const int request_seq = static_cast<int>(msg["seq"].AsInt());
-    const std::string command = msg["command"].IsString() ? msg["command"].AsString() : "";
+    const std::string& command = msg["command"].AsString();
     const int seq = GetNextSeq();
     SendMessageAfterInitialize(dap_protocol::MakeResponse(
         seq, request_seq, command, false, "unsupported reverse request: " + command,
@@ -677,7 +677,7 @@ struct DapClient::Impl {
         continue;
       }
       const util::JsonValue& msg = *msg_opt;
-      const std::string type = msg["type"].IsString() ? msg["type"].AsString() : "";
+      const std::string& type = msg["type"].AsString();
       const bool is_init_response =
           type == "response" && static_cast<int>(msg["request_seq"].AsInt()) == init_seq;
       if (!is_init_response) {
@@ -687,8 +687,9 @@ struct DapClient::Impl {
         continue;
       }
       if (!msg["success"].AsBool(false)) {
+        const util::JsonValue& message_val = msg["message"];
         const std::string message =
-            msg["message"].IsString() ? msg["message"].AsString() : "initialize failed";
+            message_val.IsString() ? message_val.AsString() : "initialize failed";
         SetLastError("debug adapter rejected initialize: " + message);
         ShutdownProcessOnce();
         ClearDeferredMessages();

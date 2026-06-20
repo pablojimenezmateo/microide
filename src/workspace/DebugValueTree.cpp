@@ -331,20 +331,18 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::ApplyVariables(
     node.total_known = variable.count_reported;
     const std::uint32_t child_id = AddNode(std::move(node));
     new_child_ids.push_back(child_id);
-    // Re-resolve parent: AddNode may have rehashed the node map.
-    if (Node* reparent = FindNode(parent_id); reparent != nullptr) {
-      reparent->children.push_back(child_id);
-    }
+    // `parent` stays valid across AddNode: unordered_map rehash on insert
+    // invalidates iterators but never pointers/references to existing elements,
+    // so we never need to re-resolve it per child.
+    parent->children.push_back(child_id);
   }
-  if (Node* reparent = FindNode(parent_id); reparent != nullptr) {
-    reparent->loaded_count = static_cast<int>(reparent->children.size());
-    // More children remain? Use the adapter-reported total when known; otherwise
-    // fall back to "a full page came back, so there may be more".
-    if (reparent->total_known) {
-      reparent->more_available = reparent->loaded_count < parent_total;
-    } else {
-      reparent->more_available = static_cast<int>(variables.size()) >= kChildPageSize;
-    }
+  parent->loaded_count = static_cast<int>(parent->children.size());
+  // More children remain? Use the adapter-reported total when known; otherwise
+  // fall back to "a full page came back, so there may be more".
+  if (parent->total_known) {
+    parent->more_available = parent->loaded_count < parent_total;
+  } else {
+    parent->more_available = static_cast<int>(variables.size()) >= kChildPageSize;
   }
   // Restore any of these children the user had expanded before this stop.
   std::vector<ChildFetch> fetches = CollectAutoExpand(new_child_ids);

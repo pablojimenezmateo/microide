@@ -334,9 +334,9 @@ void DebugSession::RequestStackTrace(const dap_protocol::DapStoppedEvent& stop) 
         if (!response.success) {
           return;
         }
-        if (callbacks_.on_stopped) {
-          callbacks_.on_stopped(stop, dap_protocol::ParseStackFrames(response.body));
-        }
+        // on_stopped is guaranteed non-null by the guard above: callbacks_ is set
+        // once at session creation and never reassigned during the session.
+        callbacks_.on_stopped(stop, dap_protocol::ParseStackFrames(response.body));
       });
 }
 

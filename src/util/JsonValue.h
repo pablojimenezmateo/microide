@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -11,7 +12,21 @@
 namespace microide::util {
 
 struct JsonValue;
-using JsonObject = std::unordered_map<std::string, JsonValue>;
+
+// Transparent hash so object lookups accept a string_view key without allocating
+// a temporary std::string per access (the DAP/LSP/control parse paths reach into
+// objects via operator[] thousands of times per message). const std::string& and
+// const char* both convert to string_view, and std::equal_to<> compares the stored
+// std::string key against the string_view lookup key; both hash routes go through
+// std::hash<std::string_view> so stored and lookup hashes stay consistent.
+struct TransparentStringHash {
+  using is_transparent = void;
+  std::size_t operator()(std::string_view sv) const noexcept {
+    return std::hash<std::string_view>{}(sv);
+  }
+};
+using JsonObject =
+    std::unordered_map<std::string, JsonValue, TransparentStringHash, std::equal_to<>>;
 using JsonArray = std::vector<JsonValue>;
 
 struct JsonValue {

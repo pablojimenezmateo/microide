@@ -92,14 +92,10 @@ void WriteLineLocked(TraceState& state, const std::string& line) {
 
 // Pull out a small summary so log scans don't require reading the whole JSON.
 std::string SummarizeMessage(const JsonValue& msg) {
-  std::string type = msg["type"].IsString() ? msg["type"].AsString() : "?";
-  std::string what;
-  if (msg["command"].IsString()) {
-    what = msg["command"].AsString();
-  } else if (msg["event"].IsString()) {
-    what = msg["event"].AsString();
-  }
-  std::string summary = type;
+  const JsonValue& type_val = msg["type"];
+  std::string summary = type_val.IsString() ? type_val.AsString() : "?";
+  const std::string& what =
+      msg["command"].IsString() ? msg["command"].AsString() : msg["event"].AsString();
   if (!what.empty()) {
     summary += ' ';
     summary += what;
@@ -110,7 +106,7 @@ std::string SummarizeMessage(const JsonValue& msg) {
     summary += " req_seq=";
     summary += std::to_string(msg["request_seq"].AsInt(0));
   }
-  if (type == "response") {
+  if (type_val.AsString() == "response") {
     // `success` is a JSON boolean — read it as such (AsInt returns 0 for a bool,
     // which would mislabel every successful response as a failure).
     summary += msg["success"].AsBool(false) ? " ok" : " FAIL";

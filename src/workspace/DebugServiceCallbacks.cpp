@@ -182,11 +182,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       manager.SetActiveSession(session_id);
       manager.SetSessionAttention(session_id, false);
       ClearTransientDebugViews();
-      for (const DapSessionInfo& info : manager.Sessions()) {
-        if (info.id == session_id && operations_.show_debug_console) {
-          operations_.show_debug_console(info.id, info.name);
-          break;
-        }
+      if (operations_.show_debug_console) {
+        operations_.show_debug_console(session_id, manager.SessionLabel(session_id));
       }
       ProjectStop(stop, frames);
     }

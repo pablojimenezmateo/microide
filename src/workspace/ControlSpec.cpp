@@ -72,12 +72,13 @@ ControlSpec ParseControlSpec(std::string_view json) {
       }
     } else if (settings.IsArray()) {
       for (const util::JsonValue& entry : settings.AsArray()) {
-        if (!entry.IsArray() || entry.AsArray().size() != 2 || !entry.AsArray()[0].IsString() ||
-            !entry.AsArray()[1].IsString() || entry.AsArray()[0].AsString().empty()) {
+        const util::JsonArray& pair = entry.AsArray();
+        if (!entry.IsArray() || pair.size() != 2 || !pair[0].IsString() || !pair[1].IsString() ||
+            pair[0].AsString().empty()) {
           spec.parse_error = "\"settings\" array entries must be [\"id\", \"value\"] string pairs";
           return spec;
         }
-        spec.settings.emplace_back(entry.AsArray()[0].AsString(), entry.AsArray()[1].AsString());
+        spec.settings.emplace_back(pair[0].AsString(), pair[1].AsString());
       }
     } else {
       spec.parse_error = "\"settings\" must be an object or an array of [id, value] pairs";

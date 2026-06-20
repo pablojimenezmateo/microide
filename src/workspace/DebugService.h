@@ -256,9 +256,18 @@ class DebugService {
   // Rebuild the Breakpoints panel + live re-send function breakpoints to the active
   // session + request a redraw. Shared by the function-breakpoint mutators.
   void ResendFunctionBreakpointsAndSync();
+  // Same shape for exception filters: rebuild the panel + live re-send exception
+  // filters to the active session + request a redraw. Shared by the exception-filter
+  // toggle/condition mutators.
+  void ResendExceptionFiltersAndSync();
   // Drop all transient debug view models (execution / variables / hover / watch
   // results) and request redraws. Shared by stop / resume / restart / switch.
   void ClearTransientDebugViews();
+  // Reset the project-shared, adapter-owned breakpoint state: line + function
+  // breakpoint verification and the advertised exception filters. Called when the
+  // last/every session goes away so a fresh session re-verifies and re-advertises
+  // from scratch (gutter reads unverified until then).
+  void ResetAdapterBreakpointState();
   // Append one text line to a session's console channel via `append_console_output`
   // (wraps the text in a synthetic `console`-category output event). Used by the
   // REPL to echo input and results.

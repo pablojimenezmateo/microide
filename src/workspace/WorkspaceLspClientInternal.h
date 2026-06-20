@@ -365,9 +365,9 @@ struct LspClient::Impl {
   }
 
   void SetProgressReadiness(const util::JsonValue& value) {
-    const std::string kind = value["kind"].IsString() ? value["kind"].AsString() : "";
-    const std::string title = value["title"].IsString() ? value["title"].AsString() : "";
-    const std::string message = value["message"].IsString() ? value["message"].AsString() : "";
+    const std::string& kind = value["kind"].AsString();
+    const std::string& title = value["title"].AsString();
+    const std::string& message = value["message"].AsString();
     const int percentage = value["percentage"].AsInt(0);
 
     std::lock_guard lock(mutex);
@@ -593,20 +593,17 @@ struct LspClient::Impl {
     using namespace util;
     if (method == "workspace/configuration") {
       JsonArray result;
-      if (params["items"].IsArray()) {
-        for (const auto& item : params["items"].AsArray()) {
-          const std::string section =
-              item["section"].IsString() ? item["section"].AsString() : "";
-          JsonValue value;  // Null when we have nothing configured.
-          if (settings.IsObject()) {
-            if (section.empty()) {
-              value = settings;
-            } else if (settings.HasKey(section)) {
-              value = settings[section];
-            }
+      for (const auto& item : params["items"].AsArray()) {
+        const std::string& section = item["section"].AsString();
+        JsonValue value;  // Null when we have nothing configured.
+        if (settings.IsObject()) {
+          if (section.empty()) {
+            value = settings;
+          } else if (settings.HasKey(section)) {
+            value = settings[section];
           }
-          result.push_back(std::move(value));
         }
+        result.push_back(std::move(value));
       }
       SendResponseResult(id, JsonValue(std::move(result)));
       return;
@@ -670,11 +667,11 @@ struct LspClient::Impl {
         PushWakeEvent();
       }
     } else if (msg.HasKey("method")) {
-      const std::string method = msg["method"].IsString() ? msg["method"].AsString() : "";
+      const std::string& method = msg["method"].AsString();
       if (method == "textDocument/publishDiagnostics") {
         util::StartupTrace::Scope scope("LspClient::DispatchDiagnostics");
         const auto& params = msg["params"];
-        const std::string uri = params["uri"].IsString() ? params["uri"].AsString() : "";
+        std::string uri = params["uri"].AsString();
         std::vector<Diagnostic> diags = lsp_protocol::ParseDiagnostics(params["diagnostics"]);
         std::lock_guard lock(mutex);
         if (diagnostics_callback) {

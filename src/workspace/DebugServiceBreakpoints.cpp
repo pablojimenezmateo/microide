@@ -17,15 +17,7 @@ void DebugService::ToggleExceptionFilter(const std::string& filter_id) {
   if (!panel.ToggleFilter(filter_id)) {
     return;
   }
-  SyncBreakpointsPanel();
-  // Live re-send so the change takes effect immediately on an active session.
-  if (DebugSession* session = CurrentDapManager().ActiveSession();
-      session != nullptr && session->IsActive()) {
-    session->ResendExceptionFilters();
-  }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  ResendExceptionFiltersAndSync();
 }
 
 void DebugService::SetExceptionFilterCondition(const std::string& filter_id,
@@ -34,15 +26,7 @@ void DebugService::SetExceptionFilterCondition(const std::string& filter_id,
   if (!panel.SetFilterCondition(filter_id, std::move(condition))) {
     return;
   }
-  SyncBreakpointsPanel();
-  // Live re-send (the filter must be enabled for the condition to take effect).
-  if (DebugSession* session = CurrentDapManager().ActiveSession();
-      session != nullptr && session->IsActive()) {
-    session->ResendExceptionFilters();
-  }
-  if (operations_.request_debug_pane_redraw) {
-    operations_.request_debug_pane_redraw();
-  }
+  ResendExceptionFiltersAndSync();
 }
 
 void DebugService::AddFunctionBreakpoint(std::string name) {
@@ -115,6 +99,18 @@ void DebugService::ResendFunctionBreakpointsAndSync() {
   if (DebugSession* session = CurrentDapManager().ActiveSession();
       session != nullptr && session->IsActive()) {
     session->ResendFunctionBreakpoints();
+  }
+  if (operations_.request_debug_pane_redraw) {
+    operations_.request_debug_pane_redraw();
+  }
+}
+
+void DebugService::ResendExceptionFiltersAndSync() {
+  SyncBreakpointsPanel();
+  // Live re-send so the change takes effect immediately on an active session.
+  if (DebugSession* session = CurrentDapManager().ActiveSession();
+      session != nullptr && session->IsActive()) {
+    session->ResendExceptionFilters();
   }
   if (operations_.request_debug_pane_redraw) {
     operations_.request_debug_pane_redraw();

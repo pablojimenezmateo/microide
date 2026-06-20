@@ -83,11 +83,9 @@ void DebugService::ConsumeDapCallbacks() {
     if (manager.ActiveSessionId() != active_before) {
       ClearTransientDebugViews();
       if (DebugSession* active = manager.ActiveSession(); active != nullptr) {
-        for (const DapSessionInfo& info : manager.Sessions()) {
-          if (info.id == manager.ActiveSessionId() && operations_.show_debug_console) {
-            operations_.show_debug_console(info.id, info.name);
-            break;
-          }
+        if (operations_.show_debug_console) {
+          const int id = manager.ActiveSessionId();
+          operations_.show_debug_console(id, manager.SessionLabel(id));
         }
         active->Reactivate();
       }
@@ -144,13 +142,7 @@ void DebugService::StopDebugging() {
   const bool last_session = manager.SessionCount() <= 1;
   manager.StopActiveSession();
   if (last_session) {
-    // Verification state is tied to the adapter; drop it so a fresh session
-    // re-verifies from scratch and the gutter shows unverified until then.
-    CurrentProjectState().breakpoint_store.ResetVerification();
-    CurrentProjectState().function_breakpoint_store.ResetVerification();
-    // The advertised exception filters belong to the (now dead) adapter; drop them
-    // so the Breakpoints tab shows only line breakpoints until a new session binds.
-    CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
+    ResetAdapterBreakpointState();
   }
   SyncBreakpointsPanel();
   // Drop the execution view + variables; the next-frame prune advances the active
@@ -170,9 +162,7 @@ void DebugService::StopAllDebugging() {
   manager.ShutdownAll();
   // All sessions are gone, so reset the project-shared adapter state (same as
   // StopDebugging's last-session branch).
-  CurrentProjectState().breakpoint_store.ResetVerification();
-  CurrentProjectState().function_breakpoint_store.ResetVerification();
-  CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
+  ResetAdapterBreakpointState();
   SyncBreakpointsPanel();
   ClearTransientDebugViews();
   SyncSessionsPanel();
@@ -209,8 +199,7 @@ void DebugService::FocusSession(int session_id) {
   manager.SetSessionAttention(session_id, false);
   // Drop the previously-active session's projection, then re-project this one.
   ClearTransientDebugViews();
-  const std::string label = !session->Config().name.empty() ? session->Config().name
-                                                            : session->Config().type;
+  const std::string label = manager.SessionLabel(session_id);
   if (operations_.show_debug_console) {
     operations_.show_debug_console(session_id, label);
   }
@@ -239,6 +228,16 @@ void DebugService::FocusNextSession() {
 
 std::vector<DapSessionInfo> DebugService::Sessions() const {
   return CurrentDapManager().Sessions();
+}
+
+void DebugService::ResetAdapterBreakpointState() {
+  // Verification state is tied to the adapter; drop it so a fresh session
+  // re-verifies from scratch and the gutter shows unverified until then.
+  CurrentProjectState().breakpoint_store.ResetVerification();
+  CurrentProjectState().function_breakpoint_store.ResetVerification();
+  // The advertised exception filters belong to the (now dead) adapter; drop them
+  // so the Breakpoints tab shows only line breakpoints until a new session binds.
+  CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
 }
 
 void DebugService::SyncSessionsPanel() {
@@ -359,13 +358,8 @@ bool DebugService::IsSessionActive() const {
 int DebugService::ActiveSessionId() const { return CurrentDapManager().ActiveSessionId(); }
 
 std::string DebugService::ActiveSessionLabel() const {
-  const int id = ActiveSessionId();
-  for (const DapSessionInfo& info : Sessions()) {
-    if (info.id == id) {
-      return info.name;
-    }
-  }
-  return {};
+  const DapManager& manager = CurrentDapManager();
+  return manager.SessionLabel(manager.ActiveSessionId());
 }
 
 DebugSession::State DebugService::SessionState() const {

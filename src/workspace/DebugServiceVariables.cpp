@@ -182,13 +182,7 @@ bool DebugService::EvaluateRepl(const std::string& expression) {
     return false;
   }
   const int session_id = manager.ActiveSessionId();
-  std::string label;
-  for (const DapSessionInfo& info : manager.Sessions()) {
-    if (info.id == session_id) {
-      label = info.name;
-      break;
-    }
-  }
+  const std::string label = manager.SessionLabel(session_id);
   // Echo the typed expression, then surface the console so the result is visible.
   AppendConsoleLine(session_id, label, "> " + expression);
   if (operations_.show_debug_console) {

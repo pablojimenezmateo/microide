@@ -216,6 +216,16 @@ std::vector<DapSessionInfo> DapManager::Sessions() const {
   return infos;
 }
 
+std::string DapManager::SessionLabel(int id) const {
+  for (const SessionEntry& entry : sessions_) {
+    if (entry.id == id) {
+      const LaunchConfig& config = entry.session->Config();
+      return !config.name.empty() ? config.name : config.type;
+    }
+  }
+  return {};
+}
+
 void DapManager::StopActiveSession() {
   if (DebugSession* session = ActiveSession(); session != nullptr) {
     session->RequestStop();

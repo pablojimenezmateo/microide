@@ -15,7 +15,7 @@ namespace microide::util {
 const JsonValue& JsonValue::operator[](std::string_view key) const {
   static const JsonValue kNull;
   if (const auto* o = std::get_if<JsonObject>(&v)) {
-    auto it = o->find(std::string(key));
+    auto it = o->find(key);  // transparent lookup: no temporary std::string
     if (it != o->end()) return it->second;
   }
   return kNull;
@@ -31,7 +31,7 @@ const JsonValue& JsonValue::operator[](std::size_t idx) const {
 
 bool JsonValue::HasKey(std::string_view key) const {
   if (const auto* o = std::get_if<JsonObject>(&v)) {
-    return o->count(std::string(key)) > 0;
+    return o->find(key) != o->end();  // transparent lookup: no temporary std::string
   }
   return false;
 }
