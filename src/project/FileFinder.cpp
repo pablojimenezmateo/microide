@@ -162,7 +162,7 @@ void FileFinder::EnsureCacheBuilt() {
         .relative_path = path.relative_path,
         .path_string = path_string,
         .lower_path = util::ToLowerAscii(path_string),
-        .lower_filename = util::ToLowerAscii(std::filesystem::path(path_string).filename().string()),
+        .lower_filename = util::ToLowerAscii(path.relative_path.filename().string()),
     });
   }
   cached_index_version_ = snapshot.version;

@@ -197,18 +197,20 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
         pos = found + 1;
       }
     } else {
-      for (std::size_t i = 0; i + lowered_needle.size() <= haystack.size(); ++i) {
-        bool match = true;
-        for (std::size_t j = 0; j < lowered_needle.size(); ++j) {
-          if (static_cast<char>(std::tolower(static_cast<unsigned char>(haystack[i + j]))) !=
-              lowered_needle[j]) {
-            match = false;
-            break;
-          }
+      // Lower the haystack once, then reuse the same fast find() as the
+      // case-sensitive branch — the previous nested loop re-lowered every
+      // haystack byte O(needle) times for each candidate position.
+      thread_local std::string lowered_haystack;
+      lowered_haystack.resize(haystack.size());
+      std::transform(haystack.begin(), haystack.end(), lowered_haystack.begin(),
+                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      for (std::size_t pos = 0; pos <= lowered_haystack.size();) {
+        const std::size_t found = lowered_haystack.find(lowered_needle, pos);
+        if (found == std::string::npos) {
+          break;
         }
-        if (match) {
-          emit(i, i + lowered_needle.size());
-        }
+        emit(found, found + lowered_needle.size());
+        pos = found + 1;
       }
     }
   };

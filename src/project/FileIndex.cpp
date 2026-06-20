@@ -242,8 +242,9 @@ std::size_t FileIndex::CacheIndex(ProjectFileScanMode mode) {
 
 bool FileIndex::IsHiddenRelativePath(const std::filesystem::path& path) {
   for (const auto& part : path) {
-    const std::string name = part.string();
-    if (!name.empty() && name[0] == '.') {
+    // c_str()[0] reads the first character without allocating a std::string per
+    // component; an empty component yields '\0', which is correctly not hidden.
+    if (part.c_str()[0] == '.') {
       return true;
     }
   }
