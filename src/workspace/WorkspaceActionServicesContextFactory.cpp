@@ -232,6 +232,15 @@ std::string WorkspaceActionContext::StartNamedDebugConfig(const std::string& nam
   return "debug launch unavailable";
 }
 
+std::string WorkspaceActionContext::StartAdHocDebug(const std::string& program,
+                                                    const std::vector<std::string>& args,
+                                                    const std::string& type) {
+  if (operations_.start_ad_hoc_debug) {
+    return operations_.start_ad_hoc_debug(program, args, type);
+  }
+  return "debug launch unavailable";
+}
+
 void WorkspaceActionContext::AddFunctionBreakpoint(const std::string& name) {
   if (operations_.add_function_breakpoint) {
     operations_.add_function_breakpoint(name);
@@ -572,6 +581,9 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](const std::filesystem::path& path) { ResendBreakpointsForFile(path); },
           .start_named_debug_config =
               [this](const std::string& name) { return StartNamedDebugConfig(name); },
+          .start_ad_hoc_debug =
+              [this](const std::string& program, const std::vector<std::string>& args,
+                     const std::string& type) { return StartAdHocDebug(program, args, type); },
           .add_function_breakpoint =
               [this](const std::string& name) { debug_service_.AddFunctionBreakpoint(name); },
           .remove_function_breakpoint =

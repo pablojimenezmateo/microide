@@ -71,6 +71,14 @@ class DapManager {
   // config until per-project launch-config selection lands in a later phase.
   std::vector<std::string> AdapterTypes() const;
 
+  // A registered adapter's type plus the argv used to spawn it. Surfaced to the
+  // control channel's `adapters` query so a headless driver sees what runs.
+  struct AdapterInfo {
+    std::string type;
+    std::vector<std::string> command;
+  };
+  std::vector<AdapterInfo> AdapterDetails() const;
+
   // Begin a new debug session for `config` and make it active. Resolves
   // `config.type` to a registered adapter, spawns it, and drives the lifecycle.
   // The session's stable id is assigned first, then `make_callbacks(id)` builds

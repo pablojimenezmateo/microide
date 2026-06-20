@@ -162,7 +162,15 @@ WorkspaceShell::WorkspaceShell() {
           .execute_command_line =
               [this](const std::string& line) { return ExecuteControlCommand(line); },
           .emit_jsonl = [](const std::string& line) { std::cout << line << '\n' << std::flush; },
-          .adapter_types = [this]() { return CurrentDapManager().AdapterTypes(); },
+          .adapters =
+              [this]() {
+                std::vector<ControlAdapterInfo> adapters;
+                for (const auto& detail : CurrentDapManager().AdapterDetails()) {
+                  adapters.push_back(ControlAdapterInfo{detail.type, detail.command});
+                }
+                return adapters;
+              },
+          .ensure_debugger_enabled = [this]() { EnsureDebuggerEnabledTransiently(); },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

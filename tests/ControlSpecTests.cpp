@@ -78,6 +78,39 @@ void TestToCommandsResolvesAndConverts() {
   Expect(ContainsCommand(commands, "goto 42"), "first breakpoint line should be revealed");
 }
 
+void TestParseFunctionBreakpoints() {
+  const ControlSpec spec = ParseControlSpec(R"({
+    "functionBreakpoints": [
+      {"name": "main"},
+      {"name": "process", "condition": "n > 3", "enabled": false}
+    ]
+  })");
+  Expect(spec.valid, "spec with function breakpoints should parse");
+  Expect(spec.function_breakpoints.size() == 2, "two function breakpoints expected");
+  Expect(spec.function_breakpoints[0].name == "main", "first function name should parse");
+  Expect(spec.function_breakpoints[1].condition.has_value() &&
+             *spec.function_breakpoints[1].condition == "n > 3",
+         "function breakpoint condition should parse");
+  Expect(!spec.function_breakpoints[1].enabled, "enabled:false should parse");
+
+  const std::vector<std::string> commands = ControlSpecToCommands(spec, "/home/u/proj");
+  Expect(ContainsCommand(commands, "breakpoint-function-add main"),
+         "an add command should be emitted for the function name");
+  Expect(ContainsCommand(commands, "breakpoint-function-condition process 'n > 3'"),
+         "a condition command should be emitted and quoted");
+  Expect(ContainsCommand(commands, "breakpoint-function-toggle process"),
+         "a disabled function breakpoint should toggle off after add");
+}
+
+void TestParseFunctionBreakpointsRejectsBadInput() {
+  Expect(!ParseControlSpec(R"({"functionBreakpoints": [{"name": ""}]})").valid,
+         "empty function name should be rejected");
+  Expect(!ParseControlSpec(R"({"functionBreakpoints": [{}]})").valid,
+         "missing function name should be rejected");
+  Expect(!ParseControlSpec(R"({"functionBreakpoints": "nope"})").valid,
+         "non-array functionBreakpoints should be rejected");
+}
+
 void TestParseSettingsArrayForm() {
   const ControlSpec spec = ParseControlSpec(R"({
     "settings": [["control.enabled", "true"], ["debug.enabled", "true"]],
@@ -114,6 +147,9 @@ void RegisterControlSpecTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlSpec/ParseFullSpec", TestParseFullSpec);
   AddTest(tests, "ControlSpec/ParseRejectsBadInput", TestParseRejectsBadInput);
   AddTest(tests, "ControlSpec/ToCommandsResolvesAndConverts", TestToCommandsResolvesAndConverts);
+  AddTest(tests, "ControlSpec/ParseFunctionBreakpoints", TestParseFunctionBreakpoints);
+  AddTest(tests, "ControlSpec/ParseFunctionBreakpointsRejectsBadInput",
+          TestParseFunctionBreakpointsRejectsBadInput);
   AddTest(tests, "ControlSpec/ParseSettingsArrayForm", TestParseSettingsArrayForm);
   AddTest(tests, "ControlSpec/ParseSettingsObjectForm", TestParseSettingsObjectForm);
   AddTest(tests, "ControlSpec/ParseSettingsRejectsBadShape", TestParseSettingsRejectsBadShape);

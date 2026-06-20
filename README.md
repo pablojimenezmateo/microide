@@ -474,6 +474,7 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `breakpoint-function-condition <name> [expr]`
 - `breakpoint-exception-condition <filterId> [expr]`
 - `debug-launch [name]`
+- `debug-run [--type <adapter>] <program> [args...]`
 - `set-setting <id> <value>`
 - `quit`
 - `reopen`

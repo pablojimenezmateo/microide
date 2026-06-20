@@ -1153,6 +1153,12 @@
   // empty name defers to StartDebuggingWithDefaultConfig(). Returns an error
   // string (empty on success). Drives the `debug-launch` command / spec field.
   std::string StartNamedDebugConfig(const std::string& name);
+  // Ad-hoc launch by program path (the `debug-run` command). Synthesizes a
+  // transient LaunchConfig from `program` (resolved against the project root) +
+  // `args`, using `type` (or the sole registered adapter when empty), then starts
+  // it. Returns an error string (empty on success). No pre-defined config needed.
+  std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
+                              const std::string& type);
   void StopDebugging();
   void ResendBreakpointsForFile(const std::filesystem::path& path);
   bool IsDebugSessionActive() const;
@@ -1160,6 +1166,11 @@
   // Canonical read of the master `debug.enabled` toggle (default off). The one
   // place that interprets the stored setting string as a bool for shell code.
   bool DebugEnabled() const;
+  // Turn the debugger on transiently (never persisted) when it is off. Shared by
+  // the cold-start spec and the control channel so a headless driver never needs
+  // a separate `set-setting debug.enabled true` prelude before breakpoint-/debug-
+  // commands. Returns true when it flipped the setting on.
+  bool EnsureDebuggerEnabledTransiently();
   // Execution control (Phase 3); forward to debug_service_ / the active session.
   void DebugContinue();
   void DebugStepOver();

@@ -52,6 +52,18 @@ std::filesystem::path SocketPathForPid(int pid) {
   return RuntimeBaseDir() / (std::to_string(pid) + ".sock");
 }
 
+// Whether a command line's verb is part of the debugger surface (and so should
+// auto-enable the debugger). Prefix match on the first token covers every
+// breakpoint-*/debug-* command, present and future, without an explicit list.
+bool CommandTouchesDebugger(const std::string& command) {
+  std::size_t start = command.find_first_not_of(" \t");
+  if (start == std::string::npos) {
+    return false;
+  }
+  const std::string_view verb(command.data() + start, command.size() - start);
+  return verb.starts_with("breakpoint-") || verb.starts_with("debug-");
+}
+
 std::filesystem::path DescriptorPathForPid(int pid) {
   return RuntimeBaseDir() / "instances" / (std::to_string(pid) + ".json");
 }
@@ -75,13 +87,13 @@ bool ProcessIsAlive(int pid) {
 
 }  // namespace
 
-std::string ControlListInstancesText() {
+std::vector<ControlInstanceDescriptor> EnumerateControlInstances() {
+  std::vector<ControlInstanceDescriptor> instances;
   const std::filesystem::path dir = RuntimeBaseDir() / "instances";
   std::error_code ec;
   if (!std::filesystem::is_directory(dir, ec)) {
-    return {};
+    return instances;
   }
-  std::string text;
   for (const std::filesystem::directory_entry& entry :
        std::filesystem::directory_iterator(dir, ec)) {
     if (entry.path().extension() != ".json") {
@@ -99,17 +111,33 @@ std::string ControlListInstancesText() {
     if (contents.empty()) {
       continue;
     }
+    const std::optional<util::JsonValue> parsed = util::ParseJson(contents);
+    if (!parsed.has_value() || !parsed->IsObject()) {
+      continue;
+    }
+    const int pid = static_cast<int>((*parsed)["pid"].AsInt());
     // Drop (and prune) descriptors whose process is gone, e.g. after a crash or
     // SIGKILL that skipped the graceful teardown.
-    const std::optional<util::JsonValue> parsed = util::ParseJson(contents);
-    const int pid =
-        parsed.has_value() && parsed->IsObject() ? static_cast<int>((*parsed)["pid"].AsInt()) : 0;
     if (!ProcessIsAlive(pid)) {
       std::error_code remove_ec;
       std::filesystem::remove(entry.path(), remove_ec);
       continue;
     }
-    text += contents;
+    ControlInstanceDescriptor descriptor;
+    descriptor.pid = pid;
+    descriptor.socket = std::filesystem::path((*parsed)["socket"].AsString());
+    descriptor.project_root = (*parsed)["project_root"].AsString();
+    descriptor.project_hash = (*parsed)["project_hash"].AsString();
+    descriptor.raw_json = std::move(contents);
+    instances.push_back(std::move(descriptor));
+  }
+  return instances;
+}
+
+std::string ControlListInstancesText() {
+  std::string text;
+  for (const ControlInstanceDescriptor& instance : EnumerateControlInstances()) {
+    text += instance.raw_json;
     text += '\n';
   }
   return text;
@@ -219,6 +247,11 @@ void ControlChannelService::ConsumeControlCallbacks() {
       response.ok = false;
       response.error = request.parse_error;
     } else if (request.is_command()) {
+      // A breakpoint-/debug- command auto-enables the debugger transiently, so a
+      // headless driver never has to send `set-setting debug.enabled true` first.
+      if (operations_.ensure_debugger_enabled && CommandTouchesDebugger(request.command)) {
+        operations_.ensure_debugger_enabled();
+      }
       CommandOutcome outcome;
       if (operations_.execute_command_line) {
         outcome = operations_.execute_command_line(request.command);
@@ -441,6 +474,9 @@ util::JsonValue ControlChannelService::BuildLaunchConfigs() const {
     object["type"] = util::JsonValue(config.type);
     object["request"] = util::JsonValue(config.request);
     object["selected"] = util::JsonValue(i == state.selected_launch_config_index);
+    // Surface the launch/attach body (program, args, cwd, stopOnEntry, ...) so a
+    // headless driver can see exactly what each config will run.
+    object["arguments"] = config.arguments;
     configs.push_back(util::JsonValue(std::move(object)));
   }
   return util::JsonValue(std::move(configs));
@@ -448,9 +484,16 @@ util::JsonValue ControlChannelService::BuildLaunchConfigs() const {
 
 util::JsonValue ControlChannelService::BuildAdapters() const {
   util::JsonArray adapters;
-  if (operations_.adapter_types) {
-    for (const std::string& type : operations_.adapter_types()) {
-      adapters.push_back(util::JsonValue(type));
+  if (operations_.adapters) {
+    for (const ControlAdapterInfo& adapter : operations_.adapters()) {
+      util::JsonObject object;
+      object["type"] = util::JsonValue(adapter.type);
+      util::JsonArray command;
+      for (const std::string& arg : adapter.command) {
+        command.push_back(util::JsonValue(arg));
+      }
+      object["command"] = util::JsonValue(std::move(command));
+      adapters.push_back(util::JsonValue(std::move(object)));
     }
   }
   return util::JsonValue(std::move(adapters));

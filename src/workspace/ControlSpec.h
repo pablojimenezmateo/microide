@@ -24,6 +24,14 @@ struct ControlSpecBreakpoint {
   std::optional<std::string> log_message;
 };
 
+// One function breakpoint from a cold-start spec — breaks on a symbol name with
+// no file/line. The right tool when the spec only knows a function name.
+struct ControlSpecFunctionBreakpoint {
+  std::string name;
+  bool enabled = true;
+  std::optional<std::string> condition;
+};
+
 // Parsed `--control-spec <file.json>` document. See ControlChannelHelpText() for
 // the schema. On a parse error, `valid` is false and `parse_error` explains why.
 struct ControlSpec {
@@ -34,6 +42,7 @@ struct ControlSpec {
   // a spec can turn on control.enabled / debug.enabled through the chokepoint.
   std::vector<std::pair<std::string, std::string>> settings;
   std::vector<ControlSpecBreakpoint> breakpoints;
+  std::vector<ControlSpecFunctionBreakpoint> function_breakpoints;
   std::vector<std::string> open;
   std::optional<std::string> launch;
   std::vector<std::string> commands;

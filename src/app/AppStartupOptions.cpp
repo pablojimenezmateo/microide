@@ -72,6 +72,7 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       std::cerr << "usage: microide [--disable-plugins] [--safe-mode] [--control] "
                    "[--set <id> <value>]...\n"
                    "                [--control-spec <file>] [--dap-log [path]] [project-path]\n"
+                   "       microide control-send [...]   send one command/query to an instance\n"
                    "       microide control-help         protocol + spec reference\n"
                    "       microide control-commands     list runnable command names\n"
                    "       microide control-list         running instances + sockets\n"
@@ -82,8 +83,10 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
                    "transient (never-persisted) setting override and may be repeated.\n"
                    "\n"
                    "Driving microide from an agent (open files, set breakpoints, run a debug\n"
-                   "session, hand over the live window): see `microide control-help` for the\n"
-                   "full protocol, query verbs, commands, and end-to-end recipes.\n";
+                   "session, hand over the live window): the quickest path is\n"
+                   "`microide <project> --set control.enabled true &` then `microide control-send\n"
+                   "debug-run <program>`. See `microide control-help` for the full protocol,\n"
+                   "query verbs, commands, control-send usage, and end-to-end recipes.\n";
       result.show_usage = true;
       return result;
     }

@@ -77,6 +77,15 @@ std::vector<std::string> DapManager::AdapterTypes() const {
   return types;
 }
 
+std::vector<DapManager::AdapterInfo> DapManager::AdapterDetails() const {
+  std::vector<AdapterInfo> details;
+  details.reserve(adapters_.size());
+  for (const auto& [type, entry] : adapters_) {
+    details.push_back(AdapterInfo{type, entry.command});
+  }
+  return details;
+}
+
 int DapManager::StartSession(const LaunchConfig& config,
                              std::function<DebugSession::Callbacks(int id)> make_callbacks,
                              const std::string& cwd) {

@@ -126,6 +126,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "breakpoint-exception-condition <filterId> [expr]", "Set Exception Condition", ""},
       ActionSpec{ActionId::DebugLaunch, "debug-launch", "debug-launch [name]",
                  "Start Debugging (Launch Config)", ""},
+      ActionSpec{ActionId::DebugRun, "debug-run", "debug-run [--type <adapter>] <program> [args...]",
+                 "Start Debugging (Program)", ""},
       ActionSpec{ActionId::SetSetting, "set-setting", "set-setting <id> <value>", "Set Setting",
                  ""},
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},

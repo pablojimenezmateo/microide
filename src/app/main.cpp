@@ -4,7 +4,9 @@
 #include "platform/HostPlatform.h"
 #include "util/DebugTrace.h"
 #include "workspace/ControlChannelService.h"
+#include "workspace/ControlClient.h"
 #include "workspace/ControlProtocol.h"
+#include "workspace/ManPage.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
 #include <filesystem>
@@ -36,6 +38,13 @@ int main(int argc, char** argv) {
     }
     if (command == "control-list") {
       std::cout << microide::workspace::ControlListInstancesText();
+      return 0;
+    }
+    if (command == "control-send") {
+      return microide::workspace::RunControlSend(argc, argv);
+    }
+    if (command == "control-man") {
+      std::cout << microide::workspace::RenderManPage();
       return 0;
     }
     if (command == "dump-state" || command == "microide-dump-state") {

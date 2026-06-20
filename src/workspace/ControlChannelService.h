@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "platform/ControlSocketServer.h"
 #include "util/JsonValue.h"
@@ -12,9 +13,31 @@ namespace microide::workspace {
 
 struct WorkspaceContext;
 
-// Concatenate the descriptor files of every running instance that has the
-// control channel enabled (one JSON object per line). Backs `microide
-// control-list`. Returns an empty string when none are found.
+// A registered debug adapter surfaced by the `adapters` query: its type id plus
+// the argv used to spawn it. Mirrors DapManager::AdapterInfo but kept local so
+// ControlChannelService stays free of DapManager coupling.
+struct ControlAdapterInfo {
+  std::string type;
+  std::vector<std::string> command;
+};
+
+// A live control-channel instance discovered from its descriptor file.
+struct ControlInstanceDescriptor {
+  int pid = 0;
+  std::filesystem::path socket;
+  std::string project_root;
+  std::string project_hash;
+  std::string raw_json;  // descriptor line as written (backs `control-list`)
+};
+
+// Enumerate every running instance with the control channel enabled, parsed from
+// the per-instance descriptor files under $XDG_RUNTIME_DIR/microide/instances.
+// Descriptors whose process is gone (crash / SIGKILL) are pruned as a side
+// effect. Backs both `control-list` and `control-send` socket discovery.
+std::vector<ControlInstanceDescriptor> EnumerateControlInstances();
+
+// Concatenate the descriptor lines of every running instance (one JSON object
+// per line). Backs `microide control-list`. Empty when none are found.
 std::string ControlListInstancesText();
 
 // Host-owned home for the live control channel. Owns the AF_UNIX line server,
@@ -38,9 +61,13 @@ class ControlChannelService {
     // Write one JSONL line to the stdout mirror (the `--control` headless
     // stream). Wired to std::cout; left null in tests / non-headless runs.
     std::function<void(const std::string&)> emit_jsonl;
-    // Registered debug-adapter type ids (for the `adapters` query). Kept behind a
-    // callback so the service stays free of DapManager/DebugService coupling.
-    std::function<std::vector<std::string>()> adapter_types;
+    // Registered debug adapters (type + spawn command) for the `adapters` query.
+    // Kept behind a callback so the service stays free of DapManager coupling.
+    std::function<std::vector<ControlAdapterInfo>()> adapters;
+    // Enable the debugger transiently if it is off. Invoked before a
+    // breakpoint-*/debug-* command so the channel never needs a separate
+    // `set-setting debug.enabled true` prelude. Left null in tests.
+    std::function<void()> ensure_debugger_enabled;
   };
 
   ControlChannelService() = default;

@@ -211,6 +211,9 @@ class WorkspaceActionContext {
     // Start a debug session for a named launch config (empty name → the
     // selected/default config). Returns an error string (empty on success).
     std::function<std::string(const std::string&)> start_named_debug_config;
+    std::function<std::string(const std::string&, const std::vector<std::string>&,
+                              const std::string&)>
+        start_ad_hoc_debug;
     // Function (symbol) breakpoints + exception-filter conditions (control channel
     // + command line). Each mutates the per-project store + live re-sends.
     std::function<void(const std::string&)> add_function_breakpoint;
@@ -396,6 +399,12 @@ class WorkspaceActionContext {
   editor::BreakpointStore& MutableBreakpointStore();
   void ResendBreakpoints(const std::filesystem::path& path);
   std::string StartNamedDebugConfig(const std::string& name);
+  // Ad-hoc launch by program path (debug-run). Synthesizes a transient launch
+  // config from `program` (resolved against the project root) + `args`, using
+  // `type` or the sole registered adapter. Returns an error string (empty on
+  // success).
+  std::string StartAdHocDebug(const std::string& program, const std::vector<std::string>& args,
+                              const std::string& type);
   // Function (symbol) breakpoints + exception-filter conditions (breakpoint-function-*
   // / breakpoint-exception-condition commands). Name/id-keyed; no-op when not found.
   void AddFunctionBreakpoint(const std::string& name);

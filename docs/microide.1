@@ -1,9 +1,12 @@
-.TH MICROIDE 1 "2026-06-18" "microide" "User Commands"
+.TH MICROIDE 1 "2026-06-20" "microide" "User Commands"
 .SH NAME
 microide \- compact native desktop IDE shell
 .SH SYNOPSIS
 .B microide
-[\fB--disable-plugins\fR] [\fB--safe-mode\fR] [\fB--control-spec\fR \fIfile\fR] [\fIproject-path\fR]
+[\fB--disable-plugins\fR] [\fB--safe-mode\fR] [\fB--control\fR] [\fB--set\fR \fIid value\fR]... [\fB--control-spec\fR \fIfile\fR] [\fIproject-path\fR]
+.br
+.B microide control-send
+[\fB--pid\fR \fIn\fR | \fB--socket\fR \fIpath\fR] (\fIcommand\fR... | \fB--query\fR \fIverb\fR | \fB--json\fR \fIobject\fR) [\fB--wait\fR \fIevent\fR] [\fB--timeout\fR \fIsecs\fR]
 .br
 .B microide control-help
 .br
@@ -27,41 +30,333 @@ Start without loading the Lua plugin runtime.
 .B --safe-mode
 Start without plugins and without restoring the previous session.
 .TP
+.B --control
+Force-start the control channel and mirror every response/event to stdout as
+JSONL (the headless entry point), independent of the
+.B control.enabled
+setting.
+.TP
+.B --set \fIid value\fR
+Apply a transient (never-persisted) setting override. May be repeated.
+.TP
 .B --control-spec \fIfile\fR
 Apply a cold-start control spec at launch: open a project with breakpoints
 already set (and optionally reveal files / start a debug session) before the
-window becomes interactive. The spec's
-.I project
-field, when present, selects the project to open. See
+window becomes interactive. See
 .B microide control-help
 for the JSON schema. Spec line numbers are 1-based; relative paths resolve
 against the project root.
 .SH CONTROL CHANNEL
 An external tool (such as an LLM) can drive a running instance over a private
-Unix-domain socket: set breakpoints (including conditional, hit-count and
-logpoint), step through a debug session, open/close files, switch projects,
-open terminals, and observe where execution stopped.
+Unix-domain socket. The one-shot client
+.B microide control-send
+is the easiest way in. The full protocol, query verbs, commands, control-send
+usage, and end-to-end recipes follow verbatim from
+.BR "microide control-help" :
 .PP
-The channel is OFF by default. Enable the
-.B control.enabled
-setting (Settings overlay, Ctrl+, or the
-.B settings
-command); it starts immediately on the running instance with no restart. The
-socket is created mode 0600 under
-.IR $XDG_RUNTIME_DIR/microide/ ,
-and a descriptor file is written to
-.IR $XDG_RUNTIME_DIR/microide/instances/<pid>.json .
+.nf
+microide control channel
+========================
+
+An external tool (e.g. an LLM) can drive a running microide instance: set
+breakpoints, step through a debug session, open/close files, switch projects,
+open terminals, and observe where execution stopped. The one-shot CLI
+`microide control-send` is the easiest way in -- no socket plumbing required.
+
+Debug a program in 4 steps (copy-paste)
+---------------------------------------
+  microide /path/to/project --set control.enabled true &   # window + live socket
+  microide control-send --query adapters                   # what can debug (gdb is bundled)
+  microide control-send breakpoint-function-add main       # debugger auto-enables
+  microide control-send debug-run ./build/app --wait stopped  # launch; block until it stops
+control-send auto-discovers the sole running instance, sends one request, prints
+every JSONL reply/event to stdout, and exits (0 reply-ok, 1 reply-not-ok, 2
+usage/connect, 3 --wait timed out). `debug-run <program> [args...]` needs no
+pre-defined launch config; `--wait stopped` returns once execution halts. Leave
+the window open to hand control to a human.
+
+Enabling
+--------
+The channel is OFF by default. Three ways to turn it on:
+  microide --control                 force-start + mirror JSONL to stdout (headless)
+  microide --set control.enabled true start the socket (transient, not persisted)
+  Settings overlay (Ctrl+,)          flip `control.enabled` (persisted)
+It starts immediately on the running instance -- no restart needed.
+
+Headless agent stream (microide --control [--control-spec <file>])
+-----------------------------------------------------------------
+--control force-starts the channel AND mirrors every response/event to stdout as
+JSONL, so an agent can drive the instance with no socket client. The stream order:
+  {"event":"ready","pid":..,"socket":"..","project_root":".."}  (handshake, first)
+  {"applied":"<command>","ok":true|false,"error":".."}        (one per spec entry)
+  {"event":"output"|"stopped"|"terminated",...}              (as the session runs)
+--set <id> <value> applies a transient (never-persisted) setting override and may
+be repeated; an explicit project (positional path or spec `project`) wins over a
+restored session.
+
+Discovery
+---------
+Each running instance with the channel on listens on a private Unix domain
+socket (mode 0600) under $XDG_RUNTIME_DIR/microide/ and writes a descriptor
+file to $XDG_RUNTIME_DIR/microide/instances/<pid>.json:
+  {"pid":..,"socket":"..","project_root":"..","project_hash":".."}
+Run `microide control-list` to print descriptors for all running instances.
+
+One-shot client (microide control-send)
+---------------------------------------
+Sends a single request to a running instance and prints the JSONL reply (and,
+with --wait, any events) to stdout. Auto-targets the sole running instance; use
+--pid or --socket to disambiguate. This is the reliable way to drive the channel
+from a script -- it keeps the connection open until the reply arrives.
+  microide control-send <command...>          # {"command":"<joined args>"}
+  microide control-send --query <verb> [--args <json>]
+  microide control-send --json '<object>'     # sent verbatim
+  options: --pid <n> | --socket <path> | --timeout <secs> | --wait <event> | --id <n>
+Exit codes: 0 reply ok, 1 reply not ok, 2 usage/discovery/connect, 3 --wait timeout.
+
+Protocol (newline-delimited JSON; one object per line)
+------------------------------------------------------
+Request (run a command):
+  {"id":1,"command":"breakpoint-set src/main.cpp 42"}
+Request (read state):
+  {"id":2,"query":"debug-state"}
+Response (command):
+  {"id":1,"ok":true,"feedback":"..."}   or   {"id":1,"ok":false,"error":"..."}
+Response (query):
+  {"id":2,"ok":true,"result":{...}}
+Unsolicited events (pushed to every connected client):
+  {"event":"stopped","file":"main.cpp","line":42,"reason":"breakpoint","frames":[...]}
+  {"event":"terminated","sessionId":..}
+  {"event":"output","category":"stdout","text":".."}
+Lines are 1-based for the developer-facing surface (commands, spec, events);
+they map to microide's internal 0-based buffer lines automatically.
+
+Query verbs
+-----------
+  debug-state
+  breakpoints
+  function-breakpoints
+  exception-filters
+  tabs
+  projects
+  status
+  launch-configs
+  adapters
+
+Commands
+--------
+Any command from the command palette works. Run `microide control-commands` for
+the full list. Breakpoint commands added for headless control:
+  breakpoint-set <file> <line> [condition]
+  breakpoint-remove <file> <line>
+  breakpoint-enable <file> <line>
+  breakpoint-disable <file> <line>
+  breakpoint-condition <file> <line> [expr]      (omit expr to clear)
+  breakpoint-hit-condition <file> <line> [expr]  (omit expr to clear)
+  breakpoint-logmessage <file> <line> [message]  (omit message to clear)
+  breakpoint-clear [file]                         (omit file to clear all)
+Function breakpoints (break by symbol name -- no file/line needed):
+  breakpoint-function-add <name>
+  breakpoint-function-remove <name>
+  breakpoint-function-toggle <name>
+  breakpoint-function-condition <name> [expr]    (omit expr to clear)
+  breakpoint-exception-condition <filterId> [expr]
+Launch a session:
+  debug-run [--type <adapter>] <program> [args...]  ad-hoc launch by program path
+                                                    (no pre-defined config needed)
+  debug-launch [name]                               start a named launch config
+Debug control: debug-start, debug-continue, debug-step-over, debug-step-in,
+  debug-step-out, debug-pause, debug-restart, debug-stop. Reverse execution
+  (recording adapters only): debug-reverse-continue, debug-step-back.
+  (Over the control channel, any breakpoint-/debug- command auto-enables the
+  debugger transiently -- no separate debug.enabled prelude is needed.)
+
+Recipes (end-to-end agent workflows)
+------------------------------------
+1) Open a session, break in a function, hand the live window to the human:
+   microide /path/to/project --set control.enabled true &   # normal window + socket
+   microide control-send breakpoint-function-add A          # debugger auto-enables
+   microide control-send debug-run ./build/app              # or: debug-launch <config>
+   # leave the window open -- the human now drives it interactively.
+   (--set control.enabled true opens a NORMAL interactive window with the socket
+    live; that is the path for "give me control". --control, by contrast, is the
+    headless stream below.)
+2) Investigate a crash, break just before the suspect line (headless):
+   microide /path/to/project --control --control-spec spec.json
+   # spec: {"breakpoints":[{"file":"src/foo.c","line":N}],"launch":"<config>"}
+   # the debugger auto-enables; read launch names first via the launch-configs
+   # query. Watch stdout for {"event":"stopped",..} then debug-continue/step.
+   # (functionBreakpoints in the spec break by symbol name with no file/line.)
+
+Cold-start spec (microide --control-spec <file.json>)
+-----------------------------------------------------
+Open a project with breakpoints already set before the window is interactive:
+  {
+    "project": "/path/to/project",          // optional; selects the project
+    "settings": [["control.enabled","true"]], // optional transient overrides
+    "breakpoints": [
+      {"file":"src/main.cpp","line":42},
+      {"file":"src/util.cpp","line":120,"condition":"x>10"},
+      {"file":"src/log.cpp","line":7,"logMessage":"hit {x}"},
+      {"file":"src/a.cpp","line":3,"hitCondition":">=5","enabled":false}
+    ],
+    "functionBreakpoints": [                  // optional; break by symbol name
+      {"name":"main"},
+      {"name":"process","condition":"n>3","enabled":false}
+    ],
+    "open": ["src/main.cpp"],               // optional files to reveal
+    "launch": "Python: main",                // optional launch-config to auto-start
+    "commands": ["sidebar-hide"]            // optional raw command lines, run last
+  }
+Spec line numbers are 1-based; relative file paths resolve against the project
+root. `settings` apply transiently and first; the debugger auto-enables when the
+spec has breakpoints or a launch. `settings` also accepts an object form
+({"id":"value"}). Discover names without reading plugin source via the
+`launch-configs` and `adapters` queries.
+.fi
+.SH COMMANDS
+Every runnable command (also printed by
+.BR "microide control-commands" ):
 .PP
-Requests and responses are newline-delimited JSON. A request is either
-.RB { \(dqcommand\(dq : \(dq...\(dq }
-(run any command \(em see
-.BR "microide control-commands" )
-or
-.RB { \(dqquery\(dq : \(dq...\(dq }
-(read state: \fBdebug-state\fR, \fBbreakpoints\fR, \fBtabs\fR, \fBprojects\fR,
-\fBstatus\fR). The server also pushes unsolicited \fBstopped\fR, \fBterminated\fR
-and \fBoutput\fR events so a client can wait for execution to stop.
+.nf
+  code-actions
+  colorscheme [name|list]
+  completion
+  insert-snippet
+  compare [path] [commit-prefix]
+  merge <base> <incoming> <current> [output]
+  files [root]
+  find <query>
+  find-references
+  focus <editor|sidebar|panel>
+  goto-definition
+  goto <line[:col]>
+  git-refresh
+  mark-branch-file-reviewed
+  mark-branch-hunk-reviewed
+  clear-branch-review-state
+  branch-review-note <text>
+  indent-width [n]
+  jump <line[:col]>
+  open <path>
+  about
+  keyboard-shortcuts
+  settings
+  project-close
+  project-next
+  project-open [path]
+  project-prev
+  project-search [query]
+  plugins-reload
+  debug-toggle-enabled
+  debug-start
+  debug-stop
+  debug-continue
+  debug-step-over
+  debug-step-in
+  debug-step-out
+  debug-pause
+  debug-reverse-continue
+  debug-step-back
+  debug-restart
+  debug-switch-session [n]
+  debug-stop-all
+  debug-repl
+  debug-pick-config
+  debug-pane-toggle
+  debug-pane-callstack
+  debug-pane-variables
+  debug-pane-watch
+  debug-pane-breakpoints
+  debug-show-output
+  breakpoint-set <file> <line> [condition]
+  breakpoint-remove <file> <line>
+  breakpoint-enable <file> <line>
+  breakpoint-disable <file> <line>
+  breakpoint-condition <file> <line> [expr]
+  breakpoint-hit-condition <file> <line> [expr]
+  breakpoint-logmessage <file> <line> [message]
+  breakpoint-clear [file]
+  breakpoint-function-add <name>
+  breakpoint-function-remove <name>
+  breakpoint-function-toggle <name>
+  breakpoint-function-condition <name> [expr]
+  breakpoint-exception-condition <filterId> [expr]
+  debug-launch [name]
+  debug-run [--type <adapter>] <program> [args...]
+  set-setting <id> <value>
+  quit
+  reopen
+  save
+  search <query>
+  sidebar-close
+  sidebar-hide
+  sidebar-show [tool]
+  sidebar-toggle [tool]
+  sidebar-width <n>
+  soft-tabs [on|off]
+  wrap [on|off]
+  split-first
+  split-last
+  split-next
+  split-prev
+  tab [path]
+  tab-size [n]
+  tabmove <n>
+  tabswitch <tab>
+  term [command]
+  tests-discover
+  tests-run [test-id...]
+  tree [root]
+  tree-refresh
+  ui-scale [n|up|down|reset]
+  layout-mode-toggle
+  status-bar-toggle
+  unsplit
+  vsplit [path]
+  jump-to-matching-bracket
+  toggle-line-comment
+  toggle-block-comment
+  move-line-up
+  move-line-down
+  duplicate-line
+  delete-line
+  indent-lines
+  outdent-lines
+  sort-lines-ascending
+  sort-lines-descending
+  add-cursor-next-match
+  add-cursor-all-matches
+  fold
+  unfold
+  fold-all
+  unfold-all
+  toggle-fold
+  toggle-editor-folding
+  toggle-editor-sticky-scroll
+  toggle-editor-indent-guides
+  toggle-editor-render-whitespace
+  toggle-editor-bracket-match-highlight
+  toggle-editor-auto-close
+  toggle-editor-surround
+  toggle-editor-smart-indent
+  toggle-editor-toggle-comment
+  toggle-editor-line-ops
+  toggle-editor-sort-lines
+  toggle-editor-add-cursor-at-match
+  toggle-editor-occurrences-highlight
+  toggle-editor-search-case-sensitive
+  toggle-editor-snippets
+  toggle-editor-save-trim
+  toggle-editor-save-ensure-newline
+  toggle-editor-auto-detect-indent
+.fi
 .SH SUBCOMMANDS
+.TP
+.B control-send \fR[...]\fP
+Send one command or query to a running instance and print the JSONL reply
+(and, with \fB--wait\fR, events) to stdout. Auto-targets the sole running
+instance; use \fB--pid\fR or \fB--socket\fR to disambiguate.
 .TP
 .B control-help
 Print the full control-channel protocol, query verbs, spec schema, and the list
@@ -73,6 +368,9 @@ Print every runnable command name and its usage.
 .B control-list
 Print the descriptor of each running instance that has the control channel
 enabled (pid, socket path, project).
+.TP
+.B control-man
+Print this man page (used by tools/gen-man.sh to regenerate docs/microide.1).
 .TP
 .B dump-state \fIpersisted-file\fR
 Decode and print a microide persisted-state file.

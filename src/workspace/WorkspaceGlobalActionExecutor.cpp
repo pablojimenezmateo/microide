@@ -489,6 +489,31 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::DebugRun: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      // debug-run [--type <adapter>] <program> [args...]
+      std::size_t index = 0;
+      std::string type;
+      if (index < args.size() && args[index] == "--type") {
+        if (index + 1 >= args.size()) {
+          return reject("debug-run: --type requires an adapter name");
+        }
+        type = args[index + 1];
+        index += 2;
+      }
+      if (index >= args.size() || args[index].empty()) {
+        return reject("debug-run: a program path is required");
+      }
+      const std::string program = args[index];
+      const std::vector<std::string> program_args(args.begin() + index + 1, args.end());
+      const std::string error = context_.StartAdHocDebug(program, program_args, type);
+      if (!error.empty()) {
+        return reject(error);
+      }
+      return DispatchResult::Handled;
+    }
     default:
       return DispatchResult::Unhandled;
   }

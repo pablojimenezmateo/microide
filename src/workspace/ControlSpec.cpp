@@ -10,8 +10,9 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::array<std::string_view, 6> kSpecKeys = {
-    "project", "settings", "breakpoints", "open", "launch", "commands",
+constexpr std::array<std::string_view, 7> kSpecKeys = {
+    "project", "settings",   "breakpoints", "functionBreakpoints",
+    "open",    "launch",     "commands",
 };
 
 // Resolve an authored path against the project root. Absolute paths pass
@@ -116,6 +117,31 @@ ControlSpec ParseControlSpec(std::string_view json) {
     }
   }
 
+  if (parsed->HasKey("functionBreakpoints")) {
+    const util::JsonValue& function_breakpoints = (*parsed)["functionBreakpoints"];
+    if (!function_breakpoints.IsArray()) {
+      spec.parse_error = "\"functionBreakpoints\" must be an array";
+      return spec;
+    }
+    for (const util::JsonValue& entry : function_breakpoints.AsArray()) {
+      if (!entry.IsObject()) {
+        spec.parse_error = "each function breakpoint must be an object";
+        return spec;
+      }
+      ControlSpecFunctionBreakpoint function_breakpoint;
+      function_breakpoint.name = entry["name"].AsString();
+      if (function_breakpoint.name.empty()) {
+        spec.parse_error = "function breakpoint \"name\" must be a non-empty string";
+        return spec;
+      }
+      if (entry.HasKey("enabled")) {
+        function_breakpoint.enabled = entry["enabled"].AsBool(true);
+      }
+      function_breakpoint.condition = OptionalString(entry["condition"]);
+      spec.function_breakpoints.push_back(std::move(function_breakpoint));
+    }
+  }
+
   if (parsed->HasKey("open")) {
     const util::JsonValue& open = (*parsed)["open"];
     if (!open.IsArray()) {
@@ -187,6 +213,19 @@ std::vector<std::string> ControlSpecToCommands(const ControlSpec& spec,
     }
     if (!breakpoint.enabled) {
       commands.push_back("breakpoint-disable " + quoted_file + " " + line_token(breakpoint.line));
+    }
+  }
+
+  for (const ControlSpecFunctionBreakpoint& function_breakpoint : spec.function_breakpoints) {
+    const std::string quoted_name = QuoteCommandArg(function_breakpoint.name);
+    commands.push_back("breakpoint-function-add " + quoted_name);
+    if (function_breakpoint.condition) {
+      commands.push_back("breakpoint-function-condition " + quoted_name + " " +
+                         QuoteCommandArg(*function_breakpoint.condition));
+    }
+    // add defaults to enabled; toggle once to disable.
+    if (!function_breakpoint.enabled) {
+      commands.push_back("breakpoint-function-toggle " + quoted_name);
     }
   }
 

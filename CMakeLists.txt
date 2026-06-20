@@ -182,6 +182,7 @@ set(MICROIDE_CORE_SOURCES
   src/compare/MergeModel.cpp
   src/platform/AppDirectories.cpp
   src/platform/AsyncSubprocess.cpp
+  src/platform/ControlSocketClient.cpp
   src/platform/ControlSocketServer.cpp
   src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
@@ -301,8 +302,10 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/ControlChannelService.cpp
+  src/workspace/ControlClient.cpp
   src/workspace/ControlProtocol.cpp
   src/workspace/ControlSpec.cpp
+  src/workspace/ManPage.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
   src/workspace/WorkspaceCommandPromptCoordinator.cpp
   src/workspace/WorkspaceEditActionExecutor.cpp
@@ -585,6 +588,8 @@ add_executable(microide_tests
   tests/AppDirectoriesTests.cpp
   tests/AppStartupOptionsTests.cpp
   src/app/AppStartupOptions.cpp
+  tests/ControlSocketServerTests.cpp
+  tests/ControlClientTests.cpp
   tests/ControlProtocolTests.cpp
   tests/ControlSpecTests.cpp
   tests/ControlChannelServiceTests.cpp

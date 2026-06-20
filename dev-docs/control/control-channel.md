@@ -71,9 +71,9 @@ The stdout JSONL stream, in order:
    `{"event":"terminated",...}` as the session runs. Each stop emits the `stopped`
    event **twice** (see below).
 
-Discover names without reading plugin source by connecting to the socket
-(`socat - UNIX-CONNECT:<socket>`) and sending `{"query":"launch-configs"}` or
-`{"query":"adapters"}`.
+Discover names without reading plugin source with the one-shot client:
+`microide control-send --query launch-configs` or `microide control-send --query
+adapters` (see below).
 
 ## Architecture
 
@@ -155,9 +155,13 @@ breakpoint-command executor (`WorkspaceGlobalActionExecutor.cpp`).
 
 `breakpoint-set`, `breakpoint-remove`, `breakpoint-enable`, `breakpoint-disable`,
 `breakpoint-condition`, `breakpoint-hit-condition`, `breakpoint-logmessage`,
-`breakpoint-clear`, plus `debug-launch [name]`. All take an explicit
+`breakpoint-clear`, plus session launch via `debug-launch [name]` (named config)
+or `debug-run [--type <adapter>] <program> [args...]` (ad-hoc launch by program
+path — no pre-defined config needed). All breakpoint commands take an explicit
 `<file> <line>` (unlike the context-menu breakpoint modifiers, which read the
-gutter line), are gated on `debug.enabled`, and re-send to a live session via
+gutter line). Breakpoint/debug commands require `debug.enabled`, but over the
+control channel any `breakpoint-`/`debug-` command **auto-enables it transiently**
+(no `set-setting debug.enabled true` prelude); they re-send to a live session via
 `DebugService::ResendBreakpointsForFile`. Breakpoints placed this way persist
 through the normal `PersistedDebugState` path.
 
@@ -168,25 +172,53 @@ an agent is told only a function name: `breakpoint-function-add <name>`,
 `breakpoint-exception-condition <filterId> [expr]`. Query current state with the
 `function-breakpoints` and `exception-filters` verbs.
 
+## One-shot client (`microide control-send`)
+
+`microide control-send` is the reliable way to drive a running instance from a
+script or an agent — no socket plumbing, no JSON hand-crafting. It connects to the
+target instance (auto-selecting the sole running one, else `--pid`/`--socket`),
+sends one request, keeps the connection open until the reply (and, with `--wait`,
+the awaited event) arrives, prints every JSONL line to stdout, and exits:
+
+```bash
+microide control-send breakpoint-function-add main      # {"command":"..."}
+microide control-send --query launch-configs            # {"query":"..."}
+microide control-send --json '{"command":"debug-start"}' # sent verbatim
+microide control-send debug-run ./build/app --wait stopped  # block until it stops
+```
+
+Options: `--pid <n>` / `--socket <path>` (target), `--timeout <secs>` (default 5),
+`--wait <event>` (block until that event; `stopped` waits for the resolved frame),
+`--id <n>`. Exit codes: `0` reply ok, `1` reply not ok, `2` usage/discovery/
+connect, `3` `--wait` timed out. The reliability rests on the server's graceful
+half-close: a client that closes its write side still receives replies for the
+requests it already sent (`ControlSocketServer` lingers until they flush), so the
+old half-closed-client "no reply" footgun is gone — though `control-send` is still
+the recommended primitive.
+
 ## Recipes
 
 **Set up a session and hand the live window to the human** (the "give me control"
 request). `--set control.enabled true` *without* `--control` opens a normal
 interactive window with the socket live — the human keeps driving after the agent
-finishes:
+finishes. Any `breakpoint-`/`debug-` command auto-enables the debugger, so no
+`debug.enabled` prelude is needed:
 
 ```bash
 microide /path/to/project --set control.enabled true &   # normal window + socket
-microide control-list                                    # find this pid's socket
-# then, over the socket (e.g. socat - UNIX-CONNECT:<socket>), one object per line:
-# {"id":1,"command":"set-setting debug.enabled true"}
-# {"id":2,"command":"breakpoint-function-add A"}
-# {"id":3,"command":"debug-start"}
+microide control-send breakpoint-function-add A          # debugger auto-enables
+microide control-send debug-run ./build/app              # or: debug-launch <config>
+# leave the window open — the human now drives it interactively.
 ```
 
-**Investigate a crash, break just before the suspect line** (headless): use the
-runbook above with `--control --control-spec` and a `{file,line}` breakpoint, read
-launch names via the `launch-configs` query first, then watch for `stopped`.
+`debug-run [--type <adapter>] <program> [args...]` synthesizes a transient launch
+config from a binary path, so no pre-defined launch config is required (the
+bundled `gdb-dap` plugin supplies a `gdb` adapter for native code). Define a
+project launch config of type `gdb` for a reusable target.
+
+**Investigate a crash, break just before the suspect line** (headless): use
+`--control --control-spec` with a `{file,line}` (or `functionBreakpoints`) entry,
+read launch names via the `launch-configs` query first, then watch for `stopped`.
 
 ## Discovery & security
 

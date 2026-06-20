@@ -78,6 +78,7 @@ void TestLaunchConfigsAndAdaptersOverSocket() {
   config.name = "Run pytest";
   config.type = "debugpy";
   config.request = "launch";
+  config.arguments = util::JsonValue(util::JsonObject{{"program", util::JsonValue("main.py")}});
   context.current_project_state.launch_configs.push_back(config);
   context.current_project_state.selected_launch_config_index = 0;
 
@@ -89,7 +90,11 @@ void TestLaunchConfigsAndAdaptersOverSocket() {
               [](const std::string&) {
                 return microide::workspace::ControlChannelService::CommandOutcome{.ok = true};
               },
-          .adapter_types = []() { return std::vector<std::string>{"debugpy", "lldb"}; },
+          .adapters =
+              []() {
+                return std::vector<microide::workspace::ControlAdapterInfo>{
+                    {"debugpy", {"python3", "-m", "debugpy.adapter"}}, {"lldb", {"lldb-dap"}}};
+              },
       });
   service.SetWakeEventType(0);
   Expect(service.Start("/tmp/proj"), "service should start");
@@ -114,13 +119,26 @@ void TestLaunchConfigsAndAdaptersOverSocket() {
   Expect(configs_result.AsArray()[0]["name"].AsString() == "Run pytest", "config name should match");
   Expect(configs_result.AsArray()[0]["type"].AsString() == "debugpy", "config type should match");
   Expect(configs_result.AsArray()[0]["selected"].AsBool(), "config should report selected");
+  Expect(configs_result.AsArray()[0]["arguments"]["program"].AsString() == "main.py",
+         "config arguments (program/args/cwd) should be surfaced");
 
   const auto adapters = util::ParseJson(ExchangeLine(service, fd, R"({"query":"adapters"})"));
   Expect(adapters.has_value() && (*adapters)["ok"].AsBool(), "adapters query should succeed");
   const util::JsonValue& adapters_result = (*adapters)["result"];
   Expect(adapters_result.IsArray() && adapters_result.AsArray().size() == 2,
-         "two adapter types expected");
-  Expect(adapters_result.AsArray()[0].AsString() == "debugpy", "first adapter should match");
+         "two adapters expected");
+  // Order is unspecified (map iteration); find the debugpy entry explicitly.
+  bool found_debugpy = false;
+  for (const util::JsonValue& adapter : adapters_result.AsArray()) {
+    if (adapter["type"].AsString() == "debugpy") {
+      found_debugpy = true;
+      Expect(adapter["command"].IsArray() && adapter["command"].AsArray().size() == 3,
+             "adapter should carry its spawn command");
+      Expect(adapter["command"].AsArray()[0].AsString() == "python3",
+             "adapter command argv[0] should match");
+    }
+  }
+  Expect(found_debugpy, "the debugpy adapter should be present with its command");
 
   ::close(fd);
   service.Stop();
@@ -297,12 +315,67 @@ void TestSocketSelfHealsAfterExternalDeletion() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// A breakpoint-/debug- command over the channel auto-enables the debugger (no
+// `set-setting debug.enabled true` prelude); a non-debug command does not.
+void TestDebugCommandAutoEnablesDebugger() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-autoenable-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+
+  int ensure_calls = 0;
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context,
+      microide::workspace::ControlChannelService::Operations{
+          .execute_command_line =
+              [](const std::string&) {
+                return microide::workspace::ControlChannelService::CommandOutcome{.ok = true};
+              },
+          .ensure_debugger_enabled = [&ensure_calls]() { ++ensure_calls; },
+      });
+  service.SetWakeEventType(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect");
+
+  ExchangeLine(service, fd, R"({"id":1,"command":"breakpoint-function-add main"})");
+  Expect(ensure_calls == 1, "a breakpoint- command should auto-enable the debugger");
+
+  ExchangeLine(service, fd, R"({"id":2,"command":"debug-start"})");
+  Expect(ensure_calls == 2, "a debug- command should auto-enable the debugger");
+
+  ExchangeLine(service, fd, R"({"id":3,"command":"open /tmp/proj/a.cpp"})");
+  Expect(ensure_calls == 2, "a non-debug command should not auto-enable the debugger");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 #else
 
 void TestQueryAndCommandOverSocket() {}
 void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
+void TestDebugCommandAutoEnablesDebugger() {}
 
 #endif
 
@@ -436,6 +509,8 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestStopBeganEmitsImmediatePendingEvent);
   AddTest(tests, "ControlChannelService/SocketSelfHealsAfterExternalDeletion",
           TestSocketSelfHealsAfterExternalDeletion);
+  AddTest(tests, "ControlChannelService/DebugCommandAutoEnablesDebugger",
+          TestDebugCommandAutoEnablesDebugger);
 }
 
 }  // namespace microide::tests

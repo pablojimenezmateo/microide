@@ -167,9 +167,14 @@ void WorkspaceShell::ApplyControlSpec(const ControlSpec& spec) {
   }
 
   // Auto-enable the debugger when the spec needs it but it is still off — removes
-  // the ordering trap where structured breakpoints/launch silently no-op.
-  if ((!spec.breakpoints.empty() || spec.launch.has_value()) && !DebugEnabled()) {
-    apply_setting("debug.enabled", "true");
+  // the ordering trap where structured breakpoints/launch silently no-op. Emit an
+  // applied line for the headless mirror when it actually flips.
+  if ((!spec.breakpoints.empty() || spec.launch.has_value() ||
+       !spec.function_breakpoints.empty()) &&
+      EnsureDebuggerEnabledTransiently()) {
+    ControlChannelService::CommandOutcome outcome;
+    outcome.ok = true;
+    emit_applied("set-setting debug.enabled true", outcome);
   }
 
   const std::vector<std::string> commands =
@@ -177,6 +182,13 @@ void WorkspaceShell::ApplyControlSpec(const ControlSpec& spec) {
   for (const std::string& command : commands) {
     emit_applied(command, ExecuteControlCommand(command));
   }
+}
+
+bool WorkspaceShell::EnsureDebuggerEnabledTransiently() {
+  if (DebugEnabled()) {
+    return false;
+  }
+  return SetSettingValue("debug.enabled", "true", /*persist=*/false);
 }
 
 void WorkspaceShell::ForceStartControlChannel() {
@@ -259,6 +271,63 @@ std::string WorkspaceShell::StartNamedDebugConfig(const std::string& name) {
     }
   }
   return "no launch config named \"" + name + "\"";
+}
+
+std::string WorkspaceShell::StartAdHocDebug(const std::string& program,
+                                            const std::vector<std::string>& args,
+                                            const std::string& type) {
+  if (program.empty()) {
+    return "debug-run: a program path is required";
+  }
+  const std::vector<std::string> types = CurrentDapManager().AdapterTypes();
+  if (types.empty()) {
+    return "no debug adapter is registered (a plugin must contribute one via ctx.debug.add)";
+  }
+  std::string adapter_type = type;
+  if (adapter_type.empty()) {
+    if (types.size() != 1) {
+      std::string joined;
+      for (const std::string& candidate : types) {
+        if (!joined.empty()) joined += ", ";
+        joined += candidate;
+      }
+      return "multiple debug adapters are registered (" + joined +
+             "); choose one with --type <adapter>";
+    }
+    adapter_type = types.front();
+  } else if (!CurrentDapManager().HasAdapter(adapter_type)) {
+    return "no debug adapter of type \"" + adapter_type + "\" is registered";
+  }
+
+  // Resolve the program against the project root unless it is already absolute,
+  // so `debug-run ./build/app` works from a headless driver with no cwd context.
+  const std::filesystem::path root = context_.current_project_state.root;
+  std::filesystem::path program_path(program);
+  if (!program_path.is_absolute()) {
+    program_path = (root / program_path).lexically_normal();
+  }
+
+  LaunchConfig config;
+  config.type = adapter_type;
+  config.request = "launch";
+  config.name = program_path.filename().string();
+  util::JsonObject arguments;
+  arguments["program"] = util::JsonValue(program_path.generic_string());
+  if (!args.empty()) {
+    util::JsonArray arg_array;
+    for (const std::string& arg : args) {
+      arg_array.push_back(util::JsonValue(arg));
+    }
+    arguments["args"] = util::JsonValue(std::move(arg_array));
+  }
+  arguments["cwd"] = util::JsonValue(root.generic_string());
+  config.arguments = util::JsonValue(std::move(arguments));
+
+  if (!StartDebugging(config, root.generic_string())) {
+    const std::string error = debug_service_.LastError();
+    return error.empty() ? "failed to start debug session" : error;
+  }
+  return {};
 }
 
 namespace {

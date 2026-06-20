@@ -1783,6 +1783,18 @@ void TestDebugManagerRetainAdaptersDropsStaleTypes() {
   Expect(manager.HasAdapter("b"), "retained adapter 'b' should survive reconcile");
 }
 
+// AdapterDetails surfaces each adapter's type + spawn command for the control
+// channel's `adapters` query (so a headless driver sees what runs).
+void TestDebugManagerAdapterDetailsCarryCommand() {
+  DapManager manager;
+  manager.RegisterAdapter("gdb", {"gdb", "--interpreter=dap"});
+  const std::vector<DapManager::AdapterInfo> details = manager.AdapterDetails();
+  Expect(details.size() == 1, "one adapter should be reported");
+  Expect(details[0].type == "gdb", "adapter type should be carried");
+  Expect(details[0].command == std::vector<std::string>({"gdb", "--interpreter=dap"}),
+         "adapter spawn command should be carried");
+}
+
 // Pure DebugExecutionView: the Call Stack panel lays out optional session +
 // thread selectors above the frame list. PanelRowAt/PanelRowCount must dispatch
 // sessions → threads → frames, and Clear() must preserve the session selector
@@ -2585,6 +2597,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugManagerRejectsUnknownAdapterType);
   AddTest(tests, "DebugService/ManagerRetainAdaptersDropsStaleTypes",
           TestDebugManagerRetainAdaptersDropsStaleTypes);
+  AddTest(tests, "DebugService/ManagerAdapterDetailsCarryCommand",
+          TestDebugManagerAdapterDetailsCarryCommand);
   AddTest(tests, "DebugService/ExecutionViewPanelRowDispatch",
           TestDebugExecutionViewPanelRowDispatch);
   AddTest(tests, "DebugService/ManagerMultipleConcurrentSessions",

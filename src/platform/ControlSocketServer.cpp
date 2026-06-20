@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -28,6 +29,13 @@ namespace microide::platform {
 
 namespace {
 
+// How long a half-closed connection is kept alive waiting for replies to the
+// requests it already sent. A client may legitimately close its write side
+// immediately after sending (socat, `echo | nc`), so we must flush pending
+// replies before reaping; this bounds the wait so a never-answered request can
+// never leak the fd forever.
+constexpr int kLingerGraceMs = 2000;
+
 void SetNonBlocking(int fd) {
   const int flags = ::fcntl(fd, F_GETFL, 0);
   if (flags >= 0) {
@@ -44,6 +52,15 @@ struct ControlSocketServer::Impl {
     std::string read_buf;
     std::mutex out_mutex;
     std::string write_buf;  // bytes pending write (already framed with '\n')
+
+    // Requests accepted from this connection that have not yet been answered.
+    // Incremented on the I/O thread when a complete request line is queued
+    // (IngestReadBuffer), decremented on the main thread when its reply is
+    // queued (SendLine). The only field touched by both threads, hence atomic;
+    // read_closed / linger_deadline are I/O-thread-only.
+    std::atomic<int> in_flight{0};
+    bool read_closed = false;  // peer closed its write side; flush then reap
+    std::chrono::steady_clock::time_point linger_deadline{};
   };
 
   std::filesystem::path socket_path;
@@ -103,6 +120,7 @@ struct ControlSocketServer::Impl {
       }
       start = newline + 1;
       if (!line.empty()) {
+        conn.in_flight.fetch_add(1, std::memory_order_release);
         std::lock_guard<std::mutex> lock(inbound_mutex);
         inbound.push_back(ControlInboundMessage{conn.id, std::move(line)});
         produced = true;
@@ -164,14 +182,16 @@ struct ControlSocketServer::Impl {
       if (stop.load(std::memory_order_acquire)) {
         break;
       }
-      if (ready <= 0) {
+      if (ready < 0) {
+        continue;  // EINTR or transient error; retry.
+      }
+      if (ready == 0) {
         // On an idle wake (poll timeout) check the advertised socket still
         // exists; some environments delete $XDG_RUNTIME_DIR contents while the
-        // process lives, silently severing the query path. Re-bind if so.
-        if (ready == 0) {
-          MaybeRebindSocket();
-        }
-        continue;
+        // process lives, silently severing the query path. Re-bind if so. Fall
+        // through so lingering half-closed connections are still swept (their
+        // revents are 0 on a timeout, which the loop below tolerates).
+        MaybeRebindSocket();
       }
 
       if ((fds[1].revents & POLLIN) != 0) {
@@ -186,8 +206,8 @@ struct ControlSocketServer::Impl {
       for (std::size_t i = 0; i < snapshot.size(); ++i) {
         const short revents = fds[i + 2].revents;
         const std::shared_ptr<Connection>& conn = snapshot[i];
-        bool drop = (revents & (POLLERR | POLLNVAL)) != 0;
-        if (!drop && (revents & POLLIN) != 0) {
+        bool hard_drop = (revents & (POLLERR | POLLNVAL)) != 0;
+        if (!hard_drop && (revents & POLLIN) != 0) {
           char buffer[4096];
           while (true) {
             const ssize_t count = ::recv(conn->fd, buffer, sizeof(buffer), 0);
@@ -196,25 +216,43 @@ struct ControlSocketServer::Impl {
               continue;
             }
             if (count == 0) {
-              drop = true;  // peer closed
+              conn->read_closed = true;  // peer closed its write side
             } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
-              drop = true;
+              hard_drop = true;
             }
             break;
           }
           IngestReadBuffer(*conn);
         }
-        if (!drop && (revents & POLLOUT) != 0) {
-          drop = !FlushConnection(*conn);
+        if ((revents & POLLHUP) != 0 && conn->read_buf.empty()) {
+          conn->read_closed = true;
         }
-        if (!drop && (revents & POLLHUP) != 0 && conn->read_buf.empty()) {
-          drop = true;
+        // Always attempt to flush; send() on a non-writable socket is a cheap
+        // EAGAIN. A hard write error means the peer is gone for good.
+        if (!hard_drop) {
+          hard_drop = !FlushConnection(*conn);
         }
-        if (drop) {
+        if (hard_drop) {
           RemoveConnection(conn->id);
-        } else {
-          drop = !FlushConnection(*conn);
-          if (drop) {
+          continue;
+        }
+        // Graceful lingering close: a peer that closed its write side still gets
+        // replies to requests it already sent. Reap once everything is flushed
+        // and answered, or when the bounded grace period expires.
+        if (conn->read_closed) {
+          if (conn->linger_deadline == std::chrono::steady_clock::time_point{}) {
+            conn->linger_deadline = std::chrono::steady_clock::now() +
+                                    std::chrono::milliseconds(kLingerGraceMs);
+          }
+          bool write_pending = false;
+          {
+            std::lock_guard<std::mutex> lock(conn->out_mutex);
+            write_pending = !conn->write_buf.empty();
+          }
+          const bool drained =
+              !write_pending && conn->in_flight.load(std::memory_order_acquire) <= 0;
+          const bool expired = std::chrono::steady_clock::now() >= conn->linger_deadline;
+          if (drained || expired) {
             RemoveConnection(conn->id);
           }
         }
@@ -428,6 +466,9 @@ void ControlSocketServer::SendLine(std::uint64_t connection_id, const std::strin
     conn->write_buf.append(line);
     conn->write_buf.push_back('\n');
   }
+  // One reply per accepted request: balance the IngestReadBuffer increment so a
+  // half-closed connection can be reaped once its replies have all been queued.
+  conn->in_flight.fetch_sub(1, std::memory_order_release);
   impl_->WakeIoThread();
 }
 

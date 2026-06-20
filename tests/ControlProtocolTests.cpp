@@ -5,11 +5,13 @@
 #include "util/JsonValue.h"
 #include "workspace/ControlProtocol.h"
 #include "workspace/ControlSpec.h"
+#include "workspace/ManPage.h"
 
 namespace microide::tests {
 namespace {
 
 using microide::workspace::ControlChannelHelpText;
+using microide::workspace::RenderManPage;
 using microide::workspace::ControlQueryVerbs;
 using microide::workspace::ControlRequest;
 using microide::workspace::ControlResponse;
@@ -70,6 +72,49 @@ void TestHelpTextListsVerbsAndSpecKeys() {
   }
 }
 
+// The runbook the agent reads must lead with control-send and never resurrect the
+// broken `set-setting debug.enabled true` prelude or socat guidance.
+void TestHelpTextLeadsWithControlSend() {
+  const std::string help = ControlChannelHelpText();
+  Expect(help.find("control-send") != std::string::npos,
+         "help text should document the control-send client");
+  Expect(help.find("debug-run") != std::string::npos,
+         "help text should document ad-hoc debug-run");
+  Expect(help.find("socat") == std::string::npos,
+         "help text must not carry the broken socat recipe");
+  Expect(help.find("set-setting debug.enabled true") == std::string::npos,
+         "the debug.enabled prelude is obsolete now that the channel auto-enables");
+}
+
+// The committed man page is generated from RenderManPage(); fail if it was edited
+// by hand or left stale so the shipped docs cannot drift from the implementation.
+void TestManPageMatchesGenerator() {
+  const std::filesystem::path repo_root =
+      std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).parent_path();
+  const std::filesystem::path man_path = repo_root / "docs" / "microide.1";
+  const std::string committed = ReadFile(man_path);
+  Expect(!committed.empty(), "docs/microide.1 should exist and be non-empty");
+  Expect(committed == RenderManPage(),
+         "docs/microide.1 is stale -- run tools/gen-man.sh to regenerate it");
+}
+
+// Negative guard: the docs an agent might read must not carry the broken socat
+// recipe, and must point at control-send instead.
+void TestDocsHaveNoSocatRecipe() {
+  const std::filesystem::path repo_root =
+      std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).parent_path();
+  for (const std::filesystem::path doc :
+       {repo_root / "docs" / "microide.1",
+        repo_root / "dev-docs" / "control" / "control-channel.md"}) {
+    const std::string text = ReadFile(doc);
+    Expect(!text.empty(), "doc should exist and be non-empty");
+    Expect(text.find("socat") == std::string::npos,
+           "doc must not carry the broken socat recipe");
+    Expect(text.find("control-send") != std::string::npos,
+           "doc should point at the control-send client");
+  }
+}
+
 }  // namespace
 
 void RegisterControlProtocolTests(std::vector<TestCase>& tests) {
@@ -79,6 +124,10 @@ void RegisterControlProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlProtocol/SerializeResponseRoundTrips", TestSerializeResponseRoundTrips);
   AddTest(tests, "ControlProtocol/HelpTextListsVerbsAndSpecKeys",
           TestHelpTextListsVerbsAndSpecKeys);
+  AddTest(tests, "ControlProtocol/HelpTextLeadsWithControlSend",
+          TestHelpTextLeadsWithControlSend);
+  AddTest(tests, "ControlProtocol/ManPageMatchesGenerator", TestManPageMatchesGenerator);
+  AddTest(tests, "ControlProtocol/DocsHaveNoSocatRecipe", TestDocsHaveNoSocatRecipe);
 }
 
 }  // namespace microide::tests

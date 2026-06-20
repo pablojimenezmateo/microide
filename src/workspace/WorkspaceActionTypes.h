@@ -196,6 +196,10 @@ enum class ActionId {
   // Start a debug session for a named launch config (control channel + spec).
   // No arg starts the selected/default config. Gated on `debug.enabled`.
   DebugLaunch,
+  // Ad-hoc launch by program path: synthesizes a transient launch config from a
+  // binary path so a session can start with no pre-defined config. Gated on
+  // `debug.enabled`. `debug-run [--type <adapter>] <program> [args...]`.
+  DebugRun,
   // Right-side debug pane (toggle + surface switching). Gated on `debug.enabled`.
   DebugPaneToggle,
   DebugPaneShowCallStack,
