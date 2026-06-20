@@ -146,6 +146,11 @@ enum class ActionId {
   DebugStepOut,
   DebugPause,
   DebugRestart,
+  // Reverse execution. Gated on `debug.enabled` + an active+Stopped session AND
+  // the adapter advertising `supportsStepBack` (so they only appear for recording
+  // adapters, e.g. gdb under `record` / rr).
+  DebugReverseContinue,
+  DebugStepBack,
   // Multi-session switcher (Phase 8). No arg cycles to the next session; an
   // optional 1-based index selects a specific session. Gated on `debug.enabled`
   // + more than one live session.

@@ -110,6 +110,10 @@ class DebugService {
   void StepIn();
   void StepOut();
   void Pause();
+  // Reverse execution. No-ops when no session is active or the adapter lacks
+  // `supportsStepBack` (the session guards the capability). Mirrors Continue/Step.
+  void ReverseContinue();
+  void StepBack();
   // Restart the active session (Phase 7). Uses the DAP `restart` request when the
   // adapter advertises `supportsRestartRequest`, otherwise terminates and
   // relaunches with the same config + cwd. No-op when no session is active.
@@ -198,6 +202,9 @@ class DebugService {
   void EvaluateHover(int frame_id, const std::string& expression);
   // Whether the active session's adapter advertises `supportsEvaluateForHovers`.
   bool SupportsEvaluateForHovers() const;
+  // Whether the active session's adapter advertises `supportsStepBack` (gates the
+  // reverse-execution commands + their toolbar buttons).
+  bool SupportsStepBack() const;
 
   // Debug-console REPL (Phase 9). Evaluate `expression` against the active
   // session's focused frame (frame 0 when running) with `context:"repl"`, echoing

@@ -667,11 +667,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   // Floating debug toolbar (continue / step / stop) renders over the top of the
   // editor and must claim the cursor before the editor surface does.
   if (DebugToolbarVisible()) {
-    const DebugToolbarLayout toolbar =
-        ComputeDebugToolbarLayout(layout.editor_surface, DebugToolbarAvoidBelowY(layout));
+    const DebugToolbarLayout toolbar = ComputeDebugToolbarLayout(
+        layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
     if (Contains(toolbar.widget, x, y)) {
-      for (const SDL_FRect& button : toolbar.buttons) {
-        if (Contains(button, x, y)) {
+      for (std::size_t i = 0; i < toolbar.button_count; ++i) {
+        if (Contains(toolbar.buttons[i], x, y)) {
           return CursorKind::Pointer;
         }
       }

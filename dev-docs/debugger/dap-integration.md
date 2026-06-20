@@ -338,6 +338,34 @@ last planned slice; the debugger is feature-complete.
 
 ### Beyond Phase 10
 
+**Shipped (2026-06-20): reverse execution.** Two execution-control commands —
+**Reverse Continue** (`reverseContinue`) and **Step Back** (`stepBack`) — wired through
+the established command pattern (the Phase 3 Continue/Step set is the template). The
+single DAP `supportsStepBack` capability (already parsed as `DapCapabilities::
+supports_step_back`) gates **both** requests — no new capability field. Both route
+through `DebugSession::SendResumeRequest` (the same optimistic-resume path as forward
+stepping; valid only while `Stopped`), with a `supports_step_back` guard so an
+unsupported request never reaches the wire. New `DebugService::SupportsStepBack()`
+surfaces the capability.
+
+Surfaces: conditional **floating-toolbar buttons** (a left-pointing play glyph for
+Reverse Continue + a mirrored step-back arc, inserted between the forward-step group and
+Restart) that appear **only when the active adapter advertises `supportsStepBack`** — so
+the common case (plain gdb, no `record`) is byte-for-byte unchanged; **Debug-menu
+entries** (greyed when no recording adapter is paused, via a new
+`debug_supports_reverse` availability op); and **command-palette / control-channel
+commands** `debug-reverse-continue` / `debug-step-back` (no default keybindings). The
+toolbar layout (`DebugToolbarLayout`) gained a `kinds[]`/`button_count` indirection so
+the reverse pair can be skipped without index/enum drift — which also removed the prior
+fragile `static_cast<index→enum>` coupling in the render/hit-test loops.
+
+End-to-end covered by `DebugService/SessionReverseStepAndContinue` (a new `reverse`
+mock-adapter mode advertising `supportsStepBack`; `stepBack`/`reverseContinue` reach the
+wire and optimistically resume) and `DebugService/SessionReverseGatedOnCapability` (an
+adapter without the capability drops both). gdb supports reverse execution only under
+`record` / rr; instruction-granularity reverse stepping is deferred with the disassembly
+pane.
+
 **Shipped (2026-06-20): function breakpoints + exception-filter conditions.** A probe
 of real gdb 17.2 (`gdb --interpreter=dap`) confirmed it advertises a large set of
 capabilities microide did not yet use; the two lowest-risk, highest-value ones (both
@@ -370,7 +398,8 @@ The items below are *parsed-but-unwired* capabilities or extra requests that eac
 a new data model and/or UI surface. gdb 17.2 advertises function breakpoints, disassembly,
 `readMemory`/`writeMemory`, instruction breakpoints, completions, modules, loadedSources,
 stepping granularity, value-formatting, and `setExpression`; it does **not** advertise
-reverse execution or data breakpoints at init. Priority order:
+reverse execution (now shipped — gated so it only surfaces for recording adapters) or
+data breakpoints at init. Priority order:
 
 - **Disassembly + instruction stepping + instruction breakpoints** (`disassemble`,
   `granularity:"instruction"`, `setInstructionBreakpoints`) — a new Disassembly pane.
@@ -378,8 +407,6 @@ reverse execution or data breakpoints at init. Priority order:
 - **REPL completions** (`completions`) — reuse the existing completion overlay.
 - **Value-formatting hex toggle** (`format:{hex:true}`) + **`setExpression`** (edit watch /
   arbitrary lvalues) + **modules / loadedSources** views.
-- **Reverse execution** (`stepBack` / `reverseContinue`; `supports_step_back` parsed) —
-  gdb supports it only via `record`; needs toolbar buttons + capability gating.
 - **Data breakpoints** (`setDataBreakpoints`) — not advertised by gdb 17.2; lowest priority.
 - **Launch-config editor** — Phase 9 added a *picker* over `launch_configs`; a small
   create/edit UI (native `PersistedRecord`, no `.vscode/launch.json`) would let a

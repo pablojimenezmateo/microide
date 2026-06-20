@@ -24,7 +24,7 @@ struct DebugToolbarButtonSpec {
   std::string_view tooltip;
 };
 
-// Tooltip labels (with the default keybinding) in DebugToolbarButton order.
+// Tooltip labels (with the default keybinding) keyed by DebugToolbarButton.
 constexpr std::array<DebugToolbarButtonSpec,
                      static_cast<std::size_t>(DebugToolbarButton::Count)>
     kButtonSpecs = {{
@@ -32,12 +32,22 @@ constexpr std::array<DebugToolbarButtonSpec,
         {"Step Over (F10)"},
         {"Step Into (F11)"},
         {"Step Out (Shift+F11)"},
+        {"Reverse Continue"},
+        {"Step Back"},
         {"Restart (Ctrl+Shift+F5)"},
         {"Stop Debugging"},
     }};
 
 constexpr std::size_t Index(DebugToolbarButton button) {
   return static_cast<std::size_t>(button);
+}
+
+// Step controls (forward and reverse) only act while paused; Continue/Pause/
+// Restart/Stop are live whenever a session is active.
+constexpr bool IsStepButton(DebugToolbarButton button) {
+  return button == DebugToolbarButton::StepOver || button == DebugToolbarButton::StepInto ||
+         button == DebugToolbarButton::StepOut || button == DebugToolbarButton::ReverseContinue ||
+         button == DebugToolbarButton::StepBack;
 }
 
 }  // namespace
@@ -65,7 +75,8 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
   if (renderer == nullptr) {
     return;
   }
-  const DebugToolbarLayout tb = ComputeDebugToolbarLayout(layout.editor_surface, avoid_below_y);
+  const DebugToolbarLayout tb =
+      ComputeDebugToolbarLayout(layout.editor_surface, avoid_below_y, DebugSupportsReverse());
   if (tb.widget.w <= 0.0f || tb.widget.h <= 0.0f) {
     return;
   }
@@ -77,25 +88,16 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
     return last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
   };
 
-  // Step controls only act while stopped; Continue/Pause/Restart/Stop are live
-  // whenever a session is active.
   const auto button_enabled = [&](DebugToolbarButton button) {
-    switch (button) {
-      case DebugToolbarButton::StepOver:
-      case DebugToolbarButton::StepInto:
-      case DebugToolbarButton::StepOut:
-        return session_stopped;
-      default:
-        return true;
-    }
+    return IsStepButton(button) ? session_stopped : true;
   };
 
   std::optional<std::size_t> hovered_index;
   // A disabled button gets no highlight but still shows a tooltip, so the user can
   // learn *why* it is inert (e.g. step controls need the program paused first).
   std::optional<std::size_t> tooltip_index;
-  for (std::size_t i = 0; i < tb.buttons.size(); ++i) {
-    const auto button = static_cast<DebugToolbarButton>(i);
+  for (std::size_t i = 0; i < tb.button_count; ++i) {
+    const DebugToolbarButton button = tb.kinds[i];
     const SDL_FRect& rect = tb.buttons[i];
     const bool enabled = button_enabled(button);
     const bool pointer_over = is_hovered(rect);
@@ -141,6 +143,12 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
       case DebugToolbarButton::StepOut:
         DrawStepOutGlyph(renderer, rect, glyph);
         break;
+      case DebugToolbarButton::ReverseContinue:
+        DrawReverseContinueGlyph(renderer, rect, glyph);
+        break;
+      case DebugToolbarButton::StepBack:
+        DrawStepBackGlyph(renderer, rect, glyph);
+        break;
       case DebugToolbarButton::Restart:
         DrawRestartGlyph(renderer, rect, glyph);
         break;
@@ -158,13 +166,11 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
   // Tooltip on top, anchored under the hovered button and clamped to the editor.
   if (tooltip_index.has_value()) {
     const SDL_FRect& rect = tb.buttons[*tooltip_index];
-    const auto button = static_cast<DebugToolbarButton>(*tooltip_index);
-    std::string_view label = kButtonSpecs[*tooltip_index].tooltip;
+    const DebugToolbarButton button = tb.kinds[*tooltip_index];
+    std::string_view label = kButtonSpecs[Index(button)].tooltip;
     if (button == DebugToolbarButton::ContinuePause && !session_stopped) {
       label = "Pause";
-    } else if (!session_stopped && (button == DebugToolbarButton::StepOver ||
-                                    button == DebugToolbarButton::StepInto ||
-                                    button == DebugToolbarButton::StepOut)) {
+    } else if (!session_stopped && IsStepButton(button)) {
       // Step controls are disabled while running: explain rather than stay silent.
       label = "Pause to step";
     }
@@ -185,8 +191,8 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
   if (event.button.button != SDL_BUTTON_LEFT || !DebugToolbarVisible()) {
     return false;
   }
-  const DebugToolbarLayout tb =
-      ComputeDebugToolbarLayout(layout.editor_surface, DebugToolbarAvoidBelowY(layout));
+  const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
+      layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
   const float x = static_cast<float>(event.button.x);
   const float y = static_cast<float>(event.button.y);
   if (!Contains(tb.widget, x, y)) {
@@ -194,11 +200,11 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
   }
 
   const bool stopped = IsDebugSessionStopped();
-  for (std::size_t i = 0; i < tb.buttons.size(); ++i) {
+  for (std::size_t i = 0; i < tb.button_count; ++i) {
     if (!Contains(tb.buttons[i], x, y)) {
       continue;
     }
-    switch (static_cast<DebugToolbarButton>(i)) {
+    switch (tb.kinds[i]) {
       case DebugToolbarButton::ContinuePause:
         if (stopped) {
           DebugContinue();
@@ -219,6 +225,16 @@ bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,
       case DebugToolbarButton::StepOut:
         if (stopped) {
           DebugStepOut();
+        }
+        break;
+      case DebugToolbarButton::ReverseContinue:
+        if (stopped) {
+          DebugReverseContinue();
+        }
+        break;
+      case DebugToolbarButton::StepBack:
+        if (stopped) {
+          DebugStepBack();
         }
         break;
       case DebugToolbarButton::Restart:

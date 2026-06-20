@@ -509,6 +509,8 @@ enum class DebugToolbarButton : std::uint8_t {
   StepOver,
   StepInto,
   StepOut,
+  ReverseContinue,  // Present only when the adapter advertises supportsStepBack
+  StepBack,         //   (same gate; both are skipped for ordinary adapters)
   Restart,
   Stop,
   Count,
@@ -516,12 +518,21 @@ enum class DebugToolbarButton : std::uint8_t {
 
 struct DebugToolbarLayout {
   SDL_FRect widget{};
+  // `buttons[i]` is the rect for the i-th *active* button, identified by
+  // `kinds[i]`; only `[0, button_count)` are populated. Inactive trailing slots are
+  // zero so the generic hover/cursor loops that scan the whole array still work.
   std::array<SDL_FRect, static_cast<std::size_t>(DebugToolbarButton::Count)> buttons{};
+  std::array<DebugToolbarButton, static_cast<std::size_t>(DebugToolbarButton::Count)> kinds{};
+  std::size_t button_count = 0;
 };
 
 // `avoid_below_y`, when set, anchors the bar just below that y so it stacks under
 // the find widget when both are visible; otherwise it sits at the editor top.
+// `include_reverse` adds the Reverse Continue / Step Back buttons (only when the
+// active adapter supports reverse execution); when false the bar is identical to
+// the pre-reverse layout.
 DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
-                                             std::optional<float> avoid_below_y);
+                                             std::optional<float> avoid_below_y,
+                                             bool include_reverse);
 
 }  // namespace microide::workspace

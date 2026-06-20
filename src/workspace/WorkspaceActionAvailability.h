@@ -40,6 +40,9 @@ class ActionAvailability {
     // paused; stopped = that session is paused at a breakpoint/step.
     std::function<bool()> debug_session_active;
     std::function<bool()> debug_session_stopped;
+    // Whether the active session's adapter advertises `supportsStepBack` — gates
+    // the reverse-execution commands so they only light up for recording adapters.
+    std::function<bool()> debug_supports_reverse;
     // Number of live debug sessions (Phase 8) — gates the session switcher.
     std::function<std::size_t()> debug_session_count;
   };

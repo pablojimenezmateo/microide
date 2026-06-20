@@ -63,7 +63,7 @@ void TestDapProtocolParsesCapabilities() {
   const codec::DapCapabilities caps = codec::ParseCapabilities(
       Json(R"({"supportsConfigurationDoneRequest":true,"supportsConditionalBreakpoints":true,
           "supportsSetVariable":true,"supportsEvaluateForHovers":true,"supportsLogPoints":true,
-          "supportsRestartRequest":true,
+          "supportsRestartRequest":true,"supportsStepBack":true,
           "exceptionBreakpointFilters":[
             {"filter":"raised","label":"Raised Exceptions"},
             {"filter":"uncaught","label":"Uncaught Exceptions","default":true,
@@ -74,6 +74,7 @@ void TestDapProtocolParsesCapabilities() {
   Expect(caps.supports_evaluate_for_hovers, "evaluate-for-hovers capability");
   Expect(caps.supports_log_points, "logpoints capability");
   Expect(caps.supports_restart_request, "restart-request capability (Phase 7)");
+  Expect(caps.supports_step_back, "step-back capability (reverse execution)");
   // Exception filters parse with ids/labels/defaults (Phase 7).
   Expect(caps.exception_filters.size() == 2, "both advertised exception filters parse");
   Expect(caps.exception_filters[0].filter == "raised" &&
@@ -83,7 +84,7 @@ void TestDapProtocolParsesCapabilities() {
   Expect(caps.exception_filters[1].default_enabled && caps.exception_filters[1].supports_condition,
          "second filter's default + supportsCondition parse");
   // Absent flags default to false.
-  Expect(!caps.supports_step_back, "absent capability defaults to false");
+  Expect(!caps.supports_function_breakpoints, "absent capability defaults to false");
 }
 
 void TestDapProtocolParsesStoppedEvent() {

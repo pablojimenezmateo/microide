@@ -85,6 +85,14 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return SettingEnabled(operations_, "debug.enabled", false) &&
              operations_.debug_session_active && operations_.debug_session_active() &&
              operations_.debug_session_stopped && operations_.debug_session_stopped();
+    case ActionId::DebugReverseContinue:
+    case ActionId::DebugStepBack:
+      // Reverse execution: paused session AND a recording adapter that advertises
+      // `supportsStepBack` (so these stay hidden/greyed for ordinary adapters).
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             operations_.debug_session_active && operations_.debug_session_active() &&
+             operations_.debug_session_stopped && operations_.debug_session_stopped() &&
+             operations_.debug_supports_reverse && operations_.debug_supports_reverse();
     case ActionId::DebugPause:
       // Pause is valid only while the session is running (active, not stopped).
       return SettingEnabled(operations_, "debug.enabled", false) &&

@@ -620,6 +620,20 @@ void DebugSession::StepOver() { SendResumeRequest("next"); }
 void DebugSession::StepIn() { SendResumeRequest("stepIn"); }
 void DebugSession::StepOut() { SendResumeRequest("stepOut"); }
 
+void DebugSession::ReverseContinue() {
+  if (!client_->Capabilities().supports_step_back) {
+    return;
+  }
+  SendResumeRequest("reverseContinue");
+}
+
+void DebugSession::StepBack() {
+  if (!client_->Capabilities().supports_step_back) {
+    return;
+  }
+  SendResumeRequest("stepBack");
+}
+
 void DebugSession::Pause() {
   if (state_ != State::Running || !client_->IsInitialized()) {
     return;

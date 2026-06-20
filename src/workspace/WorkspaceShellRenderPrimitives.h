@@ -497,6 +497,61 @@ inline void DrawRestartGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   SDL_RenderLine(renderer, sx, sy, sx - 1.0f, sy - 4.0f);
 }
 
+// Left-pointing filled triangle (Reverse Continue) — the mirror of DrawPlayGlyph.
+inline void DrawReverseContinueGlyph(SDL_Renderer* renderer, const SDL_FRect& rect,
+                                     SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cy = std::floor(rect.y + rect.h * 0.5f);
+  const float base_x = std::floor(rect.x + rect.w * 0.62f);
+  const float tip_x = std::floor(rect.x + rect.w * 0.34f);
+  const float half_h = std::floor(rect.h * 0.22f);
+  const int rows = static_cast<int>(half_h * 2.0f);
+  for (int i = 0; i <= rows; ++i) {
+    const float row_y = cy - half_h + static_cast<float>(i);
+    const float t = half_h > 0.0f ? std::fabs(row_y - cy) / half_h : 0.0f;
+    const float left = tip_x + (base_x - tip_x) * t;
+    if (left >= base_x) {
+      continue;
+    }
+    const SDL_FRect span{left, row_y, base_x - left, 1.0f};
+    SDL_RenderFillRect(renderer, &span);
+  }
+}
+
+// Arc arrow over a dot, pointing left (Step Back) — the mirror of DrawStepOverGlyph.
+inline void DrawStepBackGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
+  if (renderer == nullptr) {
+    return;
+  }
+  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  const float cx = std::floor(rect.x + rect.w * 0.5f);
+  const float cy = std::floor(rect.y + rect.h * 0.46f);
+  const float r = std::floor(rect.w * 0.22f);
+  constexpr float kPi = 3.14159265f;
+  const int segs = 10;
+  float prev_x = 0.0f;
+  float prev_y = 0.0f;
+  bool have_prev = false;
+  for (int i = 0; i <= segs; ++i) {
+    const float ang = kPi * static_cast<float>(i) / static_cast<float>(segs);
+    const float px = cx + r * std::cos(ang);
+    const float py = cy - r * std::sin(ang);
+    if (have_prev) {
+      SDL_RenderLine(renderer, prev_x, prev_y, px, py);
+    }
+    prev_x = px;
+    prev_y = py;
+    have_prev = true;
+  }
+  // Arrowhead at the left end, pointing down.
+  SDL_RenderLine(renderer, cx - r + 3.0f, cy - 3.0f, cx - r, cy);
+  SDL_RenderLine(renderer, cx - r - 3.0f, cy - 3.0f, cx - r, cy);
+  DrawGlyphDot(renderer, cx, cy + r + 3.0f, color);
+}
+
 inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   if (renderer == nullptr) {
     return;

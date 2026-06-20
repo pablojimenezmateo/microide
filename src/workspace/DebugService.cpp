@@ -665,6 +665,18 @@ void DebugService::Pause() {
   }
 }
 
+void DebugService::ReverseContinue() {
+  if (DebugSession* session = CurrentDapManager().ActiveSession(); session != nullptr) {
+    session->ReverseContinue();
+  }
+}
+
+void DebugService::StepBack() {
+  if (DebugSession* session = CurrentDapManager().ActiveSession(); session != nullptr) {
+    session->StepBack();
+  }
+}
+
 bool DebugService::IsSessionActive() const {
   const DebugSession* session = CurrentDapManager().ActiveSession();
   return session != nullptr && session->IsActive();

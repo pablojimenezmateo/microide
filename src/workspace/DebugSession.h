@@ -168,6 +168,12 @@ class DebugSession {
   void StepIn();
   void StepOut();
   void Pause();
+  // Reverse execution. Valid only while Stopped and only when the adapter
+  // advertises `supportsStepBack` (the single DAP capability gating both the
+  // `stepBack` and `reverseContinue` requests). Each optimistically resumes like
+  // its forward counterpart; the next `stopped` repopulates at the earlier point.
+  void ReverseContinue();  // DAP `reverseContinue`
+  void StepBack();         // DAP `stepBack`
 
   // Restart the active session in place via the DAP `restart` request (Phase 7).
   // Only valid when the adapter advertises `supportsRestartRequest`; callers

@@ -187,6 +187,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::DebugStepIn, "Step In", "F11"),
       MenuItem(ActionId::DebugStepOut, "Step Out", "Shift+F11"),
       MenuItem(ActionId::DebugPause, "Pause"),
+      MenuItem(ActionId::DebugReverseContinue, "Reverse Continue"),
+      MenuItem(ActionId::DebugStepBack, "Step Back"),
       MenuItem(ActionId::DebugRestart, "Restart", "Ctrl+Shift+F5"),
       MenuItem(ActionId::DebugConsoleRepl, "Evaluate in Console…"),
       MenuSeparator(),

@@ -1007,11 +1007,26 @@ FindWidgetLayout ComputeFindWidgetLayout(const SDL_FRect& editor_area, bool repl
 }
 
 DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
-                                             std::optional<float> avoid_below_y) {
+                                             std::optional<float> avoid_below_y,
+                                             bool include_reverse) {
   DebugToolbarLayout layout;
-  constexpr auto kCount = static_cast<float>(DebugToolbarButton::Count);
-  const float width = 2.0f * kDebugToolbarPad + kCount * kDebugToolbarButton +
-                      (kCount - 1.0f) * kDebugToolbarButtonGap;
+  // The active button order: Continue/Pause, the forward steps, optionally the
+  // reverse pair, then Restart and Stop. Skipping the reverse pair yields a layout
+  // byte-for-byte identical to the pre-reverse bar.
+  layout.kinds[layout.button_count++] = DebugToolbarButton::ContinuePause;
+  layout.kinds[layout.button_count++] = DebugToolbarButton::StepOver;
+  layout.kinds[layout.button_count++] = DebugToolbarButton::StepInto;
+  layout.kinds[layout.button_count++] = DebugToolbarButton::StepOut;
+  if (include_reverse) {
+    layout.kinds[layout.button_count++] = DebugToolbarButton::ReverseContinue;
+    layout.kinds[layout.button_count++] = DebugToolbarButton::StepBack;
+  }
+  layout.kinds[layout.button_count++] = DebugToolbarButton::Restart;
+  layout.kinds[layout.button_count++] = DebugToolbarButton::Stop;
+
+  const auto count = static_cast<float>(layout.button_count);
+  const float width = 2.0f * kDebugToolbarPad + count * kDebugToolbarButton +
+                      (count - 1.0f) * kDebugToolbarButtonGap;
   const float height = 2.0f * kDebugToolbarPad + kDebugToolbarButton;
   const float x = editor_area.x + editor_area.w - width - kDebugToolbarMargin;
   // Stack below the find widget when present, otherwise anchor at the editor top.
@@ -1021,8 +1036,8 @@ DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
 
   float bx = layout.widget.x + kDebugToolbarPad;
   const float by = layout.widget.y + kDebugToolbarPad;
-  for (auto& button : layout.buttons) {
-    button = MakeRect(bx, by, kDebugToolbarButton, kDebugToolbarButton);
+  for (std::size_t i = 0; i < layout.button_count; ++i) {
+    layout.buttons[i] = MakeRect(bx, by, kDebugToolbarButton, kDebugToolbarButton);
     bx += kDebugToolbarButton + kDebugToolbarButtonGap;
   }
   return layout;

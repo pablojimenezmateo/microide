@@ -426,4 +426,9 @@ bool DebugService::SupportsEvaluateForHovers() const {
   return session != nullptr && session->Client().Capabilities().supports_evaluate_for_hovers;
 }
 
+bool DebugService::SupportsStepBack() const {
+  const DebugSession* session = CurrentDapManager().ActiveSession();
+  return session != nullptr && session->Client().Capabilities().supports_step_back;
+}
+
 }  // namespace microide::workspace

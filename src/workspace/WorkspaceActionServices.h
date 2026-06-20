@@ -176,6 +176,12 @@ class WorkspaceActionContext {
     std::function<void()> debug_step_out;
     std::function<void()> debug_pause;
     std::function<void()> debug_restart;
+    // Reverse execution. Forward to the active session (no-op when none / wrong
+    // state / adapter lacks `supportsStepBack`). debug_supports_reverse reports the
+    // capability so availability can hide the verbs for non-recording adapters.
+    std::function<void()> debug_reverse_continue;
+    std::function<void()> debug_step_back;
+    std::function<bool()> debug_supports_reverse;
     // Multi-session switcher (Phase 8). debug_session_count reports how many live
     // sessions exist (gates the switch command); debug_switch_session cycles to the
     // next session (index < 0) or selects a 1-based index.
@@ -363,6 +369,8 @@ class WorkspaceActionContext {
   void DebugStepIn();
   void DebugStepOut();
   void DebugPause();
+  void DebugReverseContinue();
+  void DebugStepBack();
   void DebugRestart();
   // Multi-session switcher (Phase 8). Count of live sessions; switch to the next
   // (index < 0) or a 1-based session index.

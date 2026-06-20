@@ -1166,6 +1166,12 @@
   void DebugStepIn();
   void DebugStepOut();
   void DebugPause();
+  // Reverse execution; forward to debug_service_ (no-op unless the adapter
+  // advertises `supportsStepBack`). DebugSupportsReverse reports the capability,
+  // gating the reverse commands + their toolbar buttons.
+  void DebugReverseContinue();
+  void DebugStepBack();
+  bool DebugSupportsReverse() const;
   // Restart the active session (Phase 7); DAP `restart` or terminate+relaunch.
   void DebugRestart();
   // Focus a thread in the Call Stack thread selector (Phase 7 multi-thread).

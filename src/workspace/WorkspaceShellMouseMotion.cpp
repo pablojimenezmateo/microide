@@ -460,13 +460,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     // Floating debug toolbar: repaint on hover enter/leave so the button
     // highlight and tooltip track the pointer like the other chrome buttons.
     if (DebugToolbarVisible()) {
-      const DebugToolbarLayout tb =
-          ComputeDebugToolbarLayout(layout.editor_surface, DebugToolbarAvoidBelowY(layout));
+      const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
+          layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
       const auto hovered_button = [&](float px, float py) -> int {
         if (!Contains(tb.widget, px, py)) {
           return -1;
         }
-        for (std::size_t i = 0; i < tb.buttons.size(); ++i) {
+        for (std::size_t i = 0; i < tb.button_count; ++i) {
           if (Contains(tb.buttons[i], px, py)) {
             return static_cast<int>(i);
           }

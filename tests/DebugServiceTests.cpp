@@ -52,10 +52,11 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # all advertise configurationDone support.
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
-                                "function")
+                                "function", "reverse")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
+supports_step_back = (mode == "reverse")  # advertise supportsStepBack (reverse execution)
 supports_function = (mode == "function")  # advertise supportsFunctionBreakpoints
 multi_thread = (mode == "threads")     # `threads` returns two threads + per-thread frames
 exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters (+ filter options)
@@ -65,7 +66,7 @@ thread_event_mode = (mode == "thread_event")
 thread_started = False
 # emit `stopped` after configurationDone
 stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception",
-                          "thread_event", "function")
+                          "thread_event", "function", "reverse")
 running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
 # `die`: reach Running (respond to launch) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
@@ -138,6 +139,7 @@ while True:
                 "supportsSetVariable": supports_set_variable,
                 "supportsEvaluateForHovers": supports_evaluate,
                 "supportsRestartRequest": supports_restart,
+                "supportsStepBack": supports_step_back,
                 "supportsFunctionBreakpoints": supports_function,
                 "supportsConditionalBreakpoints": supports_function,
                 "supportsTerminateRequest": True}
@@ -199,7 +201,7 @@ while True:
         respond(msg, {})
         # Re-run the configuration handshake (some adapters re-emit initialized).
         event("initialized")
-    elif command in ("continue", "next", "stepIn", "stepOut"):
+    elif command in ("continue", "next", "stepIn", "stepOut", "reverseContinue", "stepBack"):
         event("output", {"category": "stdout", "output": "cmd:" + command + "\n"})
         respond(msg, {"allThreadsContinued": True} if command == "continue" else {})
         emit_stop()  # re-stop so the test can drive the next step
@@ -611,6 +613,87 @@ void TestDebugSessionPauseFromRunning() {
          "pause should drive the adapter to a stop");
   Expect(captured.output.find("cmd:pause") != std::string::npos,
          "Pause should send the DAP `pause` command after resolving a thread");
+  manager.ShutdownAll();
+}
+
+// Reverse execution: an adapter advertising supportsStepBack accepts `stepBack`
+// and `reverseContinue`, each optimistically resuming like a forward step.
+void TestDebugSessionReverseStepAndContinue() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "reverse"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  Expect(session->Client().Capabilities().supports_step_back,
+         "adapter should advertise supportsStepBack");
+
+  const int stops_before = captured.stop_count;
+  session->StepBack();
+  Expect(PollUntil(manager, [&]() { return captured.stop_count > stops_before; }),
+         "step back should drive another stop");
+  Expect(captured.output.find("cmd:stepBack") != std::string::npos,
+         "StepBack should send the DAP `stepBack` command");
+  Expect(captured.resume_count >= 1, "stepping back should fire on_resumed optimistically");
+
+  session->ReverseContinue();
+  Expect(PollUntil(manager,
+                   [&]() {
+                     return captured.output.find("cmd:reverseContinue") != std::string::npos;
+                   }),
+         "ReverseContinue should send the DAP `reverseContinue` command");
+  manager.ShutdownAll();
+}
+
+// Without supportsStepBack the reverse commands are dropped at the session layer:
+// nothing reaches the wire and no optimistic resume fires.
+void TestDebugSessionReverseGatedOnCapability() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));  // no supportsStepBack
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  Expect(!session->Client().Capabilities().supports_step_back,
+         "adapter should not advertise supportsStepBack");
+
+  const int resumes_before = captured.resume_count;
+  session->StepBack();
+  session->ReverseContinue();
+  // Give the (suppressed) requests a chance to round-trip, then assert nothing did.
+  Expect(!PollUntil(manager,
+                    [&]() {
+                      return captured.output.find("cmd:stepBack") != std::string::npos ||
+                             captured.output.find("cmd:reverseContinue") != std::string::npos ||
+                             captured.resume_count > resumes_before;
+                    }),
+         "reverse commands should be dropped when the adapter lacks supportsStepBack");
   manager.ShutdownAll();
 }
 
@@ -2344,6 +2427,10 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionResolvesStackOnStopAndStepsResume",
           TestDebugSessionResolvesStackOnStopAndStepsResume);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
+  AddTest(tests, "DebugService/SessionReverseStepAndContinue",
+          TestDebugSessionReverseStepAndContinue);
+  AddTest(tests, "DebugService/SessionReverseGatedOnCapability",
+          TestDebugSessionReverseGatedOnCapability);
   AddTest(tests, "DebugService/SessionRestartViaRestartRequest",
           TestDebugSessionRestartViaRestartRequest);
   AddTest(tests, "DebugService/SessionRestartNoOpWithoutCapability",

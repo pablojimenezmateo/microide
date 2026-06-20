@@ -133,6 +133,18 @@ void WorkspaceActionContext::DebugPause() {
   }
 }
 
+void WorkspaceActionContext::DebugReverseContinue() {
+  if (operations_.debug_reverse_continue) {
+    operations_.debug_reverse_continue();
+  }
+}
+
+void WorkspaceActionContext::DebugStepBack() {
+  if (operations_.debug_step_back) {
+    operations_.debug_step_back();
+  }
+}
+
 void WorkspaceActionContext::DebugRestart() {
   if (operations_.debug_restart) {
     operations_.debug_restart();
@@ -540,6 +552,9 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .debug_step_out = [this]() { DebugStepOut(); },
           .debug_pause = [this]() { DebugPause(); },
           .debug_restart = [this]() { DebugRestart(); },
+          .debug_reverse_continue = [this]() { DebugReverseContinue(); },
+          .debug_step_back = [this]() { DebugStepBack(); },
+          .debug_supports_reverse = [this]() { return DebugSupportsReverse(); },
           .debug_session_count = [this]() { return CurrentDapManager().SessionCount(); },
           .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },

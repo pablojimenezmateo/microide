@@ -203,6 +203,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.DebugPause();
       return DispatchResult::Handled;
+    case ActionId::DebugReverseContinue:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.DebugReverseContinue();
+      return DispatchResult::Handled;
+    case ActionId::DebugStepBack:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      context_.DebugStepBack();
+      return DispatchResult::Handled;
     case ActionId::DebugRestart:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
