@@ -143,7 +143,7 @@ void TabStripService::RefreshEditorGeometryCache(const ProjectWorkspaceState& st
                                                  const MeasureWidthFn& measure_width,
                                                  const TitleProvider& display_title,
                                                  const TitleProvider& tooltip_label) const {
-  const std::size_t tab_count = state.open_tabs.size();
+  const std::size_t tab_count = state.focused_group().open_tabs.size();
   const bool cache_hit = editor_tab_geometry_cache_.valid &&
                          editor_tab_geometry_cache_.tab_count == tab_count &&
                          editor_tab_geometry_cache_.window_width == strip_width;
@@ -175,8 +175,8 @@ void TabStripService::EnsureActiveEditorTabVisible(ProjectWorkspaceState& state,
                                                    const MeasureWidthFn& measure_width,
                                                    const TitleProvider& display_title,
                                                    const TitleProvider& tooltip_label) const {
-  if (state.open_tabs.empty()) {
-    state.tab_scroll_index = 0;
+  if (state.focused_group().open_tabs.empty()) {
+    state.focused_group().tab_scroll_index = 0;
     editor_tab_geometry_cache_.valid = false;
     return;
   }
@@ -188,7 +188,7 @@ void TabStripService::EnsureActiveEditorTabVisible(ProjectWorkspaceState& state,
   const float max_tab_x = std::max(start_x + 120.0f, strip_width - OverflowStripReserveForHiddenCount(1));
   std::size_t first_visible = EnsureVisibleStripIndex(
       editor_tab_geometry_cache_.widths, start_x, gap, max_tab_x,
-      static_cast<std::size_t>(std::max(0, state.tab_scroll_index)), state.active_tab_index);
+      static_cast<std::size_t>(std::max(0, state.focused_group().tab_scroll_index)), state.focused_group().active_tab_index);
 
   const auto active_fits_from = [&](std::size_t candidate_first) {
     const float candidate_start_x = candidate_first > 0 ? OverflowStripReserveForHiddenCount(1) : 0.0f;
@@ -204,22 +204,22 @@ void TabStripService::EnsureActiveEditorTabVisible(ProjectWorkspaceState& state,
       }
       const std::size_t last_visible = visible.back().index;
       const float next_right_reserve =
-          last_visible + 1 < state.open_tabs.size()
-              ? OverflowStripReserveForHiddenCount(state.open_tabs.size() - (last_visible + 1))
+          last_visible + 1 < state.focused_group().open_tabs.size()
+              ? OverflowStripReserveForHiddenCount(state.focused_group().open_tabs.size() - (last_visible + 1))
               : 0.0f;
       if (next_right_reserve == candidate_right_reserve) {
         break;
       }
       candidate_right_reserve = next_right_reserve;
     }
-    return state.active_tab_index >= visible.front().index &&
-           state.active_tab_index <= visible.back().index;
+    return state.focused_group().active_tab_index >= visible.front().index &&
+           state.focused_group().active_tab_index <= visible.back().index;
   };
   while (first_visible > 0 && active_fits_from(first_visible - 1)) {
     --first_visible;
   }
 
-  state.tab_scroll_index = static_cast<int>(first_visible);
+  state.focused_group().tab_scroll_index = static_cast<int>(first_visible);
 }
 
 std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
@@ -228,7 +228,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
     const MeasureWidthFn& measure_width,
     const TitleProvider& display_title,
     const TitleProvider& tooltip_label) const {
-  if (state.open_tabs.empty()) {
+  if (state.focused_group().open_tabs.empty()) {
     editor_tab_geometry_cache_.valid = false;
     visible_editor_tabs_cache_.valid = false;
     return {};
@@ -250,8 +250,8 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
   };
   if (visible_editor_tabs_cache_.valid &&
       visible_editor_tabs_cache_.geometry_version == editor_tab_geometry_cache_.version &&
-      visible_editor_tabs_cache_.active_tab_index == state.active_tab_index &&
-      visible_editor_tabs_cache_.tab_scroll_index == state.tab_scroll_index && strip_matches()) {
+      visible_editor_tabs_cache_.active_tab_index == state.focused_group().active_tab_index &&
+      visible_editor_tabs_cache_.tab_scroll_index == state.focused_group().tab_scroll_index && strip_matches()) {
     return visible_editor_tabs_cache_.tabs;
   }
 
@@ -263,9 +263,9 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
         std::max(start_x + 120.0f, tab_strip.x + tab_strip.w - right_overflow_reserve);
     return BuildVisibleStripTabs(
         editor_tab_geometry_cache_.widths, start_x, gap, max_tab_x,
-        static_cast<std::size_t>(std::clamp(state.tab_scroll_index, 0,
-                                            std::max(0, static_cast<int>(state.open_tabs.size()) - 1))),
-        tab_y, tab_height, {}, state.active_tab_index, editor_tab_geometry_cache_.display_titles,
+        static_cast<std::size_t>(std::clamp(state.focused_group().tab_scroll_index, 0,
+                                            std::max(0, static_cast<int>(state.focused_group().open_tabs.size()) - 1))),
+        tab_y, tab_height, {}, state.focused_group().active_tab_index, editor_tab_geometry_cache_.display_titles,
         editor_tab_geometry_cache_.tooltip_labels);
   };
 
@@ -288,15 +288,15 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
     right_overflow_reserve = next_right_overflow_reserve;
   }
   const bool all_tabs_visible = !tabs.empty() && tabs.front().index == 0 &&
-                                tabs.back().index + 1 == state.open_tabs.size();
+                                tabs.back().index + 1 == state.focused_group().open_tabs.size();
   if (all_tabs_visible) {
     tabs = build_tabs(tab_strip.x, 0.0f);
   }
 
   visible_editor_tabs_cache_.geometry_version = editor_tab_geometry_cache_.version;
   visible_editor_tabs_cache_.strip = tab_strip;
-  visible_editor_tabs_cache_.active_tab_index = state.active_tab_index;
-  visible_editor_tabs_cache_.tab_scroll_index = state.tab_scroll_index;
+  visible_editor_tabs_cache_.active_tab_index = state.focused_group().active_tab_index;
+  visible_editor_tabs_cache_.tab_scroll_index = state.focused_group().tab_scroll_index;
   visible_editor_tabs_cache_.tabs = tabs;
   visible_editor_tabs_cache_.valid = true;
   return tabs;
@@ -345,7 +345,7 @@ TabStripOverflowControls TabStripService::ComputeEditorTabOverflowControls(
     const SDL_FRect& tab_strip,
     const std::vector<VisibleStripTab>& visible_tabs,
     const ProjectWorkspaceState& state) const {
-  return BuildOverflowControls(tab_strip, visible_tabs, state.open_tabs.size());
+  return BuildOverflowControls(tab_strip, visible_tabs, state.focused_group().open_tabs.size());
 }
 
 bool TabStripService::ScrollTabIndex(int& scroll_index, int direction, std::size_t total) const {
@@ -366,7 +366,7 @@ bool TabStripService::ScrollProjectTabStrip(ProjectCatalogState& catalog, int di
 }
 
 bool TabStripService::ScrollEditorTabStrip(ProjectWorkspaceState& state, int direction) {
-  if (ScrollTabIndex(state.tab_scroll_index, direction, state.open_tabs.size())) {
+  if (ScrollTabIndex(state.focused_group().tab_scroll_index, direction, state.focused_group().open_tabs.size())) {
     InvalidateEditorTabGeometry();
     return true;
   }

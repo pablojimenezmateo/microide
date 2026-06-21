@@ -688,7 +688,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
 
 void WorkspaceShell::InvalidateStaleMergeTabs() {
   const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
-  for (TabEntry& tab : context_.current_project_state.open_tabs) {
+  for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
     if (!tab.merge.has_value()) {
       continue;
     }

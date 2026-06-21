@@ -81,14 +81,12 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
   util::AddPerformanceCounter(util::PerfCounterId::FrameApplyEditorPreferencesAllTabsCalls);
-  ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
-  for (auto& tab : context_.current_project_state.open_tabs) {
+  ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
+  for (auto& tab : context_.current_project_state.focused_group().open_tabs) {
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
       continue;
     }
-    for (auto& view : tab.editor_state->views) {
-      ApplyEditorPreferences(view.viewport);
-    }
+    ApplyEditorPreferences(tab.editor_state->viewport);
   }
 }
 
@@ -115,12 +113,10 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
                           context_.current_project_state.editor_preferences.tab_size,
                           setting_enabled("editor.fold.enabled", true),
                           active_viewport->visible_lines());
-  for (auto& view : editor_tab->views) {
-    view.viewport.SetFoldingModel(editor_tab->folding_model->ranges().empty() &&
-                                          editor_tab->folding_model->collapsed_flags().empty()
-                                      ? nullptr
-                                      : editor_tab->folding_model.get());
-  }
+  editor_tab->viewport.SetFoldingModel(editor_tab->folding_model->ranges().empty() &&
+                                               editor_tab->folding_model->collapsed_flags().empty()
+                                           ? nullptr
+                                           : editor_tab->folding_model.get());
   return editor_tab->folding_model.get();
 }
 
@@ -183,57 +179,24 @@ const WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::ActiveEditorTab(
 WorkspaceShell::TabEntry::EditorTabState WorkspaceShell::MakeEditorTabState(
     const editor::TextViewport& view) {
   TabEntry::EditorTabState state;
-  state.views.push_back(TabEntry::EditorTabState::EditorViewState{
-      .leaf_id = 1,
-      .viewport = view,
-      .restored_path = view.path().lexically_normal(),
-      .restored_cursor_line = view.cursor_line(),
-      .restored_cursor_column = view.cursor_column(),
-      .restored_scroll_line = view.scroll_line(),
-      .restored_horizontal_scroll = view.horizontal_scroll(),
-      .needs_restore = false,
-  });
-  state.active_leaf_id = 1;
-  state.next_leaf_id = 2;
-  state.split_root = MakeEditorLeafNode(1);
+  state.viewport = view;
+  state.restored_path = view.path().lexically_normal();
+  state.restored_cursor_line = view.cursor_line();
+  state.restored_cursor_column = view.cursor_column();
+  state.restored_scroll_line = view.scroll_line();
+  state.restored_horizontal_scroll = view.horizontal_scroll();
+  state.needs_restore = false;
   return state;
-}
-
-std::unique_ptr<WorkspaceShell::TabEntry::EditorTabState::EditorSplitNode>
-WorkspaceShell::MakeEditorLeafNode(std::size_t leaf_id, float size_fraction) {
-  auto leaf = std::make_unique<TabEntry::EditorTabState::EditorSplitNode>();
-  leaf->leaf_id = leaf_id;
-  leaf->orientation = EditorSplitOrientation::None;
-  leaf->size_fraction = size_fraction;
-  return leaf;
 }
 
 void WorkspaceShell::SyncActiveEditorTabMetadata() {
   MakeEditorTabService().SyncActiveEditorTabMetadata();
 }
 
-WorkspaceShell::TabEntry::EditorTabState::EditorViewState* WorkspaceShell::FindEditorViewState(
-    TabEntry::EditorTabState& editor_tab,
-    std::size_t leaf_id) {
-  auto it = std::find_if(editor_tab.views.begin(), editor_tab.views.end(), [&](const auto& view) {
-    return view.leaf_id == leaf_id;
-  });
-  return it == editor_tab.views.end() ? nullptr : &*it;
-}
-
-const WorkspaceShell::TabEntry::EditorTabState::EditorViewState*
-WorkspaceShell::FindEditorViewState(const TabEntry::EditorTabState& editor_tab,
-                                    std::size_t leaf_id) const {
-  auto it = std::find_if(editor_tab.views.begin(), editor_tab.views.end(), [&](const auto& view) {
-    return view.leaf_id == leaf_id;
-  });
-  return it == editor_tab.views.end() ? nullptr : &*it;
-}
-
 std::filesystem::path WorkspaceShell::EditorViewPath(
-    const TabEntry::EditorTabState::EditorViewState& view) const {
-  return view.needs_restore ? view.restored_path.lexically_normal()
-                            : view.viewport.path().lexically_normal();
+    const TabEntry::EditorTabState& editor_state) const {
+  return editor_state.needs_restore ? editor_state.restored_path.lexically_normal()
+                                     : editor_state.viewport.path().lexically_normal();
 }
 
 bool WorkspaceShell::ActivateCurrentTabAfterStateLoad() {
@@ -242,7 +205,7 @@ bool WorkspaceShell::ActivateCurrentTabAfterStateLoad() {
 
 bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewport) {
   auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.empty()) {
+  if (editor_tab == nullptr) {
     return false;
   }
 
@@ -250,43 +213,22 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
   ApplyEditorPreferences(configured_view);
   ApplyDetectedIndentOnOpen(configured_view);
 
-  NormalizeEditorSplitTree(*editor_tab);
-  if (auto* active_view = FindEditorView(*editor_tab, editor_tab->active_leaf_id);
-      active_view != nullptr) {
-    const std::filesystem::path old_path = active_view->path().lexically_normal();
-    *active_view = configured_view;
-    editor_tab->folding_model->Clear();
-    context_.current_project_state.welcome_surface.viewport = configured_view;
-    const std::filesystem::path new_path = configured_view.path().lexically_normal();
-    if (!old_path.empty() && old_path != new_path && CountOpenBufferViews(old_path) == 0) {
-      NotifyLspBufferClose(old_path);
-    }
-    if (!new_path.empty()) {
-      NotifyPluginBufferOpen(new_path);
-    }
-    SyncActiveEditorTabMetadata();
-    ResetCaretBlink();
-    RequestActiveTabRedraw(!context_.current_project_state.welcome_surface.viewport.path().empty());
-    return true;
+  const std::filesystem::path old_path = editor_tab->viewport.path().lexically_normal();
+  editor_tab->viewport = configured_view;
+  editor_tab->needs_restore = false;
+  editor_tab->restored_path = configured_view.path().lexically_normal();
+  editor_tab->folding_model->Clear();
+  const std::filesystem::path new_path = configured_view.path().lexically_normal();
+  if (!old_path.empty() && old_path != new_path && CountOpenBufferViews(old_path) == 0) {
+    NotifyLspBufferClose(old_path);
   }
-  return false;
-}
-
-editor::TextViewport* WorkspaceShell::FindEditorView(TabEntry::EditorTabState& editor_tab,
-                                                     std::size_t leaf_id) {
-  if (auto* view = FindEditorViewState(editor_tab, leaf_id); view != nullptr) {
-    return &view->viewport;
+  if (!new_path.empty()) {
+    NotifyPluginBufferOpen(new_path);
   }
-  return nullptr;
-}
-
-const editor::TextViewport* WorkspaceShell::FindEditorView(
-    const TabEntry::EditorTabState& editor_tab,
-    std::size_t leaf_id) const {
-  if (const auto* view = FindEditorViewState(editor_tab, leaf_id); view != nullptr) {
-    return &view->viewport;
-  }
-  return nullptr;
+  SyncActiveEditorTabMetadata();
+  ResetCaretBlink();
+  RequestActiveTabRedraw(!editor_tab->viewport.path().empty());
+  return true;
 }
 
 editor::TextViewport* WorkspaceShell::ActiveEditorViewport() {
@@ -324,10 +266,10 @@ const editor::TextViewport* WorkspaceShell::ActiveNavigableViewport() const {
 }
 
 std::filesystem::path WorkspaceShell::ActiveTabPath() const {
-  if (context_.current_project_state.active_tab_index >= context_.current_project_state.open_tabs.size()) {
+  if (context_.current_project_state.focused_group().active_tab_index >= context_.current_project_state.focused_group().open_tabs.size()) {
     return {};
   }
-  return context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index]
+  return context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index]
       .path.lexically_normal();
 }
 
@@ -337,7 +279,7 @@ void WorkspaceShell::RequestCloseTab(std::size_t index) {
 
 void WorkspaceShell::RequestCloseTabs(std::vector<std::size_t> indices) {
   indices.erase(std::remove_if(indices.begin(), indices.end(), [&](std::size_t index) {
-                  return index >= context_.current_project_state.open_tabs.size();
+                  return index >= context_.current_project_state.focused_group().open_tabs.size();
                 }),
                 indices.end());
   std::sort(indices.begin(), indices.end());
@@ -372,15 +314,13 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
   ++reload_clean_open_buffers_from_disk_invocation_count_;
   SyncActiveEditorTab();
   std::vector<std::filesystem::path> paths;
-  for (const auto& tab : context_.current_project_state.open_tabs) {
+  for (const auto& tab : context_.current_project_state.focused_group().open_tabs) {
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
       continue;
     }
-    for (const auto& view : tab.editor_state->views) {
-      const std::filesystem::path path = EditorViewPath(view);
-      if (!path.empty()) {
-        paths.push_back(path.lexically_normal());
-      }
+    const std::filesystem::path path = EditorViewPath(*tab.editor_state);
+    if (!path.empty()) {
+      paths.push_back(path.lexically_normal());
     }
   }
   std::sort(paths.begin(), paths.end());
@@ -392,8 +332,8 @@ void WorkspaceShell::ReloadCleanOpenBuffersFromDisk() {
 
 void WorkspaceShell::CloseAllTabs() {
   std::vector<std::size_t> indices;
-  indices.reserve(context_.current_project_state.open_tabs.size());
-  for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
+  indices.reserve(context_.current_project_state.focused_group().open_tabs.size());
+  for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
     indices.push_back(i);
   }
   RequestCloseTabs(std::move(indices));
@@ -409,14 +349,14 @@ std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& pa
   }
   const std::filesystem::path normalized = path.lexically_normal();
   std::size_t count = 0;
-  for (const auto& tab : context_.current_project_state.open_tabs) {
+  for (const auto& tab : context_.current_project_state.focused_group().open_tabs) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      for (const auto& view : tab.editor_state->views) {
-        const std::filesystem::path view_path =
-            (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
-        if (!view_path.empty() && view_path == normalized) {
-          ++count;
-        }
+      const std::filesystem::path view_path =
+          (tab.editor_state->needs_restore ? tab.editor_state->restored_path
+                                           : tab.editor_state->viewport.path())
+              .lexically_normal();
+      if (!view_path.empty() && view_path == normalized) {
+        ++count;
       }
       continue;
     }

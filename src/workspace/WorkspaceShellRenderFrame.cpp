@@ -134,11 +134,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   RefreshSettingsOverlayCatalog();
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
-  if (ActiveTabIsEditor()) {
-    if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-      NormalizeEditorSplitTree(*editor_tab);
-    }
-  }
   if (panel_vm.content == PanelContentKind::Terminal && ActiveTerminalTab() != nullptr) {
     const SDL_FRect& panel = layout.bottom_panel;
     const auto& cached = last_terminal_panel_rect_;
@@ -302,8 +297,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   CompareTabState* active_compare_tab = nullptr;
   MergeTabState* active_merge_tab = nullptr;
   if (frame_vm.compare_surface.has_value() &&
-      project_state.active_tab_index < project_state.open_tabs.size()) {
-    TabEntry& active_tab = project_state.open_tabs[project_state.active_tab_index];
+      project_state.focused_group().active_tab_index < project_state.focused_group().open_tabs.size()) {
+    TabEntry& active_tab = project_state.focused_group().open_tabs[project_state.focused_group().active_tab_index];
     if (frame_vm.compare_surface->kind == TabEntry::Kind::Compare && active_tab.compare.has_value()) {
       active_compare_tab = &active_tab.compare.value();
     } else if (frame_vm.compare_surface->kind == TabEntry::Kind::Merge &&
@@ -402,9 +397,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const editor::FoldingModel* active_folding_model = nullptr;
     if (!fold_enabled) {
       if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-        for (auto& view : editor_tab->views) {
-          view.viewport.SetFoldingModel(nullptr);
-        }
+        editor_tab->viewport.SetFoldingModel(nullptr);
       }
     }
     const RenderViewModelBuilder editor_render_builder(context_);
@@ -455,13 +448,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    indent_guides_enabled, render_whitespace_enabled,
                                    active_folding_model, &tls_welcome_vm);
     }
-    auto* editor_tab = ActiveEditorTab();
     for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
       const EditorPaneLayout& pane = panes[pane_index];
-      editor::TextViewport* viewport =
-          pane.active ? ActiveEditorViewport()
-                      : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
-                                               : nullptr);
+      editor::TextViewport* viewport = ActiveEditorViewport();
       if (viewport == nullptr) {
         continue;
       }
@@ -522,10 +511,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     }
     for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
       const EditorPaneLayout& pane = panes[pane_index];
-      editor::TextViewport* viewport =
-          pane.active ? ActiveEditorViewport()
-                      : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
-                                               : nullptr);
+      editor::TextViewport* viewport = ActiveEditorViewport();
       if (viewport == nullptr || viewport->is_placeholder() ||
           pane_index >= tls_pane_scroll_metrics_valid.size() ||
           tls_pane_scroll_metrics_valid[pane_index] == 0) {

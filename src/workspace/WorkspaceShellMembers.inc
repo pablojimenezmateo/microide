@@ -382,11 +382,6 @@
   using BottomPanelTabModel = workspace::BottomPanelTabModel;
 
  private:
-  struct EditorSplitSlot {
-    TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
-    std::size_t index = 0;
-    std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot = nullptr;
-  };
 
   struct EditorBlamePopupLayout {
     std::size_t line_index = 0;
@@ -644,56 +639,19 @@
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
-  std::filesystem::path EditorViewPath(const TabEntry::EditorTabState::EditorViewState& view) const;
+  std::filesystem::path EditorViewPath(const TabEntry::EditorTabState& editor_state) const;
   bool ActivateCurrentTabAfterStateLoad();
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
   static TabEntry::EditorTabState MakeEditorTabState(const editor::TextViewport& view);
-  static std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode> MakeEditorLeafNode(
-      std::size_t leaf_id,
-      float size_fraction = 1.0f);
   void SyncActiveEditorTabMetadata();
   bool ReplaceActiveEditorView(const editor::TextViewport& viewport);
-  TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
-      TabEntry::EditorTabState& editor_tab,
-      std::size_t leaf_id);
-  const TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
-      const TabEntry::EditorTabState& editor_tab,
-      std::size_t leaf_id) const;
-  editor::TextViewport* FindEditorView(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
-  const editor::TextViewport* FindEditorView(const TabEntry::EditorTabState& editor_tab,
-                                             std::size_t leaf_id) const;
   editor::TextViewport* ActiveEditorViewport();
   const editor::TextViewport* ActiveEditorViewport() const;
   editor::TextViewport* ActiveNavigableViewport();
   const editor::TextViewport* ActiveNavigableViewport() const;
   std::filesystem::path ActiveTabPath() const;
-  EditorSplitSlot FindEditorLeafSlot(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
-  TabEntry::EditorTabState::EditorSplitNode* FindEditorSplitNode(
-      TabEntry::EditorTabState::EditorSplitNode* node,
-      const std::vector<std::size_t>& path);
-  const TabEntry::EditorTabState::EditorSplitNode* FindEditorSplitNode(
-      const TabEntry::EditorTabState::EditorSplitNode* node,
-      const std::vector<std::size_t>& path) const;
-  void NormalizeEditorSplitNode(TabEntry::EditorTabState::EditorSplitNode& node);
-  void NormalizeEditorSplitTree(TabEntry::EditorTabState& editor_tab);
-  void CollectEditorLeafOrder(const TabEntry::EditorTabState::EditorSplitNode* node,
-                              std::vector<std::size_t>& order) const;
-  std::vector<std::size_t> EditorLeafOrder(const TabEntry::EditorTabState& editor_tab) const;
-  void SetActiveEditorSplit(std::size_t index);
-  bool ActivateOrderedEditorSplit(std::size_t order_index);
-  bool SplitActiveEditor(EditorSplitOrientation orientation);
-  bool UnsplitActiveEditor();
-  bool CycleEditorSplit(int delta);
-  void CollectEditorPaneLayouts(const TabEntry::EditorTabState& editor_tab,
-                                const TabEntry::EditorTabState::EditorSplitNode* node,
-                                const SDL_FRect& rect,
-                                std::vector<EditorPaneLayout>& panes,
-                                std::vector<EditorSplitDividerLayout>* dividers,
-                                std::vector<std::size_t>* path) const;
-  std::optional<SDL_FRect> ComputeEditorSplitNodeRect(const SDL_FRect& editor_surface,
-                                                      const std::vector<std::size_t>& path) const;
   std::vector<EditorPaneLayout> ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
   std::vector<EditorSplitDividerLayout> ComputeEditorSplitDividerLayouts(
       const SDL_FRect& editor_surface) const;

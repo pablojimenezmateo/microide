@@ -297,8 +297,8 @@ void WorkspaceShell::JumpCompareHunk(int delta) {
 
 void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  for (std::size_t index = 0; index < context_.current_project_state.open_tabs.size(); ++index) {
-    const auto& tab = context_.current_project_state.open_tabs[index];
+  for (std::size_t index = 0; index < context_.current_project_state.focused_group().open_tabs.size(); ++index) {
+    const auto& tab = context_.current_project_state.focused_group().open_tabs[index];
     if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
         tab.compare->path != normalized_path) {
       continue;
@@ -307,8 +307,8 @@ void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& 
     if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
       continue;
     }
-    context_.current_project_state.open_tabs[index] = std::move(*rebuilt);
-    if (index == context_.current_project_state.active_tab_index) {
+    context_.current_project_state.focused_group().open_tabs[index] = std::move(*rebuilt);
+    if (index == context_.current_project_state.focused_group().active_tab_index) {
       RevealActiveCompareSelection();
       RequestActiveTabRedraw(false);
     }

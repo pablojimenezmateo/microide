@@ -256,9 +256,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (event.button.button == SDL_BUTTON_RIGHT && ActiveTabIsEditor() &&
       Contains(layout.editor_surface, event.button.x, event.button.y)) {
     SyncActiveEditorTab();
-    if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-      NormalizeEditorSplitTree(*editor_tab);
-    }
     if (MakeEditorMouseCoordinator().HandleGutterContextMenu(event, layout)) {
       ensure_redraw([this]() { RequestChromeRedraw(); });
       return true;
@@ -274,11 +271,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
 
       SyncActiveEditorTab();
-      auto* editor_tab = ActiveEditorTab();
-      if (editor_tab == nullptr) {
+      if (ActiveEditorTab() == nullptr) {
         return false;
       }
-      NormalizeEditorSplitTree(*editor_tab);
 
       const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
       const auto pane_it = std::find_if(
@@ -288,9 +283,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           });
       if (pane_it == panes.end()) {
         return false;
-      }
-      if (!pane_it->active) {
-        SetActiveEditorSplit(pane_it->leaf_id);
       }
 
       editor::TextViewport* viewport = ActiveEditorViewport();

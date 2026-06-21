@@ -30,11 +30,6 @@ class EditorTabService {
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
   void SyncActiveEditorTabMetadata();
-  void SetActiveEditorSplit(std::size_t leaf_id);
-  bool ActivateOrderedEditorSplit(std::size_t order_index);
-  bool SplitActiveEditor(EditorSplitOrientation orientation);
-  bool UnsplitActiveEditor();
-  bool CycleEditorSplit(int delta);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);

@@ -75,15 +75,9 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .make_editor_tab_state =
               [this](const editor::TextViewport& viewport) { return MakeEditorTabState(viewport); },
           .editor_view_path =
-              [this](const TabEntry::EditorTabState::EditorViewState& view) {
-                return EditorViewPath(view);
+              [this](const TabEntry::EditorTabState& editor_state) {
+                return EditorViewPath(editor_state);
               },
-          .find_editor_view =
-              [this](TabEntry::EditorTabState& editor_tab, std::size_t leaf_id) {
-                return FindEditorView(editor_tab, leaf_id);
-              },
-          .normalize_editor_split_tree =
-              [this](TabEntry::EditorTabState& editor_tab) { NormalizeEditorSplitTree(editor_tab); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
@@ -227,11 +221,11 @@ bool WorkspaceShell::TabIsDirty(std::size_t index) const {
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
-  if (index >= context_.current_project_state.open_tabs.size()) {
+  if (index >= context_.current_project_state.focused_group().open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = context_.current_project_state.open_tabs[index];
+  const TabEntry& tab = context_.current_project_state.focused_group().open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
@@ -242,11 +236,11 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
-  if (index >= context_.current_project_state.open_tabs.size()) {
+  if (index >= context_.current_project_state.focused_group().open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = context_.current_project_state.open_tabs[index];
+  const TabEntry& tab = context_.current_project_state.focused_group().open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
@@ -263,9 +257,9 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
     const ProjectWorkspaceState& state) {
   std::vector<std::size_t> dirty_tabs;
-  dirty_tabs.reserve(state.open_tabs.size());
-  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
-    if (TabCoordinator::TabStateIsDirty(state.open_tabs[i])) {
+  dirty_tabs.reserve(state.focused_group().open_tabs.size());
+  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
+    if (TabCoordinator::TabStateIsDirty(state.focused_group().open_tabs[i])) {
       dirty_tabs.push_back(i);
     }
   }
@@ -330,8 +324,8 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
 
   editor::TextViewport* viewport = ActiveEditorViewport();
   if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
-    for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
-      const auto& tab = context_.current_project_state.open_tabs[i];
+    for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
+      const auto& tab = context_.current_project_state.focused_group().open_tabs[i];
       if (tab.kind == TabEntry::Kind::Editor && tab.path == normalized_path) {
         ActivateTab(i);
         viewport = ActiveEditorViewport();

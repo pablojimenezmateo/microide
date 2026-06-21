@@ -207,25 +207,9 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },
           .apply_detected_indent_on_open =
               [this](editor::TextViewport& viewport) { ApplyDetectedIndentOnOpen(viewport); },
-          .find_editor_view =
-              [this](const TabEntry::EditorTabState& editor_state, std::size_t leaf_id) {
-                return FindEditorView(editor_state, leaf_id);
-              },
-          .find_editor_view_state =
-              [this](TabEntry::EditorTabState& editor_state, std::size_t leaf_id) {
-                return FindEditorViewState(editor_state, leaf_id);
-              },
           .editor_view_path =
-              [this](const TabEntry::EditorTabState::EditorViewState& view_state) {
-                return EditorViewPath(view_state);
-              },
-          .normalize_editor_split_tree =
-              [this](TabEntry::EditorTabState& editor_state) {
-                NormalizeEditorSplitTree(editor_state);
-              },
-          .editor_leaf_order =
               [this](const TabEntry::EditorTabState& editor_state) {
-                return EditorLeafOrder(editor_state);
+                return EditorViewPath(editor_state);
               },
           .sync_active_editor_tab_metadata = [this]() { SyncActiveEditorTabMetadata(); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },

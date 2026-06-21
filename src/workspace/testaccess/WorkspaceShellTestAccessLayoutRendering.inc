@@ -167,7 +167,6 @@
     if (editor_tab == nullptr) {
       return {};
     }
-    shell.NormalizeEditorSplitTree(*editor_tab);
     const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
     for (const auto& pane : panes) {
       if (pane.active) {
@@ -186,7 +185,6 @@
     if (editor_tab == nullptr) {
       return {};
     }
-    shell.NormalizeEditorSplitTree(*editor_tab);
     const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
     for (const auto& pane : panes) {
       if (!pane.active) {
@@ -262,7 +260,6 @@
     if (editor_tab == nullptr) {
       return std::nullopt;
     }
-    shell.NormalizeEditorSplitTree(*editor_tab);
     microide::editor::TextViewport* viewport = shell.ActiveEditorViewport();
     if (viewport == nullptr) {
       return std::nullopt;

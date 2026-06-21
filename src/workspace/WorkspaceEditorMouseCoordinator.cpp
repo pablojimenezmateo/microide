@@ -108,9 +108,6 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
   if (pane_it == panes.end()) {
     return false;
   }
-  if (!pane_it->active) {
-    operations_.set_active_editor_split(pane_it->leaf_id);
-  }
   editor::TextViewport* viewport = operations_.active_editor_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
     return false;
@@ -165,20 +162,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  const auto dividers = operations_.compute_editor_split_divider_layouts(layout.editor_surface);
-  const auto divider_it = std::find_if(
-      dividers.begin(), dividers.end(),
-      [&](const WorkspaceShell::EditorSplitDividerLayout& divider) {
-        return Contains(divider.rect, event.button.x, event.button.y);
-      });
-  if (divider_it != dividers.end()) {
-    interaction_state_.drag_target = DragTarget::EditorSplitDivider;
-    interaction_state_.drag_editor_split_path = divider_it->node_path;
-    interaction_state_.drag_editor_split_divider_index = divider_it->divider_index;
-    state_.surface.focus = FocusTarget::Editor;
-    return true;
-  }
-
   const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
   const auto pane_it =
       std::find_if(panes.begin(), panes.end(),
@@ -187,9 +170,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
                    });
   if (pane_it == panes.end()) {
     return false;
-  }
-  if (!pane_it->active) {
-    operations_.set_active_editor_split(pane_it->leaf_id);
   }
   const SDL_FRect editor_rect = pane_it->rect;
   editor::TextViewport* viewport = operations_.active_editor_viewport();
@@ -389,72 +369,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
                                         const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleDrag");
-  if (interaction_state_.drag_target == DragTarget::EditorSplitDivider) {
-    auto* editor_tab = operations_.active_editor_tab();
-    if (editor_tab == nullptr || editor_tab->views.size() < 2 || editor_tab->split_root == nullptr) {
-      operations_.clear_drag_state();
-      return false;
-    }
-
-    operations_.normalize_editor_split_tree(*editor_tab);
-    auto* split_node = operations_.find_editor_split_node(editor_tab->split_root.get(),
-                                                          interaction_state_.drag_editor_split_path);
-    const auto node_rect =
-        operations_.compute_editor_split_node_rect(layout.editor_surface,
-                                                   interaction_state_.drag_editor_split_path);
-    if (split_node == nullptr || node_rect == std::nullopt || split_node->IsLeaf() ||
-        split_node->orientation == EditorSplitOrientation::None ||
-        interaction_state_.drag_editor_split_divider_index + 1 >= split_node->children.size()) {
-      operations_.clear_drag_state();
-      return false;
-    }
-
-    const bool vertical = split_node->orientation == EditorSplitOrientation::Vertical;
-    std::vector<float> size_fractions(split_node->children.size(), 0.0f);
-    for (std::size_t i = 0; i < split_node->children.size(); ++i) {
-      size_fractions[i] = split_node->children[i]->size_fraction;
-    }
-    const auto split_layout = ComputeEditorSplitAxisLayout(*node_rect, vertical, size_fractions);
-    if (!split_layout.has_value() || split_layout->total_extent <= 0.0f ||
-        split_layout->extents.size() != split_node->children.size()) {
-      return false;
-    }
-
-    float before_extent = 0.0f;
-    for (std::size_t i = 0; i < interaction_state_.drag_editor_split_divider_index; ++i) {
-      before_extent += split_layout->extents[i];
-    }
-    const float pair_extent =
-        split_layout->extents[interaction_state_.drag_editor_split_divider_index] +
-        split_layout->extents[interaction_state_.drag_editor_split_divider_index + 1];
-    const float min_extent =
-        split_layout->total_extent >
-                split_layout->min_pane_extent * static_cast<float>(split_layout->extents.size())
-            ? split_layout->min_pane_extent
-            : 0.0f;
-    float leading_extent =
-        vertical ? static_cast<float>(event.motion.x) - node_rect->x - before_extent -
-                       split_layout->divider_thickness *
-                           static_cast<float>(interaction_state_.drag_editor_split_divider_index) -
-                       split_layout->divider_thickness * 0.5f
-                 : static_cast<float>(event.motion.y) - node_rect->y - before_extent -
-                       split_layout->divider_thickness *
-                           static_cast<float>(interaction_state_.drag_editor_split_divider_index) -
-                       split_layout->divider_thickness * 0.5f;
-    leading_extent =
-        pair_extent <= min_extent * 2.0f
-            ? std::clamp(leading_extent, 0.0f, pair_extent)
-            : std::clamp(leading_extent, min_extent, pair_extent - min_extent);
-    const float trailing_extent = std::max(0.0f, pair_extent - leading_extent);
-    split_node->children[interaction_state_.drag_editor_split_divider_index]->size_fraction =
-        leading_extent / split_layout->total_extent;
-    split_node->children[interaction_state_.drag_editor_split_divider_index + 1]->size_fraction =
-        trailing_extent / split_layout->total_extent;
-    operations_.normalize_editor_split_node(*split_node);
-    state_.surface.focus = FocusTarget::Editor;
-    return true;
-  }
-
   if (interaction_state_.drag_target != DragTarget::EditorVerticalScrollbar &&
       interaction_state_.drag_target != DragTarget::EditorHorizontalScrollbar) {
     return false;
@@ -566,15 +480,6 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
     return false;
   }
 
-  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
-  const auto hovered_pane =
-      std::find_if(panes.begin(), panes.end(),
-                   [&](const WorkspaceShell::EditorPaneLayout& pane) {
-                     return Contains(pane.rect, event.wheel.mouse_x, event.wheel.mouse_y);
-                   });
-  if (hovered_pane != panes.end() && !hovered_pane->active) {
-    operations_.set_active_editor_split(hovered_pane->leaf_id);
-  }
   if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
     viewport->ScrollVertical(-vertical_ticks * 3);
   }
@@ -588,11 +493,8 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
       context_.interaction_state,
       text_renderer_,
       EditorMouseCoordinator::Operations{
-          .compute_editor_split_divider_layouts =
-              [this](const SDL_FRect& rect) { return ComputeEditorSplitDividerLayouts(rect); },
           .compute_editor_pane_layouts =
               [this](const SDL_FRect& rect) { return ComputeEditorPaneLayouts(rect); },
-          .set_active_editor_split = [this](std::size_t index) { SetActiveEditorSplit(index); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .compute_editor_scroll_layout =
               [this](const SDL_FRect& rect, const editor::TextViewport& viewport,
@@ -610,21 +512,6 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .active_editor_tab = [this]() { return ActiveEditorTab(); },
-          .normalize_editor_split_tree =
-              [this](TabEntry::EditorTabState& editor_tab) { NormalizeEditorSplitTree(editor_tab); },
-          .find_editor_split_node =
-              [this](TabEntry::EditorTabState::EditorSplitNode* node,
-                     const std::vector<std::size_t>& path) {
-                return FindEditorSplitNode(node, path);
-              },
-          .compute_editor_split_node_rect =
-              [this](const SDL_FRect& rect, const std::vector<std::size_t>& path) {
-                return ComputeEditorSplitNodeRect(rect, path);
-              },
-          .normalize_editor_split_node =
-              [this](TabEntry::EditorTabState::EditorSplitNode& node) {
-                NormalizeEditorSplitNode(node);
-              },
           .clear_drag_state = [this]() { ClearDragState(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },

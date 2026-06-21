@@ -100,13 +100,7 @@ LanguageContract MakeCStyleFoldContract() {
 }
 
 TabEntry::EditorTabState MakeFoldingEditorTab() {
-  TabEntry::EditorTabState tab;
-  TabEntry::EditorTabState::EditorViewState view;
-  view.leaf_id = 1;
-  tab.views.push_back(std::move(view));
-  tab.active_leaf_id = 1;
-  tab.next_leaf_id = 2;
-  return tab;
+  return TabEntry::EditorTabState{};
 }
 
 void TestFoldingModelPointerStableAcrossTabVectorReallocation() {
@@ -117,7 +111,7 @@ void TestFoldingModelPointerStableAcrossTabVectorReallocation() {
   first_tab.kind = TabEntry::Kind::Editor;
   first_tab.editor_state = MakeFoldingEditorTab();
   auto& editor_state = *first_tab.editor_state;
-  auto& viewport = editor_state.views.front().viewport;
+  auto& viewport = editor_state.viewport;
   viewport.LoadContent("void f() {\n  body();\n}\n", "/tmp/fold-stable.cpp");
   viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
@@ -145,9 +139,15 @@ void TestFoldingModelPointerStableAcrossTabVectorReallocation() {
          "heap folding model address must stay stable across tab vector reallocation");
   Expect(stored.folding_model->IsLineHidden(1),
          "collapsed fold visibility must remain valid after tab vector reallocation");
-  auto& rebound_viewport = stored.views.front().viewport;
+  // Moving the editor tab (vector reallocation) moves the contained TextViewport,
+  // which intentionally drops its non-owning folding-model binding (see
+  // TestTextViewportMoveClearsFoldingModelBinding). The render loop rebinds every
+  // frame via EnsureActiveFoldingModelFresh; emulate that and confirm the stable
+  // heap model still drives the collapsed layout.
+  auto& rebound_viewport = stored.viewport;
+  rebound_viewport.SetFoldingModel(stored.folding_model.get());
   Expect(rebound_viewport.VisualRowCount() == collapsed_visual_rows,
-         "layout after reallocation must still honor the stable folding model binding");
+         "rebinding the stable folding model after reallocation must restore collapsed layout");
 }
 
 void TestTextViewportCopyClearsFoldingModelBinding() {
@@ -196,7 +196,7 @@ void TestTextViewportMoveClearsFoldingModelBinding() {
 // fold-driving bracket pairs). Indent-based folds are still allowed.
 void TestMarkdownProseParensDoNotFold() {
   TabEntry::EditorTabState editor_state = MakeFoldingEditorTab();
-  auto& viewport = editor_state.views.front().viewport;
+  auto& viewport = editor_state.viewport;
   // Each paragraph opens a paren that closes on the following line — exactly the
   // open-questions.md shape that produced bogus fold markers.
   viewport.LoadContent(

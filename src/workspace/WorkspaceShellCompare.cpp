@@ -174,23 +174,23 @@ SDL_FRect WorkspaceShell::CompareDividerHitRect(const SDL_FRect& editor_surface,
 }
 
 bool WorkspaceShell::ActiveTabIsCompare() const {
-  return context_.current_project_state.active_tab_index < context_.current_project_state.open_tabs.size() &&
-         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].kind == TabEntry::Kind::Compare &&
-         context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].compare.has_value();
+  return context_.current_project_state.focused_group().active_tab_index < context_.current_project_state.focused_group().open_tabs.size() &&
+         context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].kind == TabEntry::Kind::Compare &&
+         context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].compare.has_value();
 }
 
 WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() {
   if (!ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].compare.value();
+  return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].compare.value();
 }
 
 const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const {
   if (!ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &context_.current_project_state.open_tabs[context_.current_project_state.active_tab_index].compare.value();
+  return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].compare.value();
 }
 
 WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(

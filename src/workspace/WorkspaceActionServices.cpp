@@ -308,13 +308,13 @@ bool WorkspaceActionContext::RequestInlineCompletion(std::string* error_message)
 }
 
 bool WorkspaceActionContext::ActiveTabIsCompare() const {
-  return state_.active_tab_index < state_.open_tabs.size() &&
-         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Compare;
+  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
+         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Compare;
 }
 
 bool WorkspaceActionContext::ActiveTabIsMerge() const {
-  return state_.active_tab_index < state_.open_tabs.size() &&
-         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Merge;
+  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
+         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Merge;
 }
 
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
@@ -442,24 +442,7 @@ ReviewOpenOutcome WorkspaceActionContext::ReviewCommit(const std::string& ref) {
 }
 
 bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
-                                      std::string* error_message) {
-  if (auto* editor_tab = operations_.active_editor_tab();
-      editor_tab != nullptr && editor_tab->views.size() > 1) {
-    editor::TextViewport opened_view;
-    if (!opened_view.OpenFile(path)) {
-      if (error_message != nullptr) {
-        *error_message = "Failed to open file: " + path.string();
-      }
-      return false;
-    }
-    if (!operations_.replace_active_editor_view(opened_view)) {
-      if (error_message != nullptr) {
-        *error_message = "Failed to replace the active split with: " + path.string();
-      }
-      return false;
-    }
-    return true;
-  }
+                                      std::string* /*error_message*/) {
   operations_.open_file(path);
   return true;
 }
@@ -483,15 +466,15 @@ void WorkspaceActionContext::ActivateTab(std::size_t index) {
 }
 
 bool WorkspaceActionContext::HasOpenTabs() const {
-  return !state_.open_tabs.empty();
+  return !state_.focused_group().open_tabs.empty();
 }
 
 std::size_t WorkspaceActionContext::OpenTabCount() const {
-  return state_.open_tabs.size();
+  return state_.focused_group().open_tabs.size();
 }
 
 std::size_t WorkspaceActionContext::ActiveTabIndex() const {
-  return state_.active_tab_index;
+  return state_.focused_group().active_tab_index;
 }
 
 void WorkspaceActionContext::MoveActiveTabTo(std::size_t index) {
@@ -551,8 +534,9 @@ void WorkspaceActionContext::ActivateOrderedEditorSplit(std::size_t index) {
 }
 
 std::size_t WorkspaceActionContext::ActiveEditorSplitCount() const {
-  const auto* editor_tab = operations_.active_editor_tab();
-  return editor_tab == nullptr ? 0 : editor_tab->views.size();
+  // Editor splits now live at the group level (max 1 per tab); a present editor
+  // tab counts as a single view.
+  return operations_.active_editor_tab() == nullptr ? 0 : 1;
 }
 
 void WorkspaceActionContext::RequestCloseTab(std::size_t index) {

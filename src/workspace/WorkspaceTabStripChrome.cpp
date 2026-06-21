@@ -105,7 +105,7 @@ std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleProjectTabs(
 }
 
 float WorkspaceTabStripChrome::TabWidthForIndex(std::size_t index) const {
-  if (index >= context_->current_project_state.open_tabs.size()) {
+  if (index >= context_->current_project_state.focused_group().open_tabs.size()) {
     return 132.0f;
   }
   return tab_strip_service_->MeasureEditorTabWidth(

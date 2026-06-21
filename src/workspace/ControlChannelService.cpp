@@ -427,8 +427,8 @@ util::JsonValue ControlChannelService::BuildTabs() const {
     return util::JsonValue(std::move(tabs));
   }
   const ProjectWorkspaceState& state = context_->current_project_state;
-  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
-    const TabEntry& tab = state.open_tabs[i];
+  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
+    const TabEntry& tab = state.focused_group().open_tabs[i];
     util::JsonObject tab_object;
     tab_object["index"] = util::JsonValue(static_cast<std::int64_t>(i));
     const char* kind = tab.kind == TabEntry::Kind::Editor    ? "editor"
@@ -437,7 +437,7 @@ util::JsonValue ControlChannelService::BuildTabs() const {
     tab_object["kind"] = util::JsonValue(std::string(kind));
     tab_object["path"] = util::JsonValue(tab.path.generic_string());
     tab_object["title"] = util::JsonValue(tab.title);
-    tab_object["active"] = util::JsonValue(i == state.active_tab_index);
+    tab_object["active"] = util::JsonValue(i == state.focused_group().active_tab_index);
     tabs.push_back(util::JsonValue(std::move(tab_object)));
   }
   return util::JsonValue(std::move(tabs));
@@ -506,7 +506,7 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   }
   const ProjectWorkspaceState& state = context_->current_project_state;
   object["projectRoot"] = util::JsonValue(state.root.generic_string());
-  object["tabCount"] = util::JsonValue(static_cast<std::int64_t>(state.open_tabs.size()));
+  object["tabCount"] = util::JsonValue(static_cast<std::int64_t>(state.focused_group().open_tabs.size()));
   object["debugStopped"] = util::JsonValue(state.debug_execution.stopped);
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   return util::JsonValue(std::move(object));

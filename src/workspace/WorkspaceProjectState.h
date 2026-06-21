@@ -320,6 +320,16 @@ struct EditorBannerState {
 
 enum class EditorBannerAction { Reload, Overwrite, Keep };
 
+// A single editor group: its own tab strip (open_tabs + active index + scroll)
+// and its own home/placeholder surface. The editor area holds 1 or 2 groups
+// arranged side-by-side or stacked (see `ProjectWorkspaceState::editor_groups`).
+struct EditorGroup {
+  WelcomeSurfaceState welcome_surface;
+  std::vector<TabEntry> open_tabs;
+  std::size_t active_tab_index = 0;
+  int tab_scroll_index = 0;
+};
+
 struct ProjectWorkspaceState {
   std::filesystem::path root;
   bool initialized = false;
@@ -327,10 +337,26 @@ struct ProjectWorkspaceState {
   project::DirectoryTree directory_tree;
   project::FileIndex file_index;
   project::FileFinder file_finder;
-  WelcomeSurfaceState welcome_surface;
-  std::vector<TabEntry> open_tabs;
-  std::size_t active_tab_index = 0;
-  int tab_scroll_index = 0;
+  // Editor groups: always 1 or 2. Group 0 is the primary. `focused_group_index`
+  // selects which group owns keyboard focus / receives newly opened files.
+  std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);
+  std::size_t focused_group_index = 0;
+  EditorSplitOrientation group_split_orientation = EditorSplitOrientation::None;
+  float group_split_fraction = 0.5f;
+
+  EditorGroup& focused_group() {
+    if (editor_groups.empty()) {
+      editor_groups.emplace_back();
+    }
+    if (focused_group_index >= editor_groups.size()) {
+      focused_group_index = editor_groups.size() - 1;
+    }
+    return editor_groups[focused_group_index];
+  }
+  const EditorGroup& focused_group() const {
+    return editor_groups[focused_group_index < editor_groups.size() ? focused_group_index : 0];
+  }
+
   ProjectSurfaceState surface;
   SidebarState sidebar;
   OverlayState overlay;

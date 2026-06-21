@@ -977,44 +977,6 @@ void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
          "jump should move the cursor relative to the current line");
 }
 
-void TestWorkspaceShellGotoTargetsActiveSplitViewport() {
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path left = root / "left.cpp";
-  const std::filesystem::path right = root / "right.cpp";
-  WriteFile(left, "left-1\nleft-2\nleft-3\n");
-  WriteFile(right, "right-1\nright-2\nright-3\nright-4\n");
-
-  WorkspaceShell shell;
-  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenFile(shell, left);
-  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
-         "split-editor goto fixture should create the second pane");
-  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
-         "split-editor goto fixture should replace the active pane");
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split-editor goto fixture should revisit the left pane");
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
-         "split-editor goto fixture should reactivate the right pane");
-
-  Expect(ExecuteCommand(shell, "goto 4:1"),
-         "goto should execute against the active split viewport");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
-         "goto should keep the right split active");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3 &&
-             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
-         "goto should move the active split cursor instead of a stale editor copy");
-
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split-editor goto fixture should allow verifying the inactive pane");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
-         "the left split should still reference the original file");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
-             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
-         "goto should not mutate the inactive split viewport");
-}
-
 void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2040,80 +2002,6 @@ void TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 12,
          "right-clicking a symbol should retarget the caret before opening the context menu");
-}
-
-void OpenSplitEditorMouseFixture(WorkspaceShell& shell,
-                                 TemporaryDirectory& temp_dir,
-                                 std::filesystem::path* left_path,
-                                 std::filesystem::path* right_path) {
-  const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path left = root / "left.txt";
-  const std::filesystem::path right = root / "right.txt";
-  WriteFile(left, "left line 1\nleft line 2\nleft line 3\n");
-  WriteFile(right, "right line 1\nright line 2\nright line 3\n");
-
-  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, left);
-  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
-         "editor mouse fixture should open a split pane");
-  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
-         "editor mouse fixture should load the second file into the active pane");
-
-  if (left_path != nullptr) {
-    *left_path = left;
-  }
-  if (right_path != nullptr) {
-    *right_path = right;
-  }
-}
-
-void TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit() {
-  TemporaryDirectory temp_dir;
-  WorkspaceShell shell;
-  std::filesystem::path left;
-  std::filesystem::path right;
-  OpenSplitEditorMouseFixture(shell, temp_dir, &left, &right);
-
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
-         "split click fixture should expose the right pane");
-  const SDL_FRect right_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split click fixture should restore the left pane before the click");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
-         "split click fixture should start from the left editor");
-
-  const float click_x = right_rect.x + right_rect.w * 0.5f;
-  const float click_y = right_rect.y + right_rect.h * 0.5f;
-  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
-         "clicking an inactive editor pane should be handled");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
-         "clicking an inactive editor pane should activate that split");
-  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
-         "clicking an inactive editor pane should keep editor focus");
-}
-
-void TestWorkspaceShellEditorWheelActivatesHoveredSplit() {
-  TemporaryDirectory temp_dir;
-  WorkspaceShell shell;
-  std::filesystem::path left;
-  std::filesystem::path right;
-  OpenSplitEditorMouseFixture(shell, temp_dir, &left, &right);
-
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
-         "split wheel fixture should expose the right pane");
-  const SDL_FRect right_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split wheel fixture should restore the left pane before scrolling");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
-         "split wheel fixture should start from the left editor");
-
-  const float wheel_x = right_rect.x + right_rect.w * 0.5f;
-  const float wheel_y = right_rect.y + right_rect.h * 0.5f;
-  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
-         "scrolling over an inactive editor pane should be handled");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
-         "scrolling over an inactive editor pane should activate that split first");
 }
 
 void TestWorkspaceShellEditorDragSelectionTracksPointer() {
@@ -3203,8 +3091,6 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
-  AddTest(tests, "WorkspaceShell/GotoTargetsActiveSplitViewport",
-          TestWorkspaceShellGotoTargetsActiveSplitViewport);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
   AddTest(tests, "WorkspaceShell/CommandPromptCompletionAndHistory",
@@ -3275,10 +3161,6 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopySelectionWithContextOnBlankLineExpandsToEnclosingFold);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensSymbolAwareContextMenu",
           TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu);
-  AddTest(tests, "WorkspaceShell/ClickingInactiveEditorPaneActivatesSplit",
-          TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit);
-  AddTest(tests, "WorkspaceShell/EditorWheelActivatesHoveredSplit",
-          TestWorkspaceShellEditorWheelActivatesHoveredSplit);
   AddTest(tests, "WorkspaceShell/EditorDragSelectionTracksPointer",
           TestWorkspaceShellEditorDragSelectionTracksPointer);
   AddTest(tests, "WorkspaceShell/AltClickAddsSecondaryCaret",

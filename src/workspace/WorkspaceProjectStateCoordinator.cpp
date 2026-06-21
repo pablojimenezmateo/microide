@@ -204,11 +204,11 @@ std::filesystem::path WorkspaceShell::ResolveProjectRootInput(
 }
 
 void WorkspaceShell::SetWelcomePlaceholder() {
-  context_.current_project_state.welcome_surface.viewport.SetPlaceholderText(
+  context_.current_project_state.focused_group().welcome_surface.viewport.SetPlaceholderText(
       "microide\n\n"
       "Welcome.\n"
       "Use File > New Project Tab... or run project-open.\n");
-  ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
+  ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
 }
 
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
@@ -234,7 +234,7 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   context_.current_project_state.surface.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
   context_.interaction_state.tab_drag = TabDragState{};
   persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
-  ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
+  ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
   if (show_welcome) {
     SetWelcomePlaceholder();
   }
@@ -275,7 +275,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::ApplyEditorPreferences");
-    ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
+    ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
   }
   if (restore_persistence) {
     util::PerformanceTrace::Scope scope(
@@ -336,10 +336,10 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     if (std::filesystem::exists(candidate) && startup_view.OpenFile(candidate)) {
       ApplyEditorPreferences(startup_view);
       ApplyDetectedIndentOnOpen(startup_view);
-      context_.current_project_state.welcome_surface.viewport = startup_view;
+      context_.current_project_state.focused_group().welcome_surface.viewport = startup_view;
       context_.current_project_state.directory_tree.SelectPath(candidate);
       RevealSelectedTreeSidebarLine();
-      context_.current_project_state.open_tabs.push_back(TabEntry{
+      context_.current_project_state.focused_group().open_tabs.push_back(TabEntry{
           .kind = TabEntry::Kind::Editor,
           .path = candidate,
           .title = candidate.filename().string(),
@@ -348,7 +348,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
           .compare = std::nullopt,
           .merge = std::nullopt,
       });
-      context_.current_project_state.active_tab_index = 0;
+      context_.current_project_state.focused_group().active_tab_index = 0;
       if (context_.current_project_state.terminal_tabs.empty()) {
         util::PerformanceTrace::Scope scope(
             "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
@@ -372,11 +372,11 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     }
   }
 
-  context_.current_project_state.welcome_surface.viewport.SetPlaceholderText(
+  context_.current_project_state.focused_group().welcome_surface.viewport.SetPlaceholderText(
       "microide\n\n"
       "Project loaded.\n"
       "Use the sidebar to open files.\n");
-  ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
+  ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
   if (context_.current_project_state.terminal_tabs.empty()) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");

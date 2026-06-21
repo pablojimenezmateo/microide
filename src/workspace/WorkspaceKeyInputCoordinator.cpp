@@ -869,7 +869,7 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
                 RequestCompareRowRangeRedraw(first_row, last_row);
               },
           .request_close_active_tab =
-              [this]() { RequestCloseTab(context_.current_project_state.active_tab_index); },
+              [this]() { RequestCloseTab(context_.current_project_state.focused_group().active_tab_index); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .show_completion_overlay =
               [this](std::string* error_message) {

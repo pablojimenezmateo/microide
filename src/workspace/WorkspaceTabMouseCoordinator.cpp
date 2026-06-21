@@ -122,7 +122,7 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (state_.root.empty()) {
       return false;
     }
-    if (state_.open_tabs.empty()) {
+    if (state_.focused_group().open_tabs.empty()) {
       const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(layout.tab_strip);
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(placeholder_tab, event.button.x, event.button.y)) {
@@ -289,13 +289,13 @@ TabMouseCoordinator::DragStrip TabMouseCoordinator::ResolveDragStrip(const Works
       d.valid = true;
       return d;
     case TabDragKind::Editor:
-      if (state_.open_tabs.empty()) {
+      if (state_.focused_group().open_tabs.empty()) {
         return d;
       }
       d.strip = layout.tab_strip;
       d.tabs = operations_.compute_visible_tabs(d.strip);
-      d.count = state_.open_tabs.size();
-      d.active = state_.active_tab_index;
+      d.count = state_.focused_group().open_tabs.size();
+      d.active = state_.focused_group().active_tab_index;
       d.move = operations_.move_active_tab_to;
       d.valid = true;
       return d;
@@ -441,8 +441,8 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
 
   if (Contains(layout.tab_strip, event.wheel.mouse_x, event.wheel.mouse_y) &&
-      !state_.open_tabs.empty()) {
-    scroll_strip(state_.open_tabs.size(), state_.tab_scroll_index);
+      !state_.focused_group().open_tabs.empty()) {
+    scroll_strip(state_.focused_group().open_tabs.size(), state_.focused_group().tab_scroll_index);
     return true;
   }
 

@@ -14,25 +14,17 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
   const std::filesystem::path normalized_path = path.lexically_normal();
   std::vector<DirtyPathTarget> targets;
   const auto& state = CurrentProjectState();
-  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
-    const TabEntry& tab = state.open_tabs[i];
+  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
+    const TabEntry& tab = state.focused_group().open_tabs[i];
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      for (const auto& view : tab.editor_state->views) {
-        const bool active_live_view =
-            i == state.active_tab_index && view.leaf_id == tab.editor_state->active_leaf_id &&
-            !view.needs_restore;
-        const editor::TextViewport& viewport =
-            active_live_view ? state.welcome_surface.viewport : view.viewport;
-        if (view.needs_restore || viewport.path().empty() || !viewport.dirty()) {
-          continue;
-        }
-        if (PathEqualsOrWithin(viewport.path().lexically_normal(), normalized_path)) {
-          targets.push_back(DirtyPathTarget{
-              .kind = DirtyPathTarget::Kind::EditorView,
-              .tab_index = i,
-              .leaf_id = view.leaf_id,
-          });
-        }
+      const auto& editor_state = *tab.editor_state;
+      if (!editor_state.needs_restore && !editor_state.viewport.path().empty() &&
+          editor_state.viewport.dirty() &&
+          PathEqualsOrWithin(editor_state.viewport.path().lexically_normal(), normalized_path)) {
+        targets.push_back(DirtyPathTarget{
+            .kind = DirtyPathTarget::Kind::EditorView,
+            .tab_index = i,
+        });
       }
       continue;
     }
@@ -79,8 +71,8 @@ std::vector<std::size_t> PathMutationCoordinator::AffectedCompareTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
   const auto& state = CurrentProjectState();
-  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
-    const TabEntry& tab = state.open_tabs[i];
+  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
+    const TabEntry& tab = state.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
       continue;
     }
@@ -95,8 +87,8 @@ std::vector<std::size_t> PathMutationCoordinator::AffectedMergeTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
   const auto& state = CurrentProjectState();
-  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
-    const TabEntry& tab = state.open_tabs[i];
+  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
+    const TabEntry& tab = state.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
       continue;
     }
@@ -115,7 +107,7 @@ bool PathMutationCoordinator::HasDirtyEditorTabsForPath(const std::filesystem::p
   const std::vector<std::size_t> dirty_tabs = DirtyTabIndicesForPath(path);
   if (!dirty_tabs.empty()) {
     if (blocking_label != nullptr) {
-      *blocking_label = CurrentProjectState().open_tabs[dirty_tabs.front()].title;
+      *blocking_label = CurrentProjectState().focused_group().open_tabs[dirty_tabs.front()].title;
     }
     return true;
   }
@@ -141,11 +133,11 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
   if (resolution == DirtyPathResolution::Save) {
     bool saved_any = false;
     for (const DirtyPathTarget& target : dirty_targets) {
-      if (target.tab_index >= state.open_tabs.size()) {
+      if (target.tab_index >= state.focused_group().open_tabs.size()) {
         continue;
       }
 
-      auto& tab = state.open_tabs[target.tab_index];
+      auto& tab = state.focused_group().open_tabs[target.tab_index];
       if (target.kind == DirtyPathTarget::Kind::CompareTab) {
         if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
             !tab.compare->right_viewport.dirty()) {
@@ -171,27 +163,17 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         continue;
       }
 
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          tab.editor_state->views.empty()) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
         continue;
       }
 
-      if (target.tab_index == state.active_tab_index) {
+      if (target.tab_index == state.focused_group().active_tab_index) {
         editor_tabs_.SyncActiveEditorTab();
       }
 
-      auto* view_state = operations_.find_editor_view_state(*tab.editor_state, target.leaf_id);
-      if (view_state == nullptr) {
-        continue;
-      }
-
-      editor::TextViewport* viewport = &view_state->viewport;
-      if (target.tab_index == state.active_tab_index &&
-          target.leaf_id == tab.editor_state->active_leaf_id && !view_state->needs_restore) {
-        viewport = &state.welcome_surface.viewport;
-      }
-
-      if (view_state->needs_restore || viewport->path().empty() || !viewport->dirty()) {
+      auto& editor_state = *tab.editor_state;
+      editor::TextViewport* viewport = &editor_state.viewport;
+      if (editor_state.needs_restore || viewport->path().empty() || !viewport->dirty()) {
         continue;
       }
 
@@ -200,15 +182,12 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       }
       saved_any = true;
 
-      view_state->restored_path = viewport->path().lexically_normal();
-      view_state->restored_cursor_line = viewport->cursor_line();
-      view_state->restored_cursor_column = viewport->cursor_column();
-      view_state->restored_scroll_line = viewport->scroll_line();
-      view_state->restored_horizontal_scroll = viewport->horizontal_scroll();
-      view_state->needs_restore = false;
-      if (viewport == &state.welcome_surface.viewport) {
-        view_state->viewport = state.welcome_surface.viewport;
-      }
+      editor_state.restored_path = viewport->path().lexically_normal();
+      editor_state.restored_cursor_line = viewport->cursor_line();
+      editor_state.restored_cursor_column = viewport->cursor_column();
+      editor_state.restored_scroll_line = viewport->scroll_line();
+      editor_state.restored_horizontal_scroll = viewport->horizontal_scroll();
+      editor_state.needs_restore = false;
     }
     if (saved_any) {
       state.directory_tree.Refresh();

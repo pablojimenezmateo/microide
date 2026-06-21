@@ -156,10 +156,10 @@ void CommandPromptCoordinator::CompleteInput() {
       candidates.push_back(CommandCompletionCandidate{std::move(value), true});
     };
 
-    for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
+    for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
       add_candidate(std::to_string(i + 1));
-      add_candidate(state_.open_tabs[i].title);
-      add_candidate(RelativePathLabel(state_.root, state_.open_tabs[i].path));
+      add_candidate(state_.focused_group().open_tabs[i].title);
+      add_candidate(RelativePathLabel(state_.root, state_.focused_group().open_tabs[i].path));
     }
   } else if (command == "tree" || command == "files") {
     candidates = CompletePath(completion_root, active_prefix, true);

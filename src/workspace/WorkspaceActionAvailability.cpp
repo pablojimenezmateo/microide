@@ -155,18 +155,18 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // session starts; Show Output no-ops gracefully without a live session).
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::CloseActiveTab:
-      return !context_.current_project_state.open_tabs.empty();
+      return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseAllTabs:
-      return !context_.current_project_state.open_tabs.empty();
+      return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseOtherTabs:
-      return context_.current_project_state.open_tabs.size() > 1;
+      return context_.current_project_state.focused_group().open_tabs.size() > 1;
     case ActionId::CloseTabsToRight:
-      return !context_.current_project_state.open_tabs.empty() &&
-             context_.current_project_state.active_tab_index + 1 <
-                 context_.current_project_state.open_tabs.size();
+      return !context_.current_project_state.focused_group().open_tabs.empty() &&
+             context_.current_project_state.focused_group().active_tab_index + 1 <
+                 context_.current_project_state.focused_group().open_tabs.size();
     case ActionId::CloseTabsToLeft:
-      return !context_.current_project_state.open_tabs.empty() &&
-             context_.current_project_state.active_tab_index > 0;
+      return !context_.current_project_state.focused_group().open_tabs.empty() &&
+             context_.current_project_state.focused_group().active_tab_index > 0;
     case ActionId::CompareHead:
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab:
@@ -296,7 +296,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TabMove:
     case ActionId::TabSwitch:
       return !context_.current_project_state.root.empty() &&
-             !context_.current_project_state.open_tabs.empty();
+             !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::TestsRun:
       return !context_.current_project_state.sidebar.tests.entries.empty();
     case ActionId::ToggleLineComment:

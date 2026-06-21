@@ -32,15 +32,15 @@ MergeMouseCoordinator::MergeMouseCoordinator(ProjectWorkspaceState& state,
       operations_(std::move(operations)) {}
 
 bool MergeMouseCoordinator::ActiveTabIsMerge() const {
-  return state_.active_tab_index < state_.open_tabs.size() &&
-         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Merge;
+  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
+         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Merge;
 }
 
 MergeTabState* MergeMouseCoordinator::ActiveMergeTab() const {
   if (!ActiveTabIsMerge()) {
     return nullptr;
   }
-  auto& tab = state_.open_tabs[state_.active_tab_index];
+  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
   return tab.merge.has_value() ? &tab.merge.value() : nullptr;
 }
 

@@ -14,7 +14,7 @@ PromptSurfaceService::PromptSurfaceService(ProjectWorkspaceState& state,
       operations_(std::move(operations)) {}
 
 void PromptSurfaceService::ShowDirtyPromptForTab(std::size_t index) {
-  if (index >= state_.open_tabs.size()) {
+  if (index >= state_.focused_group().open_tabs.size()) {
     return;
   }
 

@@ -25,7 +25,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   if (repository_changed) {
     git_repository_service_.MarkStale();
     context_.current_project_state.sidebar.git.snapshot_stale = true;
-    for (TabEntry& tab : context_.current_project_state.open_tabs) {
+    for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
       if (!tab.merge.has_value()) {
         continue;
       }
@@ -102,7 +102,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   if (batch.tree_rescan_requested) {
     if (batch.file_changes.empty()) {
       ReloadCleanOpenBuffersFromDisk();
-      for (const TabEntry& tab : context_.current_project_state.open_tabs) {
+      for (const TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
         if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
           refresh_compare_paths.insert(tab.compare->path);
         }
@@ -125,19 +125,19 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   bool refreshed_any = false;
-  for (std::size_t index = 0; index < context_.current_project_state.open_tabs.size(); ++index) {
-    const auto& tab = context_.current_project_state.open_tabs[index];
+  for (std::size_t index = 0; index < context_.current_project_state.focused_group().open_tabs.size(); ++index) {
+    const auto& tab = context_.current_project_state.focused_group().open_tabs[index];
     if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
         tab.compare->path != normalized_path) {
       continue;
     }
-    context_.current_project_state.open_tabs[index].compare->model_stale = true;
-    context_.current_project_state.open_tabs[index].compare->model_refreshing = true;
+    context_.current_project_state.focused_group().open_tabs[index].compare->model_stale = true;
+    context_.current_project_state.focused_group().open_tabs[index].compare->model_refreshing = true;
     refreshed_any = true;
   }
   if (refreshed_any) {
     RefreshOpenCompareTabsForPath(normalized_path);
-    for (TabEntry& tab : context_.current_project_state.open_tabs) {
+    for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
       if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
           tab.compare->path == normalized_path) {
         tab.compare->model_stale = false;
@@ -149,7 +149,7 @@ void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& pa
 
 void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  for (TabEntry& tab : context_.current_project_state.open_tabs) {
+  for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
     if (!tab.merge.has_value() || tab.merge->output_path.empty()) {
       continue;
     }
