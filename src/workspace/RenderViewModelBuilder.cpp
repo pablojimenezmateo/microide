@@ -773,8 +773,9 @@ editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
   editor::WelcomeViewModel vm;
   vm.title = "Welcome to microide";
   vm.subtitle = "Open a folder to start, or pick up where you left off.";
-  vm.recents_heading = "Recent Projects";
-  vm.shortcuts_heading = "Shortcuts";
+  vm.start_heading = "Start";
+  vm.recents_heading = "Recent";
+  vm.shortcuts_heading = "Keyboard Shortcuts";
   vm.empty_recents_label = "No recent projects yet.";
 
   // Curated, registry-sourced shortcut rows. Listing ActionIds (not literal chords)

@@ -29,6 +29,7 @@ struct WelcomeRecent {
 struct WelcomeViewModel {
   std::string title;
   std::string subtitle;
+  std::string start_heading;
   std::string recents_heading;
   std::string shortcuts_heading;
   std::string open_folder_label;
@@ -53,6 +54,10 @@ struct WelcomeLayout {
   SDL_FRect recents_panel{};
   SDL_FRect shortcuts_panel{};
   SDL_FRect open_folder_rect{};
+  // Y at which recent-project rows (or the empty-state caption) begin. The
+  // renderer draws the empty state here so it can never collide with the
+  // open-folder button, which now owns a dedicated slot above this point.
+  float recents_rows_top = 0.0f;
   std::vector<WelcomeHitRegion> hit_regions;
 };
 

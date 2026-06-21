@@ -90,46 +90,53 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
                            theme.text_secondary,
                            text_renderer.TruncateToWidth(model.subtitle, card.w - 40.0f));
 
-  // Recents panel: heading, then clickable recent-project rows (or an empty state),
-  // and an "Open Folder" affordance, all positioned by the shared layout helper so
-  // the shell hit-test matches exactly.
+  // Left column flows top-down: a "Start" caption, the open-folder button, a
+  // "Recent" caption, then the recent rows (or an empty-state). All Y positions
+  // come from the shared layout so the shell hit-test matches exactly.
   text_renderer.DrawString(renderer, layout.recents_panel.x, layout.recents_panel.y,
-                           theme.surface_text, model.recents_heading);
+                           theme.text_muted, model.start_heading);
+
+  // Open-folder primary action: opaque selection fill plus a 3px accent bar on the
+  // left edge — the same selection-bar language used by the overlay list — instead
+  // of a muddy translucent box.
+  const SDL_FRect& button = layout.open_folder_rect;
+  render::FillRect(renderer, button, theme.selection_strong);
+  render::FillRect(renderer, SDL_FRect{button.x, button.y + 2.0f, 3.0f, button.h - 4.0f},
+                   theme.accent);
+  const float button_text_y = button.y + std::floor(std::max(0.0f, button.h - line_height) * 0.5f);
+  text_renderer.DrawStringOn(
+      renderer, button.x + 12.0f, button_text_y, theme.surface_text, theme.selection_strong,
+      text_renderer.TruncateToWidth(model.open_folder_label, button.w - 20.0f));
+
+  const float recents_caption_y = layout.recents_rows_top - line_height - 10.0f;
+  text_renderer.DrawString(renderer, layout.recents_panel.x, recents_caption_y, theme.text_muted,
+                           model.recents_heading);
 
   bool drew_recent = false;
   for (const WelcomeHitRegion& region : layout.hit_regions) {
-    if (region.kind == WelcomeHitRegion::Kind::RecentProject) {
-      drew_recent = true;
-      const WelcomeRecent& recent = model.recent_projects[region.recent_index];
-      const std::string name = text_renderer.TruncateToWidth(recent.name, region.rect.w * 0.5f);
-      const float name_w = text_renderer.MeasureWidth(name);
-      text_renderer.DrawString(renderer, region.rect.x + 4.0f, region.rect.y + 2.0f, theme.accent,
-                               name);
-      text_renderer.DrawString(
-          renderer, region.rect.x + 14.0f + name_w, region.rect.y + 2.0f, theme.text_muted,
-          text_renderer.TruncateToWidth(recent.path_display, region.rect.w - name_w - 26.0f));
-    } else {
-      SDL_SetRenderDrawColor(renderer, theme.selection_fill.r, theme.selection_fill.g,
-                             theme.selection_fill.b, theme.selection_fill.a);
-      SDL_RenderFillRect(renderer, &region.rect);
-      SDL_SetRenderDrawColor(renderer, theme.border.r, theme.border.g, theme.border.b,
-                             theme.border.a);
-      SDL_RenderRect(renderer, &region.rect);
-      text_renderer.DrawString(
-          renderer, region.rect.x + 8.0f, region.rect.y + 2.0f, theme.surface_text,
-          text_renderer.TruncateToWidth(model.open_folder_label, region.rect.w - 16.0f));
+    if (region.kind != WelcomeHitRegion::Kind::RecentProject) {
+      continue;
     }
+    drew_recent = true;
+    const WelcomeRecent& recent = model.recent_projects[region.recent_index];
+    const std::string name = text_renderer.TruncateToWidth(recent.name, region.rect.w * 0.5f);
+    const float name_w = text_renderer.MeasureWidth(name);
+    text_renderer.DrawString(renderer, region.rect.x + 4.0f, region.rect.y + 2.0f, theme.accent,
+                             name);
+    text_renderer.DrawString(
+        renderer, region.rect.x + 14.0f + name_w, region.rect.y + 2.0f, theme.text_muted,
+        text_renderer.TruncateToWidth(recent.path_display, region.rect.w - name_w - 26.0f));
   }
   if (!drew_recent) {
-    const float empty_y = layout.recents_panel.y + line_height + 14.0f;
-    text_renderer.DrawString(renderer, layout.recents_panel.x + 4.0f, empty_y, theme.text_muted,
+    text_renderer.DrawString(renderer, layout.recents_panel.x + 4.0f, layout.recents_rows_top,
+                             theme.text_muted,
                              text_renderer.TruncateToWidth(model.empty_recents_label,
                                                            layout.recents_panel.w - 16.0f));
   }
 
   // Shortcuts panel: curated, registry-sourced key chords (never drifts).
   text_renderer.DrawString(renderer, layout.shortcuts_panel.x, layout.shortcuts_panel.y,
-                           theme.surface_text, model.shortcuts_heading);
+                           theme.text_muted, model.shortcuts_heading);
   const float keys_col = std::min(150.0f, layout.shortcuts_panel.w * 0.45f);
   const float sc_row_step = line_height + 6.0f;
   float sc_y = layout.shortcuts_panel.y + line_height + 14.0f;
