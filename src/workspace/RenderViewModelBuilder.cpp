@@ -15,8 +15,10 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 namespace microide::workspace {
@@ -811,6 +813,13 @@ editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
   vm.recent_projects.reserve(recent_projects.size());
   for (const std::filesystem::path& root : recent_projects) {
     if (root.empty()) {
+      continue;
+    }
+    // Only surface roots that still exist on disk, so every row the user sees is actually
+    // openable (stale entries — e.g. a deleted temp project — would otherwise click into a
+    // no-op). The store itself is left intact; a temporarily-unmounted path is just hidden.
+    std::error_code exists_ec;
+    if (!std::filesystem::exists(root, exists_ec)) {
       continue;
     }
     // A trailing separator makes filename() empty, so step into the parent first so

@@ -5,10 +5,12 @@
 
 #include <exception>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace microide::tests {
@@ -255,6 +257,33 @@ void ListSelectedTestsGtest(const std::vector<microide::tests::TestCase>& tests,
 
 int main(int argc, char** argv) {
   const auto shutdown_sdl = []() { SDL_Quit(); };
+
+  // Isolate every user-directory write (recents MRU, user config, per-project state,
+  // caches) into a throwaway temp tree for the whole process, so the suite never reads or
+  // pollutes the developer's real ~/.local/state, ~/.config, etc. Several WorkspaceShell
+  // fixtures open temp projects that would otherwise record their /tmp roots into the real
+  // recents store. These outlive every test; individual fixtures that set their own scoped
+  // XDG/HOME still override-then-restore back to these. Restored + removed at process exit.
+  const microide::tests::TemporaryDirectory isolated_user_root;
+  const std::filesystem::path user_root = isolated_user_root.path();
+  std::error_code isolate_ec;
+  std::filesystem::create_directories(user_root / "state", isolate_ec);
+  std::filesystem::create_directories(user_root / "config", isolate_ec);
+  std::filesystem::create_directories(user_root / "data", isolate_ec);
+  std::filesystem::create_directories(user_root / "cache", isolate_ec);
+  const microide::tests::ScopedEnvVar isolated_xdg_state("XDG_STATE_HOME",
+                                                         (user_root / "state").string());
+  const microide::tests::ScopedEnvVar isolated_xdg_config("XDG_CONFIG_HOME",
+                                                          (user_root / "config").string());
+  const microide::tests::ScopedEnvVar isolated_xdg_data("XDG_DATA_HOME",
+                                                        (user_root / "data").string());
+  const microide::tests::ScopedEnvVar isolated_xdg_cache("XDG_CACHE_HOME",
+                                                         (user_root / "cache").string());
+  const microide::tests::ScopedEnvVar isolated_localappdata("LOCALAPPDATA",
+                                                            (user_root / "state").string());
+  const microide::tests::ScopedEnvVar isolated_appdata("APPDATA",
+                                                       (user_root / "config").string());
+
   std::vector<std::string_view> args;
   args.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);
   for (int i = 1; i < argc; ++i) {

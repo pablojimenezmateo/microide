@@ -892,6 +892,7 @@ add_executable(microide_diff_bench
   src/editor/FoldingModel.cpp
   src/editor/IndentGuides.cpp
   src/editor/RowDecorationBuilder.cpp
+  src/editor/WelcomeView.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp

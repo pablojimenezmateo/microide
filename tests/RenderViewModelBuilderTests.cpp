@@ -222,13 +222,19 @@ void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
   WorkspaceContext context;
   RenderViewModelBuilder builder(context);
 
-  const std::vector<std::filesystem::path> recents = {"/home/u/alpha", "/home/u/beta/"};
+  // Only existing roots are surfaced, so create real directories on disk. A trailing
+  // separator is preserved to exercise the folder-name-from-parent path.
+  TemporaryDirectory temp;
+  std::filesystem::create_directories(temp.path() / "alpha");
+  std::filesystem::create_directories(temp.path() / "beta");
+  const std::filesystem::path alpha = temp.path() / "alpha";
+  const std::filesystem::path beta_slash = (temp.path() / "beta").string() + "/";
+  const std::vector<std::filesystem::path> recents = {alpha, beta_slash};
   const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
 
   // Recents map to folder name + full path, preserved in order.
-  Expect(vm.recent_projects.size() == 2, "every recent project should be surfaced");
-  Expect(vm.recent_projects[0].name == "alpha" &&
-             vm.recent_projects[0].path == std::filesystem::path("/home/u/alpha"),
+  Expect(vm.recent_projects.size() == 2, "every existing recent project should be surfaced");
+  Expect(vm.recent_projects[0].name == "alpha" && vm.recent_projects[0].path == alpha,
          "recent name should be the folder name and path should be preserved");
   Expect(vm.recent_projects[1].name == "beta",
          "a trailing slash should still yield the folder name");
@@ -248,6 +254,25 @@ void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
   Expect(found_palette_row, "the welcome shortcuts should be registry-sourced (no drift)");
   Expect(vm.palette_hint.find(std::string(palette->accelerator)) != std::string::npos,
          "the palette hint should reference the real key chord");
+}
+
+void TestBuilderWelcomeViewPrunesMissingRecents() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+
+  TemporaryDirectory temp;
+  std::filesystem::create_directories(temp.path() / "present");
+  const std::filesystem::path present = temp.path() / "present";
+  const std::filesystem::path missing = temp.path() / "deleted-temp-project";
+
+  // A stale root (e.g. a removed temp project) must not appear — every surfaced row has to
+  // be openable. The existing root, listed second, should still come through.
+  const std::vector<std::filesystem::path> recents = {missing, present};
+  const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
+
+  Expect(vm.recent_projects.size() == 1, "non-existent recent roots should be pruned");
+  Expect(vm.recent_projects[0].path == present,
+         "the surviving recent should be the one that still exists on disk");
 }
 
 void TestComputeWelcomeLayoutProducesHitRegions() {
@@ -283,6 +308,8 @@ void TestComputeWelcomeLayoutProducesHitRegions() {
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",
           TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
+  AddTest(tests, "RenderViewModelBuilder/WelcomeViewPrunesMissingRecents",
+          TestBuilderWelcomeViewPrunesMissingRecents);
   AddTest(tests, "RenderViewModelBuilder/ComputeWelcomeLayoutProducesHitRegions",
           TestComputeWelcomeLayoutProducesHitRegions);
   AddTest(tests, "RenderViewModelBuilder/ConstructsAllSurfaceViewModels",

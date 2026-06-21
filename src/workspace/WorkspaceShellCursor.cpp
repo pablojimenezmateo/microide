@@ -810,6 +810,24 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Pointer;
   }
 
+  // Welcome home surface: with no project open there are no editor panes, so the
+  // pane-based hit-testing below returns early without ever probing the welcome regions.
+  // Probe here (after compare/merge, which return inside their own branches; mirroring the
+  // click handler in WorkspaceShellMouse.cpp) so the pointer shows over clickable recents /
+  // the open-folder row, and the I-beam elsewhere on the surface.
+  {
+    editor::WelcomeViewModel welcome_model;
+    editor::WelcomeLayout welcome_layout;
+    if (ProbeWelcomeSurface(&welcome_model, &welcome_layout)) {
+      for (const editor::WelcomeHitRegion& region : welcome_layout.hit_regions) {
+        if (Contains(region.rect, x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Text;
+    }
+  }
+
   for (const EditorSplitDividerLayout& divider :
        ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
     if (Contains(divider.rect, x, y)) {
@@ -831,17 +849,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane_it->leaf_id)
                                                : nullptr);
   if (viewport == nullptr || viewport->is_placeholder()) {
-    // The welcome home surface shows clickable recent projects and an open-folder
-    // affordance; show the pointer over those, the text caret elsewhere.
-    editor::WelcomeViewModel welcome_model;
-    editor::WelcomeLayout welcome_layout;
-    if (ProbeWelcomeSurface(&welcome_model, &welcome_layout)) {
-      for (const editor::WelcomeHitRegion& region : welcome_layout.hit_regions) {
-        if (Contains(region.rect, x, y)) {
-          return CursorKind::Pointer;
-        }
-      }
-    }
+    // Welcome surface is hit-tested above (before the pane logic), so any placeholder
+    // pane here just shows the text caret.
     return CursorKind::Text;
   }
 
