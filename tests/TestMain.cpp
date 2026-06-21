@@ -28,6 +28,7 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests);
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceProjectFileMonitorTests(std::vector<TestCase>& tests);
 void RegisterFileFinderTests(std::vector<TestCase>& tests);
+void RegisterRecentsServiceTests(std::vector<TestCase>& tests);
 void RegisterFileIndexTests(std::vector<TestCase>& tests);
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
@@ -311,6 +312,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterIgnoreMatcherTests(tests);
   microide::tests::RegisterWorkspaceProjectFileMonitorTests(tests);
   microide::tests::RegisterFileFinderTests(tests);
+  microide::tests::RegisterRecentsServiceTests(tests);
   microide::tests::RegisterFileIndexTests(tests);
   microide::tests::RegisterWorkspaceShellSharedCoreTests(tests);
   microide::tests::RegisterWorkspaceShellSharedLayoutTests(tests);

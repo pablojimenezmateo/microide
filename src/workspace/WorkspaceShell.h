@@ -69,6 +69,7 @@
 #include "workspace/NotificationService.h"
 #include "workspace/PatchApplyService.h"
 #include "workspace/PersistenceService.h"
+#include "workspace/RecentsService.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/SettingsStore.h"
 #include "workspace/StatusBarModelService.h"

@@ -286,7 +286,17 @@ bool WorkspaceShell::OpenUntitledTab() {
 }
 
 bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
-  return MakeEditorTabService().OpenFileInNewTab(path);
+  const bool opened = MakeEditorTabService().OpenFileInNewTab(path);
+  if (opened) {
+    // Record into the recent-files MRU, scoped to the active project. Resolve to an
+    // absolute path so finder/welcome lookups match regardless of the caller's input.
+    const std::filesystem::path& root = context_.current_project_state.root;
+    if (!root.empty()) {
+      const std::filesystem::path absolute = path.is_absolute() ? path : root / path;
+      recents_service_.RecordFileOpen(absolute, root);
+    }
+  }
+  return opened;
 }
 
 bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {

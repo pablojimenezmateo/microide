@@ -116,7 +116,44 @@ void TestFileFinderIncludesHiddenIndexedPaths() {
 
 }  // namespace
 
+void TestFileFinderPrependsRecentsWhenQueryEmpty() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "recents fixture should initialize deferred file index root");
+  Expect(index.ApplyBatch(MakeInitialBatch({"src/a.cpp", "src/b.cpp", "src/c.cpp"})),
+         "recents fixture should apply initial index batch");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+  // A recent that exists, a duplicate, and one that is no longer indexed.
+  finder.SetRecentRelativePaths({"src/c.cpp", "src/c.cpp", "gone/missing.cpp"});
+  finder.SetQuery("");
+
+  Expect(finder.results().size() == 3,
+         "empty finder should list every indexed file exactly once alongside recents");
+  Expect(finder.results().front().path_string == "src/c.cpp",
+         "the recent file should lead the empty finder");
+  std::size_t c_occurrences = 0;
+  for (const auto& result : finder.results()) {
+    if (result.path_string == "src/c.cpp") {
+      ++c_occurrences;
+    }
+  }
+  Expect(c_occurrences == 1, "a recent file should not be duplicated in the ranked listing");
+
+  // Once the user types, recents no longer force ordering — normal ranking applies.
+  finder.SetQuery("a");
+  Expect(finder.results().size() == 1 && finder.results().front().path_string == "src/a.cpp",
+         "typing a query should fall back to ranked matching");
+}
+
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/PrependsRecentsWhenQueryEmpty",
+          TestFileFinderPrependsRecentsWhenQueryEmpty);
   AddTest(tests, "FileFinder/RebuildsCacheWhenFileIndexVersionChanges",
           TestFileFinderRebuildsCacheWhenFileIndexVersionChanges);
   AddTest(tests, "FileFinder/PreservesQueryAcrossIndexChanges",

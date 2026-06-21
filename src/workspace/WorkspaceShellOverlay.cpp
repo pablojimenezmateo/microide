@@ -5,6 +5,11 @@
 
 namespace microide::workspace {
 
+namespace {
+// How many recent files to surface at the top of an empty file finder.
+constexpr std::size_t kFileFinderRecentLimit = 8;
+}  // namespace
+
 WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
   return PrimarySurfaceFocus(context_.current_project_state);
 }
@@ -24,6 +29,23 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
     }
   } else {
     context_.current_project_state.overlay.caret_anchor.reset();
+  }
+  if (mode == OverlayMode::FileFinder) {
+    // Seed the finder with the active project's recent files so an empty query leads
+    // with them. Convert the stored absolute paths to project-relative form lexically
+    // (no filesystem access) to match the index's path strings.
+    const std::filesystem::path& root = context_.current_project_state.root;
+    std::vector<std::filesystem::path> recent_relative;
+    if (!root.empty()) {
+      for (const std::filesystem::path& absolute :
+           recents_service_.RecentFilesFor(root, kFileFinderRecentLimit)) {
+        std::filesystem::path relative = absolute.lexically_relative(root);
+        if (!relative.empty() && relative.native()[0] != '.') {
+          recent_relative.push_back(std::move(relative));
+        }
+      }
+    }
+    context_.current_project_state.file_finder.SetRecentRelativePaths(std::move(recent_relative));
   }
   context_.current_project_state.surface.focus = FocusTarget::Overlay;
   ResetOverlayScroll();

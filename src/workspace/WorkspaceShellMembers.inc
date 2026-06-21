@@ -1632,6 +1632,7 @@
   VirtualDocumentRegistry virtual_document_registry_;
   ReviewCommentsRegistry review_comments_registry_;
   PersistenceService persistence_service_;
+  RecentsService recents_service_;
   LayoutModeService layout_mode_service_;
   WorkspaceTabStripChrome tab_strip_chrome_;
   StatusBarService status_bar_service_;

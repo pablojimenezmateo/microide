@@ -399,6 +399,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/GitRepositoryService.cpp
   src/workspace/PatchApplyService.cpp
   src/workspace/PersistenceService.cpp
+  src/workspace/RecentsService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
   src/workspace/WorkspaceProjectFileMonitor.cpp
@@ -609,6 +610,7 @@ add_executable(microide_tests
   tests/IgnoreMatcherTests.cpp
   tests/WorkspaceProjectFileMonitorTests.cpp
   tests/FileFinderTests.cpp
+  tests/RecentsServiceTests.cpp
   tests/FileIndexTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp

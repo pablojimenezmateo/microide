@@ -23,6 +23,10 @@ class FileFinder {
   void SetIndex(const FileIndex* index);
   void InvalidateIndexCache();
   void SetQuery(std::string query);
+  // Project-relative paths (newest-first) shown ahead of the ranked listing while
+  // the query is empty, so an freshly-opened finder leads with recent files. Only
+  // entries that still exist in the index are surfaced. Ignored once the user types.
+  void SetRecentRelativePaths(std::vector<std::filesystem::path> paths);
   void Refresh();
   void MoveSelection(int delta);
 
@@ -47,6 +51,7 @@ class FileFinder {
 
   const FileIndex* index_ = nullptr;
   editor::SingleLineEditor query_;
+  std::vector<std::filesystem::path> recent_relative_paths_;
   std::vector<FileFinderResult> results_;
   std::vector<CachedFileEntry> cached_entries_;
   bool cache_ready_ = false;

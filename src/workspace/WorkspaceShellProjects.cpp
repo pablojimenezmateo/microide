@@ -140,6 +140,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
   const bool opened =
       MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback);
   if (opened) {
+    recents_service_.RecordProjectOpen(normalized_root);
     MarkLayoutDirty();
   }
   return opened;

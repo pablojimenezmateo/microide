@@ -59,6 +59,9 @@ WorkspaceShell::WorkspaceShell() {
   // active project state is moved (RebindProjectState / reset).
   settings_store_.BindUserLayer(&context_.user_settings);
   settings_store_.BindActiveProject(&context_.current_project_state.settings);
+  // Load the persisted recent-projects/files MRU so the welcome surface and the
+  // empty file finder can surface them immediately on first paint.
+  recents_service_.Configure(persistence_service_);
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
   tab_strip_chrome_.Configure(

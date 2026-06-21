@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <limits>
+#include <unordered_set>
 
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
@@ -32,6 +34,9 @@ void FileFinder::SetQuery(std::string query) {
   Refresh();
 }
 
+void FileFinder::SetRecentRelativePaths(std::vector<std::filesystem::path> paths) {
+  recent_relative_paths_ = std::move(paths);
+}
 
 void FileFinder::Refresh() {
   util::PerformanceTrace::Scope perf_scope("FileFinder::Refresh");
@@ -44,24 +49,56 @@ void FileFinder::Refresh() {
   EnsureCacheBuilt();
 
   const std::string lower_query = util::ToLowerAscii(query_.text());
+
+  // While the query is empty, lead with recent files (newest-first) so the finder is
+  // useful before the user types. Only recents still present in the index are shown;
+  // the ranked listing below excludes anything already surfaced here.
+  std::unordered_set<std::string> recent_shown;
+  if (query_.text().empty() && !recent_relative_paths_.empty()) {
+    for (const std::filesystem::path& recent : recent_relative_paths_) {
+      const std::string recent_string = recent.string();
+      if (recent_string.empty() || recent_shown.count(recent_string) != 0) {
+        continue;
+      }
+      const auto entry = std::find_if(
+          cached_entries_.begin(), cached_entries_.end(),
+          [&](const CachedFileEntry& candidate) { return candidate.path_string == recent_string; });
+      if (entry == cached_entries_.end()) {
+        continue;
+      }
+      recent_shown.insert(recent_string);
+      results_.push_back(FileFinderResult{
+          .relative_path = entry->relative_path,
+          .path_string = entry->path_string,
+          .score = 0,
+      });
+    }
+  }
+
+  std::vector<FileFinderResult> ranked;
   for (const auto& entry : cached_entries_) {
+    if (!recent_shown.empty() && recent_shown.count(entry.path_string) != 0) {
+      continue;
+    }
     const int score = RankMatchCached(entry, lower_query);
     if (score == std::numeric_limits<int>::max()) {
       continue;
     }
-    results_.push_back(FileFinderResult{
+    ranked.push_back(FileFinderResult{
         .relative_path = entry.relative_path,
         .path_string = entry.path_string,
         .score = score,
     });
   }
 
-  std::sort(results_.begin(), results_.end(), [](const auto& lhs, const auto& rhs) {
+  std::sort(ranked.begin(), ranked.end(), [](const auto& lhs, const auto& rhs) {
     if (lhs.score != rhs.score) {
       return lhs.score < rhs.score;
     }
     return lhs.path_string < rhs.path_string;
   });
+  results_.insert(results_.end(), std::make_move_iterator(ranked.begin()),
+                  std::make_move_iterator(ranked.end()));
 }
 
 void FileFinder::MoveSelection(int delta) {
