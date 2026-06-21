@@ -559,9 +559,13 @@ if(UNIX AND NOT APPLE)
           DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
   install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/microide.png"
           DESTINATION "${CMAKE_INSTALL_DATADIR}/pixmaps")
-  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/microide.png"
-          DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps"
-          RENAME "microide.png")
+  # Themed hicolor icon set (rendered from assets/icons/microide.svg).
+  foreach(_microide_icon_size 16 24 32 48 64 128 256)
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/hicolor/${_microide_icon_size}x${_microide_icon_size}/apps/microide.png"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_microide_icon_size}x${_microide_icon_size}/apps")
+  endforeach()
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/microide.svg"
+          DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps")
 
   set(CPACK_PACKAGE_NAME "${PROJECT_NAME}")
   set(CPACK_PACKAGE_VENDOR "${PROJECT_NAME}")
