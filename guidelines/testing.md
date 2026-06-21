@@ -72,6 +72,28 @@ Prefer the smallest harness that proves the behavior while still exercising the 
 - Extend `tests/fixtures/` or `tests/TestSupport.*` when the same setup will be reused.
 - Regenerate fixture corpora through documented scripts such as `tests/generate_fixtures.py` instead of hand-editing generated manifests.
 
+## Cross-Thread And Timing
+
+Tests that exercise background-thread work (file watchers, PTY/terminal, subprocess,
+DAP/LSP clients, `ProjectBackgroundExecutor`/`TaskExecutor`, project search, the control
+socket) must not assert state immediately after a fixed `std::this_thread::sleep_for`.
+A single check after a fixed wait races the background thread and goes intermittently
+red on otherwise-correct code.
+
+- **Poll a condition until a bounded deadline.** Repeatedly drain/check inside a
+  `while (steady_clock::now() < deadline)` loop with a short sleep between iterations.
+  Reuse the existing helpers (`WaitFor`, `PollUntil`, `WaitForProjectReload`,
+  `WaitForLspReadinessState`, `ExchangeLine`) or follow their shape.
+- **Prefer a deterministic signal over any sleep** where one exists — a drained
+  callback, a future, a `condition_variable`, or an `std::atomic` flag the background
+  thread sets (e.g. the `reader_running` signal in `tests/SubprocessTests.cpp`).
+- **Absence assertions** ("must NOT fire / must NOT publish after X") still need a
+  bounded quiet window: drain continuously for that window and assert nothing valid ever
+  appears, rather than checking once.
+- A fixed `sleep_for` is only acceptable for a genuine **timing-bound** assertion
+  ("operation returns within N ms") or to defeat coarse filesystem mtime granularity
+  before a synchronous sample — never to wait for a background event to land.
+
 ## UI And SDL Caveats
 
 - Tests that initialize SDL should be deterministic under the dummy video driver.

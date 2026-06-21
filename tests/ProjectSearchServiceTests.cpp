@@ -423,13 +423,22 @@ void TestProjectSearchServiceStopDiscardsLateUpdates() {
       project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   service.Start(root, "alpha", {}, indexed_files);
   service.Stop();
-  std::this_thread::sleep_for(std::chrono::milliseconds(25));
 
-  const auto update = service.TakePendingUpdate();
-  Expect(update.run_id == 0, "stopped project search should discard any pending updates");
-  Expect(update.results.empty(), "stopped project search should not publish late results");
-  Expect(!update.finished,
-         "stopped project search should not publish a completion update afterwards");
+  // A correctly-stopped search must never surface a pending update. Rather than
+  // checking once after a fixed sleep (which races a late worker publish), drain
+  // continuously for a bounded window and assert nothing valid ever appears.
+  bool saw_update = false;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto update = service.TakePendingUpdate();
+    if (update.run_id != 0 || !update.results.empty() || update.finished) {
+      saw_update = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Expect(!saw_update,
+         "stopped project search should never publish a pending update after Stop");
 }
 
 void TestProjectSearchServiceNoMatchFinishesPromptly() {

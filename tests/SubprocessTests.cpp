@@ -192,10 +192,12 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
          "async subprocess concurrency fixture should start a cat process");
 
   std::atomic<bool> stop_reader{false};
+  std::atomic<bool> reader_running{false};
   std::mutex reader_output_mutex;
   std::string reader_output;
   std::thread reader([&]() {
     while (!stop_reader.load(std::memory_order_acquire)) {
+      reader_running.store(true, std::memory_order_release);
       const auto chunk = process.Read(4096, 50);
       if (!chunk.has_value()) {
         return;
@@ -207,7 +209,15 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
     }
   });
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  // Wait for the reader to actually enter its loop (so a Read is in flight)
+  // rather than guessing with a fixed sleep, then time a concurrent write.
+  const auto reader_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!reader_running.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < reader_deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  Expect(reader_running.load(std::memory_order_acquire),
+         "async subprocess concurrency fixture should start its background reader");
   const auto start = std::chrono::steady_clock::now();
   Expect(process.Write("ping\n"),
          "async subprocess concurrency fixture should accept stdin while reads are pending");
