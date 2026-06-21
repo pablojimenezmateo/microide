@@ -28,6 +28,7 @@ class TextInputCoordinator {
     std::function<void(std::string_view)> command_prompt_append_input;
     std::function<void()> refresh_compare_picker;
     std::function<void()> refresh_launch_config_picker;
+    std::function<void()> refresh_command_palette;
     std::function<void()> refresh_buffer_search;
     std::function<void()> refresh_project_search;
     std::function<void()> reset_overlay_scroll;

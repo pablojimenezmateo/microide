@@ -131,6 +131,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      KeybindingSpec{
+          .id = "command-palette",
+          .action = ActionId::OpenCommandPalette,
+          .key = SDLK_P,
+          .modifiers = SDL_KMOD_CTRL | SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       // Debugger execution control (Phase 3). Global; the actions are gated on
       // `debug.enabled` + session state in WorkspaceActionAvailability, so these
       // keys are inert until a session is active. Pause has no default key (F6 is

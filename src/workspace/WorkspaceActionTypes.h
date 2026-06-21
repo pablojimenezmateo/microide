@@ -6,6 +6,7 @@ namespace microide::workspace {
 
 enum class ActionId {
   CodeActions,
+  OpenCommandPalette,
   Colorscheme,
   Completion,
   Compare,

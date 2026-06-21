@@ -13,6 +13,7 @@
 #include "editor/DiagnosticsStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
+#include "workspace/WorkspaceActionTypes.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/FileIndex.h"
@@ -47,6 +48,7 @@ enum class OverlayMode {
   ProjectSearch,
   CommitPicker,
   LaunchConfigPicker,
+  CommandPalette,
   Completion,
   CodeActions,
 };
@@ -207,11 +209,34 @@ struct CodeActionSessionState {
   std::string error;
 };
 
+// One selectable row in the command palette. `primary_label` is the human-facing
+// command name and `secondary_label` its key chord (may be empty). Built-in commands
+// carry an ActionId; plugin-contributed commands set is_plugin and dispatch by their
+// command token instead. Labels are precomputed when the list is built so the render
+// TU only draws them.
+struct CommandPaletteItem {
+  std::string primary_label;
+  std::string secondary_label;
+  ActionId action = ActionId::CodeActions;  // meaningful only when !is_plugin
+  std::string command_token;                // plugin command name when is_plugin
+  bool is_plugin = false;
+};
+
+struct CommandPaletteState {
+  std::string title = "Commands";
+  std::string summary_line;  // "<matches> of <total>" precomputed on refresh
+  editor::SingleLineEditor query;
+  std::vector<CommandPaletteItem> items;
+  std::vector<CommandPaletteItem> matches;
+  std::size_t selected_index = 0;
+};
+
 struct OverlayWorkflowState {
   BufferSearchState buffer_search;
   ProjectSearchState project_search;
   ComparePickerState compare_picker;
   LaunchConfigPickerState launch_config_picker;
+  CommandPaletteState command_palette;
   CompletionSessionState completion;
   CodeActionSessionState code_actions;
 };

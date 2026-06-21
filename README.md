@@ -411,6 +411,7 @@ Right-click terminal tab: **Copy Last Command + Output**.
 Run commands with `Ctrl+e` (command prompt). Current commands:
 
 - `code-actions`
+- `command-palette`
 - `colorscheme [name|list]`
 - `completion`
 - `insert-snippet`

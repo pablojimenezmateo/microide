@@ -180,6 +180,7 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
               },
           .refresh_compare_picker = [this]() { RefreshComparePicker(); },
           .refresh_launch_config_picker = [this]() { RefreshLaunchConfigPicker(); },
+          .refresh_command_palette = [this]() { RefreshCommandPalette(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },

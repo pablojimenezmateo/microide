@@ -151,6 +151,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
                std::array<std::string_view, 2>{"reset", {}}, 1),
   });
   static const auto kGoItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::OpenCommandPalette, "Command Palette…", "Ctrl+Shift+P"),
+      MenuSeparator(),
       MenuItem(ActionId::Search, "Find in Buffer", "Ctrl+F"),
       MenuItem(ActionId::ReplaceInBuffer, "Replace in Buffer", "Ctrl+H"),
       MenuSeparator(),

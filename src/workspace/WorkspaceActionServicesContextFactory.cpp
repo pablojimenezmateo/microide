@@ -198,6 +198,12 @@ void WorkspaceActionContext::OpenLaunchConfigPicker() {
   }
 }
 
+void WorkspaceActionContext::OpenCommandPalette() {
+  if (operations_.open_command_palette) {
+    operations_.open_command_palette();
+  }
+}
+
 void WorkspaceActionContext::EditBreakpointModifierFromMenu(ActionId id) {
   if (operations_.edit_breakpoint_modifier_from_menu) {
     operations_.edit_breakpoint_modifier_from_menu(id);
@@ -589,6 +595,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
           .open_launch_config_picker = [this]() { OpenLaunchConfigPicker(); },
+          .open_command_palette = [this]() { OpenCommandPalette(); },
           .edit_breakpoint_modifier_from_menu =
               [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
           .breakpoint_quick_action_from_menu =

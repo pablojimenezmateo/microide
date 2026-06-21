@@ -17,6 +17,8 @@ enum class TextInputSurface {
   CommitPicker,
   // Launch-config picker query field (Phase 9).
   LaunchConfigPicker,
+  // Command palette query field (fuzzy command search).
+  CommandPalette,
   SidebarSearchQuery,
   SidebarSearchReplace,
   CommitSubject,

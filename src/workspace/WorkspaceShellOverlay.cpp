@@ -1,6 +1,14 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "util/StringUtil.h"
+#include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceCommandRegistry.h"
 
 
 namespace microide::workspace {
@@ -139,6 +147,7 @@ float WorkspaceShell::OverlayListStartOffset() const {
       return 8.0f;
     case OverlayMode::CommitPicker:
     case OverlayMode::LaunchConfigPicker:
+    case OverlayMode::CommandPalette:
       // Picker carries a richer header (title + context subtitle + query field +
       // result/hint line) so the list starts lower than the search overlays.
       return 108.0f;
@@ -165,6 +174,8 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
       return context_.current_project_state.overlay.workflow.compare_picker.matches.size();
     case OverlayMode::LaunchConfigPicker:
       return context_.current_project_state.overlay.workflow.launch_config_picker.matches.size();
+    case OverlayMode::CommandPalette:
+      return context_.current_project_state.overlay.workflow.command_palette.matches.size();
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
       return context_.current_project_state.overlay.workflow.buffer_search.matches.size();
@@ -186,6 +197,8 @@ std::size_t WorkspaceShell::OverlaySelectedIndex() const {
       return context_.current_project_state.overlay.workflow.compare_picker.selected_index;
     case OverlayMode::LaunchConfigPicker:
       return context_.current_project_state.overlay.workflow.launch_config_picker.selected_index;
+    case OverlayMode::CommandPalette:
+      return context_.current_project_state.overlay.workflow.command_palette.selected_index;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace:
       return context_.current_project_state.overlay.workflow.buffer_search.selected_index;
@@ -213,6 +226,10 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
       break;
     case OverlayMode::LaunchConfigPicker:
       context_.current_project_state.overlay.workflow.launch_config_picker.selected_index =
+          clamped_index;
+      break;
+    case OverlayMode::CommandPalette:
+      context_.current_project_state.overlay.workflow.command_palette.selected_index =
           clamped_index;
       break;
     case OverlayMode::BufferSearch:
@@ -276,6 +293,11 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       ConfirmLaunchConfigSelection();
       DismissOverlay(true);
       return true;
+    case OverlayMode::CommandPalette:
+      // ConfirmCommandPaletteSelection dismisses before dispatching (the action may
+      // open its own overlay), so do not dismiss again here.
+      ConfirmCommandPaletteSelection();
+      return true;
     case OverlayMode::BufferSearch:
       if (!context_.current_project_state.overlay.workflow.buffer_search.matches.empty()) {
         const auto& match = context_.current_project_state.overlay.workflow.buffer_search.matches[context_.current_project_state.overlay.workflow.buffer_search.selected_index];
@@ -313,6 +335,85 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       DismissOverlay(true);
       return true;
   }
+}
+
+void WorkspaceShell::OpenCommandPalette() {
+  CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
+  palette.query.SetText("");
+  palette.items.clear();
+
+  // Built-in commands: every action that carries a human label. The label and key
+  // chord come straight from the command registry (the same source the menus use),
+  // so the palette can never drift from the real bindings.
+  const std::span<const ActionSpec> specs = WorkspaceCommandSpecs();
+  palette.items.reserve(specs.size());
+  for (const ActionSpec& spec : specs) {
+    if (spec.label.empty() || spec.id == ActionId::OpenCommandPalette) {
+      continue;
+    }
+    palette.items.push_back(CommandPaletteItem{
+        .primary_label = std::string(spec.label),
+        .secondary_label = std::string(spec.accelerator),
+        .action = spec.id,
+        .command_token = {},
+        .is_plugin = false,
+    });
+  }
+
+  // Plugin-contributed commands, dispatched by their command token.
+  for (const std::string& name : plugin_runtime_.Host().CommandNames()) {
+    if (name.empty()) {
+      continue;
+    }
+    palette.items.push_back(CommandPaletteItem{
+        .primary_label = name,
+        .secondary_label = {},
+        .action = ActionId::CodeActions,
+        .command_token = name,
+        .is_plugin = true,
+    });
+  }
+
+  RefreshCommandPalette();
+  ShowOverlay(OverlayMode::CommandPalette);
+}
+
+void WorkspaceShell::RefreshCommandPalette() {
+  CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
+  palette.matches.clear();
+  palette.selected_index = 0;
+  const std::string query = util::ToLowerAscii(palette.query.text());
+  for (const CommandPaletteItem& item : palette.items) {
+    if (!query.empty()) {
+      const std::string haystack =
+          util::ToLowerAscii(item.primary_label + " " + item.secondary_label);
+      if (haystack.find(query) == std::string::npos) {
+        continue;
+      }
+    }
+    palette.matches.push_back(item);
+  }
+  palette.summary_line =
+      std::to_string(palette.matches.size()) + " of " + std::to_string(palette.items.size());
+  ResetOverlayScroll();
+  RequestOverlayRedraw();
+}
+
+void WorkspaceShell::ConfirmCommandPaletteSelection() {
+  CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
+  if (palette.matches.empty() || palette.selected_index >= palette.matches.size()) {
+    return;
+  }
+  // Copy the selected item before dismissing: the dispatched action may itself open
+  // another overlay (e.g. Find File, Settings), so the palette must be gone first and
+  // we must not hold a reference into state that the action could mutate.
+  const CommandPaletteItem selected = palette.matches[palette.selected_index];
+  DismissOverlay(true);
+  if (selected.is_plugin) {
+    ExecuteCommandName(selected.command_token, {}, ActionSource::Menu, nullptr);
+    return;
+  }
+  ActionCoordinator(MakeActionContext()).Execute(selected.action, {}, ActionSource::Menu);
 }
 
 }  // namespace microide::workspace

@@ -254,6 +254,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
          (state_.overlay.mode == OverlayMode::FileFinder ||
           state_.overlay.mode == OverlayMode::CommitPicker ||
           state_.overlay.mode == OverlayMode::LaunchConfigPicker ||
+          state_.overlay.mode == OverlayMode::CommandPalette ||
           state_.overlay.mode == OverlayMode::BufferSearch ||
           state_.overlay.mode == OverlayMode::BufferReplace ||
           state_.overlay.mode == OverlayMode::ProjectSearch)) ||

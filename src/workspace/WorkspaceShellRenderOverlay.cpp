@@ -246,6 +246,18 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
         picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
         std::string_view{}, picker.query, picker.summary_line, rows, picker.selected_index,
         FormatEmptyState("launch configurations"));
+  } else if (overlay_vm.mode == OverlayMode::CommandPalette) {
+    const CommandPaletteState& palette = overlay_state.workflow.command_palette;
+    std::vector<std::pair<std::string_view, std::string_view>> rows;
+    rows.reserve(palette.matches.size());
+    for (const auto& item : palette.matches) {
+      rows.emplace_back(item.primary_label, item.secondary_label);
+    }
+    draw_two_column_picker(
+        TextInputSurface::CommandPalette,
+        palette.title.empty() ? std::string_view("Commands") : palette.title,
+        std::string_view{}, palette.query, palette.summary_line, rows, palette.selected_index,
+        FormatEmptyState("commands"));
   } else if (overlay_vm.mode == OverlayMode::Completion) {
     if (!overlay_state.workflow.completion.error.empty()) {
       DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 8.0f,

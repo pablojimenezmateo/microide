@@ -409,6 +409,7 @@ void WorkspaceShell::RenderSingleLineTextSelection(
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:
@@ -471,6 +472,7 @@ void WorkspaceShell::RenderActiveTextInputCaret(
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:

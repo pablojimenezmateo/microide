@@ -119,6 +119,15 @@ bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
   if (state_.overlay.mode == OverlayMode::CommitPicker) {
     operations_.move_compare_picker_selection(-overlay_ticks);
+  } else if (state_.overlay.mode == OverlayMode::CommandPalette) {
+    if (!state_.overlay.workflow.command_palette.matches.empty()) {
+      const int current =
+          static_cast<int>(state_.overlay.workflow.command_palette.selected_index);
+      const int max_index =
+          static_cast<int>(state_.overlay.workflow.command_palette.matches.size()) - 1;
+      operations_.set_overlay_selected_index(
+          static_cast<std::size_t>(std::clamp(current - overlay_ticks, 0, max_index)));
+    }
   } else if (state_.overlay.mode == OverlayMode::LaunchConfigPicker) {
     if (!state_.overlay.workflow.launch_config_picker.matches.empty()) {
       const int current =
@@ -520,7 +529,8 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
     operations_.set_overlay_selected_index(static_cast<std::size_t>(*item_index));
     operations_.reveal_overlay_selection(overlay);
     if (state_.overlay.mode == OverlayMode::CommitPicker ||
-        state_.overlay.mode == OverlayMode::LaunchConfigPicker) {
+        state_.overlay.mode == OverlayMode::LaunchConfigPicker ||
+        state_.overlay.mode == OverlayMode::CommandPalette) {
       operations_.activate_overlay_selection();
     }
   }

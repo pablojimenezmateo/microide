@@ -220,6 +220,15 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         }
         break;
       }
+      case OverlayMode::CommandPalette: {
+        // Same query field geometry as the other pickers (overlay.y + 52).
+        const SDL_FRect r = overlay_field_rect(overlay.y + 52.0f);
+        if (Contains(r, x, y)) {
+          return FilledHit(TextInputSurface::CommandPalette, r, "> ",
+                           &state.overlay.workflow.command_palette.query);
+        }
+        break;
+      }
       case OverlayMode::Completion:
       case OverlayMode::CodeActions:
         break;
@@ -365,6 +374,7 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::CommandPalette:
       context_.current_project_state.surface.focus = FocusTarget::Overlay;
       break;
     case TextInputSurface::SidebarSearchQuery:
@@ -431,6 +441,7 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
     case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace: {
       // Re-dispatch via FindSingleLineInputHit at the *current* pointer is wrong
@@ -485,6 +496,12 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
           if (proj.overlay.visible) {
             hit = FilledHit(surface, overlay_field_rect(overlay.y + 52.0f), "> ",
                             &proj.overlay.workflow.launch_config_picker.query);
+          }
+          break;
+        case TextInputSurface::CommandPalette:
+          if (proj.overlay.visible) {
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + 52.0f), "> ",
+                            &proj.overlay.workflow.command_palette.query);
           }
           break;
         case TextInputSurface::SidebarSearchQuery:

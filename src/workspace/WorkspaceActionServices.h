@@ -200,6 +200,8 @@ class WorkspaceActionContext {
     // Launch-config picker (Phase 9): open the fuzzy picker over the project's
     // launch configs.
     std::function<void()> open_launch_config_picker;
+    // Open the fuzzy command palette over all built-in + plugin commands.
+    std::function<void()> open_command_palette;
     // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
@@ -395,6 +397,7 @@ class WorkspaceActionContext {
   // Debug-console REPL + launch-config picker (Phase 9).
   void OpenDebugReplPrompt();
   void OpenLaunchConfigPicker();
+  void OpenCommandPalette();
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();
   void ShowDebugPaneSurface(DebugPaneMode mode);

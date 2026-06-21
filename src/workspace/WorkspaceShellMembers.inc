@@ -797,6 +797,9 @@
   void OpenLaunchConfigPicker();
   void RefreshLaunchConfigPicker();
   void ConfirmLaunchConfigSelection();
+  void OpenCommandPalette();
+  void RefreshCommandPalette();
+  void ConfirmCommandPaletteSelection();
   void OpenComparison(const project::GitCommitEntry& commit);
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);

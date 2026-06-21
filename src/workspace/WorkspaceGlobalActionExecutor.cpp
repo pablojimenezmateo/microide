@@ -137,6 +137,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       context_.OpenCommandPrompt();
       return DispatchResult::Handled;
     }
+    case ActionId::OpenCommandPalette:
+      context_.OpenCommandPalette();
+      return DispatchResult::Handled;
     case ActionId::OpenSettings:
       context_.OpenSettingsOverlay();
       return DispatchResult::Handled;

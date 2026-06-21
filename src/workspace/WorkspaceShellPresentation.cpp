@@ -134,7 +134,8 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
                                  overlay.mode == OverlayMode::BufferReplace);
   }
   if (overlay.mode == OverlayMode::CommitPicker ||
-      overlay.mode == OverlayMode::LaunchConfigPicker) {
+      overlay.mode == OverlayMode::LaunchConfigPicker ||
+      overlay.mode == OverlayMode::CommandPalette) {
     return ComputePickerOverlaySurfaceRect(editor_area);
   }
   return ComputeOverlaySurfaceRect(editor_area);

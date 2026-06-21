@@ -55,6 +55,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr;
     case ActionId::Colorscheme:
     case ActionId::Files:
+    case ActionId::OpenCommandPalette:
     case ActionId::OpenCommandPrompt:
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
