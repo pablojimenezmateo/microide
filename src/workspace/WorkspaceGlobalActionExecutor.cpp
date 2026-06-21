@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceCommandParsing.h"
 namespace microide::workspace {
@@ -67,6 +68,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.RefreshAvailableColorschemeNames();
       context_.ApplyColorscheme(request->name);
+      return DispatchResult::Handled;
+    }
+    case ActionId::ToggleColorTheme: {
+      // Flip between the built-in light and dark themes; any other active scheme
+      // resolves to dark first so the toggle has a predictable two-state feel.
+      const bool currently_light = util::ToLowerAscii(std::string(
+                                       context_.CurrentColorschemeName())) == "light";
+      context_.RefreshAvailableColorschemeNames();
+      context_.ApplyColorscheme(currently_light ? "default" : "light");
       return DispatchResult::Handled;
     }
     case ActionId::TabSize: {

@@ -85,10 +85,15 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
     const bool selected = row_index == selected_index;
     SDL_FRect row = ScrollableListRowRect(overlay_list_layout, row_index);
     DrawSelectableRowBackground(renderer, theme_, row, theme_.surface_raised, selected, selected);
-    DrawVCenteredTextOn(text_renderer_, renderer, row, 6.0f,
+    // Accent left-bar on the selected row, matching the two-column pickers, so the
+    // keyboard focus is unmistakable in the finder / completion / code-action lists.
+    if (selected) {
+      DrawFilledRect(renderer, MakeRect(row.x, row.y + 2.0f, 3.0f, row.h - 4.0f), theme_.accent);
+    }
+    DrawVCenteredTextOn(text_renderer_, renderer, row, 10.0f,
                         selected ? theme_.text_primary : theme_.text_secondary,
                         selected ? theme_.row_highlight : theme_.surface_raised,
-                        TruncateLabel(label, row.w - 12.0f));
+                        TruncateLabel(label, row.w - 16.0f));
   };
 
   // Shared two-column fuzzy-picker chrome (title + optional context line + query

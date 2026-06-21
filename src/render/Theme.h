@@ -70,6 +70,8 @@ struct Theme {
 };
 
 Theme MakeDefaultTheme();
+// Built-in light theme, selectable as the "light" colorscheme alongside "default".
+Theme MakeLightTheme();
 // Colour-space math primitives (RelativeLuminance/Contrast/BlendColors/
 // CompositeOver) live in render/ColorMath.h, included above.
 std::filesystem::path FindThemeDirectory();

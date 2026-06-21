@@ -13,6 +13,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Command Palette", "Ctrl+Shift+P"},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",
                  "Colorscheme", ""},
+      ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",
+                 "Toggle Light/Dark Theme", ""},
       ActionSpec{ActionId::Completion, "completion", "completion", "Completions",
                  "Ctrl+Space"},
       ActionSpec{ActionId::InsertSnippet, "insert-snippet", "insert-snippet", "Insert Snippet…",

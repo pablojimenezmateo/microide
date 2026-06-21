@@ -413,6 +413,7 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `code-actions`
 - `command-palette`
 - `colorscheme [name|list]`
+- `toggle-theme`
 - `completion`
 - `insert-snippet`
 - `compare [path] [commit-prefix]`

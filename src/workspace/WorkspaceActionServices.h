@@ -359,6 +359,7 @@ class WorkspaceActionContext {
 
   void RefreshAvailableColorschemeNames();
   void ApplyColorscheme(std::string_view name);
+  std::string_view CurrentColorschemeName() const;
   void SetTabSize(std::size_t value);
   void SetIndentWidth(std::size_t value);
   float UiScale() const;

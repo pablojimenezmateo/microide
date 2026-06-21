@@ -203,9 +203,37 @@ void ExpectSelfIncludingThemeLoadsWithoutRecursion() {
                         4.5f);
 }
 
+void ExpectBuiltinLightThemeIsSelectableAndReadable() {
+  // The built-in light theme resolves by name without any bundled assets.
+  microide::render::Theme theme;
+  std::string resolved_name;
+  std::string error;
+  const bool loaded = microide::render::LoadThemeByName("light", theme, &resolved_name, &error);
+  Expect(loaded, "the built-in light theme should load: " + error);
+  Expect(resolved_name == "light", "light colorscheme should resolve to its own name");
+
+  // It must actually be light: a bright editor background and dark primary text.
+  const auto brightness = [](SDL_Color c) {
+    return static_cast<int>(c.r) + static_cast<int>(c.g) + static_cast<int>(c.b);
+  };
+  Expect(brightness(theme.editor_background) > brightness(theme.text_primary) + 300,
+         "the light theme should have a bright background and dark text");
+  ExpectContrastAtLeast("light theme primary text", theme.text_primary, theme.editor_background,
+                        4.5f);
+
+  // Both built-in themes are always offered, even with no theme directory.
+  const std::vector<std::string> names = microide::render::ListAvailableThemeNames({});
+  Expect(std::find(names.begin(), names.end(), "light") != names.end(),
+         "the light theme should appear in the available colorscheme list");
+  Expect(std::find(names.begin(), names.end(), "default") != names.end(),
+         "the default theme should appear in the available colorscheme list");
+}
+
 }  // namespace
 
 void RegisterThemeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Theme built-in light is selectable and readable",
+          ExpectBuiltinLightThemeIsSelectableAndReadable);
   AddTest(tests, "Theme shared ANSI palette parity", ExpectSharedAnsiPaletteParity);
   AddTest(tests, "Theme self-including colorscheme loads without recursion",
           ExpectSelfIncludingThemeLoadsWithoutRecursion);

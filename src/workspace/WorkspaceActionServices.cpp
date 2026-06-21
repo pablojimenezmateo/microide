@@ -863,6 +863,10 @@ void WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
   operations_.apply_colorscheme(name);
 }
 
+std::string_view WorkspaceActionContext::CurrentColorschemeName() const {
+  return state_.active_colorscheme_name;
+}
+
 void WorkspaceActionContext::SetTabSize(std::size_t value) {
   state_.editor_preferences.tab_size = value;
   operations_.apply_editor_preferences_to_all_tabs();

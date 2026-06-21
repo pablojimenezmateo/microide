@@ -54,6 +54,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::InlineCompletion:
       return active_viewport != nullptr;
     case ActionId::Colorscheme:
+    case ActionId::ToggleColorTheme:
     case ActionId::Files:
     case ActionId::OpenCommandPalette:
     case ActionId::OpenCommandPrompt:

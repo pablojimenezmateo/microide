@@ -149,6 +149,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
                std::array<std::string_view, 2>{"down", {}}, 1),
       MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
                std::array<std::string_view, 2>{"reset", {}}, 1),
+      MenuSeparator(),
+      MenuItem(ActionId::ToggleColorTheme, "Toggle Light/Dark Theme"),
   });
   static const auto kGoItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenCommandPalette, "Command Palette…", "Ctrl+Shift+P"),

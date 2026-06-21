@@ -8,6 +8,7 @@ enum class ActionId {
   CodeActions,
   OpenCommandPalette,
   Colorscheme,
+  ToggleColorTheme,
   Completion,
   Compare,
   CompareHead,

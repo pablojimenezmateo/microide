@@ -342,6 +342,60 @@ Theme MakeDefaultTheme() {
   return theme;
 }
 
+Theme MakeLightTheme() {
+  Theme theme{
+      .window_background = SDL_Color{0xe7, 0xea, 0xf0, 0xff},
+      .chrome_background = SDL_Color{0xdc, 0xe1, 0xe9, 0xff},
+      .chrome_active = SDL_Color{0xcc, 0xd4, 0xe0, 0xff},
+      .chrome_text = SDL_Color{0x23, 0x29, 0x34, 0xff},
+      .chrome_active_text = SDL_Color{0x0f, 0x14, 0x1c, 0xff},
+      .chrome_text_secondary = SDL_Color{0x52, 0x5c, 0x6b, 0xff},
+      .surface_background = SDL_Color{0xf3, 0xf5, 0xf9, 0xff},
+      .surface_raised = SDL_Color{0xff, 0xff, 0xff, 0xff},
+      .surface_text = SDL_Color{0x23, 0x29, 0x34, 0xff},
+      .editor_background = SDL_Color{0xfb, 0xfc, 0xfe, 0xff},
+      .gutter_background = SDL_Color{0xef, 0xf2, 0xf6, 0xff},
+      .overlay_background = SDL_Color{0xff, 0xff, 0xff, 0xf8},
+      .overlay_backdrop = SDL_Color{0x37, 0x40, 0x50, 0x44},
+      .border = SDL_Color{0xc3, 0xcb, 0xd7, 0xff},
+      .accent = SDL_Color{0x2f, 0x6f, 0xd6, 0xff},
+      .text_primary = SDL_Color{0x23, 0x29, 0x34, 0xff},
+      .text_secondary = SDL_Color{0x49, 0x53, 0x62, 0xff},
+      .text_muted = SDL_Color{0x6b, 0x76, 0x87, 0xff},
+      .text_disabled = SDL_Color{0x99, 0xa3, 0xb1, 0xff},
+      .row_highlight = SDL_Color{0xe5, 0xeb, 0xf6, 0xff},
+      .selection_fill = SDL_Color{0x4a, 0x90, 0xe2, 0x55},
+      .search_match = SDL_Color{0xf2, 0xd9, 0x6b, 0x82},
+      .search_match_active = SDL_Color{0xef, 0xbe, 0x48, 0xb2},
+      .bracket_match_background = SDL_Color{0x9d, 0xc4, 0xf0, 0x9c},
+      .cursor = SDL_Color{0x11, 0x16, 0x1d, 0xff},
+      .syntax_keyword = SDL_Color{0xbf, 0x36, 0x5d, 0xff},
+      .syntax_type = SDL_Color{0x1e, 0x6e, 0xaf, 0xff},
+      .syntax_string = SDL_Color{0x3d, 0x7c, 0x2d, 0xff},
+      .syntax_comment = SDL_Color{0x88, 0x92, 0xa1, 0xff},
+      .syntax_number = SDL_Color{0xb4, 0x69, 0x1e, 0xff},
+      .syntax_constant = SDL_Color{0x7b, 0x4c, 0xc3, 0xff},
+      .syntax_preprocessor = SDL_Color{0xa8, 0x69, 0x11, 0xff},
+      .syntax_operator = SDL_Color{0x1d, 0x7f, 0x95, 0xff},
+      .line_number = SDL_Color{0xa1, 0xaa, 0xb8, 0xff},
+      .current_line_number = SDL_Color{0x39, 0x43, 0x54, 0xff},
+      .diff_added = SDL_Color{0x2e, 0x89, 0x43, 0xff},
+      .diff_modified = SDL_Color{0xa8, 0x75, 0x1e, 0xff},
+      .diff_deleted = SDL_Color{0xc3, 0x41, 0x4b, 0xff},
+      .diagnostic_error = SDL_Color{0xcf, 0x38, 0x43, 0xff},
+      .diagnostic_warning = SDL_Color{0xb4, 0x83, 0x11, 0xff},
+      .diagnostic_info = SDL_Color{0x25, 0x6b, 0xd5, 0xff},
+      .diagnostic_hint = SDL_Color{0x2e, 0x89, 0x54, 0xff},
+      .breakpoint = SDL_Color{0xcf, 0x36, 0x36, 0xff},
+      .breakpoint_unverified = SDL_Color{0xc3, 0x89, 0x89, 0xc0},
+      .breakpoint_conditional = SDL_Color{0xc6, 0x99, 0x1e, 0xff},
+      .debug_execution_line = SDL_Color{0xe8, 0xf0, 0xc8, 0xb4},
+      .debug_execution_arrow = SDL_Color{0xb4, 0x83, 0x11, 0xff},
+  };
+  theme.selection_strong = CompositeOver(theme.selection_fill, theme.surface_background);
+  return theme;
+}
+
 std::filesystem::path FindThemeDirectory() {
   const std::vector<std::filesystem::path> candidates = {
       platform::ResolveBundledAssetPath("themes"),
@@ -359,9 +413,10 @@ std::filesystem::path FindThemeDirectory() {
 
 std::vector<std::string> ListAvailableThemeNames(const std::filesystem::path& theme_directory) {
   const std::filesystem::path resolved_directory = ResolveThemeDirectory(theme_directory);
-  std::vector<std::string> names;
+  // The built-in themes are always selectable, even without bundled assets.
+  std::vector<std::string> names = {"default", "light"};
   if (resolved_directory.empty()) {
-    names.push_back("default");
+    std::sort(names.begin(), names.end());
     return names;
   }
 
@@ -378,9 +433,6 @@ std::vector<std::string> ListAvailableThemeNames(const std::filesystem::path& th
 
   std::sort(names.begin(), names.end());
   names.erase(std::unique(names.begin(), names.end()), names.end());
-  if (names.empty()) {
-    names.push_back("default");
-  }
   return names;
 }
 
@@ -394,6 +446,16 @@ bool LoadThemeByName(std::string_view name,
     out_theme = MakeDefaultTheme();
     if (resolved_name != nullptr) {
       *resolved_name = "default";
+    }
+    if (error != nullptr) {
+      error->clear();
+    }
+    return true;
+  }
+  if (util::ToLowerAscii(requested_name) == "light") {
+    out_theme = MakeLightTheme();
+    if (resolved_name != nullptr) {
+      *resolved_name = "light";
     }
     if (error != nullptr) {
       error->clear();
