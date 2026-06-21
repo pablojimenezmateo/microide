@@ -3,13 +3,17 @@
 #include "editor/BreakpointStore.h"
 #include "editor/EditorViewModel.h"
 #include "editor/TextViewport.h"
+#include "editor/WelcomeView.h"
 #include "workspace/DebugViewModel.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarService.h"
+#include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 
+#include <filesystem>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -214,9 +218,73 @@ void TestBuilderMarksConditionalAndLogpointGutterDots() {
          "a log message makes the mark read as a logpoint");
 }
 
+void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+
+  const std::vector<std::filesystem::path> recents = {"/home/u/alpha", "/home/u/beta/"};
+  const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
+
+  // Recents map to folder name + full path, preserved in order.
+  Expect(vm.recent_projects.size() == 2, "every recent project should be surfaced");
+  Expect(vm.recent_projects[0].name == "alpha" &&
+             vm.recent_projects[0].path == std::filesystem::path("/home/u/alpha"),
+         "recent name should be the folder name and path should be preserved");
+  Expect(vm.recent_projects[1].name == "beta",
+         "a trailing slash should still yield the folder name");
+
+  // Shortcuts are sourced from the command registry: the command-palette row must
+  // carry the registry's accelerator, and the hint must echo the same chord.
+  const microide::workspace::ActionSpec* palette =
+      microide::workspace::FindWorkspaceActionSpec(microide::workspace::ActionId::OpenCommandPalette);
+  Expect(palette != nullptr && !palette->accelerator.empty(),
+         "the command palette action should carry an accelerator");
+  bool found_palette_row = false;
+  for (const editor::WelcomeShortcut& shortcut : vm.shortcuts) {
+    if (shortcut.keys == std::string(palette->accelerator)) {
+      found_palette_row = true;
+    }
+  }
+  Expect(found_palette_row, "the welcome shortcuts should be registry-sourced (no drift)");
+  Expect(vm.palette_hint.find(std::string(palette->accelerator)) != std::string::npos,
+         "the palette hint should reference the real key chord");
+}
+
+void TestComputeWelcomeLayoutProducesHitRegions() {
+  editor::WelcomeViewModel vm;
+  vm.recent_projects = {
+      {.name = "a", .path_display = "/a", .path = "/a"},
+      {.name = "b", .path_display = "/b", .path = "/b"},
+  };
+  const SDL_FRect rect{0.0f, 0.0f, 1200.0f, 800.0f};
+  const editor::WelcomeLayout layout = editor::ComputeWelcomeLayout(rect, vm, 14.0f);
+
+  std::size_t recent_regions = 0;
+  std::size_t open_folder_regions = 0;
+  for (const editor::WelcomeHitRegion& region : layout.hit_regions) {
+    if (region.kind == editor::WelcomeHitRegion::Kind::RecentProject) {
+      ++recent_regions;
+      Expect(region.recent_index < vm.recent_projects.size(),
+             "recent hit regions index into the model");
+    } else {
+      ++open_folder_regions;
+    }
+    // Every interactive region stays within the card.
+    Expect(region.rect.x >= layout.card.x - 0.5f &&
+               region.rect.x + region.rect.w <= layout.card.x + layout.card.w + 0.5f,
+           "hit regions should stay inside the welcome card");
+  }
+  Expect(recent_regions == 2, "one hit region per recent project");
+  Expect(open_folder_regions == 1, "exactly one open-folder affordance");
+}
+
 }  // namespace
 
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",
+          TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
+  AddTest(tests, "RenderViewModelBuilder/ComputeWelcomeLayoutProducesHitRegions",
+          TestComputeWelcomeLayoutProducesHitRegions);
   AddTest(tests, "RenderViewModelBuilder/ConstructsAllSurfaceViewModels",
           TestBuilderConstructsAllSurfaceViewModels);
   AddTest(tests, "RenderViewModelBuilder/SidebarFallbacksAreViewsIntoStableStorage",

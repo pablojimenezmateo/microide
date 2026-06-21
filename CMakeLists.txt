@@ -145,6 +145,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
   src/editor/EditorViewRenderer.cpp
+  src/editor/WelcomeView.cpp
   src/editor/FoldingModel.cpp
   src/editor/HighlightPrefetchService.cpp
   src/editor/IndentDetect.cpp

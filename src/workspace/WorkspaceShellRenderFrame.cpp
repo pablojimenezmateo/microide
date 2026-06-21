@@ -444,12 +444,16 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
             sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution);
       }
+      // The welcome home surface (recents + curated shortcuts + hints) is built in the
+      // view-model layer so this render TU never materializes its strings.
+      thread_local editor::WelcomeViewModel tls_welcome_vm;
+      tls_welcome_vm = editor_render_builder.BuildWelcomeView(recents_service_.RecentProjects());
       editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
                                    layout.editor_surface, draw_editor_caret, "", std::nullopt,
                                    std::nullopt, {}, &tls_editor_surface_vm,
                                    bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
-                                   active_folding_model);
+                                   active_folding_model, &tls_welcome_vm);
     }
     auto* editor_tab = ActiveEditorTab();
     for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {

@@ -8,13 +8,16 @@
 #include "util/PerformanceCounters.h"
 
 #include "workspace/StatusBarService.h"
+#include "workspace/WorkspaceCommandRegistry.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace microide::workspace {
 
@@ -758,6 +761,72 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
     vm.entries.push_back(NotificationEntryViewModel{
         .tone = notification.tone,
         .message = notification.message,
+    });
+  }
+  return vm;
+}
+
+editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
+    std::span<const std::filesystem::path> recent_projects) const {
+  editor::WelcomeViewModel vm;
+  vm.title = "Welcome to microide";
+  vm.subtitle = "Open a folder to start, or pick up where you left off.";
+  vm.recents_heading = "Recent Projects";
+  vm.shortcuts_heading = "Shortcuts";
+  vm.empty_recents_label = "No recent projects yet.";
+
+  // Curated, registry-sourced shortcut rows. Listing ActionIds (not literal chords)
+  // keeps the welcome screen in lock-step with the command registry and keybindings.
+  static constexpr std::array<ActionId, 10> kWelcomeShortcutActions = {
+      ActionId::OpenCommandPalette, ActionId::Files,        ActionId::ProjectSearch,
+      ActionId::Search,             ActionId::Save,         ActionId::SidebarToggle,
+      ActionId::OpenSettings,       ActionId::OpenCommandPrompt, ActionId::CloseActiveTab,
+      ActionId::AddCursorAtNextMatch,
+  };
+  std::string palette_chord;
+  for (ActionId id : kWelcomeShortcutActions) {
+    const ActionSpec* spec = FindWorkspaceActionSpec(id);
+    if (spec == nullptr || spec->accelerator.empty() || spec->label.empty()) {
+      continue;
+    }
+    if (id == ActionId::OpenCommandPalette) {
+      palette_chord.assign(spec->accelerator);
+    }
+    vm.shortcuts.push_back(editor::WelcomeShortcut{
+        .keys = std::string(spec->accelerator),
+        .label = std::string(spec->label),
+    });
+  }
+
+  vm.open_folder_label = "Open Folder…";
+  if (const ActionSpec* open_spec = FindWorkspaceActionSpec(ActionId::ProjectOpen);
+      open_spec != nullptr && !open_spec->accelerator.empty()) {
+    vm.open_folder_label += "  (" + std::string(open_spec->accelerator) + ")";
+  }
+
+  vm.palette_hint = palette_chord.empty()
+                        ? std::string("Press Ctrl+Shift+P to browse all commands.")
+                        : "Press " + palette_chord + " to browse all commands.";
+
+  vm.recent_projects.reserve(recent_projects.size());
+  for (const std::filesystem::path& root : recent_projects) {
+    if (root.empty()) {
+      continue;
+    }
+    // A trailing separator makes filename() empty, so step into the parent first so
+    // "/path/proj/" still yields the folder name.
+    std::filesystem::path leaf = root;
+    if (!leaf.has_filename() && leaf.has_parent_path()) {
+      leaf = leaf.parent_path();
+    }
+    std::string name = leaf.filename().string();
+    if (name.empty()) {
+      name = root.string();  // e.g. a filesystem root with no trailing component
+    }
+    vm.recent_projects.push_back(editor::WelcomeRecent{
+        .name = std::move(name),
+        .path_display = root.string(),
+        .path = root,
     });
   }
   return vm;

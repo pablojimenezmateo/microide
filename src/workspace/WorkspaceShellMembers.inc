@@ -800,6 +800,11 @@
   void OpenCommandPalette();
   void RefreshCommandPalette();
   void ConfirmCommandPaletteSelection();
+  // Build the welcome-surface model + geometry for the current placeholder editor, so
+  // the click handler and cursor resolver hit-test the same regions the renderer drew.
+  // Returns false when the welcome home surface is not currently showing.
+  bool ProbeWelcomeSurface(editor::WelcomeViewModel* model,
+                           editor::WelcomeLayout* layout) const;
   void OpenComparison(const project::GitCommitEntry& commit);
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);

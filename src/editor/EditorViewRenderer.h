@@ -19,6 +19,7 @@
 #include "editor/FoldingModel.h"
 #include "editor/IndentGuides.h"
 #include "editor/TextViewport.h"
+#include "editor/WelcomeView.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 
@@ -80,7 +81,8 @@ class EditorViewRenderer {
               bool bracket_match_highlight_enabled = false,
               bool indent_guides_enabled = false,
               bool render_whitespace_enabled = false,
-              const FoldingModel* folding_model = nullptr) const;
+              const FoldingModel* folding_model = nullptr,
+              const WelcomeViewModel* welcome_view = nullptr) const;
 
   // Test/diagnostic accessors for the bracket-match cache. The cache is keyed
   // on (viewport, content_revision, primary_caret_line, primary_caret_column)

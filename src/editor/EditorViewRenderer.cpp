@@ -12,6 +12,7 @@
 #include "editor/DiagnosticsRender.h"
 #include "editor/ExecutionLineRender.h"
 #include "editor/GutterMetrics.h"
+#include "editor/WelcomeView.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceUiText.h"
@@ -70,200 +71,85 @@ void DrawFoldGutterMarker(SDL_Renderer* renderer,
 void DrawPlaceholderView(SDL_Renderer* renderer,
                          const render::TextRenderer& text_renderer,
                          const render::Theme& theme,
-                         const SDL_FRect& rect) {
-  struct CheatRow {
-    std::string_view key;
-    std::string_view label;
-  };
+                         const SDL_FRect& rect,
+                         const WelcomeViewModel& model) {
+  const float line_height = text_renderer.LineHeight();
+  const WelcomeLayout layout = ComputeWelcomeLayout(rect, model, line_height);
+  const SDL_FRect& card = layout.card;
 
-  const auto draw_panel = [&](const SDL_FRect& panel,
-                              std::string_view title,
-                              auto&& rows,
-                              float key_width) {
-    SDL_SetRenderDrawColor(renderer, theme.surface_background.r, theme.surface_background.g,
-                           theme.surface_background.b, theme.surface_background.a);
-    SDL_RenderFillRect(renderer, &panel);
-    SDL_SetRenderDrawColor(renderer, theme.border.r, theme.border.g, theme.border.b, theme.border.a);
-    SDL_RenderRect(renderer, &panel);
+  render::DrawTitledCardFrame(renderer, theme, card, layout.header.h, render::CardStyle::Raised);
 
-    const float inset_x = panel.x + 12.0f;
-    const float title_y = panel.y + 10.0f;
-    const float row_y_start = title_y + text_renderer.LineHeight() + 8.0f;
-    const float row_step = text_renderer.LineHeight() + 1.0f;
+  const float inset_x = card.x + 20.0f;
+  text_renderer.DrawStringOn(renderer, inset_x, card.y + 8.0f, theme.chrome_text,
+                             theme.chrome_background,
+                             text_renderer.TruncateToWidth(model.title, card.w - 40.0f));
+  text_renderer.DrawStringOn(renderer, inset_x, card.y + layout.header.h - line_height - 4.0f,
+                             theme.text_secondary, theme.surface_raised,
+                             text_renderer.TruncateToWidth(model.subtitle, card.w - 40.0f));
 
-    text_renderer.DrawStringOn(renderer, inset_x, title_y, theme.surface_text,
-                               theme.surface_background, title);
+  // Recents panel: heading, then clickable recent-project rows (or an empty state),
+  // and an "Open Folder" affordance, all positioned by the shared layout helper so
+  // the shell hit-test matches exactly.
+  text_renderer.DrawStringOn(renderer, layout.recents_panel.x, layout.recents_panel.y,
+                             theme.surface_text, theme.surface_raised, model.recents_heading);
 
-    float row_y = row_y_start;
-    for (const auto& row : rows) {
-      if (row_y + text_renderer.LineHeight() > panel.y + panel.h - 10.0f) {
-        break;
-      }
-
-      if (!row.label.empty() && key_width > 0.0f) {
-        text_renderer.DrawStringOn(
-            renderer, inset_x, row_y, theme.surface_text, theme.surface_background,
-            text_renderer.TruncateToWidth(row.key, key_width - 8.0f));
-        text_renderer.DrawStringOn(
-            renderer, inset_x + key_width, row_y, theme.text_secondary,
-            theme.surface_background,
-            text_renderer.TruncateToWidth(row.label, panel.w - key_width - 24.0f));
-      } else {
-        text_renderer.DrawStringOn(
-            renderer, inset_x, row_y, theme.text_secondary, theme.surface_background,
-            text_renderer.TruncateToWidth(row.key, panel.w - 24.0f));
-      }
-      row_y += row_step;
+  bool drew_recent = false;
+  for (const WelcomeHitRegion& region : layout.hit_regions) {
+    if (region.kind == WelcomeHitRegion::Kind::RecentProject) {
+      drew_recent = true;
+      const WelcomeRecent& recent = model.recent_projects[region.recent_index];
+      const std::string name = text_renderer.TruncateToWidth(recent.name, region.rect.w * 0.5f);
+      const float name_w = text_renderer.MeasureWidth(name);
+      text_renderer.DrawStringOn(renderer, region.rect.x + 4.0f, region.rect.y + 2.0f, theme.accent,
+                                 theme.surface_raised, name);
+      text_renderer.DrawStringOn(
+          renderer, region.rect.x + 14.0f + name_w, region.rect.y + 2.0f, theme.text_muted,
+          theme.surface_raised,
+          text_renderer.TruncateToWidth(recent.path_display, region.rect.w - name_w - 26.0f));
+    } else {
+      SDL_SetRenderDrawColor(renderer, theme.selection_fill.r, theme.selection_fill.g,
+                             theme.selection_fill.b, theme.selection_fill.a);
+      SDL_RenderFillRect(renderer, &region.rect);
+      SDL_SetRenderDrawColor(renderer, theme.border.r, theme.border.g, theme.border.b,
+                             theme.border.a);
+      SDL_RenderRect(renderer, &region.rect);
+      text_renderer.DrawStringOn(
+          renderer, region.rect.x + 8.0f, region.rect.y + 2.0f, theme.surface_text,
+          theme.selection_fill,
+          text_renderer.TruncateToWidth(model.open_folder_label, region.rect.w - 16.0f));
     }
-  };
+  }
+  if (!drew_recent) {
+    const float empty_y = layout.recents_panel.y + line_height + 14.0f;
+    text_renderer.DrawStringOn(renderer, layout.recents_panel.x + 4.0f, empty_y, theme.text_muted,
+                               theme.surface_raised,
+                               text_renderer.TruncateToWidth(model.empty_recents_label,
+                                                             layout.recents_panel.w - 16.0f));
+  }
 
-  static constexpr std::array<CheatRow, 19> kCoreShortcuts = {{
-      {"Ctrl+E", "command palette"},
-      {"F6", "file finder overlay"},
-      {"F8", "toggle sidebar"},
-      {"Ctrl+0 / - / =", "reset / shrink / grow UI"},
-      {"Ctrl+Tab", "switch editor/sidebar/panel focus"},
-      {"Ctrl+S", "save active file"},
-      {"Ctrl+W", "close active tab"},
-      {"Ctrl+Shift+F", "project search sidebar"},
-      {"Ctrl+F", "search in buffer"},
-      {"Ctrl+H", "replace in buffer"},
-      {"Ctrl+A", "select all"},
-      {"Ctrl+C / X / V", "copy / cut / paste"},
-      {"Ctrl+Z", "undo"},
-      {"Ctrl+Shift+Z / Ctrl+Y", "redo"},
-      {"Arrows + Shift", "move / extend selection"},
-      {"Home / End", "line start / line end"},
-      {"Ctrl+Home / End", "file start / file end"},
-      {"PgUp / PgDn / Esc", "page move / close overlay"},
-  }};
+  // Shortcuts panel: curated, registry-sourced key chords (never drifts).
+  text_renderer.DrawStringOn(renderer, layout.shortcuts_panel.x, layout.shortcuts_panel.y,
+                             theme.surface_text, theme.surface_raised, model.shortcuts_heading);
+  const float keys_col = std::min(150.0f, layout.shortcuts_panel.w * 0.45f);
+  const float sc_row_step = line_height + 6.0f;
+  float sc_y = layout.shortcuts_panel.y + line_height + 14.0f;
+  for (const WelcomeShortcut& shortcut : model.shortcuts) {
+    if (sc_y + line_height > layout.shortcuts_panel.y + layout.shortcuts_panel.h) {
+      break;
+    }
+    text_renderer.DrawStringOn(renderer, layout.shortcuts_panel.x, sc_y, theme.surface_text,
+                               theme.surface_raised,
+                               text_renderer.TruncateToWidth(shortcut.keys, keys_col - 8.0f));
+    text_renderer.DrawStringOn(
+        renderer, layout.shortcuts_panel.x + keys_col, sc_y, theme.text_secondary,
+        theme.surface_raised,
+        text_renderer.TruncateToWidth(shortcut.label, layout.shortcuts_panel.w - keys_col - 8.0f));
+    sc_y += sc_row_step;
+  }
 
-  static constexpr std::array<CheatRow, 40> kToolShortcuts = {{
-      {"Tree Up / Down", "move tree selection"},
-      {"Tree Left / Right", "collapse / expand"},
-      {"Tree Enter", "open file or toggle dir"},
-      {"Tree R", "refresh tree"},
-      {"Tree D", "compare selected file"},
-      {"Finder type", "filter project files"},
-      {"Finder Backspace", "delete query char"},
-      {"Finder Up / Down / Pg", "move result selection"},
-      {"Finder Enter", "open selected file"},
-      {"Search Up / Down / Home / End", "move result selection"},
-      {"Search PgUp / PgDn", "page through results"},
-      {"Search Enter / Right", "open selected result"},
-      {"Search /", "edit query"},
-      {"Search =", "edit replace text"},
-      {"Search buttons", "toggle Lit/Rx, case mode, and hidden files"},
-      {"Search r", "rerun current query"},
-      {"Search R", "replace all literal matches"},
-      {"Search Esc", "close temporary search"},
-      {"Buffer search type", "filter buffer matches"},
-      {"Buffer search Backspace", "delete query char"},
-      {"Buffer search Up / Down / Pg", "move match selection"},
-      {"Buffer search Enter", "jump to match and close"},
-      {"Buffer replace Tab", "switch query / replace field"},
-      {"Buffer replace Enter", "replace current match"},
-      {"Buffer replace Ctrl+Enter", "replace all matches"},
-      {"Compare j / k or arrows", "move compare rows"},
-      {"Compare [ / ]", "jump previous / next hunk"},
-      {"Compare Enter / o", "open working file"},
-      {"Compare Esc", "close compare tab"},
-      {"Merge Alt+[ / Alt+]", "move previous / next conflict"},
-      {"Merge Alt+I / B / C / M", "take incoming / base / current / both"},
-      {"Merge type / edit", "edit the result pane directly"},
-      {"Merge click / drag", "select text or resize merge panes"},
-      {"Merge Alt+O / Esc", "open result / close merge tab"},
-      {"Split click", "focus the hovered editor split"},
-      {"Split divider drag", "resize editor split"},
-      {"Terminal click", "focus the terminal panel"},
-      {"Terminal type / Enter", "send text / run command"},
-      {"Terminal arrows / Pg / Home", "send terminal navigation keys"},
-      {"Dirty prompt Tab / Enter / Esc", "pick / confirm / cancel"},
-  }};
-
-  static constexpr std::array<CheatRow, 38> kCommands = {{
-      {"colorscheme [name]", ""},
-      {"ui-scale [n|up|down|reset]", ""},
-      {"help", ""},
-      {"open <path>", ""},
-      {"tab [path]", ""},
-      {"tabswitch <tab>", ""},
-      {"tabmove <n>", ""},
-      {"compare [path] [commit]", ""},
-      {"merge <base> <incoming> <current> [output]", ""},
-      {"tab-size [n]", ""},
-      {"indent-width [n]", ""},
-      {"soft-tabs [on|off]", ""},
-      {"save", ""},
-      {"quit", ""},
-      {"jump <line[:col]>", ""},
-      {"vsplit [path]", ""},
-      {"unsplit", ""},
-      {"split-next", ""},
-      {"split-prev", ""},
-      {"split-first", ""},
-      {"split-last", ""},
-      {"term [command]", ""},
-      {"find <query>", ""},
-      {"files [root]", ""},
-      {"tree [root]", ""},
-      {"search <query>", ""},
-      {"project-search [query]", ""},
-      {"goto <line[:col]>", ""},
-      {"tree-refresh", ""},
-      {"sidebar-toggle [tool]", ""},
-      {"sidebar-show [tool]", ""},
-      {"sidebar-hide", ""},
-      {"sidebar-close", ""},
-      {"sidebar-width <n>", ""},
-      {"focus <editor|sidebar|panel>", ""},
-  }};
-
-  const float card_width = std::min(rect.w - 48.0f, 1180.0f);
-  const float card_height = std::min(rect.h - 48.0f, 620.0f);
-  const float card_x = rect.x + std::max(24.0f, (rect.w - card_width) * 0.5f);
-  const float card_y = rect.y + std::max(24.0f, rect.h * 0.05f);
-  const SDL_FRect card = SDL_FRect{card_x, card_y, std::max(320.0f, card_width), card_height};
-  const SDL_FRect header =
-      render::DrawTitledCardFrame(renderer, theme, card, 32.0f, render::CardStyle::Raised);
-
-  const float inset_x = card.x + 18.0f;
-  text_renderer.DrawStringOn(renderer, inset_x, header.y + 8.0f, theme.chrome_text,
-                             theme.chrome_background, "Workspace Ready");
-  text_renderer.DrawStringOn(renderer, inset_x, card.y + 46.0f, theme.text_secondary,
-                             theme.surface_raised,
-                             "Open a file from the tree or use this reference while the editor is empty.");
-  text_renderer.DrawStringOn(renderer, inset_x, card.y + 64.0f, theme.text_muted,
-                             theme.surface_raised,
-                             microide::workspace::JoinHintSegments(
-                                 {"Commands on the right", "Shortcuts on the left"}));
-
-  const float panels_y = card.y + 98.0f;
-  const float panels_h = card.h - 132.0f;
-  const float panel_gap = 12.0f;
-  const float panel_w = (card.w - 36.0f - panel_gap * 2.0f) / 3.0f;
-  const SDL_FRect core_panel = SDL_FRect{card.x + 12.0f, panels_y, panel_w, panels_h};
-  const SDL_FRect tool_panel =
-      SDL_FRect{core_panel.x + core_panel.w + panel_gap, panels_y, panel_w, panels_h};
-  const SDL_FRect command_panel =
-      SDL_FRect{tool_panel.x + tool_panel.w + panel_gap, panels_y, panel_w, panels_h};
-
-  draw_panel(core_panel, "Core Shortcuts", kCoreShortcuts, 128.0f);
-  draw_panel(tool_panel, "Tool Shortcuts", kToolShortcuts, 148.0f);
-  draw_panel(command_panel, "Command Palette", kCommands, 0.0f);
-
-  // Backend label is rebuilt only when the placeholder view is drawn (i.e. there is no open file).
-  // Still cheap, but reuse a thread_local so the placeholder paint stays allocation-free per
-  // frame.
-  thread_local std::string backend_label_scratch;
-  backend_label_scratch.clear();
-  backend_label_scratch.reserve(20 + text_renderer.BackendName().size());
-  backend_label_scratch.append("text renderer: ");
-  backend_label_scratch.append(text_renderer.BackendName());
-  const float backend_width = text_renderer.MeasureWidth(backend_label_scratch);
-  text_renderer.DrawStringOn(renderer, card.x + card.w - backend_width - 18.0f,
-                             card.y + card.h - 24.0f, theme.text_disabled,
-                             theme.surface_raised, backend_label_scratch);
+  text_renderer.DrawStringOn(renderer, inset_x, card.y + card.h - line_height - 10.0f,
+                             theme.text_muted, theme.surface_raised,
+                             text_renderer.TruncateToWidth(model.palette_hint, card.w - 40.0f));
 }
 
 }  // namespace
@@ -317,7 +203,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 bool bracket_match_highlight_enabled,
                                 bool indent_guides_enabled,
                                 bool render_whitespace_enabled,
-                                const FoldingModel* folding_model) const {
+                                const FoldingModel* folding_model,
+                                const WelcomeViewModel* welcome_view) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -328,7 +215,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   SDL_RenderFillRect(renderer, &rect);
 
   if (viewport.is_placeholder()) {
-    DrawPlaceholderView(renderer, text_renderer, theme, rect);
+    if (welcome_view != nullptr) {
+      DrawPlaceholderView(renderer, text_renderer, theme, rect, *welcome_view);
+    }
     viewport.SetViewportSize(1, 1);
     return;
   }

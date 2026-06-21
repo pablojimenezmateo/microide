@@ -831,6 +831,17 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                       : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane_it->leaf_id)
                                                : nullptr);
   if (viewport == nullptr || viewport->is_placeholder()) {
+    // The welcome home surface shows clickable recent projects and an open-folder
+    // affordance; show the pointer over those, the text caret elsewhere.
+    editor::WelcomeViewModel welcome_model;
+    editor::WelcomeLayout welcome_layout;
+    if (ProbeWelcomeSurface(&welcome_model, &welcome_layout)) {
+      for (const editor::WelcomeHitRegion& region : welcome_layout.hit_regions) {
+        if (Contains(region.rect, x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+    }
     return CursorKind::Text;
   }
 

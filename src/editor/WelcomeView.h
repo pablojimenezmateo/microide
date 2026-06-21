@@ -1,0 +1,65 @@
+#pragma once
+
+#include <SDL3/SDL.h>
+
+#include <cstddef>
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace microide::editor {
+
+// A single curated keyboard-shortcut row on the welcome surface. Sourced from the
+// command registry so the displayed key chord can never drift from the real binding.
+struct WelcomeShortcut {
+  std::string keys;
+  std::string label;
+};
+
+// A recent-project entry. `name` is the folder name (primary text), `path_display`
+// the muted full path, and `path` the value opened when the row is clicked.
+struct WelcomeRecent {
+  std::string name;
+  std::string path_display;
+  std::filesystem::path path;
+};
+
+// View model for the welcome / placeholder surface. All display strings are
+// precomputed by RenderViewModelBuilder so the render TU only draws them.
+struct WelcomeViewModel {
+  std::string title;
+  std::string subtitle;
+  std::string recents_heading;
+  std::string shortcuts_heading;
+  std::string open_folder_label;
+  std::string empty_recents_label;
+  std::string palette_hint;
+  std::vector<WelcomeRecent> recent_projects;
+  std::vector<WelcomeShortcut> shortcuts;
+};
+
+// An interactive region on the welcome surface, produced by ComputeWelcomeLayout and
+// shared by the renderer (to draw it) and the shell (to hit-test clicks / hover).
+struct WelcomeHitRegion {
+  enum class Kind { RecentProject, OpenFolder };
+  SDL_FRect rect{};
+  Kind kind = Kind::OpenFolder;
+  std::size_t recent_index = 0;  // valid when kind == RecentProject
+};
+
+struct WelcomeLayout {
+  SDL_FRect card{};
+  SDL_FRect header{};
+  SDL_FRect recents_panel{};
+  SDL_FRect shortcuts_panel{};
+  SDL_FRect open_folder_rect{};
+  std::vector<WelcomeHitRegion> hit_regions;
+};
+
+// Pure geometry: lay out the welcome card, its two panels, the recent-project rows,
+// and the open-folder affordance for a given editor rect + model. Deterministic so
+// the renderer and the shell hit-test stay in lock-step.
+WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel& model,
+                                   float line_height);
+
+}  // namespace microide::editor

@@ -4,7 +4,10 @@
 #include <cmath>
 
 #include "editor/EditorViewRenderer.h"
+#include "editor/WelcomeView.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/WorkspaceEditorMouseCoordinator.h"
@@ -357,12 +360,57 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
+  // Welcome home surface: a placeholder editor shows clickable recent projects and an
+  // open-folder affordance. Intercept those clicks before the editor coordinator turns
+  // them into a text-selection drag on the empty buffer.
+  if (event.button.button == SDL_BUTTON_LEFT) {
+    editor::WelcomeViewModel welcome_model;
+    editor::WelcomeLayout welcome_layout;
+    if (ProbeWelcomeSurface(&welcome_model, &welcome_layout)) {
+      const float click_x = static_cast<float>(event.button.x);
+      const float click_y = static_cast<float>(event.button.y);
+      for (const editor::WelcomeHitRegion& region : welcome_layout.hit_regions) {
+        if (!Contains(region.rect, click_x, click_y)) {
+          continue;
+        }
+        if (region.kind == editor::WelcomeHitRegion::Kind::RecentProject &&
+            region.recent_index < welcome_model.recent_projects.size()) {
+          OpenProjectTab(welcome_model.recent_projects[region.recent_index].path, true, true);
+        } else if (region.kind == editor::WelcomeHitRegion::Kind::OpenFolder) {
+          ActionCoordinator(MakeActionContext())
+              .Execute(ActionId::ProjectOpen, {}, ActionSource::Menu);
+        }
+        ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+        return true;
+      }
+    }
+  }
+
   util::PerformanceTrace::Scope editor_scope("WorkspaceShell::HandleMouseButtonDown::Editor");
   const bool handled = MakeEditorMouseCoordinator().HandleButtonDown(event, layout);
   if (handled) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
   return handled;
+}
+
+bool WorkspaceShell::ProbeWelcomeSurface(editor::WelcomeViewModel* model,
+                                         editor::WelcomeLayout* layout_out) const {
+  if (model == nullptr || layout_out == nullptr) {
+    return false;
+  }
+  const editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr || !viewport->is_placeholder()) {
+    return false;
+  }
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return false;
+  }
+  *model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_.RecentProjects());
+  *layout_out = editor::ComputeWelcomeLayout(layout->editor_surface, *model,
+                                             text_renderer_.LineHeight());
+  return true;
 }
 
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {

@@ -5,6 +5,7 @@
 #include <string>
 
 #include "editor/EditorViewModel.h"
+#include "editor/WelcomeView.h"
 #include "workspace/DebugViewModel.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/NotificationService.h"
@@ -15,6 +16,7 @@
 #include "workspace/WorkspaceTabState.h"
 
 #include <filesystem>
+#include <span>
 #include <string_view>
 #include <vector>
 
@@ -261,6 +263,11 @@ class RenderViewModelBuilder {
   StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
                                     const class StatusBarService& service) const;
   NotificationsViewModel BuildNotifications(const NotificationService& service) const;
+  // Welcome / placeholder home surface. `recent_projects` is the MRU list from
+  // RecentsService (newest-first); the curated shortcut rows are sourced from the
+  // command registry so the displayed key chords never drift from the real bindings.
+  editor::WelcomeViewModel BuildWelcomeView(
+      std::span<const std::filesystem::path> recent_projects) const;
   SettingsOverlayViewModel BuildSettingsOverlay(
       const WorkspaceLayout& layout,
       const class SettingsOverlayService& service) const;
