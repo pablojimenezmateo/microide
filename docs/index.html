@@ -3,12 +3,785 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>microide</title>
-  <meta name="description" content="A native, low-footprint C++/SDL3 desktop IDE focused on diff, merge, git, search, and terminal workflows.">
+  <title>microide — a native, low-footprint desktop IDE</title>
+  <meta name="description" content="A native, low-footprint C++/SDL3 desktop IDE focused on editor, diff, merge, git, search, terminal, and debugging workflows. Open source, private, no telemetry.">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+  <!-- Open Graph (optional — fill in once a real URL/image exists) -->
+  <meta property="og:title" content="microide">
+  <meta property="og:description" content="A native, low-footprint C++/SDL3 desktop IDE. Open source. No telemetry.">
+  <meta property="og:type" content="website">
+  <!-- [HUMAN: set og:url and og:image once published]
+  <meta property="og:url" content="https://pablojimenezmateo.github.io/microide/">
+  <meta property="og:image" content="https://pablojimenezmateo.github.io/microide/media/og.png">
+  -->
+
+  <style>
+    /* ---- Palette & tokens (dark, IDE-like) ---- */
+    :root {
+      --bg:        #0d1117;
+      --bg-soft:   #11161d;
+      --surface:   #161b22;
+      --surface-2: #1c2430;
+      --border:    #2a3340;
+      --border-2:  #38414f;
+      --text:      #e6edf3;
+      --muted:     #8b949e;
+      --muted-2:   #6e7681;
+      --accent:    #58c4dc;
+      --accent-2:  #7ee787;
+      --warn:      #e3b341;
+      --radius:    10px;
+      --maxw:      1080px;
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Consolas, monospace;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      * { transition: none !important; }
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.6;
+      font-size: 17px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .container { width: 100%; max-width: var(--maxw); margin-inline: auto; padding-inline: 24px; }
+
+    section { padding-block: 64px; border-top: 1px solid var(--border); }
+    section:first-of-type { border-top: 0; }
+
+    /* monospace section eyebrow, like an editor breadcrumb */
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 13px;
+      letter-spacing: .04em;
+      color: var(--accent);
+      text-transform: lowercase;
+      margin: 0 0 8px;
+    }
+    .eyebrow::before { content: "// "; color: var(--muted-2); }
+
+    h1, h2, h3 { line-height: 1.2; margin-top: 0; }
+    h2 { font-size: clamp(24px, 3.2vw, 34px); }
+    h3 { font-size: 19px; }
+    p.lead { color: var(--muted); font-size: 19px; max-width: 60ch; }
+
+    .placeholder {
+      color: var(--warn);
+      font-style: italic;
+      background: rgba(227,179,65,.08);
+      border-left: 3px solid var(--warn);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    /* ---- Header / hero ---- */
+    .hero {
+      background:
+        radial-gradient(1200px 500px at 50% -10%, rgba(88,196,220,.12), transparent 60%),
+        var(--bg);
+      padding-top: 88px;
+    }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 16px; margin-bottom: 64px;
+    }
+    .wordmark {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-family: var(--mono); font-weight: 700; font-size: 20px; color: var(--text);
+    }
+    .wordmark .logo { width: 28px; height: 28px; display: block; }
+    .wordmark .blink { color: var(--accent); }
+    .nav { display: flex; gap: 22px; font-size: 15px; }
+    .nav a { color: var(--muted); }
+    .nav a:hover { color: var(--text); text-decoration: none; }
+
+    .hero h1 { font-size: clamp(38px, 6vw, 64px); letter-spacing: -.02em; margin-bottom: 16px; }
+    .hero .sub { color: var(--muted); font-size: clamp(18px, 2.4vw, 22px); max-width: 56ch; margin-bottom: 28px; }
+    .hero .sub strong { color: var(--text); font-weight: 600; }
+
+    .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 40px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 11px 20px; border-radius: var(--radius);
+      font-weight: 600; font-size: 15px; cursor: pointer;
+      border: 1px solid var(--border-2); color: var(--text); background: var(--surface);
+      transition: background .15s, border-color .15s, transform .05s;
+    }
+    .btn:hover { background: var(--surface-2); border-color: var(--accent); text-decoration: none; }
+    .btn:active { transform: translateY(1px); }
+    .btn.primary { background: var(--accent); color: #06222a; border-color: var(--accent); }
+    .btn.primary:hover { background: #6fd2e8; }
+
+    /* vibecoded banner */
+    .vibe-banner {
+      display: flex; align-items: flex-start; gap: 14px;
+      background: linear-gradient(90deg, rgba(126,231,135,.08), rgba(88,196,220,.06));
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 18px 20px; margin-top: 8px;
+    }
+    .vibe-banner .tag {
+      font-family: var(--mono); font-size: 12px; font-weight: 700;
+      color: var(--accent-2); border: 1px solid var(--accent-2); border-radius: 999px;
+      padding: 3px 10px; white-space: nowrap; margin-top: 2px;
+    }
+    .vibe-banner p { margin: 0; color: var(--muted); font-size: 15px; }
+
+    /* ---- Video ---- */
+    .video-wrap {
+      border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      background: var(--bg-soft); box-shadow: 0 18px 60px rgba(0,0,0,.45);
+    }
+    .video-chrome {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--surface);
+    }
+    .video-chrome .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--border-2); }
+    .video-chrome .title { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: 8px; }
+    video { display: block; width: 100%; height: auto; background: #000; }
+    .video-fallback {
+      aspect-ratio: 16 / 9; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 8px;
+      color: var(--muted); font-family: var(--mono); font-size: 14px; text-align: center; padding: 24px;
+    }
+    figcaption { color: var(--muted); font-size: 14px; text-align: center; margin-top: 12px; }
+
+    /* ---- Pillars ---- */
+    .grid { display: grid; gap: 18px; }
+    .pillars { grid-template-columns: repeat(4, 1fr); }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 22px;
+    }
+    .card h3 { margin-bottom: 8px; }
+    .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+    /* ---- LLM control (headline) ---- */
+    .feature-llm {
+      background:
+        radial-gradient(900px 400px at 80% 0%, rgba(126,231,135,.06), transparent 60%),
+        var(--bg-soft);
+    }
+    .llm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: start; }
+    .badge-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; }
+    .chip {
+      font-family: var(--mono); font-size: 13px; color: var(--text);
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 10px;
+    }
+
+    pre {
+      margin: 0; background: #0a0e14; border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px; overflow-x: auto;
+      font-family: var(--mono); font-size: 13.5px; line-height: 1.7; color: #c9d1d9;
+    }
+    pre .c { color: var(--muted-2); }    /* comment */
+    pre .k { color: var(--accent); }      /* command/keyword */
+    pre .s { color: var(--accent-2); }    /* string/json key */
+    code.inline {
+      font-family: var(--mono); font-size: .9em; background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px;
+    }
+
+    /* ---- Feature grid ---- */
+    .features { grid-template-columns: repeat(3, 1fr); }
+    .feature h3 { font-family: var(--mono); font-size: 15px; color: var(--accent); margin-bottom: 12px; }
+    .feature ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 15px; }
+    .feature li { margin-bottom: 6px; }
+
+    /* ---- Checklist ---- */
+    .checklist { columns: 2; column-gap: 40px; list-style: none; padding: 0; margin: 0; }
+    .checklist li { break-inside: avoid; margin-bottom: 12px; padding-left: 30px; position: relative; }
+    .checklist li::before {
+      content: "✓"; position: absolute; left: 0; top: 0;
+      color: var(--accent-2); font-weight: 700;
+    }
+    .checklist li b { color: var(--text); font-weight: 600; }
+    .checklist li span { color: var(--muted); }
+
+    /* ---- Gallery ---- */
+    .gallery { grid-template-columns: repeat(3, 1fr); }
+    .shot {
+      margin: 0; border: 1px solid var(--border); border-radius: var(--radius);
+      overflow: hidden; background: var(--surface);
+    }
+    .shot .frame {
+      aspect-ratio: 16 / 10; display: flex; align-items: center; justify-content: center;
+      color: var(--muted-2); font-family: var(--mono); font-size: 13px;
+      background: repeating-linear-gradient(45deg, #11161d, #11161d 12px, #131a22 12px, #131a22 24px);
+    }
+    .shot figcaption { text-align: left; padding: 10px 14px; margin: 0; }
+
+    /* ---- Tech stack ---- */
+    .stack { display: flex; flex-wrap: wrap; gap: 10px; }
+    .stack .chip { font-size: 14px; padding: 6px 12px; }
+
+    /* ---- Get started ---- */
+    .start-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+
+    /* ---- Footer ---- */
+    footer { border-top: 1px solid var(--border); padding-block: 40px; color: var(--muted); font-size: 14px; }
+    footer .row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; }
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--text); }
+
+    /* ---- Responsive ---- */
+    @media (max-width: 880px) {
+      .pillars { grid-template-columns: repeat(2, 1fr); }
+      .features { grid-template-columns: repeat(2, 1fr); }
+      .gallery { grid-template-columns: repeat(2, 1fr); }
+      .llm-grid, .start-grid { grid-template-columns: 1fr; }
+      .checklist { columns: 1; }
+      .nav { display: none; }
+    }
+    @media (max-width: 560px) {
+      .pillars, .features, .gallery { grid-template-columns: 1fr; }
+      section { padding-block: 48px; }
+    }
+  </style>
 </head>
+
 <body>
+
+  <!-- ============ HERO ============ -->
+  <header class="hero">
+    <div class="container">
+      <div class="topbar">
+        <span class="wordmark">
+          <svg class="logo" viewBox="0 0 32 32" role="img" aria-label="microide logo">
+            <rect x="1" y="1" width="30" height="30" rx="8" fill="#11161d" stroke="#2a3340"/>
+            <path d="M9.5 21.5V13Q9.5 11.5 11 11.5H14.5Q16 11.5 16 13V21.5" fill="none" stroke="#58c4dc" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 13Q16 11.5 17.5 11.5H21Q22.5 11.5 22.5 13V21.5" fill="none" stroke="#7ee787" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          microide<span class="blink">_</span>
+        </span>
+        <nav class="nav">
+          <a href="#demo">Demo</a>
+          <a href="#llm">LLM control</a>
+          <a href="#features">Features</a>
+          <a href="#start">Get started</a>
+          <a href="https://github.com/pablojimenezmateo/microide">GitHub</a>
+        </nav>
+      </div>
+
+      <h1><span class="placeholder">[HUMAN: headline tagline — one punchy line]</span></h1>
+      <p class="sub">
+        A <strong>native, low-footprint</strong> C++/SDL3 desktop IDE focused on editor, diff,
+        merge, git, search, terminal, and debugging workflows. Single-window, keyboard-first,
+        runs without GPU acceleration.
+        <br><span class="placeholder">[HUMAN: one more sentence in your own voice]</span>
+      </p>
+
+      <div class="cta-row">
+        <a class="btn primary" href="https://github.com/pablojimenezmateo/microide">View on GitHub</a>
+        <a class="btn" href="#demo">Watch the demo</a>
+        <a class="btn" href="#start">Get started</a>
+      </div>
+
+      <div class="vibe-banner">
+        <span class="tag">100% vibecoded</span>
+        <p>
+          <span class="placeholder">[HUMAN: write the vibecoded story — every line of source, every
+          test, and every doc was written by AI coding agents under human direction. Say why that
+          matters to you.]</span>
+        </p>
+      </div>
+    </div>
+  </header>
+
   <main>
-    <h1>microide</h1>
+
+    <!-- ============ DEMO VIDEO ============ -->
+    <section id="demo">
+      <div class="container">
+        <p class="eyebrow">demo</p>
+        <h2>See it in motion</h2>
+        <p class="lead">
+          <span class="placeholder">[HUMAN: one line setting up the combined demo — multiple projects,
+          diff &amp; merge, the debugger, and LLM control, all in a single take.]</span>
+        </p>
+
+        <figure style="margin:24px 0 0;">
+          <div class="video-wrap">
+            <div class="video-chrome">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              <span class="title">microide — demo.mp4</span>
+            </div>
+            <!-- Drop the recorded file(s) into docs/media/. Poster shows until played. -->
+            <video controls preload="none" poster="media/hero-poster.png">
+              <source src="media/hero-demo.webm" type="video/webm">
+              <source src="media/hero-demo.mp4" type="video/mp4">
+              <!-- Shown if the browser can't play / files are not present yet -->
+              <div class="video-fallback">
+                <span>combined demo goes here</span>
+                <span>[HUMAN: add docs/media/hero-demo.mp4 (+ optional .webm and hero-poster.png)]</span>
+              </div>
+            </video>
+          </div>
+          <figcaption>
+            <span class="placeholder">[HUMAN: caption — what the viewer is watching]</span>
+          </figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <!-- ============ PILLARS ============ -->
+    <section id="why">
+      <div class="container">
+        <p class="eyebrow">why microide</p>
+        <h2>Built around a few firm principles</h2>
+        <div class="grid pillars" style="margin-top:28px;">
+
+          <div class="card">
+            <h3>Fast &amp; low footprint</h3>
+            <p>
+              <span class="placeholder">[HUMAN: speak to responsiveness and a small footprint. Hot
+              paths are gated by an automated performance harness with committed baselines — but keep
+              specific numbers out unless you can stand behind a measured figure.]</span>
+            </p>
+          </div>
+
+          <div class="card">
+            <h3>Private &amp; local — no telemetry</h3>
+            <p>
+              The core editor makes no network connections — no networking library is even linked.
+              No accounts, no telemetry, no update checks, no phoning home.
+              <span class="placeholder">[HUMAN: your privacy promise, in your own words. Project state
+              stays on your machine.]</span>
+            </p>
+          </div>
+
+          <div class="card">
+            <h3>Open source (MIT)</h3>
+            <p>
+              Released under the MIT license. Read it, build it, fork it, ship it.
+              <span class="placeholder">[HUMAN: add your own line if you like.]</span>
+            </p>
+          </div>
+
+          <div class="card">
+            <h3>Native &amp; keyboard-first</h3>
+            <p>
+              A single-window native app that runs without GPU acceleration.
+              <span class="placeholder">[HUMAN: your take on the keyboard-first workflow.]</span>
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ LLM CONTROL (headline differentiator) ============ -->
+    <section id="llm" class="feature-llm">
+      <div class="container">
+        <p class="eyebrow">the big idea</p>
+        <h2>Drive the IDE with an LLM — a different kind of AI editor</h2>
+        <div class="llm-grid" style="margin-top:28px;">
+
+          <div>
+            <p class="lead" style="margin-top:0;">
+              <span class="placeholder">[HUMAN: the pitch. Most "AI IDEs" bolt a chatbot into a panel.
+              microide does the opposite: it exposes the whole command palette over an external control
+              channel, so an LLM agent can actually operate the editor — set breakpoints, launch the
+              debugger, step, read state — and stream results back. Explain why that's a more useful way
+              to use an LLM.]</span>
+            </p>
+
+            <div class="badge-row">
+              <span class="chip">headless --control</span>
+              <span class="chip">JSONL protocol</span>
+              <span class="chip">AF_UNIX socket</span>
+              <span class="chip">scriptable debugging</span>
+            </div>
+
+            <p style="color:var(--muted); font-size:15px; margin-top:20px;">
+              Everything routes through the same chokepoint as the command palette — the channel adds a
+              transport and vocabulary, not a parallel code path.
+              Full reference:
+              <a href="https://github.com/pablojimenezmateo/microide/blob/main/dev-docs/control/control-channel.md">control-channel.md</a>.
+            </p>
+          </div>
+
+          <div>
+<pre><span class="c"># Drive a running instance and stream results as JSONL</span>
+<span class="k">microide</span> --control --control-spec /tmp/debug.spec.json
+
+<span class="c"># One-shot client — no socket plumbing, no hand-written JSON</span>
+<span class="k">microide</span> control-send breakpoint-function-add main
+<span class="k">microide</span> control-send --query launch-configs
+<span class="k">microide</span> control-send debug-run ./build/app --wait stopped
+
+<span class="c"># What the agent reads back on stdout:</span>
+{<span class="s">"event"</span>:<span class="s">"ready"</span>,<span class="s">"pid"</span>:1234,<span class="s">"socket"</span>:<span class="s">"…"</span>}
+{<span class="s">"id"</span>:1,<span class="s">"ok"</span>:true,<span class="s">"feedback"</span>:<span class="s">"…"</span>}
+{<span class="s">"event"</span>:<span class="s">"stopped"</span>,<span class="s">"reason"</span>:<span class="s">"breakpoint"</span>,
+ <span class="s">"file"</span>:<span class="s">"src/main.cpp"</span>,<span class="s">"line"</span>:42,<span class="s">"threadId"</span>:1}</pre>
+            <p style="color:var(--muted-2); font-size:13px; margin:10px 0 0; font-family:var(--mono);">
+              Commands &amp; protocol above are from the project docs — real, not illustrative.
+            </p>
+          </div>
+
+        </div>
+
+        <div class="grid features" style="margin-top:36px;">
+
+          <div class="card">
+            <h3>Let an agent debug for you</h3>
+            <p>
+              Set breakpoints, launch, and step entirely over the channel
+              (<code class="inline">breakpoint-set</code>, <code class="inline">debug-run</code>,
+              <code class="inline">debug-step-over</code>) while the agent reads
+              <code class="inline">debug-state</code> and reacts to <code class="inline">stopped</code>
+              events — even stepping <em>backwards</em> when the adapter supports it.
+              <span class="placeholder">[HUMAN: paint the picture — hand the bug to the model and let
+              it drive the debugger.]</span>
+            </p>
+          </div>
+
+          <div class="card">
+            <h3>One-command, reproducible setups</h3>
+            <p>
+              A <code class="inline">--control-spec</code> JSON opens a project with breakpoints and a
+              launch config already applied before the window is even interactive.
+              <span class="placeholder">[HUMAN: the value — hand a teammate (or an agent) a single
+              file that reproduces the exact debug scenario.]</span>
+            </p>
+          </div>
+
+          <div class="card">
+            <h3>Script the whole IDE</h3>
+            <p>
+              The channel mirrors the command palette, so any tool can drive the editor headlessly —
+              open files, run commands, query state — and stream JSONL events back.
+              <span class="placeholder">[HUMAN: your angle — automation, CI, custom agent loops,
+              whatever you reach for.]</span>
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ FEATURES ============ -->
+    <section id="features">
+      <div class="container">
+        <p class="eyebrow">what works today</p>
+        <h2>A full IDE shell, not a toy</h2>
+        <p class="lead"><span class="placeholder">[HUMAN: optional intro line.]</span></p>
+
+        <div class="grid features" style="margin-top:28px;">
+
+          <div class="feature">
+            <h3>Editor</h3>
+            <ul>
+              <li>Multi-project &amp; file tabs, nested splits</li>
+              <li>UTF-8 aware, IME preedit, line-ending preservation</li>
+              <li>Multi-caret editing &amp; region highlighting</li>
+              <li>Syntax highlighting with checkpointed state</li>
+              <li>Undo/redo with word-level coalescing</li>
+              <li>Async git blame shadow text</li>
+              <li>Session restore across restarts</li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Diff &amp; Merge</h3>
+            <ul>
+              <li>Compare working tree vs HEAD or any commit</li>
+              <li>Three-way merge with per-hunk picks</li>
+              <li>Shared decorated text-grid pipeline</li>
+              <li>Change-overview lane beside the scrollbar</li>
+              <li><code class="inline">[</code>/<code class="inline">]</code> hunk navigation</li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Git</h3>
+            <ul>
+              <li>Sidebar: changes, staged, conflicts, outgoing</li>
+              <li>Per-file stage / discard, bulk stage-all</li>
+              <li>Conflicts open straight into a merge tab</li>
+              <li>Editable commit message, branch/commit picker</li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Search</h3>
+            <ul>
+              <li>Parallelized project search, literal or regex</li>
+              <li>Count-all totals with match highlighting</li>
+              <li>Replace-in-project (literal mode)</li>
+              <li>File finder overlay with cached index</li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Terminal</h3>
+            <ul>
+              <li>PTY-backed tabs with scrollback &amp; selection</li>
+              <li>Alternate-screen, bracketed paste, OSC 52 copy</li>
+              <li>Tab drag reordering</li>
+              <li>Copy last command + output</li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Debugger (DAP)</h3>
+            <ul>
+              <li>Full DAP client, multi-session</li>
+              <li>Line / conditional / function breakpoints, logpoints</li>
+              <li>Step over / in / out, pause, restart</li>
+              <li>Reverse continue &amp; step back (when supported)</li>
+              <li>Call stack, variables, watch, hover-to-inspect</li>
+              <li>Debug console REPL · bundled <code class="inline">gdb-dap</code></li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Plugins (Lua 5.4)</h3>
+            <ul>
+              <li>Lifecycle hooks, commands, sidebars</li>
+              <li>Diagnostics, hover &amp; completion providers</li>
+              <li>Host-owned registries (keybindings, menus, …)</li>
+              <li>Hot reload on file change (Linux)</li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>LSP &amp; Tools</h3>
+            <ul>
+              <li>LSP client transport</li>
+              <li>Tool downloader with SHA verification</li>
+              <li>Native file-watch backend (inotify on Linux)</li>
+            </ul>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ EXPECTED IDE PROPERTIES ============ -->
+    <section id="expect">
+      <div class="container">
+        <p class="eyebrow">the table stakes</p>
+        <h2>Everything you expect from an IDE</h2>
+        <p class="lead">
+          <span class="placeholder">[HUMAN: optional line — "the boring fundamentals, done right."]</span>
+        </p>
+        <ul class="checklist" style="margin-top:24px;">
+          <li><b>Syntax highlighting</b> <span>— checkpointed, fast in large files</span></li>
+          <li><b>Multi-tab editing</b> <span>— projects, files, and splits</span></li>
+          <li><b>Split panes</b> <span>— nested, shared-buffer</span></li>
+          <li><b>Project-wide search</b> <span>— literal &amp; regex, replace</span></li>
+          <li><b>File finder</b> <span>— cached, fuzzy overlay</span></li>
+          <li><b>Integrated git</b> <span>— stage, commit, diff, merge</span></li>
+          <li><b>Integrated terminal</b> <span>— real PTY-backed tabs</span></li>
+          <li><b>Debugging</b> <span>— breakpoints, stepping, variables</span></li>
+          <li><b>Multi-caret editing</b> <span>— with position remap</span></li>
+          <li><b>Session restore</b> <span>— picks up where you left off</span></li>
+          <li><b>Plugins</b> <span>— extend it in Lua</span></li>
+          <li><b>Keyboard-first</b> <span>— a command palette for everything</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ SECURITY & TRUST ============ -->
+    <section id="security">
+      <div class="container">
+        <p class="eyebrow">security &amp; trust</p>
+        <h2>Honest about what it does — and doesn't — protect</h2>
+        <p class="lead">
+          <span class="placeholder">[HUMAN: your framing. The headline: plugins run in-process but
+          under an enforced per-plugin capability sandbox. It's meaningfully contained, not fully
+          isolated — and the docs say so plainly. Lead with that honesty.]</span>
+        </p>
+
+        <div class="grid features" style="margin-top:28px;">
+
+          <div class="feature">
+            <h3>Capability-sandboxed plugins</h3>
+            <ul>
+              <li>Filesystem access contained to the project root</li>
+              <li>Process execution is <b>default-deny</b></li>
+              <li>Formatters / LSPs / tasks rejected without <code class="inline">process.exec</code></li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Linux hardening</h3>
+            <ul>
+              <li>Plugin children + language servers confined with <b>Landlock</b></li>
+              <li>Writes limited to the project + plugin data dir</li>
+              <li>Optional <b>seccomp</b> IPv4/IPv6 socket block</li>
+            </ul>
+          </div>
+
+          <div class="feature">
+            <h3>Safe by default</h3>
+            <ul>
+              <li>User-scope plugins only — repo-local plugin trees are <b>ignored</b></li>
+              <li>Opening a cloned repo never runs plugin code from it</li>
+              <li><code class="inline">--safe-mode</code> / <code class="inline">--disable-plugins</code> for unfamiliar repos</li>
+            </ul>
+          </div>
+
+        </div>
+
+        <div class="vibe-banner" style="margin-top:22px;">
+          <span class="tag">local-only</span>
+          <p>
+            <b style="color:var(--text);">The editor makes no network connections.</b> No HTTP or
+            networking library is linked into the binary at all. Language servers, the debugger, and
+            the LLM control channel are all local — child processes over stdio, or a user-private
+            <code class="inline">AF_UNIX</code> socket. The only way anything reaches the network is a
+            plugin <em>you</em> install that explicitly declares the <code class="inline">network</code>
+            capability; it's default-deny, and on Linux it can be hard-blocked with seccomp.
+          </p>
+        </div>
+
+        <div class="vibe-banner" style="margin-top:14px;">
+          <span class="tag" style="color:var(--warn); border-color:var(--warn);">not full isolation</span>
+          <p>
+            In the interest of honesty: there's no plugin signing, no marketplace trust, no first-run
+            capability prompt, and the Lua state still runs in-process — a plugin granted
+            <code class="inline">process.exec</code> can still run tools that read your project. No
+            signed release binaries yet; build from source and verify checksums.
+            Full model:
+            <a href="https://github.com/pablojimenezmateo/microide/blob/main/SECURITY.md">SECURITY.md</a>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SCREENSHOTS ============ -->
+    <section id="shots">
+      <div class="container">
+        <p class="eyebrow">screenshots</p>
+        <h2>A look around</h2>
+        <p class="lead"><span class="placeholder">[HUMAN: optional intro. Drop PNGs into docs/media/ and
+          wire them into the figures below — or delete this whole section if you'd rather let the video
+          carry it.]</span></p>
+
+        <div class="grid gallery" style="margin-top:28px;">
+          <!-- Replace each .frame with: <img src="media/shot-editor.png" alt="…"> -->
+          <figure class="shot">
+            <div class="frame">media/shot-1.png</div>
+            <figcaption><span class="placeholder">[HUMAN: e.g. Editor + git blame]</span></figcaption>
+          </figure>
+          <figure class="shot">
+            <div class="frame">media/shot-2.png</div>
+            <figcaption><span class="placeholder">[HUMAN: e.g. Three-way merge]</span></figcaption>
+          </figure>
+          <figure class="shot">
+            <div class="frame">media/shot-3.png</div>
+            <figcaption><span class="placeholder">[HUMAN: e.g. Debugger paused]</span></figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ TECH STACK ============ -->
+    <section id="stack">
+      <div class="container">
+        <p class="eyebrow">under the hood</p>
+        <h2>Boring, dependable building blocks</h2>
+        <div class="stack" style="margin-top:24px;">
+          <span class="chip">C++20</span>
+          <span class="chip">CMake</span>
+          <span class="chip">SDL3</span>
+          <span class="chip">SDL3_ttf</span>
+          <span class="chip">PCRE2</span>
+          <span class="chip">Lua 5.4</span>
+          <span class="chip">PTY terminal</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ GET STARTED ============ -->
+    <section id="start">
+      <div class="container">
+        <p class="eyebrow">get started</p>
+        <h2>Get it running</h2>
+        <p class="lead" style="margin-top:8px;">
+          <span class="placeholder">[HUMAN: one line — grab the prebuilt package, or build from
+          source in two commands.]</span>
+        </p>
+
+        <div class="card" style="margin-top:24px; border-color: var(--accent);">
+          <h3 style="font-family:var(--mono); color:var(--accent); margin-bottom:12px;">
+            Install the prebuilt package
+            <span style="color:var(--muted); font-weight:400;">&mdash; Linux (amd64)</span>
+          </h3>
+<pre><span class="c"># Download microide_&lt;version&gt;_amd64.deb and its .sha256 from Releases</span>
+<span class="k">sha256sum</span> -c microide_&lt;version&gt;_amd64.deb.sha256
+<span class="k">sudo dpkg</span> -i microide_&lt;version&gt;_amd64.deb</pre>
+          <div style="margin-top:16px; display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+            <a class="btn primary" href="https://github.com/pablojimenezmateo/microide/releases/latest">Download latest .deb</a>
+            <span style="color:var(--muted-2); font-size:13px;">
+              Each release attaches a prebuilt <code class="inline">.deb</code> + checksum. Builds are
+              unsigned &mdash; prefer to verify it yourself? Build from source below.
+            </span>
+          </div>
+        </div>
+
+        <div class="start-grid" style="margin-top:18px;">
+
+          <div>
+            <h3 style="font-family:var(--mono); color:var(--accent);">Build from source</h3>
+<pre><span class="c"># Requires CMake 3.28+, a C++20 compiler, SDL3 dev package</span>
+<span class="k">cmake</span> -S . -B build
+<span class="k">cmake</span> --build build -j8
+<span class="k">./build/microide/microide</span></pre>
+          </div>
+
+          <div>
+            <h3 style="font-family:var(--mono); color:var(--accent);">Package it yourself</h3>
+<pre><span class="c"># Build &amp; install your own .deb (Linux)</span>
+<span class="k">./scripts/package-deb.sh</span>
+<span class="k">sudo ./scripts/install-deb.sh</span></pre>
+            <p style="color:var(--muted); font-size:15px;">
+              <span class="placeholder">[HUMAN: a line about platforms / where to file issues.]</span>
+            </p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
   </main>
+
+  <!-- ============ FOOTER ============ -->
+  <footer>
+    <div class="container row">
+      <div>
+        <span class="wordmark" style="font-size:16px;">microide<span class="blink">_</span></span>
+        <p style="margin:8px 0 0;">MIT License · © 2026 Pablo Jiménez Mateo</p>
+      </div>
+      <div style="text-align:right;">
+        <p style="margin:0;">
+          <a href="https://github.com/pablojimenezmateo/microide">GitHub</a> ·
+          <a href="https://github.com/pablojimenezmateo/microide/blob/main/dev-docs/control/control-channel.md">LLM control</a> ·
+          <a href="https://github.com/pablojimenezmateo/microide/blob/main/LICENSE">License</a>
+        </p>
+        <p style="margin:8px 0 0; color:var(--muted-2);">
+          Written by AI coding agents under human direction.
+        </p>
+      </div>
+    </div>
+  </footer>
+
 </body>
 </html>
