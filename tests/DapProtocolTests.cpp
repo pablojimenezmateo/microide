@@ -87,6 +87,34 @@ void TestDapProtocolParsesCapabilities() {
   Expect(!caps.supports_function_breakpoints, "absent capability defaults to false");
 }
 
+void TestDapProtocolMergesPartialCapabilities() {
+  // The DAP `capabilities` event carries a *partial* Capabilities object. A merge
+  // must flip only the stated fields and preserve everything initialize advertised —
+  // re-running ParseCapabilities would reset the absent flags to false. This is the
+  // gdb-under-rr/record case: it turns supportsStepBack on after initialize.
+  codec::DapCapabilities caps = codec::ParseCapabilities(
+      Json(R"({"supportsConfigurationDoneRequest":true,"supportsSetVariable":true,
+          "exceptionBreakpointFilters":[{"filter":"raised","label":"Raised"}]})"));
+  Expect(!caps.supports_step_back, "step-back starts off (gdb omits it at init)");
+
+  codec::MergeCapabilities(caps, Json(R"({"supportsStepBack":true})"));
+  Expect(caps.supports_step_back, "partial merge turns step-back on");
+  Expect(caps.supports_configuration_done_request,
+         "partial merge preserves an unrelated capability");
+  Expect(caps.supports_set_variable, "partial merge preserves setVariable");
+  Expect(caps.exception_filters.size() == 1,
+         "partial merge preserves exception filters it does not restate");
+
+  // An explicit false in the body turns a flag back off.
+  codec::MergeCapabilities(caps, Json(R"({"supportsStepBack":false})"));
+  Expect(!caps.supports_step_back, "explicit false in the body turns step-back off");
+  // Restating the filter array replaces it wholesale.
+  codec::MergeCapabilities(
+      caps, Json(R"({"exceptionBreakpointFilters":[{"filter":"a","label":"A"},
+          {"filter":"b","label":"B"}]})"));
+  Expect(caps.exception_filters.size() == 2, "restated exception-filter array replaces wholesale");
+}
+
 void TestDapProtocolParsesStoppedEvent() {
   const codec::DapStoppedEvent stopped = codec::ParseStoppedEvent(
       Json(R"({"reason":"breakpoint","threadId":1,"allThreadsStopped":true,
@@ -315,6 +343,7 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapProtocol/EncodesResponseEnvelope", TestDapProtocolEncodesResponseEnvelope);
   AddTest(tests, "DapProtocol/ParsesResponse", TestDapProtocolParsesResponse);
   AddTest(tests, "DapProtocol/ParsesCapabilities", TestDapProtocolParsesCapabilities);
+  AddTest(tests, "DapProtocol/MergesPartialCapabilities", TestDapProtocolMergesPartialCapabilities);
   AddTest(tests, "DapProtocol/ParsesStoppedEvent", TestDapProtocolParsesStoppedEvent);
   AddTest(tests, "DapProtocol/ParsesOutputEvent", TestDapProtocolParsesOutputEvent);
   AddTest(tests, "DapProtocol/ParsesThreadsStackScopesVariables",

@@ -58,6 +58,11 @@ class DapClient {
   // Capabilities reported by the adapter's initialize response (snapshot copy).
   dap_protocol::DapCapabilities Capabilities() const;
 
+  // Apply a DAP `capabilities`-event update. `capabilities_body` is the event's
+  // inner `capabilities` object (a partial Capabilities). Merges under the same
+  // lock that guards Capabilities() so a live UI read never tears.
+  void ApplyCapabilitiesUpdate(const util::JsonValue& capabilities_body);
+
   // Last startup/runtime error captured by the client.
   const std::string& LastError() const;
 

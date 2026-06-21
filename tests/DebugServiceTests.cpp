@@ -52,7 +52,7 @@ mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # all advertise configurationDone support.
 supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
-                                "function", "reverse")
+                                "function", "reverse", "reverse_late")
 supports_set_variable = (mode == "variables")
 supports_evaluate = (mode == "evaluate")
 supports_restart = (mode == "restart")
@@ -65,8 +65,12 @@ exception_mode = (mode == "exception")  # advertise exceptionBreakpointFilters (
 thread_event_mode = (mode == "thread_event")
 thread_started = False
 # emit `stopped` after configurationDone
+# `reverse_late`: does NOT advertise supportsStepBack at init; turns it on later via
+# a DAP `capabilities` event when it receives a `record` evaluate (mirrors gdb under
+# rr / gdb `record`, which announce reverse execution after initialize).
+reverse_late = (mode == "reverse_late")
 stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads", "exception",
-                          "thread_event", "function", "reverse")
+                          "thread_event", "function", "reverse", "reverse_late")
 running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
 # `die`: reach Running (respond to launch) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
@@ -237,6 +241,10 @@ while True:
             event("output", {"category": "stdout",
                              "output": "limit:" + expr + "|frameId=" +
                                        str(args.get("frameId", "none")) + "\n"})
+        if reverse_late and expr == "record":
+            # gdb turns reverse execution on once recording starts, announcing it
+            # with a post-initialize `capabilities` event (a partial body).
+            event("capabilities", {"capabilities": {"supportsStepBack": True}})
         value = expr + "@" + str(args.get("frameId", 0))
         # "obj" yields a structured result (variablesReference 1001) so the REPL can
         # expand one level via a follow-up variables request; everything else is a leaf.
@@ -327,6 +335,7 @@ struct CapturedSession {
   int resume_count = 0;
   std::vector<codec::DapThread> last_threads;
   std::vector<codec::DapExceptionFilter> advertised_filters;
+  int capabilities_changed_count = 0;
 };
 
 DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
@@ -360,6 +369,7 @@ DebugSession::Callbacks MakeCallbacks(CapturedSession& captured) {
       [&captured](const std::vector<codec::DapExceptionFilter>& filters) {
         captured.advertised_filters = filters;
       };
+  callbacks.on_capabilities_changed = [&captured]() { ++captured.capabilities_changed_count; };
   return callbacks;
 }
 
@@ -694,6 +704,60 @@ void TestDebugSessionReverseGatedOnCapability() {
                              captured.resume_count > resumes_before;
                     }),
          "reverse commands should be dropped when the adapter lacks supportsStepBack");
+  manager.ShutdownAll();
+}
+
+// Late capability: an adapter that omits supportsStepBack at initialize can turn it
+// on afterward via a DAP `capabilities` event (gdb does this once an rr replay or
+// gdb `record` target exists). The host must merge the partial event, flip the
+// stored capability, fire on_capabilities_changed (drives the toolbar redraw), and
+// then accept the reverse commands it previously gated out.
+void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "reverse_late"));
+
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }), "adapter should stop");
+
+  DebugSession* session = manager.ActiveSession();
+  Expect(session != nullptr, "session should be active while stopped");
+  // At init the adapter does not advertise reverse execution, so the command is gated.
+  Expect(!session->Client().Capabilities().supports_step_back,
+         "adapter should not advertise supportsStepBack at init");
+  const int resumes_before = captured.resume_count;
+  session->StepBack();
+  Expect(!PollUntil(manager,
+                    [&]() {
+                      return captured.output.find("cmd:stepBack") != std::string::npos ||
+                             captured.resume_count > resumes_before;
+                    }),
+         "step back is dropped before the capability is advertised");
+
+  // Start recording (as a user would type `record` in the debug console): the mock
+  // responds and emits a `capabilities` event turning supportsStepBack on.
+  session->RequestEvaluate("record", 0, "repl", nullptr);
+  Expect(PollUntil(manager,
+                   [&]() { return session->Client().Capabilities().supports_step_back; }),
+         "late capabilities event should flip supportsStepBack on");
+  Expect(captured.capabilities_changed_count >= 1,
+         "on_capabilities_changed should fire so capability-gated chrome repaints");
+
+  // The reverse command now reaches the wire.
+  session->StepBack();
+  Expect(PollUntil(manager,
+                   [&]() { return captured.output.find("cmd:stepBack") != std::string::npos; }),
+         "StepBack should reach the wire once the late capability arrives");
   manager.ShutdownAll();
 }
 
@@ -2552,6 +2616,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
           TestDebugSessionReverseStepAndContinue);
   AddTest(tests, "DebugService/SessionReverseGatedOnCapability",
           TestDebugSessionReverseGatedOnCapability);
+  AddTest(tests, "DebugService/SessionReverseEnabledByLateCapabilitiesEvent",
+          TestDebugSessionReverseEnabledByLateCapabilitiesEvent);
   AddTest(tests, "DebugService/SessionRestartViaRestartRequest",
           TestDebugSessionRestartViaRestartRequest);
   AddTest(tests, "DebugService/SessionRestartNoOpWithoutCapability",

@@ -230,6 +230,12 @@ DapResponse ParseResponse(const util::JsonValue& msg);
 // carrying the supports* flags, e.g. the `capabilities` event body).
 DapCapabilities ParseCapabilities(const util::JsonValue& body);
 
+// Overlay a (possibly partial) capabilities object onto `caps`, touching only the
+// fields the body actually carries. Used for the DAP `capabilities` event, whose
+// body is a *partial* Capabilities object: re-running ParseCapabilities would
+// default every absent flag back to false and clobber what initialize advertised.
+void MergeCapabilities(DapCapabilities& caps, const util::JsonValue& body);
+
 DapSource ParseSource(const util::JsonValue& value);
 DapThread ParseThread(const util::JsonValue& value);
 std::vector<DapThread> ParseThreads(const util::JsonValue& body);

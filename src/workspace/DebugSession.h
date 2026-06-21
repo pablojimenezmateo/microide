@@ -120,6 +120,11 @@ class DebugSession {
     // exception filters (id + optional condition) to install via
     // setExceptionBreakpoints.
     std::function<std::vector<ExceptionFilterRequest>()> exception_filter_provider;
+    // Fired when the adapter sends a post-initialize `capabilities` event (e.g. gdb
+    // turning on `supportsStepBack` once a recording/replay target exists). Lets the
+    // host repaint capability-gated chrome (the reverse-debug toolbar buttons read
+    // the capability live each frame but the event path does not auto-redraw).
+    std::function<void()> on_capabilities_changed;
   };
 
   DebugSession();

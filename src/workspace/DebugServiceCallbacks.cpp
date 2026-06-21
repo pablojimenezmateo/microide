@@ -143,6 +143,17 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
       operations_.request_debug_pane_redraw();
     }
   };
+  callbacks.on_capabilities_changed = [this]() {
+    // A late `capabilities` event can flip supportsStepBack on (gdb under rr/record),
+    // which adds the Reverse Continue / Step Back buttons to the floating debug
+    // toolbar (chrome). Repaint so they appear without waiting for the next input.
+    if (operations_.request_chrome_redraw) {
+      operations_.request_chrome_redraw();
+    }
+    if (operations_.request_debug_pane_redraw) {
+      operations_.request_debug_pane_redraw();
+    }
+  };
   // Fired once on the terminal transition (incl. a crash/kill, which reaches Failed
   // without a DAP `terminated`). Drives the control-channel broadcast for every end.
   callbacks.on_terminated = [this, session_id](DebugSession::State terminal_state,

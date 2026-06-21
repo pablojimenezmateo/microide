@@ -281,6 +281,21 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     // selector stays current between stops (a stop already refreshes it). Reuses
     // the stop-epoch guard, so a refresh superseded by a new stop is dropped.
     RefreshThreadList();
+  } else if (event == "capabilities") {
+    // The adapter changed its advertised capabilities after initialize. gdb does
+    // exactly this when reverse execution becomes available (an rr replay target,
+    // or gdb's own `record`), sending a *partial* body
+    // {"capabilities":{"supportsStepBack":true}}. Merge it and notify the host so
+    // the reverse-debug UI — gated live on supportsStepBack — repaints immediately
+    // instead of waiting for the next input event.
+    client_->ApplyCapabilitiesUpdate(body["capabilities"]);
+    // Re-surface exception filters in case the update restated them.
+    if (callbacks_.on_exception_filters_available) {
+      callbacks_.on_exception_filters_available(client_->Capabilities().exception_filters);
+    }
+    if (callbacks_.on_capabilities_changed) {
+      callbacks_.on_capabilities_changed();
+    }
   }
 }
 

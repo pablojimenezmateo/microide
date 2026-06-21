@@ -62,6 +62,11 @@ dap_protocol::DapCapabilities DapClient::Capabilities() const {
   return impl_->capabilities;
 }
 
+void DapClient::ApplyCapabilitiesUpdate(const util::JsonValue& capabilities_body) {
+  std::lock_guard lock(impl_->mutex);
+  dap_protocol::MergeCapabilities(impl_->capabilities, capabilities_body);
+}
+
 const std::string& DapClient::LastError() const {
   std::lock_guard lock(impl_->mutex);
   impl_->last_error_snapshot = impl_->last_error;

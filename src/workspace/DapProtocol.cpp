@@ -227,6 +227,37 @@ DapCapabilities ParseCapabilities(const JsonValue& body) {
   return caps;
 }
 
+void MergeCapabilities(DapCapabilities& caps, const JsonValue& body) {
+  // Presence-checked overlay: only fields the body carries are updated. Keep this
+  // list aligned with ParseCapabilities above.
+  if (body.HasKey("supportsConfigurationDoneRequest"))
+    caps.supports_configuration_done_request = body["supportsConfigurationDoneRequest"].AsBool();
+  if (body.HasKey("supportsConditionalBreakpoints"))
+    caps.supports_conditional_breakpoints = body["supportsConditionalBreakpoints"].AsBool();
+  if (body.HasKey("supportsHitConditionalBreakpoints"))
+    caps.supports_hit_conditional_breakpoints = body["supportsHitConditionalBreakpoints"].AsBool();
+  if (body.HasKey("supportsLogPoints"))
+    caps.supports_log_points = body["supportsLogPoints"].AsBool();
+  if (body.HasKey("supportsFunctionBreakpoints"))
+    caps.supports_function_breakpoints = body["supportsFunctionBreakpoints"].AsBool();
+  if (body.HasKey("supportsSetVariable"))
+    caps.supports_set_variable = body["supportsSetVariable"].AsBool();
+  if (body.HasKey("supportsEvaluateForHovers"))
+    caps.supports_evaluate_for_hovers = body["supportsEvaluateForHovers"].AsBool();
+  if (body.HasKey("supportsTerminateRequest"))
+    caps.supports_terminate_request = body["supportsTerminateRequest"].AsBool();
+  if (body.HasKey("supportsRestartRequest"))
+    caps.supports_restart_request = body["supportsRestartRequest"].AsBool();
+  if (body.HasKey("supportsStepBack"))
+    caps.supports_step_back = body["supportsStepBack"].AsBool();
+  if (body.HasKey("supportsExceptionFilterOptions"))
+    caps.supports_exception_filter_options = body["supportsExceptionFilterOptions"].AsBool();
+  // The exception-filter list is replaced wholesale only when the body restates it
+  // (an adapter that re-advertises filters sends the full array, not a delta).
+  if (body.HasKey("exceptionBreakpointFilters"))
+    caps.exception_filters = ParseCapabilities(body).exception_filters;
+}
+
 DapSource ParseSource(const JsonValue& value) {
   DapSource source;
   source.name = AsString(value["name"]);

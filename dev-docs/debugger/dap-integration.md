@@ -366,6 +366,32 @@ adapter without the capability drops both). gdb supports reverse execution only 
 `record` / rr; instruction-granularity reverse stepping is deferred with the disassembly
 pane.
 
+**Late capability (fixed 2026-06-21): the `capabilities` event.** gdb does **not**
+advertise `supportsStepBack` in its `initialize` response — at that point no
+recording/replay target exists. It turns reverse execution on *later* and announces it
+with a DAP **`capabilities` event** carrying a *partial* body
+`{"capabilities":{"supportsStepBack":true}}`. `DebugSession::HandleEvent` now handles
+that event: `DapClient::ApplyCapabilitiesUpdate` merges it under the same lock that
+guards `Capabilities()` via `dap_protocol::MergeCapabilities` (a presence-checked
+overlay — reusing `ParseCapabilities` would reset every absent flag to false), then the
+new `on_capabilities_changed` callback requests a chrome redraw so the reverse buttons
+(which read the capability live each frame) appear immediately instead of after the next
+input. Covered by `DapProtocol/MergesPartialCapabilities` (partial merge preserves
+unrelated flags) and `DebugService/SessionReverseEnabledByLateCapabilitiesEvent` (an
+adapter that omits the capability at init, then emits the event on a `record` evaluate;
+the gated command starts reaching the wire only afterward).
+
+**Driving reverse execution with the bundled `gdb-dap` plugin** (two adapters):
+- `gdb` — launch/attach as usual, then type `record` in the debug console (the REPL
+  forwards it to gdb as a raw command). gdb starts process record/replay and emits the
+  `capabilities` event; reverse stepping works within the recorded window.
+- `gdb-rr` — for Mozilla rr time-travel. Record once in a terminal (`rr record
+  ./build/app`), then start a `gdb-rr` session: the adapter runs `rr replay -d gdb -o
+  --interpreter=dap`, so rr launches gdb in DAP mode already attached to its replay
+  server (replaying the latest trace under `$_RR_TRACE_DIR`). The replay target is
+  reverse-capable from the first stop. Needs the `rr` binary on PATH; the trace
+  selection/port are rr-managed, so this replays the most recent recording.
+
 **Shipped (2026-06-20): function breakpoints + exception-filter conditions.** A probe
 of real gdb 17.2 (`gdb --interpreter=dap`) confirmed it advertises a large set of
 capabilities microide did not yet use; the two lowest-risk, highest-value ones (both
@@ -416,8 +442,9 @@ data breakpoints at init. Priority order:
   (build it on the existing `DebugValueTree` if ever wanted).
 
 `process` / `module` events are emitted by gdb but purely informational; microide
-ignores them safely. gdb does not emit `capabilities` or `invalidated`, so neither is
-handled.
+ignores them safely. gdb **does** emit a `capabilities` event — to announce reverse
+execution once a recording/replay target exists (see "Late capability" above), now
+handled. `invalidated` is still not handled.
 
 ## Phase 0 — what shipped (2026-06-17)
 
