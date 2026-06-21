@@ -221,33 +221,47 @@ bool WorkspaceShell::TabIsDirty(std::size_t index) const {
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
-  if (index >= context_.current_project_state.focused_group().open_tabs.size()) {
+  return TabDisplayTitle(context_.current_project_state.focused_group_index, index);
+}
+
+std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  if (group_index >= state.editor_groups.size() ||
+      index >= state.editor_groups[group_index].open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = context_.current_project_state.focused_group().open_tabs[index];
+  const TabEntry& tab = state.editor_groups[group_index].open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     path = tab.merge->output_path;
   }
-  return BuildWorkspaceTabTextModel(context_.current_project_state.root, path, tab.title, TabIsDirty(index)).display_title;
+  return BuildWorkspaceTabTextModel(state.root, path, tab.title,
+                                    TabCoordinator::TabStateIsDirty(tab)).display_title;
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
-  if (index >= context_.current_project_state.focused_group().open_tabs.size()) {
+  return TabTooltipLabel(context_.current_project_state.focused_group_index, index);
+}
+
+std::string WorkspaceShell::TabTooltipLabel(std::size_t group_index, std::size_t index) const {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  if (group_index >= state.editor_groups.size() ||
+      index >= state.editor_groups[group_index].open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = context_.current_project_state.focused_group().open_tabs[index];
+  const TabEntry& tab = state.editor_groups[group_index].open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     path = tab.merge->output_path;
   }
-  return BuildWorkspaceTabTextModel(context_.current_project_state.root, path, tab.title, TabIsDirty(index)).tooltip_label;
+  return BuildWorkspaceTabTextModel(state.root, path, tab.title,
+                                    TabCoordinator::TabStateIsDirty(tab)).tooltip_label;
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {

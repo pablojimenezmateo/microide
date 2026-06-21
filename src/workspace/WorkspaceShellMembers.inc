@@ -367,7 +367,7 @@
   };
 
   struct EditorPaneLayout {
-    std::size_t leaf_id = 0;
+    std::size_t group_index = 0;
     SDL_FRect rect{};
     bool active = false;
   };
@@ -612,7 +612,9 @@
   bool SaveTab(std::size_t index);
   bool TabIsDirty(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
+  std::string TabDisplayTitle(std::size_t group_index, std::size_t index) const;
   std::string TabTooltipLabel(std::size_t index) const;
+  std::string TabTooltipLabel(std::size_t group_index, std::size_t index) const;
   std::vector<std::size_t> DirtyEditorTabIndices() const;
   static std::vector<std::size_t> DirtyEditorTabIndices(const ProjectWorkspaceState& state);
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
@@ -644,6 +646,10 @@
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
+  // Group-aware viewport/tab resolution: the editor render/cursor/mouse paths
+  // drive each split group through these instead of the focused-group helpers.
+  TabEntry::EditorTabState* GroupActiveEditorTab(EditorGroup& group);
+  editor::TextViewport* GroupActiveViewport(EditorGroup& group);
   static TabEntry::EditorTabState MakeEditorTabState(const editor::TextViewport& view);
   void SyncActiveEditorTabMetadata();
   bool ReplaceActiveEditorView(const editor::TextViewport& viewport);
@@ -655,6 +661,11 @@
   std::vector<EditorPaneLayout> ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
   std::vector<EditorSplitDividerLayout> ComputeEditorSplitDividerLayouts(
       const SDL_FRect& editor_surface) const;
+  // Per-group chrome rects (tab strip / breadcrumb / surface) for the current
+  // editor-group state, carved from `layout`. Single source of truth shared by
+  // the render, cursor, and mouse paths so they cannot drift apart.
+  EditorGroupRectsLayout ComputeEditorGroupRectsForState(const WorkspaceLayout& layout) const;
+  std::size_t FocusedEditorGroupIndex() const;
   SDL_FRect EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const;
   ScrollSurfaceLayout ComputeEditorScrollLayout(const SDL_FRect& rect,
                                                 const editor::TextViewport& viewport,
@@ -1081,6 +1092,9 @@
   // tab is active. Callers (render path, fold-action handlers) consume the
   // model directly.
   editor::FoldingModel* EnsureActiveFoldingModelFresh();
+  editor::FoldingModel* EnsureGroupFoldingModelFresh(EditorGroup& group);
+  editor::FoldingModel* EnsureFoldingModelFreshForTab(TabEntry::EditorTabState* editor_tab,
+                                                      editor::TextViewport* active_viewport);
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;

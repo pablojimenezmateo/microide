@@ -180,6 +180,62 @@ std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
   return layout;
 }
 
+EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
+                                               std::size_t group_count,
+                                               bool vertical_divider,
+                                               float first_fraction) {
+  EditorGroupRectsLayout result;
+  result.vertical_divider = vertical_divider;
+  const SDL_FRect ts = layout.tab_strip;
+  const SDL_FRect bc = layout.breadcrumb;
+  const SDL_FRect es = layout.editor_surface;
+  const SDL_FRect ea = layout.editor_area;
+
+  if (group_count < 2) {
+    result.groups.push_back(EditorGroupRects{ts, bc, es});
+    return result;
+  }
+
+  const float fraction = std::clamp(first_fraction, 0.1f, 0.9f);
+  const float divider = kWorkspaceEditorSplitDividerThickness;
+
+  if (vertical_divider) {
+    // Side-by-side. Confine both groups' tab strips to the editor-area x-range so
+    // they sit above their own surfaces; the strip background fill (full width)
+    // is unchanged by the renderer.
+    const float avail = std::max(0.0f, ea.w - divider);
+    const float left_w = std::floor(avail * fraction);
+    const float right_w = std::max(0.0f, avail - left_w);
+    const float split_x = ea.x + left_w;
+    const float right_x = split_x + divider;
+    const auto col = [](const SDL_FRect& r, float x, float w) {
+      return MakeRect(x, r.y, w, r.h);
+    };
+    result.groups.push_back(EditorGroupRects{
+        col(ts, ea.x, left_w), col(bc, ea.x, left_w), col(es, ea.x, left_w)});
+    result.groups.push_back(EditorGroupRects{
+        col(ts, right_x, right_w), col(bc, right_x, right_w), col(es, right_x, right_w)});
+    result.divider = MakeRect(split_x, ea.y, divider, ea.h);
+    return result;
+  }
+
+  // Stacked. Group 0 keeps the top tab strip + breadcrumb and takes the top slice
+  // of the editor surface; group 1 synthesizes a tab strip at the top of its
+  // region with the remaining surface below.
+  const float avail = std::max(0.0f, es.h - divider);
+  const float top_h = std::floor(avail * fraction);
+  const float bottom_h = std::max(0.0f, avail - top_h);
+  result.groups.push_back(EditorGroupRects{ts, bc, MakeRect(es.x, es.y, es.w, top_h)});
+  const float region_y = es.y + top_h + divider;
+  const float strip_h = std::min(kTabStripHeight, bottom_h);
+  result.groups.push_back(EditorGroupRects{
+      MakeRect(es.x, region_y, es.w, strip_h),
+      MakeRect(0.0f, 0.0f, 0.0f, 0.0f),
+      MakeRect(es.x, region_y + strip_h, es.w, std::max(0.0f, bottom_h - strip_h))});
+  result.divider = MakeRect(es.x, es.y + top_h, es.w, divider);
+  return result;
+}
+
 bool Contains(const SDL_FRect& rect, float x, float y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }

@@ -159,56 +159,73 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                         chrome_tab_palette);
   }
 
-  std::vector<VisibleStripTab> visible_tabs;
-  if (HasActiveProjectCatalogEntry()) {
-    visible_tabs = tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
-  }
-  if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
-    const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(layout.tab_strip);
-    DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
-                 StripTabStyle{
-                     .text_left_padding = 10.0f,
-                     .close_right_reserve = 0.0f,
-                     .accent_edge = StripAccentEdge::Top,
-                 },
-                 chrome_tab_palette);
-  } else if (HasActiveProjectCatalogEntry()) {
-    for (const VisibleStripTab& tab : visible_tabs) {
-      DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
-                   tab.badge_color, tab.show_badge, tab.active,
+  // Each editor group owns its own tab strip. For a single group this is the
+  // global tab-strip band (filled in the frame pass); a stacked second group
+  // synthesizes its strip inside the editor surface, filled here.
+  const EditorGroupRectsLayout editor_group_rects = ComputeEditorGroupRectsForState(layout);
+  const std::size_t focused_group_index = FocusedEditorGroupIndex();
+  for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
+    const SDL_FRect group_tab_strip = editor_group_rects.groups[gi].tab_strip;
+    if (editor_group_rects.groups.size() > 1) {
+      DrawFilledRect(renderer, group_tab_strip, theme_.chrome_background);
+      DrawFilledRect(renderer,
+                     MakeRect(group_tab_strip.x,
+                              group_tab_strip.y + group_tab_strip.h - kWorkspaceDividerThickness,
+                              group_tab_strip.w, kWorkspaceDividerThickness),
+                     theme_.border);
+    }
+    std::vector<VisibleStripTab> visible_tabs;
+    if (HasActiveProjectCatalogEntry()) {
+      visible_tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip);
+    }
+    if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
+      const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(group_tab_strip);
+      DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
                    StripTabStyle{
                        .text_left_padding = 10.0f,
-                       .close_right_reserve = 46.0f,
+                       .close_right_reserve = 0.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
                    chrome_tab_palette);
-      draw_tab_close_button(tab.close_rect,
-                            tab.active ? chrome_tab_palette.active_glyph
-                                       : chrome_tab_palette.inactive_glyph,
-                            tab.active ? chrome_tab_palette.active_text
-                                       : chrome_tab_palette.inactive_text);
-    }
-    const auto tab_overflow = tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, visible_tabs);
-    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.left_button,
-                               /*point_right=*/false, tab_overflow.hidden_left,
-                               last_mouse_position_valid_ &&
-                                   Contains(tab_overflow.left_button, last_mouse_x_,
-                                            last_mouse_y_));
-    DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.right_button,
-                               /*point_right=*/true, tab_overflow.hidden_right,
-                               last_mouse_position_valid_ &&
-                                   Contains(tab_overflow.right_button, last_mouse_x_,
-                                            last_mouse_y_));
-    if (const TabDragState& drag = context_.interaction_state.tab_drag;
-        drag.dragging && drag.kind == TabDragKind::Editor) {
-      DrawTabDragFeedback(text_renderer_, renderer, theme_, layout.tab_strip, visible_tabs,
-                          drag.source_index, drag.target_slot, drag.pointer_x, drag.grab_offset_x,
-                          StripTabStyle{
-                              .text_left_padding = 10.0f,
-                              .close_right_reserve = 46.0f,
-                              .accent_edge = StripAccentEdge::Top,
-                          },
-                          chrome_tab_palette);
+    } else if (HasActiveProjectCatalogEntry()) {
+      for (const VisibleStripTab& tab : visible_tabs) {
+        DrawStripTab(text_renderer_, renderer, theme_, tab.rect, tab.display_title, tab.badge_text,
+                     tab.badge_color, tab.show_badge, tab.active,
+                     StripTabStyle{
+                         .text_left_padding = 10.0f,
+                         .close_right_reserve = 46.0f,
+                         .accent_edge = StripAccentEdge::Top,
+                     },
+                     chrome_tab_palette);
+        draw_tab_close_button(tab.close_rect,
+                              tab.active ? chrome_tab_palette.active_glyph
+                                         : chrome_tab_palette.inactive_glyph,
+                              tab.active ? chrome_tab_palette.active_text
+                                         : chrome_tab_palette.inactive_text);
+      }
+      const auto tab_overflow =
+          tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, group_tab_strip, visible_tabs);
+      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.left_button,
+                                 /*point_right=*/false, tab_overflow.hidden_left,
+                                 last_mouse_position_valid_ &&
+                                     Contains(tab_overflow.left_button, last_mouse_x_,
+                                              last_mouse_y_));
+      DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.right_button,
+                                 /*point_right=*/true, tab_overflow.hidden_right,
+                                 last_mouse_position_valid_ &&
+                                     Contains(tab_overflow.right_button, last_mouse_x_,
+                                              last_mouse_y_));
+      if (const TabDragState& drag = context_.interaction_state.tab_drag;
+          drag.dragging && drag.kind == TabDragKind::Editor && gi == focused_group_index) {
+        DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, visible_tabs,
+                            drag.source_index, drag.target_slot, drag.pointer_x, drag.grab_offset_x,
+                            StripTabStyle{
+                                .text_left_padding = 10.0f,
+                                .close_right_reserve = 46.0f,
+                                .accent_edge = StripAccentEdge::Top,
+                            },
+                            chrome_tab_palette);
+      }
     }
   }
 

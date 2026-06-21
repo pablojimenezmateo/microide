@@ -90,12 +90,38 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
   }
 }
 
+WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::GroupActiveEditorTab(EditorGroup& group) {
+  if (group.active_tab_index >= group.open_tabs.size()) {
+    return nullptr;
+  }
+  TabEntry& tab = group.open_tabs[group.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return nullptr;
+  }
+  return &tab.editor_state.value();
+}
+
+editor::TextViewport* WorkspaceShell::GroupActiveViewport(EditorGroup& group) {
+  TabEntry::EditorTabState* editor_tab = GroupActiveEditorTab(group);
+  if (editor_tab == nullptr) {
+    return &group.welcome_surface.viewport;
+  }
+  return &editor_tab->viewport;
+}
+
 editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
-  auto* editor_tab = ActiveEditorTab();
+  return EnsureFoldingModelFreshForTab(ActiveEditorTab(), ActiveEditorViewport());
+}
+
+editor::FoldingModel* WorkspaceShell::EnsureGroupFoldingModelFresh(EditorGroup& group) {
+  return EnsureFoldingModelFreshForTab(GroupActiveEditorTab(group), GroupActiveViewport(group));
+}
+
+editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
+    TabEntry::EditorTabState* editor_tab, editor::TextViewport* active_viewport) {
   if (editor_tab == nullptr) {
     return nullptr;
   }
-  editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (active_viewport == nullptr) {
     return editor_tab->folding_model.get();
   }

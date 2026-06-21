@@ -76,9 +76,13 @@ WorkspaceShell::WorkspaceShell() {
           .project_catalog_root =
               [this](std::size_t index) { return ProjectCatalogRoot(index); },
           .editor_tab_display_title =
-              [this](std::size_t index) { return TabDisplayTitle(index); },
+              [this](std::size_t group_index, std::size_t index) {
+                return TabDisplayTitle(group_index, index);
+              },
           .editor_tab_tooltip_label =
-              [this](std::size_t index) { return TabTooltipLabel(index); },
+              [this](std::size_t group_index, std::size_t index) {
+                return TabTooltipLabel(group_index, index);
+              },
           .current_window_rect = [this]() { return CurrentWindowRect(); },
           .measure_width =
               [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },

@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceTabStripChrome.h"
 
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -104,27 +105,62 @@ std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleProjectTabs(
                                                        badge_styles);
 }
 
+namespace {
+
+std::size_t ClampGroupIndex(const ProjectWorkspaceState& state, std::size_t group_index) {
+  if (state.editor_groups.empty()) {
+    return 0;
+  }
+  return std::min(group_index, state.editor_groups.size() - 1);
+}
+
+}  // namespace
+
 float WorkspaceTabStripChrome::TabWidthForIndex(std::size_t index) const {
+  const std::size_t group_index =
+      ClampGroupIndex(context_->current_project_state,
+                      context_->current_project_state.focused_group_index);
   if (index >= context_->current_project_state.focused_group().open_tabs.size()) {
     return 132.0f;
   }
   return tab_strip_service_->MeasureEditorTabWidth(
-      operations_.editor_tab_display_title(index), operations_.measure_width);
+      operations_.editor_tab_display_title(group_index, index), operations_.measure_width);
 }
 
 void WorkspaceTabStripChrome::EnsureActiveTabVisible() {
+  EnsureActiveTabVisibleForGroup(context_->current_project_state.focused_group_index);
+}
+
+void WorkspaceTabStripChrome::EnsureActiveTabVisibleForGroup(std::size_t group_index) {
+  ProjectWorkspaceState& state = context_->current_project_state;
+  group_index = ClampGroupIndex(state, group_index);
+  if (group_index >= state.editor_groups.size()) {
+    return;
+  }
   const auto window_rect = operations_.current_window_rect();
   const float tab_strip_width = window_rect.has_value() ? window_rect->w : 1440.0f;
   tab_strip_service_->EnsureActiveEditorTabVisible(
-      context_->current_project_state, tab_strip_width, operations_.measure_width,
-      operations_.editor_tab_display_title, operations_.editor_tab_tooltip_label);
+      state.editor_groups[group_index], group_index, tab_strip_width, operations_.measure_width,
+      [this, group_index](std::size_t i) { return operations_.editor_tab_display_title(group_index, i); },
+      [this, group_index](std::size_t i) { return operations_.editor_tab_tooltip_label(group_index, i); });
 }
 
 std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleTabs(
     const SDL_FRect& tab_strip) const {
+  return ComputeVisibleTabsForGroup(context_->current_project_state.focused_group_index, tab_strip);
+}
+
+std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleTabsForGroup(
+    std::size_t group_index, const SDL_FRect& tab_strip) const {
+  const ProjectWorkspaceState& state = context_->current_project_state;
+  group_index = ClampGroupIndex(state, group_index);
+  if (group_index >= state.editor_groups.size()) {
+    return {};
+  }
   return tab_strip_service_->ComputeVisibleEditorTabs(
-      context_->current_project_state, tab_strip, operations_.measure_width,
-      operations_.editor_tab_display_title, operations_.editor_tab_tooltip_label);
+      state.editor_groups[group_index], group_index, tab_strip, operations_.measure_width,
+      [this, group_index](std::size_t i) { return operations_.editor_tab_display_title(group_index, i); },
+      [this, group_index](std::size_t i) { return operations_.editor_tab_tooltip_label(group_index, i); });
 }
 
 TabStripOverflowControls WorkspaceTabStripChrome::ComputeProjectTabOverflowControls(
@@ -137,8 +173,21 @@ TabStripOverflowControls WorkspaceTabStripChrome::ComputeProjectTabOverflowContr
 TabStripOverflowControls WorkspaceTabStripChrome::ComputeTabOverflowControls(
     const SDL_FRect& tab_strip,
     const std::vector<VisibleStripTab>& visible_tabs) const {
+  return ComputeTabOverflowControlsForGroup(context_->current_project_state.focused_group_index,
+                                            tab_strip, visible_tabs);
+}
+
+TabStripOverflowControls WorkspaceTabStripChrome::ComputeTabOverflowControlsForGroup(
+    std::size_t group_index,
+    const SDL_FRect& tab_strip,
+    const std::vector<VisibleStripTab>& visible_tabs) const {
+  const ProjectWorkspaceState& state = context_->current_project_state;
+  group_index = ClampGroupIndex(state, group_index);
+  if (group_index >= state.editor_groups.size()) {
+    return {};
+  }
   return tab_strip_service_->ComputeEditorTabOverflowControls(tab_strip, visible_tabs,
-                                                              context_->current_project_state);
+                                                              state.editor_groups[group_index]);
 }
 
 TabStripOverflowControls WorkspaceTabStripChrome::ComputeBottomPanelTabOverflowControls(
@@ -154,7 +203,17 @@ bool WorkspaceTabStripChrome::ScrollProjectTabStrip(int direction) {
 }
 
 bool WorkspaceTabStripChrome::ScrollEditorTabStrip(int direction) {
-  return tab_strip_service_->ScrollEditorTabStrip(context_->current_project_state, direction);
+  return ScrollEditorTabStripForGroup(context_->current_project_state.focused_group_index, direction);
+}
+
+bool WorkspaceTabStripChrome::ScrollEditorTabStripForGroup(std::size_t group_index, int direction) {
+  ProjectWorkspaceState& state = context_->current_project_state;
+  group_index = ClampGroupIndex(state, group_index);
+  if (group_index >= state.editor_groups.size()) {
+    return false;
+  }
+  return tab_strip_service_->ScrollEditorTabStrip(state.editor_groups[group_index], group_index,
+                                                  direction);
 }
 
 bool WorkspaceTabStripChrome::ScrollBottomPanelTabStrip(int direction) {

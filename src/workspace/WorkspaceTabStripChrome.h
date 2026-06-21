@@ -34,8 +34,8 @@ class WorkspaceTabStripChrome {
     std::function<std::string(std::size_t)> project_tab_tooltip_label;
     std::function<const ProjectWorkspaceState*(std::size_t)> project_catalog_entry;
     std::function<std::filesystem::path(std::size_t)> project_catalog_root;
-    std::function<std::string(std::size_t)> editor_tab_display_title;
-    std::function<std::string(std::size_t)> editor_tab_tooltip_label;
+    std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_display_title;
+    std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_tooltip_label;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<float(std::string_view)> measure_width;
     std::function<void(std::string_view)> ensure_output_channel_tab_open;
@@ -58,13 +58,23 @@ class WorkspaceTabStripChrome {
       const SDL_FRect& project_tab_strip) const;
 
   float TabWidthForIndex(std::size_t index) const;
+  // Editor-tab chrome is per-group. The no-index overloads operate on the
+  // currently focused group; the *ForGroup variants target an explicit group so
+  // the render/mouse/cursor paths can drive both strips in a split.
   void EnsureActiveTabVisible();
+  void EnsureActiveTabVisibleForGroup(std::size_t group_index);
   std::vector<VisibleStripTab> ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
+  std::vector<VisibleStripTab> ComputeVisibleTabsForGroup(std::size_t group_index,
+                                                          const SDL_FRect& tab_strip) const;
 
   TabStripOverflowControls ComputeProjectTabOverflowControls(
       const SDL_FRect& project_tab_strip,
       const std::vector<VisibleStripTab>& visible_tabs) const;
   TabStripOverflowControls ComputeTabOverflowControls(
+      const SDL_FRect& tab_strip,
+      const std::vector<VisibleStripTab>& visible_tabs) const;
+  TabStripOverflowControls ComputeTabOverflowControlsForGroup(
+      std::size_t group_index,
       const SDL_FRect& tab_strip,
       const std::vector<VisibleStripTab>& visible_tabs) const;
 
@@ -74,6 +84,7 @@ class WorkspaceTabStripChrome {
 
   bool ScrollProjectTabStrip(int direction);
   bool ScrollEditorTabStrip(int direction);
+  bool ScrollEditorTabStripForGroup(std::size_t group_index, int direction);
   bool ScrollBottomPanelTabStrip(int direction);
 
   bool ActivateBottomPanelTab(std::size_t model_index);

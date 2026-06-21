@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <span>
@@ -75,13 +76,15 @@ class TabStripService {
       std::span<const std::string> tooltip_labels,
       std::span<const ProjectTabBadgeStyle> badge_styles) const;
 
-  void EnsureActiveEditorTabVisible(ProjectWorkspaceState& state,
+  void EnsureActiveEditorTabVisible(EditorGroup& group,
+                                    std::size_t group_index,
                                     float strip_width,
                                     const MeasureWidthFn& measure_width,
                                     const TitleProvider& display_title,
                                     const TitleProvider& tooltip_label) const;
   std::vector<VisibleStripTab> ComputeVisibleEditorTabs(
-      const ProjectWorkspaceState& state,
+      const EditorGroup& group,
+      std::size_t group_index,
       const SDL_FRect& tab_strip,
       const MeasureWidthFn& measure_width,
       const TitleProvider& display_title,
@@ -95,9 +98,9 @@ class TabStripService {
   TabStripOverflowControls ComputeEditorTabOverflowControls(
       const SDL_FRect& tab_strip,
       const std::vector<VisibleStripTab>& visible_tabs,
-      const ProjectWorkspaceState& state) const;
+      const EditorGroup& group) const;
   bool ScrollProjectTabStrip(ProjectCatalogState& catalog, int direction) const;
-  bool ScrollEditorTabStrip(ProjectWorkspaceState& state, int direction);
+  bool ScrollEditorTabStrip(EditorGroup& group, std::size_t group_index, int direction);
 
   std::vector<BottomPanelTabModel> BuildBottomPanelTabs(
       const ProjectWorkspaceState& state,
@@ -163,7 +166,8 @@ class TabStripService {
       std::size_t active_index,
       std::span<const std::string> display_titles,
       std::span<const std::string> tooltip_labels) const;
-  void RefreshEditorGeometryCache(const ProjectWorkspaceState& state,
+  void RefreshEditorGeometryCache(const EditorGroup& group,
+                                  std::size_t group_index,
                                   float strip_width,
                                   const MeasureWidthFn& measure_width,
                                   const TitleProvider& display_title,
@@ -174,8 +178,11 @@ class TabStripService {
       std::size_t total_count) const;
   bool ScrollTabIndex(int& scroll_index, int direction, std::size_t total) const;
 
-  mutable TabStripGeometryCache editor_tab_geometry_cache_;
-  mutable VisibleEditorTabsCache visible_editor_tabs_cache_;
+  // One cache slot per editor group (max 2). Both groups render every frame, so a
+  // single shared slot would thrash; indexing by group keeps each hot.
+  static constexpr std::size_t kMaxEditorGroups = 2;
+  mutable std::array<TabStripGeometryCache, kMaxEditorGroups> editor_tab_geometry_cache_;
+  mutable std::array<VisibleEditorTabsCache, kMaxEditorGroups> visible_editor_tabs_cache_;
 };
 
 }  // namespace microide::workspace
