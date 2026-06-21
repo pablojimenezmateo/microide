@@ -225,6 +225,17 @@ enum class FunctionBreakpointTag : std::uint16_t {
   HitCondition = 4,
 };
 
+enum class MruStateTag : std::uint16_t {
+  Schema = 1,
+  RecentProjectRoot = 2,  // repeated, one path record per project
+  RecentFile = 3,         // repeated, one nested record per file
+};
+
+enum class RecentFileEntryTag : std::uint16_t {
+  Path = 1,
+  ProjectRoot = 2,
+};
+
 enum class ExceptionFilterConditionTag : std::uint16_t {
   FilterId = 1,
   Condition = 2,

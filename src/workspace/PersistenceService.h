@@ -32,6 +32,11 @@ class PersistenceService {
                       PersistedDebugState* state) const;
   bool SaveDebugState(const std::filesystem::path& target_path,
                       const PersistedDebugState& state) const;
+
+  bool LoadMruState(const std::filesystem::path& target_path,
+                    PersistedMruState* state) const;
+  bool SaveMruState(const std::filesystem::path& target_path,
+                    const PersistedMruState& state) const;
 };
 
 }  // namespace microide::workspace

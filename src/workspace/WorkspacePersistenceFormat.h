@@ -160,6 +160,20 @@ struct PersistedWorkspaceSessionState {
   std::size_t active_project_index = 0;
 };
 
+// Most-recently-used projects and files, surfaced on the welcome surface and in
+// the file finder. Newest-first; bounded by the RecentsService on insert. Each
+// recent file carries the project root it was opened under so the finder can show
+// only the active project's recents.
+struct PersistedRecentFile {
+  std::filesystem::path path;
+  std::filesystem::path project_root;
+};
+
+struct PersistedMruState {
+  std::vector<std::filesystem::path> recent_project_roots;
+  std::vector<PersistedRecentFile> recent_files;
+};
+
 // Per-project debug state: breakpoints (keyed by file) plus launch configs.
 // `arguments_json` holds the launch config's verbatim `arguments` serialized as
 // JSON text so this format carries no util::JsonValue dependency; the coordinator
@@ -228,5 +242,7 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                                   PersistedWorkspaceSessionState* state);
 bool EncodeDebugStateRecord(const PersistedDebugState& state, std::vector<std::byte>* out);
 bool DecodeDebugStateRecord(std::span<const std::byte> input, PersistedDebugState* state);
+bool EncodeMruRecord(const PersistedMruState& state, std::vector<std::byte>* out);
+bool DecodeMruRecord(std::span<const std::byte> input, PersistedMruState* state);
 
 }  // namespace microide::workspace

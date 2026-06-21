@@ -7,17 +7,21 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <span>
 #include <vector>
 
 namespace microide::tests {
 namespace {
 
 using microide::workspace::DecodeDebugStateRecord;
+using microide::workspace::DecodeMruRecord;
 using microide::workspace::DecodeProjectConfigRecord;
 using microide::workspace::DecodeProjectSessionRecord;
 using microide::workspace::DecodeUserConfigRecord;
 using microide::workspace::DecodeWorkspaceSessionRecord;
 using microide::workspace::EncodeDebugStateRecord;
+using microide::workspace::EncodeMruRecord;
 using microide::workspace::EncodeProjectConfigRecord;
 using microide::workspace::EncodeProjectSessionRecord;
 using microide::workspace::EncodeUserConfigRecord;
@@ -29,7 +33,9 @@ using microide::workspace::PersistedEditorViewState;
 using microide::workspace::PersistedFileBreakpoints;
 using microide::workspace::PersistedFunctionBreakpoint;
 using microide::workspace::PersistedLaunchConfig;
+using microide::workspace::PersistedMruState;
 using microide::workspace::PersistedProjectConfigState;
+using microide::workspace::PersistedRecentFile;
 using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedSidebarViewPolicy;
 using microide::workspace::PersistedSplitNodeState;
@@ -459,7 +465,40 @@ void TestPersistedStateRejectsAdversarialLengthWithoutOom() {
   Expect(values.empty(), "ReadVector should not have populated values");
 }
 
+void TestPersistedStateMruRecordRoundTrip() {
+  PersistedMruState mru{
+      .recent_project_roots = {"/home/u/proj-a", "/home/u/proj-b"},
+      .recent_files = {{"/home/u/proj-a/src/main.cpp", "/home/u/proj-a"},
+                       {"/home/u/proj-b/README.md", "/home/u/proj-b"}},
+  };
+  std::vector<std::byte> encoded;
+  Expect(EncodeMruRecord(mru, &encoded), "mru record encode should succeed");
+  PersistedMruState decoded;
+  Expect(DecodeMruRecord(encoded, &decoded), "mru record decode should succeed");
+  Expect(decoded.recent_project_roots.size() == 2 &&
+             decoded.recent_project_roots[0] == std::filesystem::path("/home/u/proj-a"),
+         "mru project roots should round-trip in order");
+  Expect(decoded.recent_files.size() == 2 &&
+             decoded.recent_files[1].path == std::filesystem::path("/home/u/proj-b/README.md") &&
+             decoded.recent_files[1].project_root == std::filesystem::path("/home/u/proj-b"),
+         "mru recent files should round-trip with their project root");
+}
+
+void TestPersistedStateMruRecordRequiresSchema() {
+  // A stream that omits the schema record must be rejected (mirrors debug state).
+  PersistedMruState empty;
+  std::vector<std::byte> encoded;
+  Expect(EncodeMruRecord(empty, &encoded), "empty mru record encode should succeed");
+  Expect(!encoded.empty(), "encoded mru record should at least carry the schema tag");
+  PersistedMruState decoded;
+  Expect(DecodeMruRecord(std::span<const std::byte>{}, &decoded) == false,
+         "mru decode should fail when the schema record is missing");
+}
+
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedStateRecord/MruRoundTrip", TestPersistedStateMruRecordRoundTrip);
+  AddTest(tests, "PersistedStateRecord/MruRequiresSchema",
+          TestPersistedStateMruRecordRequiresSchema);
   AddTest(tests, "PersistedStateRecord/RejectsAdversarialLengthWithoutOom",
           TestPersistedStateRejectsAdversarialLengthWithoutOom);
   AddTest(tests, "PersistedStateRecord/UserAndProjectConfigRoundTrip",

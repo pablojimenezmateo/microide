@@ -395,6 +395,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp
+  src/workspace/WorkspacePersistenceBinaryFormatMru.cpp
   src/workspace/GitRepositoryService.cpp
   src/workspace/PatchApplyService.cpp
   src/workspace/PersistenceService.cpp

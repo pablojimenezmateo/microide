@@ -150,4 +150,22 @@ bool PersistenceService::SaveDebugState(const std::filesystem::path& target_path
          persistence::PersistedRecordWriter::WriteFile(target_path, body, 5u);
 }
 
+bool PersistenceService::LoadMruState(const std::filesystem::path& target_path,
+                                      PersistedMruState* state) const {
+  if (target_path.empty() || state == nullptr) {
+    return false;
+  }
+  return LoadStructuredRecord<PersistedMruState>(target_path, DecodeMruRecord, state);
+}
+
+bool PersistenceService::SaveMruState(const std::filesystem::path& target_path,
+                                      const PersistedMruState& state) const {
+  if (target_path.empty()) {
+    return false;
+  }
+  std::vector<std::byte> body;
+  return EncodeMruRecord(state, &body) &&
+         persistence::PersistedRecordWriter::WriteFile(target_path, body, 6u);
+}
+
 }  // namespace microide::workspace
