@@ -9,9 +9,25 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-None as of 2026-06-17. Every previously tracked topic is closed — either completed or explicitly
-marked won't-do. When new debt is uncovered, add it here as a concise, actionable entry (impact,
-relevant code, proposed shape) and remove it once it ships, archiving the detail.
+- **Timing-dependent test flakiness** (added 2026-06-21). A handful of tests exercise
+  background-thread work (control socket I/O thread, file-index watcher, external-repo change,
+  DAP/LSP clients, terminal PTY, `ProjectBackgroundExecutor`/`TaskExecutor`, subprocess) by
+  waiting on real wall-clock time. The reliable ones poll a condition until a bounded deadline
+  (e.g. `ExchangeLine` in `tests/ControlChannelServiceTests.cpp`); the flaky ones instead do a
+  single drain/check after a fixed wait and lose a race when the background thread hasn't posted
+  its event yet.
+  - **Impact:** intermittent red on otherwise-correct code; erodes trust in the suite.
+  - **Fixed so far:** `ControlChannelService/SocketSelfHealsAfterExternalDeletion` —
+    the "descriptor re-published after rebind" check now poll-drains
+    `ConsumeControlCallbacks()` until the descriptor reappears (bounded 4s) instead of draining
+    once (`tests/ControlChannelServiceTests.cpp`).
+  - **Proposed shape:** standardize on poll-until-condition with a bounded deadline for every
+    cross-thread assertion; never assert state immediately after a fixed `sleep_for`. Audit the
+    real-time-sleep test files (`rg -l "sleep_for" tests/`) for the single-check-after-sleep
+    anti-pattern and convert them. Where feasible, prefer a deterministic signal (a drained
+    callback / a future) over a sleep entirely. Candidates to review next: `FileIndexWatcherTests`,
+    `ExternalRepoChangeTests`, `ProjectChangeTests`, `WorkspaceDapClientTests`,
+    `WorkspaceLspClientTests`, `TerminalSessionTests`.
 
 ## Guardrails — rejected experiments, do not retry
 

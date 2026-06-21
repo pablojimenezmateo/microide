@@ -301,8 +301,21 @@ void TestSocketSelfHealsAfterExternalDeletion() {
   Expect(healed_fd >= 0, "a new client connects after the listener self-heals");
 
   // Draining the control callbacks observes the rebind and re-writes the descriptor.
-  service.ConsumeControlCallbacks();
-  Expect(std::filesystem::exists(descriptor_path),
+  // The rebind (which let `healed_fd` connect) and the republish callback are posted
+  // by the I/O thread independently, so the callback may not be enqueued at the exact
+  // instant the connect succeeds. Poll-drain until the descriptor reappears rather
+  // than draining once, so the test is deterministic instead of racing that window.
+  bool descriptor_republished = false;
+  const auto republish_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+  while (!descriptor_republished && std::chrono::steady_clock::now() < republish_deadline) {
+    service.ConsumeControlCallbacks();
+    if (std::filesystem::exists(descriptor_path)) {
+      descriptor_republished = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  Expect(descriptor_republished,
          "the discovery descriptor is re-published after the rebind");
 
   // The healed listener still serves queries end-to-end.
