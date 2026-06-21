@@ -171,6 +171,15 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (pane_it == panes.end()) {
     return false;
   }
+  // Clicking into a split group focuses it first, so the cursor positioning and
+  // viewport below resolve against that group's active editor.
+  if (pane_it->group_index != state_.focused_group_index &&
+      pane_it->group_index < state_.editor_groups.size()) {
+    state_.focused_group_index = pane_it->group_index;
+    if (operations_.request_tab_strip_redraw) {
+      operations_.request_tab_strip_redraw();
+    }
+  }
   const SDL_FRect editor_rect = pane_it->rect;
   editor::TextViewport* viewport = operations_.active_editor_viewport();
   if (viewport == nullptr) {

@@ -293,6 +293,34 @@ bool WorkspaceShell::OpenUntitledTab() {
   return MakeEditorTabService().OpenUntitled();
 }
 
+bool WorkspaceShell::SplitEditorGroup(EditorSplitOrientation orientation) {
+  return MakeEditorTabService().SplitEditorGroup(orientation);
+}
+
+bool WorkspaceShell::FocusOtherEditorGroup() {
+  return MakeEditorTabService().FocusOtherGroup();
+}
+
+void WorkspaceShell::FocusEditorGroup(std::size_t group_index) {
+  ProjectWorkspaceState& state = context_.current_project_state;
+  if (group_index >= state.editor_groups.size() || group_index == state.focused_group_index) {
+    state.surface.focus = FocusTarget::Editor;
+    return;
+  }
+  state.focused_group_index = group_index;
+  state.surface.focus = FocusTarget::Editor;
+  RequestChromeRedraw();
+  RequestEditorSurfaceRedraw();
+}
+
+bool WorkspaceShell::CloseEditorGroup() {
+  return MakeEditorTabService().CloseEditorGroup();
+}
+
+std::size_t WorkspaceShell::EditorGroupCount() const {
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().EditorGroupCount();
+}
+
 bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
   const bool opened = MakeEditorTabService().OpenFileInNewTab(path);
   if (opened) {

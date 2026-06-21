@@ -252,13 +252,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReplaceInBuffer:
     case ActionId::Reopen:
     case ActionId::Search:
-    case ActionId::SplitFirst:
-    case ActionId::SplitLast:
-    case ActionId::SplitNext:
-    case ActionId::SplitPrev:
-    case ActionId::Unsplit:
-    case ActionId::Vsplit:
+    case ActionId::SplitEditorRight:
+    case ActionId::SplitEditorDown:
       return operations_.active_tab_is_editor();
+    case ActionId::FocusOtherGroup:
+    case ActionId::CloseGroup:
+      // Group focus/close only make sense once a second group exists.
+      return operations_.editor_group_count() > 1;
     case ActionId::Save:
       return operations_.active_tab_is_editor() || operations_.active_tab_is_merge() ||
              (operations_.active_tab_is_compare() &&

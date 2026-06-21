@@ -83,6 +83,14 @@ class TabCoordinator {
   void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                  std::string_view content);
   void Close(std::size_t index);
+  // Editor groups (max 2). Splitting clones the focused group's active editor tab
+  // into a new group (shared buffer, independent view) and focuses it; if two
+  // groups already exist it just sets the orientation and focuses the other.
+  // Returns false when there is no active editor tab to clone.
+  bool SplitEditorGroup(EditorSplitOrientation orientation);
+  bool FocusOtherGroup();
+  bool CloseEditorGroup();
+  std::size_t EditorGroupCount() const { return state_.editor_groups.size(); }
   bool MoveActiveTo(std::size_t index);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
@@ -93,6 +101,12 @@ class TabCoordinator {
  private:
   bool RestoreEditorTab(TabEntry::EditorTabState& editor_state);
   bool EnsureEditorTabLoaded(TabEntry& tab);
+  // Remove the focused (expected-empty) group and collapse back to a single
+  // full-area group, resetting split orientation/fraction.
+  void CollapseFocusedGroup();
+  // Clone an editor tab for a split: copies the viewport (sharing the underlying
+  // DocumentState for a live shared buffer) with a fresh folding model.
+  static TabEntry CloneEditorTabForSplit(const TabEntry& tab);
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;

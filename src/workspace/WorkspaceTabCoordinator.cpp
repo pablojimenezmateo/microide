@@ -718,6 +718,15 @@ void TabCoordinator::Close(std::size_t index) {
   state_.focused_group().open_tabs.erase(state_.focused_group().open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
 
   if (state_.focused_group().open_tabs.empty()) {
+    // Closing the last tab of a split group collapses that group; the surviving
+    // group takes the full editor area.
+    if (state_.editor_groups.size() >= 2) {
+      CollapseFocusedGroup();
+      const editor::TextViewport* active_vp = ActiveEditorViewport();
+      operations_.ensure_active_tab_visible();
+      operations_.request_active_tab_redraw(active_vp != nullptr && !active_vp->path().empty());
+      return;
+    }
     state_.focused_group().active_tab_index = 0;
     state_.focused_group().tab_scroll_index = 0;
     state_.focused_group().welcome_surface.viewport.SetPlaceholderText("microide\n\n"
@@ -769,6 +778,119 @@ bool TabCoordinator::MoveActiveTo(std::size_t index) {
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.request_tab_strip_redraw();
+  return true;
+}
+
+TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
+  TabEntry clone;
+  clone.kind = TabEntry::Kind::Editor;
+  clone.path = tab.path;
+  clone.title = tab.title;
+  if (tab.editor_state.has_value()) {
+    TabEntry::EditorTabState editor_state;
+    // Copying the viewport shares the underlying DocumentState (live shared
+    // buffer) while keeping an independent scroll/cursor/selection. The folding
+    // model is non-copyable and view-local, so the clone gets a fresh one.
+    editor_state.viewport = tab.editor_state->viewport;
+    editor_state.restored_path = tab.editor_state->restored_path;
+    editor_state.restored_cursor_line = tab.editor_state->restored_cursor_line;
+    editor_state.restored_cursor_column = tab.editor_state->restored_cursor_column;
+    editor_state.restored_scroll_line = tab.editor_state->restored_scroll_line;
+    editor_state.restored_horizontal_scroll = tab.editor_state->restored_horizontal_scroll;
+    editor_state.needs_restore = tab.editor_state->needs_restore;
+    editor_state.snippet_session = tab.editor_state->snippet_session;
+    clone.editor_state = std::move(editor_state);
+  } else if (tab.deferred_handle.has_value()) {
+    clone.deferred_handle = tab.deferred_handle;
+  }
+  return clone;
+}
+
+bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
+  if (orientation == EditorSplitOrientation::None || state_.editor_groups.empty()) {
+    return false;
+  }
+
+  // With two groups already open, just retarget the divider orientation and move
+  // focus to the other group (capped at two groups).
+  if (state_.editor_groups.size() >= 2) {
+    state_.group_split_orientation = orientation;
+    state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
+    state_.surface.focus = FocusTarget::Editor;
+    operations_.ensure_active_tab_visible();
+    operations_.request_active_tab_redraw(true);
+    return true;
+  }
+
+  EditorGroup& source = state_.focused_group();
+  if (source.active_tab_index >= source.open_tabs.size()) {
+    return false;
+  }
+  const TabEntry& active = source.open_tabs[source.active_tab_index];
+  if (active.kind != TabEntry::Kind::Editor || !active.editor_state.has_value()) {
+    return false;
+  }
+  // Capture fresh scroll/cursor into the source tab before cloning so the new
+  // group starts at the same view position.
+  SyncActiveEditorTabMetadata();
+
+  EditorGroup new_group;
+  new_group.open_tabs.push_back(CloneEditorTabForSplit(active));
+  new_group.active_tab_index = 0;
+  state_.editor_groups.push_back(std::move(new_group));
+  state_.group_split_orientation = orientation;
+  state_.group_split_fraction = 0.5f;
+  state_.focused_group_index = state_.editor_groups.size() - 1;
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.ensure_active_tab_visible();
+  operations_.request_active_tab_redraw(true);
+  return true;
+}
+
+bool TabCoordinator::FocusOtherGroup() {
+  if (state_.editor_groups.size() < 2) {
+    return false;
+  }
+  state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.ensure_active_tab_visible();
+  operations_.request_active_tab_redraw(true);
+  return true;
+}
+
+void TabCoordinator::CollapseFocusedGroup() {
+  const std::size_t removed =
+      state_.focused_group_index < state_.editor_groups.size() ? state_.focused_group_index : 0;
+  state_.editor_groups.erase(state_.editor_groups.begin() +
+                             static_cast<std::ptrdiff_t>(removed));
+  if (state_.editor_groups.empty()) {
+    state_.editor_groups.emplace_back();
+  }
+  state_.focused_group_index = 0;
+  state_.group_split_orientation = EditorSplitOrientation::None;
+  state_.group_split_fraction = 0.5f;
+  state_.surface.focus = FocusTarget::Editor;
+}
+
+bool TabCoordinator::CloseEditorGroup() {
+  if (state_.editor_groups.size() < 2) {
+    return false;
+  }
+  // Releasing this group's tabs may drop the last open view of a shared buffer;
+  // fire LSP didClose for any path now unreferenced by the surviving group.
+  const EditorGroup& closing = state_.focused_group();
+  for (const TabEntry& tab : closing.open_tabs) {
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      const std::filesystem::path path = operations_.editor_view_path(*tab.editor_state);
+      if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
+        operations_.notify_lsp_buffer_close(path);
+      }
+    }
+  }
+  CollapseFocusedGroup();
+  const editor::TextViewport* active_vp = ActiveEditorViewport();
+  operations_.ensure_active_tab_visible();
+  operations_.request_active_tab_redraw(active_vp != nullptr && !active_vp->path().empty());
   return true;
 }
 }  // namespace microide::workspace

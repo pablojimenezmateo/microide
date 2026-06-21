@@ -430,6 +430,30 @@
   static bool OpenFileInNewTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.OpenFileInNewTab(path);
   }
+  static bool SplitEditorGroup(WorkspaceShell& shell,
+                               microide::workspace::EditorSplitOrientation orientation) {
+    return shell.SplitEditorGroup(orientation);
+  }
+  static bool FocusOtherEditorGroup(WorkspaceShell& shell) {
+    return shell.FocusOtherEditorGroup();
+  }
+  static bool CloseEditorGroup(WorkspaceShell& shell) { return shell.CloseEditorGroup(); }
+  static std::size_t EditorGroupCount(WorkspaceShell& shell) { return shell.EditorGroupCount(); }
+  static std::size_t FocusedGroupIndex(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.focused_group_index;
+  }
+  static microide::workspace::EditorSplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.group_split_orientation;
+  }
+  // The active editor viewport of group `gi` (path + scroll line live here).
+  static const editor::TextViewport& GroupActiveViewport(WorkspaceShell& shell, std::size_t gi) {
+    auto& group = shell.context_.current_project_state.editor_groups[gi];
+    return *shell.GroupActiveViewport(group);
+  }
+  static void SetGroupScrollLine(WorkspaceShell& shell, std::size_t gi, std::size_t line) {
+    auto& group = shell.context_.current_project_state.editor_groups[gi];
+    shell.GroupActiveViewport(group)->SetScrollLine(line);
+  }
   static void RegisterVirtualDocument(WorkspaceShell& shell,
                                       const microide::workspace::VirtualDocumentSpec& spec) {
     shell.virtual_document_registry_.Register(spec);

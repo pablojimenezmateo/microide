@@ -375,28 +375,32 @@ std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& pa
   }
   const std::filesystem::path normalized = path.lexically_normal();
   std::size_t count = 0;
-  for (const auto& tab : context_.current_project_state.focused_group().open_tabs) {
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      const std::filesystem::path view_path =
-          (tab.editor_state->needs_restore ? tab.editor_state->restored_path
-                                           : tab.editor_state->viewport.path())
-              .lexically_normal();
-      if (!view_path.empty() && view_path == normalized) {
-        ++count;
+  // Count across every editor group: a buffer shared by both groups in a split
+  // must not be reported as closed until the last view in either group is gone.
+  for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+        const std::filesystem::path view_path =
+            (tab.editor_state->needs_restore ? tab.editor_state->restored_path
+                                             : tab.editor_state->viewport.path())
+                .lexically_normal();
+        if (!view_path.empty() && view_path == normalized) {
+          ++count;
+        }
+        continue;
       }
-      continue;
-    }
-    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-        tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
-      if (tab.compare->right_viewport.path().lexically_normal() == normalized) {
-        ++count;
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+          tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
+        if (tab.compare->right_viewport.path().lexically_normal() == normalized) {
+          ++count;
+        }
+        continue;
       }
-      continue;
-    }
-    if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-        !tab.merge->result_viewport.path().empty()) {
-      if (tab.merge->result_viewport.path().lexically_normal() == normalized) {
-        ++count;
+      if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+          !tab.merge->result_viewport.path().empty()) {
+        if (tab.merge->result_viewport.path().lexically_normal() == normalized) {
+          ++count;
+        }
       }
     }
   }

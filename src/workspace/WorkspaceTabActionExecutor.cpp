@@ -129,43 +129,38 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         return reject("Save failed");
       }
       return DispatchResult::Handled;
-    case ActionId::Vsplit: {
+    case ActionId::SplitEditorRight:
+    case ActionId::SplitEditorDown: {
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
+      const EditorSplitOrientation orientation = id == ActionId::SplitEditorDown
+                                                     ? EditorSplitOrientation::Horizontal
+                                                     : EditorSplitOrientation::Vertical;
       const TabPathsRequest request = BuildTabPathsRequest(args, context_.ProjectRoot());
 
-      if (request.open_untitled) {
-        context_.SplitActiveEditorVertically();
+      if (request.open_untitled || request.paths.empty()) {
+        std::string error_message;
+        if (!context_.SplitEditorGroup(orientation, {}, &error_message)) {
+          return reject(error_message);
+        }
         return DispatchResult::Handled;
       }
 
       for (const std::filesystem::path& path : request.paths) {
         std::string error_message;
-        if (!context_.OpenVerticalSplitPath(path, &error_message)) {
+        if (!context_.SplitEditorGroup(orientation, path, &error_message)) {
           return reject(error_message);
         }
       }
-
       return DispatchResult::Handled;
     }
-    case ActionId::Unsplit:
-      context_.UnsplitActiveEditor();
+    case ActionId::FocusOtherGroup:
+      context_.FocusOtherGroup();
       return DispatchResult::Handled;
-    case ActionId::SplitNext:
-      context_.CycleEditorSplit(1);
+    case ActionId::CloseGroup:
+      context_.CloseEditorGroup();
       return DispatchResult::Handled;
-    case ActionId::SplitPrev:
-      context_.CycleEditorSplit(-1);
-      return DispatchResult::Handled;
-    case ActionId::SplitFirst:
-      context_.ActivateOrderedEditorSplit(0);
-      return DispatchResult::Handled;
-    case ActionId::SplitLast: {
-      const std::size_t split_count = context_.ActiveEditorSplitCount();
-      context_.ActivateOrderedEditorSplit(split_count == 0 ? 0 : split_count - 1);
-      return DispatchResult::Handled;
-    }
     case ActionId::CloseActiveTab:
       if (context_.HasOpenTabs()) {
         context_.RequestCloseTab(context_.ActiveTabIndex());

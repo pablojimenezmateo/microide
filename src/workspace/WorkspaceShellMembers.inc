@@ -1259,6 +1259,11 @@
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
+  bool SplitEditorGroup(EditorSplitOrientation orientation);
+  bool FocusOtherEditorGroup();
+  void FocusEditorGroup(std::size_t group_index);
+  bool CloseEditorGroup();
+  std::size_t EditorGroupCount() const;
   bool MoveActiveTabTo(std::size_t index);
   std::optional<std::size_t> FindTabIndexBySpecifier(std::string_view specifier,
                                                      std::string* error_message = nullptr) const;

@@ -222,6 +222,22 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
+  // Editor-group split divider: grab it to resize the two groups.
+  if (event.button.button == SDL_BUTTON_LEFT) {
+    for (const EditorSplitDividerLayout& divider :
+         ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
+      const float inflate = kWorkspaceResizeHandleHitInflate;
+      const SDL_FRect hit = MakeRect(divider.rect.x - inflate, divider.rect.y - inflate,
+                                     divider.rect.w + 2.0f * inflate, divider.rect.h + 2.0f * inflate);
+      if (Contains(hit, event.button.x, event.button.y)) {
+        context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
+        context_.interaction_state.drag_editor_split_divider_index = divider.divider_index;
+        context_.interaction_state.drag_editor_split_path = divider.node_path;
+        return true;
+      }
+    }
+  }
+
   if (MakeDebugPaneMouseCoordinator().HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestDebugPaneRedraw(); });
     return true;

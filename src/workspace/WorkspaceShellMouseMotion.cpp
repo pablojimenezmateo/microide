@@ -239,6 +239,21 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       return true;
     }
 
+    if (context_.interaction_state.drag_target == DragTarget::EditorSplitDivider) {
+      const SDL_FRect es = drag_layout.editor_surface;
+      ProjectWorkspaceState& ps = context_.current_project_state;
+      float fraction = ps.group_split_fraction;
+      if (ps.group_split_orientation == EditorSplitOrientation::Horizontal && es.h > 0.0f) {
+        fraction = (static_cast<float>(event.motion.y) - es.y) / es.h;
+      } else if (es.w > 0.0f) {
+        fraction = (static_cast<float>(event.motion.x) - es.x) / es.w;
+      }
+      ps.group_split_fraction = std::clamp(fraction, 0.1f, 0.9f);
+      MarkLayoutDirty();
+      ensure_redraw([this]() { RequestWindowRedraw(); });
+      return true;
+    }
+
     if (context_.interaction_state.drag_target == DragTarget::BottomPanelDivider) {
       if (MakePanelMouseCoordinator().HandleDrag(event, drag_layout)) {
         RequestBottomPanelLayoutChangeRedraw(drag_layout);

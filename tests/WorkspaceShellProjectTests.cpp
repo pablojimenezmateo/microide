@@ -3022,6 +3022,87 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
 
 }  // namespace
 
+void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  std::string many_lines;
+  for (int i = 0; i < 200; ++i) {
+    many_lines += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(file_a, many_lines);
+  WriteFile(file_b, "only b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+
+  // Scroll group 0 down so we can prove the split keeps an independent view.
+  WorkspaceShellTestAccess::SetGroupScrollLine(shell, 0, 40);
+
+  // Split right: clones the active tab into a new, focused second group sharing the
+  // same document (shared buffer) but with an independent view.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should succeed when an editor tab is active");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "splitting should create a second editor group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "splitting should focus the new group");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::Vertical,
+         "split-right should set the vertical (side-by-side) orientation");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_a.lexically_normal(),
+         "the split clone should start on the same document");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).line_count() ==
+             WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).line_count(),
+         "both groups should observe the same shared buffer contents");
+
+  // The clone starts at the source view position, but scrolling it must not move
+  // group 0 (independent views over the shared buffer).
+  WorkspaceShellTestAccess::SetGroupScrollLine(shell, 1, 5);
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 40,
+         "scrolling the second group must not disturb the first group's scroll");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).scroll_line() == 5,
+         "the second group should keep its own scroll position");
+
+  // Open a different document in the focused (second) group: the two groups now show
+  // distinct files.
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
+         "the first group should still show the original document");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_b.lexically_normal(),
+         "the second group should show the newly opened document");
+
+  // Focus toggles back and forth without disturbing either view.
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell),
+         "focus-other-group should switch focus when two groups exist");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "focus should move to group 0");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 40,
+         "group 0 scroll should survive a focus switch (guards the original scroll-reset bug)");
+
+  // Splitting again is capped at two groups.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
+         "splitting with two groups should still report success (retarget + refocus)");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "editor groups should be capped at two");
+
+  // Closing the focused group collapses back to a single full-area group.
+  Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
+         "close-group should succeed while a second group exists");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
+         "closing a group should collapse back to one group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "the surviving group should become focused");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::None,
+         "collapsing should clear the split orientation");
+  Expect(!WorkspaceShellTestAccess::FocusOtherEditorGroup(shell),
+         "focus-other-group should be a no-op with a single group");
+  Expect(!WorkspaceShellTestAccess::CloseEditorGroup(shell),
+         "close-group should be a no-op with a single group");
+}
+
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
@@ -3207,6 +3288,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabWheelScrollsStrip);
   AddTest(tests, "WorkspaceShell/ProjectWatcherReloadDoesNotContinuouslyRearm",
           TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm);
+  AddTest(tests, "WorkspaceShell/EditorGroupSplitFocusCloseSemantics",
+          TestWorkspaceShellEditorGroupSplitFocusCloseSemantics);
 }
 
 }  // namespace microide::tests

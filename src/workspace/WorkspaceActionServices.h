@@ -105,10 +105,9 @@ class WorkspaceActionContext {
     std::function<void()> reset_caret_blink;
     std::function<void()> notify_snippet_session_caret_moved;
     std::function<void()> clear_active_snippet_session_after_undo;
-    std::function<bool(EditorSplitOrientation)> split_active_editor;
-    std::function<bool()> unsplit_active_editor;
-    std::function<bool(int)> cycle_editor_split;
-    std::function<bool(std::size_t)> activate_ordered_editor_split;
+    std::function<bool(EditorSplitOrientation)> split_editor_group;
+    std::function<bool()> focus_other_group;
+    std::function<bool()> close_editor_group;
     std::function<void(std::size_t)> request_close_tab;
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
     std::function<void()> close_all_tabs;
@@ -337,12 +336,13 @@ class WorkspaceActionContext {
   void ReopenActiveTab();
   bool SaveTab(std::size_t index);
   void ResetCaretBlink();
-  bool OpenVerticalSplitPath(const std::filesystem::path& path, std::string* error_message);
-  void SplitActiveEditorVertically();
-  void UnsplitActiveEditor();
-  void CycleEditorSplit(int delta);
-  void ActivateOrderedEditorSplit(std::size_t index);
-  std::size_t ActiveEditorSplitCount() const;
+  // Split the focused editor group in the given orientation, optionally opening
+  // `path` in the new group instead of the cloned active document.
+  bool SplitEditorGroup(EditorSplitOrientation orientation,
+                        const std::filesystem::path& path,
+                        std::string* error_message);
+  bool FocusOtherGroup();
+  bool CloseEditorGroup();
   void RequestCloseTab(std::size_t index);
   void RequestCloseTabs(std::vector<std::size_t> indices);
   void CloseAllTabs();

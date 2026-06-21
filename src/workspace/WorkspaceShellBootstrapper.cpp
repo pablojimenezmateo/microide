@@ -117,6 +117,7 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .last_terminal_command_text = [shell]() { return shell->LastTerminalCommandText(); },
           .terminal_has_selection = [shell]() { return shell->TerminalHasSelection(); },
           .active_tab_is_editor = [shell]() { return shell->ActiveTabIsEditor(); },
+          .editor_group_count = [shell]() { return shell->EditorGroupCount(); },
           .active_tab_is_compare = [shell]() { return shell->ActiveTabIsCompare(); },
           .active_tab_is_merge = [shell]() { return shell->ActiveTabIsMerge(); },
           .active_compare_tab = [shell]() { return shell->ActiveCompareTab(); },

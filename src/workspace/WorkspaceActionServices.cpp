@@ -493,50 +493,40 @@ void WorkspaceActionContext::ResetCaretBlink() {
   operations_.reset_caret_blink();
 }
 
-bool WorkspaceActionContext::OpenVerticalSplitPath(const std::filesystem::path& path,
-                                                   std::string* error_message) {
+bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation,
+                                              const std::filesystem::path& path,
+                                              std::string* error_message) {
+  // When a path is given, open it first so a failure aborts before mutating the
+  // group layout.
   editor::TextViewport opened_view;
-  if (!opened_view.OpenFile(path)) {
+  const bool open_path = !path.empty();
+  if (open_path && !opened_view.OpenFile(path)) {
     if (error_message != nullptr) {
       *error_message = "Failed to open file: " + path.string();
     }
     return false;
   }
-  if (!operations_.split_active_editor(EditorSplitOrientation::Vertical)) {
+  if (!operations_.split_editor_group(orientation)) {
     if (error_message != nullptr) {
       *error_message = "Failed to split the active editor";
     }
     return false;
   }
-  if (!operations_.replace_active_editor_view(opened_view)) {
+  if (open_path && !operations_.replace_active_editor_view(opened_view)) {
     if (error_message != nullptr) {
-      *error_message = "Failed to replace the active split with: " + path.string();
+      *error_message = "Failed to open in the split: " + path.string();
     }
     return false;
   }
   return true;
 }
 
-void WorkspaceActionContext::SplitActiveEditorVertically() {
-  operations_.split_active_editor(EditorSplitOrientation::Vertical);
+bool WorkspaceActionContext::FocusOtherGroup() {
+  return operations_.focus_other_group();
 }
 
-void WorkspaceActionContext::UnsplitActiveEditor() {
-  operations_.unsplit_active_editor();
-}
-
-void WorkspaceActionContext::CycleEditorSplit(int delta) {
-  operations_.cycle_editor_split(delta);
-}
-
-void WorkspaceActionContext::ActivateOrderedEditorSplit(std::size_t index) {
-  operations_.activate_ordered_editor_split(index);
-}
-
-std::size_t WorkspaceActionContext::ActiveEditorSplitCount() const {
-  // Editor splits now live at the group level (max 1 per tab); a present editor
-  // tab counts as a single view.
-  return operations_.active_editor_tab() == nullptr ? 0 : 1;
+bool WorkspaceActionContext::CloseEditorGroup() {
+  return operations_.close_editor_group();
 }
 
 void WorkspaceActionContext::RequestCloseTab(std::size_t index) {

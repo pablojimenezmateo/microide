@@ -28,6 +28,7 @@ class ActionAvailability {
     std::function<std::optional<std::string>()> last_terminal_command_text;
     std::function<bool()> terminal_has_selection;
     std::function<bool()> active_tab_is_editor;
+    std::function<std::size_t()> editor_group_count;
     std::function<bool()> active_tab_is_compare;
     std::function<bool()> active_tab_is_merge;
     std::function<const CompareTabState*()> active_compare_tab;

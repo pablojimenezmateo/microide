@@ -492,10 +492,6 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `sidebar-width <n>`
 - `soft-tabs [on|off]`
 - `wrap [on|off]`
-- `split-first`
-- `split-last`
-- `split-next`
-- `split-prev`
 - `tab [path]`
 - `tab-size [n]`
 - `tabmove <n>`
@@ -508,8 +504,10 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `ui-scale [n|up|down|reset]`
 - `layout-mode-toggle`
 - `status-bar-toggle`
-- `unsplit`
-- `vsplit [path]`
+- `split-right [path]`
+- `split-down [path]`
+- `focus-other-group`
+- `close-group`
 - `jump-to-matching-bracket`
 - `toggle-line-comment`
 - `toggle-block-comment`

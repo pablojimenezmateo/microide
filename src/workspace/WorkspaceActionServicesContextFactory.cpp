@@ -468,12 +468,12 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this]() { assist_service_.NotifySnippetSessionCaretMoved(); },
           .clear_active_snippet_session_after_undo =
               [this]() { assist_service_.ClearActiveSnippetSessionAfterUndo(); },
-          // Editor splits are being reworked into editor groups (Phase B+); the
-          // legacy in-tab split actions are no-ops in the interim.
-          .split_active_editor = [](EditorSplitOrientation) { return false; },
-          .unsplit_active_editor = []() { return false; },
-          .cycle_editor_split = [](int) { return false; },
-          .activate_ordered_editor_split = [](std::size_t) { return false; },
+          .split_editor_group =
+              [this](EditorSplitOrientation orientation) {
+                return SplitEditorGroup(orientation);
+              },
+          .focus_other_group = [this]() { return FocusOtherEditorGroup(); },
+          .close_editor_group = [this]() { return CloseEditorGroup(); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
           .request_close_tabs =
               [this](std::vector<std::size_t> indices) { RequestCloseTabs(std::move(indices)); },
