@@ -3103,7 +3103,72 @@ void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
          "close-group should be a no-op with a single group");
 }
 
+// OpenBufferViewCounts feeds the bulk-close LSP didClose decision: a buffer must
+// be reported as still open while any group keeps a view of it, and as a single
+// view only when exactly one tab references it. This guards the per-tab-count ->
+// single-pass-map refactor in CloseEditorGroup, including that closing a split
+// group does not drop a buffer the surviving group still shows.
+void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+
+  const std::string key_a = file_a.lexically_normal().generic_string();
+  const std::string key_b = file_b.lexically_normal().generic_string();
+
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 1, "a single open tab counts as one view");
+    Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, file_a) == 1,
+           "the map and the single-path count agree for one view");
+  }
+
+  // Splitting clones the active tab into a second group sharing the same buffer.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should succeed when an editor tab is active");
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 2, "a buffer viewed by both groups counts as two views");
+    Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, file_a) == 2,
+           "the map and the single-path count agree for a shared buffer");
+  }
+
+  // Distinguish the two groups: open b.txt in the focused (second) group so it
+  // also holds a view the surviving group will not.
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 2, "a.txt is still viewed by both groups");
+    Expect(counts.at(key_b) == 1, "b.txt has a single view in the second group");
+  }
+
+  // Closing the focused group drops its tabs: the shared a.txt survives in group 0
+  // (back to one view, no spurious didClose), while b.txt is gone entirely.
+  Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
+         "close-group should succeed while a second group exists");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
+         "closing a group collapses back to one group");
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 1, "the surviving group keeps its only view of a.txt");
+    Expect(counts.find(key_b) == counts.end(), "b.txt has no remaining views after the group closes");
+    Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, file_b) == 0,
+           "the single-path count also reports b.txt fully closed");
+  }
+}
+
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/OpenBufferViewCountsAcrossGroups",
+          TestWorkspaceShellOpenBufferViewCountsAcrossGroups);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
   AddTest(tests, "WorkspaceShell/ProjectOpenCommandUsesNativePickerAtActiveProjectRoot",

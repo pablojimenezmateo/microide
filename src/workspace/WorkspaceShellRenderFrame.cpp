@@ -296,9 +296,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   ProjectWorkspaceState& project_state = *frame_vm.project_state;
   CompareTabState* active_compare_tab = nullptr;
   MergeTabState* active_merge_tab = nullptr;
-  if (frame_vm.compare_surface.has_value() &&
-      project_state.focused_group().active_tab_index < project_state.focused_group().open_tabs.size()) {
-    TabEntry& active_tab = project_state.focused_group().open_tabs[project_state.focused_group().active_tab_index];
+  EditorGroup& focused_group = project_state.focused_group();
+  if (frame_vm.compare_surface.has_value() && focused_group.has_active_tab()) {
+    TabEntry& active_tab = focused_group.active_tab();
     if (frame_vm.compare_surface->kind == TabEntry::Kind::Compare && active_tab.compare.has_value()) {
       active_compare_tab = &active_tab.compare.value();
     } else if (frame_vm.compare_surface->kind == TabEntry::Kind::Merge &&
@@ -307,8 +307,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     }
   }
   const bool render_editor_surface = active_compare_tab == nullptr && active_merge_tab == nullptr;
+  // Carve the editor surface into per-group rects once; both the pane layouts and
+  // the split divider below are derived from this single split.
+  const EditorGroupRectsLayout editor_surface_group_rects =
+      render_editor_surface ? ComputeEditorSurfaceGroupRects(layout.editor_surface)
+                            : EditorGroupRectsLayout{};
   const std::vector<EditorPaneLayout> editor_panes =
-      render_editor_surface ? ComputeEditorPaneLayouts(layout.editor_surface)
+      render_editor_surface ? EditorPaneLayoutsFromGroupRects(editor_surface_group_rects)
                             : std::vector<EditorPaneLayout>{};
   if (active_compare_tab != nullptr) {
     const bool draw_compare_caret =
@@ -540,7 +545,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       }
     }
     for (const EditorSplitDividerLayout& divider :
-         ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
+         EditorSplitDividerLayoutsFromGroupRects(editor_surface_group_rects)) {
       const bool divider_active =
           context_.interaction_state.drag_target == DragTarget::EditorSplitDivider &&
           divider.divider_index == context_.interaction_state.drag_editor_split_divider_index &&

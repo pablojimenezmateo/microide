@@ -12,10 +12,11 @@
 namespace microide::workspace {
 
 const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state) {
-  if (state.editor_banners.empty() || state.focused_group().active_tab_index >= state.focused_group().open_tabs.size()) {
+  const EditorGroup& group = state.focused_group();
+  if (state.editor_banners.empty() || !group.has_active_tab()) {
     return nullptr;
   }
-  const TabEntry& tab = state.focused_group().open_tabs[state.focused_group().active_tab_index];
+  const TabEntry& tab = group.active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return nullptr;
   }

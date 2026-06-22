@@ -62,6 +62,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [this](const std::filesystem::path& path) { NotifyLspBufferClose(path); },
           .count_open_buffer_views =
               [this](const std::filesystem::path& path) { return CountOpenBufferViews(path); },
+          .open_buffer_view_counts = [this]() { return OpenBufferViewCounts(); },
           .prepare_editor_view_for_save =
               [this](const std::filesystem::path& path,
                      editor::TextViewport& viewport,

@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <optional>
+#include <string>
+#include <unordered_map>
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceCounters.h"
@@ -369,6 +372,35 @@ void WorkspaceShell::CloseTab(std::size_t index) {
   MakeEditorTabService().Close(index);
 }
 
+namespace {
+
+// The single normalized buffer path a tab contributes to LSP open-view
+// accounting, or nullopt if the tab holds no editable buffer view. Shared by the
+// single-path count and the whole-workspace count map so both stay in lockstep.
+std::optional<std::filesystem::path> OpenBufferViewPath(const TabEntry& tab) {
+  if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+    std::filesystem::path view_path =
+        (tab.editor_state->needs_restore ? tab.editor_state->restored_path
+                                         : tab.editor_state->viewport.path())
+            .lexically_normal();
+    if (view_path.empty()) {
+      return std::nullopt;
+    }
+    return view_path;
+  }
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+      tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
+    return tab.compare->right_viewport.path().lexically_normal();
+  }
+  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
+      !tab.merge->result_viewport.path().empty()) {
+    return tab.merge->result_viewport.path().lexically_normal();
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
 std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& path) const {
   if (path.empty()) {
     return 0;
@@ -378,33 +410,30 @@ std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& pa
   // Count across every editor group: a buffer shared by both groups in a split
   // must not be reported as closed until the last view in either group is gone.
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
-    for (const auto& tab : group.open_tabs) {
-      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-        const std::filesystem::path view_path =
-            (tab.editor_state->needs_restore ? tab.editor_state->restored_path
-                                             : tab.editor_state->viewport.path())
-                .lexically_normal();
-        if (!view_path.empty() && view_path == normalized) {
-          ++count;
-        }
-        continue;
-      }
-      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-          tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
-        if (tab.compare->right_viewport.path().lexically_normal() == normalized) {
-          ++count;
-        }
-        continue;
-      }
-      if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-          !tab.merge->result_viewport.path().empty()) {
-        if (tab.merge->result_viewport.path().lexically_normal() == normalized) {
-          ++count;
-        }
+    for (const TabEntry& tab : group.open_tabs) {
+      const std::optional<std::filesystem::path> view = OpenBufferViewPath(tab);
+      if (view.has_value() && *view == normalized) {
+        ++count;
       }
     }
   }
   return count;
+}
+
+std::unordered_map<std::string, std::size_t> WorkspaceShell::OpenBufferViewCounts() const {
+  // One O(views) pass producing the same per-path counts CountOpenBufferViews
+  // would return individually, so bulk-close paths avoid an O(tabs * views)
+  // rescan (and repeated path normalization) when deciding LSP didClose.
+  std::unordered_map<std::string, std::size_t> counts;
+  for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      const std::optional<std::filesystem::path> view = OpenBufferViewPath(tab);
+      if (view.has_value()) {
+        ++counts[view->generic_string()];
+      }
+    }
+  }
+  return counts;
 }
 
 }  // namespace microide::workspace

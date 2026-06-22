@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "workspace/WorkspaceProjectState.h"
@@ -20,6 +21,9 @@ class TabCoordinator {
     std::function<void(const std::filesystem::path&)> notify_plugin_buffer_open;
     std::function<void(const std::filesystem::path&)> notify_lsp_buffer_close;
     std::function<std::size_t(const std::filesystem::path&)> count_open_buffer_views;
+    // Whole-workspace open-view counts keyed by normalized generic path, built
+    // once so closing a multi-tab group is O(views) rather than O(tabs*views).
+    std::function<std::unordered_map<std::string, std::size_t>()> open_buffer_view_counts;
     std::function<bool(const std::filesystem::path&, editor::TextViewport&, std::string*)>
         prepare_editor_view_for_save;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;

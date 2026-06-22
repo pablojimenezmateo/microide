@@ -661,6 +661,13 @@
   std::vector<EditorPaneLayout> ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
   std::vector<EditorSplitDividerLayout> ComputeEditorSplitDividerLayouts(
       const SDL_FRect& editor_surface) const;
+  // Derive pane / divider layouts from already-computed group rects, so a render
+  // pass that needs both does not recompute the surface split twice per frame.
+  std::vector<EditorPaneLayout> EditorPaneLayoutsFromGroupRects(
+      const EditorGroupRectsLayout& group_rects) const;
+  std::vector<EditorSplitDividerLayout> EditorSplitDividerLayoutsFromGroupRects(
+      const EditorGroupRectsLayout& group_rects) const;
+  EditorGroupRectsLayout ComputeEditorSurfaceGroupRects(const SDL_FRect& editor_surface) const;
   // Per-group chrome rects (tab strip / breadcrumb / surface) for the current
   // editor-group state, carved from `layout`. Single source of truth shared by
   // the render, cursor, and mouse paths so they cannot drift apart.
@@ -1103,6 +1110,9 @@
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
   std::size_t CountOpenBufferViews(const std::filesystem::path& path) const;
+  // Per-path open-view counts across all groups, built in a single pass for
+  // bulk-close callers that would otherwise call CountOpenBufferViews per tab.
+  std::unordered_map<std::string, std::size_t> OpenBufferViewCounts() const;
   // Thin forwarders to lsp_service_ (see src/workspace/LspService.*).
   bool HasActiveCompletionProvider() const;
   bool HasActiveCodeActionProvider() const;

@@ -75,6 +75,7 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests);
+void RegisterEditorGroupStateTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests);
@@ -357,6 +358,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterControlChannelServiceTests(tests);
   microide::tests::RegisterWorkspaceShellControlSettingsTests(tests);
   microide::tests::RegisterArchitectureInvariantsTests(tests);
+  microide::tests::RegisterEditorGroupStateTests(tests);
   microide::tests::RegisterSingleLineEditorTests(tests);
   microide::tests::RegisterPersistedRecordIoTests(tests);
   microide::tests::RegisterPersistedStateRecordTests(tests);

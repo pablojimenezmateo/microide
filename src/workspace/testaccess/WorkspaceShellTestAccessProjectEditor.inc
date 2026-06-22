@@ -439,6 +439,13 @@
   }
   static bool CloseEditorGroup(WorkspaceShell& shell) { return shell.CloseEditorGroup(); }
   static std::size_t EditorGroupCount(WorkspaceShell& shell) { return shell.EditorGroupCount(); }
+  static std::size_t CountOpenBufferViews(WorkspaceShell& shell,
+                                          const std::filesystem::path& path) {
+    return shell.CountOpenBufferViews(path);
+  }
+  static std::unordered_map<std::string, std::size_t> OpenBufferViewCounts(WorkspaceShell& shell) {
+    return shell.OpenBufferViewCounts();
+  }
   static std::size_t FocusedGroupIndex(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group_index;
   }

@@ -57,18 +57,22 @@ EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
                                  state.group_split_fraction);
 }
 
-std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneLayouts(
+EditorGroupRectsLayout WorkspaceShell::ComputeEditorSurfaceGroupRects(
     const SDL_FRect& editor_surface) const {
+  return ComputeEditorGroupRectsForState(SurfaceOnlyLayout(editor_surface));
+}
+
+std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::EditorPaneLayoutsFromGroupRects(
+    const EditorGroupRectsLayout& group_rects) const {
   std::vector<EditorPaneLayout> panes;
   const ProjectWorkspaceState& state = context_.current_project_state;
   if (state.editor_groups.empty()) {
     return panes;
   }
-  const EditorGroupRectsLayout group_rects =
-      ComputeEditorGroupRectsForState(SurfaceOnlyLayout(editor_surface));
   const std::size_t focused = state.focused_group_index < group_rects.groups.size()
                                   ? state.focused_group_index
                                   : 0;
+  panes.reserve(group_rects.groups.size());
   for (std::size_t i = 0; i < group_rects.groups.size(); ++i) {
     const bool active = i == focused;
     // The external-change banner belongs to the focused group; trim it from that
@@ -81,15 +85,27 @@ std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneL
 }
 
 std::vector<WorkspaceShell::EditorSplitDividerLayout>
-WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface) const {
+WorkspaceShell::EditorSplitDividerLayoutsFromGroupRects(
+    const EditorGroupRectsLayout& group_rects) const {
   std::vector<EditorSplitDividerLayout> dividers;
-  const EditorGroupRectsLayout group_rects =
-      ComputeEditorGroupRectsForState(SurfaceOnlyLayout(editor_surface));
   if (group_rects.divider.has_value()) {
     dividers.push_back(EditorSplitDividerLayout{.node_path = {}, .divider_index = 0,
                                                 .rect = *group_rects.divider});
   }
   return dividers;
+}
+
+std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneLayouts(
+    const SDL_FRect& editor_surface) const {
+  if (context_.current_project_state.editor_groups.empty()) {
+    return {};
+  }
+  return EditorPaneLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
+}
+
+std::vector<WorkspaceShell::EditorSplitDividerLayout>
+WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface) const {
+  return EditorSplitDividerLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
 }
 
 }  // namespace microide::workspace

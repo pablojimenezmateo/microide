@@ -225,9 +225,9 @@ std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t proj
 }
 
 bool TabCoordinator::ActiveTabIsEditor() const {
-  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Editor &&
-         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].editor_state.has_value();
+  const EditorGroup& group = state_.focused_group();
+  return group.has_active_tab() && group.active_tab().kind == TabEntry::Kind::Editor &&
+         group.active_tab().editor_state.has_value();
 }
 
 TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
@@ -896,11 +896,19 @@ bool TabCoordinator::CloseEditorGroup() {
   }
   // Releasing this group's tabs may drop the last open view of a shared buffer;
   // fire LSP didClose for any path now unreferenced by the surviving group.
+  // Count views once up front so this is O(views), not O(tabs * views).
+  const std::unordered_map<std::string, std::size_t> view_counts =
+      operations_.open_buffer_view_counts ? operations_.open_buffer_view_counts()
+                                          : std::unordered_map<std::string, std::size_t>{};
   const EditorGroup& closing = state_.focused_group();
   for (const TabEntry& tab : closing.open_tabs) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       const std::filesystem::path path = operations_.editor_view_path(*tab.editor_state);
-      if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
+      if (path.empty()) {
+        continue;
+      }
+      const auto it = view_counts.find(path.generic_string());
+      if (it != view_counts.end() && it->second == 1) {
         operations_.notify_lsp_buffer_close(path);
       }
     }

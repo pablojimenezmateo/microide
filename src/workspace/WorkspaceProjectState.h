@@ -328,6 +328,10 @@ struct EditorGroup {
   std::vector<TabEntry> open_tabs;
   std::size_t active_tab_index = 0;
   int tab_scroll_index = 0;
+
+  bool has_active_tab() const { return active_tab_index < open_tabs.size(); }
+  TabEntry& active_tab() { return open_tabs[active_tab_index]; }
+  const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
 };
 
 struct ProjectWorkspaceState {
@@ -344,17 +348,17 @@ struct ProjectWorkspaceState {
   EditorSplitOrientation group_split_orientation = EditorSplitOrientation::None;
   float group_split_fraction = 0.5f;
 
-  EditorGroup& focused_group() {
-    if (editor_groups.empty()) {
-      editor_groups.emplace_back();
-    }
-    if (focused_group_index >= editor_groups.size()) {
-      focused_group_index = editor_groups.size() - 1;
-    }
-    return editor_groups[focused_group_index];
+  // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the
+  // mutation sites that erase/clear a group always restore at least one), and
+  // `focused_group_index` is kept valid by those same sites; a stale index here
+  // is clamped on read rather than silently mutated, so const and non-const
+  // resolve to the same group.
+  std::size_t clamped_focused_group_index() const {
+    return focused_group_index < editor_groups.size() ? focused_group_index : 0;
   }
+  EditorGroup& focused_group() { return editor_groups[clamped_focused_group_index()]; }
   const EditorGroup& focused_group() const {
-    return editor_groups[focused_group_index < editor_groups.size() ? focused_group_index : 0];
+    return editor_groups[clamped_focused_group_index()];
   }
 
   ProjectSurfaceState surface;
