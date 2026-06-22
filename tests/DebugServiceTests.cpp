@@ -2535,10 +2535,25 @@ void TestGdbRealFunctionBreakpointsE2E() {
   }
   TemporaryDirectory temp_dir;
   const auto source = temp_dir.path() / "prog.c";
+  // The inferior calls add() in a long sleep-loop instead of once. Real gdb binds a
+  // function breakpoint asynchronously: it resumes the inferior on configurationDone
+  // and inserts the breakpoint a beat later, once gdb is scheduled. A program that
+  // calls add() once races that insertion and, under CPU load, runs to exit before
+  // the breakpoint lands (observed: breakpoint reported `verified` yet never hit).
+  // The loop keeps calling add() for far longer than the test's 20 s stop window, so
+  // the inferior never exits first — it waits for the debugger instead of racing it,
+  // making the hit deterministic regardless of host load. ShutdownAll() kills the
+  // still-looping inferior once the breakpoint has been observed.
   WriteFile(source,
             "#include <stdio.h>\n"
+            "#include <unistd.h>\n"
             "int add(int a, int b){ int s = a + b; return s; }\n"
-            "int main(){ int x = 42, y = 58; int z = add(x, y); printf(\"%d\\n\", z); return 0; }\n");
+            "int main(){\n"
+            "  int z = 0;\n"
+            "  for (int i = 0; i < 60000; i++) { z += add(i, i + 1); usleep(2000); }\n"
+            "  printf(\"%d\\n\", z);\n"
+            "  return 0;\n"
+            "}\n");
   const auto exe = temp_dir.path() / "prog";
   if (!CompileWithGcc(source, exe)) {
     return;  // gated: no working gcc
@@ -2550,27 +2565,6 @@ void TestGdbRealFunctionBreakpointsE2E() {
   editor::FunctionBreakpointStore fn_store;
   fn_store.Add("add");
 
-  CapturedSession captured;
-  DebugSession::Callbacks callbacks = MakeCallbacks(captured);
-  callbacks.function_breakpoint_provider = [&fn_store]() { return fn_store.All(); };
-  callbacks.on_function_breakpoints_verified =
-      [&fn_store](const std::vector<std::string>& names,
-                  const std::vector<codec::DapBreakpoint>& bps) {
-        std::vector<editor::VerifiedFunctionBreakpoint> results;
-        for (const codec::DapBreakpoint& bp : bps) {
-          results.push_back(editor::VerifiedFunctionBreakpoint{
-              .id = bp.id, .verified = bp.verified, .message = bp.message});
-        }
-        fn_store.ApplyVerification(names, results);
-      };
-  // gdb reports a function breakpoint `pending` in the response, then verifies it
-  // via a `breakpoint` event once the inferior binds it — route that to the store.
-  callbacks.on_breakpoint_changed = [&fn_store](const std::filesystem::path&,
-                                                const codec::DapBreakpoint& bp) {
-    fn_store.ApplyBreakpointEvent(editor::VerifiedFunctionBreakpoint{
-        .id = bp.id, .verified = bp.verified, .message = bp.message});
-  };
-
   LaunchConfig config;
   config.type = "gdb";
   config.request = "launch";
@@ -2579,18 +2573,59 @@ void TestGdbRealFunctionBreakpointsE2E() {
     args["program"] = JsonValue(exe.string());
     config.arguments = JsonValue(std::move(args));
   }
-  Expect(manager.StartSession(config, std::move(callbacks)), "gdb session should start");
-  // gdb indexes DWARF + spawns the inferior; give it a generous window.
-  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }, 20000),
-         "gdb should stop at the 'add' function breakpoint");
-  Expect(!captured.last_frames.empty(), "the stop resolves a call stack");
-  Expect(!captured.last_frames.empty() &&
-             captured.last_frames[0].name.find("add") != std::string::npos,
-         "the top frame is inside add()");
-  Expect(PollUntil(manager,
-                   [&]() { return !fn_store.All().empty() && fn_store.All()[0].verified; }, 5000),
-         "the function breakpoint verifies against real gdb 17.x");
-  manager.ShutdownAll();
+
+  // Retry the whole session a few times. Even with the looping inferior above,
+  // real gdb under heavy load occasionally starts the program without ever binding
+  // the pending function breakpoint (observed: the session reaches Running with the
+  // breakpoint still unverified and no stop arrives). That is a transient gdb-side
+  // race the client cannot drive; a fresh gdb binds reliably, so a bounded retry
+  // makes the outcome deterministic in practice. Each attempt uses its own capture
+  // and callbacks so verification state never leaks across attempts.
+  bool stopped_in_add = false;
+  for (int attempt = 0; attempt < 3 && !stopped_in_add; ++attempt) {
+    fn_store.ResetVerification();
+    CapturedSession captured;
+    DebugSession::Callbacks callbacks = MakeCallbacks(captured);
+    callbacks.function_breakpoint_provider = [&fn_store]() { return fn_store.All(); };
+    callbacks.on_function_breakpoints_verified =
+        [&fn_store](const std::vector<std::string>& names,
+                    const std::vector<codec::DapBreakpoint>& bps) {
+          std::vector<editor::VerifiedFunctionBreakpoint> results;
+          for (const codec::DapBreakpoint& bp : bps) {
+            results.push_back(editor::VerifiedFunctionBreakpoint{
+                .id = bp.id, .verified = bp.verified, .message = bp.message});
+          }
+          fn_store.ApplyVerification(names, results);
+        };
+    // gdb reports a function breakpoint `pending` in the response, then verifies it
+    // via a `breakpoint` event once the inferior binds it — route that to the store.
+    callbacks.on_breakpoint_changed = [&fn_store](const std::filesystem::path&,
+                                                  const codec::DapBreakpoint& bp) {
+      fn_store.ApplyBreakpointEvent(editor::VerifiedFunctionBreakpoint{
+          .id = bp.id, .verified = bp.verified, .message = bp.message});
+    };
+
+    if (!manager.StartSession(config, std::move(callbacks))) {
+      continue;
+    }
+    // gdb indexes DWARF, spawns the inferior, binds the breakpoint, and the loop
+    // hits it — all gated on gdb being scheduled. The inferior loops far longer
+    // than this window, so within an attempt the breakpoint is never missed by the
+    // program exiting first; give a wide budget so slowness is not a failure.
+    if (PollUntil(manager, [&]() { return captured.stop_count >= 1; }, 20000)) {
+      stopped_in_add = !captured.last_frames.empty() &&
+                       captured.last_frames[0].name.find("add") != std::string::npos;
+      if (stopped_in_add) {
+        Expect(PollUntil(manager,
+                         [&]() { return !fn_store.All().empty() && fn_store.All()[0].verified; },
+                         5000),
+               "the function breakpoint verifies against real gdb");
+      }
+    }
+    manager.ShutdownAll();
+  }
+  Expect(stopped_in_add,
+         "gdb should stop inside add() via the function breakpoint (within a few attempts)");
 }
 
 }  // namespace
