@@ -220,6 +220,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CloseTabsToRight),
       MenuItem(ActionId::CloseTabsToLeft),
       MenuSeparator(),
+      MenuItem(ActionId::SplitEditorRight, "Split Right"),
+      MenuItem(ActionId::SplitEditorDown, "Split Down"),
+      MenuSeparator(),
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),
   });
@@ -260,6 +263,8 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
   static const auto kFileItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSelectedTreeItem),
       MenuItem(ActionId::OpenSelectedTreeItemInNewTab),
+      MenuItem(ActionId::SplitEditorRight, "Split Right"),
+      MenuItem(ActionId::SplitEditorDown, "Split Down"),
       MenuSeparator(),
       MenuItem(ActionId::CompareHead),
       MenuItem(ActionId::Compare),

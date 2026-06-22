@@ -3103,6 +3103,53 @@ void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
          "close-group should be a no-op with a single group");
 }
 
+void TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen() {
+  using microide::workspace::TreeContextTargetKind;
+  using ActionId = WorkspaceShell::ActionId;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+
+  // No editor open: split is unavailable (nothing to split from).
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
+         "split-right should be disabled with no active editor");
+
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  // Single group + active editor: both split items are available.
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
+         "split-right should be enabled with one editor group");
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
+         "split-down should be enabled with one editor group");
+
+  // Right-click file B in the tree and choose Split Right: B opens in a new group
+  // while the original group keeps file A.
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, TreeContextTargetKind::File, file_b);
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(shell, ActionId::SplitEditorRight),
+         "tree Split Right should execute");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "tree Split Right should create a second group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "the new split group should be focused");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_b.lexically_normal(),
+         "the tree-split group should show the right-clicked file");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
+         "the original group should keep its own file");
+
+  // With a split now present, both items are greyed out (cap = 2 groups).
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
+         "split-right should be disabled once a split exists");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
+         "split-down should be disabled once a split exists");
+}
+
 // OpenBufferViewCounts feeds the bulk-close LSP didClose decision: a buffer must
 // be reported as still open while any group keeps a view of it, and as a single
 // view only when exactly one tab references it. This guards the per-tab-count ->
@@ -3355,6 +3402,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm);
   AddTest(tests, "WorkspaceShell/EditorGroupSplitFocusCloseSemantics",
           TestWorkspaceShellEditorGroupSplitFocusCloseSemantics);
+  AddTest(tests, "WorkspaceShell/SplitContextMenuAvailabilityAndTreeOpen",
+          TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen);
 }
 
 }  // namespace microide::tests

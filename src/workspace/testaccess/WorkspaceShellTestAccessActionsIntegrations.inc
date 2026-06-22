@@ -118,6 +118,13 @@
         WorkspaceShell::ActionId::ShowInFileExplorer, {},
         WorkspaceShell::ActionSource::ContextMenu);
   }
+  static bool ExecuteContextMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return ActionCoordinator(shell.MakeActionContext())
+        .Execute(id, {}, WorkspaceShell::ActionSource::ContextMenu);
+  }
+  static bool IsActionEnabled(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return shell.MakeActionAvailability().IsEnabled(id);
+  }
   static bool ExecutePasteClipboard(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::PasteClipboard, {}, WorkspaceShell::ActionSource::Menu);

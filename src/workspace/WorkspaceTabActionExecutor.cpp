@@ -137,6 +137,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       const EditorSplitOrientation orientation = id == ActionId::SplitEditorDown
                                                      ? EditorSplitOrientation::Horizontal
                                                      : EditorSplitOrientation::Vertical;
+      // Tree context-menu split: open the right-clicked file into the new group.
+      // (Editor tab/body menus dispatch with ActionSource::Menu and skip this.)
+      if (source == ActionSource::ContextMenu) {
+        const std::filesystem::path tree_path = context_.ResolveTreeActionPath(source);
+        if (!tree_path.empty()) {
+          std::string error_message;
+          if (!context_.SplitEditorGroup(orientation, tree_path, &error_message)) {
+            return reject(error_message);
+          }
+          return DispatchResult::Handled;
+        }
+      }
       const TabPathsRequest request = BuildTabPathsRequest(args, context_.ProjectRoot());
 
       if (request.open_untitled || request.paths.empty()) {
