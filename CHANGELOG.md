@@ -6,6 +6,55 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.1.0] - 2026-06-22
+
+Feature release focused on **multi-view editing** and **navigation**. Editor tabs can now be
+split into independent editor groups (right/down) with per-group tab strips, group-aware input,
+and session persistence. A new searchable **command palette** (Ctrl+Shift+P) and **recent
+projects/files** tracking make navigation faster, and the **welcome screen** is rebuilt into a
+data-driven home surface. Rounding it out: a built-in **light theme**, a themed app icon, and
+reverse-debugging support in the DAP integration.
+
+### Editor groups & splitting
+- Collapse legacy in-tab splits to a single viewport and introduce a first-class `EditorGroup`
+  model, with per-group layout, render, and tab strips.
+- Split/focus/close commands operate on editor groups, with group-aware keyboard input routed to
+  the focused group.
+- Split right / split down available from both the tab context menu and the file-tree context
+  menu.
+- Editor groups are persisted in session state and restored on reopen.
+
+### Welcome / home surface
+- Overhaul the welcome screen into a data-driven home surface with a bold single-card layout and
+  fixed empty-state overlap.
+- Recents on the home surface are clickable and correct, with a hand cursor and no color halo.
+
+### Navigation & discovery
+- Add a searchable command palette overlay (Ctrl+Shift+P).
+- Track recent projects/files (MRU) and surface them in the file finder, backed by a new
+  persistence record.
+
+### Theming & branding
+- Add a built-in light theme and a stronger selection focus bar.
+- Add a themed two-tone "m" application icon with a hicolor multi-size icon set.
+
+### Debugger
+- Handle a late DAP capabilities event so reverse debugging is recognized when the adapter
+  reports it after launch.
+
+### Fixes
+- Resolve the per-pane group viewport in split hit-test paths so clicks land in the correct
+  group.
+
+### Performance
+- Dedup editor-group hot paths and harden group accessors.
+- Cache the normalized focused path for per-pane path matching in the debug pane.
+
+### Docs & tests
+- Add a GitHub Pages showcase site for microide.
+- De-flake fixed-wait timing races in search/subprocess tests and the control-socket self-heal
+  test.
+
 ## [2.0.1] - 2026-06-20
 
 Patch release adding agent-driven **review verbs** to the control channel. Three new commands

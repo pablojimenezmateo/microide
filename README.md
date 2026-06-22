@@ -5,7 +5,7 @@ search, and terminal workflows. Single-window, keyboard-first, runs without GPU 
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
-> **Status: stable.** Tagged `v2.0.1` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
+> **Status: stable.** Tagged `v2.1.0` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
 > No signed binaries or third-party comparative benchmarks yet — build from source or package
 > locally. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
@@ -105,7 +105,7 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Release Status
 
-- Tagged `v2.0.1`. No signed binaries are published yet; the supported paths today are: build from
+- Tagged `v2.1.0`. No signed binaries are published yet; the supported paths today are: build from
   source or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for
   what shipped.
 - No screenshot or demo gallery is committed yet. That is deliberate for now: workflow docs track
