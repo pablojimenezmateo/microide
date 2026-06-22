@@ -833,8 +833,20 @@ void WorkspaceActionContext::RefreshAvailableColorschemeNames() {
   operations_.refresh_available_colorscheme_names();
 }
 
+void WorkspaceActionContext::RequestLiveConfigRedraw() {
+  if (operations_.mark_layout_dirty) {
+    operations_.mark_layout_dirty();
+  }
+  if (operations_.request_window_redraw) {
+    operations_.request_window_redraw();
+  }
+}
+
 void WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
   operations_.apply_colorscheme(name);
+  // A theme change repaints with new colors but does not change geometry; the
+  // window redraw is what makes it visible (the shell otherwise idles on events).
+  RequestLiveConfigRedraw();
 }
 
 std::string_view WorkspaceActionContext::CurrentColorschemeName() const {
@@ -859,12 +871,7 @@ float WorkspaceActionContext::UiScale() const {
 
 void WorkspaceActionContext::ApplyUiScale(float scale) {
   operations_.apply_ui_scale(scale);
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
-  }
-  if (operations_.request_window_redraw) {
-    operations_.request_window_redraw();
-  }
+  RequestLiveConfigRedraw();
 }
 
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {

@@ -447,6 +447,10 @@ class WorkspaceActionContext {
   bool SetSettingValue(std::string_view id, std::string value);
 
  private:
+  // Mark layout dirty and request a full-window repaint after a live config
+  // change (theme, UI scale). Shared so the redraw idiom is not duplicated.
+  void RequestLiveConfigRedraw();
+
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;
   float& ui_scale_;

@@ -2138,9 +2138,56 @@ void TestWorkspaceShellBreakpointGutterMenu() {
          "clear-condition keeps the hit-count modifier");
 }
 
+void TestColorschemeChangeRequestsRepaint() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "theme check\n");
+
+  constexpr float kWindowWidth = 1280.0f;
+  constexpr float kWindowHeight = 720.0f;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, static_cast<int>(kWindowWidth),
+                                          static_cast<int>(kWindowHeight));
+
+  // A theme change recolors the whole UI, so it must repaint the entire window —
+  // not just the chrome strips that other action side effects happen to dirty.
+  // Without that full repaint the shell idles on events and keeps showing the
+  // previous theme's colors (the reported bug).
+  const auto repaints_whole_window = [&](const auto& inv) {
+    if (inv.full) {
+      return true;
+    }
+    return std::any_of(inv.rects.begin(), inv.rects.end(), [&](const SDL_FRect& r) {
+      return r.w >= kWindowWidth && r.h >= kWindowHeight;
+    });
+  };
+
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "colorscheme light"),
+         "the colorscheme command should run");
+  Expect(repaints_whole_window(shell.ConsumePendingRenderInvalidation()),
+         "selecting a colorscheme must repaint the whole window");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") ==
+             std::optional<std::string>("light"),
+         "the colorscheme command should activate the requested theme");
+
+  // toggle-theme flips between light and dark and must repaint the whole window too.
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "toggle-theme"),
+         "the toggle-theme command should run");
+  Expect(repaints_whole_window(shell.ConsumePendingRenderInvalidation()),
+         "toggling the theme must repaint the whole window");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") !=
+             std::optional<std::string>("light"),
+         "toggle-theme should switch away from the light theme");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ColorschemeChangeRequestsRepaint",
+          TestColorschemeChangeRequestsRepaint);
   AddTest(tests, "WorkspaceShell/BreakpointGutterMenu", TestWorkspaceShellBreakpointGutterMenu);
   AddTest(tests, "WorkspaceShell/ViewMenuToggleReflectsBackingSetting",
           TestViewMenuToggleReflectsBackingSetting);
