@@ -301,6 +301,16 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return false;
       }
 
+      // Right-clicking a split group focuses it first (like left-click) so the
+      // context menu and the retargeted caret act on the clicked group, not the
+      // previously-focused one.
+      auto& project_state = context_.current_project_state;
+      if (pane_it->group_index != project_state.focused_group_index &&
+          pane_it->group_index < project_state.editor_groups.size()) {
+        project_state.focused_group_index = pane_it->group_index;
+        RequestTabStripRedraw();
+      }
+
       editor::TextViewport* viewport = ActiveEditorViewport();
       if (viewport == nullptr) {
         return false;

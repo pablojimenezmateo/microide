@@ -46,6 +46,22 @@ std::size_t WorkspaceShell::FocusedEditorGroupIndex() const {
   return context_.current_project_state.focused_group_index;
 }
 
+editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayout& pane) {
+  std::vector<EditorGroup>& groups = context_.current_project_state.editor_groups;
+  if (pane.group_index >= groups.size()) {
+    return nullptr;
+  }
+  return GroupActiveViewport(groups[pane.group_index]);
+}
+
+const editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayout& pane) const {
+  const std::vector<EditorGroup>& groups = context_.current_project_state.editor_groups;
+  if (pane.group_index >= groups.size()) {
+    return nullptr;
+  }
+  return GroupActiveViewport(groups[pane.group_index]);
+}
+
 EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
     const WorkspaceLayout& layout) const {
   const ProjectWorkspaceState& state = context_.current_project_state;

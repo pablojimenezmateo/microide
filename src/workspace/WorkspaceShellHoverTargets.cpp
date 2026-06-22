@@ -330,7 +330,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   }
 
   for (const EditorPaneLayout& pane : panes) {
-    const editor::TextViewport* viewport = ActiveEditorViewport();
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }
@@ -426,7 +426,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   }
 
   for (const EditorPaneLayout& pane : panes) {
-    const editor::TextViewport* viewport = ActiveEditorViewport();
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }
@@ -579,7 +579,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
         BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface), x, y);
   }
   for (const EditorPaneLayout& pane : panes) {
-    const editor::TextViewport* viewport = ActiveEditorViewport();
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }

@@ -199,6 +199,39 @@
                                                                 *shell.ActiveEditorViewport(),
                                                                 pane);
   }
+  // The viewport a hit-test resolves for a given pane (split group), exercised by
+  // hover/cursor/right-click paths. Returns the path each pane's group renders so a
+  // test can assert the inactive pane resolves its own group, not the focused one.
+  static std::vector<std::string> PaneViewportPaths(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    std::vector<std::string> paths;
+    paths.reserve(panes.size());
+    for (const auto& pane : panes) {
+      const microide::editor::TextViewport* viewport = shell.ViewportForPane(pane);
+      paths.push_back(viewport != nullptr ? viewport->path().generic_string() : std::string{});
+    }
+    return paths;
+  }
+  static microide::editor::TextViewport* InactiveEditorPaneViewport(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    for (const auto& pane : panes) {
+      if (!pane.active) {
+        return shell.ViewportForPane(pane);
+      }
+    }
+    return nullptr;
+  }
+  static microide::editor::EditorViewMetrics InactiveEditorPaneMetrics(WorkspaceShell& shell) {
+    const SDL_FRect pane = InactiveEditorPaneRect(shell);
+    microide::editor::TextViewport* viewport = InactiveEditorPaneViewport(shell);
+    if (viewport == nullptr) {
+      return {};
+    }
+    return microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_, *viewport,
+                                                                pane);
+  }
   static std::size_t ActiveEditorStickyScrollRows(WorkspaceShell& shell,
                                                   microide::editor::TextViewport& viewport,
                                                   const SDL_FRect& pane) {

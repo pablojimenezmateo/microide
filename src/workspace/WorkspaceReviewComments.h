@@ -55,6 +55,10 @@ class ReviewCommentsRegistry {
   bool HasComments(const std::string& uri, int line) const;
   bool HasThreads(const std::string& uri, int line) const;
 
+  // True when no comments or threads exist at all. Lets hot render paths skip
+  // per-frame work (e.g. materializing a viewport's URI) in the common case.
+  bool Empty() const { return comments_.empty() && threads_.empty(); }
+
   // Update comment state.
   void UpdateCommentState(const std::string& comment_id, ReviewCommentState state);
 

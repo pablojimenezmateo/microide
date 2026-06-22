@@ -108,6 +108,9 @@ class TabCoordinator {
   // Remove the focused (expected-empty) group and collapse back to a single
   // full-area group, resetting split orientation/fraction.
   void CollapseFocusedGroup();
+  // Shared tail for group split/focus/close: scroll the (new) focused group's
+  // active tab into view and request the matching redraw.
+  void RefreshFocusedGroupActiveTab(bool editor_redraw);
   // Clone an editor tab for a split: copies the viewport (sharing the underlying
   // DocumentState for a live shared buffer) with a fresh folding model.
   static TabEntry CloneEditorTabForSplit(const TabEntry& tab);

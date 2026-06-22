@@ -343,7 +343,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         [this, renderer](const editor::TextViewport& viewport,
                          const SDL_FRect& pane_rect,
                          const editor::EditorViewMetrics& editor_metrics) {
-          if (renderer == nullptr || viewport.path().empty() || viewport.is_placeholder()) {
+          if (renderer == nullptr || viewport.path().empty() || viewport.is_placeholder() ||
+              review_comments_registry_.Empty()) {
             return;
           }
 

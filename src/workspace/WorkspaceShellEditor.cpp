@@ -104,8 +104,28 @@ WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::GroupActiveEditorTab(E
   return &tab.editor_state.value();
 }
 
+const WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::GroupActiveEditorTab(
+    const EditorGroup& group) const {
+  if (group.active_tab_index >= group.open_tabs.size()) {
+    return nullptr;
+  }
+  const TabEntry& tab = group.open_tabs[group.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return nullptr;
+  }
+  return &tab.editor_state.value();
+}
+
 editor::TextViewport* WorkspaceShell::GroupActiveViewport(EditorGroup& group) {
   TabEntry::EditorTabState* editor_tab = GroupActiveEditorTab(group);
+  if (editor_tab == nullptr) {
+    return &group.welcome_surface.viewport;
+  }
+  return &editor_tab->viewport;
+}
+
+const editor::TextViewport* WorkspaceShell::GroupActiveViewport(const EditorGroup& group) const {
+  const TabEntry::EditorTabState* editor_tab = GroupActiveEditorTab(group);
   if (editor_tab == nullptr) {
     return &group.welcome_surface.viewport;
   }

@@ -649,7 +649,14 @@
   // Group-aware viewport/tab resolution: the editor render/cursor/mouse paths
   // drive each split group through these instead of the focused-group helpers.
   TabEntry::EditorTabState* GroupActiveEditorTab(EditorGroup& group);
+  const TabEntry::EditorTabState* GroupActiveEditorTab(const EditorGroup& group) const;
   editor::TextViewport* GroupActiveViewport(EditorGroup& group);
+  const editor::TextViewport* GroupActiveViewport(const EditorGroup& group) const;
+  // Resolve the viewport for a specific editor pane (split group) rather than the
+  // globally-focused group. Read/hit-test paths (hover, cursor shape, right-click)
+  // must use this so they inspect the pane under the cursor, not the active group.
+  editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane);
+  const editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane) const;
   static TabEntry::EditorTabState MakeEditorTabState(const editor::TextViewport& view);
   void SyncActiveEditorTabMetadata();
   bool ReplaceActiveEditorView(const editor::TextViewport& viewport);

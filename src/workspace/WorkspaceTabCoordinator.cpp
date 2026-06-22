@@ -835,8 +835,7 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
     state_.group_split_orientation = orientation;
     state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
     state_.surface.focus = FocusTarget::Editor;
-    operations_.ensure_active_tab_visible();
-    operations_.request_active_tab_redraw(true);
+    RefreshFocusedGroupActiveTab(true);
     return true;
   }
 
@@ -860,8 +859,7 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
   state_.group_split_fraction = 0.5f;
   state_.focused_group_index = state_.editor_groups.size() - 1;
   state_.surface.focus = FocusTarget::Editor;
-  operations_.ensure_active_tab_visible();
-  operations_.request_active_tab_redraw(true);
+  RefreshFocusedGroupActiveTab(true);
   return true;
 }
 
@@ -871,9 +869,13 @@ bool TabCoordinator::FocusOtherGroup() {
   }
   state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
   state_.surface.focus = FocusTarget::Editor;
-  operations_.ensure_active_tab_visible();
-  operations_.request_active_tab_redraw(true);
+  RefreshFocusedGroupActiveTab(true);
   return true;
+}
+
+void TabCoordinator::RefreshFocusedGroupActiveTab(bool editor_redraw) {
+  operations_.ensure_active_tab_visible();
+  operations_.request_active_tab_redraw(editor_redraw);
 }
 
 void TabCoordinator::CollapseFocusedGroup() {
@@ -915,8 +917,7 @@ bool TabCoordinator::CloseEditorGroup() {
   }
   CollapseFocusedGroup();
   const editor::TextViewport* active_vp = ActiveEditorViewport();
-  operations_.ensure_active_tab_visible();
-  operations_.request_active_tab_redraw(active_vp != nullptr && !active_vp->path().empty());
+  RefreshFocusedGroupActiveTab(active_vp != nullptr && !active_vp->path().empty());
   return true;
 }
 }  // namespace microide::workspace
