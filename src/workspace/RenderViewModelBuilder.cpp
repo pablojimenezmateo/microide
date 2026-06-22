@@ -605,7 +605,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   if (debug_enabled && debug_execution != nullptr && debug_execution->HasLocation() &&
       !viewport.is_placeholder()) {
     if (viewport.path().lexically_normal().generic_string() ==
-        debug_execution->FocusedPath().lexically_normal().generic_string()) {
+        debug_execution->FocusedPathNormalized()) {
       out.execution_line_index = debug_execution->FocusedLine();
     }
   }

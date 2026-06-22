@@ -146,7 +146,7 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
   exec.stopped = true;
   exec.thread_id = 1;
   microide::workspace::DebugStackFrameView frame;
-  frame.source_path = std::filesystem::path("/proj/main.py").lexically_normal();
+  frame.SetSource("/proj/main.py");
   frame.line = 2;  // 0-based
   exec.frames.push_back(frame);
 
@@ -167,7 +167,7 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
          "execution line should not be marked when the debugger is disabled");
 
   // A frame in a different file leaves this viewport unmarked.
-  exec.frames[0].source_path = std::filesystem::path("/proj/other.py").lexically_normal();
+  exec.frames[0].SetSource("/proj/other.py");
   builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
                                    /*debug_enabled=*/true, nullptr, &exec);
   Expect(!vm.execution_line_index.has_value(),

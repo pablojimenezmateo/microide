@@ -163,7 +163,7 @@ void TestDebugPaneClickFrameNavigates() {
   state.debug_execution.stopped = true;
   microide::workspace::DebugStackFrameView frame;
   frame.id = 7;
-  frame.source_path = "main.cpp";
+  frame.SetSource("main.cpp");
   frame.line = 5;
   state.debug_execution.frames.push_back(frame);
 

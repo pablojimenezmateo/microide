@@ -450,7 +450,7 @@ void TestStoppedEventCarriesPopulatedExecutionView() {
   exec.stop_reason = "breakpoint";
   exec.focused_frame_index = 0;
   microide::workspace::DebugStackFrameView frame;
-  frame.source_path = "/tmp/proj/main.cpp";
+  frame.SetSource("/tmp/proj/main.cpp");
   frame.line = 41;  // 0-based; the event reports 1-based (42)
   frame.display_primary = "main";
   exec.frames.push_back(frame);

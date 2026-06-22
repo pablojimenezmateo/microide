@@ -470,7 +470,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   // silently resolve against the wrong scope. Match the same way the execution-line
   // marker does (lexically-normalized generic strings).
   if (viewport.path().lexically_normal().generic_string() !=
-      execution.FocusedPath().lexically_normal().generic_string()) {
+      execution.FocusedPathNormalized()) {
     LogHoverGate("file-not-focused-frame");
     return std::nullopt;
   }
