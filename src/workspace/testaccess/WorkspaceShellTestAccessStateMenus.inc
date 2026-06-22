@@ -10,6 +10,9 @@
   static void SaveSessionState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveSessionState();
   }
+  static bool ActivateCurrentTabAfterStateLoad(WorkspaceShell& shell) {
+    return shell.ActivateCurrentTabAfterStateLoad();
+  }
   static bool RestoreWorkspaceSession(WorkspaceShell& shell) {
     return shell.MakePersistenceCoordinator().RestoreWorkspaceSession();
   }

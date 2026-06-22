@@ -1857,9 +1857,69 @@ void TestWorkspaceShellRestoreSessionPreservesOutgoingBaseChoice() {
          "project session restore should preserve the outgoing base choice");
 }
 
+void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  std::string many_lines;
+  for (int i = 0; i < 200; ++i) {
+    many_lines += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(file_a, many_lines);
+  WriteFile(file_b, "only b\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::SetGroupScrollLine(shell, 0, 40);
+  // Stack a second group (split-down) and give it a distinct document; focus
+  // stays on the new group.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
+         "split-down should create the second group");
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1000, 700);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "restoring a two-group session should succeed");
+  // Mirror the production startup flow, which hydrates every group's active tab.
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(restored) == 2,
+         "restore should rebuild both editor groups");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(restored) ==
+             EditorSplitOrientation::Horizontal,
+         "restore should preserve the stacked split orientation");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(restored) == 1,
+         "restore should preserve the focused group index");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(restored, 0).path() ==
+             file_a.lexically_normal(),
+         "group 0 should restore its document");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(restored, 1).path() ==
+             file_b.lexically_normal(),
+         "group 1 should restore its distinct document");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(restored, 0).scroll_line() == 40,
+         "group 0 should restore its independent scroll position");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesEditorGroupSplit",
+          TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesBranchCompareState",
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",

@@ -18,8 +18,10 @@
 
 namespace microide::workspace {
 
-struct PersistedEditorViewState {
-  std::size_t leaf_id = 0;
+struct PersistedEditorTabState {
+  std::string kind = "editor";
+  // Single editor view (the in-tab split model was removed: each tab owns exactly
+  // one viewport). These fields are empty/default for compare and merge tabs.
   std::filesystem::path path;
   std::size_t cursor_line = 0;
   std::size_t cursor_column = 0;
@@ -28,20 +30,6 @@ struct PersistedEditorViewState {
   bool dirty_snapshot = false;
   editor::TextViewport::LineEnding line_ending = editor::TextViewport::LineEnding::LF;
   std::vector<std::string> buffer_lines;
-};
-
-struct PersistedSplitNodeState {
-  std::vector<std::size_t> path;
-  std::string orientation;
-  float size_fraction = 1.0f;
-  std::size_t leaf_id = 0;
-};
-
-struct PersistedEditorTabState {
-  std::string kind = "editor";
-  std::size_t active_leaf_id = 0;
-  std::vector<PersistedEditorViewState> views;
-  std::vector<PersistedSplitNodeState> split_nodes;
   std::filesystem::path compare_path;
   std::filesystem::path compare_left_path;
   std::filesystem::path compare_right_path;
@@ -141,13 +129,25 @@ struct PersistedChatState {
   std::vector<PersistedConversationState> conversations;
 };
 
+// One editor group: its own tab list and the index of its active tab. The editor
+// area holds 1 or 2 of these (VS Code-style splits live above tabs).
+struct PersistedEditorGroupState {
+  std::vector<PersistedEditorTabState> tabs;
+  std::size_t active_tab_index = 0;
+};
+
 struct PersistedProjectSessionState {
   bool sidebar_visible = true;
   float sidebar_width = 288.0f;
   float bottom_panel_height = 156.0f;
   OutgoingBaseChoice outgoing_base_choice;
-  std::size_t active_tab_index = 0;
-  std::vector<PersistedEditorTabState> tabs;
+  // Editor groups (1 or 2; decode caps at 2). `group_split_orientation` is an
+  // EditorSplitOrientation cast to u8; `group_split_fraction` is the first group's
+  // share of the editor area.
+  std::vector<PersistedEditorGroupState> groups;
+  std::size_t focused_group_index = 0;
+  std::uint8_t group_split_orientation = 0;
+  float group_split_fraction = 0.5f;
   // Right-side debug pane (visibility / width / active surface). Only restored
   // when `debug.enabled` is on. `right_pane_mode` is a DebugPaneMode cast to u8.
   bool right_pane_visible = false;

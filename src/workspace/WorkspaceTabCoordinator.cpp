@@ -391,6 +391,24 @@ void TabCoordinator::SyncActiveEditorTab() {
 }
 
 bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
+  // Eagerly hydrate the active editor tab of every non-focused group so a restored
+  // split shows content in both panes, not just the focused one. The focused group
+  // is hydrated below via Activate().
+  for (std::size_t gi = 0; gi < state_.editor_groups.size(); ++gi) {
+    if (gi == state_.focused_group_index) {
+      continue;
+    }
+    EditorGroup& group = state_.editor_groups[gi];
+    if (group.active_tab_index >= group.open_tabs.size()) {
+      continue;
+    }
+    TabEntry& tab = group.open_tabs[group.active_tab_index];
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+        EnsureEditorTabLoaded(tab)) {
+      operations_.apply_editor_preferences(tab.editor_state->viewport);
+    }
+  }
+
   if (state_.focused_group().open_tabs.empty()) {
     return true;
   }

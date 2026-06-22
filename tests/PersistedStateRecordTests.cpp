@@ -28,8 +28,8 @@ using microide::workspace::EncodeUserConfigRecord;
 using microide::workspace::EncodeWorkspaceSessionRecord;
 using microide::workspace::PersistedBreakpoint;
 using microide::workspace::PersistedDebugState;
+using microide::workspace::PersistedEditorGroupState;
 using microide::workspace::PersistedEditorTabState;
-using microide::workspace::PersistedEditorViewState;
 using microide::workspace::PersistedFileBreakpoints;
 using microide::workspace::PersistedFunctionBreakpoint;
 using microide::workspace::PersistedLaunchConfig;
@@ -38,7 +38,6 @@ using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::PersistedRecentFile;
 using microide::workspace::PersistedProjectSessionState;
 using microide::workspace::PersistedSidebarViewPolicy;
-using microide::workspace::PersistedSplitNodeState;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 
@@ -98,24 +97,14 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
 PersistedProjectSessionState BuildProjectSessionFixture() {
   PersistedEditorTabState editor_tab;
   editor_tab.kind = "editor";
-  editor_tab.active_leaf_id = 9;
-  editor_tab.views.push_back(PersistedEditorViewState{
-      .leaf_id = 9,
-      .path = "/tmp/project/src/main.cpp",
-      .cursor_line = 12,
-      .cursor_column = 4,
-      .scroll_line = 8,
-      .horizontal_scroll = 2,
-      .dirty_snapshot = true,
-      .line_ending = microide::util::LineEnding::CRLF,
-      .buffer_lines = {"line1", "line2"},
-  });
-  editor_tab.split_nodes.push_back(PersistedSplitNodeState{
-      .path = {},
-      .orientation = "leaf",
-      .size_fraction = 1.0f,
-      .leaf_id = 9,
-  });
+  editor_tab.path = "/tmp/project/src/main.cpp";
+  editor_tab.cursor_line = 12;
+  editor_tab.cursor_column = 4;
+  editor_tab.scroll_line = 8;
+  editor_tab.horizontal_scroll = 2;
+  editor_tab.dirty_snapshot = true;
+  editor_tab.line_ending = microide::util::LineEnding::CRLF;
+  editor_tab.buffer_lines = {"line1", "line2"};
 
   PersistedEditorTabState compare_tab;
   compare_tab.kind = "compare";
@@ -136,8 +125,22 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.bottom_panel_height = 208.0f;
   session.outgoing_base_choice.kind = microide::workspace::OutgoingBaseChoice::Kind::SpecificRef;
   session.outgoing_base_choice.custom_ref = "release/2.0";
-  session.active_tab_index = 1;
-  session.tabs = {editor_tab, compare_tab};
+  PersistedEditorGroupState group_zero;
+  group_zero.active_tab_index = 1;
+  group_zero.tabs = {editor_tab, compare_tab};
+  PersistedEditorTabState second_group_tab;
+  second_group_tab.kind = "editor";
+  second_group_tab.path = "/tmp/project/src/other.cpp";
+  second_group_tab.cursor_line = 3;
+  second_group_tab.scroll_line = 1;
+  PersistedEditorGroupState group_one;
+  group_one.active_tab_index = 0;
+  group_one.tabs = {second_group_tab};
+  session.groups = {group_zero, group_one};
+  session.focused_group_index = 1;
+  session.group_split_orientation =
+      static_cast<std::uint8_t>(microide::workspace::EditorSplitOrientation::Horizontal);
+  session.group_split_fraction = 0.4f;
   session.right_pane_visible = true;
   session.right_pane_width = 312.0f;
   session.right_pane_mode = static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch);
@@ -154,16 +157,25 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
          "project session decode should succeed");
   Expect(!decoded_session.sidebar_visible &&
              std::fabs(decoded_session.sidebar_width - 320.0f) < 0.0001f &&
-             decoded_session.active_tab_index == 1,
+             decoded_session.focused_group_index == 1,
          "project session top-level fields should round-trip");
   Expect(decoded_session.outgoing_base_choice.kind ==
              microide::workspace::OutgoingBaseChoice::Kind::SpecificRef &&
              decoded_session.outgoing_base_choice.custom_ref == "release/2.0",
          "project session outgoing base choice should round-trip");
-  Expect(decoded_session.tabs.size() == 2 &&
-             decoded_session.tabs[0].views.size() == 1 &&
-             decoded_session.tabs[1].compare_right_ref == "WORKTREE",
-         "project session tabs should round-trip");
+  Expect(decoded_session.group_split_orientation ==
+             static_cast<std::uint8_t>(microide::workspace::EditorSplitOrientation::Horizontal) &&
+             std::fabs(decoded_session.group_split_fraction - 0.4f) < 0.0001f,
+         "project session group split layout should round-trip");
+  Expect(decoded_session.groups.size() == 2 &&
+             decoded_session.groups[0].tabs.size() == 2 &&
+             decoded_session.groups[0].active_tab_index == 1 &&
+             decoded_session.groups[0].tabs[0].path == "/tmp/project/src/main.cpp" &&
+             decoded_session.groups[0].tabs[0].scroll_line == 8 &&
+             decoded_session.groups[0].tabs[1].compare_right_ref == "WORKTREE" &&
+             decoded_session.groups[1].tabs.size() == 1 &&
+             decoded_session.groups[1].tabs[0].path == "/tmp/project/src/other.cpp",
+         "project session groups should round-trip");
   Expect(decoded_session.right_pane_visible &&
              std::fabs(decoded_session.right_pane_width - 312.0f) < 0.0001f &&
              decoded_session.right_pane_mode ==
@@ -225,8 +237,8 @@ void TestPersistedStateProjectSessionAcceptsLegacyChatRegistryTag() {
   PersistedProjectSessionState decoded;
   Expect(DecodeProjectSessionRecord(encoded, &decoded),
          "project session decode should ignore legacy chat records");
-  Expect(decoded.tabs.size() == session.tabs.size(),
-         "legacy chat records should not alter tab state");
+  Expect(decoded.groups.size() == session.groups.size(),
+         "legacy chat records should not alter group state");
 }
 
 void TestPersistedStateRecordDecodersSkipUnknownTags() {
@@ -257,7 +269,7 @@ void TestPersistedStateProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto() {
   std::vector<std::byte> encoded;
   std::vector<std::byte> payload;
   microide::persistence::PrimitiveWriter writer(&payload);
-  Expect(writer.WriteU32(1), "project session schema payload should encode");
+  Expect(writer.WriteU32(2), "project session schema payload should encode");
   Expect(microide::persistence::AppendTaggedRecord(1, payload, &encoded),
          "project session schema tag should append");
 
