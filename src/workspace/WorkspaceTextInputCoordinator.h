@@ -19,13 +19,11 @@ class TextInputCoordinator {
   struct Operations {
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<void()> request_prompt_redraw;
-    std::function<void()> request_bottom_panel_command_redraw;
     std::function<void()> request_sidebar_redraw;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> request_overlay_redraw;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> request_window_redraw;
-    std::function<void(std::string_view)> command_prompt_append_input;
     std::function<void()> refresh_compare_picker;
     std::function<void()> refresh_launch_config_picker;
     std::function<void()> refresh_command_palette;
@@ -91,7 +89,6 @@ class TextInputCoordinator {
   editor::SingleLineEditor* ActiveSingleLineTextState();
   const editor::SingleLineEditor* ActiveSingleLineTextState() const;
   void RequestSingleLineTextRedraw(TextInputSurface surface, bool text_changed);
-  void DidMutateCommandInputText();
 
   ProjectWorkspaceState& state_;
   PromptState& prompts_;

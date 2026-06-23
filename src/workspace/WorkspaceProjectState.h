@@ -87,11 +87,11 @@ struct ProjectSurfaceState {
   bool editor_ctrl_k_leader_armed = false;
 };
 
+// Backing state for the command-line executor. The command palette is now the sole entry
+// surface (its own `query` editor drives input); this carries only the executor feedback
+// string that the control channel and command dispatch read back. No on-screen prompt, no
+// history (the palette's Up/Down navigate its result list).
 struct CommandState {
-  editor::SingleLineEditor input;
-  std::vector<std::string> history;
-  std::optional<std::size_t> history_index;
-  std::string history_pending_input;
   std::string feedback_text;
 };
 
@@ -291,7 +291,6 @@ struct LspUiState {
 
 struct PanelState {
   PanelContentKind content = PanelContentKind::None;
-  bool command_mode = false;
   float height = 156.0f;
   // Horizontal scroll offset (first visible tab index) for the bottom-panel tab
   // strip, shared by terminal and output tabs so an overflowed strip stays

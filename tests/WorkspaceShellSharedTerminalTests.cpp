@@ -30,10 +30,8 @@ microide::terminal::TerminalLine MakeTerminalLine(std::string_view text) {
 }
 
 void TestWorkspaceSharedTerminalPanelHelpers() {
-  Expect(BottomPanelVisibleRowsForHeight(220.0f, 16.0f, false) == 10,
+  Expect(BottomPanelVisibleRowsForHeight(220.0f, 16.0f) == 10,
          "panel visible rows should use header and footer padding");
-  Expect(BottomPanelVisibleRowsForHeight(220.0f, 16.0f, true) == 7,
-         "command mode should reserve bottom panel height");
   Expect(TailScrollRowForContent(25, 8) == 17,
          "tail scroll should leave the last visible page aligned");
   Expect(TailScrollRowForContent(4, 8) == 0, "tail scroll should clamp when content fits");

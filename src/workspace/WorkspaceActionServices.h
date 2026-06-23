@@ -157,8 +157,6 @@ class WorkspaceActionContext {
     std::function<void()> mark_layout_dirty;
     std::function<void()> request_window_redraw;
     std::function<TerminalTabState*()> active_terminal_tab;
-    std::function<void()> reset_command_prompt_session;
-    std::function<void(bool)> request_command_mode_transition_redraw;
     std::function<bool()> plugin_runtime_enabled;
     std::function<void()> reload_plugins_for_current_project;
     std::function<std::string()> plugin_runtime_reload_summary;
@@ -199,8 +197,9 @@ class WorkspaceActionContext {
     // Launch-config picker (Phase 9): open the fuzzy picker over the project's
     // launch configs.
     std::function<void()> open_launch_config_picker;
-    // Open the fuzzy command palette over all built-in + plugin commands.
-    std::function<void()> open_command_palette;
+    // Open the command palette over all built-in + plugin commands, optionally pre-filling
+    // the query (e.g. "project-open ") so the user only types the argument.
+    std::function<void(std::string)> open_command_palette;
     // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
@@ -368,7 +367,6 @@ class WorkspaceActionContext {
   bool SoftWrapEnabled() const;
   void SetSoftWrap(bool enabled);
   bool Focus(FocusRequestTarget target);
-  void OpenCommandPrompt(std::string input = {});
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
   void RequestQuit();
@@ -398,7 +396,7 @@ class WorkspaceActionContext {
   // Debug-console REPL + launch-config picker (Phase 9).
   void OpenDebugReplPrompt();
   void OpenLaunchConfigPicker();
-  void OpenCommandPalette();
+  void OpenCommandPalette(std::string seed = {});
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();
   void ShowDebugPaneSurface(DebugPaneMode mode);

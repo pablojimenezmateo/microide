@@ -239,11 +239,6 @@ inline constexpr float kWorkspaceMaxRightPaneWidth = 520.0f;
 inline constexpr float kWorkspaceMinEditorAreaWidth = 280.0f;
 inline constexpr float kWorkspaceMinEditorAreaHeight = 120.0f;
 inline constexpr float kWorkspaceBottomPanelHeaderHeight = 28.0f;
-inline constexpr float kWorkspaceBottomPanelCommandReserveHeight = 56.0f;
-inline constexpr float kWorkspaceBottomPanelCommandPromptHeight = 18.0f;
-inline constexpr float kWorkspaceBottomPanelCommandInset = 10.0f;
-inline constexpr float kWorkspaceBottomPanelCommandTopPadding = 8.0f;
-inline constexpr float kWorkspaceBottomPanelCommandBottomPadding = 8.0f;
 inline constexpr float kWorkspaceOverlayMaxHeight = 360.0f;
 inline constexpr float kWorkspaceEditorSplitDividerThickness = 6.0f;
 inline constexpr float kWorkspaceSidebarRowHeight = 20.0f;
@@ -315,7 +310,7 @@ float ClampSidebarWidth(float width, float window_width);
 // resolved sidebar width (0 when hidden).
 float ClampRightPaneWidth(float width, float window_width, float sidebar_width);
 float ClampBottomPanelHeight(float height, float window_height);
-int BottomPanelVisibleRowsForHeight(float panel_height, float line_height, bool command_mode);
+int BottomPanelVisibleRowsForHeight(float panel_height, float line_height);
 // Resolve the vertical coordinate `y` to an absolute bottom-panel log line index, or
 // nullopt when `y` is above the first row, below the last visible row, or past the
 // content. Floors the row offset so coordinates above `text_y` reject rather than
@@ -348,10 +343,7 @@ SDL_FRect EmptyTabStripPlaceholderRect(const SDL_FRect& tab_strip);
 SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect);
 LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs);
 SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count);
-float BottomPanelCommandReservedHeight(bool command_mode);
-SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout, bool command_mode);
-SDL_FRect BottomPanelCommandAreaRect(const WorkspaceLayout& layout);
-SDL_FRect BottomPanelCommandPromptRect(const WorkspaceLayout& layout);
+SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout);
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full);
 std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 // The banner strip occupies the top `kWorkspaceEditorBannerHeight` of the editor

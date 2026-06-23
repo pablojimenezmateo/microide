@@ -118,7 +118,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   bool workspace_layout_recomputed = false;
   if (layout_dirty_ || !prepared_frame_layout_.has_value()) {
     layout = ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
-                           panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
+                           panel_vm.content != PanelContentKind::None,
                            project_state.sidebar.width, project_state.panel.height,
                            layout_mode_service_.SnapshotInputs(),
                            layout_mode_service_.StatusBarVisible(),
@@ -459,7 +459,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
               debug_execution);
         }
         thread_local editor::WelcomeViewModel tls_welcome_vm;
-        tls_welcome_vm = editor_render_builder.BuildWelcomeView(recents_service_.RecentProjects());
+        tls_welcome_vm = editor_render_builder.BuildWelcomeView(recents_service_);
         editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                      pane.active && draw_editor_caret, "", std::nullopt,
                                      std::nullopt, {}, &tls_editor_surface_vm,

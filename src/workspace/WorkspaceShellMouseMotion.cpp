@@ -42,9 +42,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         case TextInputSurface::PromptInput:
           ensure_redraw([this]() { RequestPromptRedraw(); });
           break;
-        case TextInputSurface::Command:
-          ensure_redraw([this]() { RequestBottomPanelRedraw(); });
-          break;
         case TextInputSurface::SidebarSearchQuery:
         case TextInputSurface::SidebarSearchReplace:
           ensure_redraw([this]() { RequestSidebarRedraw(); });

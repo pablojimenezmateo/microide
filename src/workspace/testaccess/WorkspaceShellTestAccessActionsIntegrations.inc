@@ -303,7 +303,7 @@
   static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.focused_group().tab_scroll_index; }
   static SDL_FRect BottomPanelContentRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return microide::workspace::BottomPanelContentRect(layout, shell.context_.current_project_state.panel.command_mode);
+    return microide::workspace::BottomPanelContentRect(layout);
   }
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
                                       std::size_t row,

@@ -11,7 +11,6 @@
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceTrace.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -31,8 +30,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                               const WorkspaceLayout& layout,
                                               std::size_t terminal_line_count) {
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
-  const TextInputSurfaceViewModel& text_input_vm = *prepare_cached_text_input_vm_;
-  if (!panel_vm.command_mode && panel_vm.content == PanelContentKind::None) {
+  if (panel_vm.content == PanelContentKind::None) {
     return;
   }
 
@@ -502,47 +500,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         }
       }
     }
-  }
-
-  if (panel_vm.command_mode) {
-    const SDL_FRect command_area = BottomPanelCommandAreaRect(layout);
-    DrawFilledRect(renderer, command_area, theme_.surface_raised);
-    DrawFilledRect(renderer,
-                   MakeRect(command_area.x, command_area.y, command_area.w,
-                            kWorkspaceDividerThickness),
-                   theme_.border);
-
-    const float status_y = command_area.y + kWorkspaceBottomPanelCommandTopPadding;
-    const std::string status_text = CommandPromptCoordinator::PromptStatusText(
-        *panel_vm.command_state);
-    DrawTextOn(text_renderer_, renderer, command_area.x + 12.0f, status_y, theme_.text_muted,
-               theme_.surface_raised, TruncateLabel(status_text, command_area.w - 24.0f));
-
-    const TextInputSurface panel_surface = TextInputSurface::Command;
-    const TextInputSurface current_surface = text_input_vm.current_surface;
-    const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
-    DrawTextFieldFrame(renderer, theme_, prompt_rect, current_surface == panel_surface);
-    const auto visual =
-        (current_surface == panel_surface) ? BuildActiveTextInputVisual(layout, std::nullopt)
-                                           : std::nullopt;
-    // Avoid materializing "> "+input every frame: assemble into a thread_local scratch on the
-    // fallback path only when the visual hasn't supplied displayed text.
-    thread_local std::string panel_fallback_scratch;
-    std::string_view panel_display_text;
-    if (visual.has_value() && !visual->displayed_text.empty()) {
-      panel_display_text = visual->displayed_text;
-    } else {
-      panel_fallback_scratch.clear();
-      panel_fallback_scratch.reserve(2 + panel_vm.command_state->input.text().size());
-      panel_fallback_scratch.append("> ");
-      panel_fallback_scratch.append(panel_vm.command_state->input.text());
-      panel_display_text = panel_fallback_scratch;
-    }
-    DrawSingleLineTextTail(
-        renderer, prompt_rect.x + 6.0f,
-        prompt_rect.y + std::floor((prompt_rect.h - text_renderer_.LineHeight()) * 0.5f),
-                           std::max(1.0f, prompt_rect.w - 12.0f), theme_.text_primary,
-                           theme_.surface_background, panel_display_text);
   }
 
   if (panel_layout.scroll.vertical_scrollbar.has_value()) {

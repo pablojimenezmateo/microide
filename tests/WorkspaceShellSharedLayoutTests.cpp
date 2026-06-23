@@ -13,8 +13,6 @@
 namespace microide::tests {
 namespace {
 
-using microide::workspace::BottomPanelCommandAreaRect;
-using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
 using microide::workspace::BottomPanelLineIndexAtY;
 using microide::workspace::CompareCollapsedContextBlockRect;
@@ -261,13 +259,14 @@ void TestWorkspaceSharedMergeScrollbarMarkers() {
 
 void TestWorkspaceSharedPanelGeometryHelpers() {
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 200.0f);
-  const auto content = BottomPanelContentRect(layout, true);
-  const auto command_area = BottomPanelCommandAreaRect(layout);
-  const auto prompt = BottomPanelCommandPromptRect(layout);
+  const auto content = BottomPanelContentRect(layout);
 
-  Expect(command_area.y >= content.y + content.h, "command area should sit below panel content");
-  Expect(prompt.y >= command_area.y, "command prompt should stay inside the command area");
-  Expect(prompt.x > command_area.x, "command prompt should honor horizontal inset");
+  // The bottom panel content fills below the header with no reserved command-prompt strip
+  // (the command surface is now the overlay command palette).
+  Expect(content.y > layout.bottom_panel.y, "panel content should sit below the panel header");
+  Expect(content.y + content.h <= layout.bottom_panel.y + layout.bottom_panel.h + 0.5f,
+         "panel content should stay within the bottom panel");
+  Expect(content.w == layout.bottom_panel.w, "panel content should span the panel width");
 }
 
 void TestWorkspaceSharedPromptGeometry() {

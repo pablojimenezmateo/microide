@@ -52,7 +52,6 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
 
   switch (CurrentTextInputSurface()) {
     case TextInputSurface::PromptInput:
-    case TextInputSurface::Command:
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:

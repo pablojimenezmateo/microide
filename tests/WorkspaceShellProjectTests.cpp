@@ -38,10 +38,20 @@ class ScopedProjectAppHomes {
   ScopedEnvVar appdata_;
 };
 
+// Drive the merged command surface: open the command palette (Ctrl+Shift+P), type the
+// command line, and run it with Enter. Argument-bearing commands and unmatched verbs run
+// through the shared command executor (ExecuteCommandLine); the palette dismisses after.
 bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
-  return SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL) &&
+  return SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT) &&
          WorkspaceShellTestAccess::HandleTextInput(shell, command) &&
          SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
+}
+
+// Run a command line directly through the shared executor, bypassing the palette UI. Used
+// where a bare verb would otherwise fuzzy-match a palette row (e.g. "open" → "Open File")
+// instead of reaching the executor.
+bool RunCommandLine(WorkspaceShell& shell, std::string_view command) {
+  return WorkspaceShellTestAccess::ExecuteCommandLine(shell, std::string(command));
 }
 
 bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
@@ -590,42 +600,25 @@ void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt");
+  // An unknown verb has no fuzzy match, so the palette routes it to the executor, which
+  // reports the failure. Driving via the palette UI exercises that no-match → execute rule.
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the command palette");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "bogus-command"),
-         "text input should populate the command prompt");
+         "text input should populate the palette query");
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should attempt to execute the typed command");
+         "Enter should run the unmatched query as a command line");
 
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "unknown commands should keep the command prompt open");
   Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Unknown command: bogus-command",
-         "unknown commands should report an explicit prompt error");
-}
-
-void TestWorkspaceShellLeftCtrlShortcutOpensCommandPrompt() {
-  WorkspaceShell shell;
-  WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
-
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_LCTRL),
-         "left-control Ctrl+E should open the command prompt");
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "left-control Ctrl+E should enter command mode");
+         "unknown commands should report an explicit executor error");
 }
 
 void TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before the missing-project test");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "search"),
-         "text input should populate the missing-project command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should attempt the missing-project command");
-
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "project-dependent command failures should keep the prompt open");
+  Expect(!RunCommandLine(shell, "search"),
+         "a project-dependent command should fail without an active project");
   Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "No active project",
          "project-dependent command failures should report the missing project");
 }
@@ -638,15 +631,8 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before the open-path test");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "open"),
-         "text input should populate the open command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should attempt the open command");
-
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "open without a path should keep the prompt open");
+  Expect(!RunCommandLine(shell, "open"),
+         "open without a path should fail");
   Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "open requires a path",
          "open without a path should report the missing path explicitly");
 }
@@ -668,21 +654,13 @@ void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_c, false, false),
          "third project should open");
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before cycling projects");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-prev"),
-         "text input should populate the project-prev command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should execute the project-prev command");
+  Expect(ExecuteCommand(shell, "project-prev"),
+         "the palette should run the project-prev command line");
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_b.lexically_normal(),
          "project-prev should activate the previous project tab");
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should reopen the command prompt for project-next");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-next"),
-         "text input should populate the project-next command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should execute the project-next command");
+  Expect(ExecuteCommand(shell, "project-next"),
+         "the palette should run the project-next command line");
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_c.lexically_normal(),
          "project-next should activate the next project tab");
 }
@@ -715,25 +693,11 @@ void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
          "switching back to the first project should succeed");
   Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching back should restore the first project's editor preferences");
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt after switching back");
-  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
-         "up should recall command history for the restored first project");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
-         "switching back should restore the first project's command history");
-  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
-         "escape should dismiss the recalled first-project command prompt");
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
          "switching to the second project should succeed");
   Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching forward should restore the second project's editor preferences");
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt after switching forward");
-  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
-         "up should recall command history for the restored second project");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs off",
-         "switching forward should restore the second project's command history");
 }
 
 void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
@@ -891,8 +855,6 @@ void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
 
   Expect(ExecuteCommand(shell, "sidebar-width wide"),
          "sidebar-width command should still route through the command prompt");
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "invalid sidebar-width input should keep the command prompt open");
   Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) ==
              "sidebar-width requires a numeric width",
          "invalid sidebar-width input should report the parser failure");
@@ -983,10 +945,10 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "ui-scale should open the command prompt");
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "ui-scale should open the command palette");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "ui-scale 125%"),
-         "ui-scale should populate the command prompt");
+         "ui-scale should populate the palette query");
   const auto ui_scale_submit =
       SendKeyDownResult(shell, SDLK_RETURN, SDL_KMOD_NONE);
   Expect(ui_scale_submit.handled,
@@ -1017,13 +979,15 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
          "focus panel should move focus to the bottom panel when available");
 }
 
-void TestWorkspaceShellCommandPromptCompletionAndHistory() {
+void TestWorkspaceShellCommandPaletteTabCompletion() {
   WorkspaceShell shell;
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before completion");
+  // The merged palette query supports Tab-completion over command verbs (no history — the
+  // palette's Up/Down navigate the result list instead).
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the command palette before completion");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "soft"),
-         "text input should populate the command prompt before completion");
+         "text input should populate the palette query before completion");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "tab should trigger command completion");
   Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs ",
@@ -1034,25 +998,14 @@ void TestWorkspaceShellCommandPromptCompletionAndHistory() {
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "on"),
          "completion fixture should allow finishing the completed command");
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "enter should execute the completed command");
+         "enter should execute the completed command line");
   Expect(!WorkspaceShellTestAccess::CommandMode(shell),
-         "successful command execution should close the command prompt");
+         "successful command execution should close the palette");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "the completed 'soft-tabs on' command line should apply");
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should reopen the command prompt before history recall");
-  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
-         "up should recall the previous command from history");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
-         "history recall should restore the last executed command");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("History 1 / 1") !=
-             std::string::npos,
-         "history recall should report the active history position");
-
-  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
-         "down should restore the pending empty command input");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell).empty(),
-         "history navigation back to the pending input should restore an empty prompt");
-
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should reopen the command palette for a second completion");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "wr"),
          "completion fixture should allow typing a second command prefix");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
@@ -1061,6 +1014,33 @@ void TestWorkspaceShellCommandPromptCompletionAndHistory() {
          "tab completion should expand the wrap command name");
   Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Completed wrap",
          "tab completion should report the wrap command completion");
+}
+
+void TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  // A typed command line with arguments runs through the executor (soft-tabs applies).
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "soft tabs should start disabled");
+  Expect(ExecuteCommand(shell, "soft-tabs on"),
+         "an argument-bearing query should run as a command line");
+  Expect(!WorkspaceShellTestAccess::CommandMode(shell),
+         "running a command line should dismiss the palette");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "the soft-tabs command line should apply its argument");
+
+  // A single-token fragment that fuzzy-matches a command label keeps matches, so Enter would
+  // confirm the highlighted row rather than executing a bare verb.
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the palette");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "settings"),
+         "typing a label fragment should filter the palette");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) > 0,
+         "a label fragment should keep at least one fuzzy match (Settings)");
 }
 
 void TestWorkspaceShellCtrlNOpensUntitledTab() {
@@ -3256,8 +3236,6 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
-  AddTest(tests, "WorkspaceShell/LeftCtrlShortcutOpensCommandPrompt",
-          TestWorkspaceShellLeftCtrlShortcutOpensCommandPrompt);
   AddTest(tests, "WorkspaceShell/CommandReportsMissingProjectInsteadOfSilentNoOp",
           TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp);
   AddTest(tests, "WorkspaceShell/OpenCommandRequiresPath",
@@ -3286,8 +3264,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
-  AddTest(tests, "WorkspaceShell/CommandPromptCompletionAndHistory",
-          TestWorkspaceShellCommandPromptCompletionAndHistory);
+  AddTest(tests, "WorkspaceShell/CommandPaletteTabCompletion",
+          TestWorkspaceShellCommandPaletteTabCompletion);
+  AddTest(tests, "WorkspaceShell/CommandPaletteRunsCommandLineVsFuzzyPick",
+          TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick);
   AddTest(tests, "WorkspaceShell/CtrlNOpensUntitledTab",
           TestWorkspaceShellCtrlNOpensUntitledTab);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",

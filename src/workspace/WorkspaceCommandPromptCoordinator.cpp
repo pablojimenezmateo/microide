@@ -13,7 +13,6 @@
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceTextSearch.h"
-#include "workspace/WorkspaceUiText.h"
 
 namespace microide::workspace {
 
@@ -24,12 +23,6 @@ CommandPromptCoordinator::CommandPromptCoordinator(
     : state_(state),
       available_colorscheme_names_(available_colorscheme_names),
       operations_(std::move(operations)) {}
-
-void CommandPromptCoordinator::ResetSessionState() {
-  state_.panel.command.history_index.reset();
-  state_.panel.command.history_pending_input.clear();
-  ClearFeedback();
-}
 
 void CommandPromptCoordinator::ClearFeedback() {
   state_.panel.command.feedback_text.clear();
@@ -47,60 +40,8 @@ bool CommandPromptCoordinator::RejectAction(ActionSource source, std::string fee
   return false;
 }
 
-void CommandPromptCoordinator::AppendInput(std::string_view input) {
-  state_.panel.command.input.Append(std::string(input));
-  state_.panel.command.history_index.reset();
-  state_.panel.command.history_pending_input.clear();
-  ClearFeedback();
-}
-
-void CommandPromptCoordinator::PushHistory(std::string command_line) {
-  if (command_line.empty()) {
-    return;
-  }
-  if (!state_.panel.command.history.empty() &&
-      state_.panel.command.history.back() == command_line) {
-    return;
-  }
-
-  state_.panel.command.history.push_back(std::move(command_line));
-  if (state_.panel.command.history.size() > 64) {
-    state_.panel.command.history.erase(state_.panel.command.history.begin());
-  }
-}
-
-void CommandPromptCoordinator::StepHistory(int delta) {
-  if (delta == 0 || state_.panel.command.history.empty()) {
-    return;
-  }
-
-  if (!state_.panel.command.history_index.has_value()) {
-    if (delta > 0) {
-      return;
-    }
-    state_.panel.command.history_pending_input = state_.panel.command.input.text();
-    state_.panel.command.history_index = state_.panel.command.history.size() - 1;
-  } else if (delta < 0) {
-    if (*state_.panel.command.history_index > 0) {
-      --(*state_.panel.command.history_index);
-    }
-  } else if (*state_.panel.command.history_index + 1 < state_.panel.command.history.size()) {
-    ++(*state_.panel.command.history_index);
-  } else {
-    state_.panel.command.history_index.reset();
-    state_.panel.command.input.SetText(state_.panel.command.history_pending_input);
-    state_.panel.command.history_pending_input.clear();
-    ClearFeedback();
-    return;
-  }
-
-  state_.panel.command.input.SetText(
-      state_.panel.command.history[*state_.panel.command.history_index]);
-  ClearFeedback();
-}
-
-void CommandPromptCoordinator::CompleteInput() {
-  const ParsedCommandLine parsed = ParseCommandLine(state_.panel.command.input.text());
+void CommandPromptCoordinator::CompleteInput(editor::SingleLineEditor& input) {
+  const ParsedCommandLine parsed = ParseCommandLine(input.text());
   if (parsed.dangling_escape) {
     SetFeedback("Command completion stopped at a trailing escape");
     return;
@@ -115,7 +56,7 @@ void CommandPromptCoordinator::CompleteInput() {
   const std::string active_prefix =
       starts_new_token || parsed.tokens.empty() ? std::string{} : parsed.tokens.back().text;
   const std::size_t replace_start = starts_new_token || parsed.tokens.empty()
-                                        ? state_.panel.command.input.text().size()
+                                        ? input.text().size()
                                         : parsed.tokens.back().start;
   const std::filesystem::path completion_root =
       state_.root.empty() ? std::filesystem::current_path() : state_.root;
@@ -191,10 +132,10 @@ void CommandPromptCoordinator::CompleteInput() {
         candidates.size() == 1 ? candidates.front()
                                : CommandCompletionCandidate{common_prefix, false};
     const std::string replacement = FormatCommandCompletionToken(candidate);
-    std::string updated = state_.panel.command.input.text();
+    std::string updated = input.text();
     updated.erase(replace_start);
     updated += replacement;
-    state_.panel.command.input.SetText(std::move(updated));
+    input.SetText(std::move(updated));
   }
 
   if (candidates.size() == 1) {
@@ -214,53 +155,6 @@ void CommandPromptCoordinator::CompleteInput() {
   SetFeedback(std::move(matches));
 }
 
-bool CommandPromptCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
-  switch (event.key) {
-    case SDLK_ESCAPE: {
-      const bool bottom_panel_was_visible = operations_.bottom_panel_visible();
-      state_.panel.command_mode = false;
-      state_.panel.command.input.SetText("");
-      ResetSessionState();
-      operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
-      return true;
-    }
-    case SDLK_RETURN:
-    case SDLK_KP_ENTER:
-      if (state_.panel.command.input.text().empty() ||
-          ExecuteCommandLine(state_.panel.command.input.text())) {
-        const bool bottom_panel_was_visible = operations_.bottom_panel_visible();
-        state_.panel.command_mode = false;
-        state_.panel.command.input.SetText("");
-        ResetSessionState();
-        operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
-      }
-      return true;
-    case SDLK_UP:
-      StepHistory(-1);
-      return true;
-    case SDLK_DOWN:
-      StepHistory(1);
-      return true;
-    case SDLK_TAB:
-      CompleteInput();
-      return true;
-    default:
-      return false;
-  }
-}
-
-std::string CommandPromptCoordinator::PromptStatusText(const CommandState& command) {
-  if (!command.feedback_text.empty()) {
-    return command.feedback_text;
-  }
-  if (command.history_index.has_value()) {
-    return "History " + std::to_string(*command.history_index + 1) + " / " +
-           std::to_string(command.history.size()) + "  |  " +
-           JoinHintSegments({"Enter run", "Esc cancel", "Tab complete"});
-  }
-  return JoinHintSegments({"Enter run", "Esc cancel", "Up/Down history", "Tab complete"});
-}
-
 bool CommandPromptCoordinator::ExecuteCommandLine(const std::string& command_line) {
   const ParsedCommandLine parsed = ParseCommandLine(command_line);
   if (parsed.dangling_escape) {
@@ -276,7 +170,6 @@ bool CommandPromptCoordinator::ExecuteCommandLine(const std::string& command_lin
     return true;
   }
 
-  PushHistory(command_line);
   ClearFeedback();
   const std::string& command = parsed.tokens.front().text;
   std::vector<std::string> args;

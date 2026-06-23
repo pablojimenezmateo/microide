@@ -30,7 +30,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
             return DispatchResult::Handled;
           case ProjectOpenPickerResult::Unavailable:
             if (source == ActionSource::Menu) {
-              context_.OpenCommandPrompt("project-open ");
+              // No native picker: fall back to the command palette pre-filled with the
+              // command so the user only types the path (then Enter runs it).
+              context_.OpenCommandPalette("project-open ");
             }
             return DispatchResult::Handled;
         }
@@ -46,6 +48,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteProject(
         return reject("No active project");
       }
       context_.RequestCloseProject(context_.ActiveProjectIndex());
+      return DispatchResult::Handled;
+    case ActionId::ProjectCopyAbsolutePath:
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      context_.WriteClipboardText(context_.ProjectRoot().lexically_normal().string());
       return DispatchResult::Handled;
     case ActionId::ProjectNext:
     case ActionId::ProjectPrev: {

@@ -23,7 +23,7 @@ class PanelMouseCoordinator {
     std::function<std::size_t()> bottom_panel_line_count;
     std::function<void(int, std::size_t, int)> set_bottom_panel_scroll_row;
     std::function<void(MenuId, const SDL_FRect&)> open_anchored_menu;
-    std::function<SDL_FRect(const WorkspaceLayout&, bool)> bottom_panel_content_rect;
+    std::function<SDL_FRect(const WorkspaceLayout&)> bottom_panel_content_rect;
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void()> clear_terminal_selection;
     std::function<void(std::string_view)> append_terminal_pending_input;

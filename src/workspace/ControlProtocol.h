@@ -17,8 +17,8 @@ std::span<const std::string_view> ControlQueryVerbs();
 
 // One decoded request from the control channel. Exactly one of `command` /
 // `query` is set on a valid request; `command` runs through the same
-// CommandPromptCoordinator chokepoint as the in-app command prompt, `query`
-// reads workspace state and returns structured JSON. The optional `id` is
+// CommandPromptCoordinator::ExecuteCommandLine chokepoint as the in-app command
+// palette, `query` reads workspace state and returns structured JSON. The optional `id` is
 // echoed back on the matching response so a client can correlate concurrent
 // requests.
 struct ControlRequest {

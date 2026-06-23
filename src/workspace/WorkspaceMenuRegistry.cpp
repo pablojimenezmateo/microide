@@ -231,6 +231,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kProjectTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::ProjectClose, "Close Project"),
+      MenuSeparator(),
+      MenuItem(ActionId::ProjectCopyAbsolutePath, "Copy Absolute Path"),
   });
   static const auto kMenus = std::to_array<MenuSpec>({
       MenuSpec{MenuId::File, "File", kFileItems},
@@ -294,7 +296,6 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::CreateDirectory),
       MenuSeparator(),
       MenuItem(ActionId::TreeRefresh, "Refresh"),
-      MenuItem(ActionId::ProjectClose),
       MenuSeparator(),
       MenuItem(ActionId::CopyAbsolutePath),
   });

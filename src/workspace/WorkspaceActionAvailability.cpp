@@ -57,7 +57,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleColorTheme:
     case ActionId::Files:
     case ActionId::OpenCommandPalette:
-    case ActionId::OpenCommandPrompt:
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
     case ActionId::OpenSettings:
@@ -200,6 +199,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReviewCommit:
     case ActionId::Open:
     case ActionId::ProjectClose:
+    case ActionId::ProjectCopyAbsolutePath:
     case ActionId::ProjectSearch:
     case ActionId::Tab:
     case ActionId::Term:
@@ -224,7 +224,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SelectAll:
       return active_viewport != nullptr ||
              text_input_surface == TextInputSurface::PromptInput ||
-             text_input_surface == TextInputSurface::Command ||
              text_input_surface == TextInputSurface::FileFinder ||
              text_input_surface == TextInputSurface::BufferSearch ||
              text_input_surface == TextInputSurface::BufferReplaceSearch ||
@@ -236,7 +235,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::PasteClipboard:
       return active_editable_viewport != nullptr ||
              text_input_surface == TextInputSurface::PromptInput ||
-             text_input_surface == TextInputSurface::Command ||
              text_input_surface == TextInputSurface::FileFinder ||
              text_input_surface == TextInputSurface::BufferSearch ||
              text_input_surface == TextInputSurface::BufferReplaceSearch ||

@@ -85,11 +85,6 @@ CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
                 result.error = std::move(plugin_error);
                 return result;
               },
-          .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
-          .request_command_mode_transition_redraw =
-              [this](bool bottom_panel_was_visible) {
-                RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
-              },
       });
 }
 

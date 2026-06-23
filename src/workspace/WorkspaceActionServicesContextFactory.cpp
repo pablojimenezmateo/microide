@@ -17,16 +17,6 @@
 
 namespace microide::workspace {
 
-void WorkspaceActionContext::OpenCommandPrompt(std::string input) {
-  const bool bottom_panel_was_visible =
-      state_.panel.command_mode || operations_.active_terminal_tab() != nullptr;
-  state_.panel.command_mode = true;
-  state_.surface.focus = FocusTarget::Panel;
-  state_.panel.command.input.SetText(std::move(input));
-  operations_.reset_command_prompt_session();
-  operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
-}
-
 bool WorkspaceActionContext::PluginRuntimeEnabled() const {
   return operations_.plugin_runtime_enabled();
 }
@@ -198,9 +188,9 @@ void WorkspaceActionContext::OpenLaunchConfigPicker() {
   }
 }
 
-void WorkspaceActionContext::OpenCommandPalette() {
+void WorkspaceActionContext::OpenCommandPalette(std::string seed) {
   if (operations_.open_command_palette) {
-    operations_.open_command_palette();
+    operations_.open_command_palette(std::move(seed));
   }
 }
 
@@ -566,12 +556,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
-          .reset_command_prompt_session =
-              [this]() { MakeCommandPromptCoordinator().ResetSessionState(); },
-          .request_command_mode_transition_redraw =
-              [this](bool bottom_panel_was_visible) {
-                RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
-              },
           .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
           .plugin_runtime_reload_summary = [this]() { return PluginRuntimeReloadSummary(); },
@@ -595,7 +579,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
           .open_launch_config_picker = [this]() { OpenLaunchConfigPicker(); },
-          .open_command_palette = [this]() { OpenCommandPalette(); },
+          .open_command_palette = [this](std::string seed) { OpenCommandPalette(std::move(seed)); },
           .edit_breakpoint_modifier_from_menu =
               [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
           .breakpoint_quick_action_from_menu =

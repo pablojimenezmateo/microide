@@ -189,7 +189,6 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.group_split_orientation = EditorSplitOrientation::None;
     state.group_split_fraction = 0.5f;
     state.overlay.visible = false;
-    state.panel.command_mode = false;
     state.overlay.workflow.compare_picker.matches.clear();
     state.overlay.workflow.compare_picker.items.clear();
     state.overlay.workflow.compare_picker.selected_index = 0;

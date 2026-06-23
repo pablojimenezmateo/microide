@@ -82,7 +82,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
   // The welcome surface is a cold (non-hot) path, so it draws with DrawString (no opaque
   // background box) rather than DrawStringOn. Glyphs alpha-blend over whatever backdrop is
   // already painted — card body (surface_raised), header band (chrome_background), and the
-  // semi-transparent open-folder highlight — so no run shows a mismatched background box.
+  // semi-transparent action-button highlight — so no run shows a mismatched background box.
   const float inset_x = card.x + 20.0f;
   text_renderer.DrawString(renderer, inset_x, card.y + 8.0f, theme.chrome_text,
                            text_renderer.TruncateToWidth(model.title, card.w - 40.0f));
@@ -90,35 +90,20 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
                            theme.text_secondary,
                            text_renderer.TruncateToWidth(model.subtitle, card.w - 40.0f));
 
-  // Left column flows top-down: a "Start" caption, the open-folder button, a
-  // "Recent" caption, then the recent rows (or an empty-state). All Y positions
-  // come from the shared layout so the shell hit-test matches exactly.
-  text_renderer.DrawString(renderer, layout.recents_panel.x, layout.recents_panel.y,
-                           theme.text_muted, model.start_heading);
+  // A primary-action button: opaque selection fill plus a 3px accent bar on the left edge —
+  // the same selection-bar language used by the overlay list — instead of a muddy box.
+  const auto draw_button = [&](const SDL_FRect& button, std::string_view label) {
+    render::FillRect(renderer, button, theme.selection_strong);
+    render::FillRect(renderer, SDL_FRect{button.x, button.y + 2.0f, 3.0f, button.h - 4.0f},
+                     theme.accent);
+    const float text_y = button.y + std::floor(std::max(0.0f, button.h - line_height) * 0.5f);
+    text_renderer.DrawStringOn(renderer, button.x + 12.0f, text_y, theme.surface_text,
+                               theme.selection_strong,
+                               text_renderer.TruncateToWidth(label, button.w - 20.0f));
+  };
 
-  // Open-folder primary action: opaque selection fill plus a 3px accent bar on the
-  // left edge — the same selection-bar language used by the overlay list — instead
-  // of a muddy translucent box.
-  const SDL_FRect& button = layout.open_folder_rect;
-  render::FillRect(renderer, button, theme.selection_strong);
-  render::FillRect(renderer, SDL_FRect{button.x, button.y + 2.0f, 3.0f, button.h - 4.0f},
-                   theme.accent);
-  const float button_text_y = button.y + std::floor(std::max(0.0f, button.h - line_height) * 0.5f);
-  text_renderer.DrawStringOn(
-      renderer, button.x + 12.0f, button_text_y, theme.surface_text, theme.selection_strong,
-      text_renderer.TruncateToWidth(model.open_folder_label, button.w - 20.0f));
-
-  const float recents_caption_y = layout.recents_rows_top - line_height - 10.0f;
-  text_renderer.DrawString(renderer, layout.recents_panel.x, recents_caption_y, theme.text_muted,
-                           model.recents_heading);
-
-  bool drew_recent = false;
-  for (const WelcomeHitRegion& region : layout.hit_regions) {
-    if (region.kind != WelcomeHitRegion::Kind::RecentProject) {
-      continue;
-    }
-    drew_recent = true;
-    const WelcomeRecent& recent = model.recent_projects[region.recent_index];
+  // A recent-entry row: folder/file name (accent) + muted path tail.
+  const auto draw_recent_row = [&](const WelcomeHitRegion& region, const WelcomeRecent& recent) {
     const std::string name = text_renderer.TruncateToWidth(recent.name, region.rect.w * 0.5f);
     const float name_w = text_renderer.MeasureWidth(name);
     text_renderer.DrawString(renderer, region.rect.x + 4.0f, region.rect.y + 2.0f, theme.accent,
@@ -126,15 +111,69 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     text_renderer.DrawString(
         renderer, region.rect.x + 14.0f + name_w, region.rect.y + 2.0f, theme.text_muted,
         text_renderer.TruncateToWidth(recent.path_display, region.rect.w - name_w - 26.0f));
-  }
-  if (!drew_recent) {
-    text_renderer.DrawString(renderer, layout.recents_panel.x + 4.0f, layout.recents_rows_top,
-                             theme.text_muted,
-                             text_renderer.TruncateToWidth(model.empty_recents_label,
-                                                           layout.recents_panel.w - 16.0f));
+  };
+
+  const float caption_x = layout.recents_panel.x;
+  const float recents_caption_y = layout.recents_rows_top - line_height - 10.0f;
+
+  if (model.kind == WelcomeKind::ProjectHome) {
+    // Left column flows top-down: an "Actions" caption, the three action buttons (keyed off
+    // the shared hit regions), a "Recent files" caption, then the recent-file rows.
+    text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,
+                             model.actions_heading);
+    bool drew_file = false;
+    for (const WelcomeHitRegion& region : layout.hit_regions) {
+      switch (region.kind) {
+        case WelcomeHitRegion::Kind::NewFile:
+          draw_button(region.rect, model.new_file_label);
+          break;
+        case WelcomeHitRegion::Kind::OpenFile:
+          draw_button(region.rect, model.open_file_label);
+          break;
+        case WelcomeHitRegion::Kind::FindInProject:
+          draw_button(region.rect, model.find_in_project_label);
+          break;
+        case WelcomeHitRegion::Kind::RecentFile:
+          drew_file = true;
+          draw_recent_row(region, model.recent_files[region.recent_index]);
+          break;
+        default:
+          break;
+      }
+    }
+    text_renderer.DrawString(renderer, caption_x, recents_caption_y, theme.text_muted,
+                             model.recent_files_heading);
+    if (!drew_file) {
+      text_renderer.DrawString(
+          renderer, caption_x + 4.0f, layout.recents_rows_top, theme.text_muted,
+          text_renderer.TruncateToWidth(model.empty_recent_files_label,
+                                        layout.recents_panel.w - 16.0f));
+    }
+  } else {
+    // NoProject: a "Start" caption, the open-folder button, a "Recent" caption, recent rows.
+    text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,
+                             model.start_heading);
+    draw_button(layout.open_folder_rect, model.open_folder_label);
+    text_renderer.DrawString(renderer, caption_x, recents_caption_y, theme.text_muted,
+                             model.recents_heading);
+    bool drew_recent = false;
+    for (const WelcomeHitRegion& region : layout.hit_regions) {
+      if (region.kind != WelcomeHitRegion::Kind::RecentProject) {
+        continue;
+      }
+      drew_recent = true;
+      draw_recent_row(region, model.recent_projects[region.recent_index]);
+    }
+    if (!drew_recent) {
+      text_renderer.DrawString(
+          renderer, caption_x + 4.0f, layout.recents_rows_top, theme.text_muted,
+          text_renderer.TruncateToWidth(model.empty_recents_label,
+                                        layout.recents_panel.w - 16.0f));
+    }
   }
 
-  // Shortcuts panel: curated, registry-sourced key chords (never drifts).
+  // Shortcuts panel: curated, registry-sourced key chords (never drifts). Shared by both
+  // variants, so the palette is advertised exactly once (here) — no separate footer hint.
   text_renderer.DrawString(renderer, layout.shortcuts_panel.x, layout.shortcuts_panel.y,
                            theme.text_muted, model.shortcuts_heading);
   const float keys_col = std::min(150.0f, layout.shortcuts_panel.w * 0.45f);
@@ -151,10 +190,6 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
         text_renderer.TruncateToWidth(shortcut.label, layout.shortcuts_panel.w - keys_col - 8.0f));
     sc_y += sc_row_step;
   }
-
-  text_renderer.DrawString(renderer, inset_x, card.y + card.h - line_height - 10.0f,
-                           theme.text_muted,
-                           text_renderer.TruncateToWidth(model.palette_hint, card.w - 40.0f));
 }
 
 }  // namespace

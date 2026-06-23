@@ -169,6 +169,10 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_KP_ENTER:
         operations_.activate_overlay_selection();
         return true;
+      case SDLK_TAB:
+        // The palette query doubles as a command line; Tab completes the active token.
+        operations_.complete_command_palette_query();
+        return true;
       case SDLK_UP:
         apply_selection(ClampListIndexMove(palette.selected_index, item_count, -1));
         return true;

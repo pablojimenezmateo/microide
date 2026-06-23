@@ -7,6 +7,7 @@
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 
+#include "workspace/RecentsService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
@@ -412,9 +413,8 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
   return FrameSurfaceViewModel{
       .layout = layout,
       .sidebar_visible = context_.current_project_state.sidebar.visible,
-      .bottom_panel_visible = context_.current_project_state.panel.command_mode ||
-                              context_.current_project_state.panel.content !=
-                                  PanelContentKind::None,
+      .bottom_panel_visible =
+          context_.current_project_state.panel.content != PanelContentKind::None,
       .compare_surface = compare_surface,
       .editor_banner = std::move(editor_banner),
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
@@ -438,8 +438,6 @@ TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const 
   return TextInputSurfaceViewModel{
       .current_surface = context_.text_input.active_surface,
       .prompt_editing = context_.prompts.surface_visible,
-      .command_mode = context_.current_project_state.panel.command_mode,
-      .command_input = &context_.current_project_state.panel.command.input,
       .prompt_input = &context_.prompts.surface.input,
       .buffer_search_query = &context_.current_project_state.overlay.workflow.buffer_search.query,
       .buffer_search_replace =
@@ -719,13 +717,11 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
 BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() const {
   const TabDragState& drag = context_.interaction_state.tab_drag;
   return BottomPanelSurfaceViewModel{
-      .command_mode = context_.current_project_state.panel.command_mode,
       .content = context_.current_project_state.panel.content,
       .height = context_.current_project_state.panel.height,
       .output_channel_id = context_.current_project_state.panel.output.channel_id,
       .project_root = context_.current_project_state.root,
       .focus = context_.current_project_state.surface.focus,
-      .command_state = &context_.current_project_state.panel.command,
       .project_state = &context_.current_project_state,
       .tab_drag =
           BottomPanelTabDragViewModel{
@@ -768,32 +764,71 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
   return vm;
 }
 
+namespace {
+
+// The display leaf of a path: its folder/file name, stepping past a trailing separator so
+// "/path/proj/" still yields "proj"; falls back to the full string for a bare root.
+std::string PathLeafName(const std::filesystem::path& path) {
+  std::filesystem::path leaf = path;
+  if (!leaf.has_filename() && leaf.has_parent_path()) {
+    leaf = leaf.parent_path();
+  }
+  std::string name = leaf.filename().string();
+  return name.empty() ? path.string() : name;
+}
+
+// Build a WelcomeRecent row for each path that still exists on disk, so every row the user
+// sees is actually openable (stale entries would otherwise click into a no-op). The store
+// itself is left intact; a temporarily-unmounted path is just hidden.
+std::vector<editor::WelcomeRecent> BuildRecentRows(
+    std::span<const std::filesystem::path> paths) {
+  std::vector<editor::WelcomeRecent> rows;
+  rows.reserve(paths.size());
+  for (const std::filesystem::path& path : paths) {
+    if (path.empty()) {
+      continue;
+    }
+    std::error_code exists_ec;
+    if (!std::filesystem::exists(path, exists_ec)) {
+      continue;
+    }
+    rows.push_back(editor::WelcomeRecent{
+        .name = PathLeafName(path),
+        .path_display = path.string(),
+        .path = path,
+    });
+  }
+  return rows;
+}
+
+// Append the action's accelerator to `label` as "  (chord)" when one is bound.
+std::string LabelWithChord(std::string label, ActionId id) {
+  if (const ActionSpec* spec = FindWorkspaceActionSpec(id);
+      spec != nullptr && !spec->accelerator.empty()) {
+    label += "  (" + std::string(spec->accelerator) + ")";
+  }
+  return label;
+}
+
+}  // namespace
+
 editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
-    std::span<const std::filesystem::path> recent_projects) const {
+    const RecentsService& recents) const {
   editor::WelcomeViewModel vm;
-  vm.title = "Welcome to microide";
-  vm.subtitle = "Open a folder to start, or pick up where you left off.";
-  vm.start_heading = "Start";
-  vm.recents_heading = "Recent";
   vm.shortcuts_heading = "Keyboard Shortcuts";
-  vm.empty_recents_label = "No recent projects yet.";
 
   // Curated, registry-sourced shortcut rows. Listing ActionIds (not literal chords)
   // keeps the welcome screen in lock-step with the command registry and keybindings.
-  static constexpr std::array<ActionId, 10> kWelcomeShortcutActions = {
-      ActionId::OpenCommandPalette, ActionId::Files,        ActionId::ProjectSearch,
-      ActionId::Search,             ActionId::Save,         ActionId::SidebarToggle,
-      ActionId::OpenSettings,       ActionId::OpenCommandPrompt, ActionId::CloseActiveTab,
+  static constexpr std::array<ActionId, 9> kWelcomeShortcutActions = {
+      ActionId::OpenCommandPalette, ActionId::Files,    ActionId::ProjectSearch,
+      ActionId::Search,             ActionId::Save,     ActionId::SidebarToggle,
+      ActionId::OpenSettings,       ActionId::CloseActiveTab,
       ActionId::AddCursorAtNextMatch,
   };
-  std::string palette_chord;
   for (ActionId id : kWelcomeShortcutActions) {
     const ActionSpec* spec = FindWorkspaceActionSpec(id);
     if (spec == nullptr || spec->accelerator.empty() || spec->label.empty()) {
       continue;
-    }
-    if (id == ActionId::OpenCommandPalette) {
-      palette_chord.assign(spec->accelerator);
     }
     vm.shortcuts.push_back(editor::WelcomeShortcut{
         .keys = std::string(spec->accelerator),
@@ -801,44 +836,34 @@ editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
     });
   }
 
-  vm.open_folder_label = "Open Folder…";
-  if (const ActionSpec* open_spec = FindWorkspaceActionSpec(ActionId::ProjectOpen);
-      open_spec != nullptr && !open_spec->accelerator.empty()) {
-    vm.open_folder_label += "  (" + std::string(open_spec->accelerator) + ")";
+  const std::filesystem::path& root = context_.current_project_state.root;
+  if (root.empty()) {
+    // Cold-start home: open a folder or reopen a recent project.
+    vm.kind = editor::WelcomeKind::NoProject;
+    vm.title = "Welcome to microide";
+    vm.subtitle = "Open a folder to start, or pick up where you left off.";
+    vm.start_heading = "Start";
+    vm.recents_heading = "Recent";
+    vm.empty_recents_label = "No recent projects yet.";
+    vm.open_folder_label = LabelWithChord("Open Folder…", ActionId::ProjectOpen);
+    vm.recent_projects = BuildRecentRows(recents.RecentProjects());
+    return vm;
   }
 
-  vm.palette_hint = palette_chord.empty()
-                        ? std::string("Press Ctrl+Shift+P to browse all commands.")
-                        : "Press " + palette_chord + " to browse all commands.";
-
-  vm.recent_projects.reserve(recent_projects.size());
-  for (const std::filesystem::path& root : recent_projects) {
-    if (root.empty()) {
-      continue;
-    }
-    // Only surface roots that still exist on disk, so every row the user sees is actually
-    // openable (stale entries — e.g. a deleted temp project — would otherwise click into a
-    // no-op). The store itself is left intact; a temporarily-unmounted path is just hidden.
-    std::error_code exists_ec;
-    if (!std::filesystem::exists(root, exists_ec)) {
-      continue;
-    }
-    // A trailing separator makes filename() empty, so step into the parent first so
-    // "/path/proj/" still yields the folder name.
-    std::filesystem::path leaf = root;
-    if (!leaf.has_filename() && leaf.has_parent_path()) {
-      leaf = leaf.parent_path();
-    }
-    std::string name = leaf.filename().string();
-    if (name.empty()) {
-      name = root.string();  // e.g. a filesystem root with no trailing component
-    }
-    vm.recent_projects.push_back(editor::WelcomeRecent{
-        .name = std::move(name),
-        .path_display = root.string(),
-        .path = root,
-    });
-  }
+  // Project home: a project is open but the focused group has no tab. Offer this project's
+  // recent files plus the create/open/find affordances — not "open a different folder".
+  vm.kind = editor::WelcomeKind::ProjectHome;
+  vm.title = PathLeafName(root);
+  vm.subtitle = "Open a file, or jump back into a recent one.";
+  vm.actions_heading = "Actions";
+  vm.recent_files_heading = "Recent files";
+  vm.empty_recent_files_label = "No files opened in this project yet.";
+  vm.new_file_label = LabelWithChord("New File", ActionId::Tab);
+  vm.open_file_label = LabelWithChord("Open File…", ActionId::Open);
+  vm.find_in_project_label = LabelWithChord("Find in Project…", ActionId::ProjectSearch);
+  const std::vector<std::filesystem::path> recent_files =
+      recents.RecentFilesFor(root, editor::kWelcomeRecentFileLimit);
+  vm.recent_files = BuildRecentRows(recent_files);
   return vm;
 }
 

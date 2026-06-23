@@ -28,10 +28,8 @@ class KeyInputCoordinator {
     std::function<void()> request_window_redraw;
     std::function<void()> request_overlay_redraw;
     std::function<void()> request_sidebar_redraw;
-    std::function<void()> request_bottom_panel_command_redraw;
     std::function<void()> request_bottom_panel_content_redraw;
     std::function<void()> request_focused_editor_redraw;
-    std::function<bool(const SDL_KeyboardEvent&)> command_prompt_handle_key_down;
     std::function<bool(SDL_Keycode, SDL_Keymod)> text_input_composition_consumes_key;
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_single_line_key_down;
@@ -74,6 +72,7 @@ class KeyInputCoordinator {
     std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;
+    std::function<void()> complete_command_palette_query;
     std::function<void(int)> move_compare_picker_selection;
     std::function<void()> refresh_compare_picker;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;

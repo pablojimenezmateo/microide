@@ -175,6 +175,19 @@ void TestMenuRegistrySplitItemsPresentInTabAndTreeMenus() {
          "project-tree file context menu should expose Split Down");
 }
 
+void TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot() {
+  // The project tab context menu owns project-level lifecycle: it exposes both
+  // Close Project and a dedicated Copy Absolute Path (copies the project root via
+  // ExecuteProject, not the active editor file). The project-tree root no longer
+  // duplicates Close Project.
+  Expect(MenuContainsAction(MenuId::ProjectTabContext, ActionId::ProjectClose),
+         "project tab context menu should keep Close Project");
+  Expect(MenuContainsAction(MenuId::ProjectTabContext, ActionId::ProjectCopyAbsolutePath),
+         "project tab context menu should expose Copy Absolute Path");
+  Expect(!TreeMenuContainsAction(TreeContextTargetKind::Root, ActionId::ProjectClose),
+         "project-tree root context menu should no longer expose Close Project");
+}
+
 }  // namespace
 
 void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
@@ -188,6 +201,8 @@ void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
           TestMenuRegistryEveryItemIsWired);
   AddTest(tests, "WorkspaceMenuRegistry/SplitItemsPresentInTabAndTreeMenus",
           TestMenuRegistrySplitItemsPresentInTabAndTreeMenus);
+  AddTest(tests, "WorkspaceMenuRegistry/ProjectTabContextExposesCopyAbsolutePathNotTreeRoot",
+          TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot);
 }
 
 }  // namespace microide::tests

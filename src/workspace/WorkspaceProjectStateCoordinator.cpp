@@ -204,10 +204,10 @@ std::filesystem::path WorkspaceShell::ResolveProjectRootInput(
 }
 
 void WorkspaceShell::SetWelcomePlaceholder() {
-  context_.current_project_state.focused_group().welcome_surface.viewport.SetPlaceholderText(
-      "microide\n\n"
-      "Welcome.\n"
-      "Use File > New Project Tab... or run project-open.\n");
+  // The placeholder text itself is never rendered — an empty group draws the welcome view
+  // model (DrawPlaceholderView) instead. This call only flips the viewport's is_placeholder()
+  // flag, which selects that draw path; a single marker char is enough to set it.
+  context_.current_project_state.focused_group().welcome_surface.viewport.SetPlaceholderText(" ");
   ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
 }
 

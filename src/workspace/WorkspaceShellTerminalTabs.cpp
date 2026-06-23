@@ -108,11 +108,10 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
   if (context_.current_project_state.terminal_tabs.empty()) {
     context_.current_project_state.active_terminal_tab_index = 0;
     ClearTerminalSelection();
-    if (!context_.current_project_state.panel.command_mode &&
-        context_.current_project_state.panel.content == PanelContentKind::Terminal) {
+    if (context_.current_project_state.panel.content == PanelContentKind::Terminal) {
       context_.current_project_state.panel.content = PanelContentKind::None;
     }
-    if (context_.current_project_state.surface.focus == FocusTarget::Panel && !context_.current_project_state.panel.command_mode) {
+    if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
     }
     if (BottomPanelVisible() != panel_visible_before) {

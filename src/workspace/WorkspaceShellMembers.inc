@@ -780,9 +780,17 @@
   void OpenLaunchConfigPicker();
   void RefreshLaunchConfigPicker();
   void ConfirmLaunchConfigSelection();
-  void OpenCommandPalette();
+  // Open the command palette, optionally pre-filling the query (e.g. "project-open ") so the
+  // user only types the argument. The palette is also the command-line surface: typing a
+  // verb + arguments and pressing Enter runs it via the shared command executor.
+  void OpenCommandPalette(std::string seed = {});
   void RefreshCommandPalette();
   void ConfirmCommandPaletteSelection();
+  // True when the palette query should run as a command line (verb + args) rather than
+  // confirming the highlighted fuzzy row.
+  bool CommandPaletteQueryIsCommandLine() const;
+  // Tab-complete the palette query (command verbs, paths, colorscheme names, …) in place.
+  void CompleteCommandPaletteQuery();
   // Build the welcome-surface model + geometry for the current placeholder editor, so
   // the click handler and cursor resolver hit-test the same regions the renderer drew.
   // Returns false when the welcome home surface is not currently showing.
@@ -1502,10 +1510,8 @@
   void RequestMergeConflictRedraw(std::size_t conflict_index);
   void RequestBottomPanelRedraw();
   void RequestDebugPaneRedraw();
-  void RequestBottomPanelCommandRedraw();
   void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBottomPanelContentRedraw();
-  void RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible);
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
   void QueueEditorHoverRefresh();
@@ -1521,7 +1527,6 @@
                                                            std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
-  std::optional<SDL_FRect> CurrentBottomPanelCommandRedrawRect() const;
   std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
   std::optional<SDL_FRect> CurrentPromptRedrawRect() const;

@@ -404,12 +404,17 @@
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_dialog_state_.active;
   }
-  static bool CommandMode(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command_mode; }
-  static const std::string& CommandInput(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.panel.command.input.text();
+  // The command prompt is now the command palette: "command mode" == palette open, the
+  // command input == the palette query, and the status text == the executor feedback.
+  static bool CommandMode(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.visible &&
+           shell.context_.current_project_state.overlay.mode == OverlayMode::CommandPalette;
   }
-  static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
-    return CommandPromptCoordinator::PromptStatusText(shell.context_.current_project_state.panel.command);
+  static const std::string& CommandInput(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.command_palette.query.text();
+  }
+  static const std::string& CommandPromptStatusText(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.command.feedback_text;
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.query.text();
@@ -481,6 +486,9 @@
   static float SidebarWidth(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.width; }
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_tabs;
+  }
+  static std::size_t CommandPaletteMatchCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.command_palette.matches.size();
   }
   static std::size_t EditorTabSize(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.tab_size;

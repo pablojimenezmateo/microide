@@ -124,9 +124,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   if (HandleSingleLineInputMouseDown(event, layout)) {
     switch (context_.interaction_state.single_line_drag_surface) {
-      case TextInputSurface::Command:
-        ensure_redraw([this]() { RequestBottomPanelRedraw(); });
-        break;
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace:
       case TextInputSurface::CommitSubject:
@@ -378,9 +375,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  // Welcome home surface: a placeholder editor shows clickable recent projects and an
-  // open-folder affordance. Intercept those clicks before the editor coordinator turns
-  // them into a text-selection drag on the empty buffer.
+  // Welcome home surface: a placeholder editor shows clickable recent projects/files plus
+  // primary-action buttons (open folder, or new/open/find when a project is open).
+  // Intercept those clicks before the editor coordinator turns them into a text-selection
+  // drag on the empty buffer.
   if (event.button.button == SDL_BUTTON_LEFT) {
     editor::WelcomeViewModel welcome_model;
     editor::WelcomeLayout welcome_layout;
@@ -391,12 +389,32 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         if (!Contains(region.rect, click_x, click_y)) {
           continue;
         }
-        if (region.kind == editor::WelcomeHitRegion::Kind::RecentProject &&
-            region.recent_index < welcome_model.recent_projects.size()) {
-          OpenProjectTab(welcome_model.recent_projects[region.recent_index].path, true, true);
-        } else if (region.kind == editor::WelcomeHitRegion::Kind::OpenFolder) {
-          ActionCoordinator(MakeActionContext())
-              .Execute(ActionId::ProjectOpen, {}, ActionSource::Menu);
+        const auto run_action = [this](ActionId id) {
+          ActionCoordinator(MakeActionContext()).Execute(id, {}, ActionSource::Menu);
+        };
+        switch (region.kind) {
+          case editor::WelcomeHitRegion::Kind::RecentProject:
+            if (region.recent_index < welcome_model.recent_projects.size()) {
+              OpenProjectTab(welcome_model.recent_projects[region.recent_index].path, true, true);
+            }
+            break;
+          case editor::WelcomeHitRegion::Kind::OpenFolder:
+            run_action(ActionId::ProjectOpen);
+            break;
+          case editor::WelcomeHitRegion::Kind::RecentFile:
+            if (region.recent_index < welcome_model.recent_files.size()) {
+              OpenFile(welcome_model.recent_files[region.recent_index].path);
+            }
+            break;
+          case editor::WelcomeHitRegion::Kind::NewFile:
+            run_action(ActionId::Tab);
+            break;
+          case editor::WelcomeHitRegion::Kind::OpenFile:
+            run_action(ActionId::Open);
+            break;
+          case editor::WelcomeHitRegion::Kind::FindInProject:
+            run_action(ActionId::ProjectSearch);
+            break;
         }
         ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
         return true;
@@ -425,7 +443,7 @@ bool WorkspaceShell::ProbeWelcomeSurface(editor::WelcomeViewModel* model,
   if (!layout.has_value()) {
     return false;
   }
-  *model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_.RecentProjects());
+  *model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_);
   *layout_out = editor::ComputeWelcomeLayout(layout->editor_surface, *model,
                                              text_renderer_.LineHeight());
   return true;
@@ -479,9 +497,6 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     switch (surface) {
       case TextInputSurface::PromptInput:
         ensure_redraw([this]() { RequestPromptRedraw(); });
-        break;
-      case TextInputSurface::Command:
-        ensure_redraw([this]() { RequestBottomPanelRedraw(); });
         break;
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace:

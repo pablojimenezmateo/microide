@@ -630,10 +630,6 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         }
       }
     }
-    if (context_.current_project_state.panel.command_mode &&
-        Contains(BottomPanelCommandPromptRect(layout), x, y)) {
-      return CursorKind::Text;
-    }
     if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr &&
         y >= layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight) {
       if (TerminalUrlAtPoint(x, y).has_value()) {

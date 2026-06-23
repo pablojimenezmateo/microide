@@ -31,7 +31,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   const bool clears_editor_ctrl_k_chord =
       prompts_.dirty_visible || menu_state_.tree_context_menu.open ||
       menu_state_.menu_bar_open || prompts_.surface_visible || state_.overlay.visible ||
-      state_.panel.command_mode || state_.surface.focus != FocusTarget::Editor;
+      state_.surface.focus != FocusTarget::Editor;
   if (clears_editor_ctrl_k_chord) {
     state_.surface.editor_ctrl_k_leader_armed = false;
   }
@@ -184,16 +184,6 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (HandleGlobalKeyDown(event, modifiers, active_compare_tab, active_merge_tab)) {
     return true;
   }
-  if (state_.panel.command_mode) {
-    bool handled = operations_.command_prompt_handle_key_down(event);
-    if (!handled) {
-      handled = operations_.text_input_handle_single_line_key_down(event, modifiers);
-    }
-    if (handled) {
-      ensure_redraw([this]() { operations_.request_bottom_panel_command_redraw(); });
-    }
-    return handled;
-  }
   if (HandleSurfaceNavigationKeyDown(event, modifiers)) {
     ensure_redraw([this]() { operations_.request_window_redraw(); });
     return true;
@@ -249,7 +239,6 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                               bool active_merge_tab) {
   if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
     const bool surface_accepts_paste =
-        state_.panel.command_mode ||
         (state_.overlay.visible &&
          (state_.overlay.mode == OverlayMode::FileFinder ||
           state_.overlay.mode == OverlayMode::CommitPicker ||
@@ -273,7 +262,6 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   const TextInputSurface text_input_surface = operations_.current_text_input_surface();
   const bool single_line_text_surface =
       text_input_surface == TextInputSurface::PromptInput ||
-      text_input_surface == TextInputSurface::Command ||
       text_input_surface == TextInputSurface::FileFinder ||
       text_input_surface == TextInputSurface::BufferSearch ||
       text_input_surface == TextInputSurface::BufferReplaceSearch ||
@@ -300,7 +288,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   const KeybindingContext key_ctx = ActiveKeybindingContext();
   const bool editor_chord_allowed =
       state_.surface.focus == FocusTarget::Editor && !state_.overlay.visible &&
-      !state_.panel.command_mode && key_ctx == KeybindingContext::Editor;
+      key_ctx == KeybindingContext::Editor;
 
   if (state_.surface.editor_ctrl_k_leader_armed) {
     state_.surface.editor_ctrl_k_leader_armed = false;
@@ -336,8 +324,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
       binding->action == ActionId::ReplaceInBuffer || binding->action == ActionId::ProjectSearch;
 
   if (binding->action == ActionId::Tab && binding->args.empty() &&
-      binding->command_name.empty() &&
-      (state_.panel.command_mode || state_.overlay.visible)) {
+      binding->command_name.empty() && state_.overlay.visible) {
     return false;
   }
 
@@ -348,8 +335,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                      state_.overlay.mode != OverlayMode::BufferSearch &&
                                      state_.overlay.mode != OverlayMode::BufferReplace;
   if (editor_shortcut &&
-      (state_.panel.command_mode || modal_overlay_visible ||
-       state_.surface.focus != FocusTarget::Editor)) {
+      (modal_overlay_visible || state_.surface.focus != FocusTarget::Editor)) {
     return false;
   }
   if ((binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer ||
@@ -364,8 +350,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   if (binding->action == ActionId::Save && active_compare_tab) {
     return false;
   }
-  if (!binding->command_name.empty() &&
-      (state_.panel.command_mode || state_.overlay.visible)) {
+  if (!binding->command_name.empty() && state_.overlay.visible) {
     return false;
   }
 
@@ -548,8 +533,7 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
           state_.surface.focus = FocusTarget::Overlay;
           return true;
         }
-        const bool include_panel =
-            state_.panel.content != PanelContentKind::None || state_.panel.command_mode;
+        const bool include_panel = state_.panel.content != PanelContentKind::None;
         if (include_panel) {
           if (state_.sidebar.visible) {
             if (modifiers & SDL_KMOD_SHIFT) {
@@ -620,15 +604,9 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
-          .request_bottom_panel_command_redraw =
-              [this]() { RequestBottomPanelCommandRedraw(); },
           .request_bottom_panel_content_redraw =
               [this]() { RequestBottomPanelContentRedraw(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
-          .command_prompt_handle_key_down =
-              [this](const SDL_KeyboardEvent& event) {
-                return MakeCommandPromptCoordinator().HandleKeyDown(event);
-              },
           .text_input_composition_consumes_key =
               [this](SDL_Keycode key, SDL_Keymod modifiers) {
                 return MakeTextInputCoordinator().CompositionConsumesKey(key, modifiers);
@@ -746,6 +724,7 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() {
                 ActivateOverlaySelection();
               },
+          .complete_command_palette_query = [this]() { CompleteCommandPaletteQuery(); },
           .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
           .refresh_compare_picker = [this]() { RefreshComparePicker(); },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },

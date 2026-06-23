@@ -981,7 +981,7 @@ bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
       state_.surface.focus = FocusTarget::Editor;
       return true;
     case FocusRequestTarget::Panel:
-      if (state_.panel.command_mode || operations_.active_terminal_tab() != nullptr) {
+      if (operations_.active_terminal_tab() != nullptr) {
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }

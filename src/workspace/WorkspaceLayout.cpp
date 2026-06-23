@@ -21,10 +21,6 @@ constexpr float kMaxSidebarWidth = kWorkspaceMaxSidebarWidth;
 constexpr float kMinEditorAreaWidth = kWorkspaceMinEditorAreaWidth;
 constexpr float kMinEditorAreaHeight = kWorkspaceMinEditorAreaHeight;
 constexpr float kBottomPanelHeaderHeight = kWorkspaceBottomPanelHeaderHeight;
-constexpr float kBottomPanelCommandReserveHeight = kWorkspaceBottomPanelCommandReserveHeight;
-constexpr float kBottomPanelCommandPromptHeight = kWorkspaceBottomPanelCommandPromptHeight;
-constexpr float kBottomPanelCommandInset = kWorkspaceBottomPanelCommandInset;
-constexpr float kBottomPanelCommandBottomPadding = kWorkspaceBottomPanelCommandBottomPadding;
 constexpr float kOverlayMinWidth = 520.0f;
 constexpr float kOverlayMaxWidth = 840.0f;
 constexpr float kOverlayMinHeight = 220.0f;
@@ -280,9 +276,8 @@ float ClampBottomPanelHeight(float height, float window_height) {
   return std::clamp(height, min_height, max_height);
 }
 
-int BottomPanelVisibleRowsForHeight(float panel_height, float line_height, bool command_mode) {
-  const float available_height = panel_height - kBottomPanelHeaderHeight - 18.0f -
-                                 BottomPanelCommandReservedHeight(command_mode);
+int BottomPanelVisibleRowsForHeight(float panel_height, float line_height) {
+  const float available_height = panel_height - kBottomPanelHeaderHeight - 18.0f;
   if (line_height <= 0.0f) {
     return 1;
   }
@@ -461,30 +456,10 @@ LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs)
   return window_width <= lower ? LayoutMode::Compact : LayoutMode::Regular;
 }
 
-float BottomPanelCommandReservedHeight(bool command_mode) {
-  return command_mode ? kBottomPanelCommandReserveHeight : 0.0f;
-}
-
-SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout, bool command_mode) {
+SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout) {
   return MakeRect(layout.bottom_panel.x, layout.bottom_panel.y + kBottomPanelHeaderHeight,
                   layout.bottom_panel.w,
-                  std::max(0.0f, layout.bottom_panel.h - kBottomPanelHeaderHeight -
-                                      BottomPanelCommandReservedHeight(command_mode)));
-}
-
-SDL_FRect BottomPanelCommandAreaRect(const WorkspaceLayout& layout) {
-  const float height = BottomPanelCommandReservedHeight(true);
-  return MakeRect(layout.bottom_panel.x, layout.bottom_panel.y + layout.bottom_panel.h - height,
-                  layout.bottom_panel.w, height);
-}
-
-SDL_FRect BottomPanelCommandPromptRect(const WorkspaceLayout& layout) {
-  const SDL_FRect command_area = BottomPanelCommandAreaRect(layout);
-  return MakeRect(command_area.x + kBottomPanelCommandInset,
-                  command_area.y + command_area.h - kBottomPanelCommandBottomPadding -
-                      kBottomPanelCommandPromptHeight,
-                  command_area.w - kBottomPanelCommandInset * 2.0f,
-                  kBottomPanelCommandPromptHeight);
+                  std::max(0.0f, layout.bottom_panel.h - kBottomPanelHeaderHeight));
 }
 
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full) {

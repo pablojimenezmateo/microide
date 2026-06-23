@@ -46,6 +46,7 @@ enum class ActionId {
   // value rejects. Always available (not gated).
   SetSetting,
   ProjectClose,
+  ProjectCopyAbsolutePath,
   ProjectNext,
   ProjectOpen,
   ProjectPrev,
@@ -89,7 +90,6 @@ enum class ActionId {
   CopySelection,
   CopySelectionWithContext,
   CutSelection,
-  OpenCommandPrompt,
   PasteClipboard,
   Redo,
   ReplaceInBuffer,

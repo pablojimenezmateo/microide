@@ -116,8 +116,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
-    const SDL_FRect panel_content =
-        operations_.bottom_panel_content_rect(layout, state_.panel.command_mode);
+    const SDL_FRect panel_content = operations_.bottom_panel_content_rect(layout);
     if (event.button.button == SDL_BUTTON_RIGHT &&
         Contains(panel_content, event.button.x, event.button.y)) {
       state_.surface.focus = FocusTarget::Panel;
@@ -148,8 +147,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   if (state_.panel.content == PanelContentKind::Terminal && !state_.terminal_tabs.empty()) {
-    const SDL_FRect panel_content =
-        operations_.bottom_panel_content_rect(layout, state_.panel.command_mode);
+    const SDL_FRect panel_content = operations_.bottom_panel_content_rect(layout);
     if (Contains(panel_content, event.button.x, event.button.y)) {
       if (const auto url = operations_.terminal_url_at_point(static_cast<float>(event.button.x),
                                                              static_cast<float>(event.button.y));
@@ -211,9 +209,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  if (state_.panel.command_mode) {
-    state_.surface.focus = FocusTarget::Panel;
-  } else if (state_.panel.content != PanelContentKind::None) {
+  if (state_.panel.content != PanelContentKind::None) {
     state_.surface.focus = FocusTarget::Panel;
   }
   return true;
@@ -432,9 +428,7 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
           .open_anchored_menu =
               [this](MenuId id, const SDL_FRect& rect) { MakeMenuCoordinator().OpenAnchoredMenu(id, rect); },
           .bottom_panel_content_rect =
-              [this](const WorkspaceLayout& layout, bool command_mode) {
-                return BottomPanelContentRect(layout, command_mode);
-              },
+              [this](const WorkspaceLayout& layout) { return BottomPanelContentRect(layout); },
           .read_primary_selection_text =
               [terminal_panel]() mutable { return terminal_panel.ReadPrimarySelectionText(); },
           .clear_terminal_selection =
