@@ -99,6 +99,10 @@ class TextViewport {
   void SetUntitledBuffer();
   void SetViewportSize(std::size_t visible_lines, std::size_t visible_columns);
   void SetScrollLine(std::size_t scroll_line);
+  // Scrolls so `line` (0-based logical line) sits mid-viewport. Clamped to the
+  // valid scroll range, so target lines near EOF or in tiny viewports settle as
+  // close to centered as the content allows. Soft-wrap aware via VisualRowForLine.
+  void CenterLine(std::size_t line);
   void SetHorizontalScroll(std::size_t horizontal_scroll);
   void SetTabSize(std::size_t tab_size);
   void SetIndentWidth(std::size_t indent_width);

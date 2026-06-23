@@ -137,16 +137,41 @@ Query verbs
   breakpoints
   function-breakpoints
   exception-filters
-  tabs
+  editor
   projects
   status
   launch-configs
   adapters
+  commands
+  terminal-output
+
+Read editor/terminal/command state (notable verbs):
+  editor           every editor group + layout. Returns
+                     {focusedGroupIndex, splitOrientation, splitFraction,
+                      groups:[{index, focused, tabs:[{index, kind, path, title,
+                        active, dirty, cursorLine, cursorColumn, scrollLine}]}]}.
+                     The focused group's active tab also reports visibleTop/
+                     visibleCount so you can tell what the user currently sees.
+  commands         the runnable command registry: [{command, usage, label}].
+  terminal-output  snapshot a terminal's scrollback. args {tab, lines} are
+                     optional (default: active tab, last 1000 lines). Returns
+                     {tab, running, lineCount, text}. Output is async, so this
+                     reads already-buffered bytes -- run a command with `term`,
+                     then poll until `running` is false. No exit code is exposed.
 
 Commands
 --------
-Any command from the command palette works. Run `microide control-commands` for
-the full list. Breakpoint commands added for headless control:
+Any command from the command palette works. Run `microide control-commands` (or
+the `commands` query) for the full list. Navigate and arrange the editor:
+  open <path>                    open a file in the focused group
+  reveal <path> <line[:col]>     open + place cursor + CENTER the line in view
+                                   (the way to show a specific line/function)
+  goto <line[:col]>              move the cursor in the active editor
+  tabmove <n>                    reorder the active tab within its group
+  tab-to-group <0|1> [slot]      move the active tab to the other group
+  tabswitch <tab>                activate a tab by path or specifier
+  split-right [path] / split-down [path]   open a second editor group
+Breakpoint commands added for headless control:
   breakpoint-set <file> <line> [condition]
   breakpoint-remove <file> <line>
   breakpoint-enable <file> <line>
@@ -269,6 +294,7 @@ Every runnable command (also printed by
   indent-width [n]
   jump <line[:col]>
   open <path>
+  reveal <path> <line[:col]>
   about
   keyboard-shortcuts
   settings
@@ -329,6 +355,7 @@ Every runnable command (also printed by
   tab [path]
   tab-size [n]
   tabmove <n>
+  tab-to-group <0|1> [slot]
   tabswitch <tab>
   term [command]
   tests-discover

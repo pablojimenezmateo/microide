@@ -94,6 +94,15 @@ struct TabMoveRequest {
 
 std::optional<TabMoveRequest> BuildTabMoveRequest(const std::vector<std::string>& args);
 
+// `tab-to-group <0|1> [slot]` — relocate the focused group's active tab to
+// another group. `slot` is the 1-based destination position; absent means append.
+struct TabToGroupRequest {
+  std::size_t group_index = 0;
+  std::optional<std::size_t> slot;
+};
+
+std::optional<TabToGroupRequest> BuildTabToGroupRequest(const std::vector<std::string>& args);
+
 struct LineNavigationRequest {
   long long requested_line = 0;
   std::size_t column = 0;
@@ -102,6 +111,16 @@ struct LineNavigationRequest {
 std::optional<LineNavigationRequest> BuildLineNavigationRequest(
     const std::vector<std::string>& args,
     bool allow_zero_line);
+
+// `reveal <path> <line[:col]>` — atomic open + cursor + center. Reuses the open
+// path normalization and the goto line:col parse so the surface stays consistent.
+struct RevealRequest {
+  std::filesystem::path path;
+  LineNavigationRequest navigation;
+};
+
+std::optional<RevealRequest> BuildRevealRequest(const std::vector<std::string>& args,
+                                                const std::filesystem::path& project_root);
 
 struct ColorschemeRequest {
   bool list = false;

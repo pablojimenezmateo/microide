@@ -72,6 +72,37 @@ void TestHelpTextListsVerbsAndSpecKeys() {
   }
 }
 
+// The query-verb surface: the new editor/commands/terminal-output verbs are
+// present and the removed `tabs` verb is gone (folded into `editor`).
+void TestQueryVerbSurface() {
+  bool has_editor = false;
+  bool has_commands = false;
+  bool has_terminal_output = false;
+  bool has_tabs = false;
+  for (const std::string_view verb : ControlQueryVerbs()) {
+    has_editor |= verb == "editor";
+    has_commands |= verb == "commands";
+    has_terminal_output |= verb == "terminal-output";
+    has_tabs |= verb == "tabs";
+  }
+  Expect(has_editor, "the editor query verb should be registered");
+  Expect(has_commands, "the commands query verb should be registered");
+  Expect(has_terminal_output, "the terminal-output query verb should be registered");
+  Expect(!has_tabs, "the tabs query verb should be gone (folded into editor)");
+}
+
+// A query may carry an `args` object (used by terminal-output) and it must
+// round-trip through the parser.
+void TestParseQueryRequestWithArgs() {
+  const ControlRequest request =
+      ParseControlRequest(R"({"query":"terminal-output","args":{"tab":2,"lines":50}})");
+  Expect(request.valid && request.is_query(), "query with args should parse");
+  Expect(request.query == "terminal-output", "verb should round-trip");
+  Expect(request.args.IsObject(), "args object should be captured");
+  Expect(request.args["tab"].AsInt() == 2, "args.tab should round-trip");
+  Expect(request.args["lines"].AsInt() == 50, "args.lines should round-trip");
+}
+
 // The runbook the agent reads must lead with control-send and never resurrect the
 // broken `set-setting debug.enabled true` prelude or socat guidance.
 void TestHelpTextLeadsWithControlSend() {
@@ -120,6 +151,8 @@ void TestDocsHaveNoSocatRecipe() {
 void RegisterControlProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlProtocol/ParseCommandRequest", TestParseCommandRequest);
   AddTest(tests, "ControlProtocol/ParseQueryRequest", TestParseQueryRequest);
+  AddTest(tests, "ControlProtocol/ParseQueryRequestWithArgs", TestParseQueryRequestWithArgs);
+  AddTest(tests, "ControlProtocol/QueryVerbSurface", TestQueryVerbSurface);
   AddTest(tests, "ControlProtocol/ParseRejectsMalformed", TestParseRejectsMalformed);
   AddTest(tests, "ControlProtocol/SerializeResponseRoundTrips", TestSerializeResponseRoundTrips);
   AddTest(tests, "ControlProtocol/HelpTextListsVerbsAndSpecKeys",

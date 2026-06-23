@@ -96,6 +96,12 @@ class TabCoordinator {
   bool CloseEditorGroup();
   std::size_t EditorGroupCount() const { return state_.editor_groups.size(); }
   bool MoveActiveTo(std::size_t index);
+  // Moves the focused group's active tab into another group at `dest_index`
+  // (clamped/appended). Returns false unless two groups exist, the destination
+  // differs from the source, and the source has an active tab. If the source
+  // group empties as a result it collapses, leaving the destination as the sole
+  // group. The tab keeps its buffer/view, so no LSP open/close transition fires.
+  bool MoveActiveTabToGroup(std::size_t dest_group_index, std::size_t dest_index);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
   bool ReopenActive();

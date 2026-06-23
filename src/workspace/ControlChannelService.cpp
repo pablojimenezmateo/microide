@@ -15,6 +15,8 @@
 
 #include "platform/AppDirectories.h"
 #include "workspace/ControlProtocol.h"
+#include "workspace/TerminalLineText.h"
+#include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "workspace/DebugViewModel.h"
 #include "workspace/WorkspaceContext.h"
@@ -281,7 +283,6 @@ void ControlChannelService::ConsumeControlCallbacks() {
 util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
                                                    const util::JsonValue& args, bool* ok,
                                                    std::string* error) const {
-  (void)args;
   *ok = true;
   if (verb == "debug-state") {
     return BuildDebugState();
@@ -295,8 +296,8 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "exception-filters") {
     return BuildExceptionFilters();
   }
-  if (verb == "tabs") {
-    return BuildTabs();
+  if (verb == "editor") {
+    return BuildEditor();
   }
   if (verb == "projects") {
     return BuildProjects();
@@ -309,6 +310,12 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   }
   if (verb == "adapters") {
     return BuildAdapters();
+  }
+  if (verb == "commands") {
+    return BuildCommands();
+  }
+  if (verb == "terminal-output") {
+    return BuildTerminalOutput(args, ok, error);
   }
   *ok = false;
   *error = "unknown query \"" + verb + "\"";
@@ -421,26 +428,88 @@ util::JsonValue ControlChannelService::BuildExceptionFilters() const {
   return util::JsonValue(std::move(filters));
 }
 
-util::JsonValue ControlChannelService::BuildTabs() const {
-  util::JsonArray tabs;
+namespace {
+
+// Builds the JSON object for one editor tab. Cursor/scroll fields are 1-based on
+// the wire (matching the rest of the control surface) and resolve from the live
+// viewport when hydrated, else from the deferred/restore metadata so positions
+// survive across session restore without forcing a load. `is_active_in_focus` is
+// true only for the focused group's active tab, which additionally reports the
+// visible line range so an agent can tell what the user currently sees.
+util::JsonValue BuildEditorTab(std::size_t index, const TabEntry& tab, bool active,
+                               bool is_active_in_focus) {
+  util::JsonObject object;
+  object["index"] = util::JsonValue(static_cast<std::int64_t>(index));
+  const char* kind = tab.kind == TabEntry::Kind::Editor    ? "editor"
+                     : tab.kind == TabEntry::Kind::Compare ? "compare"
+                                                           : "merge";
+  object["kind"] = util::JsonValue(std::string(kind));
+  object["path"] = util::JsonValue(tab.path.generic_string());
+  object["title"] = util::JsonValue(tab.title);
+  object["active"] = util::JsonValue(active);
+  object["dirty"] = util::JsonValue(TabIsDirty(tab));
+
+  if (tab.kind == TabEntry::Kind::Editor) {
+    const auto as_one_based = [](std::size_t value) {
+      return util::JsonValue(static_cast<std::int64_t>(value) + 1);
+    };
+    if (tab.editor_state.has_value() && !tab.editor_state->needs_restore) {
+      const editor::TextViewport& viewport = tab.editor_state->viewport;
+      object["cursorLine"] = as_one_based(viewport.cursor_line());
+      object["cursorColumn"] = as_one_based(viewport.cursor_column());
+      object["scrollLine"] = as_one_based(viewport.scroll_line());
+      if (is_active_in_focus) {
+        object["visibleTop"] = as_one_based(viewport.scroll_line());
+        object["visibleCount"] = util::JsonValue(static_cast<std::int64_t>(viewport.visible_lines()));
+      }
+    } else if (tab.editor_state.has_value()) {
+      object["cursorLine"] = as_one_based(tab.editor_state->restored_cursor_line);
+      object["cursorColumn"] = as_one_based(tab.editor_state->restored_cursor_column);
+      object["scrollLine"] = as_one_based(tab.editor_state->restored_scroll_line);
+    } else if (tab.deferred_handle.has_value()) {
+      object["cursorLine"] = as_one_based(tab.deferred_handle->cursor_line);
+      object["cursorColumn"] = as_one_based(tab.deferred_handle->cursor_column);
+      object["scrollLine"] = as_one_based(tab.deferred_handle->scroll_line);
+    }
+  }
+  return util::JsonValue(std::move(object));
+}
+
+}  // namespace
+
+util::JsonValue ControlChannelService::BuildEditor() const {
+  util::JsonObject root;
   if (context_ == nullptr) {
-    return util::JsonValue(std::move(tabs));
+    return util::JsonValue(std::move(root));
   }
   const ProjectWorkspaceState& state = context_->current_project_state;
-  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
-    const TabEntry& tab = state.focused_group().open_tabs[i];
-    util::JsonObject tab_object;
-    tab_object["index"] = util::JsonValue(static_cast<std::int64_t>(i));
-    const char* kind = tab.kind == TabEntry::Kind::Editor    ? "editor"
-                       : tab.kind == TabEntry::Kind::Compare ? "compare"
-                                                             : "merge";
-    tab_object["kind"] = util::JsonValue(std::string(kind));
-    tab_object["path"] = util::JsonValue(tab.path.generic_string());
-    tab_object["title"] = util::JsonValue(tab.title);
-    tab_object["active"] = util::JsonValue(i == state.focused_group().active_tab_index);
-    tabs.push_back(util::JsonValue(std::move(tab_object)));
+  const std::size_t focused = state.clamped_focused_group_index();
+  root["focusedGroupIndex"] = util::JsonValue(static_cast<std::int64_t>(focused));
+  const char* orientation = state.group_split_orientation == EditorSplitOrientation::Vertical
+                                ? "vertical"
+                                : state.group_split_orientation == EditorSplitOrientation::Horizontal
+                                      ? "horizontal"
+                                      : "none";
+  root["splitOrientation"] = util::JsonValue(std::string(orientation));
+  root["splitFraction"] = util::JsonValue(static_cast<double>(state.group_split_fraction));
+
+  util::JsonArray groups;
+  for (std::size_t g = 0; g < state.editor_groups.size(); ++g) {
+    const EditorGroup& group = state.editor_groups[g];
+    util::JsonObject group_object;
+    group_object["index"] = util::JsonValue(static_cast<std::int64_t>(g));
+    const bool group_focused = g == focused;
+    group_object["focused"] = util::JsonValue(group_focused);
+    util::JsonArray tabs;
+    for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+      const bool active = i == group.active_tab_index;
+      tabs.push_back(BuildEditorTab(i, group.open_tabs[i], active, group_focused && active));
+    }
+    group_object["tabs"] = util::JsonValue(std::move(tabs));
+    groups.push_back(util::JsonValue(std::move(group_object)));
   }
-  return util::JsonValue(std::move(tabs));
+  root["groups"] = util::JsonValue(std::move(groups));
+  return util::JsonValue(std::move(root));
 }
 
 util::JsonValue ControlChannelService::BuildProjects() const {
@@ -497,6 +566,79 @@ util::JsonValue ControlChannelService::BuildAdapters() const {
     }
   }
   return util::JsonValue(std::move(adapters));
+}
+
+util::JsonValue ControlChannelService::BuildCommands() const {
+  util::JsonArray commands;
+  for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
+    if (spec.command_name.empty()) {
+      continue;  // context-menu-only specs are not runnable by name.
+    }
+    util::JsonObject object;
+    object["command"] = util::JsonValue(std::string(spec.command_name));
+    object["usage"] = util::JsonValue(std::string(spec.command_usage));
+    object["label"] = util::JsonValue(std::string(spec.label));
+    commands.push_back(util::JsonValue(std::move(object)));
+  }
+  return util::JsonValue(std::move(commands));
+}
+
+util::JsonValue ControlChannelService::BuildTerminalOutput(const util::JsonValue& args, bool* ok,
+                                                           std::string* error) const {
+  // Default cap on returned lines: bounds the response and matches "the tail of
+  // the scrollback is what an agent wants". Override with args.lines.
+  constexpr std::int64_t kDefaultMaxLines = 1000;
+  if (context_ == nullptr) {
+    *ok = false;
+    *error = "no active project";
+    return util::JsonValue(nullptr);
+  }
+  const ProjectWorkspaceState& state = context_->current_project_state;
+  if (state.terminal_tabs.empty()) {
+    *ok = false;
+    *error = "no terminal tabs";
+    return util::JsonValue(nullptr);
+  }
+  std::int64_t tab_index = static_cast<std::int64_t>(state.active_terminal_tab_index);
+  if (args.IsObject() && args.HasKey("tab")) {
+    tab_index = args["tab"].AsInt(tab_index);
+  }
+  if (tab_index < 0 || static_cast<std::size_t>(tab_index) >= state.terminal_tabs.size()) {
+    *ok = false;
+    *error = "terminal tab index out of range";
+    return util::JsonValue(nullptr);
+  }
+  std::int64_t max_lines = kDefaultMaxLines;
+  if (args.IsObject() && args.HasKey("lines")) {
+    max_lines = args["lines"].AsInt(kDefaultMaxLines);
+  }
+  if (max_lines <= 0) {
+    max_lines = kDefaultMaxLines;
+  }
+
+  TerminalTabState* tab = state.terminal_tabs[static_cast<std::size_t>(tab_index)].get();
+  util::JsonObject object;
+  object["tab"] = util::JsonValue(tab_index);
+  if (tab == nullptr) {
+    *ok = false;
+    *error = "terminal tab unavailable";
+    return util::JsonValue(nullptr);
+  }
+  const std::size_t line_count = tab->session.LineCount();
+  const std::size_t cap = static_cast<std::size_t>(max_lines);
+  const std::size_t start = line_count > cap ? line_count - cap : 0;
+  const std::vector<terminal::TerminalLine> lines = tab->session.SnapshotLineRange(start, cap);
+  std::string text;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (i != 0) {
+      text.push_back('\n');
+    }
+    text += TerminalLineText(lines[i]);
+  }
+  object["running"] = util::JsonValue(tab->session.running());
+  object["lineCount"] = util::JsonValue(static_cast<std::int64_t>(line_count));
+  object["text"] = util::JsonValue(std::move(text));
+  return util::JsonValue(std::move(object));
 }
 
 util::JsonValue ControlChannelService::BuildStatus() const {

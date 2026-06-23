@@ -187,6 +187,26 @@ std::optional<TabMoveRequest> BuildTabMoveRequest(const std::vector<std::string>
   };
 }
 
+std::optional<TabToGroupRequest> BuildTabToGroupRequest(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    return std::nullopt;
+  }
+  const std::optional<int> group = ParseIntArgument(args[0]);
+  if (!group.has_value() || *group < 0) {
+    return std::nullopt;
+  }
+  TabToGroupRequest request;
+  request.group_index = static_cast<std::size_t>(*group);
+  if (args.size() > 1) {
+    const std::optional<int> slot = ParseIntArgument(args[1]);
+    if (!slot.has_value() || *slot < 1) {
+      return std::nullopt;
+    }
+    request.slot = static_cast<std::size_t>(*slot);
+  }
+  return request;
+}
+
 std::optional<LineNavigationRequest> BuildLineNavigationRequest(const std::vector<std::string>& args,
                                                                 bool allow_zero_line) {
   if (args.empty()) {
@@ -194,6 +214,20 @@ std::optional<LineNavigationRequest> BuildLineNavigationRequest(const std::vecto
   }
   LineNavigationRequest request;
   if (!ParseLineColumnSpec(args[0], &request.requested_line, &request.column, allow_zero_line)) {
+    return std::nullopt;
+  }
+  return request;
+}
+
+std::optional<RevealRequest> BuildRevealRequest(const std::vector<std::string>& args,
+                                                const std::filesystem::path& project_root) {
+  if (args.size() < 2) {
+    return std::nullopt;
+  }
+  RevealRequest request;
+  request.path = NormalizeCommandPath(project_root, std::filesystem::path(args[0]));
+  if (!ParseLineColumnSpec(args[1], &request.navigation.requested_line, &request.navigation.column,
+                           /*allow_zero_line=*/false)) {
     return std::nullopt;
   }
   return request;

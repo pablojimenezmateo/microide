@@ -461,6 +461,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               },
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
+          .move_active_tab_to_group =
+              [this](std::size_t dest_group_index, std::size_t dest_index) {
+                return MoveActiveTabToGroup(dest_group_index, dest_index);
+              },
           .reopen_active_tab = [this]() { return ReopenActiveTab(); },
           .save_tab = [this](std::size_t index) { return SaveTab(index); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },

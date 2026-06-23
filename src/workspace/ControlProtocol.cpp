@@ -6,10 +6,10 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::array<std::string_view, 9> kQueryVerbs = {
-    "debug-state",          "breakpoints", "function-breakpoints", "exception-filters",
-    "tabs",                 "projects",    "status",               "launch-configs",
-    "adapters",
+constexpr std::array<std::string_view, 11> kQueryVerbs = {
+    "debug-state", "breakpoints",    "function-breakpoints", "exception-filters",
+    "editor",      "projects",       "status",               "launch-configs",
+    "adapters",    "commands",       "terminal-output",
 };
 
 }  // namespace
@@ -178,10 +178,33 @@ std::string ControlChannelHelpText() {
   }
   text +=
       "\n"
+      "Read editor/terminal/command state (notable verbs):\n"
+      "  editor           every editor group + layout. Returns\n"
+      "                     {focusedGroupIndex, splitOrientation, splitFraction,\n"
+      "                      groups:[{index, focused, tabs:[{index, kind, path, title,\n"
+      "                        active, dirty, cursorLine, cursorColumn, scrollLine}]}]}.\n"
+      "                     The focused group's active tab also reports visibleTop/\n"
+      "                     visibleCount so you can tell what the user currently sees.\n"
+      "  commands         the runnable command registry: [{command, usage, label}].\n"
+      "  terminal-output  snapshot a terminal's scrollback. args {tab, lines} are\n"
+      "                     optional (default: active tab, last 1000 lines). Returns\n"
+      "                     {tab, running, lineCount, text}. Output is async, so this\n"
+      "                     reads already-buffered bytes -- run a command with `term`,\n"
+      "                     then poll until `running` is false. No exit code is exposed.\n"
+      "\n"
       "Commands\n"
       "--------\n"
-      "Any command from the command palette works. Run `microide control-commands` for\n"
-      "the full list. Breakpoint commands added for headless control:\n"
+      "Any command from the command palette works. Run `microide control-commands` (or\n"
+      "the `commands` query) for the full list. Navigate and arrange the editor:\n"
+      "  open <path>                    open a file in the focused group\n"
+      "  reveal <path> <line[:col]>     open + place cursor + CENTER the line in view\n"
+      "                                   (the way to show a specific line/function)\n"
+      "  goto <line[:col]>              move the cursor in the active editor\n"
+      "  tabmove <n>                    reorder the active tab within its group\n"
+      "  tab-to-group <0|1> [slot]      move the active tab to the other group\n"
+      "  tabswitch <tab>                activate a tab by path or specifier\n"
+      "  split-right [path] / split-down [path]   open a second editor group\n"
+      "Breakpoint commands added for headless control:\n"
       "  breakpoint-set <file> <line> [condition]\n"
       "  breakpoint-remove <file> <line>\n"
       "  breakpoint-enable <file> <line>\n"

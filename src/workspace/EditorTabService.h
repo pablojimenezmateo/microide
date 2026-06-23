@@ -48,6 +48,7 @@ class EditorTabService {
   bool CloseEditorGroup();
   std::size_t EditorGroupCount() const;
   bool MoveActiveTo(std::size_t index);
+  bool MoveActiveTabToGroup(std::size_t dest_group_index, std::size_t dest_index);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
   bool ReopenActive();

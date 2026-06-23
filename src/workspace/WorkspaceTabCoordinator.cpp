@@ -59,18 +59,7 @@ TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
       state_(current_project_state),
       operations_(std::move(operations)) {}
 
-bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
-  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    return tab.compare->right_editable && tab.compare->right_viewport.dirty();
-  }
-  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-    return tab.merge->result_viewport.dirty();
-  }
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-    return false;
-  }
-  return tab.editor_state->viewport.dirty();
-}
+bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) { return TabIsDirty(tab); }
 
 std::string TabCoordinator::ActiveTitle() const {
   if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
@@ -796,6 +785,50 @@ bool TabCoordinator::MoveActiveTo(std::size_t index) {
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.request_tab_strip_redraw();
+  return true;
+}
+
+bool TabCoordinator::MoveActiveTabToGroup(std::size_t dest_group_index, std::size_t dest_index) {
+  if (state_.editor_groups.size() < 2) {
+    return false;
+  }
+  const std::size_t source_index = state_.clamped_focused_group_index();
+  if (dest_group_index >= state_.editor_groups.size() || dest_group_index == source_index) {
+    return false;
+  }
+  EditorGroup& source = state_.editor_groups[source_index];
+  if (source.active_tab_index >= source.open_tabs.size()) {
+    return false;
+  }
+
+  // Flush live cursor/scroll into the source tab before relocating it so the
+  // destination shows the same view position.
+  SyncActiveEditorTabMetadata();
+
+  TabEntry moved = std::move(source.open_tabs[source.active_tab_index]);
+  source.open_tabs.erase(source.open_tabs.begin() +
+                         static_cast<std::ptrdiff_t>(source.active_tab_index));
+
+  EditorGroup& dest = state_.editor_groups[dest_group_index];
+  const std::size_t insert_at = std::min(dest_index, dest.open_tabs.size());
+  dest.open_tabs.insert(dest.open_tabs.begin() + static_cast<std::ptrdiff_t>(insert_at),
+                        std::move(moved));
+  dest.active_tab_index = insert_at;
+
+  if (source.open_tabs.empty()) {
+    // Source emptied: collapse it so the destination becomes the sole group.
+    // CollapseFocusedGroup erases `focused_group_index` and forces a single
+    // group at index 0, which is exactly the destination after the erase.
+    state_.focused_group_index = source_index;
+    CollapseFocusedGroup();
+  } else {
+    if (source.active_tab_index >= source.open_tabs.size()) {
+      source.active_tab_index = source.open_tabs.size() - 1;
+    }
+    state_.focused_group_index = dest_group_index;
+    state_.surface.focus = FocusTarget::Editor;
+  }
+  RefreshFocusedGroupActiveTab(true);
   return true;
 }
 

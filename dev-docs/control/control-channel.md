@@ -126,7 +126,27 @@ Newline-delimited JSON, one object per line.
 | applied (stdout)  | `{"applied":"breakpoint-set ..","ok":true}` |
 
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
-`exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`.
+`exception-filters`, `editor`, `projects`, `status`, `launch-configs`,
+`adapters`, `commands`, `terminal-output`.
+
+- `editor` returns every editor group and the split layout
+  (`focusedGroupIndex`, `splitOrientation`, `splitFraction`, and per-group
+  `tabs` with `cursorLine`/`cursorColumn`/`scrollLine` and `dirty`). The focused
+  group's active tab also reports `visibleTop`/`visibleCount` so an agent can see
+  what the user is currently looking at. (It replaces the old `tabs` verb, which
+  exposed only the focused group.)
+- `commands` lists the runnable command registry as `{command, usage, label}`.
+- `terminal-output` snapshots a terminal's scrollback; optional args
+  `{tab, lines}` default to the active tab and the last 1000 lines. It returns
+  `{tab, running, lineCount, text}`. PTY output is async, so this reads
+  already-buffered bytes: run a command with `term`, then poll until `running`
+  is false. No exit code is exposed.
+
+Notable navigation/arrangement commands an agent uses: `open <path>`,
+`reveal <path> <line[:col]>` (open + cursor + center the line in view), `goto
+<line[:col]>`, `tabmove <n>`, `tab-to-group <0|1> [slot]`, `tabswitch <tab>`,
+`split-right [path]`/`split-down [path]`.
+
 Events: `stopped`, `terminated`, `output`. With `--control` (stdout mirror on),
 events surface even with zero socket clients; responses and `applied` lines are
 mirrored too. `ready`/`applied` lines are stdout-only.

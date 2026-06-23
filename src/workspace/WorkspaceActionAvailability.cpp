@@ -199,6 +199,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReviewBranch:
     case ActionId::ReviewCommit:
     case ActionId::Open:
+    case ActionId::Reveal:
     case ActionId::ProjectClose:
     case ActionId::ProjectSearch:
     case ActionId::Tab:
@@ -296,6 +297,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TabMove:
     case ActionId::TabSwitch:
       return !context_.current_project_state.root.empty() &&
+             !context_.current_project_state.focused_group().open_tabs.empty();
+    case ActionId::TabToGroup:
+      return operations_.editor_group_count() > 1 &&
              !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::TestsRun:
       return !context_.current_project_state.sidebar.tests.entries.empty();

@@ -3020,6 +3020,90 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
          "injected delete batch should remove entries from project search");
 }
 
+// `reveal <path> <line>` opens the file into the focused group and places the
+// cursor on the requested (1-based) line.
+void TestWorkspaceShellRevealOpensAndPositionsCursor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  std::string content;
+  for (int i = 0; i < 100; ++i) {
+    if (i != 0) {
+      content += "\n";
+    }
+    content += "line " + std::to_string(i);
+  }
+  WriteFile(file_a, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reveal a.txt 50"),
+         "reveal should be handled");
+  const editor::TextViewport& viewport = WorkspaceShellTestAccess::GroupActiveViewport(shell, 0);
+  Expect(viewport.path() == file_a.lexically_normal(), "reveal should open the target file");
+  Expect(viewport.cursor_line() == 49, "reveal should place the cursor on 1-based line 50");
+}
+
+// `tab-to-group` relocates the focused group's active tab into the other group,
+// shifting focus there while leaving the source group's surviving tab active.
+void TestWorkspaceShellTabToGroupMovesActiveTab() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_c = root / "c.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_c, "charlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should create a second group");
+  // Focus back to group 0 and give it a second tab so the move does not empty it.
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should toggle to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c),
+         "c.txt should open as a new tab in group 0");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 1"),
+         "tab-to-group should be handled");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "both groups should survive");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "focus should follow the moved tab to group 1");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_c.lexically_normal(),
+         "group 1's active tab should be the moved c.txt");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
+         "group 0 should fall back to its remaining a.txt tab");
+}
+
+// Moving a group's only tab away empties it, so it collapses back to a single
+// group with the destination as the survivor.
+void TestWorkspaceShellTabToGroupCollapsesEmptiedSource() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  WriteFile(file_a, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should create a second group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "the split focuses the new group, which holds a single tab");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 0"),
+         "tab-to-group should be handled");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
+         "emptying the source group should collapse the split");
+}
+
 }  // namespace
 
 void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
@@ -3169,6 +3253,12 @@ void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/OpenBufferViewCountsAcrossGroups",
           TestWorkspaceShellOpenBufferViewCountsAcrossGroups);
+  AddTest(tests, "WorkspaceShell/RevealOpensAndPositionsCursor",
+          TestWorkspaceShellRevealOpensAndPositionsCursor);
+  AddTest(tests, "WorkspaceShell/TabToGroupMovesActiveTab",
+          TestWorkspaceShellTabToGroupMovesActiveTab);
+  AddTest(tests, "WorkspaceShell/TabToGroupCollapsesEmptiedSource",
+          TestWorkspaceShellTabToGroupCollapsesEmptiedSource);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
   AddTest(tests, "WorkspaceShell/ProjectOpenCommandUsesNativePickerAtActiveProjectRoot",

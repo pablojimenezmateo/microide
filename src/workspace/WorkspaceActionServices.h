@@ -100,6 +100,7 @@ class WorkspaceActionContext {
         find_tab_index_by_specifier;
     std::function<void(std::size_t)> activate_tab;
     std::function<bool(std::size_t)> move_active_tab_to;
+    std::function<bool(std::size_t, std::size_t)> move_active_tab_to_group;
     std::function<bool()> reopen_active_tab;
     std::function<bool(std::size_t)> save_tab;
     std::function<void()> reset_caret_blink;
@@ -333,6 +334,7 @@ class WorkspaceActionContext {
   std::size_t OpenTabCount() const;
   std::size_t ActiveTabIndex() const;
   void MoveActiveTabTo(std::size_t index);
+  bool MoveActiveTabToGroup(std::size_t dest_group_index, std::size_t dest_index);
   void ReopenActiveTab();
   bool SaveTab(std::size_t index);
   void ResetCaretBlink();
@@ -348,6 +350,9 @@ class WorkspaceActionContext {
   void CloseAllTabs();
 
   bool ExecuteLineNavigation(const LineNavigationRequest& request, bool relative);
+  // Centers the active navigable viewport on its current cursor line (used by
+  // `reveal` after navigation so the target sits mid-viewport, not at the edge).
+  void CenterActiveViewportOnCursor();
   void SelectAll();
   void Undo();
   void Redo();

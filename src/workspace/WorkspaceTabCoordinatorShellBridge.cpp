@@ -348,6 +348,14 @@ bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
   return MakeEditorTabService().MoveActiveTo(index);
 }
 
+bool WorkspaceShell::MoveActiveTabToGroup(std::size_t dest_group_index, std::size_t dest_index) {
+  // Cross-group relocation reorders both groups' tab vectors, so the cached tab
+  // strip geometry (keyed on tab_count/window_width) must be dropped — same
+  // reasoning as MoveActiveTabTo above.
+  tab_strip_service_.InvalidateEditorTabGeometry();
+  return MakeEditorTabService().MoveActiveTabToGroup(dest_group_index, dest_index);
+}
+
 std::optional<std::size_t> WorkspaceShell::FindTabIndexBySpecifier(
     std::string_view specifier,
     std::string* error_message) const {

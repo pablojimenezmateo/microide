@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "util/StringUtil.h"
+#include "workspace/TerminalLineText.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -17,42 +18,6 @@ namespace {
 constexpr float kBottomPanelTextInset = 12.0f;
 constexpr float kBottomPanelTextTopInset = 8.0f;
 constexpr float kBottomPanelScrollbarTextReserve = 16.0f;
-
-std::string TrimTrailingTerminalBlanks(std::string text) {
-  while (!text.empty() && (text.back() == '\0' || text.back() == ' ')) {
-    text.pop_back();
-  }
-  return text;
-}
-
-std::string TerminalLineSliceText(const terminal::TerminalLine& line,
-                                  std::size_t start,
-                                  std::size_t end,
-                                  bool trim_trailing) {
-  const std::size_t clamped_start = std::min(start, line.cells.size());
-  const std::size_t clamped_end = std::min(std::max(clamped_start, end), line.cells.size());
-  std::string text;
-  text.reserve(clamped_end - clamped_start);
-  for (std::size_t column = clamped_start; column < clamped_end; ++column) {
-    const auto& cell = line.cells[column];
-    // The trailing spacer of a double-width glyph holds no text of its own;
-    // skipping it keeps copied/selected text free of phantom spaces.
-    if (cell.style.wide_trailing()) {
-      continue;
-    }
-    const auto display_text = cell.DisplayText();
-    if (!display_text.empty()) {
-      text.append(display_text);
-      continue;
-    }
-    text.push_back(' ');
-  }
-  return trim_trailing ? TrimTrailingTerminalBlanks(std::move(text)) : text;
-}
-
-std::string TerminalLineText(const terminal::TerminalLine& line) {
-  return TerminalLineSliceText(line, 0, line.cells.size(), true);
-}
 
 std::string FirstLine(std::string_view text) {
   const std::size_t newline = text.find('\n');

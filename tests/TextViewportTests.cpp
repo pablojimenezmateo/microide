@@ -1705,9 +1705,35 @@ void TestTextViewportContentEditInvalidatesBracketAndHighlightCaches() {
          "ContentEdit bumps content_revision so downstream caches re-key correctly");
 }
 
+// CenterLine scrolls a target line to mid-viewport, clamping near the file
+// edges so it settles as close to centered as the content allows.
+void TestTextViewportCenterLine() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 100; ++i) {
+    if (i != 0) {
+      content += "\n";
+    }
+    content += "line " + std::to_string(i);  // no trailing newline -> exactly 100 lines
+  }
+  viewport.LoadContent(content, "/tmp/center.txt");
+  viewport.SetViewportSize(10, 80);  // visible_lines = 10, half = 5
+
+  viewport.CenterLine(50);
+  Expect(viewport.scroll_line() == 45, "a mid-file line centers at line - visible/2");
+
+  viewport.CenterLine(2);
+  Expect(viewport.scroll_line() == 0, "a near-top line clamps the scroll to 0");
+
+  viewport.CenterLine(99);
+  // total visual lines (100) - visible_lines (10) = 90 max scroll.
+  Expect(viewport.scroll_line() == 90, "a near-EOF line clamps to the maximum scroll");
+}
+
 }  // namespace
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/CenterLine", TestTextViewportCenterLine);
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/LargeCodeFixtureKeepsSyntaxHighlighting",

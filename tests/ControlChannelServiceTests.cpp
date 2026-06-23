@@ -4,10 +4,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "TerminalSessionTestAccess.h"
 #include "util/JsonValue.h"
 #include "workspace/ControlChannelService.h"
 #include "workspace/LaunchConfig.h"
@@ -382,6 +384,151 @@ void TestDebugCommandAutoEnablesDebugger() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// The editor / commands / terminal-output queries surface workspace state for an
+// agent: editor groups + layout + per-tab cursor, the runnable command registry,
+// and a synchronous snapshot of a terminal's scrollback.
+void TestEditorTerminalAndCommandQueries() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-editor-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  microide::workspace::ProjectWorkspaceState& state = context.current_project_state;
+  state.root = "/tmp/proj";
+
+  const auto make_editor_tab = [](const std::string& path, const std::string& content,
+                                  std::size_t cursor_line) {
+    microide::workspace::TabEntry tab;
+    tab.kind = microide::workspace::TabEntry::Kind::Editor;
+    tab.path = path;
+    tab.title = std::filesystem::path(path).filename().string();
+    microide::workspace::TabEntry::EditorTabState editor_state;
+    editor_state.viewport.SetViewportSize(10, 80);
+    editor_state.viewport.LoadContent(content, path);
+    editor_state.viewport.MoveCursorTo(cursor_line, 0);
+    tab.editor_state = std::move(editor_state);
+    return tab;
+  };
+
+  // Two editor groups (a vertical split). Group 0 holds a loaded tab (cursor on
+  // 0-based line 2) plus a deferred tab whose position comes from its handle.
+  state.editor_groups.clear();
+  state.editor_groups.resize(2);
+  state.editor_groups[0].open_tabs.push_back(
+      make_editor_tab("/tmp/proj/a.cpp", "l1\nl2\nl3\nl4\nl5\n", 2));
+  {
+    microide::workspace::TabEntry deferred;
+    deferred.kind = microide::workspace::TabEntry::Kind::Editor;
+    deferred.path = "/tmp/proj/b.cpp";
+    deferred.title = "b.cpp";
+    microide::workspace::TabEntry::DeferredTabHandle handle;
+    handle.path = "/tmp/proj/b.cpp";
+    handle.cursor_line = 5;
+    handle.cursor_column = 2;
+    handle.scroll_line = 4;
+    deferred.deferred_handle = handle;
+    state.editor_groups[0].open_tabs.push_back(std::move(deferred));
+  }
+  state.editor_groups[0].active_tab_index = 0;
+  state.editor_groups[1].open_tabs.push_back(make_editor_tab("/tmp/proj/c.cpp", "x\ny\n", 1));
+  state.editor_groups[1].active_tab_index = 0;
+  state.focused_group_index = 0;
+  state.group_split_orientation = microide::workspace::EditorSplitOrientation::Vertical;
+  state.group_split_fraction = 0.5f;
+
+  // A terminal with two buffered lines, no longer running.
+  auto terminal = std::make_unique<microide::workspace::TerminalTabState>();
+  TerminalSessionTestAccess::Reset(terminal->session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(terminal->session, "hello\r\nworld\r\n");
+  TerminalSessionTestAccess::SetRunning(terminal->session, false);
+  state.terminal_tabs.push_back(std::move(terminal));
+  state.active_terminal_tab_index = 0;
+
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context, microide::workspace::ControlChannelService::Operations{
+                   .execute_command_line =
+                       [](const std::string&) {
+                         return microide::workspace::ControlChannelService::CommandOutcome{
+                             .ok = true};
+                       },
+               });
+  service.SetWakeEventType(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect");
+
+  // editor query
+  const auto editor = util::ParseJson(ExchangeLine(service, fd, R"({"query":"editor"})"));
+  Expect(editor.has_value() && (*editor)["ok"].AsBool(), "editor query should succeed");
+  const util::JsonValue& result = (*editor)["result"];
+  Expect(result["focusedGroupIndex"].AsInt() == 0, "focused group index should be 0");
+  Expect(result["splitOrientation"].AsString() == "vertical", "split orientation should surface");
+  const util::JsonValue& groups = result["groups"];
+  Expect(groups.IsArray() && groups.AsArray().size() == 2, "two editor groups expected");
+  const util::JsonValue& group0_tabs = groups.AsArray()[0]["tabs"];
+  Expect(groups.AsArray()[0]["focused"].AsBool(), "group 0 should report focused");
+  Expect(group0_tabs.AsArray().size() == 2, "group 0 should have two tabs");
+  const util::JsonValue& tab0 = group0_tabs.AsArray()[0];
+  Expect(tab0["active"].AsBool(), "tab 0 should be active");
+  Expect(tab0["cursorLine"].AsInt() == 3, "0-based cursor line 2 should report as 1-based 3");
+  Expect(!tab0["dirty"].AsBool(), "an unedited tab should not be dirty");
+  Expect(tab0.AsObject().count("visibleCount") == 1,
+         "the focused active tab should report its visible range");
+  const util::JsonValue& tab1 = group0_tabs.AsArray()[1];
+  Expect(tab1["cursorLine"].AsInt() == 6, "deferred tab should report its handle cursor (1-based)");
+
+  // commands query
+  const auto commands = util::ParseJson(ExchangeLine(service, fd, R"({"query":"commands"})"));
+  Expect(commands.has_value() && (*commands)["ok"].AsBool(), "commands query should succeed");
+  const util::JsonValue& command_list = (*commands)["result"];
+  Expect(command_list.IsArray() && !command_list.AsArray().empty(), "command list should be non-empty");
+  bool found_reveal = false;
+  for (const util::JsonValue& command : command_list.AsArray()) {
+    Expect(!command["command"].AsString().empty(),
+           "context-menu-only specs (empty command) should be excluded");
+    if (command["command"].AsString() == "reveal") {
+      found_reveal = true;
+      Expect(command["usage"].AsString().find("reveal") != std::string::npos,
+             "reveal usage should be surfaced");
+    }
+  }
+  Expect(found_reveal, "the reveal command should be listed");
+
+  // terminal-output query (default tab)
+  const auto term = util::ParseJson(ExchangeLine(service, fd, R"({"query":"terminal-output"})"));
+  Expect(term.has_value() && (*term)["ok"].AsBool(), "terminal-output query should succeed");
+  const util::JsonValue& term_result = (*term)["result"];
+  Expect(!term_result["running"].AsBool(), "the terminal should report not running");
+  const std::string text = term_result["text"].AsString();
+  Expect(text.find("hello") != std::string::npos && text.find("world") != std::string::npos,
+         "terminal-output should carry the buffered scrollback");
+
+  // terminal-output query (out-of-range tab → failure)
+  const auto bad =
+      util::ParseJson(ExchangeLine(service, fd, R"({"query":"terminal-output","args":{"tab":9}})"));
+  Expect(bad.has_value() && !(*bad)["ok"].AsBool(),
+         "an out-of-range terminal tab index should fail");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 #else
 
 void TestQueryAndCommandOverSocket() {}
@@ -389,6 +536,7 @@ void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
 void TestDebugCommandAutoEnablesDebugger() {}
+void TestEditorTerminalAndCommandQueries() {}
 
 #endif
 
@@ -524,6 +672,8 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestSocketSelfHealsAfterExternalDeletion);
   AddTest(tests, "ControlChannelService/DebugCommandAutoEnablesDebugger",
           TestDebugCommandAutoEnablesDebugger);
+  AddTest(tests, "ControlChannelService/EditorTerminalAndCommandQueries",
+          TestEditorTerminalAndCommandQueries);
 }
 
 }  // namespace microide::tests

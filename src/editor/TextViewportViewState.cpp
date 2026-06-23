@@ -32,6 +32,13 @@ void TextViewport::SetScrollLine(std::size_t scroll_line) {
   ClampScrollState();
 }
 
+void TextViewport::CenterLine(std::size_t line) {
+  const std::size_t visual_row = VisualRowForLine(line);
+  const std::size_t half = visible_lines_ / 2;
+  scroll_line_ = visual_row > half ? visual_row - half : 0;
+  ClampScrollState();
+}
+
 void TextViewport::SetHorizontalScroll(std::size_t horizontal_scroll) {
   horizontal_scroll_ = horizontal_scroll;
   ClampScrollState();

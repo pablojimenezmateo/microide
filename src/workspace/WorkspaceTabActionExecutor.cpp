@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <string>
 #include <utility>
@@ -36,6 +37,23 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.OpenPath(request->path, &error_message)) {
         return reject(error_message);
       }
+      return DispatchResult::Handled;
+    }
+    case ActionId::Reveal: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const std::optional<RevealRequest> request =
+          BuildRevealRequest(args, context_.ProjectRoot());
+      if (!request.has_value()) {
+        return reject("reveal requires a path and line (reveal <path> <line[:col]>)");
+      }
+      std::string error_message;
+      if (!context_.OpenPath(request->path, &error_message)) {
+        return reject(error_message);
+      }
+      context_.ExecuteLineNavigation(request->navigation, /*relative=*/false);
+      context_.CenterActiveViewportOnCursor();
       return DispatchResult::Handled;
     }
     case ActionId::OpenSelectedTreeItem:
@@ -111,6 +129,24 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         context_.MoveActiveTabTo(static_cast<std::size_t>(clamped_slot - 1));
         return DispatchResult::Handled;
       }
+    case ActionId::TabToGroup: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const std::optional<TabToGroupRequest> request = BuildTabToGroupRequest(args);
+      if (!request.has_value()) {
+        return reject("tab-to-group requires a target group index (tab-to-group <0|1> [slot])");
+      }
+      // Slot is 1-based on the wire; absent appends (SIZE_MAX clamps to the end
+      // inside the coordinator).
+      const std::size_t dest_index = request->slot.has_value()
+                                         ? *request->slot - 1
+                                         : std::numeric_limits<std::size_t>::max();
+      if (!context_.MoveActiveTabToGroup(request->group_index, dest_index)) {
+        return reject("tab-to-group needs two editor groups and an active tab");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Reopen:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

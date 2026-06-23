@@ -1282,6 +1282,7 @@
   bool CloseEditorGroup();
   std::size_t EditorGroupCount() const;
   bool MoveActiveTabTo(std::size_t index);
+  bool MoveActiveTabToGroup(std::size_t dest_group_index, std::size_t dest_index);
   std::optional<std::size_t> FindTabIndexBySpecifier(std::string_view specifier,
                                                      std::string* error_message = nullptr) const;
   void OpenFile(const std::filesystem::path& path);

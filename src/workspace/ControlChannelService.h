@@ -122,11 +122,14 @@ class ControlChannelService {
   util::JsonValue BuildBreakpoints() const;
   util::JsonValue BuildFunctionBreakpoints() const;
   util::JsonValue BuildExceptionFilters() const;
-  util::JsonValue BuildTabs() const;
+  util::JsonValue BuildEditor() const;
   util::JsonValue BuildProjects() const;
   util::JsonValue BuildStatus() const;
   util::JsonValue BuildLaunchConfigs() const;
   util::JsonValue BuildAdapters() const;
+  util::JsonValue BuildCommands() const;
+  util::JsonValue BuildTerminalOutput(const util::JsonValue& args, bool* ok,
+                                      std::string* error) const;
 
   // Broadcast an event to connected clients (when running) and mirror it to
   // stdout (when mirroring). Surfaces events even with no socket client.

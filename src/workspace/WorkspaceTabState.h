@@ -194,6 +194,23 @@ struct TabEntry {
   std::optional<MergeTabState> merge;
 };
 
+// Shared dirty-state predicate for a tab, independent of which group owns it.
+// Both the tab coordinator and read-only introspection (the control channel
+// `editor` query) consult this so they agree without friend access or duplicated
+// logic. A deferred (not-yet-hydrated) editor tab is never dirty.
+inline bool TabIsDirty(const TabEntry& tab) {
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    return tab.compare->right_editable && tab.compare->right_viewport.dirty();
+  }
+  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    return tab.merge->result_viewport.dirty();
+  }
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return false;
+  }
+  return tab.editor_state->viewport.dirty();
+}
+
 struct TerminalSelectionPosition {
   std::size_t row = 0;
   std::size_t column = 0;

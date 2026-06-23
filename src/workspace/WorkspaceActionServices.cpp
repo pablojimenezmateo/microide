@@ -481,6 +481,11 @@ void WorkspaceActionContext::MoveActiveTabTo(std::size_t index) {
   operations_.move_active_tab_to(index);
 }
 
+bool WorkspaceActionContext::MoveActiveTabToGroup(std::size_t dest_group_index,
+                                                  std::size_t dest_index) {
+  return operations_.move_active_tab_to_group(dest_group_index, dest_index);
+}
+
 void WorkspaceActionContext::ReopenActiveTab() {
   operations_.reopen_active_tab();
 }
@@ -566,6 +571,15 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
   state_.surface.focus = FocusTarget::Editor;
   operations_.request_focused_editor_redraw();
   return true;
+}
+
+void WorkspaceActionContext::CenterActiveViewportOnCursor() {
+  editor::TextViewport* viewport = operations_.active_navigable_viewport();
+  if (viewport == nullptr) {
+    return;
+  }
+  viewport->CenterLine(viewport->cursor_line());
+  operations_.request_focused_editor_redraw();
 }
 
 void WorkspaceActionContext::SelectAll() {

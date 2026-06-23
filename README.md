@@ -435,6 +435,7 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `indent-width [n]`
 - `jump <line[:col]>`
 - `open <path>`
+- `reveal <path> <line[:col]>`
 - `about`
 - `keyboard-shortcuts`
 - `settings`
@@ -495,6 +496,7 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `tab [path]`
 - `tab-size [n]`
 - `tabmove <n>`
+- `tab-to-group <0|1> [slot]`
 - `tabswitch <tab>`
 - `term [command]`
 - `tests-discover`
