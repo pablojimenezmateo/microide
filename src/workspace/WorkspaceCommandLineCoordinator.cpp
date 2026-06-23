@@ -1,4 +1,4 @@
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -16,7 +16,7 @@
 
 namespace microide::workspace {
 
-CommandPromptCoordinator::CommandPromptCoordinator(
+CommandLineCoordinator::CommandLineCoordinator(
     ProjectWorkspaceState& state,
     std::vector<std::string>& available_colorscheme_names,
     Operations operations)
@@ -24,15 +24,15 @@ CommandPromptCoordinator::CommandPromptCoordinator(
       available_colorscheme_names_(available_colorscheme_names),
       operations_(std::move(operations)) {}
 
-void CommandPromptCoordinator::ClearFeedback() {
-  state_.panel.command.feedback_text.clear();
+void CommandLineCoordinator::ClearFeedback() {
+  state_.panel.feedback.text.clear();
 }
 
-void CommandPromptCoordinator::SetFeedback(std::string feedback) {
-  state_.panel.command.feedback_text = std::move(feedback);
+void CommandLineCoordinator::SetFeedback(std::string feedback) {
+  state_.panel.feedback.text = std::move(feedback);
 }
 
-bool CommandPromptCoordinator::RejectAction(ActionSource source, std::string feedback) {
+bool CommandLineCoordinator::RejectAction(ActionSource source, std::string feedback) {
   if (source != ActionSource::Command) {
     return true;
   }
@@ -40,7 +40,7 @@ bool CommandPromptCoordinator::RejectAction(ActionSource source, std::string fee
   return false;
 }
 
-void CommandPromptCoordinator::CompleteInput(editor::SingleLineEditor& input) {
+void CommandLineCoordinator::CompleteInput(editor::SingleLineEditor& input) {
   const ParsedCommandLine parsed = ParseCommandLine(input.text());
   if (parsed.dangling_escape) {
     SetFeedback("Command completion stopped at a trailing escape");
@@ -155,7 +155,7 @@ void CommandPromptCoordinator::CompleteInput(editor::SingleLineEditor& input) {
   SetFeedback(std::move(matches));
 }
 
-bool CommandPromptCoordinator::ExecuteCommandLine(const std::string& command_line) {
+bool CommandLineCoordinator::ExecuteCommandLine(const std::string& command_line) {
   const ParsedCommandLine parsed = ParseCommandLine(command_line);
   if (parsed.dangling_escape) {
     SetFeedback("Command parse error: trailing escape");

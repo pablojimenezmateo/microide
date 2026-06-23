@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "editor/SingleLineKeyHandler.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {

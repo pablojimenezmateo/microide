@@ -9,7 +9,7 @@
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandParsing.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
 
@@ -423,8 +423,8 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
     // Copy the query before dismissing — the dispatch may reopen overlays / mutate state.
     const std::string command_line = palette.query.text();
     DismissOverlay(true);
-    const bool ok = MakeCommandPromptCoordinator().ExecuteCommandLine(command_line);
-    if (const std::string& feedback = context_.current_project_state.panel.command.feedback_text;
+    const bool ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+    if (const std::string& feedback = context_.current_project_state.panel.feedback.text;
         !feedback.empty()) {
       Notify(ok ? NotificationService::Tone::Info : NotificationService::Tone::Error, feedback);
     }
@@ -447,7 +447,7 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
 
 void WorkspaceShell::CompleteCommandPaletteQuery() {
   CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
-  MakeCommandPromptCoordinator().CompleteInput(palette.query);
+  MakeCommandLineCoordinator().CompleteInput(palette.query);
   RefreshCommandPalette();
 }
 

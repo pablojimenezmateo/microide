@@ -8,7 +8,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
@@ -409,7 +409,7 @@ ReviewOpenOutcome FinishReviewOutcome(ProjectWorkspaceState& state,
                                       ReviewOpenOutcome outcome) {
   // Always surface the summary as command feedback so the control channel
   // reports it (as feedback on success, as error on failure).
-  state.panel.command.feedback_text = outcome.message;
+  state.panel.feedback.text = outcome.message;
   if (operations.notify && !outcome.message.empty()) {
     operations.notify(outcome.ok ? NotificationService::Tone::Info
                                  : NotificationService::Tone::Warning,

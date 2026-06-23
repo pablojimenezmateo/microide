@@ -91,8 +91,8 @@ struct ProjectSurfaceState {
 // surface (its own `query` editor drives input); this carries only the executor feedback
 // string that the control channel and command dispatch read back. No on-screen prompt, no
 // history (the palette's Up/Down navigate its result list).
-struct CommandState {
-  std::string feedback_text;
+struct CommandFeedbackState {
+  std::string text;
 };
 
 struct BufferSearchState {
@@ -296,7 +296,7 @@ struct PanelState {
   // strip, shared by terminal and output tabs so an overflowed strip stays
   // reachable via the chevrons or the header wheel.
   int tab_scroll_index = 0;
-  CommandState command;
+  CommandFeedbackState feedback;
   OutputPanelState output;
 };
 

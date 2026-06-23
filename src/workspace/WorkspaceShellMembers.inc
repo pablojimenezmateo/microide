@@ -200,7 +200,6 @@
   using TerminalTabState = workspace::TerminalTabState;
   using EditorPreferences = workspace::EditorPreferences;
   using ProjectSurfaceState = workspace::ProjectSurfaceState;
-  using CommandState = workspace::CommandState;
   using BufferSearchState = workspace::BufferSearchState;
   using ProjectSearchState = workspace::ProjectSearchState;
   using ComparePickerState = workspace::ComparePickerState;
@@ -519,7 +518,7 @@
   ProjectCatalogService MakeProjectCatalogService();
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
-  CommandPromptCoordinator MakeCommandPromptCoordinator();
+  CommandLineCoordinator MakeCommandLineCoordinator();
   PromptSurfaceService MakePromptSurfaceService();
   DirtyPromptCoordinator MakeDirtyPromptCoordinator(EditorTabService& editor_tabs,
                                                     PromptSurfaceService& prompt_surfaces);

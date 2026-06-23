@@ -4,7 +4,7 @@
 
 #include "workspace/TerminalPanelService.h"
 #include "workspace/WorkspaceActionCoordinator.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
@@ -53,11 +53,11 @@ TerminalPanelService WorkspaceShell::MakeTerminalPanelService() {
   });
 }
 
-CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
-  return CommandPromptCoordinator(
+CommandLineCoordinator WorkspaceShell::MakeCommandLineCoordinator() {
+  return CommandLineCoordinator(
       context_.current_project_state,
       available_colorscheme_names_,
-      CommandPromptCoordinator::Operations{
+      CommandLineCoordinator::Operations{
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
@@ -70,7 +70,7 @@ CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
           .sidebar_view_ids = [this]() { return OrderedSidebarViewIds(); },
           .execute_plugin_command =
               [this](const std::string& command, const std::vector<std::string>& args) {
-                CommandPromptCoordinator::PluginCommandResult result;
+                CommandLineCoordinator::PluginCommandResult result;
                 std::string plugin_error;
                 std::string plugin_feedback;
                 result.handled = plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error,

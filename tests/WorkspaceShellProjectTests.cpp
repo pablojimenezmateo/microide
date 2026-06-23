@@ -148,8 +148,8 @@ void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
          "menu open-project should provide a default location to the picker");
   Expect(WorkspaceShellTestAccess::ProjectOpenDialogActive(shell),
          "menu open-project should mark the picker as active while waiting");
-  Expect(!WorkspaceShellTestAccess::CommandMode(shell),
-         "menu open-project should not fall back to command mode when native launch succeeds");
+  Expect(!WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+         "menu open-project should not fall back to the command palette when native launch succeeds");
 
   WorkspaceShellTestAccess::QueueProjectOpenDialogSelection(shell, root);
   WorkspaceShellTestAccess::ConsumePendingProjectOpenDialogResult(shell);
@@ -206,9 +206,9 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu open-project should stay handled when native launch fails");
   Expect(!WorkspaceShellTestAccess::ProjectOpenDialogActive(shell),
          "failed picker launch should not leave the picker marked active");
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "menu open-project should fall back to the typed command prompt");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "project-open ",
+  Expect(WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+         "menu open-project should fall back to the prefilled command palette");
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "project-open ",
          "menu fallback should prefill the typed open-project command");
 }
 
@@ -609,7 +609,7 @@ void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "Enter should run the unmatched query as a command line");
 
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Unknown command: bogus-command",
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Unknown command: bogus-command",
          "unknown commands should report an explicit executor error");
 }
 
@@ -619,7 +619,7 @@ void TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp() {
 
   Expect(!RunCommandLine(shell, "search"),
          "a project-dependent command should fail without an active project");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "No active project",
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "No active project",
          "project-dependent command failures should report the missing project");
 }
 
@@ -633,7 +633,7 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
 
   Expect(!RunCommandLine(shell, "open"),
          "open without a path should fail");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "open requires a path",
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "open requires a path",
          "open without a path should report the missing path explicitly");
 }
 
@@ -854,8 +854,8 @@ void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
          "sidebar-width command should apply the parsed width");
 
   Expect(ExecuteCommand(shell, "sidebar-width wide"),
-         "sidebar-width command should still route through the command prompt");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) ==
+         "sidebar-width command should still route through the command line");
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) ==
              "sidebar-width requires a numeric width",
          "invalid sidebar-width input should report the parser failure");
 }
@@ -990,16 +990,16 @@ void TestWorkspaceShellCommandPaletteTabCompletion() {
          "text input should populate the palette query before completion");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "tab should trigger command completion");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs ",
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "soft-tabs ",
          "tab completion should expand the unique built-in command name");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Completed soft-tabs",
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Completed soft-tabs",
          "tab completion should report the completed command name");
 
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "on"),
          "completion fixture should allow finishing the completed command");
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "enter should execute the completed command line");
-  Expect(!WorkspaceShellTestAccess::CommandMode(shell),
+  Expect(!WorkspaceShellTestAccess::CommandPaletteOpen(shell),
          "successful command execution should close the palette");
   Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "the completed 'soft-tabs on' command line should apply");
@@ -1010,9 +1010,9 @@ void TestWorkspaceShellCommandPaletteTabCompletion() {
          "completion fixture should allow typing a second command prefix");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "tab should complete the wrap command");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "wrap ",
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "wrap ",
          "tab completion should expand the wrap command name");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Completed wrap",
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Completed wrap",
          "tab completion should report the wrap command completion");
 }
 
@@ -1028,7 +1028,7 @@ void TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick() {
          "soft tabs should start disabled");
   Expect(ExecuteCommand(shell, "soft-tabs on"),
          "an argument-bearing query should run as a command line");
-  Expect(!WorkspaceShellTestAccess::CommandMode(shell),
+  Expect(!WorkspaceShellTestAccess::CommandPaletteOpen(shell),
          "running a command line should dismiss the palette");
   Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "the soft-tabs command line should apply its argument");
@@ -1495,7 +1495,7 @@ void TestWorkspaceShellAutoCloseToggleUpdatesViewportContract() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
          "auto-close should start enabled from the default setting");
   Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
-         "toggle-editor-auto-close should execute from the command prompt");
+         "toggle-editor-auto-close should execute from the command line");
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
          "toggling auto-close off should update the active viewport contract immediately");
   const auto stored_disabled = WorkspaceShellTestAccess::ProjectStoredSettingValue(

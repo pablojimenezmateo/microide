@@ -783,7 +783,7 @@ void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
   Expect(result.handled, "command palette typing should be handled");
   Expect(!result.redraw.full && !result.redraw.rects.empty(),
          "command palette typing should stay on the partial (overlay) redraw path");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == text,
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == text,
          "command palette typing should append to the palette query");
 }
 
@@ -798,7 +798,7 @@ void TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath() {
 
   Expect(SendKeyDown(shell, SDLK_V, SDL_KMOD_CTRL),
          "Ctrl+V should be handled by the command palette query");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "palette",
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "palette",
          "Ctrl+V should route clipboard text through the shared command text-input path");
 }
 

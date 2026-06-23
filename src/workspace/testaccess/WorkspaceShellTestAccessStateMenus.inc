@@ -404,17 +404,17 @@
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_dialog_state_.active;
   }
-  // The command prompt is now the command palette: "command mode" == palette open, the
-  // command input == the palette query, and the status text == the executor feedback.
-  static bool CommandMode(const WorkspaceShell& shell) {
+  // The command line lives entirely in the command palette: "palette open" is the surface,
+  // the palette query is the command input, and the feedback text is the executor's result.
+  static bool CommandPaletteOpen(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.visible &&
            shell.context_.current_project_state.overlay.mode == OverlayMode::CommandPalette;
   }
-  static const std::string& CommandInput(const WorkspaceShell& shell) {
+  static const std::string& CommandPaletteQuery(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.command_palette.query.text();
   }
-  static const std::string& CommandPromptStatusText(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.panel.command.feedback_text;
+  static const std::string& CommandFeedbackText(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.feedback.text;
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.query.text();

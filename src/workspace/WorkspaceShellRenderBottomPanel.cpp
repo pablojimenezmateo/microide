@@ -303,9 +303,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                           panel_tab_palette);
     }
   } else {
-    // Header label is one of: "Command" (default), "Output" (no channel match), or the channel's
-    // label/id. Hold via string_view so the constant case allocates nothing per frame.
-    std::string_view header_label = "Command";
+    // Header label is one of: "Terminal" (default — a Terminal panel with no live tabs),
+    // "Output" (no channel match), or the channel's label/id. Hold via string_view so the
+    // constant case allocates nothing per frame.
+    std::string_view header_label = "Terminal";
     if (output_panel) {
       header_label = "Output";
       for (const auto& channel : output_channels_.Channels()) {

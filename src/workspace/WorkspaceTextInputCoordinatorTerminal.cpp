@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {

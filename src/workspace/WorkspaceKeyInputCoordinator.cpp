@@ -3,7 +3,7 @@
 #include <utility>
 
 #include "workspace/WorkspaceActionCoordinator.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 #include "workspace/WorkspaceShell.h"

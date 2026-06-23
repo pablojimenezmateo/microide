@@ -146,7 +146,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
           [this](const std::filesystem::path& path) { ReloadCleanEditorTabsForPath(path); },
       .set_command_feedback =
           [this](std::string_view feedback) {
-            context_.current_project_state.panel.command.feedback_text = std::string(feedback);
+            context_.current_project_state.panel.feedback.text = std::string(feedback);
           },
       .open_discard_preview_prompt =
           [this](project::PatchApplyPreview preview) {

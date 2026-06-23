@@ -23,7 +23,7 @@ void WorkspaceShell::InitializeCommitWorkflowService() {
           },
       .set_command_feedback =
           [this](const std::string_view feedback) {
-            context_.current_project_state.panel.command.feedback_text = std::string(feedback);
+            context_.current_project_state.panel.feedback.text = std::string(feedback);
           },
       .notify =
           [this](NotificationService::Tone tone, std::string message) {

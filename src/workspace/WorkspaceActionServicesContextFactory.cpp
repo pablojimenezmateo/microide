@@ -9,7 +9,7 @@
 
 #include "workspace/WorkspaceActionServices.h"
 #include "workspace/WorkspaceCommandParsing.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/ReviewSessionCoordinator.h"
@@ -24,7 +24,7 @@ bool WorkspaceActionContext::PluginRuntimeEnabled() const {
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
   operations_.reload_plugins_for_current_project();
   std::string summary = operations_.plugin_runtime_reload_summary();
-  state_.panel.command.feedback_text = summary;
+  state_.panel.feedback.text = summary;
   if (operations_.notify && !summary.empty()) {
     // Heuristic: surface failures/warnings as Warning, otherwise Info.
     const bool looks_problematic =
@@ -67,7 +67,7 @@ void WorkspaceActionContext::StartDebuggingWithFeedback() {
     return;
   }
   const std::string error = operations_.start_debugging();
-  state_.panel.command.feedback_text =
+  state_.panel.feedback.text =
       error.empty() ? std::string("Debugging started") : ("Debug: " + error);
   if (operations_.notify) {
     operations_.notify(error.empty() ? NotificationService::Tone::Info
@@ -80,7 +80,7 @@ void WorkspaceActionContext::StopDebuggingWithFeedback() {
   if (operations_.stop_debugging) {
     operations_.stop_debugging();
   }
-  state_.panel.command.feedback_text = "Debugging stopped";
+  state_.panel.feedback.text = "Debugging stopped";
   if (operations_.notify) {
     operations_.notify(NotificationService::Tone::Info, "Debugging stopped");
   }
@@ -295,7 +295,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](ActionSource source, std::string feedback) {
                 const std::string feedback_copy = feedback;
                 const bool accepted =
-                    MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
+                    MakeCommandLineCoordinator().RejectAction(source, std::move(feedback));
                 if (source != ActionSource::Command && !feedback_copy.empty()) {
                   output_channels_.AppendLine("actions.log", "Actions", feedback_copy);
                 }

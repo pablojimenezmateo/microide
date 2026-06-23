@@ -824,7 +824,7 @@ return ide.plugin({
 
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "events.ping hello plugins"),
-         "plugin commands should execute through the shell command prompt");
+         "plugin commands should execute through the shell command line");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
              WorkspaceShellTestAccess::PluginMessages(shell).back() == "events: command:hello plugins",
          "plugin commands should receive shell-split arguments");
@@ -881,9 +881,9 @@ return ide.plugin({
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
          "plugins-reload should succeed when Lua plugin support is enabled");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("Loaded 1 plugin") !=
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell).find("Loaded 1 plugin") !=
              std::string::npos,
-         "plugins-reload should report a load summary in the command prompt");
+         "plugins-reload should report a load summary as command feedback");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reloadable.ping"),
          "reloaded plugin command should execute");
@@ -956,7 +956,7 @@ return ide.plugin({
                         return kind == microide::editor::SyntaxTokenKind::Keyword;
                       }),
          "plugins-reload should invalidate active editor syntax caches when definitions change");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("1 syntax definition") !=
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell).find("1 syntax definition") !=
              std::string::npos,
          "plugins-reload feedback should include loaded plugin syntax definitions");
 }

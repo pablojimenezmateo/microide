@@ -164,13 +164,21 @@ void TestProjectBackgroundExecutorShutdownDropsQueuedWork() {
     for (int i = 0; i < 3; ++i) {
       executor.Post([&]() { ran.fetch_add(1); });
     }
+    // Drop the queued follow-ups deterministically while the worker is still
+    // parked inside the in-flight gate task. Cancel() completes synchronously
+    // under the executor lock (the worker holds no lock while running a task),
+    // so all three queued entries are marked cancelled *before* the gate is
+    // released. Without this, releasing the gate races the destructor's
+    // Shutdown: the worker could drain a queued task in the window before
+    // Shutdown cancels it, making `ran` non-deterministic.
+    executor.Cancel();
     {
       std::lock_guard lock(gate_mutex);
       release_gate = true;
     }
     gate_cv.notify_all();
-    // Destructor calls Shutdown which cancels queued entries; the gated task
-    // unblocks and runs to completion, the queued ones should be dropped.
+    // Destructor calls Shutdown: the gated task unblocks and runs to completion,
+    // the already-cancelled follow-ups are dropped, and the worker joins.
   }
   Expect(ran.load() == 1,
          "shutdown should drop queued tasks while letting the in-flight task finish");

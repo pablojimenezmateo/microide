@@ -334,7 +334,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
             return RunTests(test_ids, nullptr);
           },
           .set_command_feedback = [this](std::string feedback) {
-            context_.current_project_state.panel.command.feedback_text = std::move(feedback);
+            context_.current_project_state.panel.feedback.text = std::move(feedback);
           },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {

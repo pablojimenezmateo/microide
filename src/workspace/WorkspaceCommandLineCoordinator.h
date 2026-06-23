@@ -10,7 +10,7 @@
 
 namespace microide::workspace {
 
-class CommandPromptCoordinator {
+class CommandLineCoordinator {
  public:
   struct PluginCommandResult {
     bool handled = false;
@@ -26,21 +26,22 @@ class CommandPromptCoordinator {
         execute_plugin_command;
   };
 
-  CommandPromptCoordinator(ProjectWorkspaceState& state,
-                           std::vector<std::string>& available_colorscheme_names,
-                           Operations operations);
+  CommandLineCoordinator(ProjectWorkspaceState& state,
+                         std::vector<std::string>& available_colorscheme_names,
+                         Operations operations);
 
-  void ClearFeedback();
-  void SetFeedback(std::string feedback);
   bool RejectAction(ActionSource source, std::string feedback);
   // Parse and run a full command line (verb + arguments), dispatching to the matching
-  // workspace action or plugin command. Feedback lands in CommandState::feedback_text.
+  // workspace action or plugin command. Feedback lands in CommandFeedbackState::text.
   bool ExecuteCommandLine(const std::string& command_line);
   // Tab-complete the active token of `input` in place (command verbs, paths, colorscheme
   // names, sidebar ids, …) and record a feedback line describing the result.
   void CompleteInput(editor::SingleLineEditor& input);
 
  private:
+  void ClearFeedback();
+  void SetFeedback(std::string feedback);
+
   ProjectWorkspaceState& state_;
   std::vector<std::string>& available_colorscheme_names_;
   Operations operations_;

@@ -474,7 +474,7 @@
     return shell.OpenVirtualDocumentInNewTab(uri);
   }
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
-    return shell.MakeCommandPromptCoordinator().ExecuteCommandLine(command_line);
+    return shell.MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
   }
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Messages();

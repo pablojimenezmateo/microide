@@ -8,7 +8,7 @@
 
 #include "util/JsonValue.h"
 #include "workspace/ControlSpec.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 
 // Thin forwarders to the host-owned protocol-client services so existing
 // render/menu/plugin call sites stay unchanged. The LSP glue lives in
@@ -123,8 +123,8 @@ void WorkspaceShell::ConsumeControlCallbacks() {
 ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
     const std::string& command_line) {
   ControlChannelService::CommandOutcome outcome;
-  outcome.ok = MakeCommandPromptCoordinator().ExecuteCommandLine(command_line);
-  const std::string& feedback = context_.current_project_state.panel.command.feedback_text;
+  outcome.ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+  const std::string& feedback = context_.current_project_state.panel.feedback.text;
   if (outcome.ok) {
     outcome.feedback = feedback;
   } else {

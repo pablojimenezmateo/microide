@@ -310,7 +310,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/ControlSpec.cpp
   src/workspace/ManPage.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
-  src/workspace/WorkspaceCommandPromptCoordinator.cpp
+  src/workspace/WorkspaceCommandLineCoordinator.cpp
   src/workspace/WorkspaceEditActionExecutor.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceEventOrchestrator.cpp
