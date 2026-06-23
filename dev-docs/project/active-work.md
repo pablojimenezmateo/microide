@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-06-22.
+Reviewed on 2026-06-23 (v2.2.0 shipped).
 
 This is the single source of truth for:
 
