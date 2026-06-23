@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.2.0] - 2026-06-23
+
+Focused follow-up to the 2.1.0 navigation work. The **welcome surface** becomes
+state-aware, the **command palette** absorbs the standalone command prompt to
+become the single command surface, and a theme-switch repaint bug is fixed.
+
+### Shell & navigation
+- The welcome surface is now state-aware: a cold-start variant (Open Folder +
+  recent projects) when no project is open, and a project-home variant (project
+  name, recent files, New File / Open File / Find in Project) when a project is
+  open with no editor tab. The duplicated command-palette hint is removed.
+- The command palette (Ctrl+Shift+P) is now the single command surface: its
+  query doubles as a command line, so queries with arguments or no fuzzy match
+  run through the shared command-line executor (e.g. `colorscheme dark`), and
+  Tab completes command/path tokens. The separate Ctrl+E command prompt and its
+  bottom-panel command-mode UI are retired; the native-picker fallback opens the
+  palette pre-filled instead.
+- Editor tabs gain a "Copy Absolute Path" action.
+
+### Theming
+- Switching color theme via the command palette or keybinding (`toggle-theme` /
+  `colorscheme <name>`) now repaints the whole window immediately, instead of
+  leaving stale colors until the next unrelated event.
+
+### Internal & tests
+- Retire the lingering "command prompt" naming across the executor coordinator,
+  state, and test accessors now that the surface is gone.
+- Make the real-gdb function-breakpoint E2E test deterministic under CPU load,
+  and fix a flaky `ProjectBackgroundExecutor` shutdown test.
+
 ## [2.1.0] - 2026-06-22
 
 Feature release focused on **multi-view editing** and **navigation**. Editor tabs can now be
