@@ -50,8 +50,12 @@ void TestArchitectureInvariants() {
            });
   run_rule("CheckShellFileSize(WorkspaceShellMembers.inc)",
            [&](const std::filesystem::path& root) {
+             // 1559: +1 for the Phase B CodeLensCommandAtPosition entry point. It
+             // must be a member (it reaches private shell state and is called from
+             // the mouse TU); its per-viewport resolver stays a file-local free
+             // function so the shell surface grows by exactly one declaration.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1558);
+                                                     1559);
            });
 
   bool hard_failure = false;

@@ -968,6 +968,12 @@
       std::span<const editor::PublishedDiagnostic> diagnostics,
       float x,
       float y) const;
+  // Plugin code-lens click routing (Phase B): resolve the command bound to a
+  // clickable end-of-line code lens under (x,y), or nullopt. The per-viewport
+  // resolver is a file-local free function (CodeLensCommandForViewport) sharing
+  // editor::BuildEolDecorationSegments with the renderer so the hit rect matches
+  // the painted affordance exactly.
+  std::optional<std::string> CodeLensCommandAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetForViewport(
       const editor::TextViewport& viewport,

@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "editor/DiagnosticsRender.h"
+#include "editor/EolDecorationLayout.h"
 #include "editor/TextLayout.h"
 #include "util/DebugTrace.h"
 #include "util/PerformanceTrace.h"
@@ -50,6 +51,56 @@ TextGridInteractionLayout BuildEditorInteractionLayout(
       rect, metrics.text_x, metrics.first_line_y, metrics.line_height, text_renderer.CharWidth(),
       viewport.scroll_line(), viewport.line_count(), viewport.horizontal_scroll(),
       metrics.visible_rows, metrics.visible_columns);
+}
+
+// Resolve the command bound to a clickable end-of-line code lens under (x,y) for
+// a single viewport. Pure given its inputs: lays the line's EOL decorations out
+// with the same helper the renderer uses, so the hit rect matches the painted
+// lens exactly. Returns nullopt when nothing actionable is hit.
+std::optional<std::string> CodeLensCommandForViewport(const render::TextRenderer& text_renderer,
+                                                      const editor::TextViewport& viewport,
+                                                      const TextGridInteractionLayout& interaction,
+                                                      const editor::FileDecorations* decorations,
+                                                      float x,
+                                                      float y) {
+  if (decorations == nullptr || viewport.path().empty() || viewport.dirty() ||
+      !Contains(interaction.rect, x, y)) {
+    return std::nullopt;
+  }
+
+  const std::optional<std::size_t> line_index = VisibleTextGridLineAtY(interaction, y);
+  if (!line_index.has_value() || *line_index >= viewport.lines().size()) {
+    return std::nullopt;
+  }
+
+  const std::span<const editor::CodeLensDecoration> code_lenses =
+      decorations->CodeLensesForLine(static_cast<std::uint32_t>(*line_index));
+  if (code_lenses.empty()) {
+    return std::nullopt;
+  }
+  const std::span<const editor::InlineTextDecoration> inline_texts =
+      decorations->InlineTextsForLine(static_cast<std::uint32_t>(*line_index));
+
+  // Anchor at the line's last glyph and lay the segments out exactly as the
+  // renderer does (same helper), so the hit rect matches the painted lens.
+  const float line_y =
+      interaction.first_line_y +
+      static_cast<float>(*line_index - interaction.scroll_line) * interaction.line_height;
+  const float anchor_x =
+      interaction.text_x +
+      static_cast<float>(viewport.VisibleLineLayout(*line_index).visual_columns) *
+          text_renderer.CharWidth();
+  const float right_limit = interaction.rect.x + interaction.rect.w - 12.0f;
+  std::vector<editor::EolDecorationSegment> segments;
+  editor::BuildEolDecorationSegments(text_renderer, inline_texts, code_lenses, anchor_x, line_y,
+                                     interaction.line_height, right_limit, segments);
+  for (const editor::EolDecorationSegment& segment : segments) {
+    if (segment.kind == editor::EolDecorationSegment::Kind::CodeLens &&
+        Contains(segment.rect, x, y) && !code_lenses[segment.index].command.empty()) {
+      return code_lenses[segment.index].command;
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace
@@ -631,6 +682,57 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTarg
   }
 
   return PluginHoverTargetAtPosition(x, y);
+}
+
+std::optional<std::string> WorkspaceShell::CodeLensCommandAtPosition(float x, float y) const {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::CodeLensCommandAtPosition");
+  if (!ActiveTabIsEditor()) {
+    return std::nullopt;
+  }
+  const HoverTargetsViewModel hover_targets_vm = RenderViewModelBuilder(context_).BuildHoverTargets();
+  if (hover_targets_vm.decoration_store == nullptr) {
+    return std::nullopt;
+  }
+  const editor::PluginDecorationStore& store = *hover_targets_vm.decoration_store;
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const WorkspaceLayout layout = *layout_state;
+
+  const auto decorations_for = [&store](const editor::TextViewport& viewport)
+      -> const editor::FileDecorations* {
+    if (viewport.path().empty() || viewport.dirty()) {
+      return nullptr;
+    }
+    return store.FindByPath(viewport.path());
+  };
+
+  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
+  const editor::TextViewport* active_viewport = ActiveEditorViewport();
+  if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
+    return CodeLensCommandForViewport(
+        text_renderer_, *active_viewport,
+        BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface),
+        decorations_for(*active_viewport), x, y);
+  }
+
+  for (const EditorPaneLayout& pane : panes) {
+    const editor::TextViewport* viewport =
+        pane.active ? ActiveEditorViewport()
+                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
+      continue;
+    }
+    if (auto command = CodeLensCommandForViewport(
+            text_renderer_, *viewport, BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect),
+            decorations_for(*viewport), x, y);
+        command.has_value()) {
+      return command;
+    }
+  }
+  return std::nullopt;
 }
 
 }  // namespace microide::workspace

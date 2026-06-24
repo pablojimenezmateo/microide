@@ -202,6 +202,17 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (event.button.button == SDL_BUTTON_LEFT) {
+    // A plugin code-lens click dispatches its bound command. Checked before the
+    // blame overlay (both anchor at end-of-line) so the actionable lens wins.
+    if (const auto command = CodeLensCommandAtPosition(static_cast<float>(event.button.x),
+                                                       static_cast<float>(event.button.y));
+        command.has_value()) {
+      context_.current_project_state.surface.focus = FocusTarget::Editor;
+      std::string error_message;
+      ExecuteCommandName(*command, {}, ActionSource::Command, &error_message);
+      ensure_redraw([this]() { RequestWindowRedraw(); });
+      return true;
+    }
     if (editor_blame_overlay_service_.LineAtPosition(static_cast<float>(event.button.x),
                                                      static_cast<float>(event.button.y)) != nullptr) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;

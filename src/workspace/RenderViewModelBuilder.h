@@ -5,6 +5,7 @@
 #include <string>
 
 #include "editor/EditorViewModel.h"
+#include "editor/PluginDecorationStore.h"
 #include "editor/WelcomeView.h"
 #include "workspace/DebugViewModel.h"
 #include "workspace/GitSidebarCommandCenter.h"
@@ -145,6 +146,9 @@ struct HoverPopupViewModel {
 struct HoverTargetsViewModel {
   bool hover_enabled = false;
   const editor::DiagnosticsStore* diagnostics_store = nullptr;
+  // Plugin-published decorations, exposed so the lint-covered hit-test TU can
+  // resolve clickable end-of-line code lenses without reading project state.
+  const editor::PluginDecorationStore* decoration_store = nullptr;
   // Debug hover-to-inspect (Phase 5): non-null only when the caller-supplied gate
   // holds (debug.enabled + session Stopped + adapter advertises hover evaluation),
   // so the render-surface resolver reads debug state through the view model rather

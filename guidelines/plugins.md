@@ -70,10 +70,10 @@ ctx.decorations.set("src/main.cpp", {
     -- icon is one of: dot, circle, diamond, triangle, bookmark, check, dash
     { line = 12, icon = "bookmark", color = "#ffcc00", priority = 5 },
   },
-  inline_text = {  -- end-of-line / inline virtual text (rendered from Phase B)
+  inline_text = {  -- end-of-line virtual text (Error Lens message, blame)
     { line = 12, text = "  TODO: revisit", color = "#7f8c8d", eol = true },
   },
-  code_lenses = {  -- clickable line affordance (rendered from Phase B)
+  code_lenses = {  -- clickable end-of-line affordance dispatching a command
     { line = 1, text = "2 references", command = "refs.show" },
   },
 })
@@ -85,6 +85,19 @@ the range (bracket-pair coloring, rainbow, semantic tokens); `bg` is a fill
 layered above selection so a translucent author color blends; `underline`/`strike`
 draw lines; `bold`/`italic` are reserved style flags. The text-style render path
 stays allocation-free and materializes no strings.
+
+`inline_text` paints virtual text past a line's last glyph (`eol = true`, the
+default — this is the render path that powers Error Lens messages and EOL blame);
+its optional `bg` draws a band behind the text, and `color` defaults to the
+disabled-text tone. Mid-line virtual text (`eol = false` + `col`) is parsed but
+not yet rendered — the v1 inline path is end-of-line only. `code_lenses` paint a
+clickable affordance at end of line in the accent color; clicking one dispatches
+its `command` through the normal command path (`ctx.commands.add` handlers and
+built-in actions alike), so a lens can re-publish to update its own label. Both
+kinds render once per logical line on its first visual row; the painted rect and
+the click hit-test share one geometry helper (`editor::BuildEolDecorationSegments`)
+so a click always lands where the affordance was drawn. See the
+`plugins/eol-annotations` dogfood plugin for a worked example of both.
 
 ## Editor language contract tables (`ctx.brackets`, `ctx.comments`, `ctx.indents`, `ctx.snippets`)
 

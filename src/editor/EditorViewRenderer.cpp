@@ -902,6 +902,42 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
     }
 
+    // Plugin-published end-of-line inline text (Error Lens, GitLens blame) and
+    // code lenses, drawn once per logical line on its first visual row, past the
+    // line's last glyph. The segment geometry mirrors WorkspaceShell's click
+    // hit-test (shared BuildEolDecorationSegments) so a click lands exactly where
+    // the code-lens affordance was painted.
+    if (plugin_decorations != nullptr && (!soft_wrap || row_meta.visual_start == 0)) {
+      const std::span<const InlineTextDecoration> inline_texts =
+          plugin_decorations->InlineTextsForLine(static_cast<std::uint32_t>(line_index));
+      const std::span<const CodeLensDecoration> code_lenses =
+          plugin_decorations->CodeLensesForLine(static_cast<std::uint32_t>(line_index));
+      if (!inline_texts.empty() || !code_lenses.empty()) {
+        const float anchor_x =
+            metrics.text_x +
+            static_cast<float>(viewport.VisibleLineLayout(line_index).visual_columns) *
+                text_renderer.CharWidth();
+        const float right_limit = rect.x + rect.w - 12.0f;
+        BuildEolDecorationSegments(text_renderer, inline_texts, code_lenses, anchor_x, y,
+                                   metrics.line_height, right_limit, eol_decoration_scratch_);
+        for (const EolDecorationSegment& seg : eol_decoration_scratch_) {
+          if (seg.kind == EolDecorationSegment::Kind::CodeLens) {
+            text_renderer.DrawString(renderer, seg.rect.x, seg.rect.y, theme.accent,
+                                     code_lenses[seg.index].text);
+          } else {
+            const InlineTextDecoration& inl = inline_texts[seg.index];
+            const SDL_Color fg = inl.color.a != 0 ? inl.color : theme.text_disabled;
+            if (inl.background.a != 0) {
+              text_renderer.DrawStringOn(renderer, seg.rect.x, seg.rect.y, fg, inl.background,
+                                         inl.text);
+            } else {
+              text_renderer.DrawString(renderer, seg.rect.x, seg.rect.y, fg, inl.text);
+            }
+          }
+        }
+      }
+    }
+
     if (blame_overlay.has_value() && blame_overlay->visible) {
       while (blame_index < blame_overlay->lines.size() &&
              blame_overlay->lines[blame_index].line_index < line_index) {
