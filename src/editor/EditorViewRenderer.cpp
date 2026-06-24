@@ -209,7 +209,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 bool indent_guides_enabled,
                                 bool render_whitespace_enabled,
                                 const FoldingModel* folding_model,
-                                const WelcomeViewModel* welcome_view) const {
+                                const WelcomeViewModel* welcome_view,
+                                const FileDecorations* plugin_decorations) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -466,6 +467,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       sticky_input.diagnostic_horizontal_scroll = row_meta.visual_start;
       sticky_input.diagnostic_visible_columns = row_meta.visual_end - row_meta.visual_start;
       sticky_input.tab_size = viewport.tab_size();
+      if (plugin_decorations != nullptr) {
+        sticky_input.text_styles =
+            plugin_decorations->TextStylesForLine(static_cast<std::uint32_t>(line_index));
+      }
       sticky_input.text_renderer = &text_renderer;
       sticky_input.theme = &theme;
       BuildDecoratedRow(sticky_row, sticky_input);
@@ -789,6 +794,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
     row_input.column_fills = std::span<const RowFillSpan>(column_fill_scratch_);
     row_input.prepositioned_fills = std::span<const DecoratedTextFill>(prepositioned_fill_scratch_);
+    if (plugin_decorations != nullptr) {
+      row_input.text_styles =
+          plugin_decorations->TextStylesForLine(static_cast<std::uint32_t>(line_index));
+    }
     row_input.diagnostics = diagnostics;
     row_input.diagnostic_line_index = line_index;
     row_input.diagnostic_horizontal_scroll = row_meta.visual_start;
@@ -805,6 +814,18 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         severity.has_value()) {
       DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                  *severity);
+    }
+    // Plugin gutter marks share the breakpoint/diagnostic marker slot. Draw the
+    // highest-priority mark (first after the line-sorted, priority-desc order)
+    // once per logical line, before the breakpoint dot / execution arrow so the
+    // debugger's own glyphs win when they coincide.
+    if (plugin_decorations != nullptr && (!soft_wrap || row_meta.visual_start == 0)) {
+      const std::span<const GutterMarkDecoration> marks =
+          plugin_decorations->GutterMarksForLine(static_cast<std::uint32_t>(line_index));
+      if (!marks.empty()) {
+        GutterIconRegistry::Draw(renderer, marks.front().shape, marks.front().color, gutter.x, y,
+                                 gutter.w, metrics.line_height);
+      }
     }
     if (breakpoint_gutter_marks != nullptr &&
         breakpoint_gutter_mark_index < breakpoint_gutter_marks->size() &&

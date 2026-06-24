@@ -22,6 +22,8 @@ struct ApiFns {
   lua_CFunction process_run_async;
   lua_CFunction diagnostics_publish;
   lua_CFunction diagnostics_clear;
+  lua_CFunction decorations_set;
+  lua_CFunction decorations_clear;
   lua_CFunction sidebar_add;
   lua_CFunction sidebar_show;
   lua_CFunction hover_add;

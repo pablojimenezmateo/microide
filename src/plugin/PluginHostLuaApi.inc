@@ -727,6 +727,33 @@
     return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
   }
 
+  static int LuaDecorationsSet(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    const int rc = runtime_api_interop::LuaDecorationsSet(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
+  }
+
+  static int LuaDecorationsClear(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    int rc = 0;
+    {
+      std::optional<std::filesystem::path> path;
+      if (lua_gettop(state) >= 1 && !lua_isnil(state, 1)) {
+        const char* raw_path = luaL_checkstring(state, 1);
+        path = path_interop::ResolveRuntimePath(
+            host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+            std::filesystem::path(raw_path));
+      }
+      rc = runtime_api_interop::LuaDecorationsClear(
+          state, plugin, path, host != nullptr ? host->callbacks : EmptyCallbacks());
+    }
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
+  }
+
   static int LuaSidebarShow(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return runtime_api_interop::LuaSidebarShow(
@@ -751,6 +778,8 @@
             .process_run_async = &LuaProcessRunAsync,
             .diagnostics_publish = &LuaDiagnosticsPublish,
             .diagnostics_clear = &LuaDiagnosticsClear,
+            .decorations_set = &LuaDecorationsSet,
+            .decorations_clear = &LuaDecorationsClear,
             .sidebar_add = &LuaSidebarAdd,
             .sidebar_show = &LuaSidebarShow,
             .hover_add = &LuaHoverAdd,

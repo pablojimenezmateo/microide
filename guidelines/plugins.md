@@ -17,6 +17,8 @@ Plugins may contribute capabilities such as:
 - commands (may return a string to surface as host command-prompt feedback)
 - sidebar providers
 - diagnostics
+- editor decorations via `ctx.decorations.set(path, {...})` / `ctx.decorations.clear(path?)`
+  (see below)
 - hover providers
 - transient notifications via `microide.notify(level, message)` (host-owned toast
   surface; `level` is info/warning/error)
@@ -45,6 +47,44 @@ Plugins may contribute capabilities such as:
   commands or render surfaces.
 
 The exact mechanism should remain host-owned and registry-first.
+
+## Editor decorations (`ctx.decorations`)
+
+Plugins publish per-file editor decorations that the host renders. Like
+diagnostics, a publish **replaces** the owner's full decoration set for that
+file, and the host owns all drawing — plugins emit data only. Data flows through
+`PluginDecorationStore` (mirrors `DiagnosticsStore`) and is resolved per visible
+row by the view-model layer, so thousands of decorations across a file cost only
+the visible rows per frame. Lines and columns are **1-based**; `end_col` is
+exclusive.
+
+```lua
+ctx.decorations.set("src/main.cpp", {
+  text_styles = {
+    -- recolor / background / underline a byte range on one line
+    { line = 10, start_col = 5, end_col = 9, fg = "#c8a26d", underline = true },
+    -- whole-line background (e.g. an error-lens band); columns are ignored
+    { line = 12, whole_line = true, bg = "#3a1f1f40" },
+  },
+  gutter_marks = {
+    -- icon is one of: dot, circle, diamond, triangle, bookmark, check, dash
+    { line = 12, icon = "bookmark", color = "#ffcc00", priority = 5 },
+  },
+  inline_text = {  -- end-of-line / inline virtual text (rendered from Phase B)
+    { line = 12, text = "  TODO: revisit", color = "#7f8c8d", eol = true },
+  },
+  code_lenses = {  -- clickable line affordance (rendered from Phase B)
+    { line = 1, text = "2 references", command = "refs.show" },
+  },
+})
+ctx.decorations.clear("src/main.cpp")  -- or clear() to drop all of this plugin's
+```
+
+Colors are `#rrggbb` or `#rrggbbaa`. `fg` recolors the syntax runs that intersect
+the range (bracket-pair coloring, rainbow, semantic tokens); `bg` is a fill
+layered above selection so a translucent author color blends; `underline`/`strike`
+draw lines; `bold`/`italic` are reserved style flags. The text-style render path
+stays allocation-free and materializes no strings.
 
 ## Editor language contract tables (`ctx.brackets`, `ctx.comments`, `ctx.indents`, `ctx.snippets`)
 

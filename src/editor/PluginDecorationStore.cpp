@@ -1,0 +1,339 @@
+#include "editor/PluginDecorationStore.h"
+
+#include <algorithm>
+#include <system_error>
+#include <utility>
+
+namespace microide::editor {
+
+namespace {
+
+bool PathEqualsOrWithin(const std::filesystem::path& candidate,
+                        const std::filesystem::path& root) {
+  const std::filesystem::path normalized_candidate = candidate.lexically_normal();
+  const std::filesystem::path normalized_root = root.lexically_normal();
+  if (normalized_candidate.empty() || normalized_root.empty()) {
+    return false;
+  }
+  if (normalized_candidate == normalized_root) {
+    return true;
+  }
+  std::error_code error;
+  const std::filesystem::path relative =
+      std::filesystem::relative(normalized_candidate, normalized_root, error);
+  if (error || relative.empty()) {
+    return false;
+  }
+  const std::string relative_text = relative.generic_string();
+  return relative_text != "." && relative_text != ".." && relative_text.rfind("../", 0) != 0;
+}
+
+std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
+                                        const std::filesystem::path& old_prefix,
+                                        const std::filesystem::path& new_prefix) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_old_prefix = old_prefix.lexically_normal();
+  const std::filesystem::path normalized_new_prefix = new_prefix.lexically_normal();
+  if (!PathEqualsOrWithin(normalized_path, normalized_old_prefix)) {
+    return normalized_path;
+  }
+  if (normalized_path == normalized_old_prefix) {
+    return normalized_new_prefix;
+  }
+  std::error_code error;
+  const std::filesystem::path relative =
+      std::filesystem::relative(normalized_path, normalized_old_prefix, error);
+  if (error || relative.empty()) {
+    return normalized_path;
+  }
+  return (normalized_new_prefix / relative).lexically_normal();
+}
+
+// Contiguous slice of a line-sorted vector whose elements have `.line == line`.
+template <typename T, typename LineOf>
+std::span<const T> SliceForLine(const std::vector<T>& sorted, std::uint32_t line, LineOf line_of) {
+  const auto first = std::lower_bound(sorted.begin(), sorted.end(), line,
+                                      [&](const T& a, std::uint32_t l) { return line_of(a) < l; });
+  const auto last = std::upper_bound(first, sorted.end(), line,
+                                     [&](std::uint32_t l, const T& a) { return l < line_of(a); });
+  if (first == last) {
+    return {};
+  }
+  return std::span<const T>(&*first, static_cast<std::size_t>(last - first));
+}
+
+}  // namespace
+
+std::span<const TextStyleDecoration> FileDecorations::TextStylesForLine(std::uint32_t line) const {
+  return SliceForLine(text_styles, line, [](const TextStyleDecoration& d) { return d.line; });
+}
+
+std::span<const GutterMarkDecoration> FileDecorations::GutterMarksForLine(
+    std::uint32_t line) const {
+  return SliceForLine(gutter_marks, line, [](const GutterMarkDecoration& d) { return d.line; });
+}
+
+std::span<const InlineTextDecoration> FileDecorations::InlineTextsForLine(
+    std::uint32_t line) const {
+  return SliceForLine(inline_texts, line, [](const InlineTextDecoration& d) { return d.line; });
+}
+
+std::span<const CodeLensDecoration> FileDecorations::CodeLensesForLine(std::uint32_t line) const {
+  return SliceForLine(code_lenses, line, [](const CodeLensDecoration& d) { return d.line; });
+}
+
+std::string PluginDecorationStore::PathKey(const std::filesystem::path& path) {
+  return path.empty() ? std::string{} : path.lexically_normal().generic_string();
+}
+
+void PluginDecorationStore::SortFileDecorations(FileDecorations* file) {
+  if (file == nullptr) {
+    return;
+  }
+  std::sort(file->text_styles.begin(), file->text_styles.end(),
+            [](const TextStyleDecoration& a, const TextStyleDecoration& b) {
+              if (a.line != b.line) return a.line < b.line;
+              return a.start_column < b.start_column;
+            });
+  std::sort(file->gutter_marks.begin(), file->gutter_marks.end(),
+            [](const GutterMarkDecoration& a, const GutterMarkDecoration& b) {
+              if (a.line != b.line) return a.line < b.line;
+              return a.priority > b.priority;  // highest priority first within a line
+            });
+  std::sort(file->inline_texts.begin(), file->inline_texts.end(),
+            [](const InlineTextDecoration& a, const InlineTextDecoration& b) {
+              if (a.line != b.line) return a.line < b.line;
+              return a.anchor_column < b.anchor_column;
+            });
+  std::sort(file->code_lenses.begin(), file->code_lenses.end(),
+            [](const CodeLensDecoration& a, const CodeLensDecoration& b) {
+              return a.line < b.line;
+            });
+}
+
+void PluginDecorationStore::BumpRevision() {
+  if (++revision_ == 0) {
+    revision_ = 1;
+  }
+}
+
+void PluginDecorationStore::RebuildPath(std::string_view path_key) {
+  if (path_key.empty()) {
+    return;
+  }
+
+  FileDecorations merged;
+  for (const auto& owner_entry : by_owner_) {
+    const auto it = owner_entry.second.find(path_key);
+    if (it == owner_entry.second.end()) {
+      continue;
+    }
+    if (merged.path.empty()) {
+      merged.path = it->second.path;
+    }
+    const PluginDecorationData& data = it->second.data;
+    merged.text_styles.insert(merged.text_styles.end(), data.text_styles.begin(),
+                              data.text_styles.end());
+    merged.gutter_marks.insert(merged.gutter_marks.end(), data.gutter_marks.begin(),
+                               data.gutter_marks.end());
+    merged.inline_texts.insert(merged.inline_texts.end(), data.inline_texts.begin(),
+                               data.inline_texts.end());
+    merged.code_lenses.insert(merged.code_lenses.end(), data.code_lenses.begin(),
+                              data.code_lenses.end());
+  }
+
+  if (merged.empty()) {
+    if (merged_by_path_.erase(std::string(path_key)) > 0) {
+      BumpRevision();
+    }
+    return;
+  }
+
+  SortFileDecorations(&merged);
+  auto existing = merged_by_path_.find(path_key);
+  if (existing == merged_by_path_.end()) {
+    merged_by_path_[std::string(path_key)] = std::move(merged);
+    BumpRevision();
+    return;
+  }
+  if (existing->second == merged) {
+    return;
+  }
+  existing->second = std::move(merged);
+  BumpRevision();
+}
+
+bool PluginDecorationStore::ReplaceForOwnerFile(std::string_view owner,
+                                                const std::filesystem::path& path,
+                                                PluginDecorationData data) {
+  const std::string owner_key(owner);
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::string path_key = PathKey(normalized_path);
+  if (owner_key.empty() || path_key.empty()) {
+    return false;
+  }
+
+  auto& owner_entries = by_owner_[owner_key];
+  if (data.empty()) {
+    const bool changed = owner_entries.erase(path_key) > 0;
+    if (owner_entries.empty()) {
+      by_owner_.erase(owner_key);
+    }
+    if (changed) {
+      RebuildPath(path_key);
+    }
+    return changed;
+  }
+
+  OwnerFileDecorations next{.path = normalized_path, .data = std::move(data)};
+  const auto existing = owner_entries.find(path_key);
+  if (existing != owner_entries.end() && existing->second == next) {
+    return false;
+  }
+  owner_entries[path_key] = std::move(next);
+  RebuildPath(path_key);
+  return true;
+}
+
+bool PluginDecorationStore::ClearOwner(std::string_view owner) {
+  const auto owner_it = by_owner_.find(owner);
+  if (owner_it == by_owner_.end()) {
+    return false;
+  }
+  std::vector<std::string> path_keys;
+  path_keys.reserve(owner_it->second.size());
+  for (const auto& entry : owner_it->second) {
+    path_keys.push_back(entry.first);
+  }
+  by_owner_.erase(owner_it);
+  for (const auto& path_key : path_keys) {
+    RebuildPath(path_key);
+  }
+  return !path_keys.empty();
+}
+
+bool PluginDecorationStore::ClearOwnerFile(std::string_view owner,
+                                           const std::filesystem::path& path) {
+  const std::string owner_key(owner);
+  const std::string path_key = PathKey(path);
+  if (owner_key.empty() || path_key.empty()) {
+    return false;
+  }
+  const auto owner_it = by_owner_.find(owner_key);
+  if (owner_it == by_owner_.end()) {
+    return false;
+  }
+  if (owner_it->second.erase(path_key) == 0) {
+    return false;
+  }
+  if (owner_it->second.empty()) {
+    by_owner_.erase(owner_it);
+  }
+  RebuildPath(path_key);
+  return true;
+}
+
+bool PluginDecorationStore::RetargetPathPrefix(const std::filesystem::path& old_prefix,
+                                               const std::filesystem::path& new_prefix) {
+  const std::filesystem::path normalized_old = old_prefix.lexically_normal();
+  const std::filesystem::path normalized_new = new_prefix.lexically_normal();
+  if (normalized_old.empty() || normalized_new.empty() || normalized_old == normalized_new) {
+    return false;
+  }
+
+  bool changed = false;
+  std::vector<std::string> affected_path_keys;
+  for (auto owner_it = by_owner_.begin(); owner_it != by_owner_.end();) {
+    auto& owner_entries = owner_it->second;
+    std::vector<std::string> old_keys;
+    std::vector<std::pair<std::string, OwnerFileDecorations>> replacements;
+
+    for (const auto& [path_key, file] : owner_entries) {
+      if (!PathEqualsOrWithin(file.path, normalized_old)) {
+        continue;
+      }
+      OwnerFileDecorations moved = file;
+      moved.path = ReplacePathPrefix(file.path, normalized_old, normalized_new);
+      const std::string moved_key = PathKey(moved.path);
+      if (moved_key.empty()) {
+        continue;
+      }
+      old_keys.push_back(path_key);
+      replacements.push_back({moved_key, std::move(moved)});
+      affected_path_keys.push_back(path_key);
+      affected_path_keys.push_back(moved_key);
+      changed = true;
+    }
+
+    for (const auto& old_key : old_keys) {
+      owner_entries.erase(old_key);
+    }
+    for (auto& [new_key, moved] : replacements) {
+      owner_entries[new_key] = std::move(moved);
+    }
+    if (owner_entries.empty()) {
+      owner_it = by_owner_.erase(owner_it);
+    } else {
+      ++owner_it;
+    }
+  }
+
+  std::sort(affected_path_keys.begin(), affected_path_keys.end());
+  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
+                           affected_path_keys.end());
+  for (const auto& path_key : affected_path_keys) {
+    RebuildPath(path_key);
+  }
+  return changed;
+}
+
+bool PluginDecorationStore::ClearPathPrefix(const std::filesystem::path& path_prefix) {
+  const std::filesystem::path normalized_prefix = path_prefix.lexically_normal();
+  if (normalized_prefix.empty()) {
+    return false;
+  }
+
+  bool changed = false;
+  std::vector<std::string> affected_path_keys;
+  for (auto owner_it = by_owner_.begin(); owner_it != by_owner_.end();) {
+    auto& owner_entries = owner_it->second;
+    for (auto path_it = owner_entries.begin(); path_it != owner_entries.end();) {
+      if (!PathEqualsOrWithin(path_it->second.path, normalized_prefix)) {
+        ++path_it;
+        continue;
+      }
+      affected_path_keys.push_back(path_it->first);
+      path_it = owner_entries.erase(path_it);
+      changed = true;
+    }
+    if (owner_entries.empty()) {
+      owner_it = by_owner_.erase(owner_it);
+    } else {
+      ++owner_it;
+    }
+  }
+
+  std::sort(affected_path_keys.begin(), affected_path_keys.end());
+  affected_path_keys.erase(std::unique(affected_path_keys.begin(), affected_path_keys.end()),
+                           affected_path_keys.end());
+  for (const auto& path_key : affected_path_keys) {
+    RebuildPath(path_key);
+  }
+  return changed;
+}
+
+void PluginDecorationStore::Clear() {
+  if (by_owner_.empty() && merged_by_path_.empty()) {
+    return;
+  }
+  by_owner_.clear();
+  merged_by_path_.clear();
+  BumpRevision();
+}
+
+const FileDecorations* PluginDecorationStore::FindByPath(const std::filesystem::path& path) const {
+  const auto it = merged_by_path_.find(PathKey(path));
+  return it == merged_by_path_.end() ? nullptr : &it->second;
+}
+
+}  // namespace microide::editor

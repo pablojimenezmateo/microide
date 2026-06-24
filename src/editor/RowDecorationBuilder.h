@@ -107,6 +107,11 @@ struct RowDecorationInput {
   std::size_t diagnostic_visible_columns = 0;
   std::size_t tab_size = 0;
 
+  // Plugin-published inline text-style decorations for this line. Drives
+  // background fills, a foreground recolor overlay on the syntax runs, and
+  // underline/strike. Empty => skipped (zero overhead for the common case).
+  std::span<const TextStyleDecoration> text_styles;
+
   const render::TextRenderer* text_renderer = nullptr;
   const render::Theme* theme = nullptr;
 };

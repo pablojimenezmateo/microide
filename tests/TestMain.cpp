@@ -23,6 +23,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests);
 void RegisterBranchReviewStateTests(std::vector<TestCase>& tests);
 void RegisterPatchApplyTests(std::vector<TestCase>& tests);
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests);
+void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests);
 void RegisterBreakpointStoreTests(std::vector<TestCase>& tests);
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
@@ -334,6 +335,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterBranchReviewStateTests(tests);
   microide::tests::RegisterPatchApplyTests(tests);
   microide::tests::RegisterDiagnosticsStoreTests(tests);
+  microide::tests::RegisterPluginDecorationStoreTests(tests);
   microide::tests::RegisterBreakpointStoreTests(tests);
   microide::tests::RegisterDirectoryTreeTests(tests);
   microide::tests::RegisterDirtyRegionPolicyTests(tests);

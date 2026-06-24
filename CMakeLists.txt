@@ -144,6 +144,8 @@ set(MICROIDE_CORE_SOURCES
   src/editor/ExecutionLineRender.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
+  src/editor/PluginDecorationStore.cpp
+  src/editor/GutterIconRegistry.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/WelcomeView.cpp
   src/editor/FoldingModel.cpp
@@ -211,6 +213,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginDataDirectoryInterop.cpp
   src/plugin/PluginHoverQueryInterop.cpp
   src/plugin/PluginDiagnosticsInterop.cpp
+  src/plugin/PluginDecorationInterop.cpp
   src/plugin/PluginLifecycleCallbackInterop.cpp
   src/plugin/PluginLifecycleLoadInterop.cpp
   src/plugin/PluginLifecycleResetInterop.cpp
@@ -609,6 +612,7 @@ add_executable(microide_tests
   tests/PatchApplyTests.cpp
   tests/BreakpointStoreTests.cpp
   tests/DiagnosticsStoreTests.cpp
+  tests/PluginDecorationStoreTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
@@ -891,6 +895,8 @@ add_executable(microide_diff_bench
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
   src/editor/DiagnosticsStore.cpp
+  src/editor/PluginDecorationStore.cpp
+  src/editor/GutterIconRegistry.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/ExecutionLineRender.cpp
   src/editor/FoldingModel.cpp

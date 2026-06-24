@@ -11,6 +11,7 @@
 #include "editor/BreakpointStore.h"
 #include "editor/FunctionBreakpointStore.h"
 #include "editor/DiagnosticsStore.h"
+#include "editor/PluginDecorationStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionTypes.h"
@@ -338,6 +339,11 @@ struct ProjectWorkspaceState {
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
   editor::DiagnosticsStore diagnostics_store;
+  // Plugin-published editor decorations (inline text styles, gutter marks,
+  // inline/virtual text, code lenses) keyed by owner+path. Mirrors
+  // `diagnostics_store`: plugins replace their contribution atomically and the
+  // renderer reads the merged-per-path view. Session-scoped (not persisted).
+  editor::PluginDecorationStore decoration_store;
   // Per-project breakpoints keyed by file path. Adapter-agnostic; the host
   // snapshots it at launch (setBreakpoints) and reflects verification back.
   // Mirrors `diagnostics_store`: survives session restarts, persists via the

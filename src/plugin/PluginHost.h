@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "editor/PluginDecorationStore.h"
 #include "platform/SubprocessSandbox.h"
 #include "util/JsonValue.h"
 
@@ -341,6 +342,15 @@ class PluginHost {
         publish_diagnostics;
     std::function<void(std::string_view, const std::filesystem::path&)> clear_file_diagnostics;
     std::function<void(std::string_view)> clear_owner_diagnostics;
+    // Plugin-published editor decorations (inline text styles, gutter marks,
+    // inline/virtual text, code lenses). A publish replaces the owner's full
+    // decoration set for the file; clears mirror the diagnostics callbacks.
+    std::function<void(std::string_view,
+                       const std::filesystem::path&,
+                       editor::PluginDecorationData)>
+        publish_decorations;
+    std::function<void(std::string_view, const std::filesystem::path&)> clear_file_decorations;
+    std::function<void(std::string_view)> clear_owner_decorations;
     std::function<void(const std::string&)> error_sink;
     std::function<void(const std::string&)> log_sink;
     std::function<std::optional<std::string>(std::string_view)> get_setting;

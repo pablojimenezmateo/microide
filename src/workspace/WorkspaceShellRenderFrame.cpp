@@ -339,6 +339,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       return diagnostics != nullptr ? std::span<const editor::PublishedDiagnostic>(*diagnostics)
                                     : std::span<const editor::PublishedDiagnostic>{};
     };
+    const auto decorations_for_viewport =
+        [&project_state](const editor::TextViewport& viewport) -> const editor::FileDecorations* {
+      if (viewport.path().empty() || viewport.dirty()) {
+        return nullptr;
+      }
+      return project_state.decoration_store.FindByPath(viewport.path());
+    };
     const auto draw_review_comment_markers =
         [this, renderer](const editor::TextViewport& viewport,
                          const SDL_FRect& pane_rect,
@@ -516,7 +523,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    &tls_editor_surface_vm,
                                    pane.active && bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
-                                   active_folding_model);
+                                   active_folding_model, nullptr,
+                                   decorations_for_viewport(*viewport));
       draw_review_comment_markers(*viewport, pane.rect, metrics);
 
     }

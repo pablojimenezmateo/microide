@@ -295,6 +295,27 @@ WorkspaceShell::WorkspaceShell() {
               RequestEditorSurfaceRedraw();
             }
           },
+      .publish_decorations =
+          [this](std::string_view owner,
+                 const std::filesystem::path& path,
+                 editor::PluginDecorationData data) {
+            if (context_.current_project_state.decoration_store.ReplaceForOwnerFile(
+                    owner, path, std::move(data))) {
+              RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_file_decorations =
+          [this](std::string_view owner, const std::filesystem::path& path) {
+            if (context_.current_project_state.decoration_store.ClearOwnerFile(owner, path)) {
+              RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_owner_decorations =
+          [this](std::string_view owner) {
+            if (context_.current_project_state.decoration_store.ClearOwner(owner)) {
+              RequestEditorSurfaceRedraw();
+            }
+          },
       .error_sink =
           [this](const std::string& text) {
             output_channels_.AppendLine("plugins.error", "Plugin Errors", text);

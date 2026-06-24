@@ -109,6 +109,67 @@ void AppendColumnFill(DecoratedTextRow& row, const RowDecorationInput& in, const
   });
 }
 
+// Append underline / strikethrough lines for plugin text-style decorations,
+// clipped to the visible byte window (same geometry as diagnostic underlines).
+void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& in) {
+  if (in.text_styles.empty() || in.text == nullptr || in.text_renderer == nullptr) {
+    return;
+  }
+  const std::size_t visible_columns =
+      in.row_visual_end > in.row_visual_start ? in.row_visual_end - in.row_visual_start : 0;
+  const VisibleTextWindow window =
+      SliceVisibleColumns(*in.text, in.row_visual_start, visible_columns);
+  if (window.text.empty()) {
+    return;
+  }
+  const std::size_t window_end = window.byte_offset + window.text.size();
+  for (const TextStyleDecoration& ts : in.text_styles) {
+    const bool underline = (ts.flags & kDecorationUnderline) != 0;
+    const bool strike = (ts.flags & kDecorationStrikethrough) != 0;
+    if (!underline && !strike) {
+      continue;
+    }
+    const bool whole = (ts.flags & kDecorationWholeLine) != 0;
+    const std::size_t start = whole ? 0 : ts.start_column;
+    const std::size_t end = whole ? in.text->size() : ts.end_column;
+    if (end <= start || end <= window.byte_offset || start >= window_end) {
+      continue;
+    }
+    const std::size_t clipped_start = std::max(start, window.byte_offset);
+    const std::size_t clipped_end = std::min(end, window_end);
+    if (clipped_end <= clipped_start) {
+      continue;
+    }
+    const std::size_t local_start = clipped_start - window.byte_offset;
+    const std::size_t local_end = clipped_end - window.byte_offset;
+    const std::string_view prefix_text(window.text.data(), local_start);
+    const std::string_view span_text(window.text.data() + local_start, local_end - local_start);
+    const float start_x = in.text_x + in.text_renderer->MeasureWidth(prefix_text);
+    const float span_width = in.text_renderer->MeasureWidth(span_text);
+    if (span_width <= 0.0f) {
+      continue;
+    }
+    SDL_Color color = ts.line_color.a != 0 ? ts.line_color
+                      : ts.foreground.a != 0 ? ts.foreground
+                                             : in.plain_color;
+    // Underlines are dimmed 0.55x at draw time; lift the source alpha so plugin
+    // lines render at the author's intended intensity.
+    color.a = 255;
+    if (underline) {
+      row.underlines.push_back(DecoratedUnderline{
+          .rect = SDL_FRect{start_x, in.y + in.line_height - 2.0f, span_width, 1.0f},
+          .color = color,
+      });
+    }
+    if (strike) {
+      row.underlines.push_back(DecoratedUnderline{
+          .rect = SDL_FRect{start_x, in.y + in.line_height * 0.5f, span_width, 1.0f},
+          .color = color,
+      });
+    }
+  }
+}
+
 }  // namespace
 
 void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
@@ -128,6 +189,24 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
   for (const DecoratedTextFill& fill : in.prepositioned_fills) {
     row.fills.push_back(fill);
   }
+  // Plugin text-style background fills ride the column-fill geometry path,
+  // layered above selection/search so a translucent author color blends over
+  // them and below the syntax runs.
+  for (const TextStyleDecoration& ts : in.text_styles) {
+    if (ts.background.a == 0) {
+      continue;
+    }
+    const bool whole = (ts.flags & kDecorationWholeLine) != 0;
+    RowFillSpan span{
+        .start_column = whole ? 0 : ts.start_column,
+        .end_column = whole ? (in.text != nullptr ? in.text->size() : 0) : ts.end_column,
+        .color = ts.background,
+        .geometry = RowFillSpan::Geometry::kRange,
+    };
+    if (span.end_column > span.start_column) {
+      AppendColumnFill(row, in, span);
+    }
+  }
 
   const std::string_view text_view = in.text != nullptr ? std::string_view(*in.text)
                                                         : std::string_view{};
@@ -136,12 +215,13 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
   if (in.text_renderer != nullptr && in.theme != nullptr) {
     if (in.layout != nullptr) {
       AppendLayoutSyntaxTextRuns(row, *in.text_renderer, *in.theme, in.text_x, in.y, *in.layout,
-                                 in.plain_color, tokens);
+                                 in.plain_color, tokens, in.text_styles);
     } else {
       const std::size_t visible_columns =
           in.row_visual_end > in.row_visual_start ? in.row_visual_end - in.row_visual_start : 0;
       AppendVisibleSyntaxTextRuns(row, *in.text_renderer, *in.theme, in.text_x, in.y, text_view,
-                                  in.row_visual_start, visible_columns, in.plain_color, tokens);
+                                  in.row_visual_start, visible_columns, in.plain_color, tokens,
+                                  in.text_styles);
     }
 
     if (!in.changed_spans.empty()) {
@@ -157,6 +237,8 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
                                  *in.text, in.diagnostic_line_index, in.diagnostic_horizontal_scroll,
                                  in.diagnostic_visible_columns, in.tab_size, in.diagnostics);
     }
+
+    AppendTextStyleUnderlines(row, in);
   }
 }
 

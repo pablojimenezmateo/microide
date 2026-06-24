@@ -3,9 +3,38 @@
 #include <algorithm>
 #include <cmath>
 
+#include <optional>
+
 #include "util/StringUtil.h"
 
 namespace microide::editor {
+
+namespace {
+
+bool SameColor(SDL_Color a, SDL_Color b) noexcept {
+  return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+// Effective plugin foreground for a source byte column, if any text-style
+// decoration recolors it. Overrides for a line are few; a linear scan keeps the
+// hot path branch-light and allocation-free.
+std::optional<SDL_Color> OverrideForegroundAt(std::span<const TextStyleDecoration> overrides,
+                                              std::size_t source_byte_column) {
+  for (const TextStyleDecoration& ts : overrides) {
+    if (ts.foreground.a == 0) {
+      continue;
+    }
+    if ((ts.flags & kDecorationWholeLine) != 0) {
+      return ts.foreground;
+    }
+    if (source_byte_column >= ts.start_column && source_byte_column < ts.end_column) {
+      return ts.foreground;
+    }
+  }
+  return std::nullopt;
+}
+
+}  // namespace
 
 VisibleTextWindow SliceVisibleColumns(std::string_view text,
                                       std::size_t start_column,
@@ -54,7 +83,8 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
                                  std::size_t horizontal_scroll,
                                  std::size_t visible_columns,
                                  SDL_Color plain_color,
-                                 const std::vector<SyntaxTokenKind>& full_tokens) {
+                                 const std::vector<SyntaxTokenKind>& full_tokens,
+                                 std::span<const TextStyleDecoration> foreground_overrides) {
   if (text.empty()) {
     return;
   }
@@ -72,10 +102,22 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
     }
     return SyntaxTokenKind::Plain;
   };
+  // Effective color = plugin foreground override when present, else the syntax
+  // token color. Segmenting by effective color folds recolor and highlighting
+  // into the existing run-coalescing pass with no extra draw calls.
+  const auto effective_color_at = [&](std::size_t byte_offset) -> SDL_Color {
+    if (!foreground_overrides.empty()) {
+      if (const auto color = OverrideForegroundAt(foreground_overrides,
+                                                  window.byte_offset + byte_offset)) {
+        return *color;
+      }
+    }
+    return SyntaxTokenColor(theme, token_kind_at(byte_offset), plain_color);
+  };
 
   float segment_x = x;
   for (std::size_t segment_start = 0; segment_start < window.text.size();) {
-    const SyntaxTokenKind kind = token_kind_at(segment_start);
+    const SDL_Color color = effective_color_at(segment_start);
     std::size_t segment_end = segment_start;
     while (segment_end < window.text.size()) {
       const std::size_t next =
@@ -84,7 +126,7 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
         segment_end = window.text.size();
         break;
       }
-      if (token_kind_at(next) != kind) {
+      if (!SameColor(effective_color_at(next), color)) {
         segment_end = next;
         break;
       }
@@ -96,7 +138,7 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
     row.runs.push_back(DecoratedTextRun{
         .x = segment_x,
         .y = y,
-        .color = SyntaxTokenColor(theme, kind, plain_color),
+        .color = color,
         .text = segment_text,
     });
     segment_x += text_renderer.MeasureWidth(segment_text);
@@ -111,27 +153,33 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
                                 float y,
                                 const LayoutLine& layout,
                                 SDL_Color plain_color,
-                                const std::vector<SyntaxTokenKind>& full_tokens) {
+                                const std::vector<SyntaxTokenKind>& full_tokens,
+                                std::span<const TextStyleDecoration> foreground_overrides) {
   const std::size_t visible_cells =
       std::min(layout.source_columns.size(), layout.text_offsets.size());
   if (layout.text.empty() || visible_cells == 0) {
     return;
   }
 
-  for (std::size_t segment_start = 0; segment_start < visible_cells;) {
+  const auto effective_color_at = [&](std::size_t cell) -> SDL_Color {
     const std::size_t source_column =
-        segment_start < layout.source_columns.size() ? layout.source_columns[segment_start] : 0;
+        cell < layout.source_columns.size() ? layout.source_columns[cell] : 0;
+    if (!foreground_overrides.empty()) {
+      if (const auto color = OverrideForegroundAt(foreground_overrides, source_column)) {
+        return *color;
+      }
+    }
     const SyntaxTokenKind kind =
         source_column < full_tokens.size() ? full_tokens[source_column] : SyntaxTokenKind::Plain;
+    return SyntaxTokenColor(theme, kind, plain_color);
+  };
+
+  for (std::size_t segment_start = 0; segment_start < visible_cells;) {
+    const SDL_Color color = effective_color_at(segment_start);
 
     std::size_t segment_end = segment_start + 1;
     while (segment_end < visible_cells) {
-      const std::size_t next_source_column =
-          segment_end < layout.source_columns.size() ? layout.source_columns[segment_end] : 0;
-      const SyntaxTokenKind next_kind =
-          next_source_column < full_tokens.size() ? full_tokens[next_source_column]
-                                                  : SyntaxTokenKind::Plain;
-      if (next_kind != kind) {
+      if (!SameColor(effective_color_at(segment_end), color)) {
         break;
       }
       ++segment_end;
@@ -146,7 +194,7 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
     row.runs.push_back(DecoratedTextRun{
         .x = x + static_cast<float>(segment_start) * text_renderer.CharWidth(),
         .y = y,
-        .color = SyntaxTokenColor(theme, kind, plain_color),
+        .color = color,
         .text = segment_text,
     });
     segment_start = segment_end;

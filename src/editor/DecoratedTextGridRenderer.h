@@ -3,9 +3,11 @@
 #include <SDL3/SDL.h>
 
 #include <cstddef>
+#include <span>
 #include <string_view>
 #include <vector>
 
+#include "editor/PluginDecorationStore.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
 #include "render/TextRenderer.h"
@@ -58,7 +60,8 @@ void AppendVisibleSyntaxTextRuns(DecoratedTextRow& row,
                                  std::size_t horizontal_scroll,
                                  std::size_t visible_columns,
                                  SDL_Color plain_color,
-                                 const std::vector<SyntaxTokenKind>& full_tokens);
+                                 const std::vector<SyntaxTokenKind>& full_tokens,
+                                 std::span<const TextStyleDecoration> foreground_overrides = {});
 
 void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
                                 const render::TextRenderer& text_renderer,
@@ -67,7 +70,8 @@ void AppendLayoutSyntaxTextRuns(DecoratedTextRow& row,
                                 float y,
                                 const LayoutLine& layout,
                                 SDL_Color plain_color,
-                                const std::vector<SyntaxTokenKind>& full_tokens);
+                                const std::vector<SyntaxTokenKind>& full_tokens,
+                                std::span<const TextStyleDecoration> foreground_overrides = {});
 
 class DecoratedTextGridRenderer {
  public:
