@@ -65,8 +65,12 @@ void TestArchitectureInvariants() {
              // 1572: +1 for the Phase C follow-up ShowOutlineSidebar entry point,
              // the document-outline sidebar's host-side show wrapper (parallel to
              // ShowTestsSidebar).
+             // 1575: +3 for Phase D presentation registries: the two host-owned
+             // registry members (WorkspaceThemeRegistry, WorkspaceFileIconRegistry)
+             // and the RebuildPresentationRegistries entry point that repopulates
+             // them on plugin reload (parallel to RebuildPhase4Registries).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1572);
+                                                     1575);
            });
 
   bool hard_failure = false;

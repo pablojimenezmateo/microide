@@ -448,10 +448,29 @@ bool UpdateStatusItem(lua_State* state,
     it->second.tooltip = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
+  lua_getfield(state, 2, "icon");
+  if (lua_isstring(state, -1)) {
+    it->second.icon = lua_tostring(state, -1);
+  }
+  lua_pop(state, 1);
+  lua_getfield(state, 2, "tone");
+  if (lua_isstring(state, -1)) {
+    it->second.tone = lua_tostring(state, -1);
+  }
+  lua_pop(state, 1);
+  lua_getfield(state, 2, "progress");
+  if (lua_isnumber(state, -1)) {
+    const double value = lua_tonumber(state, -1);
+    it->second.progress = value < 0.0 ? -1.0f : std::clamp(static_cast<float>(value), 0.0f, 1.0f);
+  }
+  lua_pop(state, 1);
   for (auto& order_item : *status_item_order) {
     if (order_item.id == full_id) {
       order_item.text = it->second.text;
       order_item.tooltip = it->second.tooltip;
+      order_item.icon = it->second.icon;
+      order_item.tone = it->second.tone;
+      order_item.progress = it->second.progress;
       break;
     }
   }

@@ -1,12 +1,15 @@
 #include "TestSupport.h"
 
+#include "editor/PluginDecorationStore.h"
 #include "plugin/PluginHost.h"
+#include "workspace/WorkspaceFileIconRegistry.h"
 #include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceSettingsRegistry.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceStatusRegistry.h"
+#include "workspace/WorkspaceThemeRegistry.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -37,6 +40,9 @@ using microide::workspace::PersistedUserConfigState;
 using microide::workspace::ResolveKeybindings;
 using microide::workspace::ResolveStatusItems;
 using microide::workspace::SerializeSettingValue;
+using microide::workspace::StatusItemTone;
+using microide::workspace::WorkspaceFileIconRegistry;
+using microide::workspace::WorkspaceThemeRegistry;
 using microide::workspace::SettingType;
 using microide::workspace::SidebarViewPolicy;
 
@@ -419,6 +425,144 @@ return ide.plugin({
          "status text should update after command");
 }
 
+void TestPluginStatusItemEnrichment() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "rich-status" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "rich.status",
+  setup = function(ctx)
+    ctx.status.add({
+      id = "build",
+      text = "building",
+      icon = "dot",
+      tone = "warning",
+      command = "rich.status.cancel",
+      progress = 0.5,
+      alignment = "left",
+    })
+    ctx.commands.add("rich.status.cancel", function() end)
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  const auto views = ResolveStatusItems(host);
+  Expect(!views.empty(), "ResolveStatusItems should return the enriched item");
+  const auto& item = views.front();
+  Expect(item.icon == "dot", "icon should round-trip");
+  Expect(item.tone == StatusItemTone::Warning, "tone should resolve to Warning");
+  Expect(item.command == "rich.status.cancel", "command should round-trip");
+  Expect(item.progress > 0.49f && item.progress < 0.51f, "progress should round-trip ~0.5");
+}
+
+// ---------------------------------------------------------------------------
+// Plugin-contributed colour themes (Phase D)
+// ---------------------------------------------------------------------------
+
+void TestPluginContributedTheme() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "contrib-theme" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "contrib.theme",
+  setup = function(ctx)
+    ctx.themes.add({
+      id = "noir",
+      label = "Noir",
+      colors = {
+        ["default"] = "#d0d0d0,#101014",
+        comment = "#6a9955",
+        statement = "#569cd6",
+      },
+    })
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  Expect(!host.ContributedThemes().empty(), "plugin should contribute a theme");
+  Expect(host.ContributedThemes().front().id == "contrib.theme.noir",
+         "theme id should be host-namespaced");
+
+  WorkspaceThemeRegistry registry;
+  registry.Rebuild(host);
+  Expect(registry.Contains("contrib.theme.noir"), "registry should contain the theme");
+  const auto names = registry.Names();
+  Expect(std::find(names.begin(), names.end(), "contrib.theme.noir") != names.end(),
+         "Names() should list the contributed theme");
+  Expect(registry.Label("contrib.theme.noir") == "Noir", "label should round-trip");
+
+  const auto theme = registry.Resolve("contrib.theme.noir");
+  Expect(theme.has_value(), "registry should resolve the theme");
+  // The "default" group's background drives editor_background verbatim.
+  Expect(theme->editor_background.r == 0x10 && theme->editor_background.g == 0x10 &&
+             theme->editor_background.b == 0x14,
+         "editor background should reflect the contributed default colour");
+  Expect(!registry.Resolve("contrib.theme.missing").has_value(),
+         "unknown theme id should resolve to nullopt");
+}
+
+// ---------------------------------------------------------------------------
+// Plugin-contributed file-icon themes (Phase D)
+// ---------------------------------------------------------------------------
+
+void TestPluginFileIconTheme() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "contrib-icons" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "contrib.icons",
+  setup = function(ctx)
+    ctx.file_icons.add({
+      id = "demo",
+      rules = {
+        { ext = "csv", icon = "diamond", color = "#80c080" },
+        { name = "Makefile", icon = "square", color = "#888888" },
+      },
+    })
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  Expect(!host.ContributedFileIconThemes().empty(), "plugin should contribute a file-icon theme");
+
+  WorkspaceFileIconRegistry registry;
+  registry.Rebuild(host);
+
+  const auto csv = registry.Resolve("data.csv");
+  Expect(csv.has_value() && csv->shape == editor::GutterIconShape::Diamond,
+         "plugin extension rule should map .csv to a diamond");
+  const auto makefile = registry.Resolve("Makefile");
+  Expect(makefile.has_value() && makefile->shape == editor::GutterIconShape::Square,
+         "plugin filename rule should map Makefile to a square");
+  // Built-in fallback still applies for unconfigured types.
+  const auto cpp = registry.Resolve("main.cpp");
+  Expect(cpp.has_value() && cpp->shape == editor::GutterIconShape::Dot,
+         "built-in default should map .cpp to a dot");
+  Expect(!registry.Resolve("mystery.zzz").has_value(),
+         "unknown extension should resolve to no icon");
+}
+
 // ---------------------------------------------------------------------------
 // Sidebar view ordering and visibility
 // ---------------------------------------------------------------------------
@@ -706,6 +850,9 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
           TestPluginContributedKeybindings);
   AddTest(tests, "StatusRegistry/PluginContributions", TestPluginContributedStatusItems);
   AddTest(tests, "StatusRegistry/Update", TestPluginStatusItemUpdate);
+  AddTest(tests, "StatusRegistry/Enrichment", TestPluginStatusItemEnrichment);
+  AddTest(tests, "ThemeRegistry/PluginContributions", TestPluginContributedTheme);
+  AddTest(tests, "FileIconRegistry/PluginContributions", TestPluginFileIconTheme);
   AddTest(tests, "SidebarRegistry/OrderedNoPolicy", TestSidebarOrderedViewsNoPolicy);
   AddTest(tests, "SidebarRegistry/HideView", TestSidebarHideView);
   AddTest(tests, "SidebarRegistry/ReorderViews", TestSidebarReorderViews);

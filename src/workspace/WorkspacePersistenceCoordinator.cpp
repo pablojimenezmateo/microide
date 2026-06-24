@@ -101,6 +101,9 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
                 return value.has_value() &&
                        !(*value == "false" || *value == "0" || *value == "off");
               },
+          .plugin_theme_names = [this]() { return theme_registry_.Names(); },
+          .resolve_plugin_theme =
+              [this](std::string_view id) { return theme_registry_.Resolve(id); },
       });
 }
 

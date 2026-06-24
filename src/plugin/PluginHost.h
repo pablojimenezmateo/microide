@@ -96,6 +96,14 @@ class PluginHost {
     std::string tooltip;
     std::string alignment;      // "left", "right"
     int priority = 0;
+    // Phase D enrichments. `icon` is a gutter-icon name resolved to a shape at
+    // the workspace boundary; `tone` is one of "default"/"info"/"warning"/"error";
+    // `command` (when non-empty) runs on click; `progress` < 0 means "no bar",
+    // otherwise it is clamped to [0, 1] and drawn as a sub-bar.
+    std::string icon;
+    std::string tone;
+    std::string command;
+    float progress = -1.0f;
     std::string plugin_id;
   };
 
@@ -379,6 +387,44 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  // One highlight-group override inside a plugin-contributed theme. Mirrors a
+  // `.microide` `color-link` row; absent colours stay nullopt so the host's
+  // theme derivation falls back to its computed defaults.
+  struct ContributedThemeStyle {
+    std::string group;  // lower-cased highlight-group name (e.g. "comment")
+    std::optional<SDL_Color> foreground;
+    std::optional<SDL_Color> background;
+    bool reverse = false;
+  };
+
+  // Plugin-contributed colour theme. `id` is host-namespaced (`"<plugin>.<id>"`)
+  // and selectable as a colorscheme; the host derives a full render::Theme from
+  // `styles` via the same path that loads `.microide` files.
+  struct ContributedTheme {
+    std::string id;
+    std::string label;
+    std::vector<ContributedThemeStyle> styles;
+    std::string plugin_id;
+  };
+
+  // One file-icon rule: match by extension (without the dot) or by exact
+  // filename, mapping to a built-in gutter-icon shape name + colour.
+  struct ContributedFileIconRule {
+    std::string matcher;          // extension (no dot) or full filename, lower-cased
+    bool match_filename = false;  // false = extension match, true = whole filename
+    std::string icon;             // gutter-icon shape name (e.g. "diamond")
+    SDL_Color color{};
+  };
+
+  // Plugin-contributed file-icon theme. Rules override the host's built-in
+  // extension defaults; later-registered themes win on conflicts.
+  struct ContributedFileIconTheme {
+    std::string id;
+    std::string label;
+    std::vector<ContributedFileIconRule> rules;
+    std::string plugin_id;
+  };
+
   struct Callbacks {
     std::function<bool(std::string_view)> is_command_name_available;
     std::function<bool(const OpenFileRequest&)> open_file;
@@ -551,6 +597,8 @@ class PluginHost {
   const std::vector<ContributedCommentMarkers>& ContributedComments() const;
   const std::vector<ContributedIndentRules>& ContributedIndents() const;
   const std::vector<ContributedSnippet>& ContributedSnippets() const;
+  const std::vector<ContributedTheme>& ContributedThemes() const;
+  const std::vector<ContributedFileIconTheme>& ContributedFileIconThemes() const;
   const std::vector<std::string>& Messages() const;
   const std::vector<std::string>& Errors() const;
   void ClearMessages();

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "render/ColorMath.h"
+#include "render/ThemeFile.h"
 
 namespace microide::render {
 
@@ -72,6 +73,10 @@ struct Theme {
 Theme MakeDefaultTheme();
 // Built-in light theme, selectable as the "light" colorscheme alongside "default".
 Theme MakeLightTheme();
+// Derive a full Theme from a parsed highlight-group style map (the same map a
+// `.microide` colorscheme file parses to). Plugin-contributed themes reuse this
+// so their colour payload runs through the identical contrast-correction logic.
+Theme BuildThemeFromStyles(const ThemeStyleMap& styles);
 // Colour-space math primitives (RelativeLuminance/Contrast/BlendColors/
 // CompositeOver) live in render/ColorMath.h, included above.
 std::filesystem::path FindThemeDirectory();

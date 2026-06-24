@@ -51,6 +51,8 @@
 #include "workspace/WorkspaceTestController.h"
 #include "workspace/WorkspaceScmRegistry.h"
 #include "workspace/WorkspaceAnnotationRegistry.h"
+#include "workspace/WorkspaceThemeRegistry.h"
+#include "workspace/WorkspaceFileIconRegistry.h"
 #include "workspace/WorkspaceVirtualDocument.h"
 #include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceEventResult.h"

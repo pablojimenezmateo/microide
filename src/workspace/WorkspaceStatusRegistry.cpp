@@ -1,10 +1,28 @@
 #include "workspace/WorkspaceStatusRegistry.h"
 
 #include <algorithm>
+#include <string_view>
 
 #include "plugin/PluginHost.h"
 
 namespace microide::workspace {
+
+namespace {
+
+StatusItemTone ToneFromString(std::string_view tone) {
+  if (tone == "error") {
+    return StatusItemTone::Error;
+  }
+  if (tone == "warning") {
+    return StatusItemTone::Warning;
+  }
+  if (tone == "info") {
+    return StatusItemTone::Info;
+  }
+  return StatusItemTone::Default;
+}
+
+}  // namespace
 
 std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_host) {
   std::vector<StatusItemView> items;
@@ -16,6 +34,10 @@ std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_
         .alignment =
             (contrib.alignment == "left") ? StatusAlignment::Left : StatusAlignment::Right,
         .priority = contrib.priority,
+        .icon = contrib.icon,
+        .tone = ToneFromString(contrib.tone),
+        .command = contrib.command,
+        .progress = contrib.progress,
         .plugin_id = contrib.plugin_id,
     });
   }

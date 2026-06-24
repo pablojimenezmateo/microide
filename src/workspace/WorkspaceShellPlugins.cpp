@@ -12,6 +12,7 @@
 #include "util/StartupTrace.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspacePersistenceCoordinator.h"
 
 namespace microide::workspace {
 
@@ -489,6 +490,24 @@ void WorkspaceShell::RebuildPhase4Registries() {
   }
 }
 
+void WorkspaceShell::RebuildPresentationRegistries() {
+  const auto& host = plugin_runtime_.Host();
+  theme_registry_.Rebuild(host);
+  file_icon_registry_.Rebuild(host);
+  // Keep the colorscheme picker in sync with newly (un)contributed plugin themes.
+  auto coordinator = MakePersistenceCoordinator();
+  coordinator.RefreshAvailableColorschemeNames();
+  // If the active colorscheme is a plugin theme, re-apply it so its (possibly
+  // changed) colours take effect after the reload. Built-in/filesystem schemes
+  // are unaffected by plugin reloads, so only re-apply when ours is contributed.
+  const std::string& active = context_.current_project_state.active_colorscheme_name;
+  if (theme_registry_.Contains(active)) {
+    coordinator.ApplyColorscheme(active, /*persist=*/false, /*log_feedback=*/false);
+    RequestEditorSurfaceRedraw();
+    RequestChromeRedraw();
+  }
+}
+
 bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::ReloadPluginsForCurrentProject");
@@ -512,6 +531,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
         "WorkspaceShell::ReloadPluginsForCurrentProject::RebuildRegistries");
     RebuildPhase3Registries();
     RebuildPhase4Registries();
+    RebuildPresentationRegistries();
   }
   {
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
@@ -583,6 +603,7 @@ void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
   // completions, etc.) still rebuild to clear the previous project's leftovers.
   RebuildPhase3Registries(/*reconcile_language_servers=*/false);
   RebuildPhase4Registries();
+  RebuildPresentationRegistries();
   NormalizeSidebarViewSelection();
   RefreshPluginSidebar();
   if (ActiveSidebarMode() == SidebarMode::Git) {

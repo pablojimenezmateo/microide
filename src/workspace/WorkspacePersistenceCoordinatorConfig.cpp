@@ -110,6 +110,15 @@ void SyncCanonicalProjectSettings(std::vector<std::pair<std::string, std::string
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
   available_colorscheme_names_ = render::ListAvailableThemeNames();
+  if (operations_.plugin_theme_names) {
+    for (std::string& name : operations_.plugin_theme_names()) {
+      available_colorscheme_names_.push_back(std::move(name));
+    }
+    std::sort(available_colorscheme_names_.begin(), available_colorscheme_names_.end());
+    available_colorscheme_names_.erase(
+        std::unique(available_colorscheme_names_.begin(), available_colorscheme_names_.end()),
+        available_colorscheme_names_.end());
+  }
 }
 
 bool PersistenceCoordinator::ApplyColorscheme(std::string_view name,
@@ -120,7 +129,19 @@ bool PersistenceCoordinator::ApplyColorscheme(std::string_view name,
   std::string resolved_name;
   std::string error;
   const std::string requested_name = name.empty() ? "default" : std::string(name);
-  if (!render::LoadThemeByName(requested_name, loaded_theme, &resolved_name, &error)) {
+  // Plugin-contributed themes take precedence over built-in/filesystem themes:
+  // a plugin theme id is namespaced (`"<plugin>.<id>"`) so it cannot collide with
+  // a built-in name, and resolving it derives a full Theme from its style map.
+  bool resolved_from_plugin = false;
+  if (operations_.resolve_plugin_theme) {
+    if (auto plugin_theme = operations_.resolve_plugin_theme(requested_name)) {
+      loaded_theme = *plugin_theme;
+      resolved_name = requested_name;
+      resolved_from_plugin = true;
+    }
+  }
+  if (!resolved_from_plugin &&
+      !render::LoadThemeByName(requested_name, loaded_theme, &resolved_name, &error)) {
     return false;
   }
 

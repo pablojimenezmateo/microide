@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 
+#include "editor/GutterIconRegistry.h"
 #include "workspace/CommitWorkflowLayout.h"
 #include "workspace/CommitWorkflowService.h"
 #include "workspace/CommitWorkflowState.h"
@@ -859,6 +860,12 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       if (entry.is_directory) {
         DrawChevron(renderer, chevron_x, chevron_center_y, entry.expanded,
                     selected ? theme_.text_primary : theme_.text_muted);
+      } else if (const auto icon = file_icon_registry_.Resolve(entry.label)) {
+        // Files have no chevron, so the chevron slot holds the type icon. Selected
+        // rows tint it to the foreground so it stays legible on the highlight.
+        const SDL_Color icon_color = selected ? theme_.text_primary : icon->color;
+        editor::GutterIconRegistry::Draw(renderer, icon->shape, icon_color, chevron_x, row_rect.y,
+                                         kTreeChevronSlotWidth, row_rect.h);
       }
 
       DrawVCenteredTextOn(

@@ -2,6 +2,7 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
+#include <algorithm>
 #include <optional>
 
 #include "plugin/PluginLuaInterop.h"
@@ -398,12 +399,34 @@ bool ParseStatusItemRegistration(lua_State* state,
     priority = static_cast<int>(lua_tointeger(state, -1));
   }
   lua_pop(state, 1);
+  std::string icon;
+  if (auto icon_opt = ReadStringField(state, table_index, "icon")) {
+    icon = std::move(*icon_opt);
+  }
+  std::string tone;
+  if (auto tone_opt = ReadStringField(state, table_index, "tone")) {
+    tone = std::move(*tone_opt);
+  }
+  std::string command;
+  if (auto command_opt = ReadStringField(state, table_index, "command")) {
+    command = std::move(*command_opt);
+  }
+  float progress = -1.0f;
+  lua_getfield(state, table_index, "progress");
+  if (lua_isnumber(state, -1)) {
+    progress = std::clamp(static_cast<float>(lua_tonumber(state, -1)), 0.0f, 1.0f);
+  }
+  lua_pop(state, 1);
   out->contributed = PluginHost::ContributedStatusItem{
       .id = plugin_id + "." + *id_opt,
       .text = std::move(text),
       .tooltip = std::move(tooltip),
       .alignment = std::move(alignment),
       .priority = priority,
+      .icon = std::move(icon),
+      .tone = std::move(tone),
+      .command = std::move(command),
+      .progress = progress,
       .plugin_id = plugin_id,
   };
   if (error_message != nullptr) {

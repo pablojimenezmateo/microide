@@ -56,7 +56,9 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedBracketSet>* bracket_sets,
     std::vector<PluginHost::ContributedCommentMarkers>* comment_markers,
     std::vector<PluginHost::ContributedIndentRules>* indent_rules,
-    std::vector<PluginHost::ContributedSnippet>* snippets);
+    std::vector<PluginHost::ContributedSnippet>* snippets,
+    std::vector<PluginHost::ContributedTheme>* themes,
+    std::vector<PluginHost::ContributedFileIconTheme>* file_icon_themes);
 #endif
 
 }  // namespace microide::plugin::state_teardown_interop

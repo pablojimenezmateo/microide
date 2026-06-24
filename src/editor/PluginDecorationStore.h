@@ -59,6 +59,7 @@ enum class GutterIconShape : std::uint8_t {
   Bookmark,
   Check,
   Dash,
+  Square,
 };
 
 struct GutterMarkDecoration {

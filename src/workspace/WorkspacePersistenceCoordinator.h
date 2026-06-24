@@ -53,6 +53,12 @@ class PersistenceCoordinator {
     // debug pane visible (so a pane left open in a prior session stays hidden when
     // the debugger feature is currently disabled).
     std::function<bool()> debugger_enabled;
+    // Phase D plugin colour themes. `plugin_theme_names` lists contributed theme
+    // ids for the colorscheme picker; `resolve_plugin_theme` derives the Theme for
+    // a contributed id (nullopt when the id is not a plugin theme, so colorscheme
+    // resolution falls back to built-in/filesystem `.microide` loading).
+    std::function<std::vector<std::string>()> plugin_theme_names;
+    std::function<std::optional<render::Theme>(std::string_view)> resolve_plugin_theme;
   };
 
   PersistenceCoordinator(WorkspaceContext& context,

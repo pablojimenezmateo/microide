@@ -225,6 +225,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginProviderQueryInterop.cpp
   src/plugin/PluginRuntimeApiInterop.cpp
   src/plugin/PluginRegistryInterop.cpp
+  src/plugin/PluginPresentationRegistrationParsers.cpp
   src/plugin/PluginProviderRegistrationParsers.cpp
   src/plugin/PluginRegistrationParsers.cpp
   src/plugin/PluginSidebarHoverInterop.cpp
@@ -453,6 +454,8 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/SettingsOverlayService.cpp
   src/workspace/WorkspaceStatusRegistry.cpp
   src/workspace/WorkspaceSidebarRegistry.cpp
+  src/workspace/WorkspaceThemeRegistry.cpp
+  src/workspace/WorkspaceFileIconRegistry.cpp
   src/workspace/LspProtocol.cpp
   src/workspace/LspService.cpp
   src/workspace/WorkspaceLspClient.cpp

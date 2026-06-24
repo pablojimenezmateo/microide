@@ -39,6 +39,7 @@
 #include "plugin/PluginLifecycleResetInterop.h"
 #include "plugin/PluginLanguageProviderQueryInterop.h"
 #include "plugin/PluginPathInterop.h"
+#include "plugin/PluginPresentationRegistrationParsers.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginProviderQueryInterop.h"
 #include "plugin/PluginRegistrationParsers.h"
@@ -131,6 +132,8 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedCommentMarkers> comment_markers;
   std::vector<PluginHost::ContributedIndentRules> indent_rules;
   std::vector<PluginHost::ContributedSnippet> snippets;
+  std::vector<PluginHost::ContributedTheme> themes;
+  std::vector<PluginHost::ContributedFileIconTheme> file_icon_themes;
   std::vector<std::string> messages;
   std::vector<std::string> errors;
   std::string reload_summary = "Lua plugin runtime unavailable";

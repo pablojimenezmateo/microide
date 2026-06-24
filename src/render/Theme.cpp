@@ -151,6 +151,8 @@ SDL_Color ResolveUiBackground(const ThemeStyleMap& styles,
   return SamePolarity(*candidate, reference) ? *candidate : fallback;
 }
 
+}  // namespace
+
 Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
   Theme theme = MakeDefaultTheme();
 
@@ -285,8 +287,6 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
       ResolveForeground(styles, "debug-execution-arrow", theme.debug_execution_arrow);
   return theme;
 }
-
-}  // namespace
 
 Theme MakeDefaultTheme() {
   Theme theme{

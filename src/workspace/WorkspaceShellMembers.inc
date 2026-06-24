@@ -517,6 +517,10 @@
   void NormalizeSidebarViewSelection();
   void RebuildPhase3Registries(bool reconcile_language_servers = true);
   void RebuildPhase4Registries();
+  // Phase D: rebuild plugin-contributed presentation registries (colour themes,
+  // file-icon themes) from the host. Re-applies the active colorscheme so a
+  // currently-selected plugin theme refreshes after a reload.
+  void RebuildPresentationRegistries();
   std::vector<VisibleStatusItem> ComputeVisibleStatusItems(const SDL_FRect& breadcrumb) const;
   std::string HoveredStatusTooltip(const SDL_FRect& breadcrumb) const;
   std::optional<SDL_FRect> ActiveSubmenuRect(const SDL_FRect& menu_bar) const;
@@ -1666,6 +1670,8 @@
   TestController test_controller_;
   ScmRegistry scm_registry_;
   AnnotationRegistry annotation_registry_;
+  WorkspaceThemeRegistry theme_registry_;
+  WorkspaceFileIconRegistry file_icon_registry_;
   VirtualDocumentRegistry virtual_document_registry_;
   ReviewCommentsRegistry review_comments_registry_;
   PersistenceService persistence_service_;

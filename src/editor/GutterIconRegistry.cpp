@@ -106,7 +106,7 @@ std::optional<GutterIconShape> GutterIconRegistry::ResolveShape(std::string_view
     std::string_view name;
     GutterIconShape shape;
   };
-  static constexpr std::array<Entry, 8> kEntries{{
+  static constexpr std::array<Entry, 9> kEntries{{
       {"dot", GutterIconShape::Dot},
       {"circle", GutterIconShape::Circle},
       {"diamond", GutterIconShape::Diamond},
@@ -115,6 +115,7 @@ std::optional<GutterIconShape> GutterIconRegistry::ResolveShape(std::string_view
       {"check", GutterIconShape::Check},
       {"checkmark", GutterIconShape::Check},
       {"dash", GutterIconShape::Dash},
+      {"square", GutterIconShape::Square},
   }};
   for (const Entry& entry : kEntries) {
     if (EqualsIgnoreAsciiCase(name, entry.name)) {
@@ -197,6 +198,14 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
       const float h = std::max(2.0f, bounds.h * 0.24f);
       SDL_FRect bar{bounds.x, cy - h * 0.5f, bounds.w, h};
       SDL_RenderFillRect(renderer, &bar);
+      break;
+    }
+    case GutterIconShape::Square: {
+      // Slightly inset filled square so it reads distinctly from the dot.
+      const float inset = std::max(0.0f, bounds.w * 0.08f);
+      SDL_FRect box{bounds.x + inset, bounds.y + inset, bounds.w - inset * 2.0f,
+                    bounds.h - inset * 2.0f};
+      SDL_RenderFillRect(renderer, &box);
       break;
     }
     case GutterIconShape::Check:

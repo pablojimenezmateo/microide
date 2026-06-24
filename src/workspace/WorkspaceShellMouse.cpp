@@ -201,6 +201,19 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
+  // A plugin breadcrumb status item with a bound command dispatches it on click.
+  if (event.button.button == SDL_BUTTON_LEFT && !MenuSurfaceCapturingMouse()) {
+    for (const VisibleStatusItem& status_item : ComputeVisibleStatusItems(layout.breadcrumb)) {
+      if (!status_item.item.command.empty() &&
+          Contains(status_item.rect, event.button.x, event.button.y)) {
+        std::string error_message;
+        ExecuteCommandName(status_item.item.command, {}, ActionSource::Command, &error_message);
+        ensure_redraw([this]() { RequestChromeRedraw(); });
+        return true;
+      }
+    }
+  }
+
   if (event.button.button == SDL_BUTTON_LEFT) {
     // A plugin code-lens click dispatches its bound command. Checked before the
     // blame overlay (both anchor at end-of-line) so the actionable lens wins.

@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/GutterIconRegistry.h"
 #include "render/SurfacePrimitives.h"
 
 namespace microide::workspace {
@@ -216,12 +217,66 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
   float breadcrumb_text_right = layout.breadcrumb.x + layout.breadcrumb.w - 12.0f;
   for (const VisibleStatusItem& item : status_items) {
-    const SDL_Color background = item.hovered ? theme_.row_highlight : theme_.chrome_background;
+    // Tone tints the item background even when not hovered (so a warning/error
+    // status reads at a glance); hover still lifts it to row_highlight.
+    SDL_Color tone_fill = theme_.chrome_background;
+    switch (item.item.tone) {
+      case StatusItemTone::Error:
+        tone_fill = theme_.diagnostic_error;
+        break;
+      case StatusItemTone::Warning:
+        tone_fill = theme_.diagnostic_warning;
+        break;
+      case StatusItemTone::Info:
+        tone_fill = theme_.diagnostic_info;
+        break;
+      case StatusItemTone::Default:
+        break;
+    }
+    const bool has_tone = item.item.tone != StatusItemTone::Default;
     const SDL_Color text_color = item.hovered ? theme_.text_primary : theme_.text_muted;
     if (item.hovered) {
       DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.chrome_background, true);
+    } else if (has_tone) {
+      const SDL_Color tinted = render::BlendColors(theme_.chrome_background, tone_fill, 0.28f);
+      SDL_SetRenderDrawColor(renderer, tinted.r, tinted.g, tinted.b, 0xff);
+      SDL_RenderFillRect(renderer, &item.rect);
     }
-    DrawVCenteredTextOn(text_renderer_, renderer, item.rect, 8.0f, text_color, background,
+    const SDL_Color row_bg = item.hovered ? theme_.row_highlight
+                                          : (has_tone ? render::BlendColors(theme_.chrome_background,
+                                                                    tone_fill, 0.28f)
+                                                      : theme_.chrome_background);
+
+    float text_x = item.rect.x + 8.0f;
+    // Leading icon, if the contributed name resolves to a built-in shape.
+    if (!item.item.icon.empty()) {
+      if (const auto shape = editor::GutterIconRegistry::ResolveShape(item.item.icon)) {
+        const SDL_Color icon_color = has_tone ? tone_fill : theme_.accent;
+        editor::GutterIconRegistry::Draw(renderer, *shape, icon_color, text_x, item.rect.y, 14.0f,
+                                         item.rect.h);
+        text_x += 16.0f;
+      }
+    }
+    // Trailing progress bar, if the item declares one.
+    float text_right = item.rect.x + item.rect.w - 8.0f;
+    if (item.item.progress >= 0.0f) {
+      constexpr float kBarW = 28.0f;
+      const float bar_x = item.rect.x + item.rect.w - kBarW - 6.0f;
+      const float bar_h = 4.0f;
+      const float bar_y = item.rect.y + (item.rect.h - bar_h) * 0.5f;
+      const SDL_FRect track{bar_x, bar_y, kBarW, bar_h};
+      const SDL_Color track_color = render::BlendColors(row_bg, theme_.border, 0.6f);
+      SDL_SetRenderDrawColor(renderer, track_color.r, track_color.g, track_color.b, 0xff);
+      SDL_RenderFillRect(renderer, &track);
+      const SDL_FRect fill{bar_x, bar_y, kBarW * std::clamp(item.item.progress, 0.0f, 1.0f), bar_h};
+      const SDL_Color fill_color = has_tone ? tone_fill : theme_.accent;
+      SDL_SetRenderDrawColor(renderer, fill_color.r, fill_color.g, fill_color.b, 0xff);
+      SDL_RenderFillRect(renderer, &fill);
+      text_right = bar_x - 6.0f;
+    }
+    const SDL_FRect text_rect =
+        MakeRect(text_x, item.rect.y, std::max(0.0f, text_right - text_x), item.rect.h);
+    DrawVCenteredTextOn(text_renderer_, renderer, text_rect, 0.0f, text_color, row_bg,
                         item.item.text);
     if (item.item.alignment == StatusAlignment::Left) {
       breadcrumb_text_x = std::max(breadcrumb_text_x, item.rect.x + item.rect.w + 8.0f);

@@ -76,7 +76,9 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedBracketSet>* bracket_sets,
     std::vector<PluginHost::ContributedCommentMarkers>* comment_markers,
     std::vector<PluginHost::ContributedIndentRules>* indent_rules,
-    std::vector<PluginHost::ContributedSnippet>* snippets) {
+    std::vector<PluginHost::ContributedSnippet>* snippets,
+    std::vector<PluginHost::ContributedTheme>* themes,
+    std::vector<PluginHost::ContributedFileIconTheme>* file_icon_themes) {
   for (auto it = commands->begin(); it != commands->end();) {
     if (it->second.state != state) {
       ++it;
@@ -317,6 +319,16 @@ void UnregisterContributionsForState(
                                    return e.plugin_id == plugin_id;
                                  }),
                   snippets->end());
+  themes->erase(std::remove_if(themes->begin(), themes->end(),
+                               [&](const PluginHost::ContributedTheme& e) {
+                                 return e.plugin_id == plugin_id;
+                               }),
+                themes->end());
+  file_icon_themes->erase(std::remove_if(file_icon_themes->begin(), file_icon_themes->end(),
+                                         [&](const PluginHost::ContributedFileIconTheme& e) {
+                                           return e.plugin_id == plugin_id;
+                                         }),
+                          file_icon_themes->end());
 }
 
 }  // namespace microide::plugin::state_teardown_interop

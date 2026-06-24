@@ -28,6 +28,11 @@ struct ThemeStyle {
 // parsed style.
 using ThemeStyleMap = std::map<std::string, ThemeStyle>;
 
+// Parse a single colour token (`#rrggbb`, an ANSI-256 index, or a named colour
+// like "blue"/"brightred") into an SDL colour. Returns nullopt for empty,
+// "default", or unparseable tokens. Shared with the plugin theme parser.
+std::optional<SDL_Color> ParseThemeColor(std::string_view text);
+
 // Resolve `<theme_directory>/<name>.microide` (case-insensitively), returning an
 // empty path when not found.
 std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory,

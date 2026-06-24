@@ -33,6 +33,8 @@ struct ApiFns {
   lua_CFunction settings_get;
   lua_CFunction status_add;
   lua_CFunction status_update;
+  lua_CFunction themes_register;
+  lua_CFunction file_icons_register;
   lua_CFunction formatters_add;
   lua_CFunction save_participants_add;
   lua_CFunction completion_add;

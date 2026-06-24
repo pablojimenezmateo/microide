@@ -3,6 +3,8 @@
 #include <array>
 #include <string_view>
 
+#include "editor/GutterIconRegistry.h"
+
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceShellBootstrapper.h"
@@ -363,17 +365,33 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
   static constexpr float kItemPadding = 8.0f;
   static constexpr float kItemGap = 6.0f;
   static constexpr float kInset = 12.0f;
+  static constexpr float kIconSlot = 16.0f;
+  static constexpr float kProgressSlot = 34.0f;
   std::vector<StatusItemView> items = ResolveStatusItems(plugin_runtime_.Host());
 
   std::vector<VisibleStatusItem> visible;
   visible.reserve(items.size());
+
+  // Item width = text + padding, plus a fixed slot for a leading icon and/or a
+  // trailing progress bar when present. Kept in sync with the render layout in
+  // WorkspaceShellRenderChrome.cpp.
+  const auto item_width = [&](const StatusItemView& item) {
+    float width = text_renderer_.MeasureWidth(item.text) + kItemPadding * 2.0f;
+    if (!item.icon.empty() && editor::GutterIconRegistry::ResolveShape(item.icon)) {
+      width += kIconSlot;
+    }
+    if (item.progress >= 0.0f) {
+      width += kProgressSlot;
+    }
+    return width;
+  };
 
   float right_x = breadcrumb.x + breadcrumb.w - kInset;
   for (const StatusItemView& item : items) {
     if (item.alignment != StatusAlignment::Right || item.text.empty()) {
       continue;
     }
-    const float width = text_renderer_.MeasureWidth(item.text) + kItemPadding * 2.0f;
+    const float width = item_width(item);
     const float next_x = right_x - width;
     if (next_x < breadcrumb.x + kInset) {
       continue;
@@ -396,7 +414,7 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
     if (item.alignment != StatusAlignment::Left || item.text.empty()) {
       continue;
     }
-    const float width = text_renderer_.MeasureWidth(item.text) + kItemPadding * 2.0f;
+    const float width = item_width(item);
     if (left_x + width > left_limit) {
       break;
     }

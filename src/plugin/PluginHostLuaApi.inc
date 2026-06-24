@@ -360,6 +360,26 @@
         });
   }
 
+  static int LuaThemeRegister(lua_State* state) {
+    return RegisterTableContribution(
+        state, "theme registration requires an active plugin state",
+        "failed to register theme",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return presentation_interop::RegisterTheme(state, plugin->id, &host->themes,
+                                                     error_message);
+        });
+  }
+
+  static int LuaFileIconThemeRegister(lua_State* state) {
+    return RegisterTableContribution(
+        state, "file icon theme registration requires an active plugin state",
+        "failed to register file icon theme",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return presentation_interop::RegisterFileIconTheme(state, plugin->id,
+                                                            &host->file_icon_themes, error_message);
+        });
+  }
+
   static int LuaSaveParticipantsAdd(lua_State* state) {
     return RegisterTableContribution(
         state, "save participant registration requires an active plugin state",
@@ -815,6 +835,8 @@
             .settings_get = &LuaSettingsGet,
             .status_add = &LuaStatusAdd,
             .status_update = &LuaStatusUpdate,
+            .themes_register = &LuaThemeRegister,
+            .file_icons_register = &LuaFileIconThemeRegister,
             .formatters_add = &LuaFormattersAdd,
             .save_participants_add = &LuaSaveParticipantsAdd,
             .completion_add = &LuaCompletionAdd,
@@ -971,7 +993,7 @@
         &test_provider_runtimes,
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
         &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,
-        &bracket_sets, &comment_markers, &indent_rules, &snippets);
+        &bracket_sets, &comment_markers, &indent_rules, &snippets, &themes, &file_icon_themes);
   }
 
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {

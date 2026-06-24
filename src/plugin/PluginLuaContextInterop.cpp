@@ -77,6 +77,9 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   PushBoundFn(state, host_upvalue, fns.status_update, "update");
   lua_setfield(state, -2, "status");
 
+  PushAddOnlyModule(state, host_upvalue, "themes", fns.themes_register);
+  PushAddOnlyModule(state, host_upvalue, "file_icons", fns.file_icons_register);
+
   PushAddOnlyModule(state, host_upvalue, "formatters", fns.formatters_add);
   PushAddOnlyModule(state, host_upvalue, "save_participants", fns.save_participants_add);
   PushAddOnlyModule(state, host_upvalue, "completion", fns.completion_add);

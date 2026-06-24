@@ -17,6 +17,8 @@ SDL_Color MakeColor(Uint8 r, Uint8 g, Uint8 b, Uint8 a = 0xff) {
   return SDL_Color{r, g, b, a};
 }
 
+}  // namespace
+
 std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
   const std::string token = util::ToLowerAscii(util::TrimAsciiWhitespace(text));
   if (token.empty() || token == "default") {
@@ -84,6 +86,8 @@ std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
   }
   return std::nullopt;
 }
+
+namespace {
 
 ThemeStyle ParseThemeStyle(std::string_view text) {
   ThemeStyle style;

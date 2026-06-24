@@ -801,6 +801,15 @@ const std::vector<PluginHost::ContributedSnippet>& PluginHost::ContributedSnippe
   return impl_->snippets;
 }
 
+const std::vector<PluginHost::ContributedTheme>& PluginHost::ContributedThemes() const {
+  return impl_->themes;
+}
+
+const std::vector<PluginHost::ContributedFileIconTheme>& PluginHost::ContributedFileIconThemes()
+    const {
+  return impl_->file_icon_themes;
+}
+
 const std::vector<std::string>& PluginHost::Messages() const {
   return impl_->messages;
 }

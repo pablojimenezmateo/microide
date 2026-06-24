@@ -26,7 +26,9 @@ Plugins may contribute capabilities such as:
 - transient notifications via `microide.notify(level, message)` (host-owned toast
   surface; `level` is info/warning/error)
 - settings metadata
-- status items
+- status items (rich: `icon`, `tone`, click `command`, `progress` — see below)
+- colour themes via `ctx.themes.add{ id, label, colors = {...} }` (see below)
+- file-icon themes via `ctx.file_icons.add{ id, rules = {...} }` (see below)
 - formatters
 - save participants
 - completions
@@ -213,6 +215,45 @@ lands.
 After changes to these tables, the workspace refreshes `WorkspaceLanguageContract`
 and reapplies `LanguageContractView` to open editor tabs (same revision path as
 plugin reload).
+
+## Presentation contributions (`ctx.themes`, `ctx.file_icons`, rich status items)
+
+These Phase D surfaces are **data-only**: the plugin emits values, the host owns
+all drawing. They are parsed in `PluginPresentationRegistrationParsers` and synced
+into host-owned registries by `WorkspaceShell::RebuildPresentationRegistries()` on
+plugin load/reload (parallel to `RebuildPhase4Registries`).
+
+### `ctx.themes.add { id, label, colors = { … } }`
+
+Contributes a colour scheme as a highlight-group style map (the same vocabulary a
+`.microide` file uses: `default`, `comment`, `statement`, `type`, `constant`,
+`constant.string`, `preproc`, …). Each value is either `"#rrggbb"` /
+`"#fg,#bg"` / an ANSI-256 index / a named colour, or a table
+`{ fg = …, bg = …, reverse = true }`. The host derives a full `render::Theme` via
+`render::BuildThemeFromStyles` (identical contrast-correction to file themes) and
+caches it. The scheme is selectable in the colorscheme picker as
+`"<plugin>.<id>"`; selecting it routes through `PersistenceCoordinator::ApplyColorscheme`,
+which consults plugin themes before built-in/filesystem `.microide` schemes.
+
+### `ctx.file_icons.add { id, rules = { … } }`
+
+Maps files to a built-in gutter-icon shape + colour, drawn in the file-tree
+leading slot. Each rule is `{ ext = "csv", icon = "diamond", color = "#80c080" }`
+(extension match) or `{ name = "Makefile", icon = "square", color = "#888" }`
+(exact filename match). `icon` is a name from the built-in vocabulary
+(`dot`/`circle`/`diamond`/`triangle`/`bookmark`/`check`/`dash`/`square`);
+unknown names are dropped. Filename rules win over extension rules, and plugin
+rules win over the host's built-in extension defaults. No raster icons yet — those
+arrive with the Phase E texture cache.
+
+### Rich status items (`ctx.status.add` / `ctx.status.update`)
+
+Status items (rendered in the breadcrumb) accept, in addition to `text`/`tooltip`/
+`alignment`/`priority`: `icon` (a gutter-icon name drawn leading), `tone`
+(`default`/`info`/`warning`/`error`, tints the background), `command` (a command
+run on click via the normal command path), and `progress` (`< 0` = no bar, else a
+`[0, 1]` sub-bar). `ctx.status.update(id, { … })` mutates any of `text`, `tooltip`,
+`icon`, `tone`, `progress` live.
 
 ## What Must Remain Host-Owned
 
