@@ -57,8 +57,16 @@ void TestArchitectureInvariants() {
              // 1560: +1 for the Phase C ToggleSelectedPluginSidebarItem entry point,
              // which routes the tree-sidebar twisty toggle from the mouse/key TUs
              // into the SidebarService (parallel to OpenSelectedPluginSidebarItem).
+             // 1571: +11 for the Phase C follow-up signature-help popup: the
+             // SignatureHelpPopup state struct (7), its optional shell member (1),
+             // and the ShowSignatureHelpPopup / MaybeExpireSignatureHelp /
+             // RenderSignatureHelpPopup entry points (3). The popup is shell-owned
+             // (parallel to the hover popup) so it stays off the project-state path.
+             // 1572: +1 for the Phase C follow-up ShowOutlineSidebar entry point,
+             // the document-outline sidebar's host-side show wrapper (parallel to
+             // ShowTestsSidebar).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1560);
+                                                     1572);
            });
 
   bool hard_failure = false;

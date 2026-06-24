@@ -15,6 +15,7 @@ std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
       SidebarViewSpec{"git", "Source Control", SidebarMode::Git},
       SidebarViewSpec{"problems", "Problems", SidebarMode::Problems},
       SidebarViewSpec{"tests", "Tests", SidebarMode::Tests},
+      SidebarViewSpec{"outline", "Outline", SidebarMode::Outline},
   });
   return kSpecs;
 }
@@ -118,6 +119,7 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
     case SidebarMode::Plugin:
     case SidebarMode::Problems:
     case SidebarMode::Tests:
+    case SidebarMode::Outline:
       break;
   }
 

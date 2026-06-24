@@ -137,8 +137,9 @@ struct FileDecorations {
 
 // Owner/path-keyed store of plugin-published editor decorations, modeled on
 // DiagnosticsStore: re-publish replaces an owner's contribution atomically, and
-// a merged-per-path view is what the renderer reads. A single `revision()`
-// counter drives redraw / measurement-cache invalidation.
+// a merged-per-path view is what the renderer reads. Mutators return a bool that
+// is the redraw signal: true when the merged view actually changed, false for a
+// no-op (e.g. an identical republish) so the host can skip a needless repaint.
 class PluginDecorationStore {
  public:
   bool ReplaceForOwnerFile(std::string_view owner,
@@ -156,7 +157,6 @@ class PluginDecorationStore {
   const FileDecorations* FindByPath(const std::filesystem::path& path) const;
 
   bool empty() const { return merged_by_path_.empty(); }
-  std::uint64_t revision() const { return revision_; }
 
  private:
   struct OwnerFileDecorations {
@@ -167,8 +167,6 @@ class PluginDecorationStore {
   };
 
   static std::string PathKey(const std::filesystem::path& path);
-  static void SortFileDecorations(FileDecorations* file);
-  void BumpRevision();
   void RebuildPath(std::string_view path_key);
 
   std::unordered_map<std::string,
@@ -178,7 +176,6 @@ class PluginDecorationStore {
       by_owner_;
   std::unordered_map<std::string, FileDecorations, util::TransparentStringHash, std::equal_to<>>
       merged_by_path_;
-  std::uint64_t revision_ = 0;
 };
 
 }  // namespace microide::editor

@@ -426,6 +426,7 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `find-references`
 - `focus <editor|sidebar|panel>`
 - `goto-definition`
+- `signature-help`
 - `goto <line[:col]>`
 - `git-refresh`
 - `mark-branch-file-reviewed`

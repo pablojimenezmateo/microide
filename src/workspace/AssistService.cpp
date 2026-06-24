@@ -524,11 +524,8 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();
   }
-  editor::TextViewport* viewport = operations_.active_editable_viewport();
-  if (viewport == nullptr || viewport->path().empty()) {
-    if (error_message != nullptr) {
-      *error_message = "No active file";
-    }
+  editor::TextViewport* viewport = RequireActiveEditableViewport(error_message);
+  if (viewport == nullptr) {
     return false;
   }
 
@@ -546,19 +543,10 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
     }
   }
 
-  std::string language_id;
-  LspClient* client = operations_.lsp_client_for_viewport(*viewport, &language_id);
+  LspClient* client = PrepareLspRequest(*viewport, error_message);
   if (client == nullptr) {
-    const std::string failure =
-        LspUnavailableMessage(operations_.current_lsp_manager(), language_id, {});
-    output_channels_->AppendLine("lsp.log", "LSP Log", failure);
-    if (error_message != nullptr) {
-      *error_message = failure;
-    }
     return false;
   }
-  operations_.ensure_lsp_document_open(*viewport, *client, language_id);
-  operations_.begin_tracked_lsp_request();
   client->RequestGoToDefinitionAsync(
       FileUriForPath(viewport->path()),
       LspClient::Position{static_cast<int>(viewport->cursor_line()),
@@ -591,11 +579,8 @@ bool AssistService::FindLspReferences(std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();
   }
-  editor::TextViewport* viewport = operations_.active_editable_viewport();
-  if (viewport == nullptr || viewport->path().empty()) {
-    if (error_message != nullptr) {
-      *error_message = "No active file";
-    }
+  editor::TextViewport* viewport = RequireActiveEditableViewport(error_message);
+  if (viewport == nullptr) {
     return false;
   }
 
@@ -613,19 +598,10 @@ bool AssistService::FindLspReferences(std::string* error_message) {
     }
   }
 
-  std::string language_id;
-  LspClient* client = operations_.lsp_client_for_viewport(*viewport, &language_id);
+  LspClient* client = PrepareLspRequest(*viewport, error_message);
   if (client == nullptr) {
-    const std::string failure =
-        LspUnavailableMessage(operations_.current_lsp_manager(), language_id, {});
-    output_channels_->AppendLine("lsp.log", "LSP Log", failure);
-    if (error_message != nullptr) {
-      *error_message = failure;
-    }
     return false;
   }
-  operations_.ensure_lsp_document_open(*viewport, *client, language_id);
-  operations_.begin_tracked_lsp_request();
   client->RequestFindReferencesAsync(
       FileUriForPath(viewport->path()),
       LspClient::Position{static_cast<int>(viewport->cursor_line()),
@@ -645,44 +621,78 @@ bool AssistService::FindLspReferences(std::string* error_message) {
           if (!path.has_value()) {
             continue;
           }
-          const std::string label =
-              context_->current_project_state.root.empty()
-                  ? path->generic_string()
-                  : RelativePathLabel(context_->current_project_state.root, *path);
-          output_channels_->AppendLine(
-              "lsp.references", "LSP References",
-              label + ":" + std::to_string(location.range.start.line + 1) + ":" +
-                  std::to_string(location.range.start.character + 1));
-
-          const auto lines_it = file_line_cache.find(*path);
-          const std::vector<std::string>* file_lines = nullptr;
-          if (lines_it != file_line_cache.end()) {
-            file_lines = &lines_it->second;
-          } else if (const auto text = util::ReadTextFile(*path); text.has_value()) {
-            file_lines = &file_line_cache.emplace(*path, util::SplitLines(*text)).first->second;
-          }
-          if (file_lines == nullptr || file_lines->empty()) {
-            continue;
-          }
-
-          const std::size_t target_line =
-              static_cast<std::size_t>(std::max(location.range.start.line + 1, 1));
-          const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
-          const std::size_t last_line = target_line + 1;
-          for (std::size_t line_number = first_line; line_number <= last_line; ++line_number) {
-            if (line_number == 0 || line_number > file_lines->size()) {
-              continue;
-            }
-            output_channels_->AppendLine(
-                "lsp.references", "LSP References",
-                std::string(line_number == target_line ? " > " : "   ") +
-                    std::to_string(line_number) + " | " + (*file_lines)[line_number - 1]);
-          }
-          if (location_index + 1 < locations->size()) {
-            output_channels_->AppendLine("lsp.references", "LSP References", "");
-          }
+          // LSP positions are 0-based; the shared formatter expects 1-based.
+          EmitReferenceEntry("lsp.references", "LSP References", *path,
+                             static_cast<std::size_t>(std::max(location.range.start.line, 0)) + 1,
+                             static_cast<std::size_t>(std::max(location.range.start.character, 0)) + 1,
+                             location_index + 1 < locations->size(), file_line_cache);
         }
       });
+  return true;
+}
+
+bool AssistService::ShowSignatureHelp(std::string* error_message) {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    if (error_message != nullptr) {
+      *error_message = "No active file";
+    }
+    return false;
+  }
+
+  // Plugin language providers own signature help; there is no LSP fallback path
+  // yet, so an empty result is simply "nothing to show".
+  const std::string language_id = DetectViewportLanguageId(*viewport);
+  std::string provider_error;
+  plugin::PluginHost::SignatureHelpResult result;
+  const bool resolved = plugin_runtime_->Host().QuerySignatureHelp(
+      language_id, viewport->path(), viewport->cursor_line() + 1, viewport->cursor_column() + 1,
+      &result, &provider_error);
+  if (!resolved || result.signatures.empty()) {
+    if (error_message != nullptr) {
+      *error_message = provider_error.empty() ? "No signature help available" : provider_error;
+    }
+    return false;
+  }
+
+  const std::size_t active = result.active_signature >= 0 &&
+                                     static_cast<std::size_t>(result.active_signature) <
+                                         result.signatures.size()
+                                 ? static_cast<std::size_t>(result.active_signature)
+                                 : 0;
+  const plugin::PluginHost::SignatureInfo& signature = result.signatures[active];
+
+  // Build the supporting block off the render path: lead with the active
+  // parameter (so the user sees which argument they are typing) then the
+  // signature documentation.
+  std::string documentation;
+  if (signature.active_parameter >= 0 &&
+      static_cast<std::size_t>(signature.active_parameter) < signature.parameters.size()) {
+    const plugin::PluginHost::SignatureParameter& parameter =
+        signature.parameters[static_cast<std::size_t>(signature.active_parameter)];
+    if (!parameter.label.empty()) {
+      documentation = parameter.label;
+    }
+    if (!parameter.documentation.empty()) {
+      if (!documentation.empty()) {
+        documentation += " — ";
+      }
+      documentation += parameter.documentation;
+    }
+  }
+  if (!signature.documentation.empty()) {
+    if (!documentation.empty()) {
+      documentation += "\n";
+    }
+    documentation += signature.documentation;
+  }
+
+  if (operations_.show_signature_help) {
+    operations_.show_signature_help(signature.label, std::move(documentation));
+  }
   return true;
 }
 
@@ -708,41 +718,79 @@ void AssistService::EmitPluginReferences(
     if (location.path.empty()) {
       continue;
     }
-    const std::string label =
-        context_->current_project_state.root.empty()
-            ? location.path.generic_string()
-            : RelativePathLabel(context_->current_project_state.root, location.path);
-    output_channels_->AppendLine(
-        "lsp.references", "References",
-        label + ":" + std::to_string(location.line) + ":" + std::to_string(location.column));
+    // Provider line/column are already 1-based.
+    EmitReferenceEntry("lsp.references", "References", location.path, location.line,
+                       location.column, index + 1 < locations.size(), file_line_cache);
+  }
+}
 
-    const auto lines_it = file_line_cache.find(location.path);
-    const std::vector<std::string>* file_lines = nullptr;
-    if (lines_it != file_line_cache.end()) {
-      file_lines = &lines_it->second;
-    } else if (const auto text = util::ReadTextFile(location.path); text.has_value()) {
-      file_lines =
-          &file_line_cache.emplace(location.path, util::SplitLines(*text)).first->second;
+editor::TextViewport* AssistService::RequireActiveEditableViewport(
+    std::string* error_message) const {
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    if (error_message != nullptr) {
+      *error_message = "No active file";
     }
-    if (file_lines == nullptr || file_lines->empty()) {
+    return nullptr;
+  }
+  return viewport;
+}
+
+LspClient* AssistService::PrepareLspRequest(editor::TextViewport& viewport,
+                                            std::string* error_message) {
+  std::string language_id;
+  LspClient* client = operations_.lsp_client_for_viewport(viewport, &language_id);
+  if (client == nullptr) {
+    const std::string failure =
+        LspUnavailableMessage(operations_.current_lsp_manager(), language_id, {});
+    output_channels_->AppendLine("lsp.log", "LSP Log", failure);
+    if (error_message != nullptr) {
+      *error_message = failure;
+    }
+    return nullptr;
+  }
+  operations_.ensure_lsp_document_open(viewport, *client, language_id);
+  operations_.begin_tracked_lsp_request();
+  return client;
+}
+
+void AssistService::EmitReferenceEntry(
+    const char* channel_id, const char* channel_title, const std::filesystem::path& path,
+    std::size_t line, std::size_t column, bool append_separator,
+    std::map<std::filesystem::path, std::vector<std::string>>& file_line_cache) const {
+  const std::string label =
+      context_->current_project_state.root.empty()
+          ? path.generic_string()
+          : RelativePathLabel(context_->current_project_state.root, path);
+  output_channels_->AppendLine(
+      channel_id, channel_title,
+      label + ":" + std::to_string(line) + ":" + std::to_string(column));
+
+  const auto lines_it = file_line_cache.find(path);
+  const std::vector<std::string>* file_lines = nullptr;
+  if (lines_it != file_line_cache.end()) {
+    file_lines = &lines_it->second;
+  } else if (const auto text = util::ReadTextFile(path); text.has_value()) {
+    file_lines = &file_line_cache.emplace(path, util::SplitLines(*text)).first->second;
+  }
+  if (file_lines == nullptr || file_lines->empty()) {
+    return;
+  }
+
+  const std::size_t target_line = line > 0 ? line : 1;
+  const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
+  const std::size_t last_line = target_line + 1;
+  for (std::size_t line_number = first_line; line_number <= last_line; ++line_number) {
+    if (line_number == 0 || line_number > file_lines->size()) {
       continue;
     }
-
-    const std::size_t target_line = location.line > 0 ? location.line : 1;
-    const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
-    const std::size_t last_line = target_line + 1;
-    for (std::size_t line_number = first_line; line_number <= last_line; ++line_number) {
-      if (line_number == 0 || line_number > file_lines->size()) {
-        continue;
-      }
-      output_channels_->AppendLine(
-          "lsp.references", "References",
-          std::string(line_number == target_line ? " > " : "   ") +
-              std::to_string(line_number) + " | " + (*file_lines)[line_number - 1]);
-    }
-    if (index + 1 < locations.size()) {
-      output_channels_->AppendLine("lsp.references", "References", "");
-    }
+    output_channels_->AppendLine(
+        channel_id, channel_title,
+        std::string(line_number == target_line ? " > " : "   ") + std::to_string(line_number) +
+            " | " + (*file_lines)[line_number - 1]);
+  }
+  if (append_separator) {
+    output_channels_->AppendLine(channel_id, channel_title, "");
   }
 }
 

@@ -6,11 +6,14 @@
 #include <string>
 #include <utility>
 
+#include "editor/TextViewport.h"
 #include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/LanguageDetection.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "workspace/WorkspaceUiText.h"
 
 namespace microide::workspace {
 
@@ -21,6 +24,29 @@ void ClampSelectionToItemCount(std::size_t item_count, std::size_t* selected_ind
     return;
   }
   *selected_index = item_count == 0 ? 0 : std::min(*selected_index, item_count - 1);
+}
+
+// Depth-first flatten of the plugin document-symbol tree into the flat
+// SidebarItem row set the outline view renders. `depth` drives host-drawn
+// indentation; outline rows are not collapsible (fully expanded first pass).
+void FlattenDocumentSymbols(const std::vector<plugin::PluginHost::DocumentSymbolNode>& nodes,
+                            const std::filesystem::path& path,
+                            int depth,
+                            std::vector<plugin::PluginHost::SidebarItem>* out) {
+  for (const auto& node : nodes) {
+    out->push_back(plugin::PluginHost::SidebarItem{
+        .label = node.name,
+        .detail = node.detail.empty() ? node.kind : node.detail,
+        .path = path,
+        .line = node.line,
+        .column = node.column,
+        .id = node.name,
+        .depth = depth,
+        .collapsible = false,
+        .collapsed = false,
+    });
+    FlattenDocumentSymbols(node.children, path, depth + 1, out);
+  }
 }
 
 void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
@@ -216,8 +242,15 @@ bool SidebarCoordinator::RefreshTests() {
 }
 
 bool SidebarCoordinator::RefreshPlugin() {
+  // The outline view is a builtin that shares this item-tree storage but is
+  // populated from the host's document-symbol query rather than a plugin snapshot.
+  if (state_.sidebar.view_id == "outline") {
+    return RefreshOutline();
+  }
   state_.sidebar.plugin.items.clear();
   state_.sidebar.plugin.error.clear();
+  state_.sidebar.plugin.placeholder.clear();
+  state_.sidebar.plugin.placeholder_is_error = false;
   state_.sidebar.plugin.selected_index = 0;
   if (state_.sidebar.view_id.empty() || FindBuiltinSidebarView(state_.sidebar.view_id) != nullptr) {
     return false;
@@ -234,6 +267,7 @@ bool SidebarCoordinator::RefreshPlugin() {
   if (!plugin_runtime_.Host().SnapshotSidebar(state_.sidebar.view_id, &state_.sidebar.plugin.items,
                                               &error_message)) {
     state_.sidebar.plugin.error = std::move(error_message);
+    RecomputePluginSidebarPlaceholder();
     if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
       operations_.request_sidebar_redraw();
     }
@@ -241,6 +275,7 @@ bool SidebarCoordinator::RefreshPlugin() {
   }
   ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
                             &state_.sidebar.plugin.selected_index);
+  RecomputePluginSidebarPlaceholder();
   RevealSelectedPluginLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
     operations_.request_sidebar_redraw();
@@ -248,24 +283,72 @@ bool SidebarCoordinator::RefreshPlugin() {
   return true;
 }
 
-void SidebarCoordinator::RevealSelectedTreeLine() {
-  const auto& entries = state_.directory_tree.entries();
-  if (state_.directory_tree.selected_index() >= entries.size()) {
-    return;
+bool SidebarCoordinator::RefreshOutline() {
+  state_.sidebar.plugin.items.clear();
+  state_.sidebar.plugin.error.clear();
+  state_.sidebar.plugin.placeholder.clear();
+  state_.sidebar.plugin.placeholder_is_error = false;
+  state_.sidebar.plugin.selected_index = 0;
+
+  editor::TextViewport* viewport =
+      operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+  if (viewport != nullptr && !viewport->path().empty()) {
+    const std::string language_id = DetectViewportLanguageId(*viewport);
+    std::string error_message;
+    const auto symbols =
+        plugin_runtime_.Host().QueryDocumentSymbols(language_id, viewport->path(), &error_message);
+    if (symbols.empty() && !error_message.empty()) {
+      state_.sidebar.plugin.error = std::move(error_message);
+    }
+    FlattenDocumentSymbols(symbols, viewport->path(), 0, &state_.sidebar.plugin.items);
   }
 
+  ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
+                            &state_.sidebar.plugin.selected_index);
+  RecomputePluginSidebarPlaceholder();
+  RevealSelectedPluginLine();
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
+    operations_.request_sidebar_redraw();
+  }
+  return !state_.sidebar.plugin.items.empty();
+}
+
+void SidebarCoordinator::RecomputePluginSidebarPlaceholder() {
+  PluginSidebarState& plugin = state_.sidebar.plugin;
+  if (!plugin.error.empty()) {
+    plugin.placeholder_is_error = true;
+    plugin.placeholder.assign("Error: ").append(plugin.error);
+    return;
+  }
+  plugin.placeholder_is_error = false;
+  if (plugin.items.empty()) {
+    // Outline shares this storage but reports symbols, not generic items.
+    plugin.placeholder =
+        FormatEmptyState(ActiveSidebarMode() == SidebarMode::Outline ? "symbols" : "items");
+  } else {
+    plugin.placeholder.clear();
+  }
+}
+
+void SidebarCoordinator::RevealListSelection(
+    std::size_t count, std::size_t selected_index,
+    const std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>& compute_layout) {
+  if (count == 0 || selected_index >= count) {
+    return;
+  }
   const auto layout_state = operations_.current_workspace_layout();
-  if (!layout_state.has_value()) {
+  if (!layout_state.has_value() || layout_state->sidebar.h <= 0.0f) {
     return;
   }
-  const WorkspaceLayout layout = *layout_state;
-  if (layout.sidebar.h <= 0.0f) {
-    return;
-  }
-
-  const auto list_layout = operations_.compute_tree_sidebar_list_layout(layout.sidebar, entries.size());
+  const ScrollableListLayout list_layout = compute_layout(layout_state->sidebar, count);
   state_.sidebar.scroll_row =
-      RevealScrollableListIndex(list_layout, static_cast<int>(state_.directory_tree.selected_index()));
+      RevealScrollableListIndex(list_layout, static_cast<int>(selected_index));
+}
+
+void SidebarCoordinator::RevealSelectedTreeLine() {
+  RevealListSelection(state_.directory_tree.entries().size(),
+                      state_.directory_tree.selected_index(),
+                      operations_.compute_tree_sidebar_list_layout);
 }
 
 void SidebarCoordinator::RevealSelectedGitLine() {
@@ -273,75 +356,25 @@ void SidebarCoordinator::RevealSelectedGitLine() {
   if (!selected_line.has_value()) {
     return;
   }
-
-  const auto layout_state = operations_.current_workspace_layout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  if (layout.sidebar.h <= 0.0f) {
-    return;
-  }
-  const auto lines = operations_.build_git_sidebar_lines();
-  const auto list_layout = operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
-  state_.sidebar.scroll_row = RevealScrollableListIndex(list_layout, static_cast<int>(*selected_line));
+  // Git rows are derived from a built line model, not a flat entries vector.
+  RevealListSelection(operations_.build_git_sidebar_lines().size(), *selected_line,
+                      operations_.compute_git_sidebar_list_layout);
 }
 
 void SidebarCoordinator::RevealSelectedProblemsLine() {
-  if (state_.sidebar.problems.entries.empty() ||
-      state_.sidebar.problems.selected_index >= state_.sidebar.problems.entries.size()) {
-    return;
-  }
-  const auto layout_state = operations_.current_workspace_layout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  if (layout.sidebar.h <= 0.0f) {
-    return;
-  }
-  const auto list_layout =
-      operations_.compute_problems_sidebar_list_layout(layout.sidebar, state_.sidebar.problems.entries.size());
-  state_.sidebar.scroll_row =
-      RevealScrollableListIndex(list_layout, static_cast<int>(state_.sidebar.problems.selected_index));
+  RevealListSelection(state_.sidebar.problems.entries.size(),
+                      state_.sidebar.problems.selected_index,
+                      operations_.compute_problems_sidebar_list_layout);
 }
 
 void SidebarCoordinator::RevealSelectedTestsLine() {
-  if (state_.sidebar.tests.entries.empty() ||
-      state_.sidebar.tests.selected_index >= state_.sidebar.tests.entries.size()) {
-    return;
-  }
-  const auto layout_state = operations_.current_workspace_layout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  if (layout.sidebar.h <= 0.0f) {
-    return;
-  }
-  const auto list_layout =
-      operations_.compute_tests_sidebar_list_layout(layout.sidebar, state_.sidebar.tests.entries.size());
-  state_.sidebar.scroll_row =
-      RevealScrollableListIndex(list_layout, static_cast<int>(state_.sidebar.tests.selected_index));
+  RevealListSelection(state_.sidebar.tests.entries.size(), state_.sidebar.tests.selected_index,
+                      operations_.compute_tests_sidebar_list_layout);
 }
 
 void SidebarCoordinator::RevealSelectedPluginLine() {
-  if (state_.sidebar.plugin.items.empty() ||
-      state_.sidebar.plugin.selected_index >= state_.sidebar.plugin.items.size()) {
-    return;
-  }
-  const auto layout_state = operations_.current_workspace_layout();
-  if (!layout_state.has_value()) {
-    return;
-  }
-  const WorkspaceLayout layout = *layout_state;
-  if (layout.sidebar.h <= 0.0f) {
-    return;
-  }
-  const auto list_layout =
-      operations_.compute_plugin_sidebar_list_layout(layout.sidebar, state_.sidebar.plugin.items.size());
-  state_.sidebar.scroll_row =
-      RevealScrollableListIndex(list_layout, static_cast<int>(state_.sidebar.plugin.selected_index));
+  RevealListSelection(state_.sidebar.plugin.items.size(), state_.sidebar.plugin.selected_index,
+                      operations_.compute_plugin_sidebar_list_layout);
 }
 
 }  // namespace microide::workspace

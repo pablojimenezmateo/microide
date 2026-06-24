@@ -475,6 +475,9 @@
   static const std::string& PluginSidebarError(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.plugin.error;
   }
+  static const std::string& PluginSidebarPlaceholder(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.plugin.placeholder;
+  }
   static float SidebarWidth(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.width; }
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_tabs;

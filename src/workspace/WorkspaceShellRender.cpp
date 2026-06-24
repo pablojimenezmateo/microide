@@ -115,6 +115,8 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
       editor_hover_refresh_pending_ = false;
     }
     RenderEditorHoverPopup(renderer);
+    MaybeExpireSignatureHelp();
+    RenderSignatureHelpPopup(renderer);
   }
   if (!skip_window_chrome) {
     RenderWindowChrome(renderer, layout);

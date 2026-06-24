@@ -51,6 +51,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_viewport != nullptr && operations_.active_references_available();
     case ActionId::GoToDefinition:
       return active_viewport != nullptr && operations_.active_definition_available();
+    case ActionId::SignatureHelp:
+      // Always offered when an editor is focused; the provider query (and its
+      // graceful "no signature help available" reject) runs on invocation.
+      return active_viewport != nullptr;
     case ActionId::InlineCompletion:
       return active_viewport != nullptr;
     case ActionId::Colorscheme:

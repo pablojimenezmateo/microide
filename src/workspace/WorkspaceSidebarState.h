@@ -38,6 +38,10 @@ enum class SidebarMode {
   Git,
   Tests,
   Plugin,
+  // Host-owned document outline. Reuses the plugin item-tree surface (storage,
+  // render, key/mouse handlers): its rows are flattened DocumentSymbol nodes from
+  // the plugin language providers, and confirming a row navigates the editor.
+  Outline,
 };
 
 // One clickable mode tab in the sidebar header row. `id` points at a builtin view's static
@@ -193,6 +197,11 @@ struct PluginSidebarState {
   std::vector<plugin::PluginHost::SidebarItem> items;
   std::string error;
   std::size_t selected_index = 0;
+  // Prebuilt empty/error text the sidebar render TU draws verbatim, recomputed
+  // only when items/error change (never per frame). Empty means "draw nothing".
+  // `placeholder_is_error` picks the error vs muted text color.
+  std::string placeholder;
+  bool placeholder_is_error = false;
 };
 
 struct SidebarState {

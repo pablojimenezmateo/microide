@@ -43,7 +43,7 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (sidebar_mode == SidebarMode::Tests) {
     return HandleTestsButtonDown(event, layout, local_y);
   }
-  if (sidebar_mode == SidebarMode::Plugin) {
+  if (sidebar_mode == SidebarMode::Plugin || sidebar_mode == SidebarMode::Outline) {
     return HandlePluginButtonDown(event, layout, local_y);
   }
   return HandleTreeButtonDown(event, layout, local_y);

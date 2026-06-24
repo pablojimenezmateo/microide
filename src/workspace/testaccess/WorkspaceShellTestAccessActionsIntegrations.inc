@@ -204,6 +204,20 @@
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.entries;
   }
+  static void SetPluginSidebarSelectedIndex(WorkspaceShell& shell, std::size_t index) {
+    shell.context_.current_project_state.sidebar.plugin.selected_index = index;
+  }
+  static bool OpenSelectedPluginSidebarItem(WorkspaceShell& shell) {
+    return shell.OpenSelectedPluginSidebarItem();
+  }
+  static bool ShowSignatureHelp(WorkspaceShell& shell) {
+    return shell.assist_service_.ShowSignatureHelp(nullptr);
+  }
+  static std::optional<WorkspaceShell::SignatureHelpPopup> SignatureHelpPopup(
+      const WorkspaceShell& shell) {
+    return shell.active_signature_help_;
+  }
+  static void ExpireSignatureHelp(WorkspaceShell& shell) { shell.MaybeExpireSignatureHelp(); }
   static bool ApplySelectedCompletion(WorkspaceShell& shell) {
     return shell.assist_service_.ApplySelectedCompletion();
   }

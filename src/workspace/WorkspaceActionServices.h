@@ -43,6 +43,7 @@ class WorkspaceActionContext {
     std::function<void()> show_problems_sidebar;
     std::function<void()> show_git_sidebar;
     std::function<void()> show_tests_sidebar;
+    std::function<void()> show_outline_sidebar;
     std::function<bool(std::string_view, bool)> show_plugin_sidebar;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<void()> refresh_project_files;
@@ -74,6 +75,7 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> show_code_actions_overlay;
     std::function<bool(std::string*)> go_to_lsp_definition;
     std::function<bool(std::string*)> find_lsp_references;
+    std::function<bool(std::string*)> show_signature_help;
     std::function<bool(std::string*)> discover_tests_for_active_buffer;
     std::function<bool(const std::vector<std::string>&, std::string*)> run_tests;
     std::function<bool(std::string*)> run_all_discovered_tests;
@@ -295,6 +297,7 @@ class WorkspaceActionContext {
   bool ShowInsertSnippetOverlay(std::string* error_message);
   bool ShowCodeActionsOverlay(std::string* error_message);
   bool GoToLspDefinition(std::string* error_message);
+  bool ShowSignatureHelp(std::string* error_message);
   bool FindLspReferences(std::string* error_message);
   bool DiscoverTestsForActiveBuffer(std::string* error_message);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message);

@@ -128,6 +128,9 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Tests:
       operations_.show_tests_sidebar();
       return true;
+    case SidebarMode::Outline:
+      operations_.show_outline_sidebar();
+      return true;
     case SidebarMode::Plugin:
       return operations_.show_plugin_sidebar(view.id, false);
     case SidebarMode::None:
@@ -146,6 +149,7 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Problems:
     case SidebarMode::Git:
     case SidebarMode::Tests:
+    case SidebarMode::Outline:
     case SidebarMode::Plugin:
       if (same_view) {
         operations_.close_sidebar();
@@ -288,6 +292,10 @@ bool WorkspaceActionContext::GoToLspDefinition(std::string* error_message) {
 
 bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
   return operations_.find_lsp_references(error_message);
+}
+
+bool WorkspaceActionContext::ShowSignatureHelp(std::string* error_message) {
+  return operations_.show_signature_help(error_message);
 }
 
 bool WorkspaceActionContext::DiscoverTestsForActiveBuffer(std::string* error_message) {

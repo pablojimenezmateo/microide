@@ -100,7 +100,7 @@ ScrollableListLayout SidebarMouseCoordinator::CurrentListLayout(const WorkspaceL
     return operations_.compute_tests_sidebar_list_layout(layout.sidebar,
                                                          state_.sidebar.tests.entries.size());
   }
-  if (sidebar_mode == SidebarMode::Plugin) {
+  if (sidebar_mode == SidebarMode::Plugin || sidebar_mode == SidebarMode::Outline) {
     return operations_.compute_plugin_sidebar_list_layout(layout.sidebar,
                                                           state_.sidebar.plugin.items.size());
   }

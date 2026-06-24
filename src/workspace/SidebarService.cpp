@@ -31,6 +31,10 @@ void SidebarService::ShowTests() {
   coordinator_.ShowTests();
 }
 
+void SidebarService::ShowOutline() {
+  coordinator_.ShowOutline();
+}
+
 bool SidebarService::ShowPlugin(std::string_view id, bool temporary) {
   return coordinator_.ShowPlugin(id, temporary);
 }

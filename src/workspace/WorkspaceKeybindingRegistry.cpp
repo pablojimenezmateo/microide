@@ -418,6 +418,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      KeybindingSpec{
+          .id = "signature-help",
+          .action = ActionId::SignatureHelp,
+          .key = SDLK_SPACE,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       // Editor essentials.
       KeybindingSpec{
           .id = "jump-to-matching-bracket",

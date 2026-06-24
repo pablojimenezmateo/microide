@@ -347,6 +347,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .show_problems_sidebar = [this]() { ShowProblemsSidebar(); },
           .show_git_sidebar = [this]() { ShowGitSidebar(); },
           .show_tests_sidebar = [this]() { ShowTestsSidebar(); },
+          .show_outline_sidebar = [this]() { ShowOutlineSidebar(); },
           .show_plugin_sidebar =
               [this](std::string_view id, bool temporary) {
                 return ShowPluginSidebar(id, temporary);
@@ -407,6 +408,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .find_lsp_references =
               [this](std::string* error_message) {
                 return assist_service_.FindLspReferences(error_message);
+              },
+          .show_signature_help =
+              [this](std::string* error_message) {
+                return assist_service_.ShowSignatureHelp(error_message);
               },
           .discover_tests_for_active_buffer =
               [this](std::string* error_message) {

@@ -318,7 +318,8 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
         layout.tabs[static_cast<std::size_t>(layout.tab_count++)] =
             SidebarModeTab{.id = view.id, .mode = view.mode, .rect = {}};
       }
-    } else if (view.id != "chat" && view.id != "problems" && view.id != "tests") {
+    } else if (view.id != "chat" && view.id != "problems" && view.id != "tests" &&
+               view.id != "outline") {
       layout.has_overflow = true;
     }
   }

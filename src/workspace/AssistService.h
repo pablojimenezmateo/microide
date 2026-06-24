@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -42,6 +43,9 @@ class AssistService {
     std::function<void(OverlayMode)> show_overlay;
     std::function<void(bool)> dismiss_overlay;
     std::function<void()> request_overlay_redraw;
+    // Hand a prebuilt (signature, documentation) pair to the host's caret-anchored
+    // signature-help popup. Empty signature clears it.
+    std::function<void(std::string, std::string)> show_signature_help;
     std::function<bool(std::string_view, const std::vector<std::string>&, std::string*)>
         execute_command_name;
     std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
@@ -80,6 +84,7 @@ class AssistService {
   bool ExecuteSelectedCodeAction();
   bool GoToLspDefinition(std::string* error_message = nullptr);
   bool FindLspReferences(std::string* error_message = nullptr);
+  bool ShowSignatureHelp(std::string* error_message = nullptr);
 
  private:
   struct EditSideEffectsSnapshot {
@@ -100,6 +105,23 @@ class AssistService {
   // Render plugin-provided references into the References output channel using
   // the same file:line:column + 3-line-context layout the LSP path produces.
   void EmitPluginReferences(const std::vector<plugin::PluginHost::LocationResult>& locations);
+
+  // Shared go-to-definition / find-references prologue. Returns the active
+  // editable viewport, or nullptr after writing "No active file" to
+  // `error_message`.
+  editor::TextViewport* RequireActiveEditableViewport(std::string* error_message) const;
+  // Resolve the LSP client for `viewport`, open its document, and begin a tracked
+  // request. Returns nullptr after logging/recording an unavailable-server
+  // message when no client exists.
+  LspClient* PrepareLspRequest(editor::TextViewport& viewport, std::string* error_message);
+  // Emit one reference entry (file:line:column header + the ±1-line context block,
+  // plus a trailing blank when `append_separator`) into the given channel,
+  // caching file contents in `file_line_cache`. `line`/`column` are 1-based.
+  void EmitReferenceEntry(const char* channel_id, const char* channel_title,
+                          const std::filesystem::path& path, std::size_t line, std::size_t column,
+                          bool append_separator,
+                          std::map<std::filesystem::path, std::vector<std::string>>&
+                              file_line_cache) const;
 
   WorkspaceContext* context_ = nullptr;
   WorkspacePluginRuntime* plugin_runtime_ = nullptr;

@@ -438,6 +438,20 @@
     std::optional<SDL_FRect> primary_action_rect;
   };
 
+  // Plugin-provided signature-help popup (Phase C follow-up). Unlike the
+  // mouse-driven hover popup, this is an explicitly triggered, caret-anchored
+  // surface: the `signature-help` command fills it from the plugin language
+  // providers and it self-expires once the caret leaves the request position.
+  // The two text blocks are prebuilt off the render path (in AssistService) so
+  // RenderSignatureHelpPopup stays a pure draw.
+  struct SignatureHelpPopup {
+    std::string signature;      // active signature label (primary line)
+    std::string documentation;  // active-parameter + doc text (secondary block)
+    std::filesystem::path path;
+    std::size_t cursor_line = 0;
+    std::size_t cursor_column = 0;
+  };
+
   // Recorded by the (const) debug-value hover resolver when it classifies a cache
   // MISS, and consumed by the non-const UpdateEditorHover to kick off the async
   // `evaluate` request. Keeps the const resolver pure-read (no DAP I/O); the
@@ -878,6 +892,7 @@
   void ShowProblemsSidebar();
   void ShowGitSidebar();
   void ShowTestsSidebar();
+  void ShowOutlineSidebar();
   bool ShowPluginSidebar(std::string_view id, bool temporary = false);
   // Right-side debug pane convenience wrappers (forward to MakeDebugPaneService()).
   void ShowDebugPaneMode(DebugPaneMode mode);
@@ -1020,6 +1035,13 @@
                              std::size_t max_title_lines,
                              std::size_t max_content_lines) const;
   void UpdateEditorHover(float x, float y);
+  // Signature-help popup (Phase C follow-up). ShowSignatureHelpPopup captures the
+  // request position from the active editable viewport; MaybeExpireSignatureHelp
+  // clears the popup once the caret/buffer no longer matches; the render method
+  // draws the prebuilt blocks anchored to the caret.
+  void ShowSignatureHelpPopup(std::string signature, std::string documentation);
+  void MaybeExpireSignatureHelp();
+  void RenderSignatureHelpPopup(SDL_Renderer* renderer) const;
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
   SDL_FRect EditorBlamePopupCopyShaHitRect(const EditorBlamePopupLayout& popup) const;
   bool EditorBlamePopupCopyShaHovered(float x, float y) const;
@@ -1691,6 +1713,7 @@
   editor::HighlightPrefetchService highlight_prefetch_service_;
   EditorBlameOverlayService editor_blame_overlay_service_;
   std::optional<EditorHoverTarget> active_editor_hover_target_;
+  std::optional<SignatureHelpPopup> active_signature_help_;
   bool editor_hover_refresh_pending_ = false;
   std::function<std::optional<std::string>()> clipboard_text_reader_;
   std::function<bool(std::string_view)> clipboard_text_writer_;

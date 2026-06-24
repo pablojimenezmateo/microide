@@ -43,6 +43,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
       ActionSpec{ActionId::GoToDefinition, "goto-definition", "goto-definition",
                  "Go to Definition", "F12"},
+      ActionSpec{ActionId::SignatureHelp, "signature-help", "signature-help",
+                 "Signature Help", "Ctrl+Shift+Space"},
       ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line", ""},
       ActionSpec{ActionId::GitRefresh, "git-refresh", "git-refresh", "Refresh Git", ""},
       ActionSpec{ActionId::MarkBranchFileReviewed, "mark-branch-file-reviewed",

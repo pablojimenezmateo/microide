@@ -25,6 +25,9 @@ WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   RequestOverlayRedraw();
   InvalidateCursorKindFingerprint();
+  // An opening overlay (completion, code actions, pickers) supersedes the
+  // caret-anchored signature popup; drop it so the two never stack.
+  active_signature_help_.reset();
   context_.current_project_state.overlay.visible = true;
   context_.current_project_state.overlay.mode = mode;
   if (mode == OverlayMode::Completion || mode == OverlayMode::CodeActions) {

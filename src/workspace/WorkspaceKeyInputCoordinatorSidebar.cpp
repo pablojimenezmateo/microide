@@ -308,7 +308,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     }
   }
 
-  if (sidebar_mode == SidebarMode::Plugin) {
+  if (sidebar_mode == SidebarMode::Plugin || sidebar_mode == SidebarMode::Outline) {
     const auto* selected_plugin_item =
         state_.sidebar.plugin.selected_index < state_.sidebar.plugin.items.size()
             ? &state_.sidebar.plugin.items[state_.sidebar.plugin.selected_index]

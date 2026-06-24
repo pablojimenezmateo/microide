@@ -2,6 +2,7 @@
 
 #include "plugin/PluginHost.h"
 #include "plugin/PluginInstallRoot.h"
+#include "plugin/LuaRuntime.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
 
 #include <chrono>
@@ -527,6 +528,42 @@ return ide.plugin({
   Expect(messages[7] == "stdlib.probe: io_nil:true", "io stdlib should stay unavailable");
   Expect(messages[8] == "stdlib.probe: os_nil:true", "os stdlib should stay unavailable");
   Expect(host.Errors().empty(), "stdlib probe should not report host errors");
+}
+
+void TestPluginHostWatchdogAbortsRunawayCall() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#else
+  std::string create_error;
+  std::unique_ptr<microide::plugin::LuaRuntime> runtime =
+      microide::plugin::LuaRuntime::Create(&create_error);
+  Expect(runtime != nullptr, "LuaRuntime should be creatable for the watchdog test");
+
+  // Trip the watchdog quickly so the test stays fast; production uses a generous
+  // default hang guard.
+  runtime->set_call_budget(std::chrono::milliseconds(20));
+  lua_State* state = runtime->state();
+
+  // A finite, well-behaved call must still succeed under the watchdog.
+  Expect(luaL_loadstring(state, "local x = 0 for i = 1, 1000 do x = x + i end return x") == LUA_OK,
+         "finite chunk should compile");
+  std::string ok_error;
+  Expect(runtime->PCall(0, 1, &ok_error), "finite chunk should complete within the budget");
+  lua_settop(state, 0);
+
+  // A runaway loop must be aborted, not hang the (UI) thread forever.
+  Expect(luaL_loadstring(state, "while true do end") == LUA_OK, "infinite chunk should compile");
+  std::string runaway_error;
+  const auto started = std::chrono::steady_clock::now();
+  const bool result = runtime->PCall(0, 0, &runaway_error);
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  lua_settop(state, 0);
+
+  Expect(!result, "watchdog should abort a runaway plugin call");
+  Expect(runaway_error.find("time budget") != std::string::npos,
+         "watchdog error should explain the time-budget abort");
+  Expect(elapsed < std::chrono::seconds(5), "watchdog should abort well before any real hang");
+#endif
 }
 
 void TestPluginHostPluginsUseIsolatedLuaStates() {
@@ -2230,6 +2267,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostLuaRuntimeMatchesDocumentedStdlib);
   AddTest(tests, "PluginHost/PluginsUseIsolatedLuaStates",
           TestPluginHostPluginsUseIsolatedLuaStates);
+  AddTest(tests, "PluginHost/WatchdogAbortsRunawayCall",
+          TestPluginHostWatchdogAbortsRunawayCall);
   AddTest(tests, "PluginHost/Phase2Apis", TestPluginHostPhase2Apis);
   AddTest(tests, "PluginHost/Phase2StatusApis", TestPluginHostPhase2StatusApis);
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);

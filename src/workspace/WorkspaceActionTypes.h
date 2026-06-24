@@ -30,6 +30,7 @@ enum class ActionId {
   FindReferences,
   Focus,
   GoToDefinition,
+  SignatureHelp,
   Goto,
   GitRefresh,
   IndentWidth,

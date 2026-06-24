@@ -49,6 +49,32 @@ std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
   return (normalized_new_prefix / relative).lexically_normal();
 }
 
+// Sort the four decoration vectors of `decorations` into the per-line render
+// order the slice lookups rely on. Works on both PluginDecorationData (per-owner,
+// sorted once at publish) and FileDecorations (the merged multi-owner view).
+template <typename Decorations>
+void SortDecorations(Decorations& decorations) {
+  std::sort(decorations.text_styles.begin(), decorations.text_styles.end(),
+            [](const TextStyleDecoration& a, const TextStyleDecoration& b) {
+              if (a.line != b.line) return a.line < b.line;
+              return a.start_column < b.start_column;
+            });
+  std::sort(decorations.gutter_marks.begin(), decorations.gutter_marks.end(),
+            [](const GutterMarkDecoration& a, const GutterMarkDecoration& b) {
+              if (a.line != b.line) return a.line < b.line;
+              return a.priority > b.priority;  // highest priority first within a line
+            });
+  std::sort(decorations.inline_texts.begin(), decorations.inline_texts.end(),
+            [](const InlineTextDecoration& a, const InlineTextDecoration& b) {
+              if (a.line != b.line) return a.line < b.line;
+              return a.anchor_column < b.anchor_column;
+            });
+  std::sort(decorations.code_lenses.begin(), decorations.code_lenses.end(),
+            [](const CodeLensDecoration& a, const CodeLensDecoration& b) {
+              return a.line < b.line;
+            });
+}
+
 // Contiguous slice of a line-sorted vector whose elements have `.line == line`.
 template <typename T, typename LineOf>
 std::span<const T> SliceForLine(const std::vector<T>& sorted, std::uint32_t line, LineOf line_of) {
@@ -86,81 +112,75 @@ std::string PluginDecorationStore::PathKey(const std::filesystem::path& path) {
   return path.empty() ? std::string{} : path.lexically_normal().generic_string();
 }
 
-void PluginDecorationStore::SortFileDecorations(FileDecorations* file) {
-  if (file == nullptr) {
-    return;
-  }
-  std::sort(file->text_styles.begin(), file->text_styles.end(),
-            [](const TextStyleDecoration& a, const TextStyleDecoration& b) {
-              if (a.line != b.line) return a.line < b.line;
-              return a.start_column < b.start_column;
-            });
-  std::sort(file->gutter_marks.begin(), file->gutter_marks.end(),
-            [](const GutterMarkDecoration& a, const GutterMarkDecoration& b) {
-              if (a.line != b.line) return a.line < b.line;
-              return a.priority > b.priority;  // highest priority first within a line
-            });
-  std::sort(file->inline_texts.begin(), file->inline_texts.end(),
-            [](const InlineTextDecoration& a, const InlineTextDecoration& b) {
-              if (a.line != b.line) return a.line < b.line;
-              return a.anchor_column < b.anchor_column;
-            });
-  std::sort(file->code_lenses.begin(), file->code_lenses.end(),
-            [](const CodeLensDecoration& a, const CodeLensDecoration& b) {
-              return a.line < b.line;
-            });
-}
-
-void PluginDecorationStore::BumpRevision() {
-  if (++revision_ == 0) {
-    revision_ = 1;
-  }
-}
-
 void PluginDecorationStore::RebuildPath(std::string_view path_key) {
   if (path_key.empty()) {
     return;
   }
 
-  FileDecorations merged;
+  // Gather every owner contributing to this path. Per-owner data is already
+  // sorted at publish time, so the common single-owner case rebuilds with one
+  // copy and no sort; only genuine multi-owner overlap pays the merge + re-sort.
+  const OwnerFileDecorations* sole = nullptr;
+  std::vector<const PluginDecorationData*> contributors;
   for (const auto& owner_entry : by_owner_) {
     const auto it = owner_entry.second.find(path_key);
     if (it == owner_entry.second.end()) {
       continue;
     }
-    if (merged.path.empty()) {
-      merged.path = it->second.path;
-    }
-    const PluginDecorationData& data = it->second.data;
-    merged.text_styles.insert(merged.text_styles.end(), data.text_styles.begin(),
-                              data.text_styles.end());
-    merged.gutter_marks.insert(merged.gutter_marks.end(), data.gutter_marks.begin(),
-                               data.gutter_marks.end());
-    merged.inline_texts.insert(merged.inline_texts.end(), data.inline_texts.begin(),
-                               data.inline_texts.end());
-    merged.code_lenses.insert(merged.code_lenses.end(), data.code_lenses.begin(),
-                              data.code_lenses.end());
+    contributors.push_back(&it->second.data);
+    sole = &it->second;
   }
 
-  if (merged.empty()) {
-    if (merged_by_path_.erase(std::string(path_key)) > 0) {
-      BumpRevision();
+  if (contributors.empty()) {
+    // Heterogeneous find avoids materializing a std::string key just to erase;
+    // unordered_map has no transparent erase(key) overload before C++23.
+    if (const auto it = merged_by_path_.find(path_key); it != merged_by_path_.end()) {
+      merged_by_path_.erase(it);
     }
     return;
   }
 
-  SortFileDecorations(&merged);
-  auto existing = merged_by_path_.find(path_key);
+  FileDecorations merged;
+  if (contributors.size() == 1) {
+    merged.path = sole->path;
+    merged.text_styles = sole->data.text_styles;
+    merged.gutter_marks = sole->data.gutter_marks;
+    merged.inline_texts = sole->data.inline_texts;
+    merged.code_lenses = sole->data.code_lenses;
+  } else {
+    std::size_t ts = 0, gm = 0, it = 0, cl = 0;
+    for (const PluginDecorationData* data : contributors) {
+      ts += data->text_styles.size();
+      gm += data->gutter_marks.size();
+      it += data->inline_texts.size();
+      cl += data->code_lenses.size();
+    }
+    merged.text_styles.reserve(ts);
+    merged.gutter_marks.reserve(gm);
+    merged.inline_texts.reserve(it);
+    merged.code_lenses.reserve(cl);
+    for (const PluginDecorationData* data : contributors) {
+      merged.text_styles.insert(merged.text_styles.end(), data->text_styles.begin(),
+                                data->text_styles.end());
+      merged.gutter_marks.insert(merged.gutter_marks.end(), data->gutter_marks.begin(),
+                                 data->gutter_marks.end());
+      merged.inline_texts.insert(merged.inline_texts.end(), data->inline_texts.begin(),
+                                 data->inline_texts.end());
+      merged.code_lenses.insert(merged.code_lenses.end(), data->code_lenses.begin(),
+                                data->code_lenses.end());
+    }
+    merged.path = sole->path;
+    SortDecorations(merged);
+  }
+
+  const auto existing = merged_by_path_.find(path_key);
   if (existing == merged_by_path_.end()) {
-    merged_by_path_[std::string(path_key)] = std::move(merged);
-    BumpRevision();
-    return;
-  }
-  if (existing->second == merged) {
+    // New path: the key string must be owned here, but emplace skips the extra
+    // hash+lookup that operator[] would do on top of the find above.
+    merged_by_path_.emplace(std::string(path_key), std::move(merged));
     return;
   }
   existing->second = std::move(merged);
-  BumpRevision();
 }
 
 bool PluginDecorationStore::ReplaceForOwnerFile(std::string_view owner,
@@ -185,6 +205,11 @@ bool PluginDecorationStore::ReplaceForOwnerFile(std::string_view owner,
     return changed;
   }
 
+  // Sort once here, at publish, so RebuildPath's common single-owner case can copy
+  // the merged view without re-sorting. It also makes the no-op check below
+  // order-insensitive: republishing the same decorations in a different order is
+  // correctly treated as no change.
+  SortDecorations(data);
   OwnerFileDecorations next{.path = normalized_path, .data = std::move(data)};
   const auto existing = owner_entries.find(path_key);
   if (existing != owner_entries.end() && existing->second == next) {
@@ -328,7 +353,6 @@ void PluginDecorationStore::Clear() {
   }
   by_owner_.clear();
   merged_by_path_.clear();
-  BumpRevision();
 }
 
 const FileDecorations* PluginDecorationStore::FindByPath(const std::filesystem::path& path) const {

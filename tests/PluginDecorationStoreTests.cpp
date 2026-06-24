@@ -96,15 +96,14 @@ void TestReplaceIsIdempotentAndClears() {
   PluginDecorationData data;
   data.text_styles = {Style(1, 0, 2)};
   Expect(store.ReplaceForOwnerFile("owner", path, data), "initial publish should change state");
-  const std::uint64_t rev = store.revision();
+  // The bool return is the redraw signal: a no-op republish returns false so the
+  // host skips a needless repaint, while a real change returns true.
   Expect(!store.ReplaceForOwnerFile("owner", path, data),
          "republishing identical decorations should be a no-op");
-  Expect(store.revision() == rev, "no-op republish should not advance the revision");
 
   Expect(store.ReplaceForOwnerFile("owner", path, PluginDecorationData{}),
-         "publishing an empty set should clear the owner's file");
+         "publishing an empty set should clear the owner's file and report a change");
   Expect(store.FindByPath(path) == nullptr, "cleared file should no longer be found");
-  Expect(store.revision() > rev, "clearing should advance the revision");
 }
 
 void TestClearOwnerAndPathPrefix() {

@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "workspace/WorkspaceLayout.h"
@@ -79,6 +80,7 @@ class SidebarCoordinator {
   void ShowProblems();
   void ShowGit();
   void ShowTests();
+  void ShowOutline();
   bool ShowPlugin(std::string_view id, bool temporary = false);
   void Close();
   void Toggle();
@@ -88,6 +90,9 @@ class SidebarCoordinator {
   bool RefreshProblems();
   bool RefreshTests();
   bool RefreshPlugin();
+  // Rebuilds the outline rows from the active editable buffer's plugin document
+  // symbols. Stored in the shared plugin item-tree state (see SidebarMode::Outline).
+  bool RefreshOutline();
   void RevealSelectedTreeLine();
   void RevealSelectedGitLine();
   void RevealSelectedProblemsLine();
@@ -121,6 +126,28 @@ class SidebarCoordinator {
   void ReportGitOperationFailure(std::string_view verb, const GitSidebarEntry& entry) const;
   SidebarMode SidebarModeForViewId(std::string_view view_id) const;
   SidebarMode ActiveSidebarMode() const;
+  // Rebuilds the prebuilt plugin/outline placeholder text from the current
+  // items/error so the render TU never materializes it per frame. Call after any
+  // mutation of `state_.sidebar.plugin.{items,error}`.
+  void RecomputePluginSidebarPlaceholder();
+  // Scrolls a scrollable sidebar list so `selected_index` is visible. Shared by
+  // every per-mode RevealSelected*Line(): they differ only in the item count,
+  // selection, and which list-layout to use.
+  void RevealListSelection(
+      std::size_t count, std::size_t selected_index,
+      const std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>& compute_layout);
+  // Moves a flat-list sidebar selection by `delta` and reveals it. Shared by the
+  // Problems / Tests / Plugin modes whose move and reveal counts are identical
+  // (Git keeps its own path: its line model differs from its entry vector).
+  void MoveSimpleListSelection(
+      std::size_t count, std::size_t* selected_index,
+      const std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>& compute_layout,
+      int delta);
+  // Opens `path` in the editor (optionally moving the caret to `caret` =
+  // {line, column}), restores a temporary sidebar, and hands focus to the editor.
+  // Returns false without side effects when `path` is empty or no opener is wired.
+  bool OpenEditorFileFromSidebar(const std::filesystem::path& path,
+                                 std::optional<std::pair<std::size_t, std::size_t>> caret);
 
   ProjectWorkspaceState& state_;
   PromptState& prompts_;

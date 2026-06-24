@@ -73,6 +73,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::SignatureHelp: {
+      std::string error_message;
+      if (!context_.ShowSignatureHelp(&error_message)) {
+        return reject(error_message.empty() ? "No signature help available" : error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Goto:
     case ActionId::Jump: {
       if (context_.ActiveTabIsCompare() || context_.ActiveTabIsMerge()) {

@@ -6,6 +6,9 @@
 #include <utility>
 #include <vector>
 
+#include <optional>
+
+#include "editor/TextViewport.h"
 #include "project/GitStatusService.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/WorkspaceActionTypes.h"
@@ -13,7 +16,39 @@
 namespace microide::workspace {
 
 namespace {
+
+// Returns the selected entry of a flat sidebar list, or nullptr when the index
+// is out of range (which also covers an empty list). Collapses the repeated
+// `entries.empty() || selected_index >= entries.size()` guard at the open sites.
+template <typename Vec>
+const typename Vec::value_type* SelectedListEntry(const Vec& entries, std::size_t selected_index) {
+  if (selected_index >= entries.size()) {
+    return nullptr;
+  }
+  return &entries[selected_index];
+}
+
 }  // namespace
+
+bool SidebarCoordinator::OpenEditorFileFromSidebar(
+    const std::filesystem::path& path, std::optional<std::pair<std::size_t, std::size_t>> caret) {
+  if (path.empty() || !operations_.open_file) {
+    return false;
+  }
+  operations_.open_file(path);
+  if (caret.has_value()) {
+    if (editor::TextViewport* viewport =
+            operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+        viewport != nullptr) {
+      viewport->MoveCursorTo(caret->first, caret->second);
+    }
+  }
+  if (state_.sidebar.temporary) {
+    RestorePrevious();
+  }
+  state_.surface.focus = FocusTarget::Editor;
+  return true;
+}
 
 const GitSidebarEntry* SidebarCoordinator::GitEntry(const std::size_t entry_index) const {
   if (entry_index >= state_.sidebar.git.entries.size()) {
@@ -50,31 +85,39 @@ void SidebarCoordinator::ReportGitOperationFailure(const std::string_view verb,
                                    " (see git output)");
 }
 
+void SidebarCoordinator::MoveSimpleListSelection(
+    std::size_t count, std::size_t* selected_index,
+    const std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>& compute_layout,
+    int delta) {
+  if (MoveSelectionIndex(count, selected_index, delta)) {
+    RevealListSelection(count, *selected_index, compute_layout);
+  }
+}
+
 void SidebarCoordinator::MoveGitSelection(int delta) {
+  // Git's selection clamps against the entry vector but reveals against the
+  // richer line model, so it keeps its own move/reveal pair.
   if (MoveSelectionIndex(state_.sidebar.git.entries, &state_.sidebar.git.selected_index, delta)) {
     RevealSelectedGitLine();
   }
 }
 
 void SidebarCoordinator::MoveProblemsSelection(int delta) {
-  if (MoveSelectionIndex(state_.sidebar.problems.entries, &state_.sidebar.problems.selected_index,
-                         delta)) {
-    RevealSelectedProblemsLine();
-  }
+  MoveSimpleListSelection(state_.sidebar.problems.entries.size(),
+                          &state_.sidebar.problems.selected_index,
+                          operations_.compute_problems_sidebar_list_layout, delta);
 }
 
 void SidebarCoordinator::MoveTestsSelection(int delta) {
-  if (MoveSelectionIndex(state_.sidebar.tests.entries, &state_.sidebar.tests.selected_index,
-                         delta)) {
-    RevealSelectedTestsLine();
-  }
+  MoveSimpleListSelection(state_.sidebar.tests.entries.size(),
+                          &state_.sidebar.tests.selected_index,
+                          operations_.compute_tests_sidebar_list_layout, delta);
 }
 
 void SidebarCoordinator::MovePluginSelection(int delta) {
-  if (MoveSelectionIndex(state_.sidebar.plugin.items, &state_.sidebar.plugin.selected_index,
-                         delta)) {
-    RevealSelectedPluginLine();
-  }
+  MoveSimpleListSelection(state_.sidebar.plugin.items.size(),
+                          &state_.sidebar.plugin.selected_index,
+                          operations_.compute_plugin_sidebar_list_layout, delta);
 }
 
 bool SidebarCoordinator::OpenGitEntry(const std::size_t entry_index) {
@@ -186,71 +229,71 @@ bool SidebarCoordinator::DispatchGitSidebarAction(const GitSidebarActionId actio
 }
 
 bool SidebarCoordinator::OpenProblemItem() {
-  if (state_.sidebar.problems.entries.empty() ||
-      state_.sidebar.problems.selected_index >= state_.sidebar.problems.entries.size()) {
+  const ProblemsSidebarEntry* entry =
+      SelectedListEntry(state_.sidebar.problems.entries, state_.sidebar.problems.selected_index);
+  if (entry == nullptr || entry->diagnostic.path.empty()) {
     return false;
   }
-  const auto& entry = state_.sidebar.problems.entries[state_.sidebar.problems.selected_index];
-  if (entry.diagnostic.path.empty()) {
-    return false;
-  }
-  operations_.open_file(entry.diagnostic.path);
-  if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
-    viewport->MoveCursorTo(entry.diagnostic.range.start.line,
-                           entry.diagnostic.range.start.column);
-  }
-  if (state_.sidebar.temporary) {
-    RestorePrevious();
-  }
-  state_.surface.focus = FocusTarget::Editor;
-  return true;
+  return OpenEditorFileFromSidebar(
+      entry->diagnostic.path,
+      std::pair<std::size_t, std::size_t>{entry->diagnostic.range.start.line,
+                                          entry->diagnostic.range.start.column});
 }
 
 bool SidebarCoordinator::OpenTestItem() {
-  if (state_.sidebar.tests.entries.empty() ||
-      state_.sidebar.tests.selected_index >= state_.sidebar.tests.entries.size()) {
+  const TestsSidebarEntry* entry =
+      SelectedListEntry(state_.sidebar.tests.entries, state_.sidebar.tests.selected_index);
+  if (entry == nullptr || entry->file.empty()) {
     return false;
   }
-  const auto& entry = state_.sidebar.tests.entries[state_.sidebar.tests.selected_index];
-  if (entry.file.empty()) {
-    return false;
+  // Tests only carry a line when discovered with one; jump only then.
+  std::optional<std::pair<std::size_t, std::size_t>> caret;
+  if (entry->line > 0) {
+    caret = std::pair<std::size_t, std::size_t>{static_cast<std::size_t>(entry->line - 1), 0};
   }
-  operations_.open_file(entry.file);
-  if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr &&
-      entry.line > 0) {
-    viewport->MoveCursorTo(static_cast<std::size_t>(entry.line - 1), 0);
-  }
-  if (state_.sidebar.temporary) {
-    RestorePrevious();
-  }
-  state_.surface.focus = FocusTarget::Editor;
-  return true;
+  return OpenEditorFileFromSidebar(entry->file, caret);
 }
 
 bool SidebarCoordinator::RunTestItem() {
-  if (state_.sidebar.tests.entries.empty() ||
-      state_.sidebar.tests.selected_index >= state_.sidebar.tests.entries.size() ||
-      !operations_.run_tests) {
+  const TestsSidebarEntry* entry =
+      SelectedListEntry(state_.sidebar.tests.entries, state_.sidebar.tests.selected_index);
+  if (entry == nullptr || entry->id.empty() || !operations_.run_tests) {
     return false;
   }
-  const auto& entry = state_.sidebar.tests.entries[state_.sidebar.tests.selected_index];
-  if (entry.id.empty()) {
-    return false;
-  }
-  return operations_.run_tests({entry.id});
+  return operations_.run_tests({entry->id});
 }
 
 bool SidebarCoordinator::OpenPluginItem() {
-  if (state_.sidebar.plugin.items.empty() ||
-      state_.sidebar.plugin.selected_index >= state_.sidebar.plugin.items.size()) {
+  const plugin::PluginHost::SidebarItem* selected =
+      SelectedListEntry(state_.sidebar.plugin.items, state_.sidebar.plugin.selected_index);
+  if (selected == nullptr) {
     return false;
   }
-  const auto& item = state_.sidebar.plugin.items[state_.sidebar.plugin.selected_index];
+  const plugin::PluginHost::SidebarItem& item = *selected;
+
+  // Outline rows reuse this storage but the host owns navigation: jump the active
+  // editor to the symbol's location instead of invoking a plugin confirm callback.
+  // Keep sidebar focus so arrow keys keep browsing the outline (VS Code-style).
+  if (ActiveSidebarMode() == SidebarMode::Outline) {
+    if (item.path.empty() || !operations_.open_file) {
+      return false;
+    }
+    operations_.open_file(item.path);
+    if (editor::TextViewport* viewport =
+            operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+        viewport != nullptr) {
+      viewport->MoveCursorTo(item.line > 0 ? item.line - 1 : 0,
+                             item.column > 0 ? item.column - 1 : 0);
+    }
+    return true;
+  }
+
   std::string error_message;
   const bool confirmed =
       plugin_runtime_.Host().ConfirmSidebarItem(state_.sidebar.view_id, item, &error_message);
   if (!confirmed && !error_message.empty()) {
     state_.sidebar.plugin.error = std::move(error_message);
+    RecomputePluginSidebarPlaceholder();
   }
   if (confirmed && state_.sidebar.temporary) {
     RestorePrevious();
@@ -262,23 +305,21 @@ bool SidebarCoordinator::OpenPluginItem() {
 }
 
 bool SidebarCoordinator::TogglePluginItem() {
-  if (state_.sidebar.plugin.items.empty() ||
-      state_.sidebar.plugin.selected_index >= state_.sidebar.plugin.items.size()) {
+  const plugin::PluginHost::SidebarItem* selected =
+      SelectedListEntry(state_.sidebar.plugin.items, state_.sidebar.plugin.selected_index);
+  if (selected == nullptr || !selected->collapsible) {
     return false;
   }
   // Snapshot the item by value: re-snapshotting below rebuilds the items vector,
   // invalidating any reference into it.
-  const plugin::PluginHost::SidebarItem item =
-      state_.sidebar.plugin.items[state_.sidebar.plugin.selected_index];
-  if (!item.collapsible) {
-    return false;
-  }
+  const plugin::PluginHost::SidebarItem item = *selected;
   std::string error_message;
   const bool toggled =
       plugin_runtime_.Host().ToggleSidebarItem(state_.sidebar.view_id, item, &error_message);
   if (!toggled) {
     if (!error_message.empty()) {
       state_.sidebar.plugin.error = std::move(error_message);
+      RecomputePluginSidebarPlaceholder();
     }
     return false;
   }

@@ -1328,6 +1328,8 @@ return ide.plugin({
          "plugin sidebar should snapshot its items when shown");
   Expect(WorkspaceShellTestAccess::PluginSidebarError(shell).empty(),
          "plugin sidebar should load without runtime errors");
+  Expect(WorkspaceShellTestAccess::PluginSidebarPlaceholder(shell).empty(),
+         "a populated plugin sidebar should not cache an empty/error placeholder");
 
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
@@ -1339,6 +1341,131 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 1,
          "plugin sidebar confirm should be able to open files at the requested location");
+}
+
+void TestWorkspaceShellSignatureHelpPopupFromPluginProvider() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.lua";
+  WriteFile(source, "local function greet(name)\n  return name\nend\nprint(greet())\n");
+
+  // Custom raw-string delimiter: the signature label contains `)"`, which would
+  // otherwise close a default R"(...)" literal early.
+  WritePluginInit(
+      plugins_root, "sig-tools",
+      R"LUA(local ide = require("microide")
+return ide.plugin({
+  id = "sig-tools",
+  setup = function(ctx)
+    ctx.signature_help.add({
+      id = "sig", language_id = "lua",
+      provide = function(_, _)
+        return {
+          active_signature = 0,
+          signatures = {
+            { label = "greet(name: string)", documentation = "Greets the given name.",
+              active_parameter = 0, parameters = { { label = "name" } } },
+          },
+        }
+      end,
+    })
+  end
+})
+)LUA");
+
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "signature-help fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "signature-help"),
+         "signature-help command should resolve the plugin provider");
+  const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+  Expect(popup.has_value() && popup->signature == "greet(name: string)",
+         "signature popup should carry the active signature label");
+  Expect(popup.has_value() && popup->documentation.find("Greets the given name.") !=
+                                  std::string::npos,
+         "signature popup documentation block should include the signature docs");
+
+  // The popup is anchored to the request position; moving the caret expires it.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  WorkspaceShellTestAccess::ExpireSignatureHelp(shell);
+  Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+         "moving the caret should dismiss the signature popup");
+}
+
+void TestWorkspaceShellOutlineSidebarFromDocumentSymbols() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.lua";
+  WriteFile(source,
+            "local Widget = {}\nfunction Widget.new() end\n\n-- class\nlocal x = 1\nlocal y = 2\n"
+            "local z = 3\nfunction Widget:draw() end\nlocal q = 4\nfunction main() end\n");
+
+  WritePluginInit(
+      plugins_root, "outline-tools",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "outline-tools",
+  setup = function(ctx)
+    ctx.document_symbols.add({
+      id = "symbols", language_id = "lua",
+      provide = function(_)
+        return {
+          { name = "Widget", kind = "class", line = 1, column = 1,
+            children = { { name = "draw", kind = "method", line = 8, column = 10 } } },
+          { name = "main", kind = "function", line = 10, column = 10 },
+        }
+      end,
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "outline fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show outline"),
+         "sidebar-show should accept the built-in outline view");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Outline,
+         "outline view should activate the outline sidebar mode");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "outline",
+         "outline view should record the outline view id");
+
+  const auto& items = WorkspaceShellTestAccess::PluginSidebarItems(shell);
+  Expect(items.size() == 3, "outline should flatten the nested document symbols into rows");
+  Expect(items[0].label == "Widget" && items[0].depth == 0,
+         "outline should list the parent symbol at depth 0");
+  Expect(items[1].label == "draw" && items[1].depth == 1,
+         "outline should indent a child symbol to depth 1");
+  Expect(items[2].label == "main" && items[2].depth == 0,
+         "outline should return to depth 0 after a child subtree");
+
+  // Confirming a row navigates the editor caret to the symbol (1-based -> 0-based).
+  WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 1);
+  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell),
+         "confirming an outline row should navigate the editor");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 7 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 9,
+         "confirming an outline row should move the caret to the symbol location");
 }
 
 void TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar() {
@@ -2437,6 +2564,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginWatcherReloadsRuntimeSyntaxHighlighting);
   AddTest(tests, "WorkspaceShell/PluginSidebarOpensItems",
           TestWorkspaceShellPluginSidebarOpensItems);
+  AddTest(tests, "WorkspaceShell/SignatureHelpPopupFromPluginProvider",
+          TestWorkspaceShellSignatureHelpPopupFromPluginProvider);
+  AddTest(tests, "WorkspaceShell/OutlineSidebarFromDocumentSymbols",
+          TestWorkspaceShellOutlineSidebarFromDocumentSymbols);
   AddTest(tests, "WorkspaceShell/PluginsReloadFallsBackFromMissingActivePluginSidebar",
           TestWorkspaceShellPluginsReloadFallsBackFromMissingActivePluginSidebar);
   AddTest(tests, "WorkspaceShell/SidebarModeMenuListsPluginSidebars",

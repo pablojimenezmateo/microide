@@ -553,4 +553,77 @@ void WorkspaceShell::UpdateEditorBlameHover(float x, float y) {
   UpdateEditorHover(x, y);
 }
 
+void WorkspaceShell::ShowSignatureHelpPopup(std::string signature, std::string documentation) {
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty() || signature.empty()) {
+    active_signature_help_.reset();
+    return;
+  }
+  active_signature_help_ = SignatureHelpPopup{
+      .signature = std::move(signature),
+      .documentation = std::move(documentation),
+      .path = viewport->path(),
+      .cursor_line = viewport->cursor_line(),
+      .cursor_column = viewport->cursor_column(),
+  };
+  RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::MaybeExpireSignatureHelp() {
+  if (!active_signature_help_.has_value()) {
+    return;
+  }
+  // The popup is anchored to the caret of the buffer it was requested for; once
+  // the caret moves, the buffer changes, or no editable viewport is focused, the
+  // signature no longer describes what is being typed, so drop it.
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  const bool still_valid = viewport != nullptr &&
+                           viewport->path() == active_signature_help_->path &&
+                           viewport->cursor_line() == active_signature_help_->cursor_line &&
+                           viewport->cursor_column() == active_signature_help_->cursor_column;
+  if (!still_valid) {
+    active_signature_help_.reset();
+    RequestEditorSurfaceRedraw();
+  }
+}
+
+void WorkspaceShell::RenderSignatureHelpPopup(SDL_Renderer* renderer) const {
+  if (!active_signature_help_.has_value() || MenuSurfaceCapturingMouse()) {
+    return;
+  }
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const auto caret = ActiveEditorCaretRect(*layout_state);
+  if (!caret.has_value()) {
+    return;
+  }
+
+  const SignatureHelpPopup& popup = *active_signature_help_;
+  const SDL_FRect card_rect = ComputeTwoBlockHoverCardRect(
+      popup.signature, popup.documentation, kEditorHoverPopupMaxPluginTitleLines,
+      kEditorHoverPopupMaxPluginContentLines, *caret, layout_state->editor_surface);
+  DrawCardFrame(renderer, theme_, card_rect, CardStyle::Overlay);
+
+  const float text_x = card_rect.x + kEditorHoverPopupPadding;
+  const float text_width = std::max(0.0f, card_rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = card_rect.y + kEditorHoverPopupPadding;
+  // The signature itself is the primary line; the parameter/doc block is the
+  // muted supporting text below it (inverse of the hover card's title/content).
+  const auto signature_lines =
+      WrapEditorHoverPopupText(popup.signature, text_width, kEditorHoverPopupMaxPluginTitleLines);
+  const auto doc_lines = popup.documentation.empty()
+                             ? std::vector<std::string>{}
+                             : WrapEditorHoverPopupText(popup.documentation, text_width,
+                                                        kEditorHoverPopupMaxPluginContentLines);
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                      theme_.overlay_background, signature_lines);
+  if (!signature_lines.empty() && !doc_lines.empty()) {
+    text_y += kEditorHoverPopupSectionGap;
+  }
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
+                      theme_.overlay_background, doc_lines);
+}
+
 }  // namespace microide::workspace

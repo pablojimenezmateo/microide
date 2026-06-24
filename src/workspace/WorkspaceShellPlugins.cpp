@@ -201,6 +201,10 @@ WorkspaceShell::WorkspaceShell() {
           .show_overlay = [this](OverlayMode mode) { ShowOverlay(mode); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
+          .show_signature_help =
+              [this](std::string signature, std::string documentation) {
+                ShowSignatureHelpPopup(std::move(signature), std::move(documentation));
+              },
           .execute_command_name =
               [this](std::string_view command_name,
                      const std::vector<std::string>& args,

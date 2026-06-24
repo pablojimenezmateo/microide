@@ -146,10 +146,15 @@ actions). All line/column values are **1-based**.
   output channel with file:line context.
 - `ctx.signature_help.add{ id, language_id, provide = function(buffer, position) }`
   → returns `{ active_signature, signatures = { { label, documentation,
-  active_parameter, parameters = { { label, documentation }, ... } } } }`.
+  active_parameter, parameters = { { label, documentation }, ... } } } }`. The
+  `signature-help` command (default `Ctrl+Shift+Space`) renders the active
+  signature in a caret-anchored popup; the active parameter and docs form the
+  supporting block. The popup self-dismisses on Escape, caret movement, or edit.
 - `ctx.document_symbols.add{ id, language_id, provide = function(buffer) }` →
-  returns a nested array of `{ name, detail, kind, line, column, children = {...} }`
-  for an outline (host-bounded depth/count).
+  returns a nested array of `{ name, detail, kind, line, column, children = {...} }`.
+  The built-in **Outline** sidebar view (`sidebar-show outline`, default
+  `Ctrl+Alt+O`) flattens the tree into an indented, host-drawn list; confirming a
+  row navigates the active editor to the symbol (host-bounded depth/count).
 
 All plugin-supplied tables are bounded before allocation; oversize input is
 truncated, never trusted. These providers emit data only — the host owns

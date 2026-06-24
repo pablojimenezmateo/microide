@@ -534,7 +534,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
       return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
     }
-    if (sidebar_mode == SidebarMode::Plugin) {
+    if (sidebar_mode == SidebarMode::Plugin || sidebar_mode == SidebarMode::Outline) {
       const auto list_layout =
           ComputePluginSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.plugin.items.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);

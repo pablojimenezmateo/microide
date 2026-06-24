@@ -748,7 +748,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
-  } else if (sidebar_mode == SidebarMode::Plugin) {
+  } else if (sidebar_mode == SidebarMode::Plugin || sidebar_mode == SidebarMode::Outline) {
+    // The outline view reuses the plugin item-tree surface; only the empty-state
+    // noun differs (symbols vs items).
     const auto list_layout =
         ComputePluginSidebarListLayout(layout.sidebar, project_state.sidebar.plugin.items.size());
     const int scroll_row = list_layout.scroll_row;
@@ -790,16 +792,15 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                                   row_background, item.label, item.detail, 0.62f);
     }
 
-    const std::string placeholder =
-        !project_state.sidebar.plugin.error.empty()
-            ? "Error: " + project_state.sidebar.plugin.error
-            : project_state.sidebar.plugin.items.empty()
-                ? FormatEmptyState("items")
-                : std::string{};
+    // Placeholder text is prebuilt on refresh (SidebarCoordinator::
+    // RecomputePluginSidebarPlaceholder), so the render path never materializes
+    // a string per frame.
+    const std::string& placeholder = project_state.sidebar.plugin.placeholder;
     if (!placeholder.empty()) {
       DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
                  list_layout.row_y + 4.0f,
-                 project_state.sidebar.plugin.error.empty() ? theme_.text_muted : theme_.diff_deleted,
+                 project_state.sidebar.plugin.placeholder_is_error ? theme_.diff_deleted
+                                                                   : theme_.text_muted,
                  theme_.surface_background,
                  TruncateLabel(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
     }
