@@ -102,6 +102,7 @@ class SidebarCoordinator {
   bool OpenTestItem();
   bool RunTestItem();
   bool OpenPluginItem();
+  bool TogglePluginItem();
   bool CanStageAllGitEntries() const;
   bool CanDiscardAllGitEntries() const;
   bool StageAllGitEntries();

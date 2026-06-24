@@ -228,6 +228,10 @@ inline constexpr float kWorkspaceBottomPanelCommandBottomPadding = 8.0f;
 inline constexpr float kWorkspaceOverlayMaxHeight = 360.0f;
 inline constexpr float kWorkspaceEditorSplitDividerThickness = 6.0f;
 inline constexpr float kWorkspaceSidebarRowHeight = 20.0f;
+// Tree-row geometry shared by the file tree, git tree, and plugin tree sidebars
+// so render and click hit-testing agree on indentation and the disclosure slot.
+inline constexpr float kWorkspaceSidebarTreeIndentWidth = 14.0f;
+inline constexpr float kWorkspaceSidebarTreeChevronSlotWidth = 12.0f;
 inline constexpr float kWorkspaceSidebarHorizontalInset = 10.0f;
 inline constexpr float kWorkspaceWindowControlButtonGap = 4.0f;
 inline constexpr float kWorkspaceWindowControlButtonRightInset = 8.0f;

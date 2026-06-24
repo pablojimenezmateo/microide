@@ -261,6 +261,33 @@ bool SidebarCoordinator::OpenPluginItem() {
   return confirmed;
 }
 
+bool SidebarCoordinator::TogglePluginItem() {
+  if (state_.sidebar.plugin.items.empty() ||
+      state_.sidebar.plugin.selected_index >= state_.sidebar.plugin.items.size()) {
+    return false;
+  }
+  // Snapshot the item by value: re-snapshotting below rebuilds the items vector,
+  // invalidating any reference into it.
+  const plugin::PluginHost::SidebarItem item =
+      state_.sidebar.plugin.items[state_.sidebar.plugin.selected_index];
+  if (!item.collapsible) {
+    return false;
+  }
+  std::string error_message;
+  const bool toggled =
+      plugin_runtime_.Host().ToggleSidebarItem(state_.sidebar.view_id, item, &error_message);
+  if (!toggled) {
+    if (!error_message.empty()) {
+      state_.sidebar.plugin.error = std::move(error_message);
+    }
+    return false;
+  }
+  // The plugin owns its expand/collapse state; re-snapshot to pull the reshaped
+  // (visible) row set. RefreshPlugin re-clamps the selection and requests redraw.
+  RefreshPlugin();
+  return true;
+}
+
 bool SidebarCoordinator::CanStageAllGitEntries() const {
   return std::any_of(state_.sidebar.git.entries.begin(), state_.sidebar.git.entries.end(),
                      [](const GitSidebarEntry& entry) {

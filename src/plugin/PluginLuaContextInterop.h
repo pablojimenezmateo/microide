@@ -37,6 +37,10 @@ struct ApiFns {
   lua_CFunction save_participants_add;
   lua_CFunction completion_add;
   lua_CFunction code_action_add;
+  lua_CFunction definition_add;
+  lua_CFunction references_add;
+  lua_CFunction signature_help_add;
+  lua_CFunction document_symbols_add;
   lua_CFunction lsp_add;
   lua_CFunction debug_add;
   lua_CFunction debug_add_config;

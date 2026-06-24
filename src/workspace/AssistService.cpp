@@ -532,6 +532,20 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
     return false;
   }
 
+  // Plugin-native definition providers run first (mirrors completion / code
+  // action orchestration); a non-empty result short-circuits the LSP path.
+  {
+    const std::string plugin_language_id = DetectViewportLanguageId(*viewport);
+    std::string provider_error;
+    const auto locations = plugin_runtime_->Host().QueryDefinition(
+        plugin_language_id, viewport->path(), viewport->cursor_line() + 1,
+        viewport->cursor_column() + 1, &provider_error);
+    if (!locations.empty()) {
+      NavigateToPluginLocation(locations.front());
+      return true;
+    }
+  }
+
   std::string language_id;
   LspClient* client = operations_.lsp_client_for_viewport(*viewport, &language_id);
   if (client == nullptr) {
@@ -583,6 +597,20 @@ bool AssistService::FindLspReferences(std::string* error_message) {
       *error_message = "No active file";
     }
     return false;
+  }
+
+  // Plugin-native reference providers run first; a non-empty result is rendered
+  // into the same References output channel the LSP path uses and short-circuits.
+  {
+    const std::string plugin_language_id = DetectViewportLanguageId(*viewport);
+    std::string provider_error;
+    const auto locations = plugin_runtime_->Host().QueryReferences(
+        plugin_language_id, viewport->path(), viewport->cursor_line() + 1,
+        viewport->cursor_column() + 1, true, &provider_error);
+    if (!locations.empty()) {
+      EmitPluginReferences(locations);
+      return true;
+    }
   }
 
   std::string language_id;
@@ -656,6 +684,66 @@ bool AssistService::FindLspReferences(std::string* error_message) {
         }
       });
   return true;
+}
+
+void AssistService::NavigateToPluginLocation(const plugin::PluginHost::LocationResult& location) {
+  if (location.path.empty() || !operations_.open_file_in_new_tab(location.path)) {
+    return;
+  }
+  if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
+    // Provider line/column are 1-based; the viewport caret is 0-based.
+    active->MoveCursorTo(location.line > 0 ? location.line - 1 : 0,
+                         location.column > 0 ? location.column - 1 : 0);
+    operations_.reset_caret_blink();
+    operations_.request_focused_editor_redraw();
+  }
+}
+
+void AssistService::EmitPluginReferences(
+    const std::vector<plugin::PluginHost::LocationResult>& locations) {
+  output_channels_->Clear("lsp.references");
+  std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
+  for (std::size_t index = 0; index < locations.size(); ++index) {
+    const auto& location = locations[index];
+    if (location.path.empty()) {
+      continue;
+    }
+    const std::string label =
+        context_->current_project_state.root.empty()
+            ? location.path.generic_string()
+            : RelativePathLabel(context_->current_project_state.root, location.path);
+    output_channels_->AppendLine(
+        "lsp.references", "References",
+        label + ":" + std::to_string(location.line) + ":" + std::to_string(location.column));
+
+    const auto lines_it = file_line_cache.find(location.path);
+    const std::vector<std::string>* file_lines = nullptr;
+    if (lines_it != file_line_cache.end()) {
+      file_lines = &lines_it->second;
+    } else if (const auto text = util::ReadTextFile(location.path); text.has_value()) {
+      file_lines =
+          &file_line_cache.emplace(location.path, util::SplitLines(*text)).first->second;
+    }
+    if (file_lines == nullptr || file_lines->empty()) {
+      continue;
+    }
+
+    const std::size_t target_line = location.line > 0 ? location.line : 1;
+    const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
+    const std::size_t last_line = target_line + 1;
+    for (std::size_t line_number = first_line; line_number <= last_line; ++line_number) {
+      if (line_number == 0 || line_number > file_lines->size()) {
+        continue;
+      }
+      output_channels_->AppendLine(
+          "lsp.references", "References",
+          std::string(line_number == target_line ? " > " : "   ") +
+              std::to_string(line_number) + " | " + (*file_lines)[line_number - 1]);
+    }
+    if (index + 1 < locations.size()) {
+      output_channels_->AppendLine("lsp.references", "References", "");
+    }
+  }
 }
 
 }  // namespace microide::workspace

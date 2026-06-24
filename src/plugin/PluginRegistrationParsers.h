@@ -23,6 +23,11 @@ struct CodeActionRegistration {
   bool has_runtime = false;
 };
 
+struct LanguageQueryRegistration {
+  runtime_types::LanguageQueryRuntime runtime;
+  bool has_runtime = false;
+};
+
 struct TestProviderRegistration {
   PluginHost::ContributedTestProvider contributed;
   runtime_types::TestProviderRuntime runtime;
@@ -132,6 +137,12 @@ bool ParseCodeActionRegistration(lua_State* state,
                                  const std::string& plugin_id,
                                  CodeActionRegistration* out,
                                  std::string* error_message);
+
+bool ParseLanguageQueryRegistration(lua_State* state,
+                                    const std::string& plugin_id,
+                                    runtime_types::LanguageQueryKind kind,
+                                    LanguageQueryRegistration* out,
+                                    std::string* error_message);
 
 bool ParseTestProviderRegistration(lua_State* state,
                                    const std::string& plugin_id,

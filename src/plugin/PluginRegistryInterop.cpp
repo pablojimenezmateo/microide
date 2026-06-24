@@ -179,6 +179,24 @@ bool RegisterSidebar(lua_State* state,
     return false;
   }
 
+  int toggle_ref = LUA_NOREF;
+  lua_getfield(state, table_index, "on_toggle");
+  if (lua_isnil(state, -1)) {
+    lua_pop(state, 1);
+  } else if (lua_isfunction(state, -1)) {
+    toggle_ref = luaL_ref(state, LUA_REGISTRYINDEX);
+  } else {
+    if (error_message != nullptr) {
+      *error_message = "sidebar on_toggle must be a function";
+    }
+    lua_pop(state, 1);
+    luaL_unref(state, LUA_REGISTRYINDEX, snapshot_ref);
+    if (confirm_ref != LUA_NOREF) {
+      luaL_unref(state, LUA_REGISTRYINDEX, confirm_ref);
+    }
+    return false;
+  }
+
   sidebars->emplace(id, runtime_types::SidebarProvider{
                             .info =
                                 PluginHost::SidebarProviderInfo{
@@ -189,6 +207,7 @@ bool RegisterSidebar(lua_State* state,
                             .state = state,
                             .snapshot_ref = snapshot_ref,
                             .confirm_ref = confirm_ref,
+                            .toggle_ref = toggle_ref,
                         });
   return true;
 }

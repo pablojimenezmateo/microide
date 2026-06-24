@@ -596,6 +596,10 @@ bool WorkspaceShell::OpenSelectedPluginSidebarItem() {
   return MakeSidebarService().OpenPluginItem();
 }
 
+bool WorkspaceShell::ToggleSelectedPluginSidebarItem() {
+  return MakeSidebarService().TogglePluginItem();
+}
+
 bool WorkspaceShell::RunSelectedTestSidebarItem() {
   return MakeSidebarService().RunTestItem();
 }

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "plugin/PluginHost.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspaceLspManager.h"
@@ -92,6 +93,13 @@ class AssistService {
   EditSideEffectsSnapshot CaptureEditSnapshot(editor::TextViewport& viewport) const;
   void ApplyEditSideEffects(editor::TextViewport& viewport,
                             const EditSideEffectsSnapshot& snapshot) const;
+
+  // Open a plugin-provided navigation target (1-based line/column) in a new tab
+  // and move the caret there. Shared by go-to-definition and the outline view.
+  void NavigateToPluginLocation(const plugin::PluginHost::LocationResult& location);
+  // Render plugin-provided references into the References output channel using
+  // the same file:line:column + 3-line-context layout the LSP path produces.
+  void EmitPluginReferences(const std::vector<plugin::PluginHost::LocationResult>& locations);
 
   WorkspaceContext* context_ = nullptr;
   WorkspacePluginRuntime* plugin_runtime_ = nullptr;

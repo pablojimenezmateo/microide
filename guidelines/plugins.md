@@ -15,7 +15,10 @@ Purpose: define the durable plugin-extension rules for `microide`.
 Plugins may contribute capabilities such as:
 
 - commands (may return a string to surface as host command-prompt feedback)
-- sidebar providers
+- sidebar providers (flat lists or **tree views** — see below)
+- language providers: go-to-definition (`ctx.definition.add`), find references
+  (`ctx.references.add`), signature help (`ctx.signature_help.add`), and document
+  symbols / outline (`ctx.document_symbols.add`) — see below
 - diagnostics
 - editor decorations via `ctx.decorations.set(path, {...})` / `ctx.decorations.clear(path?)`
   (see below)
@@ -98,6 +101,59 @@ kinds render once per logical line on its first visual row; the painted rect and
 the click hit-test share one geometry helper (`editor::BuildEolDecorationSegments`)
 so a click always lands where the affordance was drawn. See the
 `plugins/eol-annotations` dogfood plugin for a worked example of both.
+
+## Tree sidebars (`ctx.sidebar.add`)
+
+A sidebar `snapshot` may return a **flattened tree** instead of a flat list. Each
+returned row is still a `{ label, detail, path, line, column }` item and may add:
+
+- `id` — stable node id (string), passed back to `on_toggle`/`on_confirm`
+- `depth` — indentation depth (integer ≥ 0; 0 = root)
+- `collapsible` — `true` to draw a host-owned disclosure twisty
+- `collapsed` — current state of a collapsible row
+
+The host owns all drawing (indentation + twisty) and routing. The **plugin owns
+the expand/collapse state**: clicking a twisty (or pressing Right/Left/Space on a
+collapsible row) calls the provider's optional `on_toggle(item)` callback, after
+which the host re-runs `snapshot` to pull the reshaped visible rows. Plain lists
+(no `depth`/`collapsible`) render exactly as before. Confirming a row
+(Enter/click on the label) still routes through `on_confirm` / opens `path`.
+
+```lua
+ctx.sidebar.add({
+  id = "symbols", label = "Symbols",
+  snapshot = function() return {
+    { id = "g1", label = "Types", depth = 0, collapsible = true, collapsed = false },
+    { label = "Widget", detail = "class", depth = 1, path = "src/widget.lua", line = 4 },
+  } end,
+  on_toggle = function(item) --[[ flip your own state for item.id ]] end,
+  on_confirm = function(item) ctx.workspace.open_file(item.path, item.line) end,
+})
+```
+
+## Language providers (`ctx.definition`, `ctx.references`, `ctx.signature_help`, `ctx.document_symbols`)
+
+Plugin-native language intelligence that the host wires into existing surfaces.
+Each registration requires `id`, `language_id`, and a `provide` function; the host
+queries every provider matching the active buffer's detected filetype. A non-empty
+plugin result short-circuits the built-in LSP path (mirroring completions / code
+actions). All line/column values are **1-based**.
+
+- `ctx.definition.add{ id, language_id, provide = function(buffer, position) }` →
+  returns an array of `{ path, line, column }`; the host opens the first target.
+- `ctx.references.add{ id, language_id, provide = function(buffer, position, include_declaration) }`
+  → returns an array of `{ path, line, column }`; rendered into the References
+  output channel with file:line context.
+- `ctx.signature_help.add{ id, language_id, provide = function(buffer, position) }`
+  → returns `{ active_signature, signatures = { { label, documentation,
+  active_parameter, parameters = { { label, documentation }, ... } } } }`.
+- `ctx.document_symbols.add{ id, language_id, provide = function(buffer) }` →
+  returns a nested array of `{ name, detail, kind, line, column, children = {...} }`
+  for an outline (host-bounded depth/count).
+
+All plugin-supplied tables are bounded before allocation; oversize input is
+truncated, never trusted. These providers emit data only — the host owns
+navigation, the output channel, the signature popup, and the outline surface.
 
 ## Editor language contract tables (`ctx.brackets`, `ctx.comments`, `ctx.indents`, `ctx.snippets`)
 

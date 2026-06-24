@@ -506,6 +506,164 @@ return ide.plugin({
   Expect(logged_custom, "plugin should receive the custom value from the callback");
 }
 
+// ---------------------------------------------------------------------------
+// Phase C: tree-capable plugin sidebar
+// ---------------------------------------------------------------------------
+
+void TestPluginTreeSidebarToggle() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "tree" / "init.lua", R"lua(
+local ide = require("microide")
+local expanded = true
+return ide.plugin({
+  id = "tree",
+  setup = function(ctx)
+    ctx.sidebar.add({
+      id = "tree",
+      label = "Tree",
+      snapshot = function()
+        local rows = {
+          { id = "root", label = "Root", depth = 0, collapsible = true, collapsed = not expanded },
+        }
+        if expanded then
+          rows[#rows + 1] = { label = "Child", depth = 1, path = "child.txt", line = 3 }
+        end
+        return rows
+      end,
+      on_toggle = function(item)
+        if item.id == "root" then expanded = not expanded end
+      end,
+    })
+    -- A flat sidebar with no on_toggle: toggling must be a silent no-op.
+    ctx.sidebar.add({
+      id = "flat",
+      label = "Flat",
+      snapshot = function()
+        return { { label = "Only", path = "only.txt" } }
+      end,
+    })
+  end,
+})
+)lua");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+
+  std::vector<PluginHost::SidebarItem> items;
+  std::string error;
+  Expect(host.SnapshotSidebar("tree", &items, &error), "tree sidebar should snapshot");
+  Expect(items.size() == 2, "expanded tree should expose root + child");
+  Expect(items[0].id == "root" && items[0].collapsible && !items[0].collapsed &&
+             items[0].depth == 0,
+         "root row should be a collapsible depth-0 node");
+  Expect(items[1].depth == 1, "child row should report depth 1");
+
+  Expect(host.ToggleSidebarItem("tree", items[0], &error),
+         "toggling a collapsible row should invoke on_toggle");
+  Expect(host.SnapshotSidebar("tree", &items, &error), "tree sidebar should re-snapshot");
+  Expect(items.size() == 1 && items[0].collapsed,
+         "collapsing the root should hide its child and mark it collapsed");
+
+  // A flat sidebar with no on_toggle reports toggle as an unhandled no-op.
+  std::vector<PluginHost::SidebarItem> flat_items;
+  Expect(host.SnapshotSidebar("flat", &flat_items, &error) && flat_items.size() == 1,
+         "flat sidebar should snapshot its single row");
+  Expect(!host.ToggleSidebarItem("flat", flat_items[0], &error) && error.empty(),
+         "toggling a sidebar without on_toggle should be a silent no-op");
+}
+
+// ---------------------------------------------------------------------------
+// Phase C: plugin-native language providers
+// ---------------------------------------------------------------------------
+
+void TestPluginLanguageProviders() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "lang" / "init.lua", R"lua(
+local ide = require("microide")
+return ide.plugin({
+  id = "lang",
+  setup = function(ctx)
+    ctx.definition.add({
+      id = "defn", language_id = "lua",
+      provide = function(buffer, position)
+        return { { path = buffer.path, line = position.line, column = position.column } }
+      end,
+    })
+    ctx.references.add({
+      id = "refs", language_id = "lua",
+      provide = function(buffer, position, include_declaration)
+        local out = { { path = buffer.path, line = position.line, column = 1 } }
+        if include_declaration then out[#out + 1] = { path = buffer.path, line = 1, column = 1 } end
+        return out
+      end,
+    })
+    ctx.signature_help.add({
+      id = "sig", language_id = "lua",
+      provide = function(_, _)
+        return {
+          active_signature = 0,
+          signatures = {
+            { label = "greet(name)", documentation = "doc", active_parameter = 0,
+              parameters = { { label = "name" } } },
+          },
+        }
+      end,
+    })
+    ctx.document_symbols.add({
+      id = "sym", language_id = "lua",
+      provide = function(_)
+        return {
+          { name = "Widget", kind = "class", line = 4, column = 1,
+            children = { { name = "draw", kind = "method", line = 8, column = 3 } } },
+          { name = "main", kind = "function", line = 40, column = 1 },
+        }
+      end,
+    })
+  end,
+})
+)lua");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  const std::filesystem::path file = temp.path() / "project" / "src" / "main.lua";
+
+  std::string error;
+  const auto definitions = host.QueryDefinition("lua", file, 12, 5, &error);
+  Expect(definitions.size() == 1 && definitions.front().line == 12 &&
+             definitions.front().column == 5 && !definitions.front().path.empty(),
+         "definition provider should return the queried position");
+
+  const auto references = host.QueryReferences("lua", file, 12, 5, true, &error);
+  Expect(references.size() == 2, "references provider should include the declaration");
+
+  PluginHost::SignatureHelpResult signature;
+  Expect(host.QuerySignatureHelp("lua", file, 12, 5, &signature, &error),
+         "signature help provider should resolve");
+  Expect(signature.signatures.size() == 1 && signature.signatures.front().label == "greet(name)" &&
+             signature.signatures.front().parameters.size() == 1,
+         "signature help should carry label and parameters");
+
+  const auto symbols = host.QueryDocumentSymbols("lua", file, &error);
+  Expect(symbols.size() == 2 && symbols.front().name == "Widget" &&
+             symbols.front().children.size() == 1 &&
+             symbols.front().children.front().name == "draw",
+         "document symbols should preserve nesting");
+
+  // A language with no provider yields nothing (so callers fall back to LSP).
+  Expect(host.QueryDefinition("python", file, 1, 1, &error).empty(),
+         "unmatched language should yield no plugin definitions");
+}
+
 }  // namespace
 
 void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
@@ -552,6 +710,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SidebarRegistry/HideView", TestSidebarHideView);
   AddTest(tests, "SidebarRegistry/ReorderViews", TestSidebarReorderViews);
   AddTest(tests, "SettingsRegistry/GetCallback", TestPluginSettingsGetCallback);
+  AddTest(tests, "SidebarRegistry/PluginTreeToggle", TestPluginTreeSidebarToggle);
+  AddTest(tests, "LanguageProviders/PluginQueries", TestPluginLanguageProviders);
 }
 
 }  // namespace microide::tests

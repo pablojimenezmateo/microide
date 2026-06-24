@@ -940,6 +940,7 @@
   bool OpenSelectedProblemSidebarItem();
   bool OpenSelectedTestSidebarItem();
   bool OpenSelectedPluginSidebarItem();
+  bool ToggleSelectedPluginSidebarItem();
   bool RunSelectedTestSidebarItem();
   bool CanStageAllGitSidebarEntries() const;
   bool CanDiscardAllGitSidebarEntries() const;

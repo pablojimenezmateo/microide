@@ -123,6 +123,10 @@ bool SidebarService::OpenPluginItem() {
   return coordinator_.OpenPluginItem();
 }
 
+bool SidebarService::TogglePluginItem() {
+  return coordinator_.TogglePluginItem();
+}
+
 bool SidebarService::CanStageAllGitEntries() const {
   return coordinator_.CanStageAllGitEntries();
 }

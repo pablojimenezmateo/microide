@@ -59,6 +59,7 @@ void UnregisterContributionsForState(
     std::vector<runtime_types::CompletionRuntime>* completion_runtimes,
     std::vector<PluginHost::ContributedCodeAction>* code_actions,
     std::vector<runtime_types::CodeActionRuntime>* code_action_runtimes,
+    std::vector<runtime_types::LanguageQueryRuntime>* language_query_runtimes,
     std::vector<PluginHost::ContributedLanguageServer>* language_servers,
     std::vector<PluginHost::ContributedDebugAdapter>* debug_adapters,
     std::vector<PluginHost::ContributedLaunchConfig>* launch_configs,
@@ -94,6 +95,9 @@ void UnregisterContributionsForState(
     luaL_unref(state, LUA_REGISTRYINDEX, it->second.snapshot_ref);
     if (it->second.confirm_ref != LUA_NOREF && it->second.confirm_ref != LUA_REFNIL) {
       luaL_unref(state, LUA_REGISTRYINDEX, it->second.confirm_ref);
+    }
+    if (it->second.toggle_ref != LUA_NOREF && it->second.toggle_ref != LUA_REFNIL) {
+      luaL_unref(state, LUA_REGISTRYINDEX, it->second.toggle_ref);
     }
     it = sidebars->erase(it);
   }
@@ -186,6 +190,14 @@ void UnregisterContributionsForState(
     }
     luaL_unref(state, LUA_REGISTRYINDEX, it->provide_ref);
     it = code_action_runtimes->erase(it);
+  }
+  for (auto it = language_query_runtimes->begin(); it != language_query_runtimes->end();) {
+    if (it->plugin_id != plugin_id) {
+      ++it;
+      continue;
+    }
+    luaL_unref(state, LUA_REGISTRYINDEX, it->provide_ref);
+    it = language_query_runtimes->erase(it);
   }
   language_servers->erase(
       std::remove_if(language_servers->begin(), language_servers->end(),

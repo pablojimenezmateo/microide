@@ -391,6 +391,32 @@
         });
   }
 
+  static int LuaLanguageQueryAdd(lua_State* state, runtime_types::LanguageQueryKind kind) {
+    return RegisterTableContribution(
+        state, "language provider registration requires an active plugin state",
+        "failed to parse language provider registration",
+        [state, kind](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return contribution_interop::RegisterLanguageQuery(
+              state, plugin->id, kind, &host->language_query_runtimes, error_message);
+        });
+  }
+
+  static int LuaDefinitionAdd(lua_State* state) {
+    return LuaLanguageQueryAdd(state, runtime_types::LanguageQueryKind::Definition);
+  }
+
+  static int LuaReferencesAdd(lua_State* state) {
+    return LuaLanguageQueryAdd(state, runtime_types::LanguageQueryKind::References);
+  }
+
+  static int LuaSignatureHelpAdd(lua_State* state) {
+    return LuaLanguageQueryAdd(state, runtime_types::LanguageQueryKind::SignatureHelp);
+  }
+
+  static int LuaDocumentSymbolsAdd(lua_State* state) {
+    return LuaLanguageQueryAdd(state, runtime_types::LanguageQueryKind::DocumentSymbol);
+  }
+
   static int LuaTaskAdd(lua_State* state) {
     return RegisterTableContribution(
         state, "task registration requires an active plugin state",
@@ -793,6 +819,10 @@
             .save_participants_add = &LuaSaveParticipantsAdd,
             .completion_add = &LuaCompletionAdd,
             .code_action_add = &LuaCodeActionAdd,
+            .definition_add = &LuaDefinitionAdd,
+            .references_add = &LuaReferencesAdd,
+            .signature_help_add = &LuaSignatureHelpAdd,
+            .document_symbols_add = &LuaDocumentSymbolsAdd,
             .lsp_add = &LuaLspAdd,
             .debug_add = &LuaDebugAdd,
             .debug_add_config = &LuaDebugAddConfig,
@@ -843,6 +873,66 @@
         error_message);
   }
 
+  bool ToggleSidebarProviderItem(const SidebarProvider& provider,
+                                 const SidebarItem& item,
+                                 std::string* error_message) {
+    return sidebar_hover_interop::ToggleSidebarProviderItem(
+        provider, item, current_project_root,
+        [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
+          return path_interop::ResolveRuntimePath(project_root, runtime_path);
+        },
+        [this](lua_State* state) { return FindPluginByState(state); }, error_message);
+  }
+
+  std::vector<PluginHost::LocationResult> QueryLanguageLocations(
+      runtime_types::LanguageQueryKind kind,
+      std::string_view language_id,
+      const std::filesystem::path& path,
+      std::size_t line,
+      std::size_t column,
+      bool include_declaration,
+      std::string* error_message) {
+    return language_provider_query_interop::QueryLocations(
+        kind, language_id, path, line, column, include_declaration, current_project_root,
+        language_query_runtimes,
+        [this](lua_State* state) { return FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          PushBufferContext(state, buffer_path);
+        },
+        [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
+          return path_interop::ResolveRuntimePath(project_root, runtime_path);
+        },
+        error_message);
+  }
+
+  bool QueryLanguageSignatureHelp(std::string_view language_id,
+                                  const std::filesystem::path& path,
+                                  std::size_t line,
+                                  std::size_t column,
+                                  PluginHost::SignatureHelpResult* result,
+                                  std::string* error_message) {
+    return language_provider_query_interop::QuerySignatureHelp(
+        language_id, path, line, column, language_query_runtimes,
+        [this](lua_State* state) { return FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          PushBufferContext(state, buffer_path);
+        },
+        result, error_message);
+  }
+
+  std::vector<PluginHost::DocumentSymbolNode> QueryLanguageDocumentSymbols(
+      std::string_view language_id,
+      const std::filesystem::path& path,
+      std::string* error_message) {
+    return language_provider_query_interop::QueryDocumentSymbols(
+        language_id, path, language_query_runtimes,
+        [this](lua_State* state) { return FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          PushBufferContext(state, buffer_path);
+        },
+        error_message);
+  }
+
   bool QueryHoverProvider(const HoverProvider& provider,
                           const std::filesystem::path& path,
                           std::size_t line,
@@ -876,6 +966,7 @@
         &hovers, &hover_provider_order, &menu_entries, &keybindings, &settings, &status_items,
         &status_item_order, &formatters, &save_participants, &save_participant_runtimes,
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
+        &language_query_runtimes,
         &language_servers, &debug_adapters, &launch_configs, &tasks, &tools, &test_providers,
         &test_provider_runtimes,
         &scm_providers, &scm_provider_runtimes, &annotation_providers,

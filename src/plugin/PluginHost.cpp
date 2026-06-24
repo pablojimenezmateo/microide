@@ -37,6 +37,7 @@
 #include "plugin/PluginLifecycleCallbackInterop.h"
 #include "plugin/PluginLifecycleLoadInterop.h"
 #include "plugin/PluginLifecycleResetInterop.h"
+#include "plugin/PluginLanguageProviderQueryInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "plugin/PluginProcessInterop.h"
 #include "plugin/PluginProviderQueryInterop.h"
@@ -71,6 +72,7 @@ struct PluginHost::Impl {
   using SaveParticipantRuntime = runtime_types::SaveParticipantRuntime;
   using CompletionRuntime = runtime_types::CompletionRuntime;
   using CodeActionRuntime = runtime_types::CodeActionRuntime;
+  using LanguageQueryRuntime = runtime_types::LanguageQueryRuntime;
   using TestProviderRuntime = runtime_types::TestProviderRuntime;
   using ScmProviderRuntime = runtime_types::ScmProviderRuntime;
   using AnnotationProviderRuntime = runtime_types::AnnotationProviderRuntime;
@@ -111,6 +113,7 @@ struct PluginHost::Impl {
   std::vector<CompletionRuntime> completion_runtimes;
   std::vector<PluginHost::ContributedCodeAction> code_actions;
   std::vector<CodeActionRuntime> code_action_runtimes;
+  std::vector<LanguageQueryRuntime> language_query_runtimes;
   std::vector<PluginHost::ContributedLanguageServer> language_servers;
   std::vector<PluginHost::ContributedDebugAdapter> debug_adapters;
   std::vector<PluginHost::ContributedLaunchConfig> launch_configs;

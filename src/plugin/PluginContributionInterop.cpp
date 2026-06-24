@@ -78,6 +78,25 @@ bool RegisterCodeAction(lua_State* state,
   return true;
 }
 
+bool RegisterLanguageQuery(lua_State* state,
+                           std::string_view plugin_id,
+                           runtime_types::LanguageQueryKind kind,
+                           std::vector<runtime_types::LanguageQueryRuntime>* runtimes,
+                           std::string* error_message) {
+  if (runtimes == nullptr) {
+    return false;
+  }
+  registration_parsers::LanguageQueryRegistration registration;
+  if (!registration_parsers::ParseLanguageQueryRegistration(state, std::string(plugin_id), kind,
+                                                            &registration, error_message)) {
+    return false;
+  }
+  if (registration.has_runtime) {
+    runtimes->push_back(std::move(registration.runtime));
+  }
+  return true;
+}
+
 bool RegisterTask(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTask>* tasks,

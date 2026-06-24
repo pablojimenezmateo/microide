@@ -108,6 +108,7 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               },
           .reveal_selected_plugin_sidebar_line = [this]() { RevealSelectedPluginSidebarLine(); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
+          .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
           .can_collapse_tree =
               [this]() { return context_.current_project_state.directory_tree.CanCollapseAll(); },
           .tree_sidebar_collapse_button_rect =

@@ -18,8 +18,8 @@ using namespace detail;
 namespace {
 
 constexpr float kSidebarInset = 10.0f;
-constexpr float kTreeIndentWidth = 14.0f;
-constexpr float kTreeChevronSlotWidth = 12.0f;
+constexpr float kTreeIndentWidth = kWorkspaceSidebarTreeIndentWidth;
+constexpr float kTreeChevronSlotWidth = kWorkspaceSidebarTreeChevronSlotWidth;
 
 // Reuse a thread-local scratch so the per-result label assembly is allocation-bounded by max label
 // width, not by `results × frames`. The render path only inspects the returned view immediately
@@ -770,7 +770,22 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
 
       const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
       const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
-      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, row_rect.x + 6.0f,
+
+      // Tree rows: host-drawn indentation by depth plus a disclosure twisty on
+      // collapsible rows. Flat sidebars (depth 0, not collapsible) keep the
+      // original left inset so their layout is unchanged.
+      const bool tree_row = item.depth > 0 || item.collapsible;
+      float label_x = row_rect.x + 6.0f;
+      if (tree_row) {
+        const float depth_offset = static_cast<float>(item.depth) * kTreeIndentWidth;
+        const float tree_x = row_rect.x + 6.0f + depth_offset;
+        label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
+        if (item.collapsible) {
+          DrawChevron(renderer, tree_x, row_rect.y + row_rect.h * 0.5f, !item.collapsed,
+                      theme_.text_muted);
+        }
+      }
+      DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, label_x,
                                   row_rect.x + row_rect.w - 6.0f, primary_color, secondary_color,
                                   row_background, item.label, item.detail, 0.62f);
     }

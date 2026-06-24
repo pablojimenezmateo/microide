@@ -60,6 +60,42 @@ bool ParseLanguageServerRegistration(lua_State* state,
   return true;
 }
 
+bool ParseLanguageQueryRegistration(lua_State* state,
+                                    const std::string& plugin_id,
+                                    runtime_types::LanguageQueryKind kind,
+                                    LanguageQueryRegistration* out,
+                                    std::string* error_message) {
+  if (out == nullptr) return false;
+  auto id_opt = ReadStringField(state, 1, "id");
+  auto language_id_opt = ReadStringField(state, 1, "language_id");
+  if (!id_opt || !language_id_opt) {
+    if (error_message != nullptr) {
+      *error_message = "language provider requires id and language_id";
+    }
+    return false;
+  }
+  const int provide_ref = ReadFunctionRefField(state, 1, "provide");
+  if (provide_ref == LUA_NOREF) {
+    if (error_message != nullptr) {
+      *error_message = "language provider requires a provide function";
+    }
+    return false;
+  }
+  out->has_runtime = true;
+  out->runtime = runtime_types::LanguageQueryRuntime{
+      .kind = kind,
+      .id = plugin_id + "." + *id_opt,
+      .language_id = std::move(*language_id_opt),
+      .plugin_id = plugin_id,
+      .state = state,
+      .provide_ref = provide_ref,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
 bool ParseDebugAdapterRegistration(lua_State* state,
                                    const std::string& plugin_id,
                                    DebugAdapterRegistration* out,

@@ -222,6 +222,27 @@ bool PluginHost::ConfirmSidebarItem(std::string_view id,
 #endif
 }
 
+bool PluginHost::ToggleSidebarItem(std::string_view id,
+                                   const SidebarItem& item,
+                                   std::string* error_message) {
+  const auto it = impl_->sidebars.find(std::string(id));
+  if (it == impl_->sidebars.end()) {
+    if (error_message != nullptr) {
+      *error_message = "unknown plugin sidebar: " + std::string(id);
+    }
+    return false;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  return impl_->ToggleSidebarProviderItem(it->second, item, error_message);
+#else
+  (void)item;
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return false;
+#endif
+}
+
 bool PluginHost::QueryHover(const std::filesystem::path& path,
                             std::size_t line,
                             std::size_t column,
@@ -392,6 +413,101 @@ std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
   (void)start_column;
   (void)end_line;
   (void)end_column;
+#endif
+  return results;
+}
+
+std::vector<PluginHost::LocationResult> PluginHost::QueryDefinition(
+    std::string_view language_id,
+    const std::filesystem::path& path,
+    std::size_t line,
+    std::size_t column,
+    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  std::vector<LocationResult> results;
+  if (!impl_->enabled()) {
+    return results;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  results = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::Definition, language_id,
+                                          path, line, column, false, error_message);
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+#endif
+  return results;
+}
+
+std::vector<PluginHost::LocationResult> PluginHost::QueryReferences(
+    std::string_view language_id,
+    const std::filesystem::path& path,
+    std::size_t line,
+    std::size_t column,
+    bool include_declaration,
+    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  std::vector<LocationResult> results;
+  if (!impl_->enabled()) {
+    return results;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  results = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::References, language_id,
+                                          path, line, column, include_declaration, error_message);
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+  (void)include_declaration;
+#endif
+  return results;
+}
+
+bool PluginHost::QuerySignatureHelp(std::string_view language_id,
+                                    const std::filesystem::path& path,
+                                    std::size_t line,
+                                    std::size_t column,
+                                    SignatureHelpResult* result,
+                                    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  if (result == nullptr || !impl_->enabled()) {
+    return false;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  return impl_->QueryLanguageSignatureHelp(language_id, path, line, column, result, error_message);
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+  return false;
+#endif
+}
+
+std::vector<PluginHost::DocumentSymbolNode> PluginHost::QueryDocumentSymbols(
+    std::string_view language_id,
+    const std::filesystem::path& path,
+    std::string* error_message) const {
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  std::vector<DocumentSymbolNode> results;
+  if (!impl_->enabled()) {
+    return results;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  results = impl_->QueryLanguageDocumentSymbols(language_id, path, error_message);
+#else
+  (void)language_id;
+  (void)path;
 #endif
   return results;
 }

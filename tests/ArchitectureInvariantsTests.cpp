@@ -54,8 +54,11 @@ void TestArchitectureInvariants() {
              // must be a member (it reaches private shell state and is called from
              // the mouse TU); its per-viewport resolver stays a file-local free
              // function so the shell surface grows by exactly one declaration.
+             // 1560: +1 for the Phase C ToggleSelectedPluginSidebarItem entry point,
+             // which routes the tree-sidebar twisty toggle from the mouse/key TUs
+             // into the SidebarService (parallel to OpenSelectedPluginSidebarItem).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1559);
+                                                     1560);
            });
 
   bool hard_failure = false;

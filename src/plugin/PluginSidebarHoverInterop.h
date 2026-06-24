@@ -30,6 +30,15 @@ bool ConfirmSidebarProviderItem(
     const std::function<bool(const PluginHost::OpenFileRequest&)>& open_file,
     std::string* error_message);
 
+bool ToggleSidebarProviderItem(
+    const runtime_types::SidebarProvider& provider,
+    const PluginHost::SidebarItem& item,
+    const std::filesystem::path& current_project_root,
+    const std::function<std::filesystem::path(const std::filesystem::path&,
+                                              const std::filesystem::path&)>& resolve_runtime_path,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    std::string* error_message);
+
 bool QueryHoverProvider(
     const runtime_types::HoverProvider& provider,
     const std::filesystem::path& path,

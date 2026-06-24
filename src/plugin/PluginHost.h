@@ -42,6 +42,16 @@ class PluginHost {
     std::filesystem::path path;
     std::size_t line = 0;
     std::size_t column = 0;
+    // Tree-view fields. A plugin sidebar snapshot may return a flattened tree:
+    // the plugin owns expand/collapse state and returns only the currently
+    // visible rows, each tagged with its `depth` (0 = root). `collapsible`
+    // rows draw a host-owned twisty; toggling one routes back through the
+    // provider's `on_toggle(item)` callback (keyed by `id`) so the plugin can
+    // re-shape its next snapshot. Flat lists simply leave these at defaults.
+    std::string id;
+    int depth = 0;
+    bool collapsible = false;
+    bool collapsed = false;
   };
 
   struct HoverResult {
@@ -197,6 +207,44 @@ class PluginHost {
     std::string title;
     std::string command;
     std::vector<std::string> arguments;
+  };
+
+  // A navigation target produced by a plugin go-to-definition / find-references
+  // provider. `line`/`column` are 1-based; `path` is resolved against the
+  // current project root by the host.
+  struct LocationResult {
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+
+  struct SignatureParameter {
+    std::string label;
+    std::string documentation;
+  };
+
+  struct SignatureInfo {
+    std::string label;
+    std::string documentation;
+    std::vector<SignatureParameter> parameters;
+    int active_parameter = -1;
+  };
+
+  struct SignatureHelpResult {
+    std::vector<SignatureInfo> signatures;
+    int active_signature = 0;
+  };
+
+  // A node in a plugin-provided document outline. `kind` is a free-form label
+  // (e.g. "function", "class"); `line`/`column` are 1-based and point at the
+  // symbol's selection range. Children nest arbitrarily (host-bounded depth).
+  struct DocumentSymbolNode {
+    std::string name;
+    std::string detail;
+    std::string kind;
+    std::size_t line = 0;
+    std::size_t column = 0;
+    std::vector<DocumentSymbolNode> children;
   };
 
   struct TestCase {
@@ -401,6 +449,12 @@ class PluginHost {
   bool ConfirmSidebarItem(std::string_view id,
                           const SidebarItem& item,
                           std::string* error_message = nullptr);
+  // Toggle a collapsible tree row. Returns false (without setting an error) when
+  // the provider declares no `on_toggle` callback, so callers can treat toggling
+  // as a no-op for flat sidebars. Re-snapshot after a successful toggle.
+  bool ToggleSidebarItem(std::string_view id,
+                         const SidebarItem& item,
+                         std::string* error_message = nullptr);
   bool QueryHover(const std::filesystem::path& path,
                   std::size_t line,
                   std::size_t column,
@@ -428,6 +482,30 @@ class PluginHost {
                                                     std::size_t end_line,
                                                     std::size_t end_column,
                                                     std::string* error_message = nullptr) const;
+  // Plugin-native language providers. Each merges results across all matching
+  // providers for `language_id`; an empty result means "no plugin handled it"
+  // so callers can fall back to LSP.
+  std::vector<LocationResult> QueryDefinition(std::string_view language_id,
+                                              const std::filesystem::path& path,
+                                              std::size_t line,
+                                              std::size_t column,
+                                              std::string* error_message = nullptr) const;
+  std::vector<LocationResult> QueryReferences(std::string_view language_id,
+                                              const std::filesystem::path& path,
+                                              std::size_t line,
+                                              std::size_t column,
+                                              bool include_declaration,
+                                              std::string* error_message = nullptr) const;
+  bool QuerySignatureHelp(std::string_view language_id,
+                          const std::filesystem::path& path,
+                          std::size_t line,
+                          std::size_t column,
+                          SignatureHelpResult* result,
+                          std::string* error_message = nullptr) const;
+  std::vector<DocumentSymbolNode> QueryDocumentSymbols(
+      std::string_view language_id,
+      const std::filesystem::path& path,
+      std::string* error_message = nullptr) const;
   bool DiscoverTests(std::string_view provider_id,
                      const std::filesystem::path& path,
                      std::vector<TestCase>* tests,

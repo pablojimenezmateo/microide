@@ -255,6 +255,23 @@ bool SidebarMouseCoordinator::HandlePluginButtonDown(const SDL_Event& event,
   state_.sidebar.plugin.selected_index = static_cast<std::size_t>(*item_index);
   operations_.reveal_selected_plugin_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
+    // A click in the indentation + disclosure slot of a collapsible tree row
+    // toggles it (re-snapshotting the provider) instead of confirming it. The
+    // hit region must mirror the render geometry exactly (label_x in the
+    // plugin branch of WorkspaceShellRenderSidebar.cpp).
+    const auto& item = state_.sidebar.plugin.items[static_cast<std::size_t>(*item_index)];
+    if (item.collapsible && operations_.toggle_plugin_sidebar_item) {
+      const SDL_FRect row_rect =
+          ScrollableListRowRect(list_layout, *item_index - list_layout.scroll_row);
+      const float depth_offset =
+          static_cast<float>(item.depth) * kWorkspaceSidebarTreeIndentWidth;
+      const float label_x = row_rect.x + 6.0f + depth_offset +
+                            kWorkspaceSidebarTreeChevronSlotWidth + 4.0f;
+      if (static_cast<float>(event.button.x) < label_x) {
+        operations_.toggle_plugin_sidebar_item();
+        return true;
+      }
+    }
     operations_.open_selected_plugin_sidebar_item();
   }
   return true;

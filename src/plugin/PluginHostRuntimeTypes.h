@@ -56,6 +56,7 @@ struct SidebarProvider {
   lua_State* state = nullptr;
   int snapshot_ref = LUA_NOREF;
   int confirm_ref = LUA_NOREF;
+  int toggle_ref = LUA_NOREF;
 #endif
 };
 
@@ -89,6 +90,28 @@ struct CompletionRuntime {
 };
 
 struct CodeActionRuntime {
+  std::string id;
+  std::string language_id;
+  std::string plugin_id;
+#if MICROIDE_HAS_LUA_PLUGINS
+  lua_State* state = nullptr;
+  int provide_ref = LUA_NOREF;
+#endif
+};
+
+// The four plugin-native language query providers (go-to-definition, find
+// references, signature help, document symbols) share one record shape — a
+// single `provide` callback keyed by language id — so they live in one
+// discriminated vector instead of four near-identical ones.
+enum class LanguageQueryKind {
+  Definition,
+  References,
+  SignatureHelp,
+  DocumentSymbol,
+};
+
+struct LanguageQueryRuntime {
+  LanguageQueryKind kind = LanguageQueryKind::Definition;
   std::string id;
   std::string language_id;
   std::string plugin_id;

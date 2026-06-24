@@ -37,6 +37,12 @@ bool RegisterCodeAction(lua_State* state,
                         std::vector<runtime_types::CodeActionRuntime>* runtimes,
                         std::string* error_message);
 
+bool RegisterLanguageQuery(lua_State* state,
+                           std::string_view plugin_id,
+                           runtime_types::LanguageQueryKind kind,
+                           std::vector<runtime_types::LanguageQueryRuntime>* runtimes,
+                           std::string* error_message);
+
 bool RegisterTask(lua_State* state,
                   std::string_view plugin_id,
                   std::vector<PluginHost::ContributedTask>* tasks,

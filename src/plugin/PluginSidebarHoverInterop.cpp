@@ -69,7 +69,7 @@ void PushSidebarItemTable(lua_State* state,
                           const std::function<std::filesystem::path(const std::filesystem::path&,
                                                                     const std::filesystem::path&)>&
                               resolve_runtime_path) {
-  lua_createtable(state, 0, 5);
+  lua_createtable(state, 0, 9);
   lua_pushstring(state, item.label.c_str());
   lua_setfield(state, -2, "label");
   if (!item.detail.empty()) {
@@ -88,6 +88,20 @@ void PushSidebarItemTable(lua_State* state,
   if (item.column > 0) {
     lua_pushinteger(state, static_cast<lua_Integer>(item.column));
     lua_setfield(state, -2, "column");
+  }
+  if (!item.id.empty()) {
+    lua_pushstring(state, item.id.c_str());
+    lua_setfield(state, -2, "id");
+  }
+  if (item.depth > 0) {
+    lua_pushinteger(state, static_cast<lua_Integer>(item.depth));
+    lua_setfield(state, -2, "depth");
+  }
+  if (item.collapsible) {
+    lua_pushboolean(state, 1);
+    lua_setfield(state, -2, "collapsible");
+    lua_pushboolean(state, item.collapsed ? 1 : 0);
+    lua_setfield(state, -2, "collapsed");
   }
 }
 
@@ -204,6 +218,42 @@ bool ConfirmSidebarProviderItem(
     if (error_message != nullptr) {
       *error_message =
           "plugin sidebar '" + provider.info.id + "' confirm failed: " + call_error;
+    }
+    return false;
+  }
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
+bool ToggleSidebarProviderItem(
+    const runtime_types::SidebarProvider& provider,
+    const PluginHost::SidebarItem& item,
+    const std::filesystem::path& current_project_root,
+    const std::function<std::filesystem::path(const std::filesystem::path&,
+                                              const std::filesystem::path&)>& resolve_runtime_path,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    std::string* error_message) {
+  if (provider.toggle_ref == LUA_NOREF || provider.state == nullptr) {
+    // No toggle callback declared: the caller treats this as a no-op so flat
+    // sidebars are unaffected.
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return false;
+  }
+
+  const lua_interop::StackResetGuard stack_guard(provider.state);
+  lua_rawgeti(provider.state, LUA_REGISTRYINDEX, provider.toggle_ref);
+  PushSidebarItemTable(provider.state, item, current_project_root, resolve_runtime_path);
+  const runtime_types::PluginInstance* plugin = find_plugin_by_state(provider.state);
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime ||
+      !plugin->runtime->PCall(1, 0, &call_error)) {
+    if (error_message != nullptr) {
+      *error_message =
+          "plugin sidebar '" + provider.info.id + "' toggle failed: " + call_error;
     }
     return false;
   }

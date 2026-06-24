@@ -824,6 +824,7 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .move_plugin_sidebar_selection = [this](int delta) { MovePluginSidebarSelection(delta); },
           .reveal_selected_plugin_sidebar_line = [this]() { RevealSelectedPluginSidebarLine(); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
+          .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
           .refresh_plugin_sidebar = [this]() { return RefreshPluginSidebar(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .refresh_project_files = [this]() { RefreshProjectFiles(); },

@@ -127,6 +127,31 @@ PluginHost::SidebarItem ReadSidebarItem(lua_State* state, int table_index) {
   }
   lua_pop(state, 1);
 
+  lua_getfield(state, absolute_index, "id");
+  if (lua_isstring(state, -1)) {
+    item.id = lua_tostring(state, -1);
+  }
+  lua_pop(state, 1);
+
+  lua_getfield(state, absolute_index, "depth");
+  if (lua_isinteger(state, -1)) {
+    const lua_Integer depth = lua_tointeger(state, -1);
+    item.depth = depth > 0 ? static_cast<int>(depth) : 0;
+  }
+  lua_pop(state, 1);
+
+  lua_getfield(state, absolute_index, "collapsible");
+  if (lua_isboolean(state, -1)) {
+    item.collapsible = lua_toboolean(state, -1) != 0;
+  }
+  lua_pop(state, 1);
+
+  lua_getfield(state, absolute_index, "collapsed");
+  if (lua_isboolean(state, -1)) {
+    item.collapsed = lua_toboolean(state, -1) != 0;
+  }
+  lua_pop(state, 1);
+
   return item;
 }
 #endif

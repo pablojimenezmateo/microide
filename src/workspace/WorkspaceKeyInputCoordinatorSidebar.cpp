@@ -309,6 +309,12 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
   }
 
   if (sidebar_mode == SidebarMode::Plugin) {
+    const auto* selected_plugin_item =
+        state_.sidebar.plugin.selected_index < state_.sidebar.plugin.items.size()
+            ? &state_.sidebar.plugin.items[state_.sidebar.plugin.selected_index]
+            : nullptr;
+    const bool selection_is_collapsible =
+        selected_plugin_item != nullptr && selected_plugin_item->collapsible;
     switch (event.key) {
       case SDLK_ESCAPE:
         if (state_.sidebar.temporary) {
@@ -342,8 +348,24 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
-      case SDLK_RIGHT:
         return operations_.open_selected_plugin_sidebar_item();
+      case SDLK_RIGHT:
+        // Expand a collapsed tree row; otherwise preserve the flat-list behavior
+        // where Right opens (confirms) the selection.
+        if (selection_is_collapsible && selected_plugin_item->collapsed) {
+          return operations_.toggle_plugin_sidebar_item();
+        }
+        return operations_.open_selected_plugin_sidebar_item();
+      case SDLK_LEFT:
+        if (selection_is_collapsible && !selected_plugin_item->collapsed) {
+          return operations_.toggle_plugin_sidebar_item();
+        }
+        return false;
+      case SDLK_SPACE:
+        if (selection_is_collapsible) {
+          return operations_.toggle_plugin_sidebar_item();
+        }
+        return false;
       case SDLK_R:
         return operations_.refresh_plugin_sidebar();
       default:
