@@ -367,9 +367,11 @@ std::vector<WorkspaceShell::VisibleStatusItem> WorkspaceShell::ComputeVisibleSta
   static constexpr float kInset = 12.0f;
   static constexpr float kIconSlot = 16.0f;
   static constexpr float kProgressSlot = 34.0f;
-  std::vector<StatusItemView> items = ResolveStatusItems(plugin_runtime_.Host());
-
   std::vector<VisibleStatusItem> visible;
+  std::vector<StatusItemView> items = ResolveStatusItems(plugin_runtime_.Host());
+  if (items.empty()) {
+    return visible;  // No plugin status items: skip all layout/measurement work.
+  }
   visible.reserve(items.size());
 
   // Item width = text + padding, plus a fixed slot for a leading icon and/or a

@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -16,6 +17,7 @@
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionTypes.h"
+#include "workspace/WorkspaceFileIconRegistry.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/FileIndex.h"
@@ -328,11 +330,25 @@ struct EditorBannerState {
 
 enum class EditorBannerAction { Reload, Overwrite, Keep };
 
+// Render-side resolved file-tree icons, parallel to DirectoryTree::entries().
+// Rebuilt lazily only when the tree entries change or plugin icon themes reload,
+// so the per-frame sidebar loop reads cached icons instead of re-resolving (and
+// re-lowercasing) every visible row. icons[i] aligns 1:1 with entries()[i];
+// directory rows hold nullopt. Session-scoped, never persisted.
+struct FileIconRenderCache {
+  std::vector<std::optional<WorkspaceFileIconRegistry::Icon>> icons;
+  std::uint64_t tree_revision = ~0ull;
+  std::uint32_t icon_revision = ~0u;
+};
+
 struct ProjectWorkspaceState {
   std::filesystem::path root;
   bool initialized = false;
   bool restore_persistence_on_activate = false;
   project::DirectoryTree directory_tree;
+  // Resolved icons for `directory_tree.entries()`, rebuilt lazily by the sidebar
+  // renderer. `mutable` so the const render path can refresh the cache.
+  mutable FileIconRenderCache file_icon_cache;
   project::FileIndex file_index;
   project::FileFinder file_finder;
   WelcomeSurfaceState welcome_surface;

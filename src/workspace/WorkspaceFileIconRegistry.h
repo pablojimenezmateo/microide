@@ -2,12 +2,15 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 
 #include "editor/PluginDecorationStore.h"  // editor::GutterIconShape
+#include "util/TransparentStringHash.h"
 
 namespace microide::plugin {
 class PluginHost;
@@ -37,10 +40,22 @@ class WorkspaceFileIconRegistry {
   // directories or unknown types so the caller draws nothing.
   std::optional<Icon> Resolve(std::string_view filename) const;
 
+  // Monotonic counter bumped whenever the plugin overrides change (Clear /
+  // Rebuild). Lets render-side resolved-icon caches invalidate on theme reloads
+  // without re-resolving every entry per frame.
+  std::uint32_t revision() const { return revision_; }
+
  private:
-  // Plugin overrides. Keys are lower-cased.
-  std::unordered_map<std::string, Icon> by_name_;
-  std::unordered_map<std::string, Icon> by_extension_;
+  // Plugin overrides. Keys are lower-cased. Transparent hashing lets Resolve look
+  // up by string_view without materialising a temporary key.
+  using IconMap =
+      std::unordered_map<std::string, Icon, util::TransparentStringHash, std::equal_to<>>;
+  IconMap by_name_;
+  IconMap by_extension_;
+  std::uint32_t revision_ = 0;
+  // Reused lowercase scratch so Resolve allocates nothing once warmed up; only
+  // touched by the once-per-tree-mutation rebuild, never the per-frame path.
+  mutable std::string lower_scratch_;
 };
 
 }  // namespace microide::workspace

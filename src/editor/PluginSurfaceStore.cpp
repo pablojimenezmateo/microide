@@ -129,20 +129,31 @@ const SurfaceContent* PluginSurfaceStore::Find(std::string_view owner,
   return surface_it == owner_it->second.end() ? nullptr : &surface_it->second;
 }
 
-std::vector<SurfaceRef> PluginSurfaceStore::PreviewSurfaces() const {
-  std::vector<SurfaceRef> refs;
+const std::vector<SurfaceRef>& PluginSurfaceStore::PreviewSurfaces() const {
+  if (by_owner_.empty()) {
+    // No surfaces at all: keep the cache empty and stamped so we never iterate.
+    preview_cache_.clear();
+    preview_cache_revision_ = revision_;
+    return preview_cache_;
+  }
+  if (preview_cache_revision_ == revision_) {
+    return preview_cache_;  // Nothing changed since the last build.
+  }
+  preview_cache_.clear();
   for (const auto& [owner, surfaces] : by_owner_) {
     for (const auto& [surface_id, content] : surfaces) {
       if (content.preview != SurfacePreviewSlot::None) {
-        refs.push_back(SurfaceRef{owner, surface_id, &content});
+        preview_cache_.push_back(SurfaceRef{owner, surface_id, &content});
       }
     }
   }
-  std::sort(refs.begin(), refs.end(), [](const SurfaceRef& a, const SurfaceRef& b) {
-    if (a.owner != b.owner) return a.owner < b.owner;
-    return a.surface_id < b.surface_id;
-  });
-  return refs;
+  std::sort(preview_cache_.begin(), preview_cache_.end(),
+            [](const SurfaceRef& a, const SurfaceRef& b) {
+              if (a.owner != b.owner) return a.owner < b.owner;
+              return a.surface_id < b.surface_id;
+            });
+  preview_cache_revision_ = revision_;
+  return preview_cache_;
 }
 
 std::span<const AnchoredSurface> PluginSurfaceStore::AnchoredSurfacesForPath(

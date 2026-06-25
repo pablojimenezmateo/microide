@@ -104,8 +104,12 @@ class PluginSurfaceStore {
   const SurfaceContent* Find(std::string_view owner, std::string_view surface_id) const;
 
   // Surfaces that asked to be previewed, sorted by (owner, surface_id) for a
-  // stable tab order. Allocates; called only when rebuilding panel tabs.
-  std::vector<SurfaceRef> PreviewSurfaces() const;
+  // stable tab order. Returns a reference into a revision-keyed cache: the list
+  // is rebuilt only when the store mutates, so the per-frame panel-tab path pays
+  // nothing when nothing changed (and nothing at all when the store is empty).
+  // The returned reference (and the SurfaceContent pointers it holds) stays valid
+  // until the next non-const store call.
+  const std::vector<SurfaceRef>& PreviewSurfaces() const;
 
   // Anchored surfaces for `path`, sorted by line. Empty span when none.
   std::span<const AnchoredSurface> AnchoredSurfacesForPath(
@@ -128,6 +132,10 @@ class PluginSurfaceStore {
                      std::equal_to<>>
       anchored_by_path_;
   std::uint64_t revision_ = 0;
+  // Revision-keyed cache for PreviewSurfaces(). `mutable` so the const accessor
+  // can refresh it lazily; invalidated whenever `revision_` advances.
+  mutable std::vector<SurfaceRef> preview_cache_;
+  mutable std::uint64_t preview_cache_revision_ = ~0ull;
 };
 
 }  // namespace microide::editor

@@ -117,6 +117,7 @@ void RegisterPatternCacheTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests);
 void RegisterEditorEssentialsTests(std::vector<TestCase>& tests);
 void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests);
+void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests);
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests);
 void RegisterFoldingModelTests(std::vector<TestCase>& tests);
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests);
@@ -434,6 +435,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceToolDownloaderTests(tests);
   microide::tests::RegisterEditorEssentialsTests(tests);
   microide::tests::RegisterEditorRenderViewModelAllocationTests(tests);
+  microide::tests::RegisterPluginPresentationAllocationTests(tests);
   microide::tests::RegisterEditorSnippetTests(tests);
   microide::tests::RegisterFoldingModelTests(tests);
   microide::tests::RegisterEditorFoldingTests(tests);

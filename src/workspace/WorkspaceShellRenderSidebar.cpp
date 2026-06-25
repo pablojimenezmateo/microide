@@ -824,6 +824,23 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
     const int scroll_row = list_layout.scroll_row;
 
+    // Resolve file icons once per tree mutation / icon-theme reload, not per row
+    // per frame. The per-row loop below then just indexes the cache, keeping the
+    // hot render path allocation- and lookup-free (zero cost with no plugins).
+    auto& icon_cache = project_state.file_icon_cache;
+    const std::uint64_t tree_revision = project_state.directory_tree.entries_revision();
+    const std::uint32_t icon_revision = file_icon_registry_.revision();
+    if (icon_cache.tree_revision != tree_revision || icon_cache.icon_revision != icon_revision) {
+      icon_cache.icons.assign(entries.size(), std::nullopt);
+      for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (!entries[i].is_directory) {
+          icon_cache.icons[i] = file_icon_registry_.Resolve(entries[i].label);
+        }
+      }
+      icon_cache.tree_revision = tree_revision;
+      icon_cache.icon_revision = icon_revision;
+    }
+
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int entry_index = scroll_row + row;
       if (entry_index >= static_cast<int>(entries.size())) {
@@ -860,7 +877,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       if (entry.is_directory) {
         DrawChevron(renderer, chevron_x, chevron_center_y, entry.expanded,
                     selected ? theme_.text_primary : theme_.text_muted);
-      } else if (const auto icon = file_icon_registry_.Resolve(entry.label)) {
+      } else if (const auto& icon = icon_cache.icons[entry_index]) {
         // Files have no chevron, so the chevron slot holds the type icon. Selected
         // rows tint it to the foreground so it stays legible on the highlight.
         const SDL_Color icon_color = selected ? theme_.text_primary : icon->color;

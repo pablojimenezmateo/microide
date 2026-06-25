@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -53,6 +54,12 @@ class DirectoryTree {
   const std::vector<TreeEntry>& entries() const { return entries_; }
   std::size_t selected_index() const { return selected_index_; }
 
+  // Monotonic counter bumped whenever entries_ is rebuilt (set-root, refresh,
+  // expand/collapse, activate). Lets render-side caches keyed on the entries
+  // vector invalidate without diffing it. Git-status updates do not bump this:
+  // they recolour labels but never change icon resolution.
+  std::uint64_t entries_revision() const { return entries_revision_; }
+
   // Whether any file in the repo (not just the currently visible tree rows)
   // is non-Clean per the last RefreshGitStatuses/ApplyGitStatuses update.
   // Iterating entries() alone misses dirty files inside collapsed folders, so
@@ -71,6 +78,7 @@ class DirectoryTree {
 
   std::filesystem::path root_;
   std::vector<TreeEntry> entries_;
+  std::uint64_t entries_revision_ = 0;
   std::unordered_map<std::string, GitFileStatus> git_statuses_;
   std::unordered_set<std::string> expanded_paths_;
   std::unordered_set<std::string> manually_collapsed_paths_;

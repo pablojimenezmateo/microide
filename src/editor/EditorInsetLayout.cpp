@@ -30,8 +30,10 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
   const std::size_t visual_count = viewport.visual_line_count();
   const std::size_t window_end = std::min(visual_count, scroll + visible_rows);
 
-  // Below: inline plugin-surface insets anchored at a line in the window.
-  if (want_surfaces) {
+  // Below: inline plugin-surface insets anchored at a line in the window. Skip the
+  // PathKey normalisation entirely when no plugin has published any anchored
+  // surface, so the feature-on-but-unused case stays allocation-free.
+  if (want_surfaces && surface_store.has_anchored()) {
     const std::span<const AnchoredSurface> anchored =
         surface_store.AnchoredSurfacesForPath(viewport.path());
     for (const AnchoredSurface& anchor : anchored) {

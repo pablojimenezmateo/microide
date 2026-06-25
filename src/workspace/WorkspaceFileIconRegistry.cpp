@@ -74,14 +74,14 @@ std::optional<WorkspaceFileIconRegistry::Icon> ResolveBuiltinExtension(std::stri
   return std::nullopt;
 }
 
-// Lower-cased extension (without the dot) of a filename, or empty when none. A
-// leading dot (dotfile) is not treated as an extension separator.
-std::string ExtensionOf(std::string_view filename) {
-  const std::size_t dot = filename.rfind('.');
-  if (dot == std::string_view::npos || dot == 0 || dot + 1 >= filename.size()) {
+// Extension (without the dot) of an already-lower-cased filename, as a view into
+// it — no allocation. A leading dot (dotfile) is not an extension separator.
+std::string_view ExtensionOf(std::string_view lower_filename) {
+  const std::size_t dot = lower_filename.rfind('.');
+  if (dot == std::string_view::npos || dot == 0 || dot + 1 >= lower_filename.size()) {
     return {};
   }
-  return util::ToLowerAscii(filename.substr(dot + 1));
+  return lower_filename.substr(dot + 1);
 }
 
 }  // namespace
@@ -89,11 +89,13 @@ std::string ExtensionOf(std::string_view filename) {
 void WorkspaceFileIconRegistry::Clear() {
   by_name_.clear();
   by_extension_.clear();
+  ++revision_;
 }
 
 void WorkspaceFileIconRegistry::Rebuild(const plugin::PluginHost& host) {
   by_name_.clear();
   by_extension_.clear();
+  ++revision_;
   for (const auto& theme : host.ContributedFileIconThemes()) {
     for (const auto& rule : theme.rules) {
       const auto shape = editor::GutterIconRegistry::ResolveShape(rule.icon);
@@ -115,14 +117,21 @@ std::optional<WorkspaceFileIconRegistry::Icon> WorkspaceFileIconRegistry::Resolv
   if (filename.empty()) {
     return std::nullopt;
   }
-  const std::string lower_name = util::ToLowerAscii(filename);
-  if (const auto it = by_name_.find(lower_name); it != by_name_.end()) {
-    return it->second;
-  }
-  const std::string ext = ExtensionOf(lower_name);
-  if (!ext.empty()) {
-    if (const auto it = by_extension_.find(ext); it != by_extension_.end()) {
+  // Lowercase once into the reused scratch buffer; every lookup below works on a
+  // view of it, so a warmed registry resolves with zero heap allocation.
+  util::ToLowerAsciiInto(filename, lower_scratch_);
+  const std::string_view lower_name = lower_scratch_;
+  if (!by_name_.empty()) {
+    if (const auto it = by_name_.find(lower_name); it != by_name_.end()) {
       return it->second;
+    }
+  }
+  const std::string_view ext = ExtensionOf(lower_name);
+  if (!ext.empty()) {
+    if (!by_extension_.empty()) {
+      if (const auto it = by_extension_.find(ext); it != by_extension_.end()) {
+        return it->second;
+      }
     }
     if (auto builtin = ResolveBuiltinExtension(ext)) {
       return builtin;

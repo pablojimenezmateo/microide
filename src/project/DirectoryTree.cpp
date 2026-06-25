@@ -288,6 +288,7 @@ std::optional<std::filesystem::path> DirectoryTree::ActivateSelection() {
 void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
   util::StartupTrace::Scope trace_scope("DirectoryTree::RebuildEntries");
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::RebuildEntries");
+  ++entries_revision_;
   const auto selected_path =
       entries_.empty() ? std::filesystem::path{} : entries_[selected_index_].path;
 
