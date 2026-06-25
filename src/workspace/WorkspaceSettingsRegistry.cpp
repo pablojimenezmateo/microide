@@ -432,6 +432,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Essentials → Block Structure",
       },
       SettingSpec{
+          .id = "sidebar.file_icons",
+          .label = "File Type Icons",
+          .description =
+              "Show built-in type icons beside files in the explorer tree. Off by "
+              "default; plugin-contributed icon themes enable icons regardless.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Sidebar",
+      },
+      SettingSpec{
           .id = "editor.brackets.match_highlight.enabled",
           .label = "Bracket Match Highlight",
           .description = "Highlight the matching bracket adjacent to the caret.",

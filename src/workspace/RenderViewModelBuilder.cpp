@@ -529,10 +529,9 @@ DebugPaneSurfaceViewModel RenderViewModelBuilder::BuildDebugPaneSurface() const 
 void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
                                                   const editor::TextViewport& viewport,
                                                   std::size_t visible_rows,
-                                                  bool inline_surfaces_enabled,
-                                                  bool code_lens_above_enabled,
+                                                  editor::InsetGapFeatureFlags inset_flags,
                                                   float line_height) const {
-  out.code_lens_above = code_lens_above_enabled;
+  out.code_lens_above = inset_flags.code_lens_above;
   // No plugin/LSP contribution published: no surfaces or code lenses can exist,
   // so skip the gap build entirely (and never touch the stores) — the common
   // no-plugin case pays nothing here.
@@ -546,8 +545,8 @@ void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
   thread_local std::vector<editor::RowGapContent> contents;
   editor::BuildRowGapsForWindow(
       pres->surfaces, pres->decorations, viewport, visible_rows,
-      editor::InsetGapOptions{.inline_surfaces = inline_surfaces_enabled,
-                              .code_lens_above = code_lens_above_enabled,
+      editor::InsetGapOptions{.inline_surfaces = inset_flags.inline_surfaces,
+                              .code_lens_above = inset_flags.code_lens_above,
                               .code_lens_height = line_height},
       gaps, contents);
   out.row_gaps = std::span<const editor::RowGap>(gaps.data(), gaps.size());
@@ -567,8 +566,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     bool debug_enabled,
     const editor::BreakpointStore* breakpoints,
     const DebugExecutionView* debug_execution,
-    bool inline_surfaces_enabled,
-    bool code_lens_above_enabled,
+    editor::InsetGapFeatureFlags inset_flags,
     float line_height) const {
   util::AddPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls);
   out.fold_gutter_marks.clear();
@@ -586,8 +584,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   // above their line. Built here so the render TU stays view-model-only; bounded
   // to the visible window so it is O(visible).
   out.code_lens_above = false;
-  BuildEditorInsetGaps(out, viewport, visible_rows, inline_surfaces_enabled,
-                       code_lens_above_enabled, line_height);
+  BuildEditorInsetGaps(out, viewport, visible_rows, inset_flags, line_height);
 
   if (folding_model != nullptr && !folding_model->ranges().empty()) {
     out.fold_gutter_marks.reserve(visible_rows);

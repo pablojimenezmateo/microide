@@ -241,6 +241,10 @@ int LuaProcessRunAsync(lua_State* state,
       {
         std::lock_guard lock(async_process_state->mutex);
         async_process_state->active_requests.push_back(request);
+        async_process_state->queued.store(
+            static_cast<int>(async_process_state->active_requests.size() +
+                             async_process_state->pending_callbacks.size()),
+            std::memory_order_release);
       }
 
       platform::SubprocessOptions opts{
@@ -275,6 +279,10 @@ int LuaProcessRunAsync(lua_State* state,
         event_type = async_process_state->event_type;
         should_push_event = true;
       }
+      async_process_state->queued.store(
+          static_cast<int>(async_process_state->active_requests.size() +
+                           async_process_state->pending_callbacks.size()),
+          std::memory_order_release);
     }
     async_process_state->in_flight.fetch_sub(1, std::memory_order_release);
     async_state_interop::NotifyWorkerCompleted(*async_process_state);

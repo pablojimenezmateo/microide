@@ -32,6 +32,33 @@ const std::vector<terminal::TerminalLine>& EmptyTerminalLines() {
   return empty_lines;
 }
 
+// Paint a decoded raster surface (scaled to fit, clipped to `rect`), or a muted
+// "Rendering…" placeholder while its decode is still in flight. Split out of
+// RenderPluginSurfaceInto so the display-list and raster paths stay independently
+// readable; kept a file-local helper so it adds no member to the size-capped shell.
+void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
+                             const editor::RasterHandle& raster, float scroll_y,
+                             render::SurfaceTextureCache& cache, render::TextRenderer& text_renderer,
+                             const render::Theme& theme) {
+  constexpr float kPad = 8.0f;
+  const render::SurfaceTextureCache::Entry* entry = cache.Lookup(raster.content_hash);
+  if (entry == nullptr || entry->texture == nullptr) {
+    text_renderer.DrawString(renderer, rect.x + kPad, rect.y + kPad, theme.text_muted, "Rendering…");
+    return;
+  }
+  const float avail_w = std::max(1.0f, rect.w - kPad * 2.0f);
+  const float scale =
+      entry->width > 0 ? std::min(1.0f, avail_w / static_cast<float>(entry->width)) : 1.0f;
+  const SDL_FRect dest{rect.x + kPad, rect.y + kPad - scroll_y,
+                       static_cast<float>(entry->width) * scale,
+                       static_cast<float>(entry->height) * scale};
+  const SDL_Rect clip{static_cast<int>(std::floor(rect.x)), static_cast<int>(std::floor(rect.y)),
+                      static_cast<int>(std::ceil(rect.w)), static_cast<int>(std::ceil(rect.h))};
+  SDL_SetRenderClipRect(renderer, &clip);
+  SDL_RenderTexture(renderer, entry->texture, nullptr, &dest);
+  SDL_SetRenderClipRect(renderer, nullptr);
+}
+
 }  // namespace
 
 void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
@@ -609,25 +636,8 @@ void WorkspaceShell::RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_F
   }
 
   if (const auto* raster = std::get_if<editor::RasterHandle>(&content->body)) {
-    const render::SurfaceTextureCache::Entry* entry =
-        surface_texture_cache_.Lookup(raster->content_hash);
-    if (entry == nullptr || entry->texture == nullptr) {
-      // Decode is still in flight (or failed): show a muted placeholder.
-      text_renderer_.DrawString(renderer, rect.x + kPad, rect.y + kPad, theme_.text_muted,
-                                "Rendering…");
-      return;
-    }
-    const float avail_w = std::max(1.0f, rect.w - kPad * 2.0f);
-    const float scale =
-        entry->width > 0 ? std::min(1.0f, avail_w / static_cast<float>(entry->width)) : 1.0f;
-    const SDL_FRect dest{rect.x + kPad, rect.y + kPad - scroll_y,
-                         static_cast<float>(entry->width) * scale,
-                         static_cast<float>(entry->height) * scale};
-    const SDL_Rect clip{static_cast<int>(std::floor(rect.x)), static_cast<int>(std::floor(rect.y)),
-                        static_cast<int>(std::ceil(rect.w)), static_cast<int>(std::ceil(rect.h))};
-    SDL_SetRenderClipRect(renderer, &clip);
-    SDL_RenderTexture(renderer, entry->texture, nullptr, &dest);
-    SDL_SetRenderClipRect(renderer, nullptr);
+    RenderRasterSurfaceInto(renderer, rect, *raster, scroll_y, surface_texture_cache_,
+                            text_renderer_, theme_);
   }
 }
 

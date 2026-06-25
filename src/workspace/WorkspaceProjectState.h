@@ -339,6 +339,16 @@ struct FileIconRenderCache {
   std::vector<std::optional<WorkspaceFileIconRegistry::Icon>> icons;
   std::uint64_t tree_revision = ~0ull;
   std::uint32_t icon_revision = ~0u;
+
+  // Drop the resolved-icon cache back to its pristine "never built" state. Called
+  // when file icons are disabled so the feature leaves no per-project footprint
+  // and a later re-enable rebuilds cleanly (sentinel revisions force a refresh).
+  void Reset() {
+    icons.clear();
+    icons.shrink_to_fit();
+    tree_revision = ~0ull;
+    icon_revision = ~0u;
+  }
 };
 
 struct ProjectWorkspaceState {

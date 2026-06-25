@@ -39,6 +39,7 @@ void CancelCallbacks(runtime_types::AsyncProcessState& state) {
     callback.callback_ref = LUA_NOREF;
   }
   state.pending_callbacks.clear();
+  state.queued.store(0, std::memory_order_release);
 #else
   (void)state;
 #endif
@@ -50,6 +51,8 @@ std::vector<runtime_types::AsyncProcessCallback> TakePendingCallbacks(
   std::vector<runtime_types::AsyncProcessCallback> callbacks;
   std::lock_guard lock(state.mutex);
   callbacks.swap(state.pending_callbacks);
+  state.queued.store(static_cast<int>(state.active_requests.size()),
+                     std::memory_order_release);
   return callbacks;
 #else
   (void)state;
@@ -59,6 +62,12 @@ std::vector<runtime_types::AsyncProcessCallback> TakePendingCallbacks(
 
 int PendingCount(runtime_types::AsyncProcessState& state) {
 #if MICROIDE_HAS_LUA_PLUGINS
+  // Fast path: with no plugin async work queued (the steady state on every
+  // scheduled wake) skip the lock and vector scan entirely. `queued` is only ever
+  // non-zero while a request is in flight or a callback awaits draining.
+  if (state.queued.load(std::memory_order_acquire) == 0) {
+    return 0;
+  }
   std::lock_guard lock(state.mutex);
   int active_count = 0;
   for (const auto& request : state.active_requests) {

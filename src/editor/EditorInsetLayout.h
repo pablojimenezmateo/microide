@@ -20,6 +20,15 @@ struct InsetGapOptions {
   float code_lens_height = 0.0f;  // height of the Above code-lens strip (a text line height)
 };
 
+// The two inline-inset feature toggles, grouped so the render path threads one
+// value instead of a pair of loose bools. The per-call line height (which varies
+// as sticky-scroll recomputes metrics) stays a separate argument and combines with
+// these into `InsetGapOptions` at the point of use.
+struct InsetGapFeatureFlags {
+  bool inline_surfaces = false;
+  bool code_lens_above = false;
+};
+
 // Resolve the inert row gaps for inline insets visible in the window
 // [scroll_line, scroll_line + visible_rows): plugin-surface insets (Below) and
 // above-line code-lens strips (Above). `out_gaps` and `out_contents` are parallel

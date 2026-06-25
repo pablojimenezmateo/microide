@@ -9,6 +9,7 @@
 #include "workspace/CommitWorkflowService.h"
 #include "workspace/CommitWorkflowState.h"
 #include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 
@@ -824,21 +825,38 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
     const int scroll_row = list_layout.scroll_row;
 
-    // Resolve file icons once per tree mutation / icon-theme reload, not per row
-    // per frame. The per-row loop below then just indexes the cache, keeping the
-    // hot render path allocation- and lookup-free (zero cost with no plugins).
+    // File icons are opt-in. They render only when a plugin contributed an icon
+    // theme, or when the user explicitly enabled the built-in defaults via
+    // `sidebar.file_icons`. With no plugin and the setting off (the default) the
+    // entire icon path is skipped — no Resolve(), no cache allocation, no per-row
+    // draw — so the file tree is byte-for-byte identical to a host without this
+    // feature. The flag is read once per sidebar render (cheap inline check).
     auto& icon_cache = project_state.file_icon_cache;
-    const std::uint64_t tree_revision = project_state.directory_tree.entries_revision();
-    const std::uint32_t icon_revision = file_icon_registry_.revision();
-    if (icon_cache.tree_revision != tree_revision || icon_cache.icon_revision != icon_revision) {
-      icon_cache.icons.assign(entries.size(), std::nullopt);
-      for (std::size_t i = 0; i < entries.size(); ++i) {
-        if (!entries[i].is_directory) {
-          icon_cache.icons[i] = file_icon_registry_.Resolve(entries[i].label);
-        }
+    const bool file_icons_enabled =
+        file_icon_registry_.has_entries() ||
+        SettingFlagEnabled(GetSettingValue("sidebar.file_icons"));
+    if (!file_icons_enabled) {
+      // Drop any cache left over from a previous opt-in so the feature has zero
+      // footprint while off.
+      if (!icon_cache.icons.empty()) {
+        icon_cache.Reset();
       }
-      icon_cache.tree_revision = tree_revision;
-      icon_cache.icon_revision = icon_revision;
+    } else {
+      // Resolve file icons once per tree mutation / icon-theme reload, not per row
+      // per frame. The per-row loop below then just indexes the cache, keeping the
+      // hot render path allocation- and lookup-free.
+      const std::uint64_t tree_revision = project_state.directory_tree.entries_revision();
+      const std::uint32_t icon_revision = file_icon_registry_.revision();
+      if (icon_cache.tree_revision != tree_revision || icon_cache.icon_revision != icon_revision) {
+        icon_cache.icons.assign(entries.size(), std::nullopt);
+        for (std::size_t i = 0; i < entries.size(); ++i) {
+          if (!entries[i].is_directory) {
+            icon_cache.icons[i] = file_icon_registry_.Resolve(entries[i].label);
+          }
+        }
+        icon_cache.tree_revision = tree_revision;
+        icon_cache.icon_revision = icon_revision;
+      }
     }
 
     for (int row = 0; row < list_layout.visible_rows; ++row) {
@@ -877,7 +895,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       if (entry.is_directory) {
         DrawChevron(renderer, chevron_x, chevron_center_y, entry.expanded,
                     selected ? theme_.text_primary : theme_.text_muted);
-      } else if (const auto& icon = icon_cache.icons[entry_index]) {
+      } else if (file_icons_enabled && icon_cache.icons[entry_index]) {
+        const auto& icon = icon_cache.icons[entry_index];
         // Files have no chevron, so the chevron slot holds the type icon. Selected
         // rows tint it to the foreground so it stays legible on the highlight.
         const SDL_Color icon_color = selected ? theme_.text_primary : icon->color;

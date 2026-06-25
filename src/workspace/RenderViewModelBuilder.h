@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 
+#include "editor/EditorInsetLayout.h"
 #include "editor/EditorViewModel.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/WelcomeView.h"
@@ -249,8 +250,7 @@ class RenderViewModelBuilder {
                                 bool debug_enabled = false,
                                 const editor::BreakpointStore* breakpoints = nullptr,
                                 const DebugExecutionView* debug_execution = nullptr,
-                                bool inline_surfaces_enabled = false,
-                                bool code_lens_above_enabled = false,
+                                editor::InsetGapFeatureFlags inset_flags = {},
                                 float line_height = 0.0f) const;
 
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
@@ -296,8 +296,8 @@ class RenderViewModelBuilder {
   // `viewport`. No-op (clears them) when both are disabled. `line_height` sizes the
   // code-lens strip.
   void BuildEditorInsetGaps(editor::EditorViewModel& out, const editor::TextViewport& viewport,
-                            std::size_t visible_rows, bool inline_surfaces_enabled,
-                            bool code_lens_above_enabled, float line_height) const;
+                            std::size_t visible_rows, editor::InsetGapFeatureFlags inset_flags,
+                            float line_height) const;
 
   const WorkspaceContext& context_;
 };

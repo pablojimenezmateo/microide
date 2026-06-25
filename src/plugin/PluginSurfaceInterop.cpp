@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "editor/PluginSurfaceStore.h"
-#include "plugin/PluginLuaParseHelpers.h"
+#include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginPathInterop.h"
 #include "render/PluginDisplayList.h"
 #include "render/SurfaceTextureCache.h"
@@ -18,15 +18,15 @@ namespace microide::plugin::surface_interop {
 namespace {
 
 using path_interop::ResolveRuntimePath;
-using lua_parse::ReadNumberField;
-using lua_parse::ReadStringField;
+using lua_interop::ReadNumberField;
+using lua_interop::ReadStringField;
 
 constexpr lua_Integer kMaxHitRegions = 4096;
 
 // Reads the `color` field of the table at `table_index` into `out`; missing keeps
 // `out` unchanged. A present-but-malformed color is an error.
 bool ReadColorField(lua_State* state, int table_index, SDL_Color* out, std::string* error) {
-  return lua_parse::ReadOptionalColorField(state, table_index, "color", out, error);
+  return lua_interop::ReadOptionalColorField(state, table_index, "color", out, error);
 }
 
 SDL_FRect ReadRectFields(lua_State* state, int table_index) {

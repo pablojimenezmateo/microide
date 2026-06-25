@@ -217,7 +217,6 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginDataDirectoryInterop.cpp
   src/plugin/PluginHoverQueryInterop.cpp
   src/plugin/PluginDiagnosticsInterop.cpp
-  src/plugin/PluginLuaParseHelpers.cpp
   src/plugin/PluginDecorationInterop.cpp
   src/plugin/PluginSurfaceInterop.cpp
   src/plugin/PluginLifecycleCallbackInterop.cpp

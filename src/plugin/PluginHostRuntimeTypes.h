@@ -195,6 +195,11 @@ struct AsyncProcessState {
   std::atomic<int> in_flight{0};
   std::vector<std::shared_ptr<AsyncProcessRequest>> active_requests;
   std::vector<AsyncProcessCallback> pending_callbacks;
+  // Lockless fast-path gate: total entries in `active_requests` + `pending_callbacks`.
+  // Maintained under `mutex` at every mutation, read without the lock by
+  // PendingCount so the common "no async work" poll on each scheduled wake costs
+  // a single relaxed atomic load instead of locking and scanning the vectors.
+  std::atomic<int> queued{0};
 };
 
 inline constexpr std::chrono::milliseconds kPluginHostDrainDeadline{100};

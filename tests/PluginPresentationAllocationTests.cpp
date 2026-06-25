@@ -2,7 +2,9 @@
 
 #include "editor/PluginSurfaceStore.h"
 #include "perf/AllocationCounter.h"
+#include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginHost.h"
+#include "plugin/PluginHostRuntimeTypes.h"
 #include "project/DirectoryTree.h"
 #include "workspace/WorkspaceFileIconRegistry.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -10,6 +12,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -240,6 +243,81 @@ void TestPluginPresentationIsLazilyAllocatedAndReleased() {
          "draining the last contribution releases the bundle back to null");
 }
 
+// --- Change 5: file icons are opt-in; the gate leaves zero footprint when off ---
+
+// The sidebar gate keys off `has_entries()` (plus the `sidebar.file_icons`
+// setting). Built-in extension icons live in Resolve()'s fallback, NOT the
+// contribution maps, so they must never register as entries — otherwise the
+// sidebar would draw icons even with the feature off and no plugin loaded.
+void TestFileIconRegistryHasNoEntriesWithoutPlugins() {
+  WorkspaceFileIconRegistry registry;
+  Expect(!registry.has_entries(),
+         "a registry with no plugin contributions reports has_entries() == false");
+  registry.Clear();
+  Expect(!registry.has_entries(), "Clear() leaves the registry without plugin entries");
+  Expect(registry.Resolve("main.cpp").has_value(),
+         "built-in icons still resolve without a plugin theme");
+  Expect(!registry.has_entries(),
+         "resolving a built-in icon must not populate the contribution maps");
+}
+
+// Disabling file icons resets the render cache to its pristine "never built" state
+// so the feature keeps zero per-project footprint, and a steady disabled frame
+// (which only touches an already-empty cache) allocates nothing.
+void TestFileIconCacheGateLeavesNoFootprintWhenDisabled() {
+  using microide::workspace::FileIconRenderCache;
+  FileIconRenderCache cache;
+  cache.icons.assign(8, std::nullopt);  // Simulate a prior opt-in that filled the cache.
+  cache.tree_revision = 3;
+  cache.icon_revision = 1;
+  cache.Reset();
+  Expect(cache.icons.empty(), "Reset() drops the resolved-icon vector");
+  Expect(cache.tree_revision == ~0ull && cache.icon_revision == ~0u,
+         "Reset() restores the sentinel revisions so a later re-enable rebuilds");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationSnapshot before =
+      microide::tests::perf::Allocations::Snapshot();
+  for (int i = 0; i < 64; ++i) {
+    if (!cache.icons.empty()) {  // Mirrors the sidebar's disabled-path guard.
+      cache.Reset();
+    }
+  }
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
+         "a disabled file-icon frame must not allocate");
+#endif
+}
+
+// --- Change 6: the async-process poll is lockless when nothing is queued ---
+
+// HandleScheduledWake polls PendingAsyncProcessCount on every wake. The `queued`
+// atomic lets the steady "no async work" case return 0 without locking the mutex
+// or scanning the request vectors; this verifies the gate opens and closes.
+void TestAsyncProcessPollIsZeroWhenIdle() {
+#if MICROIDE_HAS_LUA_PLUGINS
+  namespace async_state = microide::plugin::async_state_interop;
+  microide::plugin::runtime_types::AsyncProcessState state;
+  Expect(state.queued.load() == 0, "a fresh async state has nothing queued");
+  Expect(async_state::PendingCount(state) == 0,
+         "PendingCount returns 0 on an idle state via the lockless fast path");
+
+  // A queued request is reflected once the gate opens (the precise locked count).
+  state.active_requests.push_back(
+      std::make_shared<microide::plugin::runtime_types::AsyncProcessRequest>());
+  state.queued.store(1);
+  Expect(async_state::PendingCount(state) == 1,
+         "a queued request is counted when the fast-path gate is open");
+
+  // Cancelling clears the vectors and resets the gate back to zero.
+  async_state::CancelCallbacks(state);
+  Expect(state.queued.load() == 0, "CancelCallbacks resets the queued gate");
+  Expect(async_state::PendingCount(state) == 0,
+         "PendingCount is 0 again after cancellation");
+#endif
+}
+
 }  // namespace
 
 void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
@@ -259,6 +337,12 @@ void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
           TestStatusItemsEmptyHostIsAllocationFree);
   AddTest(tests, "PluginPresentation/PresentationIsLazilyAllocatedAndReleased",
           TestPluginPresentationIsLazilyAllocatedAndReleased);
+  AddTest(tests, "PluginPresentation/FileIconRegistryHasNoEntriesWithoutPlugins",
+          TestFileIconRegistryHasNoEntriesWithoutPlugins);
+  AddTest(tests, "PluginPresentation/FileIconCacheGateLeavesNoFootprintWhenDisabled",
+          TestFileIconCacheGateLeavesNoFootprintWhenDisabled);
+  AddTest(tests, "PluginPresentation/AsyncProcessPollIsZeroWhenIdle",
+          TestAsyncProcessPollIsZeroWhenIdle);
 }
 
 }  // namespace microide::tests

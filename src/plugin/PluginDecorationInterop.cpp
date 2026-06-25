@@ -9,16 +9,16 @@
 
 #include "editor/GutterIconRegistry.h"
 #include "editor/PluginDecorationStore.h"
-#include "plugin/PluginLuaParseHelpers.h"
+#include "plugin/PluginLuaInterop.h"
 #include "plugin/PluginPathInterop.h"
 
 namespace microide::plugin::decoration_interop {
 namespace {
 
 using path_interop::ResolveRuntimePath;
-using lua_parse::ReadBoolField;
-using lua_parse::ReadOptionalColorField;
-using lua_parse::ReadStringField;
+using lua_interop::ReadBoolField;
+using lua_interop::ReadOptionalColorField;
+using lua_interop::ReadStringField;
 
 // Cap per-kind entries so a malformed or hostile plugin cannot force an
 // unbounded allocation/sort on the shell thread.

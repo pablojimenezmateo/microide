@@ -45,6 +45,13 @@ class WorkspaceFileIconRegistry {
   // without re-resolving every entry per frame.
   std::uint32_t revision() const { return revision_; }
 
+  // True once a plugin has contributed any file-icon rule. The built-in
+  // extension defaults live in Resolve()'s fallback, NOT in these maps, so an
+  // empty registry means "no plugin opted into file icons" — the sidebar gates
+  // the whole icon path on this (plus the opt-in setting) to stay byte-for-byte
+  // identical to a no-plugin host.
+  bool has_entries() const { return !by_name_.empty() || !by_extension_.empty(); }
+
  private:
   // Plugin overrides. Keys are lower-cased. Transparent hashing lets Resolve look
   // up by string_view without materialising a temporary key.
