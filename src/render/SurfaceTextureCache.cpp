@@ -1,0 +1,169 @@
+#include "render/SurfaceTextureCache.h"
+
+#include <cstring>
+#include <utility>
+
+#include "project/ProjectBackgroundExecutor.h"
+#include "render/RasterDecode.h"
+
+namespace microide::render {
+
+namespace {
+
+// Decode encoded image bytes (PNG/JPEG) to RGBA8. Returns ok=false on any
+// failure (malformed, oversize, OOM) without producing a partial buffer.
+SurfaceTextureCache::Decoded DecodeEncoded(std::uint64_t hash,
+                                           const std::vector<std::byte>& bytes) {
+  SurfaceTextureCache::Decoded out;
+  out.hash = hash;
+  out.ok = DecodeRasterToRgba(std::span<const std::byte>(bytes.data(), bytes.size()), out.rgba,
+                              out.width, out.height);
+  return out;
+}
+
+// Validate (not decode) raw RGBA8 bytes whose dimensions the plugin declared.
+SurfaceTextureCache::Decoded WrapRgba8(std::uint64_t hash, std::vector<std::byte> bytes,
+                                       int declared_w, int declared_h) {
+  SurfaceTextureCache::Decoded out;
+  out.hash = hash;
+  if (declared_w <= 0 || declared_h <= 0 || declared_w > SurfaceTextureCache::kMaxDimension ||
+      declared_h > SurfaceTextureCache::kMaxDimension) {
+    return out;
+  }
+  const std::size_t expected =
+      static_cast<std::size_t>(declared_w) * static_cast<std::size_t>(declared_h) * 4;
+  if (bytes.size() != expected) {
+    return out;
+  }
+  out.rgba.resize(expected);
+  std::memcpy(out.rgba.data(), bytes.data(), expected);
+  out.width = declared_w;
+  out.height = declared_h;
+  out.ok = true;
+  return out;
+}
+
+}  // namespace
+
+SurfaceTextureCache::SurfaceTextureCache(project::ProjectBackgroundExecutor& executor,
+                                         std::size_t vram_budget_bytes)
+    : executor_(executor),
+      sink_(std::make_shared<DecodeSink>()),
+      vram_budget_bytes_(vram_budget_bytes) {}
+
+SurfaceTextureCache::~SurfaceTextureCache() { Clear(); }
+
+void SurfaceTextureCache::Request(std::uint64_t hash, RasterFormat format,
+                                  std::vector<std::byte> bytes, int declared_w, int declared_h) {
+  if (hash == 0) {
+    return;
+  }
+  if (entries_.find(hash) != entries_.end() ||
+      in_flight_or_failed_.find(hash) != in_flight_or_failed_.end()) {
+    return;  // already cached, decoding, or known-bad
+  }
+  in_flight_or_failed_.emplace(hash, true);
+
+  // The worker captures a copy of the sink shared_ptr and the bytes by value, and
+  // never touches `this`, so the cache can outlive-or-predecease the task safely.
+  std::shared_ptr<DecodeSink> sink = sink_;
+  executor_.Post([sink = std::move(sink), hash, format, bytes = std::move(bytes), declared_w,
+                  declared_h]() mutable {
+    Decoded decoded = format == RasterFormat::Png
+                          ? DecodeEncoded(hash, bytes)
+                          : WrapRgba8(hash, std::move(bytes), declared_w, declared_h);
+    std::lock_guard<std::mutex> lock(sink->mutex);
+    sink->ready.push_back(std::move(decoded));
+  });
+}
+
+void SurfaceTextureCache::Upload(SDL_Renderer* renderer) {
+  std::vector<Decoded> ready;
+  {
+    std::lock_guard<std::mutex> lock(sink_->mutex);
+    ready.swap(sink_->ready);
+  }
+  if (ready.empty()) {
+    return;
+  }
+  for (Decoded& decoded : ready) {
+    // The hash may have been Clear()'d while decoding; only honor still-pending
+    // requests. A failed decode drops the in-flight marker so we never retry, but
+    // keeps it in the map so a later identical Request short-circuits.
+    const auto pending = in_flight_or_failed_.find(decoded.hash);
+    if (pending == in_flight_or_failed_.end()) {
+      continue;
+    }
+    if (!decoded.ok || renderer == nullptr) {
+      continue;  // leave the marker so we treat this hash as permanently failed
+    }
+
+    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                             SDL_TEXTUREACCESS_STATIC, decoded.width,
+                                             decoded.height);
+    if (texture == nullptr) {
+      continue;
+    }
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_UpdateTexture(texture, nullptr, decoded.rgba.data(),
+                      decoded.width * 4);
+
+    in_flight_or_failed_.erase(pending);
+    Entry entry{texture, decoded.width, decoded.height};
+    entries_[decoded.hash] = entry;
+    vram_bytes_ += static_cast<std::size_t>(decoded.width) *
+                   static_cast<std::size_t>(decoded.height) * 4;
+    lru_.push_front(decoded.hash);
+    lru_pos_[decoded.hash] = lru_.begin();
+  }
+  EvictToBudget();
+}
+
+const SurfaceTextureCache::Entry* SurfaceTextureCache::Lookup(std::uint64_t hash) {
+  const auto it = entries_.find(hash);
+  if (it == entries_.end()) {
+    return nullptr;
+  }
+  // Move to the front of the LRU list.
+  const auto pos = lru_pos_.find(hash);
+  if (pos != lru_pos_.end()) {
+    lru_.erase(pos->second);
+    lru_.push_front(hash);
+    pos->second = lru_.begin();
+  }
+  return &it->second;
+}
+
+void SurfaceTextureCache::EvictToBudget() {
+  while (vram_bytes_ > vram_budget_bytes_ && !lru_.empty()) {
+    const std::uint64_t victim = lru_.back();
+    lru_.pop_back();
+    lru_pos_.erase(victim);
+    const auto it = entries_.find(victim);
+    if (it != entries_.end()) {
+      if (it->second.texture != nullptr) {
+        SDL_DestroyTexture(it->second.texture);
+      }
+      vram_bytes_ -= static_cast<std::size_t>(it->second.width) *
+                     static_cast<std::size_t>(it->second.height) * 4;
+      entries_.erase(it);
+    }
+    // An evicted hash may be re-requested later; drop any stale marker so it can.
+    in_flight_or_failed_.erase(victim);
+  }
+}
+
+void SurfaceTextureCache::Clear() {
+  for (auto& [hash, entry] : entries_) {
+    if (entry.texture != nullptr) {
+      SDL_DestroyTexture(entry.texture);
+    }
+  }
+  entries_.clear();
+  lru_.clear();
+  lru_pos_.clear();
+  in_flight_or_failed_.clear();
+  vram_bytes_ = 0;
+}
+
+}  // namespace microide::render

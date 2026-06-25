@@ -5,6 +5,7 @@
 #include "plugin/LuaError.h"
 #include "plugin/PluginDecorationInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
+#include "plugin/PluginSurfaceInterop.h"
 
 namespace microide::plugin::runtime_api_interop {
 
@@ -89,6 +90,50 @@ int LuaDecorationsClear(lua_State* state,
       return 0;
     }
     lua_error_util::PushMessage(state, error_message, "failed to clear decorations");
+  }
+  return lua_error_util::kPendingError;
+}
+
+int LuaSurfaceSet(lua_State* state,
+                  const runtime_types::PluginInstance* plugin,
+                  const std::filesystem::path& current_project_root,
+                  const PluginHost::Callbacks& callbacks) {
+  if (!lua_isstring(state, 1)) {
+    lua_error_util::PushMessage(state, "surface.set requires a surface id string");
+    return lua_error_util::kPendingError;
+  }
+  if (lua_type(state, 2) != LUA_TTABLE) {
+    lua_error_util::PushMessage(state, "surface.set requires a spec table");
+    return lua_error_util::kPendingError;
+  }
+  const char* surface_id = lua_tostring(state, 1);
+  {
+    std::string error_message;
+    if (plugin != nullptr &&
+        surface_interop::PublishSurface(state, plugin->id, current_project_root, surface_id, 2,
+                                        callbacks, &error_message)) {
+      return 0;
+    }
+    lua_error_util::PushMessage(state, error_message, "failed to set surface");
+  }
+  return lua_error_util::kPendingError;
+}
+
+int LuaSurfaceClear(lua_State* state,
+                    const runtime_types::PluginInstance* plugin,
+                    const PluginHost::Callbacks& callbacks) {
+  if (!lua_isstring(state, 1)) {
+    lua_error_util::PushMessage(state, "surface.clear requires a surface id string");
+    return lua_error_util::kPendingError;
+  }
+  const char* surface_id = lua_tostring(state, 1);
+  {
+    std::string error_message;
+    if (plugin != nullptr &&
+        surface_interop::ClearSurface(plugin->id, surface_id, callbacks, &error_message)) {
+      return 0;
+    }
+    lua_error_util::PushMessage(state, error_message, "failed to clear surface");
   }
   return lua_error_util::kPendingError;
 }

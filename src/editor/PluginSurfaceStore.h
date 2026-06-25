@@ -1,0 +1,133 @@
+#pragma once
+
+#include <SDL3/SDL.h>
+
+#include <cstdint>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <variant>
+#include <vector>
+
+#include "render/PluginDisplayList.h"
+#include "util/TransparentStringHash.h"
+
+namespace microide::editor {
+
+// Where a plugin wants its surface previewed. `None` means the surface exists but
+// is not (yet) shown in a panel; it may still render inline if it has an anchor.
+enum class SurfacePreviewSlot : std::uint8_t { None, Bottom, Side };
+
+// A decoded-raster reference. The pixels live in the host's SurfaceTextureCache
+// keyed by `content_hash`; the store only carries the handle + intrinsic size.
+struct RasterHandle {
+  std::uint64_t content_hash = 0;
+  int width = 0;
+  int height = 0;
+
+  bool operator==(const RasterHandle&) const = default;
+};
+
+// A clickable region in surface-content-local coordinates. A click dispatches
+// `command` through the host's existing command runner (the same validated path
+// Phase B code-lens clicks use) — no bespoke per-surface callback registry.
+struct SurfaceHitRegion {
+  SDL_FRect rect{0.0f, 0.0f, 0.0f, 0.0f};
+  std::string command;
+
+  bool operator==(const SurfaceHitRegion& o) const {
+    return rect.x == o.rect.x && rect.y == o.rect.y && rect.w == o.rect.w &&
+           rect.h == o.rect.h && command == o.command;
+  }
+};
+
+// Optional inline anchor: render the surface as an inert block inset after
+// `line` (0-based) of `path`. Only honored when inline surfaces are enabled.
+struct SurfaceAnchor {
+  std::filesystem::path path;
+  std::uint32_t line = 0;
+
+  bool operator==(const SurfaceAnchor&) const = default;
+};
+
+// One plugin surface: either a structured display list or a raster handle, plus
+// its intrinsic size, optional inline anchor, hit regions, and preview request.
+struct SurfaceContent {
+  std::variant<std::monostate, render::PluginDisplayList, RasterHandle> body;
+  float intrinsic_width = 0.0f;
+  float intrinsic_height = 0.0f;
+  std::string title;
+  std::optional<SurfaceAnchor> anchor;
+  std::vector<SurfaceHitRegion> hit_regions;
+  SurfacePreviewSlot preview = SurfacePreviewSlot::None;
+
+  bool has_body() const { return body.index() != 0; }
+  bool operator==(const SurfaceContent&) const = default;
+};
+
+// A resolved anchored surface for one file, sorted by line so the inset resolver
+// can slice per visible row. Pointers stay valid until the next store mutation.
+struct AnchoredSurface {
+  std::uint32_t line = 0;
+  std::string owner;
+  std::string surface_id;
+  const SurfaceContent* content = nullptr;
+};
+
+// A surface requesting a panel preview, used to enumerate bottom-panel tabs.
+struct SurfaceRef {
+  std::string owner;
+  std::string surface_id;
+  const SurfaceContent* content = nullptr;
+};
+
+// Owner/id-keyed store of plugin-published content surfaces, modeled on
+// PluginDecorationStore. A re-publish replaces one (owner, surface_id)
+// atomically. Mutators return the redraw signal: true when something actually
+// changed. An anchored-by-path index is rebuilt on mutation so the inline-inset
+// resolver is O(surfaces for the file), not O(all surfaces).
+class PluginSurfaceStore {
+ public:
+  bool ReplaceForOwnerSurface(std::string_view owner, std::string_view surface_id,
+                              SurfaceContent content);
+  bool ClearOwnerSurface(std::string_view owner, std::string_view surface_id);
+  bool ClearOwner(std::string_view owner);
+  // Host-side override of a surface's preview request (e.g. the user closed its
+  // preview tab). No-op if the surface is missing or already at `slot`.
+  bool SetPreviewSlot(std::string_view owner, std::string_view surface_id,
+                      SurfacePreviewSlot slot);
+  void Clear();
+
+  const SurfaceContent* Find(std::string_view owner, std::string_view surface_id) const;
+
+  // Surfaces that asked to be previewed, sorted by (owner, surface_id) for a
+  // stable tab order. Allocates; called only when rebuilding panel tabs.
+  std::vector<SurfaceRef> PreviewSurfaces() const;
+
+  // Anchored surfaces for `path`, sorted by line. Empty span when none.
+  std::span<const AnchoredSurface> AnchoredSurfacesForPath(
+      const std::filesystem::path& path) const;
+
+  bool has_anchored() const { return !anchored_by_path_.empty(); }
+  std::uint64_t revision() const { return revision_; }
+  bool empty() const { return by_owner_.empty(); }
+
+ private:
+  static std::string PathKey(const std::filesystem::path& path);
+  void RebuildAnchorIndex();
+
+  using SurfaceMap = std::unordered_map<std::string, SurfaceContent,
+                                        util::TransparentStringHash, std::equal_to<>>;
+
+  std::unordered_map<std::string, SurfaceMap, util::TransparentStringHash, std::equal_to<>>
+      by_owner_;
+  std::unordered_map<std::string, std::vector<AnchoredSurface>, util::TransparentStringHash,
+                     std::equal_to<>>
+      anchored_by_path_;
+  std::uint64_t revision_ = 0;
+};
+
+}  // namespace microide::editor

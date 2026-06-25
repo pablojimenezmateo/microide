@@ -69,8 +69,14 @@ void TestArchitectureInvariants() {
              // registry members (WorkspaceThemeRegistry, WorkspaceFileIconRegistry)
              // and the RebuildPresentationRegistries entry point that repopulates
              // them on plugin reload (parallel to RebuildPhase4Registries).
+             // 1581: +6 for Phase E plugin surfaces: the host-owned
+             // SurfaceTextureCache member and the ActivatePluginSurfacePreview /
+             // SyncPluginSurfacePreviewClosed / RenderPluginSurfaceInto entry
+             // points that drive the preview panel + inline insets.
+             // 1584: +3 for the Phase E1 DrawEditorInsets entry point that paints
+             // inline-surface insets into the editor's inert row-gaps.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1575);
+                                                     1584);
            });
 
   bool hard_failure = false;

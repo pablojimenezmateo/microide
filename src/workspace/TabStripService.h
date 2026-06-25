@@ -37,12 +37,16 @@ struct TabStripOverflowControls {
 enum class BottomPanelTabKind {
   Terminal,
   Output,
+  PluginSurface,
 };
 
 struct BottomPanelTabModel {
   BottomPanelTabKind kind = BottomPanelTabKind::Terminal;
   std::size_t terminal_index = 0;
   std::string output_channel_id;
+  // Identifies a plugin-surface preview tab (Phase E0) when kind == PluginSurface.
+  std::string surface_owner;
+  std::string surface_id;
   std::string label;
   std::string tooltip_label;
 };

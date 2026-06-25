@@ -1,0 +1,119 @@
+#include "TestSupport.h"
+
+#include "render/PluginDisplayList.h"
+
+#include <string>
+
+namespace microide::tests {
+namespace {
+
+using microide::render::ComputeDisplayListHash;
+using microide::render::DisplayOp;
+using microide::render::DrawOp;
+using microide::render::PluginDisplayList;
+using microide::render::ValidateDisplayList;
+
+PluginDisplayList RectList() {
+  PluginDisplayList list;
+  list.ops.push_back(DisplayOp{.op = DrawOp::Rect,
+                               .rect = SDL_FRect{0, 0, 10, 10},
+                               .color = SDL_Color{1, 2, 3, 255}});
+  list.content_width = 10;
+  list.content_height = 10;
+  return list;
+}
+
+void TestValidListPasses() {
+  PluginDisplayList list = RectList();
+  list.text_arena = "hello";
+  list.ops.push_back(DisplayOp{.op = DrawOp::Text, .data_offset = 0, .data_count = 5});
+  std::string error;
+  Expect(ValidateDisplayList(list, &error), "a well-formed display list should validate");
+  Expect(error.empty(), "no error on a valid list");
+}
+
+void TestTextOpOutOfBoundsFails() {
+  PluginDisplayList list;
+  list.text_arena = "abc";
+  list.ops.push_back(DisplayOp{.op = DrawOp::Text, .data_offset = 1, .data_count = 5});
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error), "a text op past the arena must be rejected");
+  Expect(!error.empty(), "rejection should report a reason");
+}
+
+void TestPolylineNeedsTwoPoints() {
+  PluginDisplayList list;
+  list.point_arena.push_back(SDL_FPoint{0, 0});
+  list.ops.push_back(DisplayOp{.op = DrawOp::Polyline, .data_offset = 0, .data_count = 1});
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error), "a one-point polyline must be rejected");
+}
+
+void TestPolylineOutOfBoundsFails() {
+  PluginDisplayList list;
+  list.point_arena.push_back(SDL_FPoint{0, 0});
+  list.point_arena.push_back(SDL_FPoint{1, 1});
+  list.ops.push_back(DisplayOp{.op = DrawOp::Polyline, .data_offset = 1, .data_count = 2});
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error), "a polyline past the point arena must be rejected");
+}
+
+void TestImageOpOutOfBoundsFails() {
+  PluginDisplayList list;
+  list.ops.push_back(DisplayOp{.op = DrawOp::Image, .data_offset = 0});
+  std::string error;
+  Expect(!ValidateDisplayList(list, &error),
+         "an image op with no registered handle must be rejected");
+}
+
+void TestUnbalancedClipFails() {
+  PluginDisplayList push_only;
+  push_only.ops.push_back(DisplayOp{.op = DrawOp::ClipPush, .rect = SDL_FRect{0, 0, 5, 5}});
+  std::string error;
+  Expect(!ValidateDisplayList(push_only, &error), "an unbalanced clip push must be rejected");
+
+  PluginDisplayList pop_only;
+  pop_only.ops.push_back(DisplayOp{.op = DrawOp::ClipPop});
+  Expect(!ValidateDisplayList(pop_only, &error), "an unbalanced clip pop must be rejected");
+}
+
+void TestBalancedClipPasses() {
+  PluginDisplayList list;
+  list.ops.push_back(DisplayOp{.op = DrawOp::ClipPush, .rect = SDL_FRect{0, 0, 5, 5}});
+  list.ops.push_back(DisplayOp{.op = DrawOp::Rect, .rect = SDL_FRect{0, 0, 2, 2}});
+  list.ops.push_back(DisplayOp{.op = DrawOp::ClipPop});
+  std::string error;
+  Expect(ValidateDisplayList(list, &error), "a balanced clip pair should validate");
+}
+
+void TestHashIsStableAndSensitive() {
+  const PluginDisplayList a = RectList();
+  const PluginDisplayList b = RectList();
+  Expect(ComputeDisplayListHash(a) == ComputeDisplayListHash(b),
+         "identical lists hash identically");
+
+  PluginDisplayList c = RectList();
+  c.ops[0].color.r = 99;
+  Expect(ComputeDisplayListHash(a) != ComputeDisplayListHash(c),
+         "a color change should change the hash");
+
+  PluginDisplayList d = RectList();
+  d.content_height = 11;
+  Expect(ComputeDisplayListHash(a) != ComputeDisplayListHash(d),
+         "an intrinsic-size change should change the hash");
+}
+
+}  // namespace
+
+void RegisterPluginDisplayListTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginDisplayList/ValidListPasses", TestValidListPasses);
+  AddTest(tests, "PluginDisplayList/TextOpOutOfBoundsFails", TestTextOpOutOfBoundsFails);
+  AddTest(tests, "PluginDisplayList/PolylineNeedsTwoPoints", TestPolylineNeedsTwoPoints);
+  AddTest(tests, "PluginDisplayList/PolylineOutOfBoundsFails", TestPolylineOutOfBoundsFails);
+  AddTest(tests, "PluginDisplayList/ImageOpOutOfBoundsFails", TestImageOpOutOfBoundsFails);
+  AddTest(tests, "PluginDisplayList/UnbalancedClipFails", TestUnbalancedClipFails);
+  AddTest(tests, "PluginDisplayList/BalancedClipPasses", TestBalancedClipPasses);
+  AddTest(tests, "PluginDisplayList/HashIsStableAndSensitive", TestHashIsStableAndSensitive);
+}
+
+}  // namespace microide::tests

@@ -59,6 +59,11 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   lua_setfield(state, -2, "decorations");
 
   lua_createtable(state, 0, 2);
+  PushBoundFn(state, host_upvalue, fns.surface_set, "set");
+  PushBoundFn(state, host_upvalue, fns.surface_clear, "clear");
+  lua_setfield(state, -2, "surface");
+
+  lua_createtable(state, 0, 2);
   PushBoundFn(state, host_upvalue, fns.sidebar_add, "add");
   PushBoundFn(state, host_upvalue, fns.sidebar_show, "show");
   lua_setfield(state, -2, "sidebar");

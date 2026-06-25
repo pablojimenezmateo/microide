@@ -912,6 +912,16 @@
   void RefreshGitSidebar();
   void ConsumeGitSidebarRefresh();
   bool RefreshProblemsSidebar();
+  // Phase E0: open/refresh a plugin surface preview in the bottom panel, and keep
+  // the panel consistent when a previewed surface is cleared.
+  void ActivatePluginSurfacePreview(std::string_view owner, std::string_view surface_id,
+                                    editor::SurfacePreviewSlot slot);
+  void SyncPluginSurfacePreviewClosed();
+  void RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
+                               const editor::SurfaceContent* content, float scroll_y);
+  void DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& pane_rect,
+                        const editor::EditorViewMetrics& metrics, std::size_t scroll_line,
+                        const editor::EditorViewModel& view_model);
   bool RefreshTestsSidebar();
   bool RefreshTestsSidebarState();
   bool RefreshPluginSidebar();
@@ -1629,6 +1639,9 @@
   GitRepositoryService git_repository_service_{project_background_executor_};
   PatchApplyService patch_apply_service_{project_background_executor_, git_repository_service_};
   CommitWorkflowService commit_workflow_service_{project_background_executor_, git_repository_service_};
+  // Host-owned cache of plugin-published raster surfaces (Phase E). Declared after
+  // the executor so it tears down first, while the executor is still alive.
+  render::SurfaceTextureCache surface_texture_cache_{project_background_executor_};
   std::mutex save_tab_mutex_;
   std::unique_ptr<platform::FileIndexWatcher> file_index_watcher_;
   std::atomic<std::uint64_t> file_index_watcher_generation_{0};

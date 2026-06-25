@@ -425,6 +425,24 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
     });
   }
 
+  // Plugin-surface preview tabs (Phase E0): every surface that requested a
+  // bottom-panel preview becomes a tab, in the store's stable (owner, id) order.
+  for (const editor::SurfaceRef& ref : state.surface_store.PreviewSurfaces()) {
+    if (ref.content == nullptr || ref.content->preview != editor::SurfacePreviewSlot::Bottom) {
+      continue;
+    }
+    std::string label = ref.content->title.empty() ? ref.surface_id : ref.content->title;
+    tabs.push_back(BottomPanelTabModel{
+        .kind = BottomPanelTabKind::PluginSurface,
+        .terminal_index = 0,
+        .output_channel_id = {},
+        .surface_owner = ref.owner,
+        .surface_id = ref.surface_id,
+        .label = label,
+        .tooltip_label = label,
+    });
+  }
+
   return tabs;
 }
 

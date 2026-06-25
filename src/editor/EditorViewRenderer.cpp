@@ -509,6 +509,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   }
 
   util::PerformanceTrace::Scope rows_scope("EditorViewRenderer::Render::Rows");
+  // The single row -> y mapping. With no inline insets (the common case) row_gaps
+  // is empty and RowTop(row) == first_line_y + row*line_height exactly.
+  const EditorRowYLayout row_y_layout(
+      metrics.first_line_y, metrics.line_height, static_cast<std::uint32_t>(scroll_line),
+      view_model != nullptr ? view_model->row_gaps : std::span<const RowGap>{});
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= viewport.visual_line_count()) {
@@ -522,7 +527,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       break;
     }
 
-    const float y = metrics.first_line_y + static_cast<float>(row) * metrics.line_height;
+    const float y = row_y_layout.RowTop(row);
     const std::size_t row_visual_origin =
         soft_wrap ? row_meta.visual_start : viewport.horizontal_scroll();
     // Hanging indent: continuation rows shift their whole content (text, carets,

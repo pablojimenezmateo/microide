@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -11,6 +12,7 @@
 
 #include "editor/DiagnosticsStore.h"
 #include "editor/PluginDecorationStore.h"
+#include "editor/PluginSurfaceStore.h"
 #include "platform/SubprocessSandbox.h"
 #include "util/JsonValue.h"
 
@@ -445,6 +447,16 @@ class PluginHost {
         publish_decorations;
     std::function<void(std::string_view, const std::filesystem::path&)> clear_file_decorations;
     std::function<void(std::string_view)> clear_owner_decorations;
+    // Plugin-published content surfaces (Phase E). `publish_surface` replaces one
+    // (owner, surface_id) atomically; clears mirror the decoration callbacks.
+    // `decode_raster` hands encoded/raw image bytes to the host texture cache for
+    // off-thread decode + shell-thread upload, keyed by content hash. `format` is
+    // 0 = PNG/JPEG (decode), 1 = raw RGBA8 (validate only).
+    std::function<void(std::string_view, std::string_view, editor::SurfaceContent)>
+        publish_surface;
+    std::function<void(std::string_view, std::string_view)> clear_surface;
+    std::function<void(std::string_view)> clear_owner_surfaces;
+    std::function<void(std::uint64_t, int, std::vector<std::byte>, int, int)> decode_raster;
     std::function<void(const std::string&)> error_sink;
     std::function<void(const std::string&)> log_sink;
     std::function<std::optional<std::string>(std::string_view)> get_setting;

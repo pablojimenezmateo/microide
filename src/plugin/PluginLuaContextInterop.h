@@ -24,6 +24,8 @@ struct ApiFns {
   lua_CFunction diagnostics_clear;
   lua_CFunction decorations_set;
   lua_CFunction decorations_clear;
+  lua_CFunction surface_set;
+  lua_CFunction surface_clear;
   lua_CFunction sidebar_add;
   lua_CFunction sidebar_show;
   lua_CFunction hover_add;

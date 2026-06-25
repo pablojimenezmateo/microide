@@ -269,6 +269,43 @@ RuleResult CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(const std::filesystem:
   return result;
 }
 
+RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root) {
+  // Hard product guarantee: the microide core binary makes no network calls and
+  // links no networking client libraries. Plugins may reach the network in their
+  // own sandboxed subprocess (declared `network` capability); the host only ever
+  // decodes/caches/blits the plugin's local output (e.g. the Phase E raster path
+  // accepts plugin-supplied bytes, never a URL). This bans the unambiguous
+  // HTTP/TLS/DNS client tokens. It deliberately does NOT ban socket()/connect()/
+  // AF_INET, which have legitimate non-network uses here: the control channel
+  // speaks AF_UNIX (local IPC) and the subprocess sandbox names AF_INET only to
+  // BLOCK it in its seccomp filter.
+  RuleResult result;
+  result.label = "core binary is network-free";
+  result.hard_fail = true;
+  const std::filesystem::path src_dir = repo_root / "src";
+  if (!std::filesystem::exists(src_dir)) {
+    return result;
+  }
+  const std::regex network_client(
+      R"((curl_easy|curl_global|curl/curl\.h|libcurl|gethostbyname|getaddrinfo|openssl/|SSL_CTX|SSL_connect|<arpa/inet|httplib|cpr::|boost/asio|<asio))");
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".inc" && ext != ".h" && ext != ".hpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, network_client,
+        "the core binary must not link or call a network client (HTTP/TLS/DNS); plugins "
+        "reach the network in their own sandboxed subprocess and the host consumes only "
+        "their local output. See the network-isolation guarantee in CLAUDE.md / the plan.");
+  }
+  return result;
+}
+
 std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root) {
   std::vector<RuleResult> results;
   const auto run = [&](auto&& fn) { results.push_back(fn(repo_root)); };
@@ -278,6 +315,7 @@ std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& 
   run(CheckPluginDrainBeforeTeardown);
   run(CheckPluginTranslationUnitSize);
   run(CheckPluginLuaErrorDoesNotLongjmpOverCppLocals);
+  run(CheckCoreIsNetworkFree);
   return results;
 }
 

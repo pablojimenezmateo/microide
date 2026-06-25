@@ -22,6 +22,8 @@ Plugins may contribute capabilities such as:
 - diagnostics
 - editor decorations via `ctx.decorations.set(path, {...})` / `ctx.decorations.clear(path?)`
   (see below)
+- content surfaces (charts / previews) via `ctx.surface.set(id, {...})` /
+  `ctx.surface.clear(id)` (see below)
 - hover providers
 - transient notifications via `microide.notify(level, message)` (host-owned toast
   surface; `level` is info/warning/error)
@@ -254,6 +256,45 @@ Status items (rendered in the breadcrumb) accept, in addition to `text`/`tooltip
 run on click via the normal command path), and `progress` (`< 0` = no bar, else a
 `[0, 1]` sub-bar). `ctx.status.update(id, { … })` mutates any of `text`, `tooltip`,
 `icon`, `tone`, `progress` live.
+
+## Content surfaces (`ctx.surface.set` / `ctx.surface.clear`)
+
+Phase E lets a plugin emit a whole **rendered content surface** — a chart, a REST
+response view, a markdown/mermaid preview — that the host draws. As everywhere
+else, the plugin emits **data only**; the host owns all drawing, caching, clipping,
+and hit-testing. The core never opens a socket or fetches a URL: a markdown/mermaid
+plugin runs its CLI in its own sandboxed subprocess (`ctx.process.run_async`, the
+`network` capability) and hands the host the resulting **local** bytes.
+
+`ctx.surface.set(id, spec)` is a single atomic publish (it replaces the whole
+surface for that id). `spec` carries exactly one body:
+
+- `display_list = { width, height, ops = { … } }` — a flat op buffer the host
+  replays. Ops: `{op="rect", x,y,w,h, color}`, `{op="line", x1,y1,x2,y2, color}`,
+  `{op="polyline", points={{x,y},…}, color}`, `{op="text", x,y, text, color}`,
+  `{op="clip_push", x,y,w,h}` / `{op="clip_pop"}`. Coordinates are content-local.
+- `raster = { format = "png"|"rgba8", bytes, width, height }` — encoded image
+  (PNG/JPEG, decoded off-thread) or raw RGBA8. Pixels live in the host's
+  `SurfaceTextureCache`, keyed by content hash, LRU-evicted by a VRAM budget.
+
+Optional fields: `title`, `preview = "bottom"|"side"` (open it as a panel preview),
+`hit_regions = { { x,y,w,h, command } … }` (a click runs `command` through the
+normal command path — no bespoke callback), and `anchor = { path, line }` (render
+it as an inline inset; see below). `ctx.surface.clear(id)` removes it.
+
+All inputs are bounded before allocation (op/point/text/raster caps); oversize or
+malformed input is rejected, never clamped. The display-list op-buffer and the
+PNG decoder each have a libFuzzer target (`PluginDisplayListParseFuzz`,
+`SurfaceRasterDecodeFuzz`).
+
+**Inline insets are experimental and off by default.** With `plugins.inline_surfaces`
+enabled, an anchored surface renders as an inert vertical gap below its anchor
+line. The gap is inert (the caret skips it, a selection cannot enter it) and every
+row→y lookup goes through the single `editor::EditorRowYLayout` mapping, so with
+the setting off the editor geometry is byte-for-byte unchanged. Caret-vertical and
+click geometry are **not yet fully gap-aware** under the flag — that, and an
+above-line code-lens inset reusing the same gap machinery, are the remaining
+follow-ups for this gated path.
 
 ## What Must Remain Host-Owned
 

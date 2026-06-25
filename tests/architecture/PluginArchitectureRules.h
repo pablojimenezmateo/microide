@@ -13,6 +13,7 @@ RuleResult CheckPluginDrainBeforeTeardown(const std::filesystem::path& repo_root
 RuleResult CheckPluginTranslationUnitSize(const std::filesystem::path& repo_root);
 RuleResult CheckNoProjectLocalPluginDiscovery(const std::filesystem::path& repo_root);
 RuleResult CheckPluginLuaErrorDoesNotLongjmpOverCppLocals(const std::filesystem::path& repo_root);
+RuleResult CheckCoreIsNetworkFree(const std::filesystem::path& repo_root);
 
 std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root);
 

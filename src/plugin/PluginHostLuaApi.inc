@@ -800,6 +800,23 @@
     return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
   }
 
+  static int LuaSurfaceSet(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    const int rc = runtime_api_interop::LuaSurfaceSet(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
+  }
+
+  static int LuaSurfaceClear(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    const int rc = runtime_api_interop::LuaSurfaceClear(
+        state, plugin, host != nullptr ? host->callbacks : EmptyCallbacks());
+    return rc == lua_error_util::kPendingError ? lua_error(state) : rc;
+  }
+
   static int LuaSidebarShow(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     return runtime_api_interop::LuaSidebarShow(
@@ -826,6 +843,8 @@
             .diagnostics_clear = &LuaDiagnosticsClear,
             .decorations_set = &LuaDecorationsSet,
             .decorations_clear = &LuaDecorationsClear,
+            .surface_set = &LuaSurfaceSet,
+            .surface_clear = &LuaSurfaceClear,
             .sidebar_add = &LuaSidebarAdd,
             .sidebar_show = &LuaSidebarShow,
             .hover_add = &LuaHoverAdd,

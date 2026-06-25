@@ -1,7 +1,11 @@
 #include "TestSupport.h"
 
 #include "editor/PluginDecorationStore.h"
+#include "editor/PluginSurfaceStore.h"
 #include "plugin/PluginHost.h"
+#include "render/PluginDisplayList.h"
+
+#include <variant>
 #include "workspace/WorkspaceFileIconRegistry.h"
 #include "workspace/WorkspaceKeybindingRegistry.h"
 #include "workspace/WorkspaceMenuRegistry.h"
@@ -810,6 +814,75 @@ return ide.plugin({
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// Phase E: plugin content surfaces (ctx.surface.set)
+// ---------------------------------------------------------------------------
+
+void TestPluginSurfacePublish() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "surface-test" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "surface.test",
+  setup = function(ctx)
+    ctx.commands.add("surface.test.publish", function()
+      ctx.surface.set("chart", {
+        title = "Chart",
+        preview = "bottom",
+        display_list = { width = 100, height = 50, ops = {
+          { op = "rect", x = 0, y = 0, w = 10, h = 10, color = "#112233" },
+          { op = "text", x = 2, y = 2, text = "hi", color = "#ffffff" },
+        } },
+        hit_regions = { { x = 0, y = 0, w = 100, h = 14, command = "surface.test.publish" } },
+      })
+    end)
+    ctx.commands.add("surface.test.bad", function()
+      -- Both bodies at once must be rejected by the host (no publish).
+      ctx.surface.set("bad", { display_list = { ops = {} }, raster = { format = "rgba8", bytes = "x" } })
+    end)
+  end,
+})
+)");
+
+  PluginHost host;
+  std::string published_owner;
+  std::string published_id;
+  editor::SurfaceContent published;
+  int publish_count = 0;
+  PluginHost::Callbacks callbacks;
+  callbacks.publish_surface = [&](std::string_view owner, std::string_view id,
+                                  editor::SurfaceContent content) {
+    published_owner = std::string(owner);
+    published_id = std::string(id);
+    published = std::move(content);
+    ++publish_count;
+  };
+  host.SetCallbacks(std::move(callbacks));
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+
+  host.ExecuteCommand("surface.test.publish", {});
+  Expect(publish_count == 1, "a valid surface.set should publish exactly once");
+  Expect(published_owner == "surface.test", "publish carries the plugin id as owner");
+  Expect(published_id == "chart", "publish carries the surface id");
+  Expect(published.preview == editor::SurfacePreviewSlot::Bottom, "preview slot is parsed");
+  Expect(published.intrinsic_width == 100.0f && published.intrinsic_height == 50.0f,
+         "intrinsic size comes from the display list");
+  Expect(published.hit_regions.size() == 1 && published.hit_regions[0].command == "surface.test.publish",
+         "hit regions and their commands are parsed");
+  const auto* list = std::get_if<render::PluginDisplayList>(&published.body);
+  Expect(list != nullptr && list->ops.size() == 2, "the display list body has both ops");
+  Expect(list != nullptr && list->content_hash != 0, "the display list got a content hash");
+
+  // A spec with two bodies is rejected: the host records an error and never publishes.
+  host.ExecuteCommand("surface.test.bad", {});
+  Expect(publish_count == 1, "a two-body spec must not publish");
+}
+
 void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/BuiltinsNonEmpty",
           TestKeybindingRegistryBuiltinsNonEmpty);
@@ -859,6 +932,7 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SettingsRegistry/GetCallback", TestPluginSettingsGetCallback);
   AddTest(tests, "SidebarRegistry/PluginTreeToggle", TestPluginTreeSidebarToggle);
   AddTest(tests, "LanguageProviders/PluginQueries", TestPluginLanguageProviders);
+  AddTest(tests, "SurfaceRegistry/PluginPublish", TestPluginSurfacePublish);
 }
 
 }  // namespace microide::tests

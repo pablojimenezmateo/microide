@@ -321,6 +321,42 @@ WorkspaceShell::WorkspaceShell() {
               RequestEditorSurfaceRedraw();
             }
           },
+      .publish_surface =
+          [this](std::string_view owner, std::string_view surface_id,
+                 editor::SurfaceContent content) {
+            const editor::SurfacePreviewSlot slot = content.preview;
+            if (context_.current_project_state.surface_store.ReplaceForOwnerSurface(
+                    owner, surface_id, std::move(content))) {
+              if (slot != editor::SurfacePreviewSlot::None) {
+                ActivatePluginSurfacePreview(owner, surface_id, slot);
+              }
+              RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_surface =
+          [this](std::string_view owner, std::string_view surface_id) {
+            if (context_.current_project_state.surface_store.ClearOwnerSurface(owner,
+                                                                               surface_id)) {
+              SyncPluginSurfacePreviewClosed();
+              RequestEditorSurfaceRedraw();
+            }
+          },
+      .clear_owner_surfaces =
+          [this](std::string_view owner) {
+            if (context_.current_project_state.surface_store.ClearOwner(owner)) {
+              SyncPluginSurfacePreviewClosed();
+              RequestEditorSurfaceRedraw();
+            }
+          },
+      .decode_raster =
+          [this](std::uint64_t hash, int format, std::vector<std::byte> bytes, int width,
+                 int height) {
+            surface_texture_cache_.Request(
+                hash,
+                format == 0 ? render::SurfaceTextureCache::RasterFormat::Png
+                            : render::SurfaceTextureCache::RasterFormat::Rgba8,
+                std::move(bytes), width, height);
+          },
       .error_sink =
           [this](const std::string& text) {
             output_channels_.AppendLine("plugins.error", "Plugin Errors", text);
@@ -787,6 +823,38 @@ bool WorkspaceShell::ConsumePluginAsyncProcessCallbacks() {
     RequestFullRedraw();
   }
   return consumed;
+}
+
+void WorkspaceShell::ActivatePluginSurfacePreview(std::string_view owner,
+                                                  std::string_view surface_id,
+                                                  editor::SurfacePreviewSlot slot) {
+  // v1 routes both Bottom and Side preview requests to the bottom panel (a
+  // dedicated side preview pane is a later increment); the surface renders the
+  // same way regardless of slot.
+  if (slot == editor::SurfacePreviewSlot::None) {
+    return;
+  }
+  auto& panel = context_.current_project_state.panel;
+  panel.content = PanelContentKind::PluginSurface;
+  panel.surface_owner = std::string(owner);
+  panel.surface_id = std::string(surface_id);
+  panel.surface_scroll_y = 0;
+  context_.current_project_state.surface.focus = FocusTarget::Panel;
+  RequestFullRedraw();
+}
+
+void WorkspaceShell::SyncPluginSurfacePreviewClosed() {
+  auto& panel = context_.current_project_state.panel;
+  if (panel.content != PanelContentKind::PluginSurface) {
+    return;
+  }
+  const editor::SurfaceContent* content =
+      context_.current_project_state.surface_store.Find(panel.surface_owner, panel.surface_id);
+  if (content == nullptr || content->preview == editor::SurfacePreviewSlot::None) {
+    panel.content = PanelContentKind::None;
+    panel.surface_owner.clear();
+    panel.surface_id.clear();
+  }
 }
 
 }  // namespace microide::workspace

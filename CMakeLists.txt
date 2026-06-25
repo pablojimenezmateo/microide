@@ -147,6 +147,8 @@ set(MICROIDE_CORE_SOURCES
   src/editor/PluginDecorationStore.cpp
   src/editor/GutterIconRegistry.cpp
   src/editor/EolDecorationLayout.cpp
+  src/editor/PluginSurfaceStore.cpp
+  src/editor/EditorRowYLayout.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/WelcomeView.cpp
   src/editor/FoldingModel.cpp
@@ -215,6 +217,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginHoverQueryInterop.cpp
   src/plugin/PluginDiagnosticsInterop.cpp
   src/plugin/PluginDecorationInterop.cpp
+  src/plugin/PluginSurfaceInterop.cpp
   src/plugin/PluginLifecycleCallbackInterop.cpp
   src/plugin/PluginLifecycleLoadInterop.cpp
   src/plugin/PluginLifecycleResetInterop.cpp
@@ -266,6 +269,10 @@ set(MICROIDE_CORE_SOURCES
   src/render/AnsiPalette.cpp
   src/render/ColorMath.cpp
   src/render/ThemeFile.cpp
+  src/render/PluginDisplayList.cpp
+  src/render/PluginDisplayListRenderer.cpp
+  src/render/RasterDecode.cpp
+  src/render/SurfaceTextureCache.cpp
   src/terminal/TerminalSession.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalSessionOutput.cpp
@@ -523,7 +530,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
 endif()
 
-target_include_directories(microide PRIVATE src)
+target_include_directories(microide PRIVATE src third_party/stb)
 target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide PRIVATE ${MICROIDE_LUA_TARGET})
@@ -618,6 +625,9 @@ add_executable(microide_tests
   tests/BreakpointStoreTests.cpp
   tests/DiagnosticsStoreTests.cpp
   tests/PluginDecorationStoreTests.cpp
+  tests/PluginSurfaceStoreTests.cpp
+  tests/PluginDisplayListTests.cpp
+  tests/EditorRowYLayoutTests.cpp
   tests/EolDecorationLayoutTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
@@ -733,7 +743,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
 endif()
 
-target_include_directories(microide_tests PRIVATE src tests)
+target_include_directories(microide_tests PRIVATE src tests third_party/stb)
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
@@ -842,6 +852,23 @@ if(MICROIDE_FUZZ)
     target_link_libraries(TerminalSessionOutputFuzz PRIVATE ${MICROIDE_SDL3_TARGET})
   endif()
   microide_configure_fuzz_target(TerminalSessionOutputFuzz)
+
+  # Phase E: the plugin content-surface parsers fed by plugin-supplied bytes.
+  add_executable(PluginDisplayListParseFuzz
+    src/render/PluginDisplayList.cpp
+    tests/fuzz/PluginDisplayListParseFuzz.cpp
+  )
+  if(NOT MICROIDE_SDL3_TARGET STREQUAL "")
+    target_link_libraries(PluginDisplayListParseFuzz PRIVATE ${MICROIDE_SDL3_TARGET})
+  endif()
+  microide_configure_fuzz_target(PluginDisplayListParseFuzz)
+
+  add_executable(SurfaceRasterDecodeFuzz
+    src/render/RasterDecode.cpp
+    tests/fuzz/SurfaceRasterDecodeFuzz.cpp
+  )
+  target_include_directories(SurfaceRasterDecodeFuzz PRIVATE src third_party/stb)
+  microide_configure_fuzz_target(SurfaceRasterDecodeFuzz)
 endif()
 
 if(MICROIDE_PERF_HARNESS_BUILD)
@@ -868,7 +895,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     target_link_libraries(microide_perf PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
   endif()
 
-  target_include_directories(microide_perf PRIVATE src tests)
+  target_include_directories(microide_perf PRIVATE src tests third_party/stb)
   target_link_libraries(microide_perf PRIVATE
     ${MICROIDE_SDL3_TARGET}
     ${MICROIDE_PCRE2_TARGET}
@@ -904,6 +931,7 @@ add_executable(microide_diff_bench
   src/editor/PluginDecorationStore.cpp
   src/editor/GutterIconRegistry.cpp
   src/editor/EolDecorationLayout.cpp
+  src/editor/EditorRowYLayout.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/ExecutionLineRender.cpp
   src/editor/FoldingModel.cpp

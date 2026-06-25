@@ -183,6 +183,12 @@ bool WorkspaceTabStripChrome::ActivateBottomPanelTab(std::size_t model_index) {
       context_->current_project_state.panel.content = PanelContentKind::Output;
       context_->current_project_state.panel.output.channel_id = tab.output_channel_id;
       break;
+    case BottomPanelTabKind::PluginSurface:
+      context_->current_project_state.panel.content = PanelContentKind::PluginSurface;
+      context_->current_project_state.panel.surface_owner = tab.surface_owner;
+      context_->current_project_state.panel.surface_id = tab.surface_id;
+      context_->current_project_state.panel.surface_scroll_y = 0;
+      break;
   }
 
   context_->current_project_state.surface.focus = FocusTarget::Panel;
@@ -205,6 +211,21 @@ bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
     case BottomPanelTabKind::Output:
       operations_.close_output_channel_tab(tab.output_channel_id);
       break;
+    case BottomPanelTabKind::PluginSurface: {
+      // Closing a preview tab withdraws the surface's preview request (host-side
+      // override); the surface itself stays published for inline/anchor use.
+      auto& state = context_->current_project_state;
+      state.surface_store.SetPreviewSlot(tab.surface_owner, tab.surface_id,
+                                         editor::SurfacePreviewSlot::None);
+      if (state.panel.content == PanelContentKind::PluginSurface &&
+          state.panel.surface_owner == tab.surface_owner &&
+          state.panel.surface_id == tab.surface_id) {
+        state.panel.content = PanelContentKind::None;
+        state.panel.surface_owner.clear();
+        state.panel.surface_id.clear();
+      }
+      break;
+    }
   }
 
   operations_.request_bottom_panel_redraw();

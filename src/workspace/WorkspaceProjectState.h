@@ -12,6 +12,7 @@
 #include "editor/FunctionBreakpointStore.h"
 #include "editor/DiagnosticsStore.h"
 #include "editor/PluginDecorationStore.h"
+#include "editor/PluginSurfaceStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceActionTypes.h"
@@ -58,6 +59,7 @@ enum class PanelContentKind {
   None,
   Terminal,
   Output,
+  PluginSurface,
 };
 
 // The four structured debug surfaces shown in the right-side debug pane. Selected
@@ -300,6 +302,11 @@ struct PanelState {
   int tab_scroll_index = 0;
   CommandState command;
   OutputPanelState output;
+  // Active plugin surface shown when `content == PluginSurface` (Phase E0). Keyed
+  // by owner+id into `surface_store`; scroll is host-owned and panel-local.
+  std::string surface_owner;
+  std::string surface_id;
+  int surface_scroll_y = 0;
 };
 
 struct WelcomeSurfaceState {
@@ -344,6 +351,12 @@ struct ProjectWorkspaceState {
   // `diagnostics_store`: plugins replace their contribution atomically and the
   // renderer reads the merged-per-path view. Session-scoped (not persisted).
   editor::PluginDecorationStore decoration_store;
+  // Plugin-published content surfaces (display lists / rasters) keyed by
+  // owner+surface_id (Phase E). Mirrors `decoration_store`: a re-publish replaces
+  // one surface atomically; the preview panel and inline insets read it via the
+  // render view model. Session-scoped (not persisted). Raster pixels live in the
+  // host-owned SurfaceTextureCache, not here.
+  editor::PluginSurfaceStore surface_store;
   // Per-project breakpoints keyed by file path. Adapter-agnostic; the host
   // snapshots it at launch (setBreakpoints) and reflects verification back.
   // Mirrors `diagnostics_store`: survives session restarts, persists via the

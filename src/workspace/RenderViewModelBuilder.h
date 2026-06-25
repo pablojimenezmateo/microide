@@ -248,7 +248,8 @@ class RenderViewModelBuilder {
                                 bool render_whitespace_enabled = false,
                                 bool debug_enabled = false,
                                 const editor::BreakpointStore* breakpoints = nullptr,
-                                const DebugExecutionView* debug_execution = nullptr) const;
+                                const DebugExecutionView* debug_execution = nullptr,
+                                bool inline_surfaces_enabled = false) const;
 
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
                                                std::size_t visible_rows,
@@ -288,6 +289,11 @@ class RenderViewModelBuilder {
   static std::uint64_t OccurrenceScanCacheMissesForTesting();
 
  private:
+  // Phase E1: populate out.row_gaps / out.row_gap_contents from anchored plugin
+  // surfaces visible in `viewport`. No-op (clears them) when disabled.
+  void BuildEditorInsetGaps(editor::EditorViewModel& out, const editor::TextViewport& viewport,
+                            std::size_t visible_rows, bool enabled) const;
+
   const WorkspaceContext& context_;
 };
 

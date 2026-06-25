@@ -33,6 +33,15 @@ int LuaDecorationsClear(
     const std::optional<std::filesystem::path>& path,
     const PluginHost::Callbacks& callbacks);
 
+int LuaSurfaceSet(lua_State* state,
+                  const runtime_types::PluginInstance* plugin,
+                  const std::filesystem::path& current_project_root,
+                  const PluginHost::Callbacks& callbacks);
+
+int LuaSurfaceClear(lua_State* state,
+                    const runtime_types::PluginInstance* plugin,
+                    const PluginHost::Callbacks& callbacks);
+
 int LuaSidebarShow(lua_State* state, const PluginHost::Callbacks& callbacks);
 #endif
 

@@ -8,8 +8,14 @@
 #include <utility>
 #include <vector>
 
+#include <variant>
+
 #include "editor/DecoratedTextGridRenderer.h"
+#include "editor/PluginSurfaceStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "render/PluginDisplayList.h"
+#include "render/PluginDisplayListRenderer.h"
+#include "render/SurfaceTextureCache.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 #include "workspace/WorkspaceTextSearch.h"
@@ -341,6 +347,23 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   }
 
+  // Phase E0: a plugin content surface replaces the terminal/output body. The
+  // host owns scroll + clipping; the plugin only supplied data (display list or
+  // raster handle). Reached through the view model's project_state pointer (the
+  // sanctioned escape hatch), never the shell's live project state.
+  if (panel_vm.content == PanelContentKind::PluginSurface && panel_vm.project_state != nullptr) {
+    const SDL_FRect body =
+        MakeRect(layout.bottom_panel.x, panel_header.y + panel_header.h, layout.bottom_panel.w,
+                 std::max(0.0f, layout.bottom_panel.h - panel_header.h));
+    FillRect(renderer, body, theme_.surface_background);
+    const PanelState& panel = panel_vm.project_state->panel;
+    const editor::SurfaceContent* content =
+        panel_vm.project_state->surface_store.Find(panel.surface_owner, panel.surface_id);
+    RenderPluginSurfaceInto(renderer, body, content,
+                            static_cast<float>(panel.surface_scroll_y));
+    return;
+  }
+
   const std::vector<std::string>* output_entries =
       output_panel ? OutputChannelEntries(panel_vm.output_channel_id)
                    : nullptr;
@@ -552,6 +575,85 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   }
   if (panel_vm.project_state->surface.focus == FocusTarget::Panel) {
     DrawSurfaceFocusRing(renderer, layout.bottom_panel);
+  }
+}
+
+// Host-owned painter for a single plugin content surface, shared by the bottom
+// preview panel (E0) and inline insets (E1). The surface carries only data (a
+// display list or a raster handle); all drawing happens here. `scroll_y` is the
+// host-owned vertical scroll within the surface. Reads no project state.
+void WorkspaceShell::RenderPluginSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
+                                             const editor::SurfaceContent* content,
+                                             float scroll_y) {
+  if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  // Make any freshly decoded rasters available before we look them up.
+  surface_texture_cache_.Upload(renderer);
+
+  constexpr float kPad = 8.0f;
+  if (content == nullptr || !content->has_body()) {
+    return;
+  }
+
+  if (const auto* display_list = std::get_if<render::PluginDisplayList>(&content->body)) {
+    render::DisplayListReplayParams params;
+    params.origin_x = rect.x + kPad;
+    params.origin_y = rect.y + kPad - scroll_y;
+    params.clip = rect;
+    render::ReplayDisplayList(renderer, text_renderer_, surface_texture_cache_, *display_list,
+                              params);
+    return;
+  }
+
+  if (const auto* raster = std::get_if<editor::RasterHandle>(&content->body)) {
+    const render::SurfaceTextureCache::Entry* entry =
+        surface_texture_cache_.Lookup(raster->content_hash);
+    if (entry == nullptr || entry->texture == nullptr) {
+      // Decode is still in flight (or failed): show a muted placeholder.
+      text_renderer_.DrawString(renderer, rect.x + kPad, rect.y + kPad, theme_.text_muted,
+                                "Rendering…");
+      return;
+    }
+    const float avail_w = std::max(1.0f, rect.w - kPad * 2.0f);
+    const float scale =
+        entry->width > 0 ? std::min(1.0f, avail_w / static_cast<float>(entry->width)) : 1.0f;
+    const SDL_FRect dest{rect.x + kPad, rect.y + kPad - scroll_y,
+                         static_cast<float>(entry->width) * scale,
+                         static_cast<float>(entry->height) * scale};
+    const SDL_Rect clip{static_cast<int>(std::floor(rect.x)), static_cast<int>(std::floor(rect.y)),
+                        static_cast<int>(std::ceil(rect.w)), static_cast<int>(std::ceil(rect.h))};
+    SDL_SetRenderClipRect(renderer, &clip);
+    SDL_RenderTexture(renderer, entry->texture, nullptr, &dest);
+    SDL_SetRenderClipRect(renderer, nullptr);
+  }
+}
+
+// Phase E1 (gated): paint inline-surface insets into the inert row-gaps the view
+// model carries. Uses the same EditorRowYLayout mapping the text-row loop used,
+// so an inset always lands directly below its anchor row. Reads only the view
+// model + metrics, never project state.
+void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& pane_rect,
+                                      const editor::EditorViewMetrics& metrics,
+                                      std::size_t scroll_line,
+                                      const editor::EditorViewModel& view_model) {
+  if (view_model.row_gaps.empty()) {
+    return;
+  }
+  const editor::EditorRowYLayout layout(metrics.first_line_y, metrics.line_height,
+                                        static_cast<std::uint32_t>(scroll_line),
+                                        view_model.row_gaps);
+  for (std::size_t i = 0; i < view_model.row_gaps.size(); ++i) {
+    const editor::RowGap& gap = view_model.row_gaps[i];
+    if (gap.visual_row < scroll_line) {
+      continue;
+    }
+    const std::size_t row = gap.visual_row - scroll_line;
+    const float top = layout.RowTop(row) + metrics.line_height;
+    const SDL_FRect inset{pane_rect.x, top, pane_rect.w, gap.height};
+    const editor::SurfaceContent* content =
+        i < view_model.row_gap_contents.size() ? view_model.row_gap_contents[i] : nullptr;
+    RenderPluginSurfaceInto(renderer, inset, content, 0.0f);
   }
 }
 

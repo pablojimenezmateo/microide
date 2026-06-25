@@ -5,7 +5,11 @@
 #include <span>
 #include <vector>
 
+#include "editor/EditorRowYLayout.h"
+
 namespace microide::editor {
+
+struct SurfaceContent;  // editor/PluginSurfaceStore.h (Phase E inline insets)
 
 struct FoldGutterMark {
   std::size_t line_index = 0;
@@ -60,6 +64,14 @@ struct EditorViewModel {
   // a session is stopped on this viewport's file (debugger enabled). Drives the
   // full-width execution-line fill + gutter arrow. Empty in the common case.
   std::optional<std::size_t> execution_line_index;
+  // Inert vertical gaps (inline plugin-surface insets, Phase E1), sorted by
+  // visual row. Empty unless the `plugins.inline_surfaces` setting is on, so the
+  // EditorRowYLayout the renderer builds from this is bit-identical to the legacy
+  // `first_line_y + row*line_height` mapping in the common case. `row_gap_contents`
+  // is parallel to `row_gaps` (same index) and carries the surface each gap hosts
+  // so the workspace draw pass can paint it; EditorViewRenderer ignores it.
+  std::span<const RowGap> row_gaps;
+  std::span<const SurfaceContent* const> row_gap_contents;
   std::vector<WhitespaceGlyphRun> whitespace_glyph_runs;
   // CSR-style index into `whitespace_glyph_runs`: for visible row `r`, runs are in
   // [whitespace_row_offsets[r], whitespace_row_offsets[r+1]). Size is `visible_rows + 1` whenever

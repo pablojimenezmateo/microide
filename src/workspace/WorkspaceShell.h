@@ -33,6 +33,7 @@
 #include "project/ProjectChangeCoalescer.h"
 #include "project/GitCompareService.h"
 #include "project/ProjectSearchService.h"
+#include "render/SurfaceTextureCache.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
