@@ -55,4 +55,14 @@ std::vector<StatusItemView> ResolveStatusItems(const plugin::PluginHost& plugin_
   return items;
 }
 
+const std::vector<StatusItemView>& ResolveStatusItems(const plugin::PluginHost& plugin_host,
+                                                      StatusItemCache& cache) {
+  const std::uint64_t revision = plugin_host.StatusItemsRevision();
+  if (cache.revision != revision) {
+    cache.items = ResolveStatusItems(plugin_host);
+    cache.revision = revision;
+  }
+  return cache.items;
+}
+
 }  // namespace microide::workspace

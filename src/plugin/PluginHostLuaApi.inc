@@ -316,9 +316,13 @@
                   error_message)) {
             return false;
           }
-          return registry_interop::RegisterStatusItem(
+          const bool registered = registry_interop::RegisterStatusItem(
               plugin, std::move(registration.contributed), &host->status_items,
               &host->status_item_order, error_message);
+          if (registered) {
+            ++host->status_items_revision;
+          }
+          return registered;
         });
   }
 
@@ -330,9 +334,11 @@
       return 0;
     }
     if (registry_interop::UpdateStatusItem(state, host->FindPluginByState(state), id,
-                                           &host->status_items, &host->status_item_order) &&
-        host->callbacks.request_status_redraw) {
-      host->callbacks.request_status_redraw();
+                                           &host->status_items, &host->status_item_order)) {
+      ++host->status_items_revision;
+      if (host->callbacks.request_status_redraw) {
+        host->callbacks.request_status_redraw();
+      }
     }
     return 0;
   }
@@ -1013,6 +1019,10 @@
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
         &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,
         &bracket_sets, &comment_markers, &indent_rules, &snippets, &themes, &file_icon_themes);
+    // Teardown may remove status items; conservatively invalidate the resolved
+    // view so the next read rebuilds. Unload is rare, so an occasional redundant
+    // rebuild is cheaper than threading a changed-flag through the unregister.
+    ++status_items_revision;
   }
 
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {

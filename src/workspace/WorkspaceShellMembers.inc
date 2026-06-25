@@ -1634,6 +1634,10 @@
   mutable std::vector<ResolvedKeybinding> resolved_keybindings_cache_;
   mutable std::vector<std::string> resolved_keybindings_disabled_ids_snapshot_;
   mutable std::size_t resolved_keybindings_reload_generation_ = std::numeric_limits<std::size_t>::max();
+  // Resolved plugin status-item view, rebuilt only when the host's status items
+  // change. ComputeVisibleStatusItems runs per frame from the render, hit-test,
+  // and hover paths, so this avoids re-copying + re-sorting on every call.
+  mutable StatusItemCache status_item_cache_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
   WorkspaceProjectFileMonitor project_file_monitor_;
   project::ProjectChangeCoalescer project_change_coalescer_;

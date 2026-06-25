@@ -814,6 +814,17 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   if (normalized_path.empty()) {
     return;
   }
+  // Semantic-token decorations are published into the plugin-presentation store
+  // under "lsp:semantic". Drop them up front, independent of whether an LSP
+  // client is still running, so the store does not accumulate stale entries
+  // across open/close churn and can release back to its zero-cost (null) state.
+  auto& state = context_.current_project_state;
+  if (auto* pres = state.plugin_presentation.get(); pres != nullptr) {
+    if (pres->decorations.ClearOwnerFile("lsp:semantic", normalized_path)) {
+      state.MaybeReleasePluginPresentation();
+      RequestEditorSurfaceRedraw();
+    }
+  }
   const std::string language_id = editor::runtime_syntax::DetectFiletype(normalized_path, {});
   if (language_id.empty()) {
     return;
@@ -826,7 +837,7 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   if (client->HasOpenDocument(uri)) {
     client->DidClose(uri);
   }
-  context_.current_project_state.diagnostics_store.ClearOwnerFile("lsp", normalized_path);
+  state.diagnostics_store.ClearOwnerFile("lsp", normalized_path);
   RefreshProblemsSidebar();
   RequestEditorSurfaceRedraw();
 }

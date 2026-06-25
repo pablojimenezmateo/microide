@@ -24,6 +24,8 @@ using microide::editor::SurfaceContent;
 using microide::editor::SurfacePreviewSlot;
 using microide::project::DirectoryTree;
 using microide::workspace::ResolveStatusItems;
+using microide::workspace::StatusItemCache;
+using microide::workspace::StatusItemView;
 using microide::workspace::WorkspaceFileIconRegistry;
 
 // --- Change 1: file icons resolve once per tree mutation, allocation-free per frame ---
@@ -202,6 +204,69 @@ void TestStatusItemsEmptyHostIsAllocationFree() {
 #endif
 }
 
+// The cache-aware resolve rebuilds the sorted view only when the host's
+// StatusItemsRevision() changes. ComputeVisibleStatusItems runs per frame from the
+// render, hit-test, and hover paths, so a stable revision must reuse one build with
+// no re-copy or re-sort. With no contributions the revision never moves.
+void TestStatusItemCacheReturnsStableReferenceWhenUnchanged() {
+  plugin::PluginHost host;
+  StatusItemCache cache;
+  const std::vector<StatusItemView>& first = ResolveStatusItems(host, cache);
+  Expect(first.empty(), "an empty host resolves to no status items");
+  const std::vector<StatusItemView>& second = ResolveStatusItems(host, cache);
+  Expect(&first == &second, "a same-revision resolve returns the cached view by reference");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationSnapshot before =
+      microide::tests::perf::Allocations::Snapshot();
+  for (int i = 0; i < 64; ++i) {
+    (void)ResolveStatusItems(host, cache);
+  }
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
+         "a cached status-item resolve at a stable revision must not allocate");
+#endif
+}
+
+// NotifyLspBufferClose clears semantic-token decorations published under the
+// "lsp:semantic" owner for the closed file. This guards the per-file clear +
+// release contract the shell relies on so open/close churn cannot accumulate
+// stale decorations or pin the presentation bundle.
+void TestLspSemanticDecorationsClearPerFileAndRelease() {
+  using microide::workspace::ProjectWorkspaceState;
+  ProjectWorkspaceState state;
+
+  microide::editor::PluginDecorationData a;
+  a.gutter_marks.push_back(microide::editor::GutterMarkDecoration{.line = 0});
+  microide::editor::PluginDecorationData b;
+  b.gutter_marks.push_back(microide::editor::GutterMarkDecoration{.line = 0});
+  Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:semantic", "a.cpp",
+                                                                          a),
+         "publishing semantic decorations for a.cpp changes the merged view");
+  Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:semantic", "b.cpp",
+                                                                          b),
+         "publishing semantic decorations for b.cpp changes the merged view");
+
+  // Closing a.cpp drops only its decorations; b.cpp survives and the bundle stays.
+  Expect(state.plugin_presentation->decorations.ClearOwnerFile("lsp:semantic", "a.cpp"),
+         "closing a.cpp clears its semantic decorations");
+  state.MaybeReleasePluginPresentation();
+  Expect(state.plugin_presentation_if_present() != nullptr,
+         "the bundle stays alive while b.cpp still has decorations");
+  Expect(state.plugin_presentation->decorations.FindByPath("a.cpp") == nullptr,
+         "a.cpp has no remaining merged decorations after close");
+  Expect(state.plugin_presentation->decorations.FindByPath("b.cpp") != nullptr,
+         "b.cpp decorations are untouched by closing a.cpp");
+
+  // Closing b.cpp drains the store and releases the bundle to its zero-cost state.
+  Expect(state.plugin_presentation->decorations.ClearOwnerFile("lsp:semantic", "b.cpp"),
+         "closing b.cpp clears its semantic decorations");
+  state.MaybeReleasePluginPresentation();
+  Expect(state.plugin_presentation_if_present() == nullptr,
+         "draining the last semantic decorations releases the bundle back to null");
+}
+
 // --- Change 4: the plugin presentation bundle is lazily allocated ---
 
 // The decoration/surface stores live behind a unique_ptr that stays null until a
@@ -335,6 +400,10 @@ void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
           TestPreviewSurfacesCacheInvalidatesOnRevisionChange);
   AddTest(tests, "PluginPresentation/StatusItemsEmptyHostIsAllocationFree",
           TestStatusItemsEmptyHostIsAllocationFree);
+  AddTest(tests, "PluginPresentation/StatusItemCacheReturnsStableReferenceWhenUnchanged",
+          TestStatusItemCacheReturnsStableReferenceWhenUnchanged);
+  AddTest(tests, "PluginPresentation/LspSemanticDecorationsClearPerFileAndRelease",
+          TestLspSemanticDecorationsClearPerFileAndRelease);
   AddTest(tests, "PluginPresentation/PresentationIsLazilyAllocatedAndReleased",
           TestPluginPresentationIsLazilyAllocatedAndReleased);
   AddTest(tests, "PluginPresentation/FileIconRegistryHasNoEntriesWithoutPlugins",

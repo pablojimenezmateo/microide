@@ -309,10 +309,18 @@ const std::vector<PluginHost::ContributedStatusItem>& PluginHost::ContributedSta
   return impl_->status_item_order;
 }
 
+std::uint64_t PluginHost::StatusItemsRevision() const {
+  return impl_->status_items_revision;
+}
+
 bool PluginHost::UpdateStatusItem(std::string_view id, std::string text, std::string tooltip) {
-  return status_interop::UpdateStatusItem(
+  const bool changed = status_interop::UpdateStatusItem(
       id, std::move(text), std::move(tooltip), &impl_->status_items, &impl_->status_item_order,
       impl_->callbacks.request_status_redraw);
+  if (changed) {
+    ++impl_->status_items_revision;
+  }
+  return changed;
 }
 
 bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,

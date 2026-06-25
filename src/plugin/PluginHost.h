@@ -523,6 +523,9 @@ class PluginHost {
   const std::vector<ContributedKeybinding>& ContributedKeybindings() const;
   const std::vector<ContributedSettingSpec>& ContributedSettings() const;
   const std::vector<ContributedStatusItem>& ContributedStatusItems() const;
+  // Stamp that changes whenever the contributed status items change. Callers that
+  // resolve the items into a sorted render view cache it against this value.
+  std::uint64_t StatusItemsRevision() const;
   bool UpdateStatusItem(std::string_view id, std::string text, std::string tooltip = {});
   bool RunSaveParticipants(const std::filesystem::path& path,
                            std::string* text,

@@ -107,6 +107,10 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedSettingSpec> settings;
   std::unordered_map<std::string, PluginHost::ContributedStatusItem> status_items;
   std::vector<PluginHost::ContributedStatusItem> status_item_order;
+  // Monotonic stamp bumped on every status-item mutation (add/update/teardown).
+  // The render/hit-test/hover paths resolve the sorted view once per change
+  // instead of rebuilding it every frame.
+  std::uint64_t status_items_revision = 0;
   std::vector<PluginHost::ContributedFormatter> formatters;
   std::vector<PluginHost::ContributedSaveParticipant> save_participants;
   std::vector<SaveParticipantRuntime> save_participant_runtimes;

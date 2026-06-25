@@ -44,6 +44,7 @@ using microide::workspace::PersistedUserConfigState;
 using microide::workspace::ResolveKeybindings;
 using microide::workspace::ResolveStatusItems;
 using microide::workspace::SerializeSettingValue;
+using microide::workspace::StatusItemCache;
 using microide::workspace::StatusItemTone;
 using microide::workspace::WorkspaceFileIconRegistry;
 using microide::workspace::WorkspaceThemeRegistry;
@@ -427,6 +428,43 @@ return ide.plugin({
   host.ExecuteCommand("update.status.tick", {});
   Expect(host.ContributedStatusItems().front().text == "1",
          "status text should update after command");
+}
+
+// The cache-aware resolve must reuse one sorted build until the host's status
+// items change, then rebuild after a status update bumps StatusItemsRevision().
+void TestStatusItemCacheInvalidatesOnRevisionBump() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "cache-status" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "cache.status",
+  setup = function(ctx)
+    ctx.status.add({ id = "counter", text = "0" })
+    ctx.commands.add("cache.status.tick", function()
+      ctx.status.update("counter", { text = "1" })
+    end)
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+
+  StatusItemCache cache;
+  const auto& first = ResolveStatusItems(host, cache);
+  Expect(first.size() == 1 && first.front().text == "0", "cached resolve sees the initial item");
+  const auto& second = ResolveStatusItems(host, cache);
+  Expect(&first == &second, "an unchanged host returns the cached view by reference");
+
+  host.ExecuteCommand("cache.status.tick", {});  // ctx.status.update bumps the revision.
+  const auto& third = ResolveStatusItems(host, cache);
+  Expect(third.size() == 1 && third.front().text == "1",
+         "a status update invalidates the cache and rebuilds the resolved view");
 }
 
 void TestPluginStatusItemEnrichment() {
@@ -923,6 +961,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
           TestPluginContributedKeybindings);
   AddTest(tests, "StatusRegistry/PluginContributions", TestPluginContributedStatusItems);
   AddTest(tests, "StatusRegistry/Update", TestPluginStatusItemUpdate);
+  AddTest(tests, "StatusRegistry/CacheInvalidatesOnRevisionBump",
+          TestStatusItemCacheInvalidatesOnRevisionBump);
   AddTest(tests, "StatusRegistry/Enrichment", TestPluginStatusItemEnrichment);
   AddTest(tests, "ThemeRegistry/PluginContributions", TestPluginContributedTheme);
   AddTest(tests, "FileIconRegistry/PluginContributions", TestPluginFileIconTheme);
