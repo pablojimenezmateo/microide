@@ -344,7 +344,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (viewport.path().empty() || viewport.dirty()) {
         return nullptr;
       }
-      return project_state.decoration_store.FindByPath(viewport.path());
+      const auto* pres = project_state.plugin_presentation_if_present();
+      return pres != nullptr ? pres->decorations.FindByPath(viewport.path()) : nullptr;
     };
     const auto draw_review_comment_markers =
         [this, renderer](const editor::TextViewport& viewport,

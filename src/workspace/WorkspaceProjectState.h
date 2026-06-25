@@ -362,17 +362,45 @@ struct ProjectWorkspaceState {
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
   editor::DiagnosticsStore diagnostics_store;
-  // Plugin-published editor decorations (inline text styles, gutter marks,
-  // inline/virtual text, code lenses) keyed by owner+path. Mirrors
-  // `diagnostics_store`: plugins replace their contribution atomically and the
-  // renderer reads the merged-per-path view. Session-scoped (not persisted).
-  editor::PluginDecorationStore decoration_store;
-  // Plugin-published content surfaces (display lists / rasters) keyed by
-  // owner+surface_id (Phase E). Mirrors `decoration_store`: a re-publish replaces
-  // one surface atomically; the preview panel and inline insets read it via the
-  // render view model. Session-scoped (not persisted). Raster pixels live in the
-  // host-owned SurfaceTextureCache, not here.
-  editor::PluginSurfaceStore surface_store;
+  // Plugin/LSP-published editor presentation: decorations (inline text styles,
+  // gutter marks, inline/virtual text, code lenses) keyed by owner+path, and
+  // content surfaces (display lists / rasters) keyed by owner+surface_id. Both
+  // mirror `diagnostics_store`: a producer replaces its contribution atomically
+  // and the renderer reads the merged view. Session-scoped (never persisted).
+  //
+  // Bundled behind a lazily-allocated pointer so an unloaded session pays zero
+  // bytes and the per-frame render path gates on a single null check (mirroring
+  // the debugger's emplace-on-enable view model). `unique_ptr` — not `optional`
+  // — because the stores hand out pointers/spans valid "until the next mutation"
+  // and the bundle's address must stay stable across publish/clear cycles. Null
+  // until the first publish from any producer (Lua plugin or LSP semantic
+  // tokens); released back to null when both stores drain empty.
+  struct PluginEditorPresentation {
+    editor::PluginDecorationStore decorations;
+    editor::PluginSurfaceStore surfaces;
+  };
+  std::unique_ptr<PluginEditorPresentation> plugin_presentation;
+
+  // Reader gate: returns nullptr when nothing is published (the common case).
+  const PluginEditorPresentation* plugin_presentation_if_present() const {
+    return plugin_presentation.get();
+  }
+  // Writer entry: lazily allocates the bundle on the first contribution.
+  PluginEditorPresentation& EnsurePluginPresentation() {
+    if (!plugin_presentation) {
+      plugin_presentation = std::make_unique<PluginEditorPresentation>();
+    }
+    return *plugin_presentation;
+  }
+  // Restore the zero-footprint state once both stores are empty. Call as the
+  // last statement of a clear handler (after redraw is requested, never
+  // mid-render) so no reader holds a store pointer across the reset.
+  void MaybeReleasePluginPresentation() {
+    if (plugin_presentation && plugin_presentation->decorations.empty() &&
+        plugin_presentation->surfaces.empty()) {
+      plugin_presentation.reset();
+    }
+  }
   // Per-project breakpoints keyed by file path. Adapter-agnostic; the host
   // snapshots it at launch (setBreakpoints) and reflects verification back.
   // Mirrors `diagnostics_store`: survives session restarts, persists via the

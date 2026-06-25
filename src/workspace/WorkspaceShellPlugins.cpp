@@ -307,29 +307,35 @@ WorkspaceShell::WorkspaceShell() {
           [this](std::string_view owner,
                  const std::filesystem::path& path,
                  editor::PluginDecorationData data) {
-            if (context_.current_project_state.decoration_store.ReplaceForOwnerFile(
-                    owner, path, std::move(data))) {
+            if (context_.current_project_state.EnsurePluginPresentation()
+                    .decorations.ReplaceForOwnerFile(owner, path, std::move(data))) {
               RequestEditorSurfaceRedraw();
             }
           },
       .clear_file_decorations =
           [this](std::string_view owner, const std::filesystem::path& path) {
-            if (context_.current_project_state.decoration_store.ClearOwnerFile(owner, path)) {
+            auto& state = context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->decorations.ClearOwnerFile(owner, path)) {
               RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
             }
           },
       .clear_owner_decorations =
           [this](std::string_view owner) {
-            if (context_.current_project_state.decoration_store.ClearOwner(owner)) {
+            auto& state = context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->decorations.ClearOwner(owner)) {
               RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
             }
           },
       .publish_surface =
           [this](std::string_view owner, std::string_view surface_id,
                  editor::SurfaceContent content) {
             const editor::SurfacePreviewSlot slot = content.preview;
-            if (context_.current_project_state.surface_store.ReplaceForOwnerSurface(
-                    owner, surface_id, std::move(content))) {
+            if (context_.current_project_state.EnsurePluginPresentation()
+                    .surfaces.ReplaceForOwnerSurface(owner, surface_id, std::move(content))) {
               if (slot != editor::SurfacePreviewSlot::None) {
                 ActivatePluginSurfacePreview(owner, surface_id, slot);
               }
@@ -338,17 +344,22 @@ WorkspaceShell::WorkspaceShell() {
           },
       .clear_surface =
           [this](std::string_view owner, std::string_view surface_id) {
-            if (context_.current_project_state.surface_store.ClearOwnerSurface(owner,
-                                                                               surface_id)) {
+            auto& state = context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->surfaces.ClearOwnerSurface(owner, surface_id)) {
               SyncPluginSurfacePreviewClosed();
               RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
             }
           },
       .clear_owner_surfaces =
           [this](std::string_view owner) {
-            if (context_.current_project_state.surface_store.ClearOwner(owner)) {
+            auto& state = context_.current_project_state;
+            auto* pres = state.plugin_presentation.get();
+            if (pres != nullptr && pres->surfaces.ClearOwner(owner)) {
               SyncPluginSurfacePreviewClosed();
               RequestEditorSurfaceRedraw();
+              state.MaybeReleasePluginPresentation();
             }
           },
       .decode_raster =
@@ -851,8 +862,9 @@ void WorkspaceShell::SyncPluginSurfacePreviewClosed() {
   if (panel.content != PanelContentKind::PluginSurface) {
     return;
   }
+  const auto* pres = context_.current_project_state.plugin_presentation_if_present();
   const editor::SurfaceContent* content =
-      context_.current_project_state.surface_store.Find(panel.surface_owner, panel.surface_id);
+      pres != nullptr ? pres->surfaces.Find(panel.surface_owner, panel.surface_id) : nullptr;
   if (content == nullptr || content->preview == editor::SurfacePreviewSlot::None) {
     panel.content = PanelContentKind::None;
     panel.surface_owner.clear();

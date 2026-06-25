@@ -215,8 +215,12 @@ bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
       // Closing a preview tab withdraws the surface's preview request (host-side
       // override); the surface itself stays published for inline/anchor use.
       auto& state = context_->current_project_state;
-      state.surface_store.SetPreviewSlot(tab.surface_owner, tab.surface_id,
-                                         editor::SurfacePreviewSlot::None);
+      // A PluginSurface tab can only exist while a surface is published, so the
+      // bundle is present; guard defensively against a stale tab regardless.
+      if (auto* pres = state.plugin_presentation.get()) {
+        pres->surfaces.SetPreviewSlot(tab.surface_owner, tab.surface_id,
+                                      editor::SurfacePreviewSlot::None);
+      }
       if (state.panel.content == PanelContentKind::PluginSurface &&
           state.panel.surface_owner == tab.surface_owner &&
           state.panel.surface_id == tab.surface_id) {

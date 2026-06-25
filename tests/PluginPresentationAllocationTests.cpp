@@ -5,6 +5,7 @@
 #include "plugin/PluginHost.h"
 #include "project/DirectoryTree.h"
 #include "workspace/WorkspaceFileIconRegistry.h"
+#include "workspace/WorkspaceProjectState.h"
 #include "workspace/WorkspaceStatusRegistry.h"
 
 #include <cstdint>
@@ -198,6 +199,47 @@ void TestStatusItemsEmptyHostIsAllocationFree() {
 #endif
 }
 
+// --- Change 4: the plugin presentation bundle is lazily allocated ---
+
+// The decoration/surface stores live behind a unique_ptr that stays null until a
+// producer (Lua plugin or LSP) publishes, and drops back to null once both stores
+// drain. This is the single render-path gate that makes an unloaded session pay
+// zero bytes and zero per-frame branching beyond one null check.
+void TestPluginPresentationIsLazilyAllocatedAndReleased() {
+  using microide::workspace::ProjectWorkspaceState;
+
+  ProjectWorkspaceState state;
+  Expect(state.plugin_presentation_if_present() == nullptr,
+         "a fresh project has no plugin presentation allocated");
+
+  // First publish allocates the bundle.
+  Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
+             "owner", "file.cpp", microide::editor::PluginDecorationData{}) == false,
+         "publishing empty decoration data is a no-op merge");
+  // Empty data merges to nothing, so the store reports empty and a release request
+  // collapses the bundle straight back to null.
+  state.MaybeReleasePluginPresentation();
+  Expect(state.plugin_presentation_if_present() == nullptr,
+         "an empty publish must not keep the bundle alive");
+
+  // A real contribution keeps the bundle present.
+  microide::editor::PluginDecorationData data;
+  data.gutter_marks.push_back(microide::editor::GutterMarkDecoration{.line = 0});
+  Expect(state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("owner", "file.cpp",
+                                                                          data),
+         "a non-empty publish changes the merged view");
+  state.MaybeReleasePluginPresentation();
+  Expect(state.plugin_presentation_if_present() != nullptr,
+         "a live contribution keeps the bundle allocated");
+
+  // Clearing the only contribution releases the bundle again (zero footprint).
+  Expect(state.plugin_presentation->decorations.ClearOwner("owner"),
+         "clearing the sole owner changes the merged view");
+  state.MaybeReleasePluginPresentation();
+  Expect(state.plugin_presentation_if_present() == nullptr,
+         "draining the last contribution releases the bundle back to null");
+}
+
 }  // namespace
 
 void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
@@ -215,6 +257,8 @@ void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
           TestPreviewSurfacesCacheInvalidatesOnRevisionChange);
   AddTest(tests, "PluginPresentation/StatusItemsEmptyHostIsAllocationFree",
           TestStatusItemsEmptyHostIsAllocationFree);
+  AddTest(tests, "PluginPresentation/PresentationIsLazilyAllocatedAndReleased",
+          TestPluginPresentationIsLazilyAllocatedAndReleased);
 }
 
 }  // namespace microide::tests

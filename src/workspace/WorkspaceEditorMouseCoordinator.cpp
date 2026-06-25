@@ -98,11 +98,19 @@ editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
     const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
     const editor::EditorViewMetrics& metrics, float y,
     const std::function<std::optional<std::string>(std::string_view)>& get_setting_value) {
+  // No plugin/LSP contribution: no insets can exist, so the gap list is empty and
+  // the mapping collapses to the legacy formula. Skip the store probing entirely.
+  const auto* pres = state.plugin_presentation_if_present();
+  if (pres == nullptr) {
+    return editor::EditorRowYLayout(metrics.first_line_y, metrics.line_height,
+                                    static_cast<std::uint32_t>(viewport.scroll_line()))
+        .HitTest(y, metrics.visible_rows);
+  }
   const editor::InsetGapOptions options{
       .inline_surfaces = SettingOn(get_setting_value, "plugins.inline_surfaces"),
       .code_lens_above = SettingOn(get_setting_value, "plugins.code_lens_above"),
       .code_lens_height = metrics.line_height};
-  return editor::ResolveInsetClick(state.surface_store, state.decoration_store, viewport,
+  return editor::ResolveInsetClick(pres->surfaces, pres->decorations, viewport,
                                    metrics.first_line_y, metrics.line_height, metrics.visible_rows,
                                    y, options)
       .hit;

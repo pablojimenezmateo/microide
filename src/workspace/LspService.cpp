@@ -395,7 +395,8 @@ void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::str
     style.foreground = editor::SyntaxTokenColor(*theme_, kind, plain);  // a!=0 => recolor
     data.text_styles.push_back(style);
   }
-  if (state.decoration_store.ReplaceForOwnerFile("lsp:semantic", *path, std::move(data))) {
+  if (state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile("lsp:semantic", *path,
+                                                                       std::move(data))) {
     operations_.request_editor_surface_redraw();
   }
 }

@@ -46,12 +46,16 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
 
   // Save the caller's clip so we can restore it; everything we draw is bounded by
   // the surface rect. A clip stack tracks ClipPush/ClipPop (content-local rects).
+  // Both scratch buffers are thread_local and reused across replays so a visible
+  // surface re-painted every frame allocates nothing here.
   SDL_Rect previous_clip{};
   const bool had_clip = SDL_GetRenderClipRect(renderer, &previous_clip);
   const SDL_Rect base_clip = ToIntRect(params.clip);
-  std::vector<SDL_Rect> clip_stack;
+  thread_local std::vector<SDL_Rect> clip_stack;
+  clip_stack.clear();
   clip_stack.push_back(base_clip);
   SDL_SetRenderClipRect(renderer, &base_clip);
+  thread_local std::vector<SDL_FPoint> polyline_points;
 
   for (const DisplayOp& op : list.ops) {
     switch (op.op) {
@@ -66,14 +70,15 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
         break;
       case DrawOp::Polyline: {
         SDL_SetRenderDrawColor(renderer, op.color.r, op.color.g, op.color.b, op.color.a);
-        // Translate into a small scratch buffer; polyline point counts are capped.
-        std::vector<SDL_FPoint> points;
-        points.reserve(op.data_count);
+        // Translate into the reused scratch buffer; polyline point counts are capped.
+        polyline_points.clear();
+        polyline_points.reserve(op.data_count);
         for (std::uint32_t i = 0; i < op.data_count; ++i) {
           const SDL_FPoint& p = list.point_arena[op.data_offset + i];
-          points.push_back(SDL_FPoint{ox + p.x, oy + p.y});
+          polyline_points.push_back(SDL_FPoint{ox + p.x, oy + p.y});
         }
-        SDL_RenderLines(renderer, points.data(), static_cast<int>(points.size()));
+        SDL_RenderLines(renderer, polyline_points.data(),
+                        static_cast<int>(polyline_points.size()));
         break;
       }
       case DrawOp::Text: {

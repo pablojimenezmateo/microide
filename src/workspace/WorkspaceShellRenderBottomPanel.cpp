@@ -358,8 +358,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                  std::max(0.0f, layout.bottom_panel.h - panel_header.h));
     FillRect(renderer, body, theme_.surface_background);
     const PanelState& panel = panel_vm.project_state->panel;
+    const auto* pres = panel_vm.project_state->plugin_presentation_if_present();
     const editor::SurfaceContent* content =
-        panel_vm.project_state->surface_store.Find(panel.surface_owner, panel.surface_id);
+        pres != nullptr ? pres->surfaces.Find(panel.surface_owner, panel.surface_id) : nullptr;
     RenderPluginSurfaceInto(renderer, body, content,
                             static_cast<float>(panel.surface_scroll_y));
     return;

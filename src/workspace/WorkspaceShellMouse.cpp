@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "editor/EditorInsetLayout.h"
+#include "editor/EditorRowYLayout.h"
 #include "editor/EditorViewRenderer.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/WelcomeView.h"
@@ -340,16 +341,25 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         const auto value = GetSettingValue(id);
         return value.has_value() && *value != "false" && *value != "0" && *value != "off";
       };
-      const editor::InsetGapOptions inset_options{
-          .inline_surfaces = setting_on("plugins.inline_surfaces"),
-          .code_lens_above = setting_on("plugins.code_lens_above"),
-          .code_lens_height = metrics.line_height};
-      const std::size_t row =
-          editor::ResolveInsetClick(context_.current_project_state.surface_store,
-                                    context_.current_project_state.decoration_store, *viewport,
-                                    metrics.first_line_y, metrics.line_height, metrics.visible_rows,
-                                    event.button.y, inset_options)
-              .hit.row;
+      // No plugin/LSP contribution: no insets, so the gap-aware mapping collapses
+      // to the legacy row formula. Skip the store probing entirely.
+      const auto* pres = context_.current_project_state.plugin_presentation_if_present();
+      std::size_t row = 0;
+      if (pres == nullptr) {
+        row = editor::EditorRowYLayout(metrics.first_line_y, metrics.line_height,
+                                       static_cast<std::uint32_t>(viewport->scroll_line()))
+                  .HitTest(event.button.y, metrics.visible_rows)
+                  .row;
+      } else {
+        const editor::InsetGapOptions inset_options{
+            .inline_surfaces = setting_on("plugins.inline_surfaces"),
+            .code_lens_above = setting_on("plugins.code_lens_above"),
+            .code_lens_height = metrics.line_height};
+        row = editor::ResolveInsetClick(pres->surfaces, pres->decorations, *viewport,
+                                        metrics.first_line_y, metrics.line_height,
+                                        metrics.visible_rows, event.button.y, inset_options)
+                  .hit.row;
+      }
       const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
       const std::size_t visual_column =
           viewport->horizontal_scroll() +
@@ -551,6 +561,11 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
   const WorkspaceLayout layout = *layout_state;
   const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
 
+  // No plugin/LSP contribution: no above-line code lenses can exist.
+  const auto* pres = context_.current_project_state.plugin_presentation_if_present();
+  if (pres == nullptr) {
+    return std::nullopt;
+  }
   const auto resolve = [&](const editor::TextViewport& viewport,
                            const SDL_FRect& rect) -> std::optional<std::string> {
     if (viewport.is_placeholder() || viewport.path().empty() || viewport.dirty()) {
@@ -562,8 +577,7 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
                                           .code_lens_above = true,
                                           .code_lens_height = metrics.line_height};
     const editor::InsetClickResult result = editor::ResolveInsetClick(
-        context_.current_project_state.surface_store,
-        context_.current_project_state.decoration_store, viewport, metrics.first_line_y,
+        pres->surfaces, pres->decorations, viewport, metrics.first_line_y,
         metrics.line_height, metrics.visible_rows, y, options);
     if (result.gap_content.code_lens != nullptr &&
         !result.gap_content.code_lens->command.empty()) {

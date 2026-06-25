@@ -532,18 +532,26 @@ void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
                                                   bool inline_surfaces_enabled,
                                                   bool code_lens_above_enabled,
                                                   float line_height) const {
+  out.code_lens_above = code_lens_above_enabled;
+  // No plugin/LSP contribution published: no surfaces or code lenses can exist,
+  // so skip the gap build entirely (and never touch the stores) — the common
+  // no-plugin case pays nothing here.
+  const auto* pres = context_.current_project_state.plugin_presentation_if_present();
+  if (pres == nullptr) {
+    out.row_gaps = {};
+    out.row_gap_contents = {};
+    return;
+  }
   thread_local std::vector<editor::RowGap> gaps;
   thread_local std::vector<editor::RowGapContent> contents;
   editor::BuildRowGapsForWindow(
-      context_.current_project_state.surface_store, context_.current_project_state.decoration_store,
-      viewport, visible_rows,
+      pres->surfaces, pres->decorations, viewport, visible_rows,
       editor::InsetGapOptions{.inline_surfaces = inline_surfaces_enabled,
                               .code_lens_above = code_lens_above_enabled,
                               .code_lens_height = line_height},
       gaps, contents);
   out.row_gaps = std::span<const editor::RowGap>(gaps.data(), gaps.size());
   out.row_gap_contents = std::span<const editor::RowGapContent>(contents.data(), contents.size());
-  out.code_lens_above = code_lens_above_enabled;
 }
 
 void RenderViewModelBuilder::BuildEditorViewModelInto(
@@ -784,10 +792,11 @@ HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_targ
 }
 
 HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets(bool debug_hover_enabled) const {
+  const auto* pres = context_.current_project_state.plugin_presentation_if_present();
   return HoverTargetsViewModel{
       .hover_enabled = true,
       .diagnostics_store = &context_.current_project_state.diagnostics_store,
-      .decoration_store = &context_.current_project_state.decoration_store,
+      .decoration_store = pres != nullptr ? &pres->decorations : nullptr,
       .debug_execution =
           debug_hover_enabled ? &context_.current_project_state.debug_execution : nullptr,
       .debug_hover = debug_hover_enabled ? &context_.current_project_state.debug_hover : nullptr,
