@@ -9,73 +9,20 @@
 
 #include "editor/GutterIconRegistry.h"
 #include "editor/PluginDecorationStore.h"
+#include "plugin/PluginLuaParseHelpers.h"
 #include "plugin/PluginPathInterop.h"
-#include "util/Hex.h"
 
 namespace microide::plugin::decoration_interop {
 namespace {
 
 using path_interop::ResolveRuntimePath;
+using lua_parse::ReadBoolField;
+using lua_parse::ReadOptionalColorField;
+using lua_parse::ReadStringField;
 
 // Cap per-kind entries so a malformed or hostile plugin cannot force an
 // unbounded allocation/sort on the shell thread.
 constexpr lua_Integer kMaxEntriesPerKind = 100000;
-
-std::optional<SDL_Color> ParseColor(std::string_view text) {
-  if (text.size() == 7 && text.front() == '#') {
-    const auto rgb = util::DecodeHexColor(text);
-    if (!rgb) {
-      return std::nullopt;
-    }
-    return SDL_Color{(*rgb)[0], (*rgb)[1], (*rgb)[2], 255};
-  }
-  if (text.size() == 9 && text.front() == '#') {
-    const auto r = util::ParseHexByte(text[1], text[2]);
-    const auto g = util::ParseHexByte(text[3], text[4]);
-    const auto b = util::ParseHexByte(text[5], text[6]);
-    const auto a = util::ParseHexByte(text[7], text[8]);
-    if (!r || !g || !b || !a) {
-      return std::nullopt;
-    }
-    return SDL_Color{*r, *g, *b, *a};
-  }
-  return std::nullopt;
-}
-
-bool ReadBoolField(lua_State* state, int table_index, const char* key) {
-  lua_getfield(state, table_index, key);
-  const bool value = lua_toboolean(state, -1) != 0;
-  lua_pop(state, 1);
-  return value;
-}
-
-// Reads an optional color field. Missing => keeps `out` untouched and returns
-// true; a present-but-malformed value is an error.
-bool ReadOptionalColorField(lua_State* state, int table_index, const char* key, SDL_Color* out,
-                            std::string* error_message) {
-  lua_getfield(state, table_index, key);
-  if (lua_isnil(state, -1)) {
-    lua_pop(state, 1);
-    return true;
-  }
-  if (!lua_isstring(state, -1)) {
-    if (error_message != nullptr) {
-      *error_message = std::string(key) + " must be a hex color string";
-    }
-    lua_pop(state, 1);
-    return false;
-  }
-  const auto color = ParseColor(lua_tostring(state, -1));
-  lua_pop(state, 1);
-  if (!color) {
-    if (error_message != nullptr) {
-      *error_message = std::string(key) + " must be #rrggbb or #rrggbbaa";
-    }
-    return false;
-  }
-  *out = *color;
-  return true;
-}
 
 // Reads a required positive (1-based) integer field into a 0-based uint32.
 bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::uint32_t* out,
@@ -91,15 +38,6 @@ bool ReadOneBasedField(lua_State* state, int table_index, const char* key, std::
   *out = static_cast<std::uint32_t>(lua_tointeger(state, -1) - 1);
   lua_pop(state, 1);
   return true;
-}
-
-bool ReadStringField(lua_State* state, int table_index, const char* key, std::string* out) {
-  lua_getfield(state, table_index, key);
-  if (lua_isstring(state, -1)) {
-    *out = lua_tostring(state, -1);
-  }
-  lua_pop(state, 1);
-  return !out->empty();
 }
 
 // Begin iterating an optional array field `key`. Returns false (with the field
@@ -200,7 +138,7 @@ bool ReadGutterMarks(lua_State* state, int table_index, editor::PluginDecoration
       std::string icon;
       if (!ReadOneBasedField(state, entry, "line", &mark.line, error_message)) {
         ok = false;
-      } else if (!ReadStringField(state, entry, "icon", &icon)) {
+      } else if (!ReadStringField(state, entry, "icon", &icon) || icon.empty()) {
         if (error_message != nullptr) *error_message = "gutter_marks icon must be a string";
         ok = false;
       } else if (const auto shape = editor::GutterIconRegistry::ResolveShape(icon); !shape) {
@@ -247,7 +185,7 @@ bool ReadInlineText(lua_State* state, int table_index, editor::PluginDecorationD
       editor::InlineTextDecoration inl;
       if (!ReadOneBasedField(state, entry, "line", &inl.line, error_message)) {
         ok = false;
-      } else if (!ReadStringField(state, entry, "text", &inl.text)) {
+      } else if (!ReadStringField(state, entry, "text", &inl.text) || inl.text.empty()) {
         if (error_message != nullptr) *error_message = "inline_text text must be a non-empty string";
         ok = false;
       } else if (!ReadOptionalColorField(state, entry, "color", &inl.color, error_message) ||
@@ -293,7 +231,7 @@ bool ReadCodeLenses(lua_State* state, int table_index, editor::PluginDecorationD
       editor::CodeLensDecoration lens;
       if (!ReadOneBasedField(state, entry, "line", &lens.line, error_message)) {
         ok = false;
-      } else if (!ReadStringField(state, entry, "text", &lens.text)) {
+      } else if (!ReadStringField(state, entry, "text", &lens.text) || lens.text.empty()) {
         if (error_message != nullptr) *error_message = "code_lenses text must be a non-empty string";
         ok = false;
       } else {

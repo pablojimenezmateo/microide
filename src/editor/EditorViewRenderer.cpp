@@ -915,8 +915,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (plugin_decorations != nullptr && (!soft_wrap || row_meta.visual_start == 0)) {
       const std::span<const InlineTextDecoration> inline_texts =
           plugin_decorations->InlineTextsForLine(static_cast<std::uint32_t>(line_index));
+      // Phase E2: when above-line code lenses are active they render as inset
+      // strips, so suppress the end-of-line affordance for the same lenses.
       const std::span<const CodeLensDecoration> code_lenses =
-          plugin_decorations->CodeLensesForLine(static_cast<std::uint32_t>(line_index));
+          (view_model != nullptr && view_model->code_lens_above)
+              ? std::span<const CodeLensDecoration>{}
+              : plugin_decorations->CodeLensesForLine(static_cast<std::uint32_t>(line_index));
       if (!inline_texts.empty() || !code_lenses.empty()) {
         const float anchor_x =
             metrics.text_x +

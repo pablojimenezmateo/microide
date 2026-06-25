@@ -397,6 +397,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     // Phase E1: inline plugin-surface insets. Experimental and off by default, so
     // the editor geometry stays byte-for-byte identical for everyone else.
     const bool inline_surfaces_enabled = setting_enabled("plugins.inline_surfaces", false);
+    const bool code_lens_above_enabled = setting_enabled("plugins.code_lens_above", false);
     const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
     const bool occurrences_highlight_enabled_global =
         setting_enabled("editor.occurrences.enabled", true);
@@ -443,7 +444,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       editor_render_builder.BuildEditorViewModelInto(
           tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
           occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-          sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution);
+          sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
+          debug_execution, inline_surfaces_enabled, code_lens_above_enabled, metrics.line_height);
       if (!tls_editor_surface_vm.sticky_lines.empty()) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
             text_renderer_, *active_viewport, layout.editor_surface,
@@ -452,7 +454,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution);
+            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
+            debug_execution, inline_surfaces_enabled, code_lens_above_enabled, metrics.line_height);
       }
       // The welcome home surface (recents + curated shortcuts + hints) is built in the
       // view-model layer so this render TU never materializes its strings.
@@ -494,7 +497,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
           occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
           render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution,
-          inline_surfaces_enabled);
+          inline_surfaces_enabled, code_lens_above_enabled, metrics.line_height);
       if (!tls_editor_surface_vm.sticky_lines.empty()) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
             text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
@@ -503,7 +506,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
             occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
             render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution,
-            inline_surfaces_enabled);
+            inline_surfaces_enabled, code_lens_above_enabled, metrics.line_height);
       }
       tls_pane_scroll_metrics[pane_index] = metrics;
       tls_pane_scroll_metrics_valid[pane_index] = 1;

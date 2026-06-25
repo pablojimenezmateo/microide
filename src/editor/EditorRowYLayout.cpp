@@ -8,9 +8,14 @@ EditorRowYLayout::HitResult EditorRowYLayout::HitTest(float y, std::size_t visib
   }
   for (std::size_t row = 0; row < visible_rows; ++row) {
     const float top = RowTop(row);
-    if (y < top) {
-      // Above the first row's top -> clamp to the first row.
+    const float above = GapAbove(row);
+    if (y < top - above) {
+      // Above this row's inset strip (and its text) -> clamp up to the row.
       return HitResult{row, false};
+    }
+    if (above > 0.0f && y < top) {
+      // Inside the inert above-line code-lens strip.
+      return HitResult{row, true};
     }
     if (y < top + line_height_) {
       return HitResult{row, false};
@@ -28,9 +33,10 @@ float EditorRowYLayout::WindowHeight(std::size_t visible_rows) const {
     return 0.0f;
   }
   // RowTop(visible_rows - 1) already folds in every gap above the last row; add
-  // that last row's own height plus any gap directly below it.
+  // that last row's own height plus any gap directly below it. RowTop(0) cancels
+  // the first row's own Above strip, so add it back to keep it inside the window.
   return (RowTop(visible_rows - 1) - RowTop(0)) + line_height_ +
-         GapHeightBelow(visible_rows - 1);
+         GapHeightBelow(visible_rows - 1) + GapAbove(0);
 }
 
 }  // namespace microide::editor

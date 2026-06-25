@@ -1004,6 +1004,10 @@
   // editor::BuildEolDecorationSegments with the renderer so the hit rect matches
   // the painted affordance exactly.
   std::optional<std::string> CodeLensCommandAtPosition(float x, float y) const;
+  // Phase E2: resolve the command bound to an above-line code-lens inset under
+  // (x,y) when `plugins.code_lens_above` is on, sharing the gap geometry the
+  // renderer drew (editor::ResolveInsetClick). Returns nullopt outside any strip.
+  std::optional<std::string> AboveLensCommandAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetAtPosition(float x, float y) const;
   std::optional<EditorHoverTarget> PluginHoverTargetForViewport(
       const editor::TextViewport& viewport,

@@ -27,6 +27,7 @@ void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests);
 void RegisterPluginSurfaceStoreTests(std::vector<TestCase>& tests);
 void RegisterPluginDisplayListTests(std::vector<TestCase>& tests);
 void RegisterEditorRowYLayoutTests(std::vector<TestCase>& tests);
+void RegisterEditorInsetLayoutTests(std::vector<TestCase>& tests);
 void RegisterEolDecorationLayoutTests(std::vector<TestCase>& tests);
 void RegisterBreakpointStoreTests(std::vector<TestCase>& tests);
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests);
@@ -343,6 +344,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPluginSurfaceStoreTests(tests);
   microide::tests::RegisterPluginDisplayListTests(tests);
   microide::tests::RegisterEditorRowYLayoutTests(tests);
+  microide::tests::RegisterEditorInsetLayoutTests(tests);
   microide::tests::RegisterEolDecorationLayoutTests(tests);
   microide::tests::RegisterBreakpointStoreTests(tests);
   microide::tests::RegisterDirectoryTreeTests(tests);

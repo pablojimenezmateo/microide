@@ -9,8 +9,6 @@
 
 namespace microide::editor {
 
-struct SurfaceContent;  // editor/PluginSurfaceStore.h (Phase E inline insets)
-
 struct FoldGutterMark {
   std::size_t line_index = 0;
   std::size_t visual_row_index = 0;
@@ -64,14 +62,19 @@ struct EditorViewModel {
   // a session is stopped on this viewport's file (debugger enabled). Drives the
   // full-width execution-line fill + gutter arrow. Empty in the common case.
   std::optional<std::size_t> execution_line_index;
-  // Inert vertical gaps (inline plugin-surface insets, Phase E1), sorted by
-  // visual row. Empty unless the `plugins.inline_surfaces` setting is on, so the
-  // EditorRowYLayout the renderer builds from this is bit-identical to the legacy
-  // `first_line_y + row*line_height` mapping in the common case. `row_gap_contents`
-  // is parallel to `row_gaps` (same index) and carries the surface each gap hosts
-  // so the workspace draw pass can paint it; EditorViewRenderer ignores it.
+  // Inert vertical gaps hosting inline insets: plugin-surface insets below their
+  // anchor row (Phase E1, `plugins.inline_surfaces`) and above-line code-lens
+  // strips over their line (Phase E2, `plugins.code_lens_above`). Empty unless one
+  // of those settings is on, so the EditorRowYLayout the renderer builds from this
+  // is bit-identical to the legacy `first_line_y + row*line_height` mapping in the
+  // common case. `row_gap_contents` is parallel (same index) and carries the
+  // surface or code lens each gap hosts for the workspace draw pass; the editor
+  // renderer consumes only `row_gaps` (geometry).
   std::span<const RowGap> row_gaps;
-  std::span<const SurfaceContent* const> row_gap_contents;
+  std::span<const RowGapContent> row_gap_contents;
+  // True when above-line code lenses are active; the editor renderer then
+  // suppresses the end-of-line code-lens affordance (it is drawn as the inset).
+  bool code_lens_above = false;
   std::vector<WhitespaceGlyphRun> whitespace_glyph_runs;
   // CSR-style index into `whitespace_glyph_runs`: for visible row `r`, runs are in
   // [whitespace_row_offsets[r], whitespace_row_offsets[r+1]). Size is `visible_rows + 1` whenever

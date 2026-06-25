@@ -9,72 +9,24 @@
 #include <vector>
 
 #include "editor/PluginSurfaceStore.h"
+#include "plugin/PluginLuaParseHelpers.h"
 #include "plugin/PluginPathInterop.h"
 #include "render/PluginDisplayList.h"
 #include "render/SurfaceTextureCache.h"
-#include "util/Hex.h"
 
 namespace microide::plugin::surface_interop {
 namespace {
 
 using path_interop::ResolveRuntimePath;
+using lua_parse::ReadNumberField;
+using lua_parse::ReadStringField;
 
 constexpr lua_Integer kMaxHitRegions = 4096;
-
-std::optional<SDL_Color> ParseColor(std::string_view text) {
-  if (text.size() == 7 && text.front() == '#') {
-    const auto rgb = util::DecodeHexColor(text);
-    if (!rgb) return std::nullopt;
-    return SDL_Color{(*rgb)[0], (*rgb)[1], (*rgb)[2], 255};
-  }
-  if (text.size() == 9 && text.front() == '#') {
-    const auto r = util::ParseHexByte(text[1], text[2]);
-    const auto g = util::ParseHexByte(text[3], text[4]);
-    const auto b = util::ParseHexByte(text[5], text[6]);
-    const auto a = util::ParseHexByte(text[7], text[8]);
-    if (!r || !g || !b || !a) return std::nullopt;
-    return SDL_Color{*r, *g, *b, *a};
-  }
-  return std::nullopt;
-}
-
-float ReadNumberField(lua_State* state, int table_index, const char* key, float fallback) {
-  lua_getfield(state, table_index, key);
-  const float value = lua_isnumber(state, -1) ? static_cast<float>(lua_tonumber(state, -1))
-                                              : fallback;
-  lua_pop(state, 1);
-  return value;
-}
-
-bool ReadStringField(lua_State* state, int table_index, const char* key, std::string* out) {
-  lua_getfield(state, table_index, key);
-  const bool ok = lua_isstring(state, -1) != 0;
-  if (ok) {
-    std::size_t len = 0;
-    const char* s = lua_tolstring(state, -1, &len);
-    out->assign(s, len);
-  }
-  lua_pop(state, 1);
-  return ok;
-}
 
 // Reads the `color` field of the table at `table_index` into `out`; missing keeps
 // `out` unchanged. A present-but-malformed color is an error.
 bool ReadColorField(lua_State* state, int table_index, SDL_Color* out, std::string* error) {
-  lua_getfield(state, table_index, "color");
-  if (lua_isnil(state, -1)) {
-    lua_pop(state, 1);
-    return true;
-  }
-  const bool is_str = lua_isstring(state, -1) != 0;
-  const auto color = is_str ? ParseColor(lua_tostring(state, -1)) : std::nullopt;
-  lua_pop(state, 1);
-  if (!color) {
-    if (error != nullptr) *error = "op color must be #rrggbb or #rrggbbaa";
-    return false;
-  }
-  *out = *color;
-  return true;
+  return lua_parse::ReadOptionalColorField(state, table_index, "color", out, error);
 }
 
 SDL_FRect ReadRectFields(lua_State* state, int table_index) {

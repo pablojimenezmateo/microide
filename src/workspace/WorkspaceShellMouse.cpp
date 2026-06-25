@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "editor/EditorInsetLayout.h"
 #include "editor/EditorViewRenderer.h"
+#include "editor/PluginDecorationStore.h"
 #include "editor/WelcomeView.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
@@ -217,9 +219,17 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (event.button.button == SDL_BUTTON_LEFT) {
     // A plugin code-lens click dispatches its bound command. Checked before the
     // blame overlay (both anchor at end-of-line) so the actionable lens wins.
-    if (const auto command = CodeLensCommandAtPosition(static_cast<float>(event.button.x),
-                                                       static_cast<float>(event.button.y));
-        command.has_value()) {
+    // With `plugins.code_lens_above` the lens renders as an inset strip above its
+    // line, so its click geometry comes from the gap layout instead of the EOL one.
+    const auto above_value = GetSettingValue("plugins.code_lens_above");
+    const bool code_lens_above = above_value.has_value() && *above_value != "false" &&
+                                 *above_value != "0" && *above_value != "off";
+    const auto command =
+        code_lens_above ? AboveLensCommandAtPosition(static_cast<float>(event.button.x),
+                                                     static_cast<float>(event.button.y))
+                        : CodeLensCommandAtPosition(static_cast<float>(event.button.x),
+                                                    static_cast<float>(event.button.y));
+    if (command.has_value()) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
       std::string error_message;
       ExecuteCommandName(*command, {}, ActionSource::Command, &error_message);
@@ -326,8 +336,20 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane_it->rect);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
-      const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
-      const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
+      const auto setting_on = [this](std::string_view id) {
+        const auto value = GetSettingValue(id);
+        return value.has_value() && *value != "false" && *value != "0" && *value != "off";
+      };
+      const editor::InsetGapOptions inset_options{
+          .inline_surfaces = setting_on("plugins.inline_surfaces"),
+          .code_lens_above = setting_on("plugins.code_lens_above"),
+          .code_lens_height = metrics.line_height};
+      const std::size_t row =
+          editor::ResolveInsetClick(context_.current_project_state.surface_store,
+                                    context_.current_project_state.decoration_store, *viewport,
+                                    metrics.first_line_y, metrics.line_height, metrics.visible_rows,
+                                    event.button.y, inset_options)
+              .hit.row;
       const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
       const std::size_t visual_column =
           viewport->horizontal_scroll() +
@@ -513,6 +535,61 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
   }
   return was_selecting;
+}
+
+std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, float y) const {
+  if (!ActiveTabIsEditor()) {
+    return std::nullopt;
+  }
+  const auto inline_value = GetSettingValue("plugins.inline_surfaces");
+  const bool inline_surfaces = inline_value.has_value() && *inline_value != "false" &&
+                               *inline_value != "0" && *inline_value != "off";
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const WorkspaceLayout layout = *layout_state;
+  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
+
+  const auto resolve = [&](const editor::TextViewport& viewport,
+                           const SDL_FRect& rect) -> std::optional<std::string> {
+    if (viewport.is_placeholder() || viewport.path().empty() || viewport.dirty()) {
+      return std::nullopt;
+    }
+    const editor::EditorViewMetrics metrics =
+        editor::EditorViewRenderer::ComputeMetrics(text_renderer_, viewport, rect);
+    const editor::InsetGapOptions options{.inline_surfaces = inline_surfaces,
+                                          .code_lens_above = true,
+                                          .code_lens_height = metrics.line_height};
+    const editor::InsetClickResult result = editor::ResolveInsetClick(
+        context_.current_project_state.surface_store,
+        context_.current_project_state.decoration_store, viewport, metrics.first_line_y,
+        metrics.line_height, metrics.visible_rows, y, options);
+    if (result.gap_content.code_lens != nullptr &&
+        !result.gap_content.code_lens->command.empty()) {
+      return result.gap_content.code_lens->command;
+    }
+    return std::nullopt;
+  };
+
+  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const editor::TextViewport* active_viewport = ActiveEditorViewport();
+  if (panes.empty() && active_viewport != nullptr) {
+    return resolve(*active_viewport, layout.editor_surface);
+  }
+  for (const EditorPaneLayout& pane : panes) {
+    if (!Contains(pane.rect, x, y)) {
+      continue;
+    }
+    const editor::TextViewport* viewport =
+        pane.active ? ActiveEditorViewport()
+                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    if (viewport == nullptr) {
+      return std::nullopt;
+    }
+    return resolve(*viewport, pane.rect);
+  }
+  return std::nullopt;
 }
 
 }  // namespace microide::workspace

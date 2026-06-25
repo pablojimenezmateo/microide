@@ -75,8 +75,11 @@ void TestArchitectureInvariants() {
              // points that drive the preview panel + inline insets.
              // 1584: +3 for the Phase E1 DrawEditorInsets entry point that paints
              // inline-surface insets into the editor's inert row-gaps.
+             // 1586: +2 for the Phase E2 AboveLensCommandAtPosition entry point
+             // that resolves above-line code-lens inset clicks (gap-aware) to the
+             // bound command, paired with the existing EOL CodeLensCommandAtPosition.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1584);
+                                                     1586);
            });
 
   bool hard_failure = false;

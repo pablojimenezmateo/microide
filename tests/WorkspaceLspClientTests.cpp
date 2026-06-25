@@ -629,9 +629,34 @@ void TestLspManagerSharesOneSubprocessAcrossLanguageIds() {
          "a shared server is retired once none of its language ids is active");
 }
 
+void TestWorkspaceLspClientSemanticTokensStubRoundTrip() {
+  LspClient client;
+  client.EnableTestStubMode();
+  client.SetTestSemanticTokenLegend({"variable", "type", "keyword"});
+  client.SetTestSemanticTokensHandler(
+      [](std::string uri, LspClient::SemanticTokensCallback cb) {
+        (void)uri;
+        cb(std::vector<LspClient::SemanticToken>{
+            LspClient::SemanticToken{.line = 3, .start_char = 2, .length = 5, .token_type = 1}});
+      });
+
+  Expect(client.SupportsSemanticTokens(), "stub legend marks the server as semantic-capable");
+  Expect(client.SemanticTokenLegend().size() == 3, "the stub legend is reported back");
+
+  std::optional<std::vector<LspClient::SemanticToken>> received;
+  client.RequestSemanticTokensAsync("file:///s.cpp", [&](auto tokens) { received = std::move(tokens); });
+  client.DrainCallbacks();  // stub responses dispatch on the main-thread pump
+
+  Expect(received.has_value() && received->size() == 1, "the stubbed token is delivered");
+  Expect((*received)[0].line == 3 && (*received)[0].token_type == 1,
+         "the delivered token preserves its fields");
+}
+
 }  // namespace
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspClient/SemanticTokensStubRoundTrip",
+          TestWorkspaceLspClientSemanticTokensStubRoundTrip);
   AddTest(tests, "WorkspaceLspClient/ShutdownDoesNotRaceInitialization",
           TestWorkspaceLspClientShutdownDoesNotRaceInitialization);
   AddTest(tests, "WorkspaceLspClient/ShutdownWaitsForGracefulExit",

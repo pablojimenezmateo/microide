@@ -6,7 +6,10 @@
 #include <utility>
 #include <vector>
 
+#include "editor/EditorInsetLayout.h"
+#include "editor/EditorRowYLayout.h"
 #include "editor/EditorViewRenderer.h"
+#include "editor/PluginSurfaceStore.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
@@ -76,6 +79,35 @@ std::optional<editor::EditorViewMetrics> FastEditorPointerMetricsFromViewportSta
   return metrics;
 }
 
+bool SettingOn(const std::function<std::optional<std::string>(std::string_view)>& get_setting_value,
+               std::string_view id) {
+  if (!get_setting_value) {
+    return false;
+  }
+  const auto value = get_setting_value(id);
+  return value.has_value() && *value != "false" && *value != "0" && *value != "off";
+}
+
+// Resolve the gap-aware visible-row offset for a pointer at screen-y `y`. When an
+// inline-inset setting (`plugins.inline_surfaces` / `plugins.code_lens_above`) is
+// on, the insets are resolved into the same row gaps the renderer drew (via the
+// single EditorRowYLayout mapping) so a click below a gap lands on the correct
+// logical line. With both off — or nothing visible — the gap list is empty and
+// this collapses to the legacy `(y - first_line_y) / line_height` result.
+editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
+    const ProjectWorkspaceState& state, const editor::TextViewport& viewport,
+    const editor::EditorViewMetrics& metrics, float y,
+    const std::function<std::optional<std::string>(std::string_view)>& get_setting_value) {
+  const editor::InsetGapOptions options{
+      .inline_surfaces = SettingOn(get_setting_value, "plugins.inline_surfaces"),
+      .code_lens_above = SettingOn(get_setting_value, "plugins.code_lens_above"),
+      .code_lens_height = metrics.line_height};
+  return editor::ResolveInsetClick(state.surface_store, state.decoration_store, viewport,
+                                   metrics.first_line_y, metrics.line_height, metrics.visible_rows,
+                                   y, options)
+      .hit;
+}
+
 }  // namespace
 
 EditorMouseCoordinator::EditorMouseCoordinator(ProjectWorkspaceState& state,
@@ -125,7 +157,9 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
   }
   const std::size_t visual_row =
       viewport->scroll_line() +
-      static_cast<std::size_t>((event.button.y - metrics.first_line_y) / metrics.line_height);
+      ResolveGapAwareRow(state_, *viewport, metrics, event.button.y,
+                         operations_.get_setting_value)
+          .row;
   if (visual_row >= viewport->visual_line_count()) {
     return false;
   }
@@ -265,8 +299,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       if (event.button.x >= fold_hit_left && event.button.x < gutter_right) {
         const std::size_t visual_row =
             viewport->scroll_line() +
-            static_cast<std::size_t>((event.button.y - metrics.first_line_y) /
-                                     metrics.line_height);
+            ResolveGapAwareRow(state_, *viewport, metrics, event.button.y,
+                               operations_.get_setting_value)
+                .row;
         if (visual_row < viewport->visual_line_count()) {
           const std::size_t opener_line = viewport->VisualRowLineIndex(visual_row);
           editor::FoldingModel* fold_model =
@@ -301,8 +336,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       if (event.button.x >= gutter_left && event.button.x < fold_hit_left) {
         const std::size_t visual_row =
             viewport->scroll_line() +
-            static_cast<std::size_t>((event.button.y - metrics.first_line_y) /
-                                     metrics.line_height);
+            ResolveGapAwareRow(state_, *viewport, metrics, event.button.y,
+                               operations_.get_setting_value)
+                .row;
         if (visual_row < viewport->visual_line_count()) {
           const std::size_t line_index = viewport->VisualRowLineIndex(visual_row);
           const std::filesystem::path& path = viewport->path();
@@ -320,8 +356,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  const float local_y = std::max(0.0f, event.button.y - metrics.first_line_y);
-  const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
+  const std::size_t row = ResolveGapAwareRow(state_, *viewport, metrics,
+                                             event.button.y, operations_.get_setting_value)
+                              .row;
   const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
   const int visual_column = static_cast<int>(viewport->horizontal_scroll() +
       static_cast<std::size_t>(std::max(
@@ -543,8 +580,9 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
     metrics = resolved_metrics;
   }
 
-  const float local_y = std::max(0.0f, event.motion.y - metrics.first_line_y);
-  const std::size_t row = static_cast<std::size_t>(local_y / metrics.line_height);
+  const std::size_t row = ResolveGapAwareRow(state_, *viewport, metrics,
+                                             event.motion.y, operations_.get_setting_value)
+                              .row;
   const float text_offset_x = std::max(0.0f, event.motion.x - metrics.text_x);
   const int visual_column = static_cast<int>(viewport->horizontal_scroll() +
       static_cast<std::size_t>(std::max(

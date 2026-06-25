@@ -298,4 +298,26 @@ void LspClient::ClearTestDocumentSymbolHandler() {
   impl_->test_document_symbol_handler = nullptr;
 }
 
+std::vector<std::string> LspClient::SemanticTokenLegend() const {
+  std::lock_guard lock(impl_->mutex);
+  return impl_->semantic_token_types;
+}
+
+bool LspClient::SupportsSemanticTokens() const {
+  return impl_->supports_semantic_tokens.load(std::memory_order_acquire);
+}
+
+void LspClient::SetTestSemanticTokensHandler(
+    std::function<void(std::string uri, SemanticTokensCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_semantic_tokens_handler = std::move(handler);
+  impl_->supports_semantic_tokens.store(true, std::memory_order_release);
+}
+
+void LspClient::SetTestSemanticTokenLegend(std::vector<std::string> legend) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->semantic_token_types = std::move(legend);
+  impl_->supports_semantic_tokens.store(true, std::memory_order_release);
+}
+
 }  // namespace microide::workspace

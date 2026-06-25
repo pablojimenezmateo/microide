@@ -1,5 +1,6 @@
 #include "workspace/LspProtocol.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace microide::workspace::lsp_protocol {
@@ -106,6 +107,41 @@ std::vector<LspClient::DocumentSymbol> ParseDocumentSymbols(const JsonValue& res
     symbols.push_back(ParseDocumentSymbol(item));
   }
   return symbols;
+}
+
+std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& result,
+                                                              std::size_t max_tokens) {
+  std::vector<LspClient::SemanticToken> tokens;
+  if (!result.HasKey("data")) {
+    return tokens;
+  }
+  const JsonValue& data = result["data"];
+  if (!data.IsArray()) {
+    return tokens;
+  }
+  const auto& ints = data.AsArray();
+  const std::size_t groups = ints.size() / 5;  // 5 ints per token; trailing partial ignored
+  tokens.reserve(std::min(groups, max_tokens));
+  int line = 0;
+  int start_char = 0;
+  for (std::size_t i = 0; i + 5 <= ints.size() && tokens.size() < max_tokens; i += 5) {
+    const int delta_line = static_cast<int>(ints[i].AsInt());
+    const int delta_start = static_cast<int>(ints[i + 1].AsInt());
+    const int length = static_cast<int>(ints[i + 2].AsInt());
+    const int token_type = static_cast<int>(ints[i + 3].AsInt());
+    if (delta_line > 0) {
+      line += delta_line;
+      start_char = delta_start;
+    } else {
+      start_char += delta_start;
+    }
+    if (length <= 0 || line < 0 || start_char < 0) {
+      continue;  // skip degenerate tokens but keep decoding the rest
+    }
+    tokens.push_back(LspClient::SemanticToken{
+        .line = line, .start_char = start_char, .length = length, .token_type = token_type});
+  }
+  return tokens;
 }
 
 JsonValue MakePosition(const LspClient::Position& position) {

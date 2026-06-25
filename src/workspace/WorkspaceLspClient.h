@@ -89,6 +89,15 @@ class LspClient {
     std::vector<DocumentSymbol> children;
   };
 
+  // One decoded semantic token: an absolute (line, start_char, length) range plus
+  // the server-legend token-type index (the deltas in `data` are pre-resolved).
+  struct SemanticToken {
+    int line = 0;
+    int start_char = 0;
+    int length = 0;
+    int token_type = 0;
+  };
+
   using OnPublishDiagnostics = std::function<void(std::string uri, std::vector<Diagnostic>)>;
 
   // Async callback types — called on the main thread from DrainCallbacks().
@@ -100,6 +109,8 @@ class LspClient {
   using RenameCallback = std::function<void(std::optional<WorkspaceEdit>)>;
   using DocumentSymbolCallback =
       std::function<void(std::optional<std::vector<DocumentSymbol>>)>;
+  using SemanticTokensCallback =
+      std::function<void(std::optional<std::vector<SemanticToken>>)>;
 
   LspClient();
   ~LspClient();
@@ -195,12 +206,26 @@ class LspClient {
   // Async textDocument/documentSymbol.
   void RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallback callback);
 
+  // Async textDocument/semanticTokens/full. The callback receives tokens decoded
+  // to absolute ranges; map the `token_type` index through SemanticTokenLegend().
+  void RequestSemanticTokensAsync(std::string uri, SemanticTokensCallback callback);
+
+  // The server's semantic-token type legend (index -> type name), captured from
+  // the initialize handshake. Empty when the server advertises no semanticTokens
+  // provider; in that case RequestSemanticTokensAsync reports nullopt.
+  std::vector<std::string> SemanticTokenLegend() const;
+  bool SupportsSemanticTokens() const;
+
   // Unit tests: pretend a connected server without starting a subprocess.
   void EnableTestStubMode();
   void DisableTestStubMode();
   void SetTestDocumentSymbolHandler(
       std::function<void(std::string uri, DocumentSymbolCallback cb)> handler);
   void ClearTestDocumentSymbolHandler();
+  // Unit tests: feed a canned semantic-tokens response + legend.
+  void SetTestSemanticTokensHandler(
+      std::function<void(std::string uri, SemanticTokensCallback cb)> handler);
+  void SetTestSemanticTokenLegend(std::vector<std::string> legend);
 
   // Shutdown and close connection (blocks until complete).
   void BeginShutdown();

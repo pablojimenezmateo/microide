@@ -101,6 +101,9 @@ WorkspaceShell::WorkspaceShell() {
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
       });
+  // Live theme pointer for baking semantic-token recolor decorations (theme_'s
+  // address is stable; a theme switch mutates it in place).
+  lsp_service_.SetTheme(&theme_);
   debug_service_.Configure(
       context_,
       DebugService::Operations{

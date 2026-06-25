@@ -249,7 +249,9 @@ class RenderViewModelBuilder {
                                 bool debug_enabled = false,
                                 const editor::BreakpointStore* breakpoints = nullptr,
                                 const DebugExecutionView* debug_execution = nullptr,
-                                bool inline_surfaces_enabled = false) const;
+                                bool inline_surfaces_enabled = false,
+                                bool code_lens_above_enabled = false,
+                                float line_height = 0.0f) const;
 
   editor::EditorViewModel BuildEditorViewModel(const editor::TextViewport& viewport,
                                                std::size_t visible_rows,
@@ -289,10 +291,13 @@ class RenderViewModelBuilder {
   static std::uint64_t OccurrenceScanCacheMissesForTesting();
 
  private:
-  // Phase E1: populate out.row_gaps / out.row_gap_contents from anchored plugin
-  // surfaces visible in `viewport`. No-op (clears them) when disabled.
+  // Phase E1/E2: populate out.row_gaps / out.row_gap_contents from anchored plugin
+  // surfaces (Below insets) and above-line code lenses (Above strips) visible in
+  // `viewport`. No-op (clears them) when both are disabled. `line_height` sizes the
+  // code-lens strip.
   void BuildEditorInsetGaps(editor::EditorViewModel& out, const editor::TextViewport& viewport,
-                            std::size_t visible_rows, bool enabled) const;
+                            std::size_t visible_rows, bool inline_surfaces_enabled,
+                            bool code_lens_above_enabled, float line_height) const;
 
   const WorkspaceContext& context_;
 };

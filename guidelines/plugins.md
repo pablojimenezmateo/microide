@@ -93,6 +93,16 @@ layered above selection so a translucent author color blends; `underline`/`strik
 draw lines; `bold`/`italic` are reserved style flags. The text-style render path
 stays allocation-free and materializes no strings.
 
+The host's own LSP integration reuses this exact recolor path: when a language
+server advertises `semanticTokens`, `LspService` requests `textDocument/
+semanticTokens/full`, maps each token's server-legend type to the theme's syntax
+palette, and publishes the resulting `fg`-recolor text styles into the same
+`PluginDecorationStore` under the reserved owner `lsp:semantic` (so plugin and
+LSP decorations coexist without a parallel mechanism). Tokens it has no distinct
+theme color for (variables, functions, parameters) are left to lexical
+highlighting. Colors refresh on document open and bulk edits; a debounced
+per-keystroke refresh is a follow-up.
+
 `inline_text` paints virtual text past a line's last glyph (`eol = true`, the
 default — this is the render path that powers Error Lens messages and EOL blame);
 its optional `bg` draws a band behind the text, and `color` defaults to the
@@ -100,7 +110,12 @@ disabled-text tone. Mid-line virtual text (`eol = false` + `col`) is parsed but
 not yet rendered — the v1 inline path is end-of-line only. `code_lenses` paint a
 clickable affordance at end of line in the accent color; clicking one dispatches
 its `command` through the normal command path (`ctx.commands.add` handlers and
-built-in actions alike), so a lens can re-publish to update its own label. Both
+built-in actions alike), so a lens can re-publish to update its own label. With the
+`plugins.code_lens_above` setting on (Phase E2), code lenses instead render as an
+inert inset strip **above** their line (reusing the `EditorRowYLayout` gap
+machinery, so the row is pushed down and the caret/selection skip the strip); the
+end-of-line affordance is suppressed and a click in the strip dispatches the same
+`command` (resolved gap-aware via `editor::ResolveInsetClick`). Both
 kinds render once per logical line on its first visual row; the painted rect and
 the click hit-test share one geometry helper (`editor::BuildEolDecorationSegments`)
 so a click always lands where the affordance was drawn. See the
@@ -289,12 +304,16 @@ PNG decoder each have a libFuzzer target (`PluginDisplayListParseFuzz`,
 
 **Inline insets are experimental and off by default.** With `plugins.inline_surfaces`
 enabled, an anchored surface renders as an inert vertical gap below its anchor
-line. The gap is inert (the caret skips it, a selection cannot enter it) and every
-row→y lookup goes through the single `editor::EditorRowYLayout` mapping, so with
-the setting off the editor geometry is byte-for-byte unchanged. Caret-vertical and
-click geometry are **not yet fully gap-aware** under the flag — that, and an
-above-line code-lens inset reusing the same gap machinery, are the remaining
-follow-ups for this gated path.
+line; with `plugins.code_lens_above` enabled, code lenses render as an inert strip
+above their line. Both gap kinds are inert (the caret skips them, a selection
+cannot enter them) and every row→y lookup — render, caret, selection, **and the
+click/hit-test input paths** (`editor::ResolveInsetClick`) — goes through the single
+`editor::EditorRowYLayout` mapping, so a click below an inset lands on the correct
+logical line and with both settings off the editor geometry is byte-for-byte
+unchanged. The one remaining follow-up for this gated path is the gutter
+comment-marker and inline-blame overlays, which still paint at the legacy row y
+(visually offset only when an inset gap sits above them with the flag on); the
+core caret/selection/click geometry is fully gap-aware.
 
 ## What Must Remain Host-Owned
 

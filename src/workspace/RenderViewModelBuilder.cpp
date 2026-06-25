@@ -3,6 +3,7 @@
 #include "workspace/DebugPaneRegistry.h"
 #include "workspace/GitSidebarCommandCenter.h"
 
+#include "editor/EditorInsetLayout.h"
 #include "editor/FoldingModel.h"
 #include "editor/PluginSurfaceStore.h"
 #include "util/Parse.h"
@@ -527,39 +528,22 @@ DebugPaneSurfaceViewModel RenderViewModelBuilder::BuildDebugPaneSurface() const 
 
 void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
                                                   const editor::TextViewport& viewport,
-                                                  std::size_t visible_rows, bool enabled) const {
+                                                  std::size_t visible_rows,
+                                                  bool inline_surfaces_enabled,
+                                                  bool code_lens_above_enabled,
+                                                  float line_height) const {
   thread_local std::vector<editor::RowGap> gaps;
-  thread_local std::vector<const editor::SurfaceContent*> contents;
-  gaps.clear();
-  contents.clear();
-  if (!enabled || viewport.is_placeholder() || viewport.path().empty()) {
-    return;
-  }
-  const editor::PluginSurfaceStore& store = context_.current_project_state.surface_store;
-  const std::span<const editor::AnchoredSurface> anchored =
-      store.AnchoredSurfacesForPath(viewport.path());
-  if (anchored.empty()) {
-    return;
-  }
-  const std::size_t scroll = viewport.scroll_line();
-  const std::size_t visual_count = viewport.visual_line_count();
-  for (const editor::AnchoredSurface& anchor : anchored) {
-    if (anchor.content == nullptr || !anchor.content->has_body()) {
-      continue;
-    }
-    const std::size_t visual_row = viewport.VisualRowForLine(anchor.line);
-    if (visual_row >= visual_count || visual_row < scroll || visual_row >= scroll + visible_rows) {
-      continue;  // anchor not in the visible window
-    }
-    const float height = std::clamp(anchor.content->intrinsic_height, 1.0f, 1024.0f);
-    gaps.push_back(editor::RowGap{static_cast<std::uint32_t>(visual_row), height});
-    contents.push_back(anchor.content);
-  }
-  // `anchored` is sorted by line and visual rows are monotonic in line, so `gaps`
-  // is already sorted by visual_row as EditorRowYLayout requires.
+  thread_local std::vector<editor::RowGapContent> contents;
+  editor::BuildRowGapsForWindow(
+      context_.current_project_state.surface_store, context_.current_project_state.decoration_store,
+      viewport, visible_rows,
+      editor::InsetGapOptions{.inline_surfaces = inline_surfaces_enabled,
+                              .code_lens_above = code_lens_above_enabled,
+                              .code_lens_height = line_height},
+      gaps, contents);
   out.row_gaps = std::span<const editor::RowGap>(gaps.data(), gaps.size());
-  out.row_gap_contents =
-      std::span<const editor::SurfaceContent* const>(contents.data(), contents.size());
+  out.row_gap_contents = std::span<const editor::RowGapContent>(contents.data(), contents.size());
+  out.code_lens_above = code_lens_above_enabled;
 }
 
 void RenderViewModelBuilder::BuildEditorViewModelInto(
@@ -575,7 +559,9 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     bool debug_enabled,
     const editor::BreakpointStore* breakpoints,
     const DebugExecutionView* debug_execution,
-    bool inline_surfaces_enabled) const {
+    bool inline_surfaces_enabled,
+    bool code_lens_above_enabled,
+    float line_height) const {
   util::AddPerformanceCounter(util::PerfCounterId::RenderBuildEditorViewModelCalls);
   out.fold_gutter_marks.clear();
   out.breakpoint_gutter_marks.clear();
@@ -587,10 +573,13 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   out.whitespace_glyph_runs.clear();
   out.whitespace_row_offsets.clear();
 
-  // Phase E1 (gated, default off): inline plugin-surface insets become inert
-  // vertical gaps below their anchor line's visual row. Built here so the render
-  // TU stays view-model-only; bounded to the visible window so it is O(visible).
-  BuildEditorInsetGaps(out, viewport, visible_rows, inline_surfaces_enabled);
+  // Phase E1/E2 (gated, default off): inline plugin-surface insets become inert
+  // gaps below their anchor row, and above-line code lenses become inert strips
+  // above their line. Built here so the render TU stays view-model-only; bounded
+  // to the visible window so it is O(visible).
+  out.code_lens_above = false;
+  BuildEditorInsetGaps(out, viewport, visible_rows, inline_surfaces_enabled,
+                       code_lens_above_enabled, line_height);
 
   if (folding_model != nullptr && !folding_model->ranges().empty()) {
     out.fold_gutter_marks.reserve(visible_rows);

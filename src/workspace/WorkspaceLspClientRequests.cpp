@@ -190,4 +190,42 @@ void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallba
       [failure = std::move(failure)]() { failure(std::nullopt); });
 }
 
+void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallback callback) {
+  if (!callback) return;
+  {
+    std::lock_guard lock(impl_->mutex);
+    if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
+      auto handler = impl_->test_semantic_tokens_handler;
+      impl_->ready_callbacks.push_back(
+          [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
+            if (handler) {
+              handler(std::move(uri), std::move(cb));
+            } else {
+              cb(std::nullopt);
+            }
+          });
+      return;
+    }
+  }
+  if (!impl_->supports_semantic_tokens.load(std::memory_order_acquire)) {
+    callback(std::nullopt);
+    return;
+  }
+  SemanticTokensCallback failure = callback;
+  using namespace util;
+  JsonObject params;
+  params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
+  impl_->DispatchRequest(
+      "textDocument/semanticTokens/full", JsonValue(std::move(params)),
+      [cb = std::move(callback)](util::JsonValue resp) {
+        if (!resp.HasKey("result")) {
+          cb(std::nullopt);
+          return;
+        }
+        cb(std::optional<std::vector<SemanticToken>>(
+            lsp_protocol::ParseSemanticTokensData(resp["result"])));
+      },
+      [failure = std::move(failure)]() { failure(std::nullopt); });
+}
+
 }  // namespace microide::workspace

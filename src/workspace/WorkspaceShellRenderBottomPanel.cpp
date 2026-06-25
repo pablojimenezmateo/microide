@@ -11,6 +11,7 @@
 #include <variant>
 
 #include "editor/DecoratedTextGridRenderer.h"
+#include "editor/PluginDecorationStore.h"
 #include "editor/PluginSurfaceStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "render/PluginDisplayList.h"
@@ -649,11 +650,23 @@ void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& p
       continue;
     }
     const std::size_t row = gap.visual_row - scroll_line;
+    const editor::RowGapContent content = i < view_model.row_gap_contents.size()
+                                              ? view_model.row_gap_contents[i]
+                                              : editor::RowGapContent{};
+    if (gap.placement == editor::RowGapPlacement::Above) {
+      // Phase E2: above-line code-lens strip sits directly over the row's text.
+      const float top = layout.RowTop(row) - gap.height;
+      if (content.code_lens != nullptr && !content.code_lens->text.empty()) {
+        const float text_x = pane_rect.x + metrics.gutter_width + 4.0f;
+        const float text_y = top + std::max(0.0f, (gap.height - metrics.line_height) * 0.5f);
+        text_renderer_.DrawString(renderer, text_x, text_y, theme_.accent,
+                                  content.code_lens->text);
+      }
+      continue;
+    }
     const float top = layout.RowTop(row) + metrics.line_height;
     const SDL_FRect inset{pane_rect.x, top, pane_rect.w, gap.height};
-    const editor::SurfaceContent* content =
-        i < view_model.row_gap_contents.size() ? view_model.row_gap_contents[i] : nullptr;
-    RenderPluginSurfaceInto(renderer, inset, content, 0.0f);
+    RenderPluginSurfaceInto(renderer, inset, content.surface, 0.0f);
   }
 }
 

@@ -7,7 +7,11 @@
 #include <string>
 #include <vector>
 
+#include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsStore.h"
+#include "editor/PluginDecorationStore.h"
+#include "editor/SyntaxHighlighter.h"
+#include "render/Theme.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
@@ -37,6 +41,25 @@ std::string DetectActiveLanguageIdCached(const editor::TextViewport& viewport,
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
   return util::SerializeLines(viewport.lines(), viewport.line_ending());
+}
+
+// Map an LSP standard semantic-token type name to the editor's lexical token
+// kind. Returns Plain for kinds we have no distinct theme color for (variable,
+// function, parameter, property, ...); the caller skips those so semantic tokens
+// only refine coloring rather than flatten it.
+editor::SyntaxTokenKind SyntaxKindForSemanticType(std::string_view type) {
+  if (type == "keyword" || type == "modifier") return editor::SyntaxTokenKind::Keyword;
+  if (type == "type" || type == "class" || type == "struct" || type == "interface" ||
+      type == "enum" || type == "typeParameter" || type == "namespace") {
+    return editor::SyntaxTokenKind::Type;
+  }
+  if (type == "string") return editor::SyntaxTokenKind::String;
+  if (type == "comment") return editor::SyntaxTokenKind::Comment;
+  if (type == "number") return editor::SyntaxTokenKind::Number;
+  if (type == "macro") return editor::SyntaxTokenKind::Preprocessor;
+  if (type == "operator") return editor::SyntaxTokenKind::Operator;
+  if (type == "enumMember") return editor::SyntaxTokenKind::Constant;
+  return editor::SyntaxTokenKind::Plain;
 }
 
 editor::DiagnosticSeverity DiagnosticSeverityFromLsp(int severity) {
@@ -86,6 +109,8 @@ void LspService::Configure(WorkspaceContext& context, CompletionRegistry& comple
 }
 
 void LspService::SetWakeEventType(Uint32 event_type) { wake_event_type_ = event_type; }
+
+void LspService::SetTheme(const render::Theme* theme) { theme_ = theme; }
 
 ProjectWorkspaceState& LspService::CurrentProjectState() {
   return context_->current_project_state;
@@ -282,6 +307,8 @@ void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, Lsp
     return;
   }
   client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
+  // Pull semantic tokens for the freshly-opened document so identifiers recolor.
+  RequestLspSemanticTokens(viewport, client);
 }
 
 void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
@@ -319,6 +346,60 @@ void LspService::PublishLspDiagnostics(ProjectWorkspaceState& state, std::string
   }
 }
 
+void LspService::RequestLspSemanticTokens(const editor::TextViewport& viewport, LspClient& client) {
+  if (theme_ == nullptr || viewport.path().empty() || !client.SupportsSemanticTokens()) {
+    return;
+  }
+  ProjectWorkspaceState* const project = &CurrentProjectState();
+  std::string uri = FileUriForPath(viewport.path());
+  std::vector<std::string> legend = client.SemanticTokenLegend();
+  if (legend.empty()) {
+    return;
+  }
+  client.RequestSemanticTokensAsync(
+      uri, [this, project, uri, legend = std::move(legend)](
+               std::optional<std::vector<LspClient::SemanticToken>> tokens) mutable {
+        if (!tokens.has_value()) {
+          return;
+        }
+        PublishLspSemanticTokens(*project, std::move(uri), std::move(legend), std::move(*tokens));
+      });
+}
+
+void LspService::PublishLspSemanticTokens(ProjectWorkspaceState& state, std::string uri,
+                                          std::vector<std::string> legend,
+                                          std::vector<LspClient::SemanticToken> tokens) {
+  if (theme_ == nullptr) {
+    return;
+  }
+  const std::optional<std::filesystem::path> path = PathFromFileUri(uri);
+  if (!path.has_value()) {
+    return;
+  }
+  const SDL_Color plain = theme_->text_primary;
+  editor::PluginDecorationData data;
+  data.text_styles.reserve(tokens.size());
+  for (const LspClient::SemanticToken& token : tokens) {
+    if (token.token_type < 0 ||
+        static_cast<std::size_t>(token.token_type) >= legend.size() || token.length <= 0) {
+      continue;
+    }
+    const editor::SyntaxTokenKind kind = SyntaxKindForSemanticType(legend[token.token_type]);
+    if (kind == editor::SyntaxTokenKind::Plain) {
+      continue;  // no distinct color -> leave the lexical highlighting in place
+    }
+    editor::TextStyleDecoration style;
+    style.line = static_cast<std::uint32_t>(token.line);
+    style.start_column = static_cast<std::uint32_t>(token.start_char);
+    style.end_column = static_cast<std::uint32_t>(token.start_char + token.length);
+    style.foreground = editor::SyntaxTokenColor(*theme_, kind, plain);  // a!=0 => recolor
+    data.text_styles.push_back(style);
+  }
+  if (state.decoration_store.ReplaceForOwnerFile("lsp:semantic", *path, std::move(data))) {
+    operations_.request_editor_surface_redraw();
+  }
+}
+
 void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                                 const std::vector<std::string>& after_lines) {
   editor::TextViewport* viewport = operations_.active_editable_viewport();
@@ -340,6 +421,10 @@ void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& 
   // so a clean full replace is the correct, desync-proof choice.
   const std::string uri = FileUriForPath(viewport->path());
   client->DidChange(uri, util::SerializeLines(after_lines, viewport->line_ending()));
+  // Refresh semantic tokens on bulk edits (paste/undo/format/multi-edit). The
+  // per-keystroke path stays request-free to keep typing fast; live incremental
+  // semantic refresh (a debounced re-request) is a documented follow-up.
+  RequestLspSemanticTokens(*viewport, *client);
 }
 
 void LspService::SyncLspForActiveEditableLastChange() {

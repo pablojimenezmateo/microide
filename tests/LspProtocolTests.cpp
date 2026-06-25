@@ -106,9 +106,34 @@ void TestLspProtocolEncodersRoundTrip() {
          "params carry position");
 }
 
+void TestLspProtocolDecodesSemanticTokens() {
+  // Two tokens on line 0 (cols 0..3 type 1, cols 5..9 type 2) and one on line 2
+  // (cols 4..6 type 0), delta-encoded as the LSP wire format prescribes.
+  const JsonValue result = Json(R"({"data":[
+      0,0,3,1,0,
+      0,5,4,2,0,
+      2,4,2,0,0]})");
+  const std::vector<LspClient::SemanticToken> tokens = codec::ParseSemanticTokensData(result);
+  Expect(tokens.size() == 3, "three tokens decode from the delta stream");
+  Expect(tokens[0].line == 0 && tokens[0].start_char == 0 && tokens[0].length == 3 &&
+             tokens[0].token_type == 1,
+         "first token resolves to absolute (0,0,3,type1)");
+  Expect(tokens[1].line == 0 && tokens[1].start_char == 5 && tokens[1].length == 4 &&
+             tokens[1].token_type == 2,
+         "second token shares the line and advances the column (0,5,4,type2)");
+  Expect(tokens[2].line == 2 && tokens[2].start_char == 4 && tokens[2].length == 2,
+         "third token jumps two lines and resets the column (2,4,2)");
+
+  // Malformed inputs decode to nothing rather than throwing or over-reading.
+  Expect(codec::ParseSemanticTokensData(Json(R"({})")).empty(), "missing data => no tokens");
+  Expect(codec::ParseSemanticTokensData(Json(R"({"data":[0,0,3]})")).empty(),
+         "a partial 3-int group yields no tokens");
+}
+
 }  // namespace
 
 void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "LspProtocol/DecodesSemanticTokens", TestLspProtocolDecodesSemanticTokens);
   AddTest(tests, "LspProtocol/ParsesPositionAndRange", TestLspProtocolParsesPositionAndRange);
   AddTest(tests, "LspProtocol/ParsesLocations", TestLspProtocolParsesLocationsArrayAndSingleAndLink);
   AddTest(tests, "LspProtocol/ParsesDiagnosticSeverityDefault",

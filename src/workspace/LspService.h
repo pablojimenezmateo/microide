@@ -8,6 +8,10 @@
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceLspManager.h"
 
+namespace microide::render {
+struct Theme;
+}
+
 namespace microide::workspace {
 
 struct WorkspaceContext;
@@ -35,6 +39,10 @@ class LspService {
   void Configure(WorkspaceContext& context, CompletionRegistry& completion_registry,
                  CodeActionRegistry& code_action_registry, Operations operations);
   void SetWakeEventType(Uint32 event_type);
+  // Live pointer to the host-owned active theme used to bake semantic-token colors
+  // (the address is stable; a theme switch mutates it in place). Optional: when
+  // null, semantic-token publishing is skipped.
+  void SetTheme(const render::Theme* theme);
 
   // Provider-presence queries for the active editable viewport.
   std::string ActiveLanguageIdForProvider() const;
@@ -66,6 +74,12 @@ class LspService {
                              std::string_view language_id);
   void PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
                              std::vector<LspClient::Diagnostic> diagnostics);
+  // Request textDocument/semanticTokens/full for `viewport` and publish the
+  // recolor decorations under owner "lsp:semantic" when the response arrives.
+  void RequestLspSemanticTokens(const editor::TextViewport& viewport, LspClient& client);
+  void PublishLspSemanticTokens(ProjectWorkspaceState& state, std::string uri,
+                                std::vector<std::string> legend,
+                                std::vector<LspClient::SemanticToken> tokens);
   void SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
                                       const std::vector<std::string>& after_lines);
   void SyncLspForActiveEditableLastChange();
@@ -77,6 +91,7 @@ class LspService {
   WorkspaceContext* context_ = nullptr;
   CompletionRegistry* completion_registry_ = nullptr;
   CodeActionRegistry* code_action_registry_ = nullptr;
+  const render::Theme* theme_ = nullptr;
   Operations operations_{};
   Uint32 wake_event_type_ = 0;
 };

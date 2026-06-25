@@ -149,6 +149,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/EolDecorationLayout.cpp
   src/editor/PluginSurfaceStore.cpp
   src/editor/EditorRowYLayout.cpp
+  src/editor/EditorInsetLayout.cpp
   src/editor/EditorViewRenderer.cpp
   src/editor/WelcomeView.cpp
   src/editor/FoldingModel.cpp
@@ -216,6 +217,7 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginDataDirectoryInterop.cpp
   src/plugin/PluginHoverQueryInterop.cpp
   src/plugin/PluginDiagnosticsInterop.cpp
+  src/plugin/PluginLuaParseHelpers.cpp
   src/plugin/PluginDecorationInterop.cpp
   src/plugin/PluginSurfaceInterop.cpp
   src/plugin/PluginLifecycleCallbackInterop.cpp
@@ -628,6 +630,7 @@ add_executable(microide_tests
   tests/PluginSurfaceStoreTests.cpp
   tests/PluginDisplayListTests.cpp
   tests/EditorRowYLayoutTests.cpp
+  tests/EditorInsetLayoutTests.cpp
   tests/EolDecorationLayoutTests.cpp
   tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp

@@ -138,6 +138,12 @@ struct LspClient::Impl {
   // When true, the client behaves as a connected server for unit tests (no subprocess).
   std::atomic<bool> test_stub_mode{false};
   std::function<void(std::string, DocumentSymbolCallback)> test_document_symbol_handler;
+  std::function<void(std::string, SemanticTokensCallback)> test_semantic_tokens_handler;
+
+  // Server semantic-token legend (index -> type name), captured at initialize.
+  // Guarded by `mutex`. Empty when the server advertises no semanticTokens provider.
+  std::vector<std::string> semantic_token_types;
+  std::atomic<bool> supports_semantic_tokens{false};
 
   // Diagnostics callback — set from main thread, called on main thread via ready_callbacks.
   OnPublishDiagnostics diagnostics_callback;
@@ -784,6 +790,22 @@ struct LspClient::Impl {
     JsonObject document_symbol_caps;
     document_symbol_caps["dynamicRegistration"] = JsonValue(false);
 
+    JsonObject semantic_tokens_caps;
+    semantic_tokens_caps["dynamicRegistration"] = JsonValue(false);
+    {
+      JsonObject requests;
+      requests["full"] = JsonValue(true);
+      semantic_tokens_caps["requests"] = JsonValue(std::move(requests));
+      JsonArray formats;
+      formats.push_back(JsonValue("relative"));
+      semantic_tokens_caps["formats"] = JsonValue(std::move(formats));
+      // The server still picks its own legend; we map its token-type indices by
+      // name at publish time, so an empty client tokenTypes/tokenModifiers set is
+      // fine (we accept whatever legend the server reports).
+      semantic_tokens_caps["tokenTypes"] = JsonValue(JsonArray{});
+      semantic_tokens_caps["tokenModifiers"] = JsonValue(JsonArray{});
+    }
+
     JsonObject text_document_caps;
     text_document_caps["synchronization"] = JsonValue(std::move(text_doc_sync));
     text_document_caps["completion"] = JsonValue(std::move(completion_caps));
@@ -795,6 +817,7 @@ struct LspClient::Impl {
     text_document_caps["codeAction"] = JsonValue(std::move(code_action_caps));
     text_document_caps["formatting"] = JsonValue(std::move(formatting_caps));
     text_document_caps["documentSymbol"] = JsonValue(std::move(document_symbol_caps));
+    text_document_caps["semanticTokens"] = JsonValue(std::move(semantic_tokens_caps));
 
     JsonObject workspace_caps;
     workspace_caps["configuration"] = JsonValue(true);
@@ -886,6 +909,26 @@ struct LspClient::Impl {
               sync_kind = sync["change"].AsInt(1);
             }
             supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
+
+            // Capture the semantic-token legend (type names) so the host can map
+            // a response's token-type indices back to names at publish time.
+            if (server_caps.HasKey("semanticTokensProvider")) {
+              const auto& provider = server_caps["semanticTokensProvider"];
+              if (provider.HasKey("legend") && provider["legend"].HasKey("tokenTypes")) {
+                const auto& types = provider["legend"]["tokenTypes"];
+                if (types.IsArray()) {
+                  const auto& array = types.AsArray();
+                  std::vector<std::string> legend;
+                  legend.reserve(array.size());
+                  for (const auto& entry : array) {
+                    legend.push_back(entry.AsString());
+                  }
+                  std::lock_guard lock(mutex);
+                  semantic_token_types = std::move(legend);
+                }
+                supports_semantic_tokens.store(true, std::memory_order_release);
+              }
+            }
           }
           got_init = true;
         }

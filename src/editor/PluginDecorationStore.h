@@ -88,8 +88,9 @@ struct InlineTextDecoration {
   }
 };
 
-// Clickable line-level command indicator (rendered as an end-of-line affordance
-// in Phase A/B; the above-line form lands with variable-height insets later).
+// Clickable line-level command indicator. Rendered as an end-of-line affordance
+// by default; with `plugins.code_lens_above` (Phase E2) it instead renders as an
+// inert inset strip above its line, reusing the EditorRowYLayout gap machinery.
 struct CodeLensDecoration {
   std::uint32_t line = 0;
   std::string text;
