@@ -6,6 +6,7 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceCounters.h"
 #include "workspace/EditorTabService.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
 #include "workspace/WorkspaceIndentDetectApply.h"
 
@@ -53,11 +54,7 @@ void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) c
 
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) const {
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
-    const auto value = GetSettingValue(id);
-    if (!value.has_value()) {
-      return default_value;
-    }
-    return *value != "false" && *value != "0" && *value != "off";
+    return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
 
   viewport.SetTabSize(context_.current_project_state.editor_preferences.tab_size);
@@ -102,11 +99,7 @@ editor::FoldingModel* WorkspaceShell::EnsureActiveFoldingModelFresh() {
     return editor_tab->folding_model.get();
   }
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
-    const auto value = GetSettingValue(id);
-    if (!value.has_value()) {
-      return default_value;
-    }
-    return *value != "false" && *value != "0" && *value != "off";
+    return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
   const std::string language_id =
       editor::runtime_syntax::DetectFiletype(active_viewport->path(), active_viewport->lines());

@@ -8,6 +8,7 @@
 #include "editor/BracketScanner.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -16,11 +17,7 @@ namespace microide::workspace {
 namespace {
 
 bool SettingEnabled(const WorkspaceActionContext& context, std::string_view id, bool default_value) {
-  const auto value = context.GetSettingValue(id);
-  if (!value.has_value()) {
-    return default_value;
-  }
-  return *value != "false" && *value != "0" && *value != "off";
+  return SettingFlagEnabled(context.GetSettingValue(id), default_value);
 }
 
 }  // namespace

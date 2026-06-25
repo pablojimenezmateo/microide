@@ -12,6 +12,7 @@
 #include "editor/PluginSurfaceStore.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -25,11 +26,7 @@ std::pair<editor::EditorViewMetrics, std::vector<std::size_t>> EditorPointerLayo
     const std::function<editor::FoldingModel*()>& ensure_active_folding_model_fresh) {
   util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::ResolvePointerLayout");
   auto setting_enabled = [&](std::string_view id, bool default_value) -> bool {
-    const auto value = get_setting_value(id);
-    if (!value.has_value()) {
-      return default_value;
-    }
-    return *value != "false" && *value != "0" && *value != "off";
+    return SettingFlagEnabled(get_setting_value(id), default_value);
   };
 
   const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
@@ -84,8 +81,7 @@ bool SettingOn(const std::function<std::optional<std::string>(std::string_view)>
   if (!get_setting_value) {
     return false;
   }
-  const auto value = get_setting_value(id);
-  return value.has_value() && *value != "false" && *value != "0" && *value != "off";
+  return SettingFlagEnabled(get_setting_value(id));
 }
 
 // Resolve the gap-aware visible-row offset for a pointer at screen-y `y`. When an
@@ -135,9 +131,7 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
   const auto debug_setting = operations_.get_setting_value
                                  ? operations_.get_setting_value("debug.enabled")
                                  : std::nullopt;
-  const bool debug_enabled = debug_setting.has_value() && *debug_setting != "false" &&
-                             *debug_setting != "0" && *debug_setting != "off";
-  if (!debug_enabled) {
+  if (!SettingFlagEnabled(debug_setting)) {
     return false;
   }
   const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
@@ -298,10 +292,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     const auto fold_setting = operations_.get_setting_value
                                   ? operations_.get_setting_value("editor.fold.enabled")
                                   : std::nullopt;
-    const bool fold_enabled = !fold_setting.has_value() ||
-                              (*fold_setting != "false" && *fold_setting != "0" &&
-                               *fold_setting != "off");
-    if (fold_enabled) {
+    if (SettingFlagEnabled(fold_setting, /*default_value=*/true)) {
       const float gutter_right = editor_rect.x + metrics.gutter_width;
       const float fold_hit_left = gutter_right - 18.0f;
       if (event.button.x >= fold_hit_left && event.button.x < gutter_right) {
@@ -336,9 +327,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     const auto debug_setting = operations_.get_setting_value
                                    ? operations_.get_setting_value("debug.enabled")
                                    : std::nullopt;
-    const bool debug_enabled = debug_setting.has_value() && *debug_setting != "false" &&
-                               *debug_setting != "0" && *debug_setting != "off";
-    if (debug_enabled) {
+    if (SettingFlagEnabled(debug_setting)) {
       const float gutter_left = editor_rect.x;
       const float fold_hit_left = editor_rect.x + metrics.gutter_width - 18.0f;
       if (event.button.x >= gutter_left && event.button.x < fold_hit_left) {

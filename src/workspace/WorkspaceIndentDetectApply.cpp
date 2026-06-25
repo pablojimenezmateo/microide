@@ -2,6 +2,7 @@
 
 #include "editor/IndentDetect.h"
 #include "editor/TextViewport.h"
+#include "workspace/SettingFlags.h"
 
 namespace microide::workspace {
 
@@ -12,12 +13,7 @@ void ApplyDetectedIndentAfterPreferences(
     return;
   }
 
-  const std::optional<std::string> toggle = get_setting("editor.indent.detect_on_open");
-  const bool enabled =
-      !toggle.has_value() ||
-      (*toggle != "false" && *toggle != "0" && *toggle != "off");
-
-  if (!enabled) {
+  if (!SettingFlagEnabled(get_setting("editor.indent.detect_on_open"), /*default_value=*/true)) {
     return;
   }
 

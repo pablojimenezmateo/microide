@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
@@ -18,11 +19,6 @@ bool IsMenuBarTopLevelMenu(MenuId id) {
          id != MenuId::EditorContext && id != MenuId::EditorTabContext &&
          id != MenuId::TerminalContext && id != MenuId::TerminalTabContext &&
          id != MenuId::ProjectTabContext;
-}
-
-// A bool-typed setting value reads as "on" unless it is one of the falsey tokens.
-bool SettingTruthy(const std::optional<std::string>& value) {
-  return value.has_value() && !(*value == "false" || *value == "0" || *value == "off");
 }
 
 }  // namespace
@@ -466,7 +462,7 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
     return context_.current_project_state.debug_pane.visible;
   }
   if (item.action == ActionId::DebugToggleEnabled) {
-    return SettingTruthy(GetSettingValue("debug.enabled"));
+    return SettingFlagEnabled(GetSettingValue("debug.enabled"));
   }
   if (item.action == ActionId::Wrap) {
     return context_.current_project_state.editor_preferences.soft_wrap;
@@ -488,11 +484,7 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   }
   if (const char* setting_key = EditorEssentialsCapabilitySettingKey(item.action);
       setting_key != nullptr) {
-    const auto value = GetSettingValue(setting_key);
-    if (!value.has_value()) {
-      return false;
-    }
-    return !(*value == "false" || *value == "0" || *value == "off");
+    return SettingFlagEnabled(GetSettingValue(setting_key));
   }
   return false;
 }

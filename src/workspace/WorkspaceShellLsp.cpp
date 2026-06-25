@@ -8,6 +8,7 @@
 
 #include "util/JsonValue.h"
 #include "workspace/ControlSpec.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
 
 // Thin forwarders to the host-owned protocol-client services so existing
@@ -19,10 +20,6 @@
 namespace microide::workspace {
 
 namespace {
-bool ControlSettingIsOn(const std::optional<std::string>& value) {
-  return value.has_value() && *value != "false" && *value != "0" && *value != "off";
-}
-
 // One console channel per debug session, keyed by session id. The label defaults
 // to the session name; a generic fallback covers an unnamed session.
 std::string DebugConsoleChannelId(int session_id) {
@@ -210,7 +207,7 @@ void WorkspaceShell::MaybeStartControlChannel() {
   if (startup_options_.control_stdout) {
     return;
   }
-  if (ControlSettingIsOn(GetSettingValue("control.enabled"))) {
+  if (SettingFlagEnabled(GetSettingValue("control.enabled"))) {
     control_channel_service_.Start(context_.current_project_state.root);
   } else {
     control_channel_service_.Stop();
@@ -448,8 +445,7 @@ bool WorkspaceShell::IsDebugSessionStopped() const {
 }
 
 bool WorkspaceShell::DebugEnabled() const {
-  const std::optional<std::string> value = GetSettingValue("debug.enabled");
-  return value.has_value() && *value != "false" && *value != "0" && *value != "off";
+  return SettingFlagEnabled(GetSettingValue("debug.enabled"));
 }
 
 void WorkspaceShell::DebugContinue() { debug_service_.Continue(); }

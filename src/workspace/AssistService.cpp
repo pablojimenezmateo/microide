@@ -14,6 +14,7 @@
 #include "util/TextFileIO.h"
 #include "workspace/FileUri.h"
 #include "workspace/LanguageDetection.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
@@ -80,11 +81,8 @@ void AssistService::Configure(WorkspaceContext& context,
 }
 
 bool AssistService::EditorSnippetsSettingEnabled() const {
-  const auto value = operations_.get_setting_value("editor.snippets.enabled");
-  if (!value.has_value()) {
-    return true;
-  }
-  return *value != "false" && *value != "0" && *value != "off";
+  return SettingFlagEnabled(operations_.get_setting_value("editor.snippets.enabled"),
+                            /*default_value=*/true);
 }
 
 bool AssistService::ShowCompletionOverlay(std::string* error_message) {

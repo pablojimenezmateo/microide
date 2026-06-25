@@ -4,6 +4,7 @@
 
 #include "editor/ShapingActions.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/SettingFlags.h"
 
 namespace microide::workspace {
 
@@ -13,11 +14,8 @@ bool EditorShapingLineOpsSettingEnabled(const KeyInputCoordinator::Operations& o
   if (!operations.get_setting_value) {
     return true;
   }
-  const auto value = operations.get_setting_value("editor.shaping.line_ops.enabled");
-  if (!value.has_value()) {
-    return true;
-  }
-  return *value != "false" && *value != "0" && *value != "off";
+  return SettingFlagEnabled(operations.get_setting_value("editor.shaping.line_ops.enabled"),
+                            /*default_value=*/true);
 }
 
 template <typename EditFn>

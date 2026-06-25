@@ -205,11 +205,7 @@
                                                   microide::editor::TextViewport& viewport,
                                                   const SDL_FRect& pane) {
     auto setting_enabled = [&](std::string_view id, bool default_value) -> bool {
-      const auto value = shell.GetSettingValue(id);
-      if (!value.has_value()) {
-        return default_value;
-      }
-      return *value != "false" && *value != "0" && *value != "off";
+      return SettingFlagEnabled(shell.GetSettingValue(id), default_value);
     };
     const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
     const bool sticky_setting = setting_enabled("editor.fold.sticky_scroll.enabled", true);

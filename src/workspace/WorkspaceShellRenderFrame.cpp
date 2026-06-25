@@ -8,6 +8,7 @@
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
@@ -383,11 +384,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           }
         };
     const auto setting_enabled = [this](std::string_view id, bool default_value) {
-      const auto value = GetSettingValue(id);
-      if (!value.has_value()) {
-        return default_value;
-      }
-      return *value != "false" && *value != "0" && *value != "off";
+      return SettingFlagEnabled(GetSettingValue(id), default_value);
     };
     const bool bracket_match_highlight_enabled =
         setting_enabled("editor.brackets.match_highlight.enabled", true);

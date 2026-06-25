@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "util/PerformanceTrace.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceCommandPromptCoordinator.h"
@@ -985,10 +986,8 @@ void WorkspaceActionContext::ToggleEditorEssentialsCapability(ActionId id) {
     return;
   }
 
-  bool currently_enabled = true;
-  if (const auto current = operations_.get_setting_value(key); current.has_value()) {
-    currently_enabled = !(*current == "false" || *current == "0" || *current == "off");
-  }
+  const bool currently_enabled =
+      SettingFlagEnabled(operations_.get_setting_value(key), /*default_value=*/true);
   const bool next_enabled = !currently_enabled;
   if (!operations_.set_setting_value(key, next_enabled ? "true" : "false")) {
     return;

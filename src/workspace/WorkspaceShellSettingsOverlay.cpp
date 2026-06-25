@@ -6,6 +6,7 @@
 
 #include "workspace/WorkspaceStartupOptions.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceKeybindingRegistry.h"
@@ -342,7 +343,7 @@ void WorkspaceShell::ApplyLiveSettings() {
   // The wake-event plumbing is already bound; only the listener is gated.
   MaybeStartControlChannel();
   if (const auto value = GetSettingValue("ui.show_status_bar"); value.has_value()) {
-    layout_mode_service_.SetStatusBarVisible(*value != "false" && *value != "0" && *value != "off");
+    layout_mode_service_.SetStatusBarVisible(SettingFlagEnabled(value));
   }
   if (const auto value = GetSettingValue("ui.layout_compact_breakpoint_px"); value.has_value()) {
     if (const auto parsed = util::ParseFloat(*value); parsed.has_value()) {

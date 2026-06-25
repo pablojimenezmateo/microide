@@ -10,6 +10,7 @@
 #include "editor/WelcomeView.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/WorkspaceChromeMouseCoordinator.h"
@@ -222,9 +223,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     // blame overlay (both anchor at end-of-line) so the actionable lens wins.
     // With `plugins.code_lens_above` the lens renders as an inset strip above its
     // line, so its click geometry comes from the gap layout instead of the EOL one.
-    const auto above_value = GetSettingValue("plugins.code_lens_above");
-    const bool code_lens_above = above_value.has_value() && *above_value != "false" &&
-                                 *above_value != "0" && *above_value != "off";
+    const bool code_lens_above = SettingFlagEnabled(GetSettingValue("plugins.code_lens_above"));
     const auto command =
         code_lens_above ? AboveLensCommandAtPosition(static_cast<float>(event.button.x),
                                                      static_cast<float>(event.button.y))
@@ -338,8 +337,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
       const auto setting_on = [this](std::string_view id) {
-        const auto value = GetSettingValue(id);
-        return value.has_value() && *value != "false" && *value != "0" && *value != "off";
+        return SettingFlagEnabled(GetSettingValue(id));
       };
       // No plugin/LSP contribution: no insets, so the gap-aware mapping collapses
       // to the legacy row formula. Skip the store probing entirely.
@@ -551,9 +549,7 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
   if (!ActiveTabIsEditor()) {
     return std::nullopt;
   }
-  const auto inline_value = GetSettingValue("plugins.inline_surfaces");
-  const bool inline_surfaces = inline_value.has_value() && *inline_value != "false" &&
-                               *inline_value != "0" && *inline_value != "off";
+  const bool inline_surfaces = SettingFlagEnabled(GetSettingValue("plugins.inline_surfaces"));
   const auto layout_state = CurrentWorkspaceLayout();
   if (!layout_state.has_value()) {
     return std::nullopt;

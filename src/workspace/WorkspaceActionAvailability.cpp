@@ -5,6 +5,8 @@
 #include <string_view>
 #include <utility>
 
+#include "workspace/SettingFlags.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -15,11 +17,7 @@ bool SettingEnabled(const ActionAvailability::Operations& operations,
   if (!operations.get_setting_value) {
     return default_value;
   }
-  const auto value = operations.get_setting_value(id);
-  if (!value.has_value()) {
-    return default_value;
-  }
-  return !(*value == "false" || *value == "0" || *value == "off");
+  return SettingFlagEnabled(operations.get_setting_value(id), default_value);
 }
 
 }  // namespace

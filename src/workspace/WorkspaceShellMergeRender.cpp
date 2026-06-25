@@ -16,6 +16,7 @@
 #include "util/PerformanceTrace.h"
 #include "workspace/CompareMergeRender.h"
 #include "workspace/MergeResolverContext.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 
@@ -458,11 +459,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           ? diagnostics_store.FindByPath(merge_tab->result_viewport.path())
           : nullptr;
   const auto merge_setting_enabled = [this](std::string_view id, bool default_value) {
-    const auto value = GetSettingValue(id);
-    if (!value.has_value()) {
-      return default_value;
-    }
-    return *value != "false" && *value != "0" && *value != "off";
+    return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
   const bool bracket_match_highlight_enabled =
       merge_setting_enabled("editor.brackets.match_highlight.enabled", true);
