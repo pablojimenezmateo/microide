@@ -38,6 +38,13 @@ struct PluginInstance {
   int on_project_close_ref = LUA_NOREF;
   int on_buffer_open_ref = LUA_NOREF;
   int on_buffer_save_ref = LUA_NOREF;
+  // Reactive editor events (SEAM 1). All optional; each stays LUA_NOREF unless the
+  // plugin registers it, which keeps the host's per-keystroke sampling zero-cost
+  // when nothing listens.
+  int on_buffer_change_ref = LUA_NOREF;
+  int on_cursor_move_ref = LUA_NOREF;
+  int on_selection_change_ref = LUA_NOREF;
+  int on_buffer_close_ref = LUA_NOREF;
   int shutdown_ref = LUA_NOREF;
 #endif
 };

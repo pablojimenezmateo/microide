@@ -749,6 +749,15 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = toast_delay_ms;
     }
   }
+  // Pending debounced editor events wake the loop near their deadline so the
+  // coalesced plugin callback fires promptly after typing settles.
+  if (const auto editor_event_delay = plugin_editor_event_tracker_.NextDelayMs(SDL_GetTicks());
+      editor_event_delay.has_value()) {
+    const Uint32 editor_event_delay_ms = static_cast<Uint32>(*editor_event_delay);
+    if (!next_delay.has_value() || editor_event_delay_ms < *next_delay) {
+      next_delay = editor_event_delay_ms;
+    }
+  }
   return next_delay;
 }
 
@@ -859,6 +868,17 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
     };
   }
   if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = true,
+            .rects = {},
+        },
+    };
+  }
+  // Debounced reactive editor events fire here once their deadline elapses. A full
+  // redraw covers any decorations a handler republishes in response.
+  if (DispatchDuePluginEditorEvents()) {
     return EventResult{
         .handled = true,
         .redraw = RenderInvalidation{

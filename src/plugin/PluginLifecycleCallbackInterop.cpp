@@ -81,6 +81,30 @@ void CallBufferCallback(runtime_types::PluginInstance* plugin,
   }
 }
 
+void CallBufferEventCallback(runtime_types::PluginInstance* plugin,
+                             int ref,
+                             const char* callback_name,
+                             const std::filesystem::path& path,
+                             const std::function<void(lua_State*)>& push_plugin_context,
+                             const std::function<void(lua_State*, const std::filesystem::path&)>&
+                                 push_buffer_table,
+                             const std::function<void(lua_State*)>& push_payload,
+                             const std::function<void(std::string)>& record_error,
+                             const std::function<std::string(const runtime_types::PluginInstance*)>&
+                                 format_plugin_prefix) {
+  if (plugin == nullptr || ref == LUA_NOREF || path.empty()) {
+    return;
+  }
+  lua_rawgeti(plugin->state, LUA_REGISTRYINDEX, ref);
+  push_plugin_context(plugin->state);
+  push_buffer_table(plugin->state, path);
+  push_payload(plugin->state);
+  std::string call_error;
+  if (!plugin->runtime->PCall(3, 0, &call_error)) {
+    record_error(format_plugin_prefix(plugin) + " " + callback_name + " failed: " + call_error);
+  }
+}
+
 void CallShutdown(runtime_types::PluginInstance* plugin,
                   const std::function<void(lua_State*)>& push_plugin_context,
                   const std::function<void(std::string)>& record_error,
@@ -166,6 +190,10 @@ bool LoadPluginRoot(const std::filesystem::path& plugin_root,
       .on_project_close_ref = LUA_NOREF,
       .on_buffer_open_ref = LUA_NOREF,
       .on_buffer_save_ref = LUA_NOREF,
+      .on_buffer_change_ref = LUA_NOREF,
+      .on_cursor_move_ref = LUA_NOREF,
+      .on_selection_change_ref = LUA_NOREF,
+      .on_buffer_close_ref = LUA_NOREF,
       .shutdown_ref = LUA_NOREF,
   };
 

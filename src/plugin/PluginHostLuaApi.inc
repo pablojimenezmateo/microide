@@ -829,6 +829,32 @@
         state, host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
+  // ctx.editor.* helpers never raise (they push (false, message) on failure), so
+  // they need no kPendingError handling — the interop already pushed every result.
+  static int LuaEditorApplyEdits(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    return runtime_api_interop::LuaEditorApplyEdits(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+  }
+
+  static int LuaEditorSetCursor(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    return runtime_api_interop::LuaEditorSetCursor(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+  }
+
+  static int LuaEditorSetSelection(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    return runtime_api_interop::LuaEditorSetSelection(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+  }
+
   void PushPluginContext(lua_State* state) {
     lua_context_interop::PushPluginContext(
         state, this,
@@ -851,6 +877,9 @@
             .decorations_clear = &LuaDecorationsClear,
             .surface_set = &LuaSurfaceSet,
             .surface_clear = &LuaSurfaceClear,
+            .editor_apply_edits = &LuaEditorApplyEdits,
+            .editor_set_cursor = &LuaEditorSetCursor,
+            .editor_set_selection = &LuaEditorSetSelection,
             .sidebar_add = &LuaSidebarAdd,
             .sidebar_show = &LuaSidebarShow,
             .hover_add = &LuaHoverAdd,
@@ -1065,6 +1094,23 @@
           PushBufferTable(state, buffer_path);
         },
         [this](std::string error) { RecordError(std::move(error)); },
+        [this](const PluginInstance* plugin_instance) {
+          return FormatPluginPrefix(plugin_instance);
+        });
+  }
+
+  void CallBufferEventCallback(PluginInstance* plugin,
+                               int ref,
+                               const char* callback_name,
+                               const std::filesystem::path& path,
+                               const std::function<void(lua_State*)>& push_payload) {
+    lifecycle_callback_interop::CallBufferEventCallback(
+        plugin, ref, callback_name, path,
+        [this](lua_State* state) { PushPluginContext(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          PushBufferTable(state, buffer_path);
+        },
+        push_payload, [this](std::string error) { RecordError(std::move(error)); },
         [this](const PluginInstance* plugin_instance) {
           return FormatPluginPrefix(plugin_instance);
         });

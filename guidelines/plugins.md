@@ -22,6 +22,11 @@ Plugins may contribute capabilities such as:
 - diagnostics
 - editor decorations via `ctx.decorations.set(path, {...})` / `ctx.decorations.clear(path?)`
   (see below)
+- host-owned buffer edits via `ctx.editor.apply_edits{ ... }` plus the
+  `ctx.editor.set_cursor` / `ctx.editor.set_selection` wrappers (see below)
+- reactive editor events (`on_buffer_change`, `on_cursor_move`,
+  `on_selection_change`, `on_buffer_close`) — debounced lifecycle callbacks
+  (see below)
 - content surfaces (charts / previews) via `ctx.surface.set(id, {...})` /
   `ctx.surface.clear(id)` (see below)
 - hover providers
@@ -120,6 +125,65 @@ kinds render once per logical line on its first visual row; the painted rect and
 the click hit-test share one geometry helper (`editor::BuildEolDecorationSegments`)
 so a click always lands where the affordance was drawn. See the
 `plugins/eol-annotations` dogfood plugin for a worked example of both.
+
+## Host-owned buffer edits (`ctx.editor`)
+
+Plugins do not touch editor buffers directly. Instead they submit a structured
+edit request that the host validates, clamps, and applies through the real
+viewport edit/undo primitives — so a plugin edit is bounds-checked, grouped into a
+single undo step, and redraws like any other edit. Lines and columns are
+**1-based**; `end_col` is exclusive (the same convention as decorations).
+
+```lua
+-- All edits apply atomically as ONE undo step. Returns true, or (false, reason).
+local ok, err = ctx.editor.apply_edits({
+  path = "src/main.cpp",        -- optional; omit/"" => the active editable buffer
+  edits = {
+    { start_line = 10, start_col = 5, end_line = 10, end_col = 9, text = "const" },
+    { start_line = 12, start_col = 1, end_line = 12, end_col = 1, text = "// " },
+  },
+  cursor = { line = 12, col = 4 },                       -- optional, applied after edits
+  selection = { start_line = 10, start_col = 5, end_line = 10, end_col = 10 }, -- optional
+})
+ctx.editor.set_cursor({ line = 3, col = 1 })             -- sugar for an empty-edit move
+ctx.editor.set_selection({ start_line = 3, start_col = 1, end_line = 3, end_col = 8 })
+```
+
+The host applies edits highest-position-first so earlier offsets stay valid, then
+moves the caret / sets the selection. A named `path` must be an already-open
+editor buffer (v1 never edits files on disk, so undo stays coherent); an unopened
+path returns `(false, …)`. This is the primitive a code-action command handler
+calls to apply a fix (ESLint `--fix`, a spell-check correction): the action's
+`command` runs, and its handler issues `ctx.editor.apply_edits`. Prefer this over
+`save_participants` for **ranged, undoable** edits — `save_participants` is a
+whole-document transform applied at save time and records no undo entry.
+
+## Reactive editor events
+
+In addition to the load-time `on_buffer_open` / `on_buffer_save` hooks, a plugin
+table may declare debounced reactive callbacks. The host samples the active
+editable buffer once per input batch and coalesces a burst of activity into a
+single trailing-debounced callback (≈150 ms after it settles), so typing never
+stalls. These are **zero-cost when unused**: a project with no subscribing plugin
+never arms the sampler.
+
+```lua
+return ide.plugin({
+  id = "reactor",
+  on_buffer_change = function(ctx, buffer, change)
+    -- change.start_line / change.end_line are a 1-based changed-line hint.
+  end,
+  on_cursor_move = function(ctx, buffer, pos)       -- pos = { line, col } (1-based)
+  end,
+  on_selection_change = function(ctx, buffer, sel)  -- sel = {start_line,start_col,end_line,end_col} or nil
+  end,
+  on_buffer_close = function(ctx, buffer) end,      -- fires immediately, not debounced
+})
+```
+
+These pair naturally with `ctx.decorations` and `ctx.editor`: an Error-Lens-style
+plugin re-publishes decorations from `on_buffer_change`; a paired-edit plugin
+issues `ctx.editor.apply_edits` from one.
 
 ## Tree sidebars (`ctx.sidebar.add`)
 
@@ -225,9 +289,12 @@ Required: `id`, `language_id`, `prefix`, `body` (all strings). Optional `label`.
 
 The host forms the stable snippet id as `<plugin_id>.<id>` for merges and
 `editor.snippets.user_disabled` filtering. Snippet **bodies** are stored in the
-resolved `LanguageContract`; expansion UI / completion routing is not wired
-until the snippet engine work in `openspec/changes/editor-essential-capabilities`
-lands.
+resolved `LanguageContract` and fully expandable: they surface in the completion
+list (`is_snippet`) and in the Insert-Snippet overlay, and pressing **Tab** after
+typing a snippet's `prefix` (with no active snippet session) expands it in place
+via `AssistService::TrySnippetPrefixExpansion` — an ambiguous or non-matching
+prefix falls through to a literal tab. Tabstop / placeholder / choice navigation
+(`$1`, `${1:default}`, `${1|a,b|}`) is handled by `editor::SnippetEngine`.
 
 After changes to these tables, the workspace refreshes `WorkspaceLanguageContract`
 and reapplies `LanguageContractView` to open editor tabs (same revision path as

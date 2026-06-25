@@ -78,8 +78,15 @@ void TestArchitectureInvariants() {
              // 1586: +2 for the Phase E2 AboveLensCommandAtPosition entry point
              // that resolves above-line code-lens inset clicks (gap-aware) to the
              // bound command, paired with the existing EOL CodeLensCommandAtPosition.
+             // 1587: +1 for ApplyPluginWorkspaceEdit, the host-owned entry point that
+             // applies plugin ctx.editor.apply_edits requests through the real
+             // viewport edit/undo primitives (SEAM 2 of VSCode-portability work).
+             // 1591: +4 for the SEAM 1 reactive-editor-event seam: the
+             // PluginEditorEventTracker member plus the RefreshPluginEditorEventInterest
+             // / SamplePluginEditorEvents / DispatchDuePluginEditorEvents entry points
+             // that debounce on_buffer_change/cursor/selection dispatch.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1586);
+                                                     1591);
            });
 
   bool hard_failure = false;

@@ -54,6 +54,7 @@
 #include "workspace/WorkspaceAnnotationRegistry.h"
 #include "workspace/WorkspaceThemeRegistry.h"
 #include "workspace/WorkspaceFileIconRegistry.h"
+#include "workspace/PluginEditorEventTracker.h"
 #include "workspace/WorkspaceVirtualDocument.h"
 #include "workspace/WorkspaceReviewComments.h"
 #include "workspace/WorkspaceEventResult.h"

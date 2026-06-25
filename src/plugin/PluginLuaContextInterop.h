@@ -26,6 +26,9 @@ struct ApiFns {
   lua_CFunction decorations_clear;
   lua_CFunction surface_set;
   lua_CFunction surface_clear;
+  lua_CFunction editor_apply_edits;
+  lua_CFunction editor_set_cursor;
+  lua_CFunction editor_set_selection;
   lua_CFunction sidebar_add;
   lua_CFunction sidebar_show;
   lua_CFunction hover_add;

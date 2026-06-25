@@ -219,6 +219,37 @@ class PluginHost {
     std::vector<std::string> arguments;
   };
 
+  // One ranged text edit inside a WorkspaceEditRequest. All positions are 1-based
+  // (matching the rest of the plugin position vocabulary); `end_*` is exclusive.
+  // The host validates and clamps every edit against the live buffer before
+  // applying, so out-of-range values are corrected, never trusted.
+  struct EditRequest {
+    std::size_t start_line = 0;
+    std::size_t start_column = 0;
+    std::size_t end_line = 0;
+    std::size_t end_column = 0;
+    std::string text;
+  };
+
+  // A host-owned text-edit request from a plugin (`ctx.editor.apply_edits`). The
+  // host applies all `edits` as a single grouped undo step on the resolved buffer
+  // (empty `path` => the active editable buffer; a named path must be open), then
+  // optionally moves the caret / sets the selection. Unlike `save_participants`
+  // (a whole-document transform at save time, producing no undo entry), this is a
+  // ranged, undoable edit through the real viewport edit primitives.
+  struct WorkspaceEditRequest {
+    std::filesystem::path path;     // empty => active editable buffer
+    std::vector<EditRequest> edits;  // 1-based; applied atomically (one undo step)
+    bool has_cursor = false;
+    std::size_t cursor_line = 0;     // 1-based
+    std::size_t cursor_column = 0;   // 1-based
+    bool has_selection = false;
+    std::size_t selection_start_line = 0;
+    std::size_t selection_start_column = 0;
+    std::size_t selection_end_line = 0;
+    std::size_t selection_end_column = 0;
+  };
+
   // A navigation target produced by a plugin go-to-definition / find-references
   // provider. `line`/`column` are 1-based; `path` is resolved against the
   // current project root by the host.
@@ -457,6 +488,12 @@ class PluginHost {
     std::function<void(std::string_view, std::string_view)> clear_surface;
     std::function<void(std::string_view)> clear_owner_surfaces;
     std::function<void(std::uint64_t, int, std::vector<std::byte>, int, int)> decode_raster;
+    // Apply a plugin-requested ranged text edit (`ctx.editor.apply_edits`) on the
+    // host thread. Returns true when the edit was applied to a resolved buffer.
+    // The host owns validation, undo grouping, caret placement, and redraw; the
+    // plugin never touches the buffer directly. Dormant (no per-frame cost) until
+    // a plugin issues an edit.
+    std::function<bool(std::string_view owner, const WorkspaceEditRequest&)> apply_workspace_edit;
     std::function<void(const std::string&)> error_sink;
     std::function<void(const std::string&)> log_sink;
     std::function<std::optional<std::string>(std::string_view)> get_setting;
@@ -494,6 +531,33 @@ class PluginHost {
   void Shutdown();
   void OnBufferOpen(const std::filesystem::path& path);
   void OnBufferSave(const std::filesystem::path& path);
+  // Which reactive editor events at least one loaded plugin subscribes to. The
+  // host queries this once per plugin reload and gates its per-keystroke sampling
+  // on it, so a project with no subscribing plugin pays nothing.
+  struct EditorEventInterest {
+    bool buffer_change = false;
+    bool cursor_move = false;
+    bool selection_change = false;
+    bool buffer_close = false;
+    bool any() const {
+      return buffer_change || cursor_move || selection_change || buffer_close;
+    }
+  };
+  EditorEventInterest EditorEventInterests() const;
+  // Reactive editor events (SEAM 1). `OnBufferChange` reports a 1-based inclusive
+  // changed-line range; `OnCursorMove` a 1-based caret; `OnSelectionChange` a
+  // 1-based range (all zero => selection cleared); `OnBufferClose` mirrors save.
+  void OnBufferChange(const std::filesystem::path& path,
+                      std::size_t start_line,
+                      std::size_t end_line);
+  void OnCursorMove(const std::filesystem::path& path, std::size_t line, std::size_t column);
+  void OnSelectionChange(const std::filesystem::path& path,
+                         bool has_selection,
+                         std::size_t start_line,
+                         std::size_t start_column,
+                         std::size_t end_line,
+                         std::size_t end_column);
+  void OnBufferClose(const std::filesystem::path& path);
   bool ExecuteCommand(std::string_view name,
                       const std::vector<std::string>& args,
                       std::string* error_message = nullptr,

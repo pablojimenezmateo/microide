@@ -38,6 +38,21 @@ void CallBufferCallback(runtime_types::PluginInstance* plugin,
                         const std::function<std::string(const runtime_types::PluginInstance*)>&
                             format_plugin_prefix);
 
+// Like CallBufferCallback but pushes a third argument table (the event payload —
+// a changed-line range, caret position, or selection). `push_payload` writes one
+// Lua value onto the stack. Used by the reactive editor events (SEAM 1).
+void CallBufferEventCallback(runtime_types::PluginInstance* plugin,
+                             int ref,
+                             const char* callback_name,
+                             const std::filesystem::path& path,
+                             const std::function<void(lua_State*)>& push_plugin_context,
+                             const std::function<void(lua_State*, const std::filesystem::path&)>&
+                                 push_buffer_table,
+                             const std::function<void(lua_State*)>& push_payload,
+                             const std::function<void(std::string)>& record_error,
+                             const std::function<std::string(const runtime_types::PluginInstance*)>&
+                                 format_plugin_prefix);
+
 void CallShutdown(runtime_types::PluginInstance* plugin,
                   const std::function<void(lua_State*)>& push_plugin_context,
                   const std::function<void(std::string)>& record_error,

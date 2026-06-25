@@ -867,6 +867,17 @@
                                             editor::TextPosition cursor_before);
   editor::TextViewport* ActiveEditableViewport();
   const editor::TextViewport* ActiveEditableViewport() const;
+  // Applies a plugin `ctx.editor.apply_edits` request: resolves the target
+  // viewport (active editable buffer, or a named open editor buffer), validates
+  // and clamps every edit, applies them as one grouped-undo step, then optionally
+  // moves the caret / sets the selection. Returns true when a buffer was edited.
+  bool ApplyPluginWorkspaceEdit(const plugin::PluginHost::WorkspaceEditRequest& request);
+  // SEAM 1 reactive editor events: recompute which events any plugin wants (after
+  // reload), sample the active buffer once per input batch, and dispatch coalesced
+  // events when their debounce deadline elapses.
+  void RefreshPluginEditorEventInterest();
+  void SamplePluginEditorEvents();
+  bool DispatchDuePluginEditorEvents();
   void MoveMergeSelection(int delta);
   void ScrollMergeColumns(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
@@ -1711,6 +1722,7 @@
   DebugService debug_service_;
   ControlChannelService control_channel_service_;
   WorkspaceLanguageContract language_contract_;
+  PluginEditorEventTracker plugin_editor_event_tracker_;
   struct LiveSettingsEditorSnapshot {
     std::filesystem::path project_root;
     std::size_t tab_size = 0;

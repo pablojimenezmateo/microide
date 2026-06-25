@@ -119,6 +119,121 @@ void PluginHost::OnBufferSave(const std::filesystem::path& path) {
 #endif
 }
 
+PluginHost::EditorEventInterest PluginHost::EditorEventInterests() const {
+  EditorEventInterest interest;
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (const auto& plugin : impl_->plugins) {
+    interest.buffer_change |= plugin.on_buffer_change_ref != LUA_NOREF;
+    interest.cursor_move |= plugin.on_cursor_move_ref != LUA_NOREF;
+    interest.selection_change |= plugin.on_selection_change_ref != LUA_NOREF;
+    interest.buffer_close |= plugin.on_buffer_close_ref != LUA_NOREF;
+  }
+#endif
+  return interest;
+}
+
+void PluginHost::OnBufferChange(const std::filesystem::path& path,
+                                std::size_t start_line,
+                                std::size_t end_line) {
+  if (!impl_->enabled() || path.empty()) {
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (auto& plugin : impl_->plugins) {
+    impl_->CallBufferEventCallback(
+        &plugin, plugin.on_buffer_change_ref, "on_buffer_change", path,
+        [start_line, end_line](lua_State* state) {
+          lua_createtable(state, 0, 2);
+          lua_pushinteger(state, static_cast<lua_Integer>(start_line));
+          lua_setfield(state, -2, "start_line");
+          lua_pushinteger(state, static_cast<lua_Integer>(end_line));
+          lua_setfield(state, -2, "end_line");
+        });
+  }
+#else
+  (void)start_line;
+  (void)end_line;
+#endif
+}
+
+void PluginHost::OnCursorMove(const std::filesystem::path& path,
+                              std::size_t line,
+                              std::size_t column) {
+  if (!impl_->enabled() || path.empty()) {
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (auto& plugin : impl_->plugins) {
+    impl_->CallBufferEventCallback(
+        &plugin, plugin.on_cursor_move_ref, "on_cursor_move", path,
+        [line, column](lua_State* state) {
+          lua_createtable(state, 0, 2);
+          lua_pushinteger(state, static_cast<lua_Integer>(line));
+          lua_setfield(state, -2, "line");
+          lua_pushinteger(state, static_cast<lua_Integer>(column));
+          lua_setfield(state, -2, "col");
+        });
+  }
+#else
+  (void)line;
+  (void)column;
+#endif
+}
+
+void PluginHost::OnSelectionChange(const std::filesystem::path& path,
+                                   bool has_selection,
+                                   std::size_t start_line,
+                                   std::size_t start_column,
+                                   std::size_t end_line,
+                                   std::size_t end_column) {
+  if (!impl_->enabled() || path.empty()) {
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  for (auto& plugin : impl_->plugins) {
+    impl_->CallBufferEventCallback(
+        &plugin, plugin.on_selection_change_ref, "on_selection_change", path,
+        [has_selection, start_line, start_column, end_line, end_column](lua_State* state) {
+          if (!has_selection) {
+            lua_pushnil(state);
+            return;
+          }
+          lua_createtable(state, 0, 4);
+          lua_pushinteger(state, static_cast<lua_Integer>(start_line));
+          lua_setfield(state, -2, "start_line");
+          lua_pushinteger(state, static_cast<lua_Integer>(start_column));
+          lua_setfield(state, -2, "start_col");
+          lua_pushinteger(state, static_cast<lua_Integer>(end_line));
+          lua_setfield(state, -2, "end_line");
+          lua_pushinteger(state, static_cast<lua_Integer>(end_column));
+          lua_setfield(state, -2, "end_col");
+        });
+  }
+#else
+  (void)has_selection;
+  (void)start_line;
+  (void)start_column;
+  (void)end_line;
+  (void)end_column;
+#endif
+}
+
+void PluginHost::OnBufferClose(const std::filesystem::path& path) {
+  if (!impl_->enabled() || path.empty()) {
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  buffer_lifecycle_interop::DispatchBufferCallbacks(
+      &impl_->plugins, &runtime_types::PluginInstance::on_buffer_close_ref, "on_buffer_close", path,
+      [this](runtime_types::PluginInstance* plugin,
+             int callback_ref,
+             const char* callback_name,
+             const std::filesystem::path& callback_path) {
+        impl_->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
+      });
+#endif
+}
+
 bool PluginHost::ExecuteCommand(std::string_view name,
                                 const std::vector<std::string>& args,
                                 std::string* error_message,

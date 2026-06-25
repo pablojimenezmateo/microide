@@ -59,6 +59,13 @@
     return *shell.ActiveEditorViewport();
   }
 
+  static void SamplePluginEditorEvents(WorkspaceShell& shell) {
+    shell.SamplePluginEditorEvents();
+  }
+  static bool DispatchDuePluginEditorEvents(WorkspaceShell& shell) {
+    return shell.DispatchDuePluginEditorEvents();
+  }
+
   static void ApplyEditorPreferencesToAllTabs(WorkspaceShell& shell) {
     shell.ApplyEditorPreferencesToAllTabs();
   }

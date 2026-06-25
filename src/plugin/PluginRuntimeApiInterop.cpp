@@ -5,9 +5,46 @@
 #include "plugin/LuaError.h"
 #include "plugin/PluginDecorationInterop.h"
 #include "plugin/PluginDiagnosticsInterop.h"
+#include "plugin/PluginLuaInterop.h"
+#include "plugin/PluginPathInterop.h"
 #include "plugin/PluginSurfaceInterop.h"
 
 namespace microide::plugin::runtime_api_interop {
+namespace {
+
+// Reads a 1-based position field; 0 means "absent" (callers treat 0 as unset).
+std::size_t ReadIndexField(lua_State* state, int table_index, const char* field) {
+  const float value = lua_interop::ReadNumberField(state, table_index, field, 0.0f);
+  return value >= 1.0f ? static_cast<std::size_t>(value) : 0;
+}
+
+// Resolves an optional `path` field on the spec table at index 1 against the
+// project root. An absent/empty path leaves the request targeting the active
+// editable buffer.
+void ReadOptionalPathField(lua_State* state,
+                           const std::filesystem::path& current_project_root,
+                           PluginHost::WorkspaceEditRequest* request) {
+  std::optional<std::string> raw_path = lua_interop::ReadOptionalStringField(state, 1, "path");
+  if (raw_path.has_value() && !raw_path->empty()) {
+    request->path =
+        path_interop::ResolveRuntimePath(current_project_root, std::filesystem::path(*raw_path));
+  }
+}
+
+// Invokes the host edit callback and pushes the Lua result tuple. `request` must
+// be destructed by the caller's enclosing scope before this returns to keep the
+// (potentially OOM-raising) Lua pushes free of live C++ locals.
+int PushEditResult(lua_State* state, bool applied, const char* fail_message) {
+  if (applied) {
+    lua_pushboolean(state, 1);
+    return 1;
+  }
+  lua_pushboolean(state, 0);
+  lua_pushstring(state, fail_message != nullptr ? fail_message : "editor edit failed");
+  return 2;
+}
+
+}  // namespace
 
 // These delegating functions are called by the thin wrappers in
 // PluginHostLuaApi.inc. They never longjmp (no luaL_error / luaL_check): on any
@@ -146,6 +183,123 @@ int LuaSidebarShow(lua_State* state, const PluginHost::Callbacks& callbacks) {
   }
   lua_pushboolean(state, callbacks.show_sidebar(id) ? 1 : 0);
   return 1;
+}
+
+int LuaEditorApplyEdits(lua_State* state,
+                        const runtime_types::PluginInstance* plugin,
+                        const std::filesystem::path& current_project_root,
+                        const PluginHost::Callbacks& callbacks) {
+  if (lua_type(state, 1) != LUA_TTABLE) {
+    return PushEditResult(state, false, "editor.apply_edits requires a spec table");
+  }
+  if (plugin == nullptr || !callbacks.apply_workspace_edit) {
+    return PushEditResult(state, false, "editor.apply_edits unavailable");
+  }
+  bool applied = false;
+  const char* fail_message = "editor.apply_edits could not resolve a target buffer";
+  {
+    PluginHost::WorkspaceEditRequest request;
+    ReadOptionalPathField(state, current_project_root, &request);
+
+    lua_getfield(state, 1, "edits");
+    if (lua_type(state, -1) == LUA_TTABLE) {
+      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, -1));
+      for (lua_Integer i = 1; i <= count; ++i) {
+        lua_rawgeti(state, -1, i);
+        if (lua_type(state, -1) == LUA_TTABLE) {
+          const int edit_index = lua_gettop(state);
+          PluginHost::EditRequest edit;
+          edit.start_line = ReadIndexField(state, edit_index, "start_line");
+          edit.start_column = ReadIndexField(state, edit_index, "start_col");
+          edit.end_line = ReadIndexField(state, edit_index, "end_line");
+          edit.end_column = ReadIndexField(state, edit_index, "end_col");
+          lua_interop::ReadStringField(state, edit_index, "text", &edit.text);
+          request.edits.push_back(std::move(edit));
+        }
+        lua_pop(state, 1);
+      }
+    }
+    lua_pop(state, 1);  // edits
+
+    lua_getfield(state, 1, "cursor");
+    if (lua_type(state, -1) == LUA_TTABLE) {
+      const int cursor_index = lua_gettop(state);
+      request.cursor_line = ReadIndexField(state, cursor_index, "line");
+      request.cursor_column = ReadIndexField(state, cursor_index, "col");
+      request.has_cursor = request.cursor_line >= 1;
+    }
+    lua_pop(state, 1);  // cursor
+
+    lua_getfield(state, 1, "selection");
+    if (lua_type(state, -1) == LUA_TTABLE) {
+      const int selection_index = lua_gettop(state);
+      request.selection_start_line = ReadIndexField(state, selection_index, "start_line");
+      request.selection_start_column = ReadIndexField(state, selection_index, "start_col");
+      request.selection_end_line = ReadIndexField(state, selection_index, "end_line");
+      request.selection_end_column = ReadIndexField(state, selection_index, "end_col");
+      request.has_selection =
+          request.selection_start_line >= 1 && request.selection_end_line >= 1;
+    }
+    lua_pop(state, 1);  // selection
+
+    if (request.edits.empty() && !request.has_cursor && !request.has_selection) {
+      fail_message = "editor.apply_edits requires edits, cursor, or selection";
+    } else {
+      applied = callbacks.apply_workspace_edit(plugin->id, request);
+    }
+  }
+  return PushEditResult(state, applied, fail_message);
+}
+
+int LuaEditorSetCursor(lua_State* state,
+                       const runtime_types::PluginInstance* plugin,
+                       const std::filesystem::path& current_project_root,
+                       const PluginHost::Callbacks& callbacks) {
+  if (lua_type(state, 1) != LUA_TTABLE) {
+    return PushEditResult(state, false, "editor.set_cursor requires a position table");
+  }
+  if (plugin == nullptr || !callbacks.apply_workspace_edit) {
+    return PushEditResult(state, false, "editor.set_cursor unavailable");
+  }
+  bool applied = false;
+  {
+    PluginHost::WorkspaceEditRequest request;
+    ReadOptionalPathField(state, current_project_root, &request);
+    request.cursor_line = ReadIndexField(state, 1, "line");
+    request.cursor_column = ReadIndexField(state, 1, "col");
+    request.has_cursor = request.cursor_line >= 1;
+    if (request.has_cursor) {
+      applied = callbacks.apply_workspace_edit(plugin->id, request);
+    }
+  }
+  return PushEditResult(state, applied, "editor.set_cursor requires a 1-based line");
+}
+
+int LuaEditorSetSelection(lua_State* state,
+                          const runtime_types::PluginInstance* plugin,
+                          const std::filesystem::path& current_project_root,
+                          const PluginHost::Callbacks& callbacks) {
+  if (lua_type(state, 1) != LUA_TTABLE) {
+    return PushEditResult(state, false, "editor.set_selection requires a range table");
+  }
+  if (plugin == nullptr || !callbacks.apply_workspace_edit) {
+    return PushEditResult(state, false, "editor.set_selection unavailable");
+  }
+  bool applied = false;
+  {
+    PluginHost::WorkspaceEditRequest request;
+    ReadOptionalPathField(state, current_project_root, &request);
+    request.selection_start_line = ReadIndexField(state, 1, "start_line");
+    request.selection_start_column = ReadIndexField(state, 1, "start_col");
+    request.selection_end_line = ReadIndexField(state, 1, "end_line");
+    request.selection_end_column = ReadIndexField(state, 1, "end_col");
+    request.has_selection =
+        request.selection_start_line >= 1 && request.selection_end_line >= 1;
+    if (request.has_selection) {
+      applied = callbacks.apply_workspace_edit(plugin->id, request);
+    }
+  }
+  return PushEditResult(state, applied, "editor.set_selection requires a 1-based range");
 }
 
 }  // namespace microide::plugin::runtime_api_interop

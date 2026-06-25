@@ -30,6 +30,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       add_focus_surface_redraw(focus_after);
     }
   }
+  // Single chokepoint for reactive editor-event sampling: diff the active buffer's
+  // content/caret/selection once per input batch (no-op unless a plugin subscribes).
+  SamplePluginEditorEvents();
   return result;
 }
 

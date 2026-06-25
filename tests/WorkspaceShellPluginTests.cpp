@@ -2,6 +2,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StringUtil.h"
+#include "workspace/PluginEditorEventTracker.h"
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/WorkspaceLspManager.h"
 #include "workspace/WorkspaceShellTestAccess.h"
@@ -2531,9 +2532,368 @@ return ide.plugin({
          "switching back must retain the SAME warm client instance (no restart/re-index)");
 }
 
+// SEAM 2 — host-owned plugin buffer edits (ctx.editor.apply_edits).
+// Loads a plugin exposing commands that drive apply_edits/set_cursor/set_selection
+// against the active buffer, then asserts the host applied them with correct
+// grouped-undo, caret, and rejection behaviour.
+void RunEditPluginSetup(WorkspaceShell& shell,
+                        const std::filesystem::path& plugins_root,
+                        const std::filesystem::path& project_root,
+                        const std::filesystem::path& source,
+                        std::string_view source_text) {
+  WriteFile(source, std::string(source_text));
+  WritePluginInit(
+      plugins_root, "editops",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "editops",
+  setup = function(ctx)
+    ctx.commands.add("editops.replace_first_word", function()
+      local ok = ctx.editor.apply_edits({
+        edits = { { start_line = 1, start_col = 1, end_line = 1, end_col = 6, text = "HELLO" } },
+      })
+      ctx.log(ok and "applied" or "rejected")
+    end)
+    ctx.commands.add("editops.replace_two_lines", function()
+      local ok = ctx.editor.apply_edits({
+        edits = {
+          { start_line = 1, start_col = 1, end_line = 1, end_col = 4, text = "AAA" },
+          { start_line = 2, start_col = 1, end_line = 2, end_col = 4, text = "BBB" },
+        },
+      })
+      ctx.log(ok and "applied" or "rejected")
+    end)
+    ctx.commands.add("editops.select_first_two", function()
+      ctx.editor.set_selection({ start_line = 1, start_col = 1, end_line = 1, end_col = 3 })
+    end)
+    ctx.commands.add("editops.edit_missing_path", function()
+      local ok, err = ctx.editor.apply_edits({
+        path = "not-open.txt",
+        edits = { { start_line = 1, start_col = 1, end_line = 1, end_col = 1, text = "X" } },
+      })
+      ctx.log(ok and "applied" or ("rejected:" .. tostring(err)))
+    end)
+    ctx.commands.add("editops.append_past_end", function()
+      local ok = ctx.editor.apply_edits({
+        edits = { { start_line = 999, start_col = 999, end_line = 999, end_col = 999, text = "!" } },
+      })
+      ctx.log(ok and "applied" or "rejected")
+    end)
+  end
+})
+)");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "editops plugin fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+}
+
+void TestWorkspaceShellPluginApplyEditsSingleEditUndo() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\nworld\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.replace_first_word"),
+         "apply_edits command should dispatch");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.lines()[0] == "HELLO", "apply_edits should replace the first word");
+  Expect(editor.Undo(), "a plugin edit should be undoable");
+  Expect(editor.lines()[0] == "hello", "one undo should revert the plugin edit");
+}
+
+void TestWorkspaceShellPluginApplyEditsMultiEditAtomicUndo() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "aaa\nbbb\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.replace_two_lines"),
+         "multi-edit command should dispatch");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.lines()[0] == "AAA" && editor.lines()[1] == "BBB",
+         "both edits should apply");
+  Expect(editor.Undo(), "the grouped plugin edit should be undoable");
+  Expect(editor.lines()[0] == "aaa" && editor.lines()[1] == "bbb",
+         "a single undo should revert BOTH edits (one grouped step)");
+}
+
+void TestWorkspaceShellPluginApplyEditsSetsSelection() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\nworld\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.select_first_two"),
+         "set_selection command should dispatch");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const auto selection = editor.selection_range();
+  Expect(selection.has_value(), "set_selection should establish a selection");
+  Expect(selection->start.line == 0 && selection->start.column == 0 &&
+             selection->end.line == 0 && selection->end.column == 2,
+         "set_selection should map 1-based input to the 0-based range [0,0)-(0,2)");
+}
+
+void TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\n");
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.edit_missing_path"),
+         "missing-path edit command should dispatch");
+
+  const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+  Expect(!messages.empty() && messages.back().rfind("editops: rejected:", 0) == 0,
+         "editing a path that is not open should return (false, message), not raise");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.lines()[0] == "hello", "a rejected edit must not touch the active buffer");
+}
+
+void TestWorkspaceShellPluginApplyEditsClampsOutOfBounds() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hi\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.append_past_end"),
+         "out-of-bounds edit command should dispatch");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  // The line/column clamp to the last line's end, so the insert lands at EOL of
+  // the final content line ("hi") rather than crashing or growing the buffer.
+  Expect(editor.lines()[0] == "hi!" || editor.lines().back() == "!" ||
+             editor.lines().back() == "hi!",
+         "an out-of-bounds edit should clamp to a valid position, not crash");
+}
+
+// SEAM 1 — reactive editor events. Unit-tests for the deterministic debounce /
+// coalescing tracker (time injected), then an end-to-end plugin dispatch test.
+void TestPluginEditorEventTrackerCoalescesChanges() {
+  using microide::workspace::PluginEditorEventTracker;
+  PluginEditorEventTracker tracker;
+  tracker.SetInterest({.buffer_change = true});
+  const std::filesystem::path path = "a.txt";
+  // First sample baselines silently.
+  tracker.Sample(path, 1, 1, 1, false, 0, 0, 0, 0, /*now=*/100, /*debounce=*/150);
+  Expect(!tracker.NextDelayMs(100).has_value(), "baseline sample should arm nothing");
+  // A burst of edits coalesces into one armed change with a trailing deadline.
+  tracker.Sample(path, 2, 3, 1, false, 0, 0, 0, 0, 110, 150);
+  tracker.Sample(path, 3, 7, 1, false, 0, 0, 0, 0, 140, 150);
+  Expect(tracker.NextDelayMs(140).has_value(), "an edit should arm a debounce delay");
+  // Before the deadline nothing is due.
+  Expect(!tracker.TakeDue(200).any(), "no event before the trailing deadline");
+  // After the deadline (last edit at 140 + 150) exactly one change fires, with the
+  // unioned caret-line range across the burst.
+  const auto due = tracker.TakeDue(300);
+  Expect(due.change && !due.cursor && !due.selection, "a settled burst yields one change");
+  Expect(due.change_start_line == 3 && due.change_end_line == 7,
+         "the change range should union the burst's caret lines");
+  Expect(!tracker.TakeDue(400).any(), "a consumed event does not refire");
+}
+
+void TestPluginEditorEventTrackerZeroCostWhenUnsubscribed() {
+  using microide::workspace::PluginEditorEventTracker;
+  PluginEditorEventTracker tracker;  // no interest set
+  tracker.Sample("a.txt", 1, 1, 1, true, 1, 1, 1, 5, 100, 150);
+  tracker.Sample("a.txt", 2, 2, 2, true, 1, 1, 1, 9, 110, 150);
+  Expect(!tracker.NextDelayMs(110).has_value(),
+         "with no subscriber the tracker must arm nothing (zero-cost)");
+  Expect(!tracker.TakeDue(1000).any(), "with no subscriber nothing is ever due");
+}
+
+void TestPluginEditorEventTrackerBufferSwitchDoesNotEmit() {
+  using microide::workspace::PluginEditorEventTracker;
+  PluginEditorEventTracker tracker;
+  tracker.SetInterest({.buffer_change = true, .cursor_move = true});
+  tracker.Sample("a.txt", 5, 4, 2, false, 0, 0, 0, 0, 100, 150);
+  // Switching to a different buffer re-baselines silently even though revision and
+  // caret differ — no spurious change/cursor event.
+  tracker.Sample("b.txt", 9, 1, 1, false, 0, 0, 0, 0, 110, 150);
+  Expect(!tracker.NextDelayMs(110).has_value(), "switching buffers must not arm an event");
+  Expect(!tracker.TakeDue(1000).any(), "switching buffers must not emit");
+}
+
+void TestPluginEditorEventTrackerSeparatesCursorAndSelection() {
+  using microide::workspace::PluginEditorEventTracker;
+  PluginEditorEventTracker tracker;
+  tracker.SetInterest({.cursor_move = true, .selection_change = true});
+  tracker.Sample("a.txt", 1, 1, 1, false, 0, 0, 0, 0, 100, 50);
+  tracker.Sample("a.txt", 1, 2, 4, true, 2, 1, 2, 4, 110, 50);
+  const auto due = tracker.TakeDue(200);
+  Expect(due.cursor && due.cursor_line == 2 && due.cursor_column == 4,
+         "a caret move should fire on_cursor_move with the 1-based caret");
+  Expect(due.selection && due.selection_present && due.selection_end_column == 4,
+         "a new selection should fire on_selection_change");
+  Expect(!due.change, "no content change means no on_buffer_change");
+}
+
+void TestWorkspaceShellPluginReceivesBufferChangeEvent() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WriteFile(source, "hello\nworld\n");
+  WritePluginInit(
+      plugins_root, "reactor",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "reactor",
+  setup = function(ctx)
+    ctx.commands.add("reactor.poke", function()
+      ctx.editor.apply_edits({
+        edits = { { start_line = 1, start_col = 1, end_line = 1, end_col = 6, text = "HELLO" } },
+      })
+    end)
+  end,
+  on_buffer_change = function(ctx, buffer, change)
+    ctx.log("changed:" .. tostring(change.start_line) .. "-" .. tostring(change.end_line))
+  end,
+  on_buffer_close = function(ctx, buffer)
+    ctx.log("closed")
+  end,
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "reactor plugin fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+
+  // Baseline sample, then mutate, then sample again to arm the debounced change.
+  WorkspaceShellTestAccess::SamplePluginEditorEvents(shell);
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reactor.poke"),
+         "reactor.poke should dispatch and edit the buffer");
+  WorkspaceShellTestAccess::SamplePluginEditorEvents(shell);
+
+  // Let the trailing debounce window elapse, then drive the scheduled-wake dispatch.
+  std::this_thread::sleep_for(std::chrono::milliseconds(180));
+  bool dispatched = false;
+  for (int attempt = 0; attempt < 5 && !dispatched; ++attempt) {
+    dispatched = WorkspaceShellTestAccess::DispatchDuePluginEditorEvents(shell);
+    if (!dispatched) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    }
+  }
+  Expect(dispatched, "a settled edit should dispatch a debounced on_buffer_change");
+  const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+  Expect(!messages.empty() && messages.back().rfind("reactor: changed:", 0) == 0,
+         "the plugin should receive on_buffer_change after the debounce window");
+}
+
+// SEAM 3 — a plugin-contributed snippet expands from its prefix on Tab.
+void TestWorkspaceShellPluginSnippetTabTriggerExpands() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.lua";
+  WriteFile(source, "\n");
+  WritePluginInit(
+      plugins_root, "snip",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "snip",
+  setup = function(ctx)
+    ctx.snippets.add({
+      id = "forloop", language_id = "lua", prefix = "forr", label = "for loop",
+      body = "for i=1,10 do end",
+    })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "snippet plugin fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.InsertText("forr");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should be handled when a snippet prefix matches");
+  Expect(editor.lines()[0] == "for i=1,10 do end",
+         "a Tab after a matching snippet prefix should expand the snippet body");
+  Expect(editor.Undo(), "snippet expansion should be undoable");
+  Expect(editor.lines()[0] == "forr", "one undo should restore the typed prefix");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/PluginSnippetTabTriggerExpands",
+          TestWorkspaceShellPluginSnippetTabTriggerExpands);
+  AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerCoalescesChanges",
+          TestPluginEditorEventTrackerCoalescesChanges);
+  AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerZeroCostWhenUnsubscribed",
+          TestPluginEditorEventTrackerZeroCostWhenUnsubscribed);
+  AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerBufferSwitchDoesNotEmit",
+          TestPluginEditorEventTrackerBufferSwitchDoesNotEmit);
+  AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerSeparatesCursorAndSelection",
+          TestPluginEditorEventTrackerSeparatesCursorAndSelection);
+  AddTest(tests, "WorkspaceShell/PluginReceivesBufferChangeEvent",
+          TestWorkspaceShellPluginReceivesBufferChangeEvent);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsSingleEditUndo",
+          TestWorkspaceShellPluginApplyEditsSingleEditUndo);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsMultiEditAtomicUndo",
+          TestWorkspaceShellPluginApplyEditsMultiEditAtomicUndo);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsSetsSelection",
+          TestWorkspaceShellPluginApplyEditsSetsSelection);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsRejectsUnopenedPath",
+          TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsClampsOutOfBounds",
+          TestWorkspaceShellPluginApplyEditsClampsOutOfBounds);
   AddTest(tests, "WorkspaceShell/PluginKeybindingsDispatchCommands",
           TestWorkspaceShellPluginKeybindingsDispatchCommands);
   AddTest(tests, "WorkspaceShell/PluginStatusItemsRenderAndRedraw",

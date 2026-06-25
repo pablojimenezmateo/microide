@@ -371,6 +371,11 @@ WorkspaceShell::WorkspaceShell() {
                             : render::SurfaceTextureCache::RasterFormat::Rgba8,
                 std::move(bytes), width, height);
           },
+      .apply_workspace_edit =
+          [this](std::string_view /*owner*/,
+                 const plugin::PluginHost::WorkspaceEditRequest& request) {
+            return ApplyPluginWorkspaceEdit(request);
+          },
       .error_sink =
           [this](const std::string& text) {
             output_channels_.AppendLine("plugins.error", "Plugin Errors", text);
@@ -582,6 +587,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
     RebuildPhase3Registries();
     RebuildPhase4Registries();
     RebuildPresentationRegistries();
+    RefreshPluginEditorEventInterest();
   }
   {
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
@@ -654,6 +660,7 @@ void WorkspaceShell::RefreshPluginSurfacesForReactivation() {
   RebuildPhase3Registries(/*reconcile_language_servers=*/false);
   RebuildPhase4Registries();
   RebuildPresentationRegistries();
+  RefreshPluginEditorEventInterest();
   NormalizeSidebarViewSelection();
   RefreshPluginSidebar();
   if (ActiveSidebarMode() == SidebarMode::Git) {
@@ -814,6 +821,11 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   if (normalized_path.empty()) {
     return;
   }
+  // Reactive on_buffer_close fires here (the single buffer-close chokepoint),
+  // before the LSP/decoration teardown below.
+  if (plugin_runtime_.enabled()) {
+    plugin_runtime_.Host().OnBufferClose(normalized_path);
+  }
   // Semantic-token decorations are published into the plugin-presentation store
   // under "lsp:semantic". Drop them up front, independent of whether an LSP
   // client is still running, so the store does not accumulate stale entries
@@ -866,6 +878,178 @@ void WorkspaceShell::ActivatePluginSurfacePreview(std::string_view owner,
   panel.surface_scroll_y = 0;
   context_.current_project_state.surface.focus = FocusTarget::Panel;
   RequestFullRedraw();
+}
+
+bool WorkspaceShell::ApplyPluginWorkspaceEdit(
+    const plugin::PluginHost::WorkspaceEditRequest& request) {
+  // Resolve the target viewport: an empty path edits the active editable buffer;
+  // a named path must be an already-open editor buffer (v1 never edits files on
+  // disk, so undo stays coherent).
+  editor::TextViewport* viewport = nullptr;
+  if (request.path.empty()) {
+    viewport = ActiveEditableViewport();
+  } else {
+    const std::filesystem::path normalized = request.path.lexically_normal();
+    if (editor::TextViewport* active = ActiveEditableViewport();
+        active != nullptr && active->path().lexically_normal() == normalized) {
+      viewport = active;
+    } else {
+      for (auto& tab : context_.current_project_state.open_tabs) {
+        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+          continue;
+        }
+        for (auto& view : tab.editor_state->views) {
+          if (!view.needs_restore &&
+              view.viewport.path().lexically_normal() == normalized) {
+            viewport = &view.viewport;
+            break;
+          }
+        }
+        if (viewport != nullptr) {
+          break;
+        }
+      }
+    }
+  }
+  if (viewport == nullptr) {
+    return false;
+  }
+
+  // 1-based plugin coordinates → clamped 0-based document positions, evaluated
+  // live so caret clamping sees post-edit line lengths.
+  const auto clamp_position = [&](std::size_t one_based_line,
+                                  std::size_t one_based_column) -> editor::TextPosition {
+    const std::size_t line_count = viewport->line_count();
+    std::size_t line = one_based_line >= 1 ? one_based_line - 1 : 0;
+    if (line_count == 0) {
+      return editor::TextPosition{0, 0};
+    }
+    if (line >= line_count) {
+      line = line_count - 1;
+    }
+    const std::size_t line_length = viewport->lines()[line].size();
+    std::size_t column = one_based_column >= 1 ? one_based_column - 1 : 0;
+    if (column > line_length) {
+      column = line_length;
+    }
+    return editor::TextPosition{line, column};
+  };
+
+  // Build clamped ranges up front, then apply highest-position-first so earlier
+  // edits' coordinates stay valid as the document shifts beneath them.
+  std::vector<std::pair<editor::SelectionRange, std::string>> applied_edits;
+  applied_edits.reserve(request.edits.size());
+  for (const auto& edit : request.edits) {
+    const editor::TextPosition start = clamp_position(edit.start_line, edit.start_column);
+    const editor::TextPosition end =
+        edit.end_line >= 1 ? clamp_position(edit.end_line, edit.end_column) : start;
+    applied_edits.emplace_back(editor::SelectionRange{start, end}, edit.text);
+  }
+  std::sort(applied_edits.begin(), applied_edits.end(),
+            [](const auto& lhs, const auto& rhs) {
+              const editor::SelectionRange a = editor::TextViewport::NormalizeRange(lhs.first);
+              const editor::SelectionRange b = editor::TextViewport::NormalizeRange(rhs.first);
+              if (a.start.line != b.start.line) {
+                return a.start.line > b.start.line;
+              }
+              return a.start.column > b.start.column;
+            });
+
+  if (!applied_edits.empty()) {
+    viewport->BeginUndoGroup();
+    for (const auto& [range, text] : applied_edits) {
+      viewport->ReplaceRange(range, text, /*record_undo=*/true);
+    }
+    viewport->EndUndoGroup();
+  }
+
+  if (request.has_selection) {
+    const editor::TextPosition start =
+        clamp_position(request.selection_start_line, request.selection_start_column);
+    const editor::TextPosition end =
+        clamp_position(request.selection_end_line, request.selection_end_column);
+    viewport->MoveCursorTo(start.line, start.column, /*extend_selection=*/false);
+    viewport->MoveCursorTo(end.line, end.column, /*extend_selection=*/true);
+  } else if (request.has_cursor) {
+    const editor::TextPosition cursor =
+        clamp_position(request.cursor_line, request.cursor_column);
+    viewport->MoveCursorTo(cursor.line, cursor.column, /*extend_selection=*/false);
+  }
+
+  ResetCaretBlink();
+  RequestActiveEditableLastChangeRedraw();
+  RequestChromeRedraw();
+  return true;
+}
+
+namespace {
+// Trailing debounce for reactive editor events: a plugin sees one coalesced
+// event ~150 ms after typing / caret motion settles, never on the hot path.
+constexpr std::uint32_t kPluginEditorEventDebounceMs = 150;
+}  // namespace
+
+void WorkspaceShell::RefreshPluginEditorEventInterest() {
+  if (!plugin_runtime_.enabled()) {
+    plugin_editor_event_tracker_.SetInterest({});
+    plugin_editor_event_tracker_.Reset();
+    return;
+  }
+  plugin_editor_event_tracker_.SetInterest(plugin_runtime_.Host().EditorEventInterests());
+  plugin_editor_event_tracker_.Reset();
+}
+
+void WorkspaceShell::SamplePluginEditorEvents() {
+  // Zero-cost gate: when no loaded plugin subscribes, this returns before
+  // touching the viewport, so typing pays only one predicate.
+  if (!plugin_editor_event_tracker_.interest().any()) {
+    return;
+  }
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    return;
+  }
+  bool selection_present = false;
+  std::size_t sel_start_line = 0;
+  std::size_t sel_start_column = 0;
+  std::size_t sel_end_line = 0;
+  std::size_t sel_end_column = 0;
+  if (const auto range = viewport->selection_range(); range.has_value()) {
+    const editor::SelectionRange normalized = editor::TextViewport::NormalizeRange(*range);
+    selection_present = true;
+    sel_start_line = normalized.start.line + 1;
+    sel_start_column = normalized.start.column + 1;
+    sel_end_line = normalized.end.line + 1;
+    sel_end_column = normalized.end.column + 1;
+  }
+  plugin_editor_event_tracker_.Sample(
+      viewport->path().lexically_normal(), viewport->content_revision(),
+      viewport->cursor_line() + 1, viewport->cursor_column() + 1, selection_present,
+      sel_start_line, sel_start_column, sel_end_line, sel_end_column, SDL_GetTicks(),
+      kPluginEditorEventDebounceMs);
+}
+
+bool WorkspaceShell::DispatchDuePluginEditorEvents() {
+  if (!plugin_editor_event_tracker_.interest().any()) {
+    return false;
+  }
+  const PluginEditorEventTracker::DueEvents due =
+      plugin_editor_event_tracker_.TakeDue(SDL_GetTicks());
+  if (!due.any() || due.path.empty()) {
+    return false;
+  }
+  auto& host = plugin_runtime_.Host();
+  if (due.change) {
+    host.OnBufferChange(due.path, due.change_start_line, due.change_end_line);
+  }
+  if (due.cursor) {
+    host.OnCursorMove(due.path, due.cursor_line, due.cursor_column);
+  }
+  if (due.selection) {
+    host.OnSelectionChange(due.path, due.selection_present, due.selection_start_line,
+                           due.selection_start_column, due.selection_end_line,
+                           due.selection_end_column);
+  }
+  return true;
 }
 
 void WorkspaceShell::SyncPluginSurfacePreviewClosed() {

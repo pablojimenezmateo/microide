@@ -299,8 +299,13 @@ bool AssistService::TrySnippetTabInEditor(bool shift_tab) {
   }
   TabEntry::EditorTabState* tab = operations_.active_editor_tab();
   editor::TextViewport* viewport = operations_.active_editable_viewport();
-  if (tab == nullptr || viewport == nullptr || !tab->snippet_session.active) {
+  if (tab == nullptr || viewport == nullptr) {
     return false;
+  }
+  // With no active session a forward Tab tries prefix-triggered snippet expansion
+  // before the caller falls back to inserting a literal tab.
+  if (!tab->snippet_session.active) {
+    return !shift_tab && TrySnippetPrefixExpansion(*tab, *viewport);
   }
   if (!editor::SnippetNavigateTab(*viewport, tab->snippet_session, shift_tab)) {
     return false;
@@ -309,6 +314,53 @@ bool AssistService::TrySnippetTabInEditor(bool shift_tab) {
   operations_.reset_caret_blink();
   operations_.request_active_editable_last_change_redraw();
   operations_.request_focused_editor_redraw();
+  return true;
+}
+
+bool AssistService::TrySnippetPrefixExpansion(TabEntry::EditorTabState& tab,
+                                              editor::TextViewport& viewport) {
+  const std::string language_id = DetectViewportLanguageId(viewport);
+  const LanguageContract* contract = language_contract_->Find(language_id);
+  if (contract == nullptr || contract->snippets.empty()) {
+    return false;
+  }
+  const editor::SelectionRange range = CompletionReplacementRange(viewport);
+  if (range.start.line != range.end.line || range.end.column <= range.start.column) {
+    return false;
+  }
+  const std::string_view line = LineAtOrEmpty(viewport.lines(), range.start.line);
+  if (range.end.column > line.size()) {
+    return false;
+  }
+  const std::string_view prefix =
+      line.substr(range.start.column, range.end.column - range.start.column);
+  if (prefix.empty()) {
+    return false;
+  }
+  // Require a unique exact prefix match; ambiguity falls through to a literal tab.
+  const LanguageSnippet* match = nullptr;
+  for (const auto& snippet : contract->snippets) {
+    if (snippet.prefix == prefix) {
+      if (match != nullptr) {
+        return false;
+      }
+      match = &snippet;
+    }
+  }
+  if (match == nullptr) {
+    return false;
+  }
+
+  const EditSideEffectsSnapshot snapshot = CaptureEditSnapshot(viewport);
+  viewport.BeginUndoGroup();
+  if (!editor::ExpandSnippetAtSelection(viewport, tab.snippet_session, range, match->body)) {
+    if (viewport.UndoGroupActive()) {
+      viewport.EndUndoGroup();
+    }
+    return false;
+  }
+  tab.folding_model->MarkDirty();
+  ApplyEditSideEffects(viewport, snapshot);
   return true;
 }
 

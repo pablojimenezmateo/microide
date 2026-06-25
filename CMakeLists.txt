@@ -380,6 +380,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShellHoverTargets.cpp
   src/workspace/WorkspacePersistenceCoordinator.cpp
   src/workspace/WorkspaceShellPlugins.cpp
+  src/workspace/PluginEditorEventTracker.cpp
   src/workspace/DebugToolbarSurface.cpp
   src/workspace/WorkspaceShellLsp.cpp
   src/workspace/WorkspaceShellTestAccess.cpp

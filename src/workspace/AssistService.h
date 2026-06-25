@@ -98,6 +98,10 @@ class AssistService {
   EditSideEffectsSnapshot CaptureEditSnapshot(editor::TextViewport& viewport) const;
   void ApplyEditSideEffects(editor::TextViewport& viewport,
                             const EditSideEffectsSnapshot& snapshot) const;
+  // Expand a snippet whose `prefix` matches the identifier immediately left of the
+  // caret (Tab with no active session). Returns false on no/ambiguous match so the
+  // caller falls through to inserting a literal tab.
+  bool TrySnippetPrefixExpansion(TabEntry::EditorTabState& tab, editor::TextViewport& viewport);
 
   // Open a plugin-provided navigation target (1-based line/column) in a new tab
   // and move the caret there. Shared by go-to-definition and the outline view.

@@ -257,6 +257,30 @@ bool LoadPluginDescriptor(runtime_types::PluginInstance* plugin, std::string* er
     lua_pop(plugin->state, 1);
     return false;
   }
+  plugin->on_buffer_change_ref =
+      ExtractFunctionRef(plugin->state, table_index, "on_buffer_change", plugin->root, error_message);
+  if (error_message != nullptr && !error_message->empty()) {
+    lua_pop(plugin->state, 1);
+    return false;
+  }
+  plugin->on_cursor_move_ref =
+      ExtractFunctionRef(plugin->state, table_index, "on_cursor_move", plugin->root, error_message);
+  if (error_message != nullptr && !error_message->empty()) {
+    lua_pop(plugin->state, 1);
+    return false;
+  }
+  plugin->on_selection_change_ref = ExtractFunctionRef(
+      plugin->state, table_index, "on_selection_change", plugin->root, error_message);
+  if (error_message != nullptr && !error_message->empty()) {
+    lua_pop(plugin->state, 1);
+    return false;
+  }
+  plugin->on_buffer_close_ref =
+      ExtractFunctionRef(plugin->state, table_index, "on_buffer_close", plugin->root, error_message);
+  if (error_message != nullptr && !error_message->empty()) {
+    lua_pop(plugin->state, 1);
+    return false;
+  }
   plugin->shutdown_ref =
       ExtractFunctionRef(plugin->state, table_index, "shutdown", plugin->root, error_message);
   if (error_message != nullptr && !error_message->empty()) {
