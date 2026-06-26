@@ -161,6 +161,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .dap_event_type = shell->dap_event_type_,
           .control_event_type = shell->control_event_type_,
           .plugin_async_process_event_type = shell->plugin_async_process_event_type_,
+          .plugin_thread_event_type = shell->plugin_thread_event_type_,
           .highlight_prefetch_event_type = shell->highlight_prefetch_event_type_,
       },
       WorkspaceEventDispatcher::State{
@@ -200,6 +201,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->ConsumeControlCallbacks(); },
           .consume_plugin_async_process_callbacks =
               [shell]() { shell->ConsumePluginAsyncProcessCallbacks(); },
+          .consume_plugin_thread_actions =
+              [shell]() { shell->plugin_runtime_.DrainPluginThreadActions(); },
           .consume_terminal_session_updates =
               [shell]() { shell->ConsumeTerminalSessionUpdates(); },
           .sync_text_input_surface =

@@ -55,6 +55,8 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
 void RegisterReviewTabPlanTests(std::vector<TestCase>& tests);
 void RegisterReviewSessionTests(std::vector<TestCase>& tests);
 void RegisterPluginHostTests(std::vector<TestCase>& tests);
+void RegisterPluginSurfaceCoverageTests(std::vector<TestCase>& tests);
+void RegisterPluginThreadTests(std::vector<TestCase>& tests);
 void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests);
 void RegisterProjectChangeTests(std::vector<TestCase>& tests);
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests);
@@ -362,6 +364,8 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellSharedSearchTests(tests);
   microide::tests::RegisterWorkspaceShellSharedTerminalTests(tests);
   microide::tests::RegisterPluginHostTests(tests);
+  microide::tests::RegisterPluginSurfaceCoverageTests(tests);
+  microide::tests::RegisterPluginThreadTests(tests);
   microide::tests::RegisterParseTests(tests);
   microide::tests::RegisterControlSocketServerTests(tests);
   microide::tests::RegisterControlClientTests(tests);

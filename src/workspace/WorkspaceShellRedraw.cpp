@@ -876,6 +876,18 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
         },
     };
   }
+  // Drain results marshalled back from the plugin worker thread. Gated on a
+  // lockless atomic so a project with no plugin work pays a single load here.
+  if (plugin_runtime_.PendingPluginThreadActionCount() > 0 &&
+      plugin_runtime_.DrainPluginThreadActions() > 0) {
+    return EventResult{
+        .handled = true,
+        .redraw = RenderInvalidation{
+            .full = true,
+            .rects = {},
+        },
+    };
+  }
   // Debounced reactive editor events fire here once their deadline elapses. A full
   // redraw covers any decorations a handler republishes in response.
   if (DispatchDuePluginEditorEvents()) {

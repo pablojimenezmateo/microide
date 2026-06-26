@@ -92,8 +92,13 @@ void TestArchitectureInvariants() {
              // synchronous staleness invalidation. State itself lives in the lazy
              // PluginEditorPresentation bundle, so the shell surface grows only by
              // these declarations.
+             // 1598: +1 for plugin_thread_event_type_, the SDL wake event for the
+             // dedicated plugin worker thread that runs Lua off the UI thread
+             // (parallel to plugin_async_process_event_type_, which the worker
+             // subsumes in a later phase). The thread/queues live in plugin/, so the
+             // shell surface grows only by this one wake-event handle.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1597);
+                                                     1598);
            });
 
   bool hard_failure = false;

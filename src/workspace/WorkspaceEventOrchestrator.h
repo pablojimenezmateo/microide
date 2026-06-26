@@ -21,6 +21,7 @@ class WorkspaceEventDispatcher {
     Uint32 dap_event_type = 0;
     Uint32 control_event_type = 0;
     Uint32 plugin_async_process_event_type = 0;
+    Uint32 plugin_thread_event_type = 0;
     Uint32 highlight_prefetch_event_type = 0;
   };
 
@@ -45,6 +46,7 @@ class WorkspaceEventDispatcher {
     std::function<void()> consume_dap_callbacks;
     std::function<void()> consume_control_callbacks;
     std::function<void()> consume_plugin_async_process_callbacks;
+    std::function<void()> consume_plugin_thread_actions;
     std::function<void()> consume_terminal_session_updates;
     std::function<void(SDL_Window*)> sync_text_input_surface;
     std::function<bool(const SDL_Event&)> handle_mouse_button_down;

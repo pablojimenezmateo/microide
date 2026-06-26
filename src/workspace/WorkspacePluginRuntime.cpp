@@ -59,6 +59,18 @@ int WorkspacePluginRuntime::PendingAsyncProcessCount() const {
   return plugin_host_.PendingAsyncProcessCount();
 }
 
+void WorkspacePluginRuntime::SetPluginThreadEventType(Uint32 event_type) {
+  plugin_thread_.SetWakeEventType(event_type);
+}
+
+int WorkspacePluginRuntime::DrainPluginThreadActions() {
+  return plugin_thread_.DrainMainThreadActions();
+}
+
+int WorkspacePluginRuntime::PendingPluginThreadActionCount() const {
+  return plugin_thread_.PendingMainThreadActionCount();
+}
+
 void WorkspacePluginRuntime::SetPollInterval(std::chrono::milliseconds poll_interval) {
   asset_monitor_.SetPollInterval(poll_interval);
 }
@@ -151,6 +163,9 @@ void WorkspacePluginRuntime::ShutdownHost() {
 }
 
 void WorkspacePluginRuntime::Shutdown() {
+  // Join the worker before tearing down the host so no in-flight job touches a
+  // lua_State the host is about to destroy.
+  plugin_thread_.Shutdown();
   asset_monitor_.SetWakeEventType(0);
   asset_monitor_.Reset();
   plugin_host_.Shutdown();

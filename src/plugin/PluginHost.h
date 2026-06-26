@@ -18,6 +18,8 @@
 
 namespace microide::plugin {
 
+class PluginThread;
+
 class PluginHost {
  public:
   struct OpenFileRequest {
@@ -540,6 +542,9 @@ class PluginHost {
   PluginHost& operator=(PluginHost&&) noexcept;
 
   void SetCallbacks(Callbacks callbacks);
+  // Wire the dedicated worker thread that runs all plugin Lua off the UI thread.
+  // Null leaves the host in inline (UI-thread) mode.
+  void SetWorker(PluginThread* worker);
   void SetAsyncProcessEventType(std::uint32_t type);
   int ConsumeAsyncProcessCallbacks();
   int PendingAsyncProcessCount() const;

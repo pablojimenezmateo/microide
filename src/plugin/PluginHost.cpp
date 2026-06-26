@@ -6,6 +6,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -51,6 +52,8 @@
 #include "plugin/PluginStateTeardownInterop.h"
 #include "plugin/PluginWorkspaceInterop.h"
 #include "plugin/PluginHostRuntimeTypes.h"
+#include "plugin/PluginThread.h"
+#include "plugin/PluginThreadTypes.h"
 #include "plugin/LuaError.h"
 #include "plugin/LuaRuntime.h"
 #include "util/TextFileIO.h"
@@ -79,8 +82,114 @@ struct PluginHost::Impl {
   using AnnotationProviderRuntime = runtime_types::AnnotationProviderRuntime;
   using AuthProviderRuntime = runtime_types::AuthProviderRuntime;
 
+  // `callbacks` is the THREAD-ROUTED view the Lua verbs see: read verbs resolve
+  // from the active per-call snapshot, write verbs either run directly (round-trip
+  // ops, where the UI thread is parked and the worker has exclusive shell access)
+  // or post a main-thread action to the worker mailbox (fire-and-forget events).
+  // `raw_callbacks` is the unwrapped shell binding the routed view dispatches to.
+  Callbacks raw_callbacks{};
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
+
+  // Worker-execution context. These are touched ONLY on the plugin worker thread
+  // (or inline on the UI thread before the worker is wired), set around each plugin
+  // call by ExecuteWithContext. The worker is single-threaded, so no locking.
+  PluginThread* worker_ = nullptr;
+  const PluginHostSnapshot* current_snapshot_ = nullptr;
+  bool direct_host_access_ = true;
+  bool executing_plugin_call_ = false;
+
+  // Restores the worker-execution context on scope exit so nested plugin calls and
+  // any early return leave the flags as they were.
+  struct ContextGuard {
+    Impl* impl;
+    const PluginHostSnapshot* prev_snapshot;
+    bool prev_direct;
+    bool prev_executing;
+    ~ContextGuard() {
+      impl->current_snapshot_ = prev_snapshot;
+      impl->direct_host_access_ = prev_direct;
+      impl->executing_plugin_call_ = prev_executing;
+    }
+  };
+
+  template <typename F>
+  void ExecuteWithContext(const PluginHostSnapshot* snapshot, bool direct, F&& fn) {
+    ContextGuard guard{this, current_snapshot_, direct_host_access_, executing_plugin_call_};
+    current_snapshot_ = snapshot;
+    direct_host_access_ = direct;
+    executing_plugin_call_ = true;
+    fn();
+  }
+
+  // Apply a host-side mutation: run it now when the worker holds exclusive shell
+  // access (round-trip with the UI thread parked, or the un-wired inline path),
+  // otherwise marshal it to the UI thread via the mailbox.
+  void ApplyHostMutation(std::function<void()> fn) {
+    if (direct_host_access_ || worker_ == nullptr) {
+      fn();
+    } else {
+      worker_->PostToMain(std::move(fn));
+    }
+  }
+
+  std::optional<PluginHost::ActiveBuffer> ResolveActiveBuffer() const {
+    if (current_snapshot_ != nullptr) {
+      if (!current_snapshot_->active_buffer.present) {
+        return std::nullopt;
+      }
+      return PluginHost::ActiveBuffer{
+          .path = current_snapshot_->active_buffer.path,
+          .line = current_snapshot_->active_buffer.line,
+          .column = current_snapshot_->active_buffer.column,
+      };
+    }
+    return raw_callbacks.active_buffer ? raw_callbacks.active_buffer() : std::nullopt;
+  }
+
+  std::optional<std::string> ResolveSetting(std::string_view id) const {
+    if (current_snapshot_ != nullptr) {
+      for (const auto& [key, value] : current_snapshot_->settings) {
+        if (key == id) {
+          return value;
+        }
+      }
+      return std::nullopt;
+    }
+    return raw_callbacks.get_setting ? raw_callbacks.get_setting(id) : std::nullopt;
+  }
+
+  // Build the thread-routed Callbacks view over `raw_callbacks`. Read verbs resolve
+  // from the snapshot; write/request verbs go through ApplyHostMutation. Closures
+  // capture only owning copies (never a lua_State / Lua ref) so a deferred action
+  // is safe to run later on the UI thread.
+  Callbacks BuildRoutedCallbacks();
+
+  // Capture the immutable host view a plugin call may read. Runs on the UI thread.
+  PluginHostSnapshot CaptureSnapshot() const;
+
+  // Dispatch a plugin call onto the worker. Detached = fire-and-forget (events);
+  // Blocking = bounded synchronous round-trip preserving the synchronous API.
+  void RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn);
+  template <typename F>
+  void RunOnWorkerBlocking(const PluginHostSnapshot& snapshot, F&& fn) {
+    if (executing_plugin_call_ || worker_ == nullptr) {
+      // Already on the worker (re-entrant) or no worker wired: run inline with
+      // exclusive access rather than dead-locking on a self-post.
+      ExecuteWithContext(&snapshot, /*direct=*/true, std::forward<F>(fn));
+      return;
+    }
+    worker_->EnsureStarted();
+    std::promise<void> done;
+    std::future<void> finished = done.get_future();
+    // Captures by reference are safe: the UI thread blocks on `finished` until the
+    // job completes, so every referent outlives the call.
+    worker_->Post([this, &snapshot, &fn, &done]() {
+      ExecuteWithContext(&snapshot, /*direct=*/true, fn);
+      done.set_value();
+    });
+    finished.wait();
+  }
 
   using AsyncProcessCallback = runtime_types::AsyncProcessCallback;
   using AsyncProcessRequest = runtime_types::AsyncProcessRequest;
@@ -185,18 +294,26 @@ struct PluginHost::Impl {
     }
   }
 
+  // RecordMessage/RecordError mutate the host-owned messages/errors vectors that the
+  // UI thread reads, so the whole record-and-sink runs through ApplyHostMutation:
+  // inline under exclusive access (setup/round-trip), or marshalled to the UI thread
+  // when a fire-and-forget event records on the worker.
   void RecordMessage(std::string message) {
-    messages.push_back(message);
-    if (callbacks.log_sink) {
-      callbacks.log_sink(messages.back());
-    }
+    ApplyHostMutation([this, message = std::move(message)]() mutable {
+      messages.push_back(std::move(message));
+      if (raw_callbacks.log_sink) {
+        raw_callbacks.log_sink(messages.back());
+      }
+    });
   }
 
   void RecordError(std::string error) {
-    errors.push_back(error);
-    if (callbacks.error_sink) {
-      callbacks.error_sink(errors.back());
-    }
+    ApplyHostMutation([this, error = std::move(error)]() mutable {
+      errors.push_back(std::move(error));
+      if (raw_callbacks.error_sink) {
+        raw_callbacks.error_sink(errors.back());
+      }
+    });
   }
 
   std::optional<std::string> RelativePathString(const std::filesystem::path& path) const {
@@ -267,6 +384,213 @@ struct PluginHost::Impl {
 
 };
 
+PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
+  Callbacks routed;
+
+  // Each routed wrapper is assigned only when the corresponding raw callback is
+  // wired, so existence checks (`if (callbacks.x)`) keep their original meaning.
+
+  // Reads resolve from the per-call snapshot (or live shell, on the inline path).
+  if (raw_callbacks.active_buffer) {
+    routed.active_buffer = [this]() { return ResolveActiveBuffer(); };
+  }
+  if (raw_callbacks.get_setting) {
+    routed.get_setting = [this](std::string_view id) { return ResolveSetting(id); };
+  }
+  if (raw_callbacks.is_command_name_available) {
+    // Consulted only during setup-time registration, which runs with direct access.
+    routed.is_command_name_available = [this](std::string_view name) -> bool {
+      return direct_host_access_ && raw_callbacks.is_command_name_available(name);
+    };
+  }
+
+  // Requests/writes: run directly when the worker holds exclusive shell access,
+  // otherwise marshal an owning copy to the UI thread via the mailbox. Closures
+  // never capture a lua_State / Lua ref.
+  if (raw_callbacks.open_file) {
+    routed.open_file = [this](const OpenFileRequest& request) -> bool {
+      if (direct_host_access_) {
+        return raw_callbacks.open_file(request);
+      }
+      ApplyHostMutation([this, request]() { raw_callbacks.open_file(request); });
+      return true;
+    };
+  }
+  if (raw_callbacks.show_sidebar) {
+    routed.show_sidebar = [this](std::string_view id) -> bool {
+      if (direct_host_access_) {
+        return raw_callbacks.show_sidebar(id);
+      }
+      ApplyHostMutation([this, id = std::string(id)]() { raw_callbacks.show_sidebar(id); });
+      return true;
+    };
+  }
+  if (raw_callbacks.publish_diagnostics) {
+    routed.publish_diagnostics = [this](std::string_view owner, const std::filesystem::path& path,
+                                        std::vector<editor::Diagnostic> diagnostics) {
+      ApplyHostMutation([this, owner = std::string(owner), path,
+                         diagnostics = std::move(diagnostics)]() mutable {
+        raw_callbacks.publish_diagnostics(owner, path, std::move(diagnostics));
+      });
+    };
+  }
+  if (raw_callbacks.clear_file_diagnostics) {
+    routed.clear_file_diagnostics = [this](std::string_view owner,
+                                           const std::filesystem::path& path) {
+      ApplyHostMutation([this, owner = std::string(owner), path]() {
+        raw_callbacks.clear_file_diagnostics(owner, path);
+      });
+    };
+  }
+  if (raw_callbacks.clear_owner_diagnostics) {
+    routed.clear_owner_diagnostics = [this](std::string_view owner) {
+      ApplyHostMutation(
+          [this, owner = std::string(owner)]() { raw_callbacks.clear_owner_diagnostics(owner); });
+    };
+  }
+  if (raw_callbacks.publish_decorations) {
+    routed.publish_decorations = [this](std::string_view owner, const std::filesystem::path& path,
+                                        editor::PluginDecorationData decorations) {
+      ApplyHostMutation([this, owner = std::string(owner), path,
+                         decorations = std::move(decorations)]() mutable {
+        raw_callbacks.publish_decorations(owner, path, std::move(decorations));
+      });
+    };
+  }
+  if (raw_callbacks.clear_file_decorations) {
+    routed.clear_file_decorations = [this](std::string_view owner,
+                                           const std::filesystem::path& path) {
+      ApplyHostMutation([this, owner = std::string(owner), path]() {
+        raw_callbacks.clear_file_decorations(owner, path);
+      });
+    };
+  }
+  if (raw_callbacks.clear_owner_decorations) {
+    routed.clear_owner_decorations = [this](std::string_view owner) {
+      ApplyHostMutation(
+          [this, owner = std::string(owner)]() { raw_callbacks.clear_owner_decorations(owner); });
+    };
+  }
+  if (raw_callbacks.publish_surface) {
+    routed.publish_surface = [this](std::string_view owner, std::string_view surface_id,
+                                    editor::SurfaceContent content) {
+      ApplyHostMutation([this, owner = std::string(owner), surface_id = std::string(surface_id),
+                         content = std::move(content)]() mutable {
+        raw_callbacks.publish_surface(owner, surface_id, std::move(content));
+      });
+    };
+  }
+  if (raw_callbacks.clear_surface) {
+    routed.clear_surface = [this](std::string_view owner, std::string_view surface_id) {
+      ApplyHostMutation(
+          [this, owner = std::string(owner), surface_id = std::string(surface_id)]() {
+            raw_callbacks.clear_surface(owner, surface_id);
+          });
+    };
+  }
+  if (raw_callbacks.clear_owner_surfaces) {
+    routed.clear_owner_surfaces = [this](std::string_view owner) {
+      ApplyHostMutation(
+          [this, owner = std::string(owner)]() { raw_callbacks.clear_owner_surfaces(owner); });
+    };
+  }
+  if (raw_callbacks.decode_raster) {
+    routed.decode_raster = [this](std::uint64_t hash, int format, std::vector<std::byte> bytes,
+                                  int width, int height) {
+      ApplyHostMutation([this, hash, format, bytes = std::move(bytes), width, height]() mutable {
+        raw_callbacks.decode_raster(hash, format, std::move(bytes), width, height);
+      });
+    };
+  }
+  if (raw_callbacks.apply_workspace_edit) {
+    routed.apply_workspace_edit = [this](std::string_view owner,
+                                         const WorkspaceEditRequest& request) -> bool {
+      if (direct_host_access_) {
+        return raw_callbacks.apply_workspace_edit(owner, request);
+      }
+      // Posted, not awaited: the UI thread re-validates against the live buffer at
+      // apply time and drops the edit if stale. Report optimistic acceptance.
+      ApplyHostMutation([this, owner = std::string(owner), request]() {
+        raw_callbacks.apply_workspace_edit(owner, request);
+      });
+      return true;
+    };
+  }
+  if (raw_callbacks.publish_ghost_text) {
+    routed.publish_ghost_text = [this](std::string_view owner, const GhostTextRequest& request) {
+      ApplyHostMutation([this, owner = std::string(owner), request]() {
+        raw_callbacks.publish_ghost_text(owner, request);
+      });
+    };
+  }
+  if (raw_callbacks.clear_ghost_text) {
+    routed.clear_ghost_text = [this](std::string_view owner) {
+      ApplyHostMutation(
+          [this, owner = std::string(owner)]() { raw_callbacks.clear_ghost_text(owner); });
+    };
+  }
+  if (raw_callbacks.error_sink) {
+    routed.error_sink = [this](const std::string& message) {
+      ApplyHostMutation([this, message]() { raw_callbacks.error_sink(message); });
+    };
+  }
+  if (raw_callbacks.log_sink) {
+    routed.log_sink = [this](const std::string& message) {
+      ApplyHostMutation([this, message]() { raw_callbacks.log_sink(message); });
+    };
+  }
+  if (raw_callbacks.request_status_redraw) {
+    routed.request_status_redraw = [this]() {
+      ApplyHostMutation([this]() { raw_callbacks.request_status_redraw(); });
+    };
+  }
+  if (raw_callbacks.show_notification) {
+    routed.show_notification = [this](const std::string& level, const std::string& message) {
+      ApplyHostMutation([this, level, message]() { raw_callbacks.show_notification(level, message); });
+    };
+  }
+
+  return routed;
+}
+
+PluginHostSnapshot PluginHost::Impl::CaptureSnapshot() const {
+  PluginHostSnapshot snapshot;
+  snapshot.project_root = current_project_root;
+  if (raw_callbacks.active_buffer) {
+    if (const std::optional<PluginHost::ActiveBuffer> active = raw_callbacks.active_buffer();
+        active.has_value() && !active->path.empty()) {
+      snapshot.active_buffer = PluginHostSnapshot::ActiveBuffer{
+          .path = active->path,
+          .line = active->line,
+          .column = active->column,
+          .present = true,
+      };
+    }
+  }
+  if (raw_callbacks.get_setting) {
+    snapshot.settings.reserve(settings.size());
+    for (const auto& spec : settings) {
+      if (const std::optional<std::string> value = raw_callbacks.get_setting(spec.id);
+          value.has_value()) {
+        snapshot.settings.emplace_back(spec.id, *value);
+      }
+    }
+  }
+  return snapshot;
+}
+
+void PluginHost::Impl::RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn) {
+  if (worker_ == nullptr) {
+    // No worker wired: run inline with exclusive access (legacy behavior).
+    ExecuteWithContext(&snapshot, /*direct=*/true, fn);
+    return;
+  }
+  worker_->EnsureStarted();
+  worker_->Post([this, snapshot = std::move(snapshot), fn = std::move(fn)]() mutable {
+    ExecuteWithContext(&snapshot, /*direct=*/false, fn);
+  });
+}
+
 PluginHost::PluginHost() : impl_(std::make_unique<Impl>()) {}
 
 PluginHost::~PluginHost() {
@@ -278,7 +602,12 @@ PluginHost::PluginHost(PluginHost&& other) noexcept = default;
 PluginHost& PluginHost::operator=(PluginHost&& other) noexcept = default;
 
 void PluginHost::SetCallbacks(Callbacks callbacks) {
-  impl_->callbacks = std::move(callbacks);
+  impl_->raw_callbacks = std::move(callbacks);
+  impl_->callbacks = impl_->BuildRoutedCallbacks();
+}
+
+void PluginHost::SetWorker(PluginThread* worker) {
+  impl_->worker_ = worker;
 }
 
 #include "plugin/PluginHostPublicApi.inc"

@@ -233,6 +233,13 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
     plugin_async_process_event_type_ = 0;
   }
 
+  plugin_thread_event_type_ = SDL_RegisterEvents(1);
+  if (plugin_thread_event_type_ != static_cast<Uint32>(-1)) {
+    plugin_runtime_.SetPluginThreadEventType(plugin_thread_event_type_);
+  } else {
+    plugin_thread_event_type_ = 0;
+  }
+
   highlight_prefetch_event_type_ = SDL_RegisterEvents(1);
   if (highlight_prefetch_event_type_ == static_cast<Uint32>(-1)) {
     highlight_prefetch_event_type_ = 0;

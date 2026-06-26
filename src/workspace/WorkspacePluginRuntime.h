@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "plugin/PluginHost.h"
+#include "plugin/PluginThread.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
 
@@ -33,6 +34,13 @@ class WorkspacePluginRuntime {
   void SetAsyncProcessEventType(Uint32 event_type);
   bool ConsumeAsyncProcessCallbacks();
   int PendingAsyncProcessCount() const;
+
+  // Dedicated worker thread that runs plugin Lua off the UI thread. Spawned
+  // lazily on the first Reload that loads a plugin; never created otherwise.
+  plugin::PluginThread& Thread() { return plugin_thread_; }
+  void SetPluginThreadEventType(Uint32 event_type);
+  int DrainPluginThreadActions();
+  int PendingPluginThreadActionCount() const;
   void SetPollInterval(std::chrono::milliseconds poll_interval);
   std::optional<std::chrono::milliseconds> NextPollDelay() const;
   bool ConsumeAssetChanges(bool force_check);
@@ -51,6 +59,7 @@ class WorkspacePluginRuntime {
   WorkspaceOutputChannels output_channels_;
   WorkspacePluginAssetMonitor asset_monitor_;
   plugin::PluginHost plugin_host_;
+  plugin::PluginThread plugin_thread_;
   std::size_t runtime_syntax_plugin_definition_count_ = 0;
   std::vector<std::string> runtime_syntax_errors_;
   bool syntax_definitions_changed_ = false;

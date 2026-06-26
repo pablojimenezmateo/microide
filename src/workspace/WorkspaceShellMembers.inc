@@ -1756,6 +1756,7 @@
   Uint32 dap_event_type_ = 0;
   Uint32 control_event_type_ = 0;
   Uint32 plugin_async_process_event_type_ = 0;
+  Uint32 plugin_thread_event_type_ = 0;
   Uint32 highlight_prefetch_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;
   bool pending_tree_git_badge_refresh_after_paint_ = false;
