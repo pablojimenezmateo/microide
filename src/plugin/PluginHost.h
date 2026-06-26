@@ -585,6 +585,18 @@ class PluginHost {
                       const std::vector<std::string>& args,
                       std::string* error_message = nullptr,
                       std::string* feedback = nullptr);
+  // True when `name` resolves to a registered plugin command. Lets a caller decide
+  // synchronously whether it handled the command before dispatching the (async)
+  // execution, since ExecuteCommandAsync no longer returns success inline.
+  bool HasCommand(std::string_view name) const;
+  // Async execution: runs the command handler on the plugin worker (never blocking
+  // the UI) and delivers its outcome on the UI-thread mailbox drain. `on_result`
+  // receives (ran, error, feedback): ran=false with a message when the handler
+  // failed; feedback is the command's optional returned message. Runs inline and
+  // delivers synchronously when no worker is wired.
+  void ExecuteCommandAsync(std::string name,
+                           std::vector<std::string> args,
+                           std::function<void(bool, std::string, std::string)> on_result);
   const std::vector<std::string>& CommandNames() const;
   const std::vector<SidebarProviderInfo>& SidebarProviders() const;
   const SidebarProviderInfo* FindSidebarProvider(std::string_view id) const;

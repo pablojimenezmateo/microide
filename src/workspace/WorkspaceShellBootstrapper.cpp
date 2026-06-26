@@ -78,18 +78,19 @@ CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
           .execute_plugin_command =
               [this](const std::string& command, const std::vector<std::string>& args) {
                 CommandPromptCoordinator::PluginCommandResult result;
-                std::string plugin_error;
-                std::string plugin_feedback;
-                result.handled = plugin_runtime_.Host().ExecuteCommand(command, args, &plugin_error,
-                                                                       &plugin_feedback);
-                if (result.handled) {
-                  // Prefer the command's own returned message; otherwise confirm it ran so the
-                  // user always gets feedback, not silence.
-                  result.feedback = !plugin_feedback.empty() ? std::move(plugin_feedback)
-                                                             : "ran " + command;
+                // Recognition is synchronous; execution runs on the plugin worker
+                // and its real outcome surfaces as a toast on the drain. Confirm
+                // dispatch in the prompt so the user never sees silence.
+                result.handled = plugin_runtime_.Host().HasCommand(command);
+                if (!result.handled) {
                   return result;
                 }
-                result.error = std::move(plugin_error);
+                result.feedback = "ran " + command;
+                plugin_runtime_.Host().ExecuteCommandAsync(
+                    command, args,
+                    [this, command](bool ran, std::string error, std::string feedback) {
+                      NotifyPluginCommandOutcome(command, ran, error, feedback);
+                    });
                 return result;
               },
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },

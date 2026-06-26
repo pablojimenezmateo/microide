@@ -189,13 +189,14 @@ struct PluginHost::Impl {
     finished.wait();
   }
 
-  // Dispatch a result-returning query onto the worker without blocking the UI.
+  // Dispatch a result-returning call onto the worker without blocking the UI.
   // `produce` runs on the worker (reads resolve from the captured snapshot) and
   // returns the POD result; `deliver` runs on the UI thread during the mailbox
-  // drain. `dedup_key` collapses superseded in-flight requests of the same kind
-  // (a stale cursor-driven query is dropped before it runs). With no worker wired
-  // (tests / pre-wire) or when already on the worker, runs inline and delivers
-  // synchronously.
+  // drain. A non-empty `dedup_key` collapses superseded in-flight requests of the
+  // same kind (a stale cursor-driven query is dropped before it runs); an empty
+  // key means every call must run (e.g. command execution), so it is plain-posted.
+  // With no worker wired (tests / pre-wire) or when already on the worker, runs
+  // inline and delivers synchronously.
   template <typename Result>
   void RunQueryAsync(std::string dedup_key,
                      std::function<Result()> produce,
@@ -208,16 +209,19 @@ struct PluginHost::Impl {
       return;
     }
     worker_->EnsureStarted();
-    worker_->PostLatest(
-        std::move(dedup_key),
-        [this, snapshot = std::move(snapshot), produce = std::move(produce),
-         deliver = std::move(deliver)]() mutable {
-          auto result = std::make_shared<Result>();
-          ExecuteWithContext(&snapshot, /*direct=*/false, [&]() { *result = produce(); });
-          worker_->PostToMain([result, deliver = std::move(deliver)]() mutable {
-            deliver(std::move(*result));
-          });
-        });
+    auto task = [this, snapshot = std::move(snapshot), produce = std::move(produce),
+                 deliver = std::move(deliver)]() mutable {
+      auto result = std::make_shared<Result>();
+      ExecuteWithContext(&snapshot, /*direct=*/false, [&]() { *result = produce(); });
+      worker_->PostToMain([result, deliver = std::move(deliver)]() mutable {
+        deliver(std::move(*result));
+      });
+    };
+    if (dedup_key.empty()) {
+      worker_->Post(std::move(task));
+    } else {
+      worker_->PostLatest(std::move(dedup_key), std::move(task));
+    }
   }
 
   std::vector<PluginInstance> plugins;

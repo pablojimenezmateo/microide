@@ -98,8 +98,12 @@ void TestArchitectureInvariants() {
              // this one wake-event handle.
              // 1596: -2 after deleting the dead plugin subprocess-callback
              // subsystem (its shell consume-callback decl + SDL wake-event handle).
+             // 1600: +4 for NotifyPluginCommandOutcome, the shared toast helper that
+             // surfaces an async plugin command's outcome (run on the worker,
+             // delivered on the drain) for both the keybinding and command-prompt
+             // entry points instead of duplicating the logic at each.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1596);
+                                                     1600);
            });
 
   bool hard_failure = false;

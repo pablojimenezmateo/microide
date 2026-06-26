@@ -511,6 +511,13 @@
                           const std::vector<std::string>& args,
                           ActionSource source,
                           std::string* error_message = nullptr);
+  // Surface the outcome of an async plugin command (run on the worker, delivered on
+  // the drain) as a toast: an error tone when the handler failed, otherwise the
+  // command's returned feedback message if any.
+  void NotifyPluginCommandOutcome(const std::string& command,
+                                  bool ran,
+                                  const std::string& error,
+                                  const std::string& feedback);
   std::optional<std::string> GetSettingValue(std::string_view id) const;
   const std::vector<ResolvedKeybinding>& ResolvedKeybindings() const;
   std::vector<std::string> OrderedSidebarViewIds() const;

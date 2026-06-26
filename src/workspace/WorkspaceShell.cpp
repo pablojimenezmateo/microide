@@ -276,7 +276,32 @@ bool WorkspaceShell::ExecuteCommandName(std::string_view command_name,
     }
     return ActionCoordinator(MakeActionContext()).Execute(action->id, args, source);
   }
-  return plugin_runtime_.Host().ExecuteCommand(command_name, args, error_message);
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  // "Handled" is resolved synchronously from the registry; the handler itself runs
+  // on the plugin worker and its outcome surfaces as a toast on the drain.
+  std::string command(command_name);
+  if (!plugin_runtime_.Host().HasCommand(command)) {
+    return false;
+  }
+  plugin_runtime_.Host().ExecuteCommandAsync(
+      command, args, [this, command](bool ran, std::string error, std::string feedback) {
+        NotifyPluginCommandOutcome(command, ran, error, feedback);
+      });
+  return true;
+}
+
+void WorkspaceShell::NotifyPluginCommandOutcome(const std::string& command,
+                                                bool ran,
+                                                const std::string& error,
+                                                const std::string& feedback) {
+  if (!ran) {
+    Notify(NotificationService::Tone::Error,
+           error.empty() ? ("command '" + command + "' failed") : error);
+  } else if (!feedback.empty()) {
+    Notify(NotificationService::Tone::Info, feedback);
+  }
 }
 
 std::optional<std::string> WorkspaceShell::GetSettingValue(std::string_view id) const {

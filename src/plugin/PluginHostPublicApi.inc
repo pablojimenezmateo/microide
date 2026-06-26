@@ -273,6 +273,53 @@ bool PluginHost::ExecuteCommand(std::string_view name,
 #endif
 }
 
+bool PluginHost::HasCommand(std::string_view name) const {
+#if MICROIDE_HAS_LUA_PLUGINS
+  if (!impl_->enabled()) {
+    return false;
+  }
+  return impl_->commands.find(std::string(name)) != impl_->commands.end();
+#else
+  (void)name;
+  return false;
+#endif
+}
+
+void PluginHost::ExecuteCommandAsync(
+    std::string name,
+    std::vector<std::string> args,
+    std::function<void(bool, std::string, std::string)> on_result) {
+  if (!impl_->enabled()) {
+    on_result(false, {}, {});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct CommandResult {
+    bool ran = false;
+    std::string error;
+    std::string feedback;
+  };
+  impl_->RunQueryAsync<CommandResult>(
+      /*dedup_key=*/{},  // every command invocation must run; never supersede.
+      [this, name = std::move(name), args = std::move(args)]() {
+        CommandResult result;
+        result.ran = provider_query_interop::ExecuteCommand(
+            name, args, impl_->commands,
+            [this](lua_State* state) { return impl_->FindPluginByState(state); },
+            [this](lua_State* state) { impl_->PushPluginContext(state); }, &result.error,
+            &result.feedback);
+        return result;
+      },
+      [on_result = std::move(on_result)](CommandResult result) {
+        on_result(result.ran, std::move(result.error), std::move(result.feedback));
+      });
+#else
+  (void)name;
+  (void)args;
+  on_result(false, {}, {});
+#endif
+}
+
 const std::vector<std::string>& PluginHost::CommandNames() const {
 #if MICROIDE_HAS_LUA_PLUGINS
   // Lazy rebuild: registration only marks the ordered view dirty, so the sort runs

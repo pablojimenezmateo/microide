@@ -2268,6 +2268,69 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// ExecuteCommandAsync resolves "handled" synchronously (HasCommand) but runs the
+// handler on the worker and delivers its outcome on the UI-thread drain. Verified
+// under TSAN.
+void TestPluginHostExecuteCommandAsyncDeliversThroughWorker() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "async command fixture\n");
+
+  WritePluginInit(
+      global_plugins, "async-command",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "async.cmd",
+  setup = function(ctx)
+    ctx.commands.add("async.cmd.run", function(ctx2, args)
+      return "did:" .. tostring(args[1] or "none")
+    end)
+    ctx.commands.add("async.cmd.noop", function() end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);
+  host.SetWorker(&thread);
+
+  Expect(host.Reload(project_root), "async command fixture should load");
+  Expect(host.HasCommand("async.cmd.run"), "a registered command should resolve synchronously");
+  Expect(!host.HasCommand("async.cmd.missing"), "an unknown command should not resolve");
+
+  bool delivered = false;
+  bool ran = false;
+  std::string feedback;
+  host.ExecuteCommandAsync("async.cmd.run", {"x"},
+                           [&](bool command_ran, std::string /*error*/, std::string command_feedback) {
+                             ran = command_ran;
+                             feedback = std::move(command_feedback);
+                             delivered = true;
+                           });
+  Expect(!delivered, "the command outcome must not be delivered synchronously with a worker wired");
+
+  // Quiesce the worker with a blocking round-trip (FIFO), then drain.
+  std::string error_message;
+  std::string round_trip_feedback;
+  host.ExecuteCommand("async.cmd.noop", {}, &error_message, &round_trip_feedback);
+  const int drained = thread.DrainMainThreadActions();
+  Expect(drained > 0 && delivered && ran, "draining should deliver the async command outcome");
+  Expect(feedback == "did:x", "the command's returned feedback should round-trip to the callback");
+
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -2308,6 +2371,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRoutesEventsThroughWorkerThread);
   AddTest(tests, "PluginHost/QueryCompletionsAsyncDeliversThroughWorker",
           TestPluginHostQueryCompletionsAsyncDeliversThroughWorker);
+  AddTest(tests, "PluginHost/ExecuteCommandAsyncDeliversThroughWorker",
+          TestPluginHostExecuteCommandAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);
