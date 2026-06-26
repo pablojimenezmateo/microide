@@ -1177,7 +1177,6 @@
   const std::vector<WorkspaceOutputChannels::ChannelInfo>& OutputChannels() const;
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
   void ConsumeLspCallbacks();
-  bool ConsumePluginAsyncProcessCallbacks();
   void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
@@ -1755,7 +1754,6 @@
   Uint32 lsp_event_type_ = 0;
   Uint32 dap_event_type_ = 0;
   Uint32 control_event_type_ = 0;
-  Uint32 plugin_async_process_event_type_ = 0;
   Uint32 plugin_thread_event_type_ = 0;
   Uint32 highlight_prefetch_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;

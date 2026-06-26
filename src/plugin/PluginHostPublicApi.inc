@@ -32,7 +32,6 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 
   auto load_body = [impl = impl_.get(), next_project_root,
                     plugin_roots = std::move(plugin_roots)]() {
-    impl->DrainAsyncProcessWorkers();
     impl->TearDownPlugins();
     impl->disabled_plugin_meta.clear();
     impl->current_project_root = next_project_root;
@@ -75,33 +74,10 @@ void PluginHost::Shutdown() {
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  impl_->DrainAsyncProcessWorkers();
   impl_->TearDownPlugins();
 #endif
   impl_->current_project_root.clear();
   impl_->SetReloadSummary();
-}
-
-void PluginHost::SetAsyncProcessEventType(std::uint32_t type) {
-  async_state_interop::SetEventType(*impl_->async_process_state, type);
-}
-
-int PluginHost::ConsumeAsyncProcessCallbacks() {
-#if MICROIDE_HAS_LUA_PLUGINS
-  return async_callback_interop::ConsumeCallbacks(
-      *impl_->async_process_state,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](std::string error) {
-        if (impl_->callbacks.error_sink) {
-          impl_->callbacks.error_sink(std::move(error));
-        }
-      });
-#endif
-  return 0;
-}
-
-int PluginHost::PendingAsyncProcessCount() const {
-  return async_state_interop::PendingCount(*impl_->async_process_state);
 }
 
 void PluginHost::OnBufferOpen(const std::filesystem::path& path) {

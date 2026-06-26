@@ -2,7 +2,6 @@
 
 #include "editor/PluginSurfaceStore.h"
 #include "perf/AllocationCounter.h"
-#include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginHost.h"
 #include "plugin/PluginHostRuntimeTypes.h"
 #include "project/DirectoryTree.h"
@@ -355,34 +354,6 @@ void TestFileIconCacheGateLeavesNoFootprintWhenDisabled() {
 #endif
 }
 
-// --- Change 6: the async-process poll is lockless when nothing is queued ---
-
-// HandleScheduledWake polls PendingAsyncProcessCount on every wake. The `queued`
-// atomic lets the steady "no async work" case return 0 without locking the mutex
-// or scanning the request vectors; this verifies the gate opens and closes.
-void TestAsyncProcessPollIsZeroWhenIdle() {
-#if MICROIDE_HAS_LUA_PLUGINS
-  namespace async_state = microide::plugin::async_state_interop;
-  microide::plugin::runtime_types::AsyncProcessState state;
-  Expect(state.queued.load() == 0, "a fresh async state has nothing queued");
-  Expect(async_state::PendingCount(state) == 0,
-         "PendingCount returns 0 on an idle state via the lockless fast path");
-
-  // A queued request is reflected once the gate opens (the precise locked count).
-  state.active_requests.push_back(
-      std::make_shared<microide::plugin::runtime_types::AsyncProcessRequest>());
-  state.queued.store(1);
-  Expect(async_state::PendingCount(state) == 1,
-         "a queued request is counted when the fast-path gate is open");
-
-  // Cancelling clears the vectors and resets the gate back to zero.
-  async_state::CancelCallbacks(state);
-  Expect(state.queued.load() == 0, "CancelCallbacks resets the queued gate");
-  Expect(async_state::PendingCount(state) == 0,
-         "PendingCount is 0 again after cancellation");
-#endif
-}
-
 }  // namespace
 
 void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
@@ -410,8 +381,6 @@ void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
           TestFileIconRegistryHasNoEntriesWithoutPlugins);
   AddTest(tests, "PluginPresentation/FileIconCacheGateLeavesNoFootprintWhenDisabled",
           TestFileIconCacheGateLeavesNoFootprintWhenDisabled);
-  AddTest(tests, "PluginPresentation/AsyncProcessPollIsZeroWhenIdle",
-          TestAsyncProcessPollIsZeroWhenIdle);
 }
 
 }  // namespace microide::tests

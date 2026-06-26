@@ -886,14 +886,6 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   RequestEditorSurfaceRedraw();
 }
 
-bool WorkspaceShell::ConsumePluginAsyncProcessCallbacks() {
-  const bool consumed = plugin_runtime_.ConsumeAsyncProcessCallbacks();
-  if (consumed) {
-    RequestFullRedraw();
-  }
-  return consumed;
-}
-
 void WorkspaceShell::ActivatePluginSurfacePreview(std::string_view owner,
                                                   std::string_view surface_id,
                                                   editor::SurfacePreviewSlot slot) {

@@ -867,15 +867,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
         },
     };
   }
-  if (plugin_runtime_.PendingAsyncProcessCount() > 0 && ConsumePluginAsyncProcessCallbacks()) {
-    return EventResult{
-        .handled = true,
-        .redraw = RenderInvalidation{
-            .full = true,
-            .rects = {},
-        },
-    };
-  }
   // Drain results marshalled back from the plugin worker thread. Gated on a
   // lockless atomic so a project with no plugin work pays a single load here.
   if (plugin_runtime_.PendingPluginThreadActionCount() > 0 &&

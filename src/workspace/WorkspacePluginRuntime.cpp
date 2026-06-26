@@ -47,18 +47,6 @@ bool WorkspacePluginRuntime::ConsumeWakeEvent(Uint32 type) {
   return asset_monitor_.ConsumeWakeEvent(type);
 }
 
-void WorkspacePluginRuntime::SetAsyncProcessEventType(Uint32 event_type) {
-  plugin_host_.SetAsyncProcessEventType(static_cast<std::uint32_t>(event_type));
-}
-
-bool WorkspacePluginRuntime::ConsumeAsyncProcessCallbacks() {
-  return plugin_host_.ConsumeAsyncProcessCallbacks() > 0;
-}
-
-int WorkspacePluginRuntime::PendingAsyncProcessCount() const {
-  return plugin_host_.PendingAsyncProcessCount();
-}
-
 void WorkspacePluginRuntime::SetPluginThreadEventType(Uint32 event_type) {
   plugin_thread_.SetWakeEventType(event_type);
 }

@@ -2,19 +2,14 @@
 
 #if MICROIDE_HAS_LUA_PLUGINS
 
-#include <algorithm>
 #include <array>
 #include <span>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
-#include <SDL3/SDL.h>
-
 #include "platform/Subprocess.h"
 #include "plugin/LuaError.h"
-#include "plugin/PluginAsyncStateInterop.h"
 #include "plugin/PluginPathInterop.h"
 
 namespace microide::plugin::process_interop {

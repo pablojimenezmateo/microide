@@ -111,7 +111,6 @@ void ScenarioContext::PumpEvents() {
   while (SDL_PollEvent(&event)) {
     (void)shell_.HandleEvent(event);
   }
-  workspace::WorkspaceShell::TestAccess::ConsumePluginAsyncProcessCallbacks(shell_);
 }
 
 bool ScenarioContext::Open(const std::filesystem::path& project_root) {
@@ -199,7 +198,6 @@ bool ScenarioContext::WaitForDiagnostics(const std::filesystem::path& path,
     if (workspace::WorkspaceShell::TestAccess::DiagnosticsForPath(shell_, path) != nullptr) {
       return true;
     }
-    workspace::WorkspaceShell::TestAccess::ConsumePluginAsyncProcessCallbacks(shell_);
     const auto wake = shell_.HandleScheduledWake();
     if (wake.handled) {
       PumpFrames(1);

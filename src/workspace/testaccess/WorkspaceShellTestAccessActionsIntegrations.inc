@@ -36,19 +36,6 @@
   static std::size_t SelectedLaunchConfigIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.selected_launch_config_index;
   }
-  static void ConsumePluginAsyncProcessCallbacks(WorkspaceShell& shell) {
-    shell.ConsumePluginAsyncProcessCallbacks();
-  }
-  static bool WaitForPluginAsyncProcessCallbacks(WorkspaceShell& shell, int timeout_ms = 5000) {
-    const Uint64 deadline = SDL_GetTicks() + static_cast<Uint64>(std::max(timeout_ms, 0));
-    while (shell.plugin_runtime_.Host().PendingAsyncProcessCount() > 0 &&
-           SDL_GetTicks() <= deadline) {
-      shell.ConsumePluginAsyncProcessCallbacks();
-      SDL_Delay(5);
-    }
-    shell.ConsumePluginAsyncProcessCallbacks();
-    return shell.plugin_runtime_.Host().PendingAsyncProcessCount() == 0;
-  }
   static const std::vector<editor::PublishedDiagnostic>* DiagnosticsForPath(
       const WorkspaceShell& shell,
       const std::filesystem::path& path) {

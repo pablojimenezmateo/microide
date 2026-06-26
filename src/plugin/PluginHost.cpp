@@ -25,8 +25,6 @@
 #include "platform/AppDirectories.h"
 #include "platform/Filesystem.h"
 #include "platform/Subprocess.h"
-#include "plugin/PluginAsyncStateInterop.h"
-#include "plugin/PluginAsyncCallbackInterop.h"
 #include "plugin/PluginContributionInterop.h"
 #include "plugin/PluginDataDirectoryInterop.h"
 #include "plugin/PluginBufferLifecycleInterop.h"
@@ -191,10 +189,6 @@ struct PluginHost::Impl {
     finished.wait();
   }
 
-  using AsyncProcessCallback = runtime_types::AsyncProcessCallback;
-  using AsyncProcessRequest = runtime_types::AsyncProcessRequest;
-  using AsyncProcessState = runtime_types::AsyncProcessState;
-  std::shared_ptr<AsyncProcessState> async_process_state = std::make_shared<AsyncProcessState>();
   std::vector<PluginInstance> plugins;
   // Plugin ids the user has disabled: their setup is skipped on Reload. disabled_plugin_meta
   // records {id, root} for the ones actually skipped this reload so the UI can list them.
@@ -359,28 +353,6 @@ struct PluginHost::Impl {
 #include "plugin/PluginHostLuaApi.inc"
 
   void ClearMessages() { messages.clear(); }
-
-#if MICROIDE_HAS_LUA_PLUGINS
-  void CancelAsyncProcessCallbacks() {
-    if (async_process_state) {
-      async_state_interop::CancelCallbacks(*async_process_state);
-    }
-  }
-
-  void DrainAsyncProcessWorkers() {
-    if (!async_process_state) {
-      return;
-    }
-    const bool drained = async_state_interop::DrainAndJoinWorkers(
-        *async_process_state, runtime_types::kPluginHostDrainDeadline);
-    if (!drained) {
-      SDL_Log(
-          "PluginHost: async worker drain exceeded %lld ms deadline; proceeding "
-          "with teardown (cancelled callbacks remain inert)",
-          static_cast<long long>(runtime_types::kPluginHostDrainDeadline.count()));
-    }
-  }
-#endif
 
 };
 

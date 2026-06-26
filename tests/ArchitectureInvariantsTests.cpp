@@ -93,12 +93,13 @@ void TestArchitectureInvariants() {
              // PluginEditorPresentation bundle, so the shell surface grows only by
              // these declarations.
              // 1598: +1 for plugin_thread_event_type_, the SDL wake event for the
-             // dedicated plugin worker thread that runs Lua off the UI thread
-             // (parallel to plugin_async_process_event_type_, which the worker
-             // subsumes in a later phase). The thread/queues live in plugin/, so the
-             // shell surface grows only by this one wake-event handle.
+             // dedicated plugin worker thread that runs Lua off the UI thread.
+             // The thread/queues live in plugin/, so the shell surface grows only by
+             // this one wake-event handle.
+             // 1596: -2 after deleting the dead plugin subprocess-callback
+             // subsystem (its shell consume-callback decl + SDL wake-event handle).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1598);
+                                                     1596);
            });
 
   bool hard_failure = false;

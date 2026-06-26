@@ -1855,7 +1855,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "eslint plugin fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
@@ -1863,8 +1862,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   editor.InsertText("broken();\n");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "eslint plugin fixture should save the edited JavaScript buffer");
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async lint should complete after saving the JavaScript buffer");
 
   const auto* broken_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
   Expect(broken_diagnostics != nullptr && broken_diagnostics->size() == 1,
@@ -1892,19 +1889,15 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnSave() {
   WriteFile(unopened, "broken();\n");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "eslint.run-opened"),
          "eslint.run-opened should execute");
-  WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell);
   Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, unopened) == nullptr,
          "eslint.run-opened should ignore dirty files that were never opened in this session");
 
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell);
   auto& clean_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   clean_editor.SelectAll();
   clean_editor.InsertText("const answer = 1;\n");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "eslint plugin fixture should save the cleaned JavaScript buffer");
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async lint should complete after saving the cleaned JavaScript buffer");
   Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
          "saving a clean JavaScript file should clear the plugin's diagnostics");
 }
@@ -1929,8 +1922,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnOpen() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "eslint open fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async lint should complete after opening the broken JavaScript file");
 
   const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
   Expect(diagnostics != nullptr && diagnostics->size() == 1,
@@ -1951,8 +1942,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesDiagnosticsOnOpen() {
   editor.InsertText("const answer = 1;\n");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "eslint open fixture should save the cleaned JavaScript buffer");
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async lint should complete after saving the cleaned JavaScript buffer");
   Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
          ("saving a cleaned JavaScript file should clear the ESLint diagnostics: " +
           DescribePluginState(shell))
@@ -2015,8 +2004,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesNestedTypescriptDiagnosticsOnOpe
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "nested eslint fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async lint should complete after opening the nested TypeScript file");
   const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
 
   Expect(diagnostics != nullptr && diagnostics->size() == 3,
@@ -2051,8 +2038,6 @@ void TestWorkspaceShellRepoEslintPluginRepublishesDiagnosticsOnSaveWithoutEdits(
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "eslint save preserve fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async lint should complete after opening the broken TypeScript file");
 
   const auto* opened_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
   Expect(opened_diagnostics != nullptr && opened_diagnostics->size() == 1,
@@ -2060,8 +2045,6 @@ void TestWorkspaceShellRepoEslintPluginRepublishesDiagnosticsOnSaveWithoutEdits(
 
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "saving an unchanged file should re-run ESLint");
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async lint should complete after saving the unchanged TypeScript file");
 
   const auto* saved_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
   Expect(saved_diagnostics != nullptr && saved_diagnostics->size() == 1,
@@ -2111,8 +2094,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
          "eslint tsconfig fixture should open the project");
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async config check should complete after opening the TypeScript config");
   const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, source);
   Expect(diagnostics != nullptr && diagnostics->size() == 1,
          ("opening a TypeScript config should publish tsc diagnostics immediately: " +
@@ -2134,8 +2115,6 @@ void TestWorkspaceShellRepoEslintPluginPublishesTypescriptConfigDiagnostics() {
       "}\n");
   Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
          "saving a TypeScript config should re-run config diagnostics");
-  Expect(WorkspaceShellTestAccess::WaitForPluginAsyncProcessCallbacks(shell),
-         "eslint async config check should complete after saving the TypeScript config");
   Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, source) == nullptr,
          ("saving a clean TypeScript config should clear the plugin diagnostics: " +
           DescribePluginState(shell))

@@ -31,9 +31,6 @@ class WorkspacePluginRuntime {
 
   void SetWakeEventType(Uint32 event_type);
   bool ConsumeWakeEvent(Uint32 type);
-  void SetAsyncProcessEventType(Uint32 event_type);
-  bool ConsumeAsyncProcessCallbacks();
-  int PendingAsyncProcessCount() const;
 
   // Dedicated worker thread that runs plugin Lua off the UI thread. Spawned
   // lazily on the first Reload that loads a plugin; never created otherwise.

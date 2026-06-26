@@ -210,8 +210,6 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginLuaBufferProjectInterop.cpp
   src/plugin/PluginLuaContextInterop.cpp
   src/plugin/PluginContributionInterop.cpp
-  src/plugin/PluginAsyncCallbackInterop.cpp
-  src/plugin/PluginAsyncStateInterop.cpp
   src/plugin/PluginBufferLifecycleInterop.cpp
   src/plugin/PluginInstallRoot.cpp
   src/plugin/PluginDiscoveryInterop.cpp

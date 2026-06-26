@@ -545,9 +545,6 @@ class PluginHost {
   // Wire the dedicated worker thread that runs all plugin Lua off the UI thread.
   // Null leaves the host in inline (UI-thread) mode.
   void SetWorker(PluginThread* worker);
-  void SetAsyncProcessEventType(std::uint32_t type);
-  int ConsumeAsyncProcessCallbacks();
-  int PendingAsyncProcessCount() const;
   bool enabled() const;
   void SetStartupPluginsEnabled(bool enabled);
   // Plugin ids whose setup should be skipped on the next Reload. They still appear in
