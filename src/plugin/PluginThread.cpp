@@ -47,6 +47,17 @@ void PluginThread::PostLatest(std::string key, std::function<void()> task) {
   inbound_cv_.notify_one();
 }
 
+void PluginThread::PostFront(std::function<void()> task) {
+  {
+    std::lock_guard lock(inbound_mutex_);
+    if (stop_) {
+      return;
+    }
+    inbound_.push_front(Job{.key = {}, .task = std::move(task), .cancelled = false});
+  }
+  inbound_cv_.notify_one();
+}
+
 void PluginThread::PostToMain(PluginMainThreadAction action) {
   {
     std::lock_guard lock(mailbox_mutex_);

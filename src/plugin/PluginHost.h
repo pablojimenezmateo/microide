@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -636,6 +637,9 @@ class PluginHost {
   bool RunSaveParticipants(const std::filesystem::path& path,
                            std::string* text,
                            std::string* error_message = nullptr) const;
+  // Test-only: shorten the bounded save round-trip so the timeout fallback is
+  // exercisable without a multi-second wait.
+  void SetSaveParticipantDeadlineForTesting(std::chrono::milliseconds deadline);
   std::vector<CompletionCandidate> QueryCompletions(std::string_view language_id,
                                                     const std::filesystem::path& path,
                                                     std::size_t line,

@@ -53,6 +53,11 @@ class PluginThread {
   // stale hover/completion request — is discarded instead of backing up.
   void Post(std::function<void()> task);
   void PostLatest(std::string key, std::function<void()> task);
+  // Jump the queue: run before any already-queued job (it still waits for the
+  // job currently mid-PCall, which the watchdog bounds). For a user-blocking,
+  // deadline-bounded round-trip (save participants) that must not sit behind a
+  // backlog of speculative query jobs.
+  void PostFront(std::function<void()> task);
 
   // Worker -> UI thread. Queues an action and wakes the UI loop.
   void PostToMain(PluginMainThreadAction action);

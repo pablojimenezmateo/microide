@@ -9,6 +9,7 @@
 #include <chrono>
 #include <algorithm>
 #include <filesystem>
+#include <future>
 #include <string>
 #include <thread>
 #include <vector>
@@ -2465,6 +2466,87 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// The save path is the one deliberate bounded synchronous round-trip onto the
+// worker. This proves both halves of Phase 5: the worker actually transforms the
+// text when it finishes in time, and a worker that cannot answer within the
+// deadline never wedges the save -- it proceeds untransformed and warns.
+void TestPluginHostSaveParticipantsBoundedRoundTrip() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "doc.txt";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "save-participant",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "save.participant",
+  setup = function(ctx)
+    ctx.save_participants.add("uppercase", function(buffer)
+      return { text = string.upper(buffer.text) }
+    end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  bool warned = false;
+  std::string warn_level;
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.show_notification = [&](const std::string& level, const std::string&) {
+    warned = true;
+    warn_level = level;
+  };
+
+  PluginHost host;
+  host.SetCallbacks(std::move(callbacks));
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);  // No SDL loop; drive the worker by hand.
+  host.SetWorker(&thread);
+  Expect(host.Reload(project_root), "save participant plugin should reload through the worker");
+
+  // Happy path: the worker answers within the deadline and the transform lands.
+  std::string text = "alpha\n";
+  std::string error_message;
+  Expect(host.RunSaveParticipants(source, &text, &error_message),
+         "a worker-path save round-trip should succeed");
+  Expect(error_message.empty(), "a successful save round-trip should not set an error");
+  Expect(text == "ALPHA\n", "the worker-run participant should transform the saved text");
+  Expect(!warned, "a save that completes in time must not warn");
+
+  // Timeout path: occupy the worker with a job that blocks until released, so the
+  // save's queue-jumping job cannot run within the (shortened) deadline.
+  auto started = std::make_shared<std::promise<void>>();
+  auto release = std::make_shared<std::promise<void>>();
+  std::future<void> started_future = started->get_future();
+  std::shared_future<void> release_future = release->get_future().share();
+  thread.Post([started, release_future]() mutable {
+    started->set_value();
+    release_future.wait();
+  });
+  started_future.wait();  // The worker is now parked inside the blocking job.
+
+  host.SetSaveParticipantDeadlineForTesting(std::chrono::milliseconds(100));
+  std::string blocked_text = "alpha\n";
+  error_message.clear();
+  const bool ok = host.RunSaveParticipants(source, &blocked_text, &error_message);
+  Expect(ok, "a save must never be wedged by a busy worker -- it proceeds");
+  Expect(blocked_text == "alpha\n", "a timed-out save keeps its untransformed text");
+  Expect(error_message.empty(), "a timeout is not a participant failure, so no error is set");
+  Expect(warned && warn_level == "warning", "a timed-out save should surface a warning toast");
+
+  release->set_value();  // Let the worker drain the blocking job before shutdown.
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -2511,6 +2593,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostExecuteCommandAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/ReloadAsyncPublishesOnDrain",
           TestPluginHostReloadAsyncPublishesOnDrain);
+  AddTest(tests, "PluginHost/SaveParticipantsBoundedRoundTrip",
+          TestPluginHostSaveParticipantsBoundedRoundTrip);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);

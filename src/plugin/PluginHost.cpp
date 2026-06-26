@@ -63,6 +63,14 @@ namespace microide::plugin {
 
 namespace {
 
+// Upper bound on how long a buffer save will park the UI thread waiting for the
+// worker to run save participants. Participants normally finish in microseconds;
+// this caps the freeze if the worker is mid-PCall on a prior job or a participant
+// blocks on slow I/O (e.g. ctx.process.run, which the instruction watchdog cannot
+// bound). On timeout the save proceeds with untransformed text and warns -- a save
+// is never wedged by a slow plugin.
+constexpr std::chrono::milliseconds kSaveParticipantDeadline{2000};
+
 // Per-plugin-call execution context. This is THREAD-LOCAL, not shared host state:
 // re-entrancy ("am I already inside a plugin call on THIS thread") and the active
 // snapshot / direct-access flags are inherently per-thread. A shared member would
@@ -119,6 +127,11 @@ struct PluginHost::Impl {
   // from both threads as a stable pointer; the per-call execution context lives in
   // the thread-local g_exec, not here.
   PluginThread* worker_ = nullptr;
+
+  // How long a save will park the UI waiting for the worker to run participants.
+  // Defaults to kSaveParticipantDeadline; tests shorten it to exercise the timeout
+  // path without a multi-second wait.
+  std::chrono::milliseconds save_participant_deadline_ = kSaveParticipantDeadline;
 
   // Restores the per-thread execution context on scope exit so nested plugin calls
   // and any early return leave the thread-local flags as they were.
@@ -187,6 +200,26 @@ struct PluginHost::Impl {
   // Dispatch a plugin call onto the worker. Detached = fire-and-forget (events);
   // Blocking = bounded synchronous round-trip preserving the synchronous API.
   void RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn);
+
+  // Outcome of a deadline-bounded save-participant round-trip. `text` holds the
+  // (possibly transformed) buffer when the worker finished in time; on timeout
+  // the worker may still be writing into the shared copy, so `timed_out` callers
+  // must ignore `text` and keep their original buffer.
+  struct SaveParticipantResult {
+    std::string text;
+    std::string error;
+    bool ok = true;
+    bool timed_out = false;
+  };
+
+  // Run the registered save participants on the worker, waiting at most
+  // `kSaveParticipantDeadline`. Participant Lua only transforms `input` via its
+  // return value; any host side effects defer to the mailbox (direct=false) so a
+  // job that outlives the UI's wait can never mutate live shell state after the
+  // UI has moved on. The result text lives in a shared buffer co-owned by the
+  // worker job, so a late completion past a timeout is safe to abandon.
+  SaveParticipantResult RunSaveParticipantsBounded(const std::filesystem::path& path,
+                                                   std::string input);
   template <typename F>
   void RunOnWorkerBlocking(const PluginHostSnapshot& snapshot, F&& fn) {
     if (g_exec.executing || worker_ == nullptr) {
@@ -832,6 +865,61 @@ void PluginHost::Impl::RunOnWorkerDetached(PluginHostSnapshot snapshot, std::fun
     ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/false, fn);
   });
 }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+PluginHost::Impl::SaveParticipantResult PluginHost::Impl::RunSaveParticipantsBounded(
+    const std::filesystem::path& path, std::string input) {
+  // The transformed text lives in a shared buffer co-owned by the worker job so a
+  // completion that lands AFTER a UI timeout writes into a still-live object the UI
+  // has stopped reading -- never into a dangling stack local.
+  auto shared = std::make_shared<SaveParticipantResult>();
+  shared->text = std::move(input);
+
+  PluginHostSnapshot snapshot = CaptureSnapshot();
+
+  if (worker_ == nullptr || g_exec.executing) {
+    // No worker wired (tests / pre-wire) or already on the worker (re-entrant):
+    // run inline with exclusive access. No deadline applies -- nothing else can be
+    // touching a lua_State.
+    ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/false, [&]() {
+      shared->ok = provider_query_interop::RunSaveParticipants(
+          path, &shared->text, save_participant_runtimes,
+          [this](lua_State* state) { return FindPluginByState(state); },
+          [this](lua_State* state, const std::filesystem::path& buffer_path,
+                 std::string_view value) { PushBufferContext(state, buffer_path, value); },
+          &shared->error);
+    });
+    return *shared;
+  }
+
+  worker_->EnsureStarted();
+  auto done = std::make_shared<std::promise<void>>();
+  std::future<void> finished = done->get_future();
+  // PostFront: a user-blocking save must not sit behind a backlog of speculative
+  // query jobs. direct=false: any host side effects defer to the mailbox, so a job
+  // that outlives our wait can never mutate live shell state after we move on.
+  worker_->PostFront([this, snapshot = std::move(snapshot), shared, path, done]() mutable {
+    ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/false, [&]() {
+      shared->ok = provider_query_interop::RunSaveParticipants(
+          path, &shared->text, save_participant_runtimes,
+          [this](lua_State* state) { return FindPluginByState(state); },
+          [this](lua_State* state, const std::filesystem::path& buffer_path,
+                 std::string_view value) { PushBufferContext(state, buffer_path, value); },
+          &shared->error);
+    });
+    done->set_value();
+  });
+
+  if (finished.wait_for(save_participant_deadline_) == std::future_status::ready) {
+    return *shared;
+  }
+  // Timed out: leave `text` to the still-running worker job and tell the caller to
+  // proceed with its own untransformed buffer.
+  SaveParticipantResult timed_out;
+  timed_out.timed_out = true;
+  return timed_out;
+}
+#endif
 
 PluginHost::PluginHost() : impl_(std::make_unique<Impl>()) {}
 

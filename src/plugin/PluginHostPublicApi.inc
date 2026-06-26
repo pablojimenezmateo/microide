@@ -568,22 +568,36 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  bool ok = false;
-  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
-    ok = provider_query_interop::RunSaveParticipants(
-        path, text, impl_->save_participant_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); },
-        [this](lua_State* state, const std::filesystem::path& buffer_path, std::string_view value) {
-          impl_->PushBufferContext(state, buffer_path, value);
-        },
-        error_message);
-  });
-  return ok;
+  // Pass a copy, not a move: on timeout the worker may still be transforming its
+  // copy, so the caller's `*text` must stay intact to save untransformed.
+  PluginHost::Impl::SaveParticipantResult result =
+      impl_->RunSaveParticipantsBounded(path, *text);
+  if (result.timed_out) {
+    // Never wedge a save: proceed with the caller's untransformed `*text` (left
+    // intact -- we passed a copy to the worker) and surface a toast.
+    if (impl_->raw_callbacks.show_notification) {
+      impl_->raw_callbacks.show_notification(
+          "warning", "save participants timed out; saved without plugin transforms");
+    }
+    return true;
+  }
+  if (!result.ok) {
+    if (error_message != nullptr) {
+      *error_message = std::move(result.error);
+    }
+    return false;
+  }
+  *text = std::move(result.text);
+  return true;
 #else
   (void)path;
   (void)text;
   return true;
 #endif
+}
+
+void PluginHost::SetSaveParticipantDeadlineForTesting(std::chrono::milliseconds deadline) {
+  impl_->save_participant_deadline_ = deadline;
 }
 
 std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
