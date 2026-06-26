@@ -116,7 +116,7 @@
   // it is refused rather than raced. Returns true when the call must be rejected,
   // leaving the error message on the Lua stack for the caller to raise.
   static bool RejectRuntimeRegistration(lua_State* state, Impl* host) {
-    if (host == nullptr || host->direct_host_access_) {
+    if (host == nullptr || g_exec.direct) {
       return false;
     }
     lua_error_util::PushMessage(

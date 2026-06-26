@@ -14,6 +14,7 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
         &impl_->sidebars, &impl_->sidebar_providers, &impl_->hovers, &impl_->hover_provider_order,
         &impl_->plugins);
     impl_->SetReloadSummary();
+    impl_->PublishContributionSnapshot();
     return false;
   }
 
@@ -61,6 +62,7 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 #endif
 
   impl_->SetReloadSummary();
+  impl_->PublishContributionSnapshot();
   return impl_->errors.empty();
 }
 
@@ -70,6 +72,7 @@ void PluginHost::Shutdown() {
         &impl_->current_project_root, &impl_->commands, &impl_->command_names, &impl_->sidebars,
         &impl_->sidebar_providers, &impl_->hovers, &impl_->hover_provider_order, &impl_->plugins);
     impl_->SetReloadSummary();
+    impl_->PublishContributionSnapshot();
     return;
   }
 
@@ -78,6 +81,7 @@ void PluginHost::Shutdown() {
 #endif
   impl_->current_project_root.clear();
   impl_->SetReloadSummary();
+  impl_->PublishContributionSnapshot();
 }
 
 void PluginHost::OnBufferOpen(const std::filesystem::path& path) {
@@ -321,25 +325,13 @@ void PluginHost::ExecuteCommandAsync(
 }
 
 const std::vector<std::string>& PluginHost::CommandNames() const {
-#if MICROIDE_HAS_LUA_PLUGINS
-  // Lazy rebuild: registration only marks the ordered view dirty, so the sort runs
-  // at most once per batch of registrations, on the first read after a change.
-  if (impl_->command_names_dirty) {
-    registry_interop::RebuildCommandNames(impl_->commands, &impl_->command_names);
-    impl_->command_names_dirty = false;
-  }
-#endif
-  return impl_->command_names;
+  // The sorted view is resolved once when the snapshot is published (registration
+  // only flips the dirty bit); the UI reads the immutable published copy here.
+  return impl_->published_.command_names;
 }
 
 const std::vector<PluginHost::SidebarProviderInfo>& PluginHost::SidebarProviders() const {
-#if MICROIDE_HAS_LUA_PLUGINS
-  if (impl_->sidebar_providers_dirty) {
-    registry_interop::RebuildSidebarProviders(impl_->sidebars, &impl_->sidebar_providers);
-    impl_->sidebar_providers_dirty = false;
-  }
-#endif
-  return impl_->sidebar_providers;
+  return impl_->published_.sidebar_providers;
 }
 
 const PluginHost::SidebarProviderInfo* PluginHost::FindSidebarProvider(std::string_view id) const {
@@ -480,15 +472,15 @@ std::vector<std::filesystem::path> PluginHost::DataDirectories(std::string_view 
 }
 
 const std::vector<PluginHost::ContributedMenuEntry>& PluginHost::ContributedMenuEntries() const {
-  return impl_->menu_entries;
+  return impl_->published_.menu_entries;
 }
 
 const std::vector<PluginHost::ContributedKeybinding>& PluginHost::ContributedKeybindings() const {
-  return impl_->keybindings;
+  return impl_->published_.keybindings;
 }
 
 const std::vector<PluginHost::ContributedSettingSpec>& PluginHost::ContributedSettings() const {
-  return impl_->settings;
+  return impl_->published_.settings;
 }
 
 const std::vector<PluginHost::ContributedStatusItem>& PluginHost::ContributedStatusItems() const {
@@ -1269,88 +1261,88 @@ bool PluginHost::LogoutAuthSession(std::string_view provider_id,
 }
 
 const std::vector<PluginHost::ContributedFormatter>& PluginHost::ContributedFormatters() const {
-  return impl_->formatters;
+  return impl_->published_.formatters;
 }
 
 const std::vector<PluginHost::ContributedSaveParticipant>& PluginHost::ContributedSaveParticipants()
     const {
-  return impl_->save_participants;
+  return impl_->published_.save_participants;
 }
 
 const std::vector<PluginHost::ContributedCompletion>& PluginHost::ContributedCompletions() const {
-  return impl_->completions;
+  return impl_->published_.completions;
 }
 
 const std::vector<PluginHost::ContributedCodeAction>& PluginHost::ContributedCodeActions() const {
-  return impl_->code_actions;
+  return impl_->published_.code_actions;
 }
 
 const std::vector<PluginHost::ContributedLanguageServer>&
 PluginHost::ContributedLanguageServers() const {
-  return impl_->language_servers;
+  return impl_->published_.language_servers;
 }
 
 const std::vector<PluginHost::ContributedDebugAdapter>&
 PluginHost::ContributedDebugAdapters() const {
-  return impl_->debug_adapters;
+  return impl_->published_.debug_adapters;
 }
 
 const std::vector<PluginHost::ContributedLaunchConfig>&
 PluginHost::ContributedLaunchConfigs() const {
-  return impl_->launch_configs;
+  return impl_->published_.launch_configs;
 }
 
 const std::vector<PluginHost::ContributedTask>& PluginHost::ContributedTasks() const {
-  return impl_->tasks;
+  return impl_->published_.tasks;
 }
 
 const std::vector<PluginHost::ContributedTool>& PluginHost::ContributedTools() const {
-  return impl_->tools;
+  return impl_->published_.tools;
 }
 
 const std::vector<PluginHost::ContributedTestProvider>& PluginHost::ContributedTestProviders()
     const {
-  return impl_->test_providers;
+  return impl_->published_.test_providers;
 }
 
 const std::vector<PluginHost::ContributedScmProvider>& PluginHost::ContributedScmProviders()
     const {
-  return impl_->scm_providers;
+  return impl_->published_.scm_providers;
 }
 
 const std::vector<PluginHost::ContributedAnnotationProvider>&
 PluginHost::ContributedAnnotationProviders() const {
-  return impl_->annotation_providers;
+  return impl_->published_.annotation_providers;
 }
 
 const std::vector<PluginHost::ContributedAuthProvider>& PluginHost::ContributedAuthProviders()
     const {
-  return impl_->auth_providers;
+  return impl_->published_.auth_providers;
 }
 
 const std::vector<PluginHost::ContributedBracketSet>& PluginHost::ContributedBrackets() const {
-  return impl_->bracket_sets;
+  return impl_->published_.bracket_sets;
 }
 
 const std::vector<PluginHost::ContributedCommentMarkers>& PluginHost::ContributedComments() const {
-  return impl_->comment_markers;
+  return impl_->published_.comment_markers;
 }
 
 const std::vector<PluginHost::ContributedIndentRules>& PluginHost::ContributedIndents() const {
-  return impl_->indent_rules;
+  return impl_->published_.indent_rules;
 }
 
 const std::vector<PluginHost::ContributedSnippet>& PluginHost::ContributedSnippets() const {
-  return impl_->snippets;
+  return impl_->published_.snippets;
 }
 
 const std::vector<PluginHost::ContributedTheme>& PluginHost::ContributedThemes() const {
-  return impl_->themes;
+  return impl_->published_.themes;
 }
 
 const std::vector<PluginHost::ContributedFileIconTheme>& PluginHost::ContributedFileIconThemes()
     const {
-  return impl_->file_icon_themes;
+  return impl_->published_.file_icon_themes;
 }
 
 const std::vector<std::string>& PluginHost::Messages() const {
@@ -1366,7 +1358,7 @@ void PluginHost::ClearMessages() {
 }
 
 std::string PluginHost::ReloadSummary() const {
-  return impl_->reload_summary;
+  return impl_->published_.reload_summary;
 }
 
 std::size_t PluginHost::LoadedPluginCount() const {
@@ -1378,17 +1370,7 @@ void PluginHost::SetDisabledPlugins(std::vector<std::string> disabled_ids) {
 }
 
 std::vector<PluginHost::LoadedPlugin> PluginHost::LoadedPlugins() const {
-  std::vector<LoadedPlugin> result;
-  result.reserve(impl_->plugins.size() + impl_->disabled_plugin_meta.size());
-  for (const auto& plugin : impl_->plugins) {
-    result.push_back(LoadedPlugin{.id = plugin.id, .root = plugin.root, .enabled = true});
-  }
-  for (const auto& meta : impl_->disabled_plugin_meta) {
-    result.push_back(meta);
-  }
-  std::sort(result.begin(), result.end(),
-            [](const LoadedPlugin& a, const LoadedPlugin& b) { return a.id < b.id; });
-  return result;
+  return impl_->published_.loaded_plugins;
 }
 
 }  // namespace microide::plugin

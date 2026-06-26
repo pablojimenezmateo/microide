@@ -64,6 +64,20 @@ namespace microide::plugin {
 
 namespace {
 
+// Per-plugin-call execution context. This is THREAD-LOCAL, not shared host state:
+// re-entrancy ("am I already inside a plugin call on THIS thread") and the active
+// snapshot / direct-access flags are inherently per-thread. A shared member would
+// race — the worker writes the flags while the main thread reads them to decide
+// inline-vs-post, and a stale read of "executing" set by the busy worker would make
+// the main thread wrongly run Lua inline. Keeping it thread-local makes the worker's
+// context invisible to the main thread and vice versa.
+struct PluginExecContext {
+  const PluginHostSnapshot* snapshot = nullptr;
+  bool direct = true;
+  bool executing = false;
+};
+thread_local PluginExecContext g_exec;
+
 }  // namespace
 
 struct PluginHost::Impl {
@@ -89,34 +103,24 @@ struct PluginHost::Impl {
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
 
-  // Worker-execution context. These are touched ONLY on the plugin worker thread
-  // (or inline on the UI thread before the worker is wired), set around each plugin
-  // call by ExecuteWithContext. The worker is single-threaded, so no locking.
+  // The dedicated worker that runs plugin Lua. Set once at wiring time and read
+  // from both threads as a stable pointer; the per-call execution context lives in
+  // the thread-local g_exec, not here.
   PluginThread* worker_ = nullptr;
-  const PluginHostSnapshot* current_snapshot_ = nullptr;
-  bool direct_host_access_ = true;
-  bool executing_plugin_call_ = false;
 
-  // Restores the worker-execution context on scope exit so nested plugin calls and
-  // any early return leave the flags as they were.
+  // Restores the per-thread execution context on scope exit so nested plugin calls
+  // and any early return leave the thread-local flags as they were.
   struct ContextGuard {
-    Impl* impl;
-    const PluginHostSnapshot* prev_snapshot;
-    bool prev_direct;
-    bool prev_executing;
-    ~ContextGuard() {
-      impl->current_snapshot_ = prev_snapshot;
-      impl->direct_host_access_ = prev_direct;
-      impl->executing_plugin_call_ = prev_executing;
-    }
+    PluginExecContext prev;
+    ~ContextGuard() { g_exec = prev; }
   };
 
   template <typename F>
   void ExecuteWithContext(const PluginHostSnapshot* snapshot, bool direct, F&& fn) {
-    ContextGuard guard{this, current_snapshot_, direct_host_access_, executing_plugin_call_};
-    current_snapshot_ = snapshot;
-    direct_host_access_ = direct;
-    executing_plugin_call_ = true;
+    ContextGuard guard{g_exec};
+    g_exec.snapshot = snapshot;
+    g_exec.direct = direct;
+    g_exec.executing = true;
     fn();
   }
 
@@ -124,7 +128,7 @@ struct PluginHost::Impl {
   // access (round-trip with the UI thread parked, or the un-wired inline path),
   // otherwise marshal it to the UI thread via the mailbox.
   void ApplyHostMutation(std::function<void()> fn) {
-    if (direct_host_access_ || worker_ == nullptr) {
+    if (g_exec.direct || worker_ == nullptr) {
       fn();
     } else {
       worker_->PostToMain(std::move(fn));
@@ -132,22 +136,22 @@ struct PluginHost::Impl {
   }
 
   std::optional<PluginHost::ActiveBuffer> ResolveActiveBuffer() const {
-    if (current_snapshot_ != nullptr) {
-      if (!current_snapshot_->active_buffer.present) {
+    if (g_exec.snapshot != nullptr) {
+      if (!g_exec.snapshot->active_buffer.present) {
         return std::nullopt;
       }
       return PluginHost::ActiveBuffer{
-          .path = current_snapshot_->active_buffer.path,
-          .line = current_snapshot_->active_buffer.line,
-          .column = current_snapshot_->active_buffer.column,
+          .path = g_exec.snapshot->active_buffer.path,
+          .line = g_exec.snapshot->active_buffer.line,
+          .column = g_exec.snapshot->active_buffer.column,
       };
     }
     return raw_callbacks.active_buffer ? raw_callbacks.active_buffer() : std::nullopt;
   }
 
   std::optional<std::string> ResolveSetting(std::string_view id) const {
-    if (current_snapshot_ != nullptr) {
-      for (const auto& [key, value] : current_snapshot_->settings) {
+    if (g_exec.snapshot != nullptr) {
+      for (const auto& [key, value] : g_exec.snapshot->settings) {
         if (key == id) {
           return value;
         }
@@ -171,7 +175,7 @@ struct PluginHost::Impl {
   void RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn);
   template <typename F>
   void RunOnWorkerBlocking(const PluginHostSnapshot& snapshot, F&& fn) {
-    if (executing_plugin_call_ || worker_ == nullptr) {
+    if (g_exec.executing || worker_ == nullptr) {
       // Already on the worker (re-entrant) or no worker wired: run inline with
       // exclusive access rather than dead-locking on a self-post.
       ExecuteWithContext(&snapshot, /*direct=*/true, std::forward<F>(fn));
@@ -202,7 +206,7 @@ struct PluginHost::Impl {
                      std::function<Result()> produce,
                      std::function<void(Result)> deliver) {
     PluginHostSnapshot snapshot = CaptureSnapshot();
-    if (worker_ == nullptr || executing_plugin_call_) {
+    if (worker_ == nullptr || g_exec.executing) {
       Result result;
       ExecuteWithContext(&snapshot, /*direct=*/true, [&]() { result = produce(); });
       deliver(std::move(result));
@@ -223,6 +227,43 @@ struct PluginHost::Impl {
       worker_->PostLatest(std::move(dedup_key), std::move(task));
     }
   }
+
+  // Immutable, UI-thread-owned view of every setup-time contribution the UI reads
+  // (everything that changes only on Reload; the runtime-mutating status items,
+  // messages, and errors are not here). The worker builds it from the live
+  // registries at the end of a reload; the UI accessors read it. This decouples UI
+  // reads from the worker's registry mutations so Reload can stop blocking the UI
+  // (the worker rebuilds the live registries and republishes this view without the
+  // UI ever touching live mutable plugin state).
+  struct ContributionSnapshot {
+    std::vector<std::string> command_names;
+    std::vector<SidebarProviderInfo> sidebar_providers;
+    std::vector<PluginHost::ContributedMenuEntry> menu_entries;
+    std::vector<PluginHost::ContributedKeybinding> keybindings;
+    std::vector<PluginHost::ContributedSettingSpec> settings;
+    std::vector<PluginHost::ContributedFormatter> formatters;
+    std::vector<PluginHost::ContributedSaveParticipant> save_participants;
+    std::vector<PluginHost::ContributedCompletion> completions;
+    std::vector<PluginHost::ContributedCodeAction> code_actions;
+    std::vector<PluginHost::ContributedLanguageServer> language_servers;
+    std::vector<PluginHost::ContributedDebugAdapter> debug_adapters;
+    std::vector<PluginHost::ContributedLaunchConfig> launch_configs;
+    std::vector<PluginHost::ContributedTask> tasks;
+    std::vector<PluginHost::ContributedTool> tools;
+    std::vector<PluginHost::ContributedTestProvider> test_providers;
+    std::vector<PluginHost::ContributedScmProvider> scm_providers;
+    std::vector<PluginHost::ContributedAnnotationProvider> annotation_providers;
+    std::vector<PluginHost::ContributedAuthProvider> auth_providers;
+    std::vector<PluginHost::ContributedBracketSet> bracket_sets;
+    std::vector<PluginHost::ContributedCommentMarkers> comment_markers;
+    std::vector<PluginHost::ContributedIndentRules> indent_rules;
+    std::vector<PluginHost::ContributedSnippet> snippets;
+    std::vector<PluginHost::ContributedTheme> themes;
+    std::vector<PluginHost::ContributedFileIconTheme> file_icon_themes;
+    std::vector<PluginHost::LoadedPlugin> loaded_plugins;
+    std::string reload_summary = "Lua plugin runtime unavailable";
+  };
+  ContributionSnapshot published_;
 
   std::vector<PluginInstance> plugins;
   // Plugin ids the user has disabled: their setup is skipped on Reload. disabled_plugin_meta
@@ -323,6 +364,70 @@ struct PluginHost::Impl {
     }
   }
 
+  // Compute the {id, root, enabled} list the UI shows for loaded + disabled plugins.
+  std::vector<PluginHost::LoadedPlugin> ComputeLoadedPlugins() const {
+    std::vector<PluginHost::LoadedPlugin> result;
+    result.reserve(plugins.size() + disabled_plugin_meta.size());
+    for (const auto& plugin : plugins) {
+      result.push_back(PluginHost::LoadedPlugin{.id = plugin.id, .root = plugin.root, .enabled = true});
+    }
+    for (const auto& meta : disabled_plugin_meta) {
+      result.push_back(meta);
+    }
+    std::sort(result.begin(), result.end(),
+              [](const PluginHost::LoadedPlugin& a, const PluginHost::LoadedPlugin& b) {
+                return a.id < b.id;
+              });
+    return result;
+  }
+
+  // Build the immutable UI view from the live setup-time registries, resolving the
+  // lazy ordered views first. Called when a reload/shutdown settles; the result is
+  // assigned to `published_` (in 4a inline while the UI is parked on the round-trip;
+  // a later phase posts it to the UI thread so Reload need not block).
+  ContributionSnapshot BuildContributionSnapshot() {
+#if MICROIDE_HAS_LUA_PLUGINS
+    if (command_names_dirty) {
+      registry_interop::RebuildCommandNames(commands, &command_names);
+      command_names_dirty = false;
+    }
+    if (sidebar_providers_dirty) {
+      registry_interop::RebuildSidebarProviders(sidebars, &sidebar_providers);
+      sidebar_providers_dirty = false;
+    }
+#endif
+    ContributionSnapshot snapshot;
+    snapshot.command_names = command_names;
+    snapshot.sidebar_providers = sidebar_providers;
+    snapshot.menu_entries = menu_entries;
+    snapshot.keybindings = keybindings;
+    snapshot.settings = settings;
+    snapshot.formatters = formatters;
+    snapshot.save_participants = save_participants;
+    snapshot.completions = completions;
+    snapshot.code_actions = code_actions;
+    snapshot.language_servers = language_servers;
+    snapshot.debug_adapters = debug_adapters;
+    snapshot.launch_configs = launch_configs;
+    snapshot.tasks = tasks;
+    snapshot.tools = tools;
+    snapshot.test_providers = test_providers;
+    snapshot.scm_providers = scm_providers;
+    snapshot.annotation_providers = annotation_providers;
+    snapshot.auth_providers = auth_providers;
+    snapshot.bracket_sets = bracket_sets;
+    snapshot.comment_markers = comment_markers;
+    snapshot.indent_rules = indent_rules;
+    snapshot.snippets = snippets;
+    snapshot.themes = themes;
+    snapshot.file_icon_themes = file_icon_themes;
+    snapshot.loaded_plugins = ComputeLoadedPlugins();
+    snapshot.reload_summary = reload_summary;
+    return snapshot;
+  }
+
+  void PublishContributionSnapshot() { published_ = BuildContributionSnapshot(); }
+
   // RecordMessage/RecordError mutate the host-owned messages/errors vectors that the
   // UI thread reads, so the whole record-and-sink runs through ApplyHostMutation:
   // inline under exclusive access (setup/round-trip), or marshalled to the UI thread
@@ -407,7 +512,7 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
   if (raw_callbacks.is_command_name_available) {
     // Consulted only during setup-time registration, which runs with direct access.
     routed.is_command_name_available = [this](std::string_view name) -> bool {
-      return direct_host_access_ && raw_callbacks.is_command_name_available(name);
+      return g_exec.direct && raw_callbacks.is_command_name_available(name);
     };
   }
 
@@ -416,7 +521,7 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
   // never capture a lua_State / Lua ref.
   if (raw_callbacks.open_file) {
     routed.open_file = [this](const OpenFileRequest& request) -> bool {
-      if (direct_host_access_) {
+      if (g_exec.direct) {
         return raw_callbacks.open_file(request);
       }
       ApplyHostMutation([this, request]() { raw_callbacks.open_file(request); });
@@ -425,7 +530,7 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
   }
   if (raw_callbacks.show_sidebar) {
     routed.show_sidebar = [this](std::string_view id) -> bool {
-      if (direct_host_access_) {
+      if (g_exec.direct) {
         return raw_callbacks.show_sidebar(id);
       }
       ApplyHostMutation([this, id = std::string(id)]() { raw_callbacks.show_sidebar(id); });
@@ -512,7 +617,7 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
   if (raw_callbacks.apply_workspace_edit) {
     routed.apply_workspace_edit = [this](std::string_view owner,
                                          const WorkspaceEditRequest& request) -> bool {
-      if (direct_host_access_) {
+      if (g_exec.direct) {
         return raw_callbacks.apply_workspace_edit(owner, request);
       }
       // Posted, not awaited: the UI thread re-validates against the live buffer at
