@@ -604,14 +604,28 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
   }
   // Apply the user's per-plugin disable set before reloading so disabled plugins skip setup.
   plugin_runtime_.Host().SetDisabledPlugins(context_.disabled_plugin_ids);
-  bool clean_reload;
-  {
-    util::StartupTrace::Scope plugin_scope("PluginRuntime::Reload");
-    util::PerformanceTrace::Scope perf_plugin_scope(
-        "WorkspaceShell::ReloadPluginsForCurrentProject::PluginRuntimeReload");
-    clean_reload = plugin_runtime_.Reload(context_.current_project_state.root,
-                                          request.syntax_definitions);
-  }
+  // The reload runs the plugin Lua off the UI thread. The post-reload consumption
+  // (registry rebuilds, sidebar/syntax refresh, redraws) must run only after the
+  // rebuilt contribution snapshot is published, so it lives in the completion. With no
+  // worker wired the completion fires inline and the whole flow stays synchronous.
+  const std::uint64_t generation = reload_plugins_invocation_count_;
+  plugin_runtime_.ReloadAsync(
+      context_.current_project_state.root, request.syntax_definitions,
+      [this, request, generation](bool clean_reload) {
+        // Drop a stale completion: a newer reload has superseded this one and its own
+        // completion will rebuild against the live snapshot.
+        if (generation != reload_plugins_invocation_count_) {
+          return;
+        }
+        ConsumeReloadResult(request, clean_reload);
+      });
+  // Reload dispatched. Callers ignore the return; the real result is delivered to the
+  // completion above.
+  return true;
+}
+
+void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean_reload) {
+  (void)clean_reload;
   {
     util::StartupTrace::Scope registry_scope("RebuildRegistries");
     util::PerformanceTrace::Scope perf_registry_scope(
@@ -674,7 +688,6 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
         "WorkspaceShell::ReloadPluginsForCurrentProject::RequestEditorSurfaceRedraw");
     RequestEditorSurfaceRedraw();
   }
-  return clean_reload;
 }
 
 void WorkspaceShell::RefreshPluginSurfacesForReactivation() {

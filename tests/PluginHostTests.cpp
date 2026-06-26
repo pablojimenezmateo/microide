@@ -2395,6 +2395,76 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// ReloadAsync must run the plugin load on the worker WITHOUT blocking the UI thread,
+// then publish the rebuilt contribution snapshot and fire on_complete on the mailbox
+// drain. Until the drain, the UI keeps reading the previous (empty) published view.
+// Under TSAN this is the load-bearing check that a detached reload mutates the live
+// registries on the worker while the calling thread reads only the published snapshot.
+void TestPluginHostReloadAsyncPublishesOnDrain() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "async reload fixture\n");
+
+  WritePluginInit(
+      global_plugins, "async-reload",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "async.reload",
+  setup = function(ctx)
+    ctx.commands.add("async.reload.cmd", function() end)
+    ctx.commands.add("async.reload.noop", function() end)
+    ctx.status.add({ id = "badge", text = "ready" })
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);  // No SDL loop; drain the mailbox by hand.
+  host.SetWorker(&thread);
+
+  bool completed = false;
+  bool clean = false;
+  host.ReloadAsync(project_root, [&](bool ok) {
+    completed = true;
+    clean = ok;
+  });
+  Expect(!completed, "ReloadAsync must not complete synchronously with a worker wired");
+  Expect(!host.HasCommand("async.reload.cmd"),
+         "a reloaded command must not be visible before the snapshot publishes");
+  Expect(host.ContributedStatusItems().empty(),
+         "status items must not be visible before the snapshot publishes");
+  Expect(thread.started(), "loading a plugin should lazily spawn the worker");
+
+  // A blocking round-trip runs strictly after the queued reload (FIFO on one worker),
+  // so once it returns the reload has finished and posted its completion to the mailbox.
+  std::string error_message;
+  std::string feedback;
+  host.ExecuteCommand("async.reload.noop", {}, &error_message, &feedback);
+  const int drained = thread.DrainMainThreadActions();
+  Expect(drained > 0 && completed && clean,
+         "draining should publish the snapshot and fire on_complete cleanly");
+  Expect(host.HasCommand("async.reload.cmd"),
+         "the reloaded command should resolve after the snapshot publishes");
+  bool has_badge = false;
+  for (const auto& item : host.ContributedStatusItems()) {
+    has_badge = has_badge || item.text == "ready";
+  }
+  Expect(has_badge, "the reloaded status item should appear in the published view");
+
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -2439,6 +2509,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostQueryHoverAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/ExecuteCommandAsyncDeliversThroughWorker",
           TestPluginHostExecuteCommandAsyncDeliversThroughWorker);
+  AddTest(tests, "PluginHost/ReloadAsyncPublishesOnDrain",
+          TestPluginHostReloadAsyncPublishesOnDrain);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);

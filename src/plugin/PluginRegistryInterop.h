@@ -89,11 +89,11 @@ bool ExtractStatusItemUpdate(lua_State* state,
                              std::string_view id,
                              StatusItemUpdate* out);
 
-// UI thread: apply a previously extracted update to the status registries.
-// Returns true when the target item existed and was changed.
+// UI thread: apply a previously extracted update to the published status-item view.
+// Operates on the order vector alone (the UI renders it; the worker-owned map is not
+// touched at runtime). Returns true when the target item existed and was changed.
 bool ApplyStatusItemUpdate(
     const StatusItemUpdate& update,
-    std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
     std::vector<PluginHost::ContributedStatusItem>* status_item_order);
 #endif
 

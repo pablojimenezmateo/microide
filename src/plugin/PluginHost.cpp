@@ -46,7 +46,6 @@
 #include "plugin/PluginProjectLifecycleInterop.h"
 #include "plugin/PluginRuntimeApiInterop.h"
 #include "plugin/PluginSidebarHoverInterop.h"
-#include "plugin/PluginStatusInterop.h"
 #include "plugin/PluginStateTeardownInterop.h"
 #include "plugin/PluginWorkspaceInterop.h"
 #include "plugin/PluginHostRuntimeTypes.h"
@@ -75,6 +74,19 @@ struct PluginExecContext {
   const PluginHostSnapshot* snapshot = nullptr;
   bool direct = true;
   bool executing = false;
+  // Whether the running call may register setup-time contributions. Decoupled from
+  // `direct` so a DETACHED reload (direct=false, because the UI thread is NOT parked
+  // and shell writes must defer to the mailbox) can still register commands, sidebars,
+  // status items, etc. on the worker. Reactive events and async queries leave this
+  // false: a keystroke handler must never mutate the contribution registries the UI
+  // is reading. For exclusive contexts (inline / round-trip) direct and
+  // allow_registration move together.
+  bool allow_registration = true;
+  // True only while a reload's load body runs (setup + project-open). A ctx.status.update
+  // issued here must mutate the LIVE status order so the reload's publish carries it;
+  // outside a reload it targets the published (visible) view instead. Set by
+  // RunReloadLoad and restored by the enclosing ExecuteWithContext's ContextGuard.
+  bool in_reload = false;
 };
 thread_local PluginExecContext g_exec;
 
@@ -116,11 +128,13 @@ struct PluginHost::Impl {
   };
 
   template <typename F>
-  void ExecuteWithContext(const PluginHostSnapshot* snapshot, bool direct, F&& fn) {
+  void ExecuteWithContext(const PluginHostSnapshot* snapshot, bool direct,
+                          bool allow_registration, F&& fn) {
     ContextGuard guard{g_exec};
     g_exec.snapshot = snapshot;
     g_exec.direct = direct;
     g_exec.executing = true;
+    g_exec.allow_registration = allow_registration;
     fn();
   }
 
@@ -178,7 +192,8 @@ struct PluginHost::Impl {
     if (g_exec.executing || worker_ == nullptr) {
       // Already on the worker (re-entrant) or no worker wired: run inline with
       // exclusive access rather than dead-locking on a self-post.
-      ExecuteWithContext(&snapshot, /*direct=*/true, std::forward<F>(fn));
+      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true,
+                         std::forward<F>(fn));
       return;
     }
     worker_->EnsureStarted();
@@ -187,7 +202,7 @@ struct PluginHost::Impl {
     // Captures by reference are safe: the UI thread blocks on `finished` until the
     // job completes, so every referent outlives the call.
     worker_->Post([this, &snapshot, &fn, &done]() {
-      ExecuteWithContext(&snapshot, /*direct=*/true, fn);
+      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, fn);
       done.set_value();
     });
     finished.wait();
@@ -208,7 +223,8 @@ struct PluginHost::Impl {
     PluginHostSnapshot snapshot = CaptureSnapshot();
     if (worker_ == nullptr || g_exec.executing) {
       Result result;
-      ExecuteWithContext(&snapshot, /*direct=*/true, [&]() { result = produce(); });
+      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true,
+                         [&]() { result = produce(); });
       deliver(std::move(result));
       return;
     }
@@ -216,7 +232,8 @@ struct PluginHost::Impl {
     auto task = [this, snapshot = std::move(snapshot), produce = std::move(produce),
                  deliver = std::move(deliver)]() mutable {
       auto result = std::make_shared<Result>();
-      ExecuteWithContext(&snapshot, /*direct=*/false, [&]() { *result = produce(); });
+      ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/false,
+                         [&]() { *result = produce(); });
       worker_->PostToMain([result, deliver = std::move(deliver)]() mutable {
         deliver(std::move(*result));
       });
@@ -227,6 +244,68 @@ struct PluginHost::Impl {
       worker_->PostLatest(std::move(dedup_key), std::move(task));
     }
   }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  // The Lua-touching core of a reload: tear down the old states, load every plugin
+  // root, and dispatch project-open. Runs under an active execution context (inline
+  // with exclusive access, or detached on the worker with registration allowed and
+  // shell writes deferred). Shared by the synchronous Reload and the detached
+  // ReloadAsync so the load sequence lives in exactly one place.
+  void RunReloadLoad(const std::filesystem::path& next_project_root,
+                     const std::vector<std::filesystem::path>& plugin_roots) {
+    // Mark the reload window; the enclosing ExecuteWithContext's ContextGuard restores
+    // this to false when the load body returns.
+    g_exec.in_reload = true;
+    TearDownPlugins();
+    disabled_plugin_meta.clear();
+    current_project_root = next_project_root;
+    for (const auto& plugin_root : plugin_roots) {
+      std::string error_message;
+      if (!LoadPluginRoot(plugin_root, &error_message) && !error_message.empty()) {
+        RecordError(std::move(error_message));
+      }
+    }
+    if (!current_project_root.empty()) {
+      project_lifecycle_interop::DispatchProjectOpenCallbacks(
+          &plugins, [this](runtime_types::PluginInstance* plugin, int callback_ref,
+                           const char* callback_name) {
+            CallProjectCallback(plugin, callback_ref, callback_name);
+          });
+    }
+  }
+
+  // Run a reload on the worker WITHOUT parking the UI thread, then publish the rebuilt
+  // contribution snapshot and invoke `on_complete` on the UI thread during the mailbox
+  // drain. Registration is allowed (it's setup) but shell writes defer, and the
+  // reload's RecordError appends marshal to the UI in mailbox order ahead of the
+  // completion -- so the error count is read here, on the UI thread, where it is final.
+  void ReloadDetached(PluginHostSnapshot snapshot,
+                      std::vector<std::filesystem::path> plugin_roots,
+                      std::function<void(bool)> on_complete) {
+    worker_->EnsureStarted();
+    worker_->Post([this, snapshot = std::move(snapshot),
+                   plugin_roots = std::move(plugin_roots),
+                   on_complete = std::move(on_complete)]() mutable {
+      ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/true,
+                         [&]() { RunReloadLoad(snapshot.project_root, plugin_roots); });
+      // Build the snapshot here (live registries are worker-owned); patch the
+      // error-count-bearing summary on the UI thread where errors are settled.
+      auto built = std::make_shared<ContributionSnapshot>(BuildContributionSnapshot());
+      const std::size_t plugin_count = plugins.size();
+      const std::size_t command_count = commands.size();
+      const std::size_t sidebar_count = sidebars.size();
+      const std::size_t hover_count = hover_provider_order.size();
+      worker_->PostToMain([this, built, plugin_count, command_count, sidebar_count, hover_count,
+                           on_complete = std::move(on_complete)]() mutable {
+        published_ = std::move(*built);
+        published_.reload_summary = FormatReloadSummary(plugin_count, command_count, sidebar_count,
+                                                        hover_count, errors.size());
+        ++status_view_revision;
+        on_complete(errors.empty());
+      });
+    });
+  }
+#endif
 
   // Immutable, UI-thread-owned view of every setup-time contribution the UI reads
   // (everything that changes only on Reload; the runtime-mutating status items,
@@ -261,9 +340,26 @@ struct PluginHost::Impl {
     std::vector<PluginHost::ContributedTheme> themes;
     std::vector<PluginHost::ContributedFileIconTheme> file_icon_themes;
     std::vector<PluginHost::LoadedPlugin> loaded_plugins;
+    // Sorted status-item view the status bar renders. Setup registers into the live
+    // status_item_order on the worker; publish copies it here. Runtime ctx.status.update
+    // mutates THIS copy directly on the UI thread (see LuaStatusUpdate) so a status
+    // change shows without a reload.
+    std::vector<PluginHost::ContributedStatusItem> status_item_order;
+    // Which reactive editor events any loaded plugin subscribes to. The shell gates
+    // its per-keystroke sampling on this, so it must read the published (race-free)
+    // value rather than scanning the live `plugins` vector the worker rebuilds.
+    PluginHost::EditorEventInterest editor_event_interests;
+    // The project root the UI resolves plugin paths against. The live
+    // current_project_root is worker-owned and rewritten mid-reload, so UI-thread path
+    // resolution (snapshot capture, hover) reads this published copy instead.
+    std::filesystem::path project_root;
     std::string reload_summary = "Lua plugin runtime unavailable";
   };
   ContributionSnapshot published_;
+  // Monotonic stamp the UI render/hit-test paths compare to decide when to re-resolve
+  // status geometry. UI-thread-owned: bumped when a snapshot is published and when a
+  // runtime status update is applied to published_.status_item_order.
+  std::uint64_t status_view_revision = 0;
 
   std::vector<PluginInstance> plugins;
   // Plugin ids the user has disabled: their setup is skipped on Reload. disabled_plugin_meta
@@ -284,12 +380,10 @@ struct PluginHost::Impl {
   std::vector<PluginHost::ContributedMenuEntry> menu_entries;
   std::vector<PluginHost::ContributedKeybinding> keybindings;
   std::vector<PluginHost::ContributedSettingSpec> settings;
+  // Worker-owned status registry: setup registers into these; publish copies
+  // status_item_order into published_.status_item_order for the UI to render.
   std::unordered_map<std::string, PluginHost::ContributedStatusItem> status_items;
   std::vector<PluginHost::ContributedStatusItem> status_item_order;
-  // Monotonic stamp bumped on every status-item mutation (add/update/teardown).
-  // The render/hit-test/hover paths resolve the sorted view once per change
-  // instead of rebuilding it every frame.
-  std::uint64_t status_items_revision = 0;
   std::vector<PluginHost::ContributedFormatter> formatters;
   std::vector<PluginHost::ContributedSaveParticipant> save_participants;
   std::vector<SaveParticipantRuntime> save_participant_runtimes;
@@ -333,35 +427,62 @@ struct PluginHost::Impl {
 #endif
   }
 
+  // Pure formatter so the summary can be built from worker-known counts plus the
+  // UI-side error count (the detached-reload completion supplies `error_count` after
+  // the marshalled RecordError appends have settled on the UI thread).
+  static std::string FormatReloadSummary(std::size_t plugin_count, std::size_t command_count,
+                                         std::size_t sidebar_count, std::size_t hover_count,
+                                         std::size_t error_count) {
+    std::string summary = "Loaded " + std::to_string(plugin_count) + " plugin";
+    if (plugin_count != 1) {
+      summary += "s";
+    }
+    summary += " and " + std::to_string(command_count) + " command";
+    if (command_count != 1) {
+      summary += "s";
+    }
+    summary += " and " + std::to_string(sidebar_count) + " sidebar";
+    if (sidebar_count != 1) {
+      summary += "s";
+    }
+    summary += " and " + std::to_string(hover_count) + " hover provider";
+    if (hover_count != 1) {
+      summary += "s";
+    }
+    if (error_count != 0) {
+      summary += " with " + std::to_string(error_count) + " error";
+      if (error_count != 1) {
+        summary += "s";
+      }
+    }
+    return summary;
+  }
+
   void SetReloadSummary() {
     if (!enabled()) {
       reload_summary = "Lua plugin runtime unavailable";
       return;
     }
-    reload_summary = "Loaded " + std::to_string(plugins.size()) + " plugin";
-    if (plugins.size() != 1) {
-      reload_summary += "s";
-    }
     // Read the maps, not the ordered views: the latter rebuild lazily and may be
     // dirty here, but their element counts always match the source maps.
-    reload_summary += " and " + std::to_string(commands.size()) + " command";
-    if (commands.size() != 1) {
-      reload_summary += "s";
+    reload_summary = FormatReloadSummary(plugins.size(), commands.size(), sidebars.size(),
+                                         hover_provider_order.size(), errors.size());
+  }
+
+  // The reactive editor events any loaded plugin subscribes to. Computed from the live
+  // `plugins` vector (worker-owned), captured into the published snapshot so the UI
+  // reads a race-free value.
+  PluginHost::EditorEventInterest ComputeEditorEventInterests() const {
+    PluginHost::EditorEventInterest interest;
+#if MICROIDE_HAS_LUA_PLUGINS
+    for (const auto& plugin : plugins) {
+      interest.buffer_change |= plugin.on_buffer_change_ref != LUA_NOREF;
+      interest.cursor_move |= plugin.on_cursor_move_ref != LUA_NOREF;
+      interest.selection_change |= plugin.on_selection_change_ref != LUA_NOREF;
+      interest.buffer_close |= plugin.on_buffer_close_ref != LUA_NOREF;
     }
-    reload_summary += " and " + std::to_string(sidebars.size()) + " sidebar";
-    if (sidebars.size() != 1) {
-      reload_summary += "s";
-    }
-    reload_summary += " and " + std::to_string(hover_provider_order.size()) + " hover provider";
-    if (hover_provider_order.size() != 1) {
-      reload_summary += "s";
-    }
-    if (!errors.empty()) {
-      reload_summary += " with " + std::to_string(errors.size()) + " error";
-      if (errors.size() != 1) {
-        reload_summary += "s";
-      }
-    }
+#endif
+    return interest;
   }
 
   // Compute the {id, root, enabled} list the UI shows for loaded + disabled plugins.
@@ -422,11 +543,17 @@ struct PluginHost::Impl {
     snapshot.themes = themes;
     snapshot.file_icon_themes = file_icon_themes;
     snapshot.loaded_plugins = ComputeLoadedPlugins();
+    snapshot.status_item_order = status_item_order;
+    snapshot.editor_event_interests = ComputeEditorEventInterests();
+    snapshot.project_root = current_project_root;
     snapshot.reload_summary = reload_summary;
     return snapshot;
   }
 
-  void PublishContributionSnapshot() { published_ = BuildContributionSnapshot(); }
+  void PublishContributionSnapshot() {
+    published_ = BuildContributionSnapshot();
+    ++status_view_revision;
+  }
 
   // RecordMessage/RecordError mutate the host-owned messages/errors vectors that the
   // UI thread reads, so the whole record-and-sink runs through ApplyHostMutation:
@@ -510,9 +637,10 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
     routed.get_setting = [this](std::string_view id) { return ResolveSetting(id); };
   }
   if (raw_callbacks.is_command_name_available) {
-    // Consulted only during setup-time registration, which runs with direct access.
+    // Consulted only during setup-time registration (which a detached reload runs
+    // with allow_registration set even though shell writes are deferred).
     routed.is_command_name_available = [this](std::string_view name) -> bool {
-      return g_exec.direct && raw_callbacks.is_command_name_available(name);
+      return g_exec.allow_registration && raw_callbacks.is_command_name_available(name);
     };
   }
 
@@ -667,7 +795,9 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
 
 PluginHostSnapshot PluginHost::Impl::CaptureSnapshot() const {
   PluginHostSnapshot snapshot;
-  snapshot.project_root = current_project_root;
+  // Read the published root (UI-thread-owned); the live current_project_root is
+  // worker-owned and may be mid-rewrite during a detached reload.
+  snapshot.project_root = published_.project_root;
   if (raw_callbacks.active_buffer) {
     if (const std::optional<PluginHost::ActiveBuffer> active = raw_callbacks.active_buffer();
         active.has_value() && !active->path.empty()) {
@@ -694,12 +824,12 @@ PluginHostSnapshot PluginHost::Impl::CaptureSnapshot() const {
 void PluginHost::Impl::RunOnWorkerDetached(PluginHostSnapshot snapshot, std::function<void()> fn) {
   if (worker_ == nullptr) {
     // No worker wired: run inline with exclusive access (legacy behavior).
-    ExecuteWithContext(&snapshot, /*direct=*/true, fn);
+    ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, fn);
     return;
   }
   worker_->EnsureStarted();
   worker_->Post([this, snapshot = std::move(snapshot), fn = std::move(fn)]() mutable {
-    ExecuteWithContext(&snapshot, /*direct=*/false, fn);
+    ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/false, fn);
   });
 }
 

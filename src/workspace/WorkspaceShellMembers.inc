@@ -616,6 +616,10 @@
   std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject(PluginReloadRequest request = {});
+  // Post-reload consumption (registry rebuilds, sidebar/syntax refresh, redraws). Runs
+  // from the ReloadPluginsForCurrentProject completion once the rebuilt contribution
+  // snapshot is published (inline when no worker is wired).
+  void ConsumeReloadResult(PluginReloadRequest request, bool clean_reload);
   void RefreshPluginSurfacesForReactivation();
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);

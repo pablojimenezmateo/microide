@@ -116,7 +116,7 @@
   // it is refused rather than raced. Returns true when the call must be rejected,
   // leaving the error message on the Lua stack for the caller to raise.
   static bool RejectRuntimeRegistration(lua_State* state, Impl* host) {
-    if (host == nullptr || g_exec.direct) {
+    if (host == nullptr || g_exec.allow_registration) {
       return false;
     }
     lua_error_util::PushMessage(
@@ -345,13 +345,11 @@
                   error_message)) {
             return false;
           }
-          const bool registered = registry_interop::RegisterStatusItem(
+          // Setup-time registration into the worker-owned registry; the bump to the
+          // UI-visible revision happens when the reload publishes the snapshot.
+          return registry_interop::RegisterStatusItem(
               plugin, std::move(registration.contributed), &host->status_items,
               &host->status_item_order, error_message);
-          if (registered) {
-            ++host->status_items_revision;
-          }
-          return registered;
         });
   }
 
@@ -362,19 +360,25 @@
     if (host == nullptr) {
       return 0;
     }
-    // Read the update off the Lua table here (worker), then defer the registry
-    // mutation + redraw so a status.update from a reactive event never races the
-    // UI thread's reads. Under direct access (setup / round-trip) ApplyHostMutation
-    // runs the closure inline; from a detached event it marshals to the UI thread.
+    // Read the update off the Lua table here (worker), then defer the apply + redraw
+    // so a status.update from a reactive event never races the UI thread's reads. The
+    // closure mutates the published status view directly: ApplyHostMutation runs it
+    // inline under exclusive access (setup / round-trip, UI parked) or marshals it to
+    // the UI thread (detached event) -- published_ is UI-thread-owned in both cases.
     registry_interop::StatusItemUpdate update;
     if (!registry_interop::ExtractStatusItemUpdate(state, host->FindPluginByState(state), id,
                                                    &update)) {
       return 0;
     }
+    if (g_exec.in_reload) {
+      // Update issued from a setup / project-open handler: mutate the live order so the
+      // reload's publish carries it (a publish to published_ here would be overwritten).
+      registry_interop::ApplyStatusItemUpdate(update, &host->status_item_order);
+      return 0;
+    }
     host->ApplyHostMutation([host, update = std::move(update)]() mutable {
-      if (registry_interop::ApplyStatusItemUpdate(update, &host->status_items,
-                                                  &host->status_item_order)) {
-        ++host->status_items_revision;
+      if (registry_interop::ApplyStatusItemUpdate(update, &host->published_.status_item_order)) {
+        ++host->status_view_revision;
         if (host->raw_callbacks.request_status_redraw) {
           host->raw_callbacks.request_status_redraw();
         }
@@ -1104,10 +1108,9 @@
         &scm_providers, &scm_provider_runtimes, &annotation_providers,
         &annotation_provider_runtimes, &auth_providers, &auth_provider_runtimes,
         &bracket_sets, &comment_markers, &indent_rules, &snippets, &themes, &file_icon_themes);
-    // Teardown may remove status items; conservatively invalidate the resolved
-    // view so the next read rebuilds. Unload is rare, so an occasional redundant
-    // rebuild is cheaper than threading a changed-flag through the unregister.
-    ++status_items_revision;
+    // Teardown runs on the worker during reload; the publish at the end of the reload
+    // copies the (now-empty or rebuilt) status_item_order into published_ and bumps
+    // the UI-visible status_view_revision, so no separate invalidation is needed here.
   }
 
   bool InitializeState(PluginInstance* plugin, std::string* error_message) {

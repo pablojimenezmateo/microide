@@ -469,41 +469,32 @@ bool ExtractStatusItemUpdate(lua_State* state,
 
 bool ApplyStatusItemUpdate(
     const StatusItemUpdate& update,
-    std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
     std::vector<PluginHost::ContributedStatusItem>* status_item_order) {
-  if (status_items == nullptr || status_item_order == nullptr) {
+  if (status_item_order == nullptr) {
     return false;
-  }
-  auto it = status_items->find(update.full_id);
-  if (it == status_items->end()) {
-    return false;
-  }
-  if (update.has_text) {
-    it->second.text = update.text;
-  }
-  if (update.has_tooltip) {
-    it->second.tooltip = update.tooltip;
-  }
-  if (update.has_icon) {
-    it->second.icon = update.icon;
-  }
-  if (update.has_tone) {
-    it->second.tone = update.tone;
-  }
-  if (update.has_progress) {
-    it->second.progress = update.progress;
   }
   for (auto& order_item : *status_item_order) {
-    if (order_item.id == update.full_id) {
-      order_item.text = it->second.text;
-      order_item.tooltip = it->second.tooltip;
-      order_item.icon = it->second.icon;
-      order_item.tone = it->second.tone;
-      order_item.progress = it->second.progress;
-      break;
+    if (order_item.id != update.full_id) {
+      continue;
     }
+    if (update.has_text) {
+      order_item.text = update.text;
+    }
+    if (update.has_tooltip) {
+      order_item.tooltip = update.tooltip;
+    }
+    if (update.has_icon) {
+      order_item.icon = update.icon;
+    }
+    if (update.has_tone) {
+      order_item.tone = update.tone;
+    }
+    if (update.has_progress) {
+      order_item.progress = update.progress;
+    }
+    return true;
   }
-  return true;
+  return false;
 }
 
 }  // namespace microide::plugin::registry_interop

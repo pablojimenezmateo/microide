@@ -551,6 +551,14 @@ class PluginHost {
   // LoadedPlugins() as disabled so the UI can re-enable them.
   void SetDisabledPlugins(std::vector<std::string> disabled_ids);
   bool Reload(const std::filesystem::path& project_root);
+  // Non-blocking reload: runs the plugin Lua load on the worker without parking the UI
+  // thread, then publishes the rebuilt contribution snapshot and invokes `on_complete`
+  // (with the clean/error result) on the UI thread during the mailbox drain. When no
+  // worker is wired or there is nothing to load, runs inline and calls `on_complete`
+  // synchronously before returning, so callers that depend on synchronous completion in
+  // that configuration (e.g. tests with no worker) are unaffected.
+  void ReloadAsync(const std::filesystem::path& project_root,
+                   std::function<void(bool)> on_complete);
   void Shutdown();
   void OnBufferOpen(const std::filesystem::path& path);
   void OnBufferSave(const std::filesystem::path& path);
@@ -625,7 +633,6 @@ class PluginHost {
   // Stamp that changes whenever the contributed status items change. Callers that
   // resolve the items into a sorted render view cache it against this value.
   std::uint64_t StatusItemsRevision() const;
-  bool UpdateStatusItem(std::string_view id, std::string text, std::string tooltip = {});
   bool RunSaveParticipants(const std::filesystem::path& path,
                            std::string* text,
                            std::string* error_message = nullptr) const;

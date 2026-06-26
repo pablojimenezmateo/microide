@@ -31,39 +31,67 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
       impl_->worker_ != nullptr &&
       (impl_->worker_->started() || !plugin_roots.empty() || !impl_->plugins.empty());
 
-  auto load_body = [impl = impl_.get(), next_project_root,
-                    plugin_roots = std::move(plugin_roots)]() {
-    impl->TearDownPlugins();
-    impl->disabled_plugin_meta.clear();
-    impl->current_project_root = next_project_root;
-
-    for (const auto& plugin_root : plugin_roots) {
-      std::string error_message;
-      if (!impl->LoadPluginRoot(plugin_root, &error_message) && !error_message.empty()) {
-        impl->RecordError(std::move(error_message));
-      }
-    }
-    if (!impl->current_project_root.empty()) {
-      project_lifecycle_interop::DispatchProjectOpenCallbacks(
-          &impl->plugins, [impl](runtime_types::PluginInstance* plugin, int callback_ref,
-                                 const char* callback_name) {
-            impl->CallProjectCallback(plugin, callback_ref, callback_name);
-          });
-    }
-  };
-
   PluginHostSnapshot snapshot = impl_->CaptureSnapshot();
   snapshot.project_root = next_project_root;
+  auto load_body = [impl = impl_.get(), next_project_root, plugin_roots]() {
+    impl->RunReloadLoad(next_project_root, plugin_roots);
+  };
   if (needs_worker) {
+    // Synchronous round-trip: the UI thread parks until the worker finishes. Direct
+    // callers (and the test suite) depend on Reload's synchronous bool result.
     impl_->RunOnWorkerBlocking(snapshot, load_body);
   } else {
-    impl_->ExecuteWithContext(&snapshot, /*direct=*/true, load_body);
+    impl_->ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, load_body);
   }
 #endif
 
   impl_->SetReloadSummary();
   impl_->PublishContributionSnapshot();
   return impl_->errors.empty();
+}
+
+void PluginHost::ReloadAsync(const std::filesystem::path& project_root,
+                             std::function<void(bool)> on_complete) {
+  impl_->errors.clear();
+  if (!impl_->enabled()) {
+    lifecycle_reset_interop::ResetForDisabledRuntime(
+        project_root, &impl_->current_project_root, &impl_->commands, &impl_->command_names,
+        &impl_->sidebars, &impl_->sidebar_providers, &impl_->hovers, &impl_->hover_provider_order,
+        &impl_->plugins);
+    impl_->SetReloadSummary();
+    impl_->PublishContributionSnapshot();
+    on_complete(false);
+    return;
+  }
+
+#if MICROIDE_HAS_LUA_PLUGINS
+  const std::filesystem::path next_project_root =
+      project_root.empty() ? std::filesystem::path{} : project_root.lexically_normal();
+  std::vector<std::filesystem::path> plugin_roots = impl_->DiscoverPluginRoots();
+  const bool needs_worker =
+      impl_->worker_ != nullptr &&
+      (impl_->worker_->started() || !plugin_roots.empty() || !impl_->plugins.empty());
+
+  PluginHostSnapshot snapshot = impl_->CaptureSnapshot();
+  snapshot.project_root = next_project_root;
+  if (!needs_worker) {
+    // Nothing to run on a worker: stay inline and complete synchronously, exactly like
+    // the no-plugin Reload path. Keeps no-worker callers (and most tests) synchronous.
+    impl_->ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true,
+                              [&]() { impl_->RunReloadLoad(next_project_root, plugin_roots); });
+    impl_->SetReloadSummary();
+    impl_->PublishContributionSnapshot();
+    on_complete(impl_->errors.empty());
+    return;
+  }
+  // Detached: the worker runs the Lua load while the UI thread keeps painting; the
+  // rebuilt snapshot is published and on_complete fires during the next mailbox drain.
+  impl_->ReloadDetached(std::move(snapshot), std::move(plugin_roots), std::move(on_complete));
+#else
+  impl_->SetReloadSummary();
+  impl_->PublishContributionSnapshot();
+  on_complete(true);
+#endif
 }
 
 void PluginHost::Shutdown() {
@@ -119,16 +147,9 @@ void PluginHost::OnBufferSave(const std::filesystem::path& path) {
 }
 
 PluginHost::EditorEventInterest PluginHost::EditorEventInterests() const {
-  EditorEventInterest interest;
-#if MICROIDE_HAS_LUA_PLUGINS
-  for (const auto& plugin : impl_->plugins) {
-    interest.buffer_change |= plugin.on_buffer_change_ref != LUA_NOREF;
-    interest.cursor_move |= plugin.on_cursor_move_ref != LUA_NOREF;
-    interest.selection_change |= plugin.on_selection_change_ref != LUA_NOREF;
-    interest.buffer_close |= plugin.on_buffer_close_ref != LUA_NOREF;
-  }
-#endif
-  return interest;
+  // Published (race-free) value; recomputed from the live `plugins` vector each time a
+  // snapshot is built on the worker.
+  return impl_->published_.editor_event_interests;
 }
 
 void PluginHost::OnBufferChange(const std::filesystem::path& path,
@@ -282,7 +303,10 @@ bool PluginHost::HasCommand(std::string_view name) const {
   if (!impl_->enabled()) {
     return false;
   }
-  return impl_->commands.find(std::string(name)) != impl_->commands.end();
+  // Probe the published command-name view (sorted, UI-thread-owned) instead of the
+  // live `commands` map the worker rebuilds on reload.
+  return std::binary_search(impl_->published_.command_names.begin(),
+                            impl_->published_.command_names.end(), name);
 #else
   (void)name;
   return false;
@@ -335,33 +359,46 @@ const std::vector<PluginHost::SidebarProviderInfo>& PluginHost::SidebarProviders
 }
 
 const PluginHost::SidebarProviderInfo* PluginHost::FindSidebarProvider(std::string_view id) const {
-  const auto it = impl_->sidebars.find(std::string(id));
-  return it == impl_->sidebars.end() ? nullptr : &it->second.info;
+  // Search the published view (UI-thread-owned) rather than the live `sidebars` map
+  // the worker rebuilds on reload. Providers are few, so a linear scan is cheap and
+  // the returned pointer stays valid until the next publish (also on the UI thread).
+  for (const auto& provider : impl_->published_.sidebar_providers) {
+    if (provider.id == id) {
+      return &provider;
+    }
+  }
+  return nullptr;
 }
 
 bool PluginHost::SnapshotSidebar(std::string_view id,
                                  std::vector<SidebarItem>* items,
                                  std::string* error_message) {
-  const auto it = impl_->sidebars.find(std::string(id));
-  if (it == impl_->sidebars.end()) {
+  if (items != nullptr) {
+    items->clear();
+  }
+  // Fast-reject unknown ids against the published view (no round-trip, race-free).
+  if (FindSidebarProvider(id) == nullptr) {
     if (error_message != nullptr) {
       *error_message = "unknown plugin sidebar: " + std::string(id);
-    }
-    if (items != nullptr) {
-      items->clear();
     }
     return false;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
   bool ok = false;
+  // Resolve the live provider on the worker (the lua-ref-bearing map is worker-owned).
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    const auto it = impl_->sidebars.find(std::string(id));
+    if (it == impl_->sidebars.end()) {
+      if (error_message != nullptr) {
+        *error_message = "unknown plugin sidebar: " + std::string(id);
+      }
+      ok = false;
+      return;
+    }
     ok = impl_->SnapshotSidebarProvider(it->second, items, error_message);
   });
   return ok;
 #else
-  if (items != nullptr) {
-    items->clear();
-  }
   if (error_message != nullptr) {
     *error_message = "Lua plugin runtime unavailable";
   }
@@ -372,8 +409,7 @@ bool PluginHost::SnapshotSidebar(std::string_view id,
 bool PluginHost::ConfirmSidebarItem(std::string_view id,
                                     const SidebarItem& item,
                                     std::string* error_message) {
-  const auto it = impl_->sidebars.find(std::string(id));
-  if (it == impl_->sidebars.end()) {
+  if (FindSidebarProvider(id) == nullptr) {
     if (error_message != nullptr) {
       *error_message = "unknown plugin sidebar: " + std::string(id);
     }
@@ -382,6 +418,14 @@ bool PluginHost::ConfirmSidebarItem(std::string_view id,
 #if MICROIDE_HAS_LUA_PLUGINS
   bool ok = false;
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    const auto it = impl_->sidebars.find(std::string(id));
+    if (it == impl_->sidebars.end()) {
+      if (error_message != nullptr) {
+        *error_message = "unknown plugin sidebar: " + std::string(id);
+      }
+      ok = false;
+      return;
+    }
     ok = impl_->ConfirmSidebarProviderItem(it->second, item, error_message);
   });
   return ok;
@@ -397,8 +441,7 @@ bool PluginHost::ConfirmSidebarItem(std::string_view id,
 bool PluginHost::ToggleSidebarItem(std::string_view id,
                                    const SidebarItem& item,
                                    std::string* error_message) {
-  const auto it = impl_->sidebars.find(std::string(id));
-  if (it == impl_->sidebars.end()) {
+  if (FindSidebarProvider(id) == nullptr) {
     if (error_message != nullptr) {
       *error_message = "unknown plugin sidebar: " + std::string(id);
     }
@@ -407,6 +450,14 @@ bool PluginHost::ToggleSidebarItem(std::string_view id,
 #if MICROIDE_HAS_LUA_PLUGINS
   bool ok = false;
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    const auto it = impl_->sidebars.find(std::string(id));
+    if (it == impl_->sidebars.end()) {
+      if (error_message != nullptr) {
+        *error_message = "unknown plugin sidebar: " + std::string(id);
+      }
+      ok = false;
+      return;
+    }
     ok = impl_->ToggleSidebarProviderItem(it->second, item, error_message);
   });
   return ok;
@@ -441,7 +492,7 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
   }
 
   const std::filesystem::path resolved_path =
-      path_interop::ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
+      path_interop::ResolveRuntimePath(impl_->published_.project_root, path).lexically_normal();
 #if MICROIDE_HAS_LUA_PLUGINS
   bool ok = false;
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
@@ -468,7 +519,16 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
 }
 
 std::vector<std::filesystem::path> PluginHost::DataDirectories(std::string_view subdirectory) const {
-  return data_directory_interop::DataDirectories(subdirectory, impl_->plugins);
+  // Resolve against the published, enabled plugin roots (UI-thread-owned) rather than
+  // the live `plugins` vector the worker rebuilds on reload.
+  std::vector<std::filesystem::path> roots;
+  roots.reserve(impl_->published_.loaded_plugins.size());
+  for (const auto& plugin : impl_->published_.loaded_plugins) {
+    if (plugin.enabled) {
+      roots.push_back(plugin.root);
+    }
+  }
+  return data_directory_interop::DataDirectories(subdirectory, roots);
 }
 
 const std::vector<PluginHost::ContributedMenuEntry>& PluginHost::ContributedMenuEntries() const {
@@ -484,21 +544,11 @@ const std::vector<PluginHost::ContributedSettingSpec>& PluginHost::ContributedSe
 }
 
 const std::vector<PluginHost::ContributedStatusItem>& PluginHost::ContributedStatusItems() const {
-  return impl_->status_item_order;
+  return impl_->published_.status_item_order;
 }
 
 std::uint64_t PluginHost::StatusItemsRevision() const {
-  return impl_->status_items_revision;
-}
-
-bool PluginHost::UpdateStatusItem(std::string_view id, std::string text, std::string tooltip) {
-  const bool changed = status_interop::UpdateStatusItem(
-      id, std::move(text), std::move(tooltip), &impl_->status_items, &impl_->status_item_order,
-      impl_->callbacks.request_status_redraw);
-  if (changed) {
-    ++impl_->status_items_revision;
-  }
-  return changed;
+  return impl_->status_view_revision;
 }
 
 bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
@@ -812,7 +862,7 @@ void PluginHost::QueryHoverAsync(std::filesystem::path path,
   }
 #if MICROIDE_HAS_LUA_PLUGINS
   const std::filesystem::path resolved_path =
-      path_interop::ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
+      path_interop::ResolveRuntimePath(impl_->published_.project_root, path).lexically_normal();
   struct QueryResult {
     bool ok = false;
     HoverResult hover;
@@ -845,8 +895,9 @@ void PluginHost::QueryHoverAsync(std::filesystem::path path,
 void PluginHost::SnapshotSidebarAsync(
     std::string id,
     std::function<void(bool, std::vector<SidebarItem>, std::string)> on_result) {
-  // Resolve an unknown provider synchronously — there is nothing to run on the worker.
-  if (impl_->sidebars.find(id) == impl_->sidebars.end()) {
+  // Fast-reject an unknown provider against the published view (race-free); the worker
+  // closure below re-checks the live map. Nothing to run on the worker for an unknown id.
+  if (FindSidebarProvider(id) == nullptr) {
     on_result(false, {}, "unknown plugin sidebar: " + id);
     return;
   }
@@ -1362,7 +1413,16 @@ std::string PluginHost::ReloadSummary() const {
 }
 
 std::size_t PluginHost::LoadedPluginCount() const {
-  return impl_->plugins.size();
+  // Count the enabled plugins in the published view (UI-thread-owned); the live
+  // `plugins` vector is worker-owned and rebuilt on reload. Disabled plugins appear in
+  // loaded_plugins with enabled=false and are excluded, matching the live count.
+  std::size_t count = 0;
+  for (const auto& plugin : impl_->published_.loaded_plugins) {
+    if (plugin.enabled) {
+      ++count;
+    }
+  }
+  return count;
 }
 
 void PluginHost::SetDisabledPlugins(std::vector<std::string> disabled_ids) {

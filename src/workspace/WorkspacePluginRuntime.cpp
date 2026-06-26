@@ -71,17 +71,24 @@ bool WorkspacePluginRuntime::ConsumeAssetChanges(bool force_check) {
   return force_check ? asset_monitor_.ConsumePendingChanges() : asset_monitor_.PollForChanges();
 }
 
-bool WorkspacePluginRuntime::Reload(const std::filesystem::path& project_root,
-                                    bool reload_syntax_definitions) {
+void WorkspacePluginRuntime::ReloadAsync(const std::filesystem::path& project_root,
+                                         bool reload_syntax_definitions,
+                                         std::function<void(bool)> on_complete) {
   syntax_definitions_changed_ = false;
   changed_syntax_languages_.clear();
   changed_syntax_language_views_.clear();
-  bool clean_reload = false;
-  {
-    util::StartupTrace::Scope host_scope("PluginHost::Reload");
-    clean_reload = plugin_host_.enabled() ? plugin_host_.Reload(project_root) : false;
-  }
+  // The host reload runs the plugin Lua off the UI thread; ApplySyntaxReload then loads
+  // runtime syntax definitions when the rebuilt snapshot is published. With no worker
+  // wired the host completion fires inline, so this stays synchronous in that config.
+  plugin_host_.ReloadAsync(
+      project_root, [this, project_root, reload_syntax_definitions,
+                     on_complete = std::move(on_complete)](bool clean_reload) mutable {
+        on_complete(ApplySyntaxReload(project_root, reload_syntax_definitions, clean_reload));
+      });
+}
 
+bool WorkspacePluginRuntime::ApplySyntaxReload(const std::filesystem::path& project_root,
+                                               bool reload_syntax_definitions, bool clean_reload) {
   if (!reload_syntax_definitions) {
     asset_monitor_.SetProjectRoot(project_root);
     return clean_reload;

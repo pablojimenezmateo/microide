@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -42,7 +43,12 @@ class WorkspacePluginRuntime {
   std::optional<std::chrono::milliseconds> NextPollDelay() const;
   bool ConsumeAssetChanges(bool force_check);
 
-  bool Reload(const std::filesystem::path& project_root, bool reload_syntax_definitions = true);
+  // Non-blocking reload: forwards to PluginHost::ReloadAsync, then loads runtime syntax
+  // definitions and invokes `on_complete` with the clean/error result. `on_complete`
+  // runs on the UI thread during the mailbox drain (or synchronously when no worker is
+  // wired / nothing needs loading).
+  void ReloadAsync(const std::filesystem::path& project_root, bool reload_syntax_definitions,
+                   std::function<void(bool)> on_complete);
   std::span<const std::string_view> ChangedSyntaxLanguages() const {
     return changed_syntax_language_views_;
   }
@@ -53,6 +59,11 @@ class WorkspacePluginRuntime {
   void Shutdown();
 
  private:
+  // Load runtime syntax definitions after the host reload settles and fold the result
+  // into the clean/error bool. Runs on the same thread as the ReloadAsync completion.
+  bool ApplySyntaxReload(const std::filesystem::path& project_root,
+                         bool reload_syntax_definitions, bool clean_reload);
+
   WorkspaceOutputChannels output_channels_;
   WorkspacePluginAssetMonitor asset_monitor_;
   plugin::PluginHost plugin_host_;

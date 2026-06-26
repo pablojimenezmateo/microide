@@ -105,8 +105,11 @@ void TestArchitectureInvariants() {
              // 1616: +16 for the PluginHoverCache state machine + kickoff helper that
              // moves plugin hover off the synchronous hit-test path onto the worker
              // (sibling of the existing EditorHoverTarget / PendingHoverEval state).
+             // 1617: +1 for ConsumeReloadResult, the post-reload consumption helper that
+             // runs registry rebuilds + sidebar/syntax refresh from the non-blocking
+             // ReloadAsync completion instead of inline after a UI-parking reload.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1616);
+                                                     1617);
            });
 
   bool hard_failure = false;
