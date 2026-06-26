@@ -2197,6 +2197,96 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// A workspace edit deferred from the worker (a reactive editor event calling
+// ctx.editor.apply_edits) must carry the capturing snapshot's staleness guard:
+// the active buffer path and its content revision at capture time. The host uses
+// that stamp on the UI-thread drain to drop an edit whose coordinates were
+// computed against a buffer the user has since typed into. Direct (synchronous)
+// edits leave the guard unset and always apply.
+void TestPluginHostDeferredWorkspaceEditCarriesStalenessGuard() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "stale-edit guard fixture\n");
+  WriteFile(source, "console.log('hello');\n");
+
+  WritePluginInit(
+      global_plugins, "edit-guard",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "edit.guard",
+  setup = function(ctx)
+    ctx.commands.add("edit.guard.noop", function() end)
+  end,
+  on_cursor_move = function(ctx)
+    ctx.editor.apply_edits({
+      edits = { { start_line = 1, start_col = 1, end_line = 1, end_col = 1, text = "X" } },
+    })
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  // The active buffer the snapshot captures, with a known content revision.
+  const std::filesystem::path active_path = source.lexically_normal();
+  constexpr std::uint64_t kCapturedRevision = 4242;
+  plugin::PluginHost::WorkspaceEditRequest received;
+  bool received_any = false;
+
+  auto callbacks = MakePluginHostCallbacks();
+  callbacks.active_buffer = [&]() -> std::optional<plugin::PluginHost::ActiveBuffer> {
+    return plugin::PluginHost::ActiveBuffer{
+        .path = active_path,
+        .line = 1,
+        .column = 1,
+        .content_revision = kCapturedRevision,
+    };
+  };
+  callbacks.apply_workspace_edit =
+      [&](std::string_view, const plugin::PluginHost::WorkspaceEditRequest& request) {
+        received = request;
+        received_any = true;
+        return true;
+      };
+
+  PluginHost host;
+  host.SetCallbacks(std::move(callbacks));
+
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);  // No SDL loop in this test; we drain the mailbox by hand.
+  host.SetWorker(&thread);
+
+  Expect(host.Reload(project_root), "edit-guard fixture should load");
+
+  // Reactive event runs on the worker (direct=false); its apply_edits defers to the
+  // mailbox stamped with the snapshot guard.
+  host.OnCursorMove(source, 7, 3);
+
+  // Blocking round-trip flushes the FIFO worker, so the deferred edit is now queued.
+  std::string error_message;
+  std::string feedback;
+  host.ExecuteCommand("edit.guard.noop", {}, &error_message, &feedback);
+  thread.DrainMainThreadActions();
+
+  Expect(received_any, "the deferred apply_edits should reach the host on the drain");
+  Expect(received.has_staleness_guard,
+         "an edit deferred from the worker must carry the staleness guard");
+  Expect(received.guard_path == active_path,
+         "the guard must record the captured active buffer path");
+  Expect(received.captured_content_revision == kCapturedRevision,
+         "the guard must record the captured content revision");
+
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 // QueryCompletionsAsync must dispatch to the worker and deliver its result on the
 // UI-thread mailbox drain — never synchronously and never on the worker. Verified
 // under TSAN: the produce step runs on the worker, the deliver step on this thread.
@@ -2585,6 +2675,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRunAsyncInvokesCallbackSynchronously);
   AddTest(tests, "PluginHost/RoutesEventsThroughWorkerThread",
           TestPluginHostRoutesEventsThroughWorkerThread);
+  AddTest(tests, "PluginHost/DeferredWorkspaceEditCarriesStalenessGuard",
+          TestPluginHostDeferredWorkspaceEditCarriesStalenessGuard);
   AddTest(tests, "PluginHost/QueryCompletionsAsyncDeliversThroughWorker",
           TestPluginHostQueryCompletionsAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/QueryHoverAsyncDeliversThroughWorker",

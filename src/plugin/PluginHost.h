@@ -33,6 +33,11 @@ class PluginHost {
     std::filesystem::path path;
     std::size_t line = 0;
     std::size_t column = 0;
+    // Monotonic content-edit stamp of this buffer at capture time. A deferred
+    // (async) workspace edit carries this forward as a staleness guard so the
+    // host can drop an edit whose coordinates were computed against a buffer the
+    // user has since typed into. 0 when the host reports no stamp.
+    std::uint64_t content_revision = 0;
   };
 
   struct SidebarProviderInfo {
@@ -251,6 +256,16 @@ class PluginHost {
     std::size_t selection_start_column = 0;
     std::size_t selection_end_line = 0;
     std::size_t selection_end_column = 0;
+    // Staleness guard for edits deferred from the plugin worker to the UI thread.
+    // Stamped only on the async (direct=false) path from the capturing snapshot:
+    // `guard_path` + `captured_content_revision` identify the exact buffer-version
+    // the plugin computed against. At apply time the host drops the edit if the
+    // resolved buffer is a different file or has advanced past that revision, so a
+    // late edit can never clobber input the user typed during the async hop. A
+    // synchronous (direct) edit leaves this unset and always applies.
+    bool has_staleness_guard = false;
+    std::filesystem::path guard_path;
+    std::uint64_t captured_content_revision = 0;
   };
 
   // A ghost-text (inline AI suggestion) proposal from a plugin

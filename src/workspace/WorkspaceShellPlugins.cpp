@@ -298,6 +298,7 @@ WorkspaceShell::WorkspaceShell() {
                 .path = viewport->path().lexically_normal(),
                 .line = viewport->cursor_line() + 1,
                 .column = viewport->cursor_column() + 1,
+                .content_revision = viewport->content_revision(),
             };
           },
       .show_sidebar =
@@ -949,6 +950,17 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
     }
   }
   if (viewport == nullptr) {
+    return false;
+  }
+
+  // Staleness guard for edits deferred from the plugin worker: the coordinates
+  // were computed against `guard_path` at `captured_content_revision`. If the
+  // resolved buffer is a different file (the user switched tabs) or has advanced
+  // (the user typed) during the async hop, the edit is stale — drop it rather than
+  // apply now-invalid coordinates over newer input.
+  if (request.has_staleness_guard &&
+      (viewport->path().lexically_normal() != request.guard_path ||
+       viewport->content_revision() != request.captured_content_revision)) {
     return false;
   }
 

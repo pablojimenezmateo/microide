@@ -52,6 +52,14 @@ inline std::chrono::milliseconds RequestTimeoutFor(const std::string& command) {
   return kInteractiveRequestTimeout;
 }
 
+// OOM backstop for the outbound/deferred queues. The I/O thread drains outbound
+// continuously, so this is never approached in normal operation; the queues only grow
+// without bound if the adapter stops reading its stdin while staying alive. At that
+// point the session is wedged, so we refuse further messages rather than silently DROP
+// queued protocol messages or grow until the IDE OOMs. Refused requests fail cleanly
+// via the send-failure path; the timeout sweep clears anything already pending.
+constexpr std::size_t kMaxQueuedMessages = 50000;
+
 bool DapLifecycleTraceEnabled() {
   static const bool enabled = []() {
     const char* value = std::getenv("MICROIDE_TRACE_DAP_LIFECYCLE");
@@ -157,6 +165,8 @@ struct DapClient::Impl {
 
   std::deque<QueuedMessage> deferred_messages;
   std::deque<QueuedMessage> outbound_messages;
+  // One-shot guard so the wedged-adapter overflow warning logs once, not per message.
+  bool outbound_overflow_logged_ = false;
   int next_seq = 1;
   std::string adapter_id;
   std::string last_error;
@@ -283,6 +293,18 @@ struct DapClient::Impl {
     }
     std::lock_guard lock(send_mutex);
     if (shutting_down.load(std::memory_order_acquire)) {
+      return false;
+    }
+    // OOM backstop: a wedged adapter that has stopped reading stdin. Refuse rather
+    // than grow without bound or corrupt the protocol by dropping mid-stream messages.
+    if (deferred_messages.size() + outbound_messages.size() >= kMaxQueuedMessages) {
+      if (!outbound_overflow_logged_) {
+        outbound_overflow_logged_ = true;
+        std::fprintf(stderr,
+                     "[dap] outbound queue exceeded %zu messages; adapter appears wedged, "
+                     "refusing further messages\n",
+                     kMaxQueuedMessages);
+      }
       return false;
     }
     if (!initialized.load(std::memory_order_acquire)) {

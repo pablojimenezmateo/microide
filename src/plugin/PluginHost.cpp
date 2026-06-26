@@ -232,8 +232,16 @@ struct PluginHost::Impl {
     worker_->EnsureStarted();
     std::promise<void> done;
     std::future<void> finished = done.get_future();
-    // Captures by reference are safe: the UI thread blocks on `finished` until the
-    // job completes, so every referent outlives the call.
+    // Plain Post (FIFO), NOT PostFront: a synchronous call must preserve ordering
+    // with already-queued reactive events so it observes their effects, not jump
+    // ahead of them. The hot-path queries (hover/completion/symbols) run through the
+    // *Async variants instead; these blocking entry points are discrete user actions
+    // (command palette, sidebar item, run tests, SCM/auth), and any speculative query
+    // backlog is dedup-capped by PostLatest. The wait is unbounded but bounded in
+    // practice by the per-call runtime watchdog (LuaRuntime call budget). Captures by
+    // reference are safe: the UI thread blocks on `finished` until the job completes,
+    // so every referent outlives the call (which is also why a deadline here would be
+    // unsafe -- a late job would touch freed stack locals).
     worker_->Post([this, &snapshot, &fn, &done]() {
       ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true, fn);
       done.set_value();
@@ -255,8 +263,11 @@ struct PluginHost::Impl {
                      std::function<void(Result)> deliver) {
     PluginHostSnapshot snapshot = CaptureSnapshot();
     if (worker_ == nullptr || g_exec.executing) {
+      // A query never registers contributions: match the worker path's
+      // allow_registration=false so a re-entrant query taking this inline branch
+      // cannot mutate the contribution registries the UI is reading.
       Result result;
-      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true,
+      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/false,
                          [&]() { result = produce(); });
       deliver(std::move(result));
       return;
@@ -781,10 +792,17 @@ PluginHost::Callbacks PluginHost::Impl::BuildRoutedCallbacks() {
       if (g_exec.direct) {
         return raw_callbacks.apply_workspace_edit(owner, request);
       }
-      // Posted, not awaited: the UI thread re-validates against the live buffer at
+      // Posted, not awaited: stamp the capturing snapshot's buffer identity and
+      // edit generation so the UI thread re-validates against the live buffer at
       // apply time and drops the edit if stale. Report optimistic acceptance.
-      ApplyHostMutation([this, owner = std::string(owner), request]() {
-        raw_callbacks.apply_workspace_edit(owner, request);
+      WorkspaceEditRequest guarded = request;
+      if (g_exec.snapshot != nullptr && g_exec.snapshot->active_buffer.present) {
+        guarded.has_staleness_guard = true;
+        guarded.guard_path = g_exec.snapshot->active_buffer.path;
+        guarded.captured_content_revision = g_exec.snapshot->generation;
+      }
+      ApplyHostMutation([this, owner = std::string(owner), guarded = std::move(guarded)]() {
+        raw_callbacks.apply_workspace_edit(owner, guarded);
       });
       return true;
     };
@@ -840,6 +858,9 @@ PluginHostSnapshot PluginHost::Impl::CaptureSnapshot() const {
           .column = active->column,
           .present = true,
       };
+      // Stamp the active buffer's edit generation so a deferred async edit can be
+      // dropped if the buffer advances before the mailbox drain applies it.
+      snapshot.generation = active->content_revision;
     }
   }
   if (raw_callbacks.get_setting) {

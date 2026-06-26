@@ -55,6 +55,23 @@ void TraceLspLifecycle(std::string_view language_id,
                detail.data());
 }
 
+// A request that gets no response within this deadline is failed synthetically so
+// the UI's loading state clears instead of hanging forever on a silent server.
+// LSP requests here are all post-initialize interactive queries (hover, completion,
+// definition, formatting, …); a single generous deadline fits them all. The
+// blocking initialize handshake runs on its own thread and is not swept here.
+constexpr std::chrono::milliseconds kLspRequestTimeout{30000};
+
+// OOM backstop for the outbound/deferred queues. In normal operation the I/O thread
+// drains outbound continuously, so this is never approached. The queues only grow
+// without bound if the server stops consuming its stdin while staying alive — a
+// wedged server. At that point the session is effectively dead (document sync is
+// already broken because the server isn't reading), so we refuse further messages
+// rather than silently DROP queued protocol messages (which would corrupt sync on a
+// healthy stream) or grow until the whole IDE OOMs. Refused requests fail cleanly via
+// the send-failure path; the timeout sweep clears anything already pending.
+constexpr std::size_t kMaxQueuedMessages = 50000;
+
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -130,8 +147,16 @@ struct LspClient::Impl {
   bool shutdown_response_received = false;
   int shutdown_request_id = 0;
 
-  // Per-request pending callbacks (keyed by request id), guarded by mutex.
-  std::unordered_map<int, std::function<void(util::JsonValue)>> pending_requests;
+  // Per-request pending callbacks (keyed by request id), guarded by mutex. Each
+  // carries a deadline so a silent server can never strand a request (and its UI
+  // loading state) forever: the I/O loop sweeps expired requests and synthesizes an
+  // empty response, which every handler treats as "no result". Mirrors the DAP
+  // client's timeout sweep.
+  struct PendingRequest {
+    std::function<void(util::JsonValue)> callback;
+    std::chrono::steady_clock::time_point deadline;
+  };
+  std::unordered_map<int, PendingRequest> pending_requests;
 
   // Callbacks marshalled to the main thread and drained once per frame. Carries
   // its own mutex + SDL wake event, so it is the innermost lock: producers may
@@ -154,6 +179,8 @@ struct LspClient::Impl {
   std::unordered_map<std::string, int> document_versions;
   std::deque<QueuedMessage> deferred_messages;
   std::deque<QueuedMessage> outbound_messages;
+  // One-shot guard so the wedged-server overflow warning logs once, not per message.
+  bool outbound_overflow_logged_ = false;
   int next_id = 1;
   std::string root_uri;
   std::string language_id;
@@ -316,6 +343,18 @@ struct LspClient::Impl {
     }
     std::lock_guard lock(send_mutex);
     if (shutting_down.load(std::memory_order_acquire)) {
+      return false;
+    }
+    // OOM backstop: a wedged server that has stopped reading stdin. Refuse rather
+    // than grow without bound or corrupt sync by dropping mid-stream messages.
+    if (deferred_messages.size() + outbound_messages.size() >= kMaxQueuedMessages) {
+      if (!outbound_overflow_logged_) {
+        outbound_overflow_logged_ = true;
+        std::fprintf(stderr,
+                     "[lsp] outbound queue exceeded %zu messages; server appears wedged, "
+                     "refusing further messages\n",
+                     kMaxQueuedMessages);
+      }
       return false;
     }
     if (!initialized.load(std::memory_order_acquire)) {
@@ -505,6 +544,11 @@ struct LspClient::Impl {
       // and a single read can carry several messages. Dispatch may enqueue replies.
       ParseBufferedMessages();
       DrainOutbound();
+      // WaitStdoutReadable wakes at least once per second, so this sweeps timed-out
+      // requests within ~1s even when the server sends nothing.
+      if (!shutting_down.load(std::memory_order_acquire)) {
+        FailPendingRequests(/*only_expired=*/true);
+      }
       if (stop_io.load(std::memory_order_acquire)) {
         break;
       }
@@ -517,6 +561,12 @@ struct LspClient::Impl {
     }
     ParseBufferedMessages();
     DrainOutbound();  // final flush (e.g. an exit notification queued during stop)
+    // The server is gone (EOF / exited). When this is an unexpected death rather than
+    // a shutdown we requested, fail any still-pending requests so their UI loading
+    // state clears instead of hanging forever.
+    if (!shutting_down.load(std::memory_order_acquire)) {
+      FailPendingRequests(/*only_expired=*/false);
+    }
   }
 
   std::optional<util::JsonValue> TryParseOneMessage(ReadBuf& buf) {
@@ -652,7 +702,7 @@ struct LspClient::Impl {
         std::lock_guard lock(mutex);
         auto it = pending_requests.find(id);
         if (it != pending_requests.end()) {
-          cb = std::move(it->second);
+          cb = std::move(it->second.callback);
           pending_requests.erase(it);
         }
       }
@@ -690,13 +740,43 @@ struct LspClient::Impl {
   int RegisterPendingRequest(std::function<void(util::JsonValue)> cb) {
     std::lock_guard lock(mutex);
     const int id = next_id++;
-    pending_requests[id] = std::move(cb);
+    pending_requests[id] = PendingRequest{
+        .callback = std::move(cb),
+        .deadline = std::chrono::steady_clock::now() + kLspRequestTimeout,
+    };
     return id;
   }
 
   void RemovePendingRequest(int id) {
     std::lock_guard lock(mutex);
     pending_requests.erase(id);
+  }
+
+  // Synthesize empty responses for pending requests so a non-responding server never
+  // strands a request (and its UI loading state). `only_expired` fails just those
+  // past their deadline (the periodic sweep); otherwise fails all (the server exited
+  // and no response can ever arrive). Runs on the I/O thread: handlers are posted to
+  // the main-thread mailbox. The empty `{}` envelope has no "result" key, so every
+  // response handler degrades to its no-result path.
+  void FailPendingRequests(bool only_expired) {
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard lock(mutex);
+    bool any = false;
+    for (auto it = pending_requests.begin(); it != pending_requests.end();) {
+      if (only_expired && now < it->second.deadline) {
+        ++it;
+        continue;
+      }
+      auto cb = std::move(it->second.callback);
+      it = pending_requests.erase(it);
+      main_mailbox.PostWithoutWake([cb = std::move(cb)]() mutable {
+        cb(util::JsonValue(util::JsonObject{}));
+      });
+      any = true;
+    }
+    if (any) {
+      main_mailbox.PushWake();
+    }
   }
 
   // Shared scaffolding for every async request: register the response handler,
