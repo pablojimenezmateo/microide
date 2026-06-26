@@ -98,6 +98,13 @@ class AssistService {
   EditSideEffectsSnapshot CaptureEditSnapshot(editor::TextViewport& viewport) const;
   void ApplyEditSideEffects(editor::TextViewport& viewport,
                             const EditSideEffectsSnapshot& snapshot) const;
+  // Populate the (already-open) completion overlay from the language server when no
+  // plugin provider returned completions. Runs on the UI thread; issues its own
+  // async LSP request. `provider_error` carries the plugin provider's message for
+  // the "no LSP available" diagnostic.
+  void BeginLspCompletionFallback(editor::TextViewport& viewport,
+                                  const std::string& language_id,
+                                  const std::string& provider_error);
   // Expand a snippet whose `prefix` matches the identifier immediately left of the
   // caret (Tab with no active session). Returns false on no/ambiguous match so the
   // caller falls through to inserting a literal tab.

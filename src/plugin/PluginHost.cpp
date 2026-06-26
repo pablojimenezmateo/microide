@@ -189,6 +189,37 @@ struct PluginHost::Impl {
     finished.wait();
   }
 
+  // Dispatch a result-returning query onto the worker without blocking the UI.
+  // `produce` runs on the worker (reads resolve from the captured snapshot) and
+  // returns the POD result; `deliver` runs on the UI thread during the mailbox
+  // drain. `dedup_key` collapses superseded in-flight requests of the same kind
+  // (a stale cursor-driven query is dropped before it runs). With no worker wired
+  // (tests / pre-wire) or when already on the worker, runs inline and delivers
+  // synchronously.
+  template <typename Result>
+  void RunQueryAsync(std::string dedup_key,
+                     std::function<Result()> produce,
+                     std::function<void(Result)> deliver) {
+    PluginHostSnapshot snapshot = CaptureSnapshot();
+    if (worker_ == nullptr || executing_plugin_call_) {
+      Result result;
+      ExecuteWithContext(&snapshot, /*direct=*/true, [&]() { result = produce(); });
+      deliver(std::move(result));
+      return;
+    }
+    worker_->EnsureStarted();
+    worker_->PostLatest(
+        std::move(dedup_key),
+        [this, snapshot = std::move(snapshot), produce = std::move(produce),
+         deliver = std::move(deliver)]() mutable {
+          auto result = std::make_shared<Result>();
+          ExecuteWithContext(&snapshot, /*direct=*/false, [&]() { *result = produce(); });
+          worker_->PostToMain([result, deliver = std::move(deliver)]() mutable {
+            deliver(std::move(*result));
+          });
+        });
+  }
+
   std::vector<PluginInstance> plugins;
   // Plugin ids the user has disabled: their setup is skipped on Reload. disabled_plugin_meta
   // records {id, root} for the ones actually skipped this reload so the UI can list them.

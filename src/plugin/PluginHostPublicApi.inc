@@ -533,6 +533,49 @@ std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
   return results;
 }
 
+void PluginHost::QueryCompletionsAsync(
+    std::string language_id,
+    std::filesystem::path path,
+    std::size_t line,
+    std::size_t column,
+    std::string trigger_character,
+    std::function<void(std::vector<CompletionCandidate>, std::string)> on_result) {
+  if (!impl_->enabled()) {
+    on_result({}, {});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct QueryResult {
+    std::vector<CompletionCandidate> items;
+    std::string error;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:completions",
+      [this, language_id = std::move(language_id), path = std::move(path), line, column,
+       trigger_character = std::move(trigger_character)]() {
+        QueryResult result;
+        result.items = provider_query_interop::QueryCompletions(
+            language_id, path, line, column, trigger_character, impl_->completion_runtimes,
+            [this](lua_State* state) { return impl_->FindPluginByState(state); },
+            [this](lua_State* state, const std::filesystem::path& buffer_path) {
+              impl_->PushBufferContext(state, buffer_path);
+            },
+            &result.error);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(std::move(result.items), std::move(result.error));
+      });
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+  (void)trigger_character;
+  on_result({}, {});
+#endif
+}
+
 std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
     std::string_view language_id,
     const std::filesystem::path& path,

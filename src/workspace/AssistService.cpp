@@ -95,57 +95,83 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
   }
 
   const std::string language_id = DetectViewportLanguageId(*viewport);
-  std::string provider_error;
-  const auto items = plugin_runtime_->Host().QueryCompletions(language_id, viewport->path(),
-                                                              viewport->cursor_line() + 1,
-                                                              viewport->cursor_column() + 1, {},
-                                                              &provider_error);
-  context_->current_project_state.overlay.workflow.completion.items.clear();
-  context_->current_project_state.overlay.workflow.completion.selected_index = 0;
-  context_->current_project_state.overlay.workflow.completion.replacement_range =
-      CompletionReplacementRange(*viewport);
-  context_->current_project_state.overlay.workflow.completion.source = "plugin";
-  context_->current_project_state.overlay.workflow.completion.error = provider_error;
-  for (const auto& item : items) {
-    const bool snippets_on = EditorSnippetsSettingEnabled();
-    context_->current_project_state.overlay.workflow.completion.items.push_back(
-        CompletionSessionItem{
-            .label = item.label,
-            .detail = item.detail,
-            .documentation = item.documentation,
-            .insert_text = item.insert_text,
-            .is_snippet = snippets_on && item.is_snippet,
-        });
-  }
-  if (!context_->current_project_state.overlay.workflow.completion.items.empty()) {
-    operations_.show_overlay(OverlayMode::Completion);
-    return true;
-  }
+  const std::filesystem::path request_path = viewport->path();
 
-  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
-  if (client == nullptr) {
-    const std::string failure =
-        LspUnavailableMessage(operations_.current_lsp_manager(), language_id, provider_error);
-    output_channels_->AppendLine("lsp.log", "LSP Log", failure);
-    if (error_message != nullptr) {
-      *error_message = failure;
-    }
-    return false;
-  }
-
-  operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+  // Open the overlay in a loading state immediately; the plugin completion query
+  // runs on the worker and never blocks the UI. Results (or the LSP fallback) fill
+  // in on the next mailbox drain. With no worker wired the callback runs inline.
   auto& session = context_->current_project_state.overlay.workflow.completion;
   session.items.clear();
   session.selected_index = 0;
   session.replacement_range = CompletionReplacementRange(*viewport);
-  session.source = "lsp";
+  session.source = "plugin";
   session.error = "Loading...";
   operations_.show_overlay(OverlayMode::Completion);
+
+  plugin_runtime_->Host().QueryCompletionsAsync(
+      language_id, request_path, viewport->cursor_line() + 1, viewport->cursor_column() + 1, {},
+      [this, language_id, request_path](
+          std::vector<plugin::PluginHost::CompletionCandidate> items, std::string provider_error) {
+        // Drop superseded results: the active editable buffer changed since the
+        // request was issued.
+        editor::TextViewport* current = operations_.active_editable_viewport();
+        if (current == nullptr || current->path() != request_path) {
+          return;
+        }
+        auto& current_session = context_->current_project_state.overlay.workflow.completion;
+        if (!items.empty()) {
+          current_session.items.clear();
+          current_session.selected_index = 0;
+          current_session.source = "plugin";
+          current_session.error = std::move(provider_error);
+          const bool snippets_on = EditorSnippetsSettingEnabled();
+          for (const auto& item : items) {
+            current_session.items.push_back(CompletionSessionItem{
+                .label = item.label,
+                .detail = item.detail,
+                .documentation = item.documentation,
+                .insert_text = item.insert_text,
+                .is_snippet = snippets_on && item.is_snippet,
+            });
+          }
+          operations_.request_overlay_redraw();
+          return;
+        }
+        // No plugin completions: fall back to the language server in the same overlay.
+        BeginLspCompletionFallback(*current, language_id, provider_error);
+      });
+  return true;
+}
+
+void AssistService::BeginLspCompletionFallback(editor::TextViewport& viewport,
+                                               const std::string& language_id,
+                                               const std::string& provider_error) {
+  auto& session = context_->current_project_state.overlay.workflow.completion;
+  LspClient* client = operations_.lsp_client_for_viewport(viewport, nullptr);
+  if (client == nullptr) {
+    const std::string failure =
+        LspUnavailableMessage(operations_.current_lsp_manager(), language_id, provider_error);
+    output_channels_->AppendLine("lsp.log", "LSP Log", failure);
+    session.items.clear();
+    session.selected_index = 0;
+    session.source = "plugin";
+    session.error = failure;
+    operations_.request_overlay_redraw();
+    return;
+  }
+
+  operations_.ensure_lsp_document_open(viewport, *client, language_id);
+  session.items.clear();
+  session.selected_index = 0;
+  session.replacement_range = CompletionReplacementRange(viewport);
+  session.source = "lsp";
+  session.error = "Loading...";
+  operations_.request_overlay_redraw();
   operations_.begin_tracked_lsp_request();
   client->RequestCompletionAsync(
-      FileUriForPath(viewport->path()),
-      LspClient::Position{static_cast<int>(viewport->cursor_line()),
-                          static_cast<int>(viewport->cursor_column())},
+      FileUriForPath(viewport.path()),
+      LspClient::Position{static_cast<int>(viewport.cursor_line()),
+                          static_cast<int>(viewport.cursor_column())},
       [this](std::optional<std::vector<LspClient::CompletionItem>> items) {
         operations_.finish_tracked_lsp_request();
         auto& current_session = context_->current_project_state.overlay.workflow.completion;
@@ -169,7 +195,6 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
         }
         operations_.request_overlay_redraw();
       });
-  return true;
 }
 
 AssistService::EditSideEffectsSnapshot AssistService::CaptureEditSnapshot(

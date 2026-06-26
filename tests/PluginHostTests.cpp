@@ -2196,6 +2196,78 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// QueryCompletionsAsync must dispatch to the worker and deliver its result on the
+// UI-thread mailbox drain — never synchronously and never on the worker. Verified
+// under TSAN: the produce step runs on the worker, the deliver step on this thread.
+void TestPluginHostQueryCompletionsAsyncDeliversThroughWorker() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "async completion fixture\n");
+  WriteFile(source, "x\n");
+
+  WritePluginInit(
+      global_plugins, "async-complete",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "async.complete",
+  setup = function(ctx)
+    ctx.commands.add("async.complete.noop", function() end)
+    ctx.completion.add({
+      id = "words", language_id = "javascript", trigger_characters = { "." },
+      provide = function(buffer, position, trigger)
+        return { { label = "hello", insert_text = "hello" } }
+      end,
+    })
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);
+  host.SetWorker(&thread);
+
+  Expect(host.Reload(project_root), "async completion fixture should load");
+
+  std::vector<PluginHost::CompletionCandidate> delivered_items;
+  bool delivered = false;
+  host.QueryCompletionsAsync(
+      "javascript", source, 1, 1, "",
+      [&](std::vector<PluginHost::CompletionCandidate> items, std::string /*error*/) {
+        delivered_items = std::move(items);
+        delivered = true;
+      });
+  Expect(!delivered,
+         "with a worker wired the completion result must not be delivered synchronously");
+
+  // A blocking round-trip runs after the queued async query (FIFO), so the query
+  // has completed once it returns; its result now sits in the mailbox, undelivered
+  // until the drain.
+  std::string error_message;
+  std::string feedback;
+  host.ExecuteCommand("async.complete.noop", {}, &error_message, &feedback);
+  Expect(!delivered, "the result is delivered on the drain, not during the round-trip");
+
+  const int drained = thread.DrainMainThreadActions();
+  Expect(drained > 0, "the completion result should reach the mailbox");
+  Expect(delivered, "draining should deliver the async completion result");
+  Expect(delivered_items.size() == 1 && delivered_items.front().label == "hello",
+         "the async completion query should return the provider's item");
+
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -2234,6 +2306,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRunAsyncInvokesCallbackSynchronously);
   AddTest(tests, "PluginHost/RoutesEventsThroughWorkerThread",
           TestPluginHostRoutesEventsThroughWorkerThread);
+  AddTest(tests, "PluginHost/QueryCompletionsAsyncDeliversThroughWorker",
+          TestPluginHostQueryCompletionsAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);

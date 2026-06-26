@@ -623,6 +623,18 @@ class PluginHost {
                                                     std::size_t column,
                                                     std::string_view trigger_character = {},
                                                     std::string* error_message = nullptr) const;
+  // Async variant: dispatches the completion query to the plugin worker and never
+  // blocks the UI thread. `on_result(items, error)` runs on the UI thread during
+  // the next mailbox drain. Superseded requests (a newer query for the same kind)
+  // are dropped before they run. When no worker is wired the query runs inline and
+  // `on_result` is invoked synchronously before returning.
+  void QueryCompletionsAsync(
+      std::string language_id,
+      std::filesystem::path path,
+      std::size_t line,
+      std::size_t column,
+      std::string trigger_character,
+      std::function<void(std::vector<CompletionCandidate>, std::string)> on_result);
   std::vector<CodeActionCandidate> QueryCodeActions(std::string_view language_id,
                                                     const std::filesystem::path& path,
                                                     std::size_t start_line,
