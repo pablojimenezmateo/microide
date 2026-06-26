@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "util/JsonValue.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/SettingFlags.h"
@@ -21,6 +22,29 @@ namespace {
 
 bool IsVirtualDocumentUri(std::string_view text) {
   return text.starts_with("virtual://");
+}
+
+// True when the live editor no longer matches the suggestion's anchor. Cheap
+// integer/identity checks first; the path normalize is the last resort so the
+// common "user typed / moved" case never allocates.
+bool GhostTextStale(
+    const editor::TextViewport* viewport,
+    const ProjectWorkspaceState::PluginEditorPresentation::GhostText& ghost) {
+  if (viewport == nullptr) {
+    return true;
+  }
+  if (viewport->cursor_line() != ghost.anchor_line ||
+      viewport->cursor_column() != ghost.anchor_column ||
+      viewport->content_revision() != ghost.content_revision) {
+    return true;
+  }
+  return !util::SamePathNormalized(viewport->path(), ghost.path);
+}
+
+// Drop the live suggestion and release the bundle if it drained empty.
+void ResetGhostText(ProjectWorkspaceState& state) {
+  state.plugin_presentation->ghost_text.reset();
+  state.MaybeReleasePluginPresentation();
 }
 
 template <typename Callback>
@@ -1044,9 +1068,8 @@ void WorkspaceShell::ClearPluginGhostText(std::string_view owner) {
   if (ghost == nullptr || ghost->owner != owner) {
     return;
   }
-  state.plugin_presentation->ghost_text.reset();
+  ResetGhostText(state);
   RequestEditorSurfaceRedraw();
-  state.MaybeReleasePluginPresentation();
 }
 
 bool WorkspaceShell::AcceptGhostText() {
@@ -1056,13 +1079,8 @@ bool WorkspaceShell::AcceptGhostText() {
     return false;  // No suggestion: let Tab fall through to snippet/indent.
   }
   editor::TextViewport* viewport = ActiveEditableViewport();
-  const bool stale = viewport == nullptr || viewport->path().lexically_normal() != ghost->path ||
-                     viewport->content_revision() != ghost->content_revision ||
-                     viewport->cursor_line() != ghost->anchor_line ||
-                     viewport->cursor_column() != ghost->anchor_column;
-  if (stale) {
-    state.plugin_presentation->ghost_text.reset();
-    state.MaybeReleasePluginPresentation();
+  if (GhostTextStale(viewport, *ghost)) {
+    ResetGhostText(state);
     return false;
   }
   std::string text;
@@ -1072,8 +1090,7 @@ bool WorkspaceShell::AcceptGhostText() {
     }
     text += ghost->lines[i];
   }
-  state.plugin_presentation->ghost_text.reset();
-  state.MaybeReleasePluginPresentation();
+  ResetGhostText(state);
   viewport->BeginUndoGroup();
   viewport->InsertText(text, /*record_undo=*/true);
   viewport->EndUndoGroup();
@@ -1088,9 +1105,8 @@ void WorkspaceShell::DismissGhostText() {
   if (state.ghost_text_if_present() == nullptr) {
     return;
   }
-  state.plugin_presentation->ghost_text.reset();
+  ResetGhostText(state);
   RequestEditorSurfaceRedraw();
-  state.MaybeReleasePluginPresentation();
 }
 
 void WorkspaceShell::InvalidateGhostTextIfStale() {
@@ -1099,15 +1115,9 @@ void WorkspaceShell::InvalidateGhostTextIfStale() {
   if (ghost == nullptr) {
     return;  // Zero-cost when no suggestion is live.
   }
-  const editor::TextViewport* viewport = ActiveEditableViewport();
-  const bool stale = viewport == nullptr || viewport->path().lexically_normal() != ghost->path ||
-                     viewport->content_revision() != ghost->content_revision ||
-                     viewport->cursor_line() != ghost->anchor_line ||
-                     viewport->cursor_column() != ghost->anchor_column;
-  if (stale) {
-    state.plugin_presentation->ghost_text.reset();
+  if (GhostTextStale(ActiveEditableViewport(), *ghost)) {
+    ResetGhostText(state);
     RequestEditorSurfaceRedraw();
-    state.MaybeReleasePluginPresentation();
   }
 }
 

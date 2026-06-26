@@ -111,8 +111,12 @@ per-keystroke refresh is a follow-up.
 `inline_text` paints virtual text past a line's last glyph (`eol = true`, the
 default — this is the render path that powers Error Lens messages and EOL blame);
 its optional `bg` draws a band behind the text, and `color` defaults to the
-disabled-text tone. Mid-line virtual text (`eol = false` + `col`) is parsed but
-not yet rendered — the v1 inline path is end-of-line only. `code_lenses` paint a
+disabled-text tone. Mid-line *decoration* virtual text (`eol = false` + `col`) is
+parsed but not yet rendered — the v1 inline *decoration* path is end-of-line only.
+(Caret-anchored **ghost text** does render mid-line via the separate
+`ctx.editor.set_ghost_text` seam — see "Ghost-text inline suggestions" below; the
+deferral here is the *general* mid-line decoration case, e.g. inline color swatches.)
+`code_lenses` paint a
 clickable affordance at end of line in the accent color; clicking one dispatches
 its `command` through the normal command path (`ctx.commands.add` handlers and
 built-in actions alike), so a lens can re-publish to update its own label. With the
@@ -157,6 +161,35 @@ calls to apply a fix (ESLint `--fix`, a spell-check correction): the action's
 `command` runs, and its handler issues `ctx.editor.apply_edits`. Prefer this over
 `save_participants` for **ranged, undoable** edits — `save_participants` is a
 whole-document transform applied at save time and records no undo entry.
+
+### Ghost-text inline suggestions (`ctx.editor.set_ghost_text`)
+
+A plugin can paint a transient, dimmed suggestion **at the caret** — the
+inline-completion affordance a Copilot/Codeium/Tabnine bridge needs. This is a
+host-owned *rendering* seam, not an AI feature: the host ships no provider, model,
+or chat; the plugin computes the suggestion text however it likes (typically
+`ctx.process.run` to a CLI or a network call) and hands the host a string to render.
+
+```lua
+ctx.editor.set_ghost_text({
+  anchor = { line = 5, col = 10 },  -- 1-based caret position; 0/omitted => live caret
+  text = "completion tail\nand a second line",  -- '\n'-separated, multi-line
+  path = "src/main.cpp",            -- optional; omit/"" => the active editable buffer
+})
+ctx.editor.clear_ghost_text()
+```
+
+The first line renders mid-line at the caret in `theme.text_muted` — no
+phantom-column-shift, because it begins exactly where the caret is; continuation
+lines occupy a single below-row gap (the same `EditorRowYLayout` gap machinery code
+lenses use, so real rows push down and caret/selection/click geometry stay in sync).
+Ghost text is **single-owner / last-writer-wins** and only ever decorates the
+focused editable buffer (an empty `path` targets it; a named `path` must match it).
+The host owns the lifecycle: **Tab** accepts (inserting the suggestion as one
+grouped-undo edit), **Esc** dismisses, and the host auto-invalidates a stale
+suggestion on caret move, buffer edit, or focus change. The whole path is gated by
+the `plugins.ghost_text` setting (**default off**) and is **zero-cost when unused** —
+no state is allocated until a plugin publishes while the setting is on.
 
 ## Reactive editor events
 

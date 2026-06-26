@@ -18,14 +18,20 @@ largest portability gaps so the language-server, theme, decoration, linter/
 formatter, status/sidebar, reactive-decoration, and editing-extension classes can
 be ported. Specifically added: host-owned buffer edits (`ctx.editor.apply_edits`),
 debounced reactive editor events (`on_buffer_change`/`on_cursor_move`/
-`on_selection_change`/`on_buffer_close`), and snippet prefix tab-trigger expansion.
+`on_selection_change`/`on_buffer_close`), snippet prefix tab-trigger expansion, and
+(2026-06-26, commit `75ece739`) a caret-anchored ghost-text render seam
+(`ctx.editor.set_ghost_text`) — a plugin-driven *rendering* primitive (no host AI)
+that lets an inline-suggestion bridge draw Copilot/Codeium/Tabnine-style completions.
 
 Still deliberately out of scope (genuine exceptions to "any top extension is
-portable"): notebooks (Jupyter), remote / Live Share, AI inline + chat, and full
-interactive webviews. Mid-line virtual text rendering (inline color swatches /
-mid-line annotations) remains **deferred** — its phantom-column-shift threads
-through the editor's hot-path glyph/caret/selection geometry and the cross-layer
-click hit-test, a risky rework reserved for a dedicated follow-up.
+portable"): notebooks (Jupyter), remote / Live Share, **host-owned** AI inline + AI
+chat, and full interactive webviews. Note the ghost-text seam above does **not**
+reintroduce host AI — it renders plugin-supplied text only, so *inline-suggestion
+rendering* is no longer the blocker (the AI chat *webview* still is). Mid-line
+*decoration* virtual text rendering (inline color swatches / mid-line annotations)
+remains **deferred** — its phantom-column-shift threads through the editor's hot-path
+glyph/caret/selection geometry and the cross-layer click hit-test, a risky rework
+reserved for a dedicated follow-up (ghost text sidesteps this by anchoring at the caret).
 
 ## Decision
 

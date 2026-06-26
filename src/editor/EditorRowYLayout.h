@@ -109,9 +109,6 @@ class EditorRowYLayout {
   };
   HitResult HitTest(float y, std::size_t visible_rows) const;
 
-  // Total pixel height of `visible_rows` text rows plus every gap among them.
-  float WindowHeight(std::size_t visible_rows) const;
-
  private:
   float first_line_y_;
   float line_height_;

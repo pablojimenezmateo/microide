@@ -42,7 +42,7 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
         continue;
       }
       const std::size_t visual_row = viewport.VisualRowForLine(anchor.line);
-      if (visual_row >= visual_count || visual_row < scroll || visual_row >= scroll + visible_rows) {
+      if (!VisualRowInWindow(visual_row, scroll, visible_rows, visual_count)) {
         continue;
       }
       const float height = std::clamp(anchor.content->intrinsic_height, 1.0f, 1024.0f);
@@ -81,8 +81,7 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
   // `ghost_content` for drawing.
   if (want_ghost) {
     const std::size_t visual_row = viewport.VisualRowForLine(options.ghost_anchor_line);
-    if (visual_row < visual_count && visual_row >= scroll &&
-        visual_row < scroll + visible_rows) {
+    if (VisualRowInWindow(visual_row, scroll, visible_rows, visual_count)) {
       out_gaps.push_back(
           RowGap{static_cast<std::uint32_t>(visual_row), options.ghost_height,
                  RowGapPlacement::Below});

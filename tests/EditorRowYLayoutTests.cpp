@@ -65,21 +65,12 @@ void TestHitTestDistinguishesGap() {
   Expect(hit.row == 1 && !hit.in_gap, "a click past the gap maps to the following row");
 }
 
-void TestWindowHeightIncludesGaps() {
-  const float lh = 10.0f;
-  const std::vector<RowGap> gaps{RowGap{.visual_row = 1, .height = 30.0f}};
-  const EditorRowYLayout layout(0.0f, lh, 0, gaps);
-  // 4 rows * 10 + one 30px gap = 70.
-  Expect(Near(layout.WindowHeight(4), 70.0f), "window height folds in the visible gaps");
-}
-
 }  // namespace
 
 void RegisterEditorRowYLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorRowYLayout/NoGapsMatchesLegacyFormula", TestNoGapsMatchesLegacyFormula);
   AddTest(tests, "EditorRowYLayout/GapShiftsRowsBelowIt", TestGapShiftsRowsBelowIt);
   AddTest(tests, "EditorRowYLayout/HitTestDistinguishesGap", TestHitTestDistinguishesGap);
-  AddTest(tests, "EditorRowYLayout/WindowHeightIncludesGaps", TestWindowHeightIncludesGaps);
 }
 
 }  // namespace microide::tests

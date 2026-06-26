@@ -10,6 +10,7 @@
 #include "editor/EditorRowYLayout.h"
 #include "editor/EditorViewRenderer.h"
 #include "editor/PluginSurfaceStore.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
@@ -111,7 +112,7 @@ editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
   if (const auto* ghost = state.ghost_text_if_present();
       ghost != nullptr && ghost->lines.size() > 1 &&
       SettingOn(get_setting_value, "plugins.ghost_text") &&
-      viewport.path().lexically_normal() == ghost->path) {
+      util::SamePathNormalized(viewport.path(), ghost->path)) {
     options.ghost_anchor_line = ghost->anchor_line;
     options.ghost_height = static_cast<float>(ghost->lines.size() - 1) * metrics.line_height;
   }

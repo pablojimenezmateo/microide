@@ -28,15 +28,4 @@ EditorRowYLayout::HitResult EditorRowYLayout::HitTest(float y, std::size_t visib
   return HitResult{visible_rows - 1, false};
 }
 
-float EditorRowYLayout::WindowHeight(std::size_t visible_rows) const {
-  if (visible_rows == 0) {
-    return 0.0f;
-  }
-  // RowTop(visible_rows - 1) already folds in every gap above the last row; add
-  // that last row's own height plus any gap directly below it. RowTop(0) cancels
-  // the first row's own Above strip, so add it back to keep it inside the window.
-  return (RowTop(visible_rows - 1) - RowTop(0)) + line_height_ +
-         GapHeightBelow(visible_rows - 1) + GapAbove(0);
-}
-
 }  // namespace microide::editor

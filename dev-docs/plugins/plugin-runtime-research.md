@@ -723,12 +723,14 @@ The first plugin system should solve concrete editor extension problems, not bec
 
 If the architecture can support ESLint cleanly, the plugin system is probably on the right track.
 
-> Note: AI, chat, inline-completion, and provider-bridge workflows are retired
-> product scope (see `dev-docs/project/implementation-guide.md` and the Phase 5 retirement note
-> in `dev-docs/project/active-work.md`). Earlier revisions of this doc included an "LLM plugin"
-> sketch as a second exemplar; it has been removed deliberately. New plugin-facing
+> Note: AI, chat, inline-completion, and provider-bridge workflows are retired as
+> **host-owned** product scope (see `dev-docs/project/implementation-guide.md` and the Phase 5
+> retirement note in `dev-docs/project/active-work.md`). Earlier revisions of this doc included
+> an "LLM plugin" sketch as a second exemplar; it has been removed deliberately. New plugin-facing
 > seams should be motivated by ESLint-class, formatter-class, or language-server
-> workflows that the host already supports end to end.
+> workflows that the host already supports end to end. (The `ctx.editor.set_ghost_text` render
+> seam is *not* an exception to this: it ships no provider/model/chat and only renders
+> plugin-supplied text — a rendering primitive, not a host AI workflow.)
 
 ## Recommended Directory And Module Layout
 

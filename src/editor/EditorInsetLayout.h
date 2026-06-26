@@ -12,6 +12,14 @@ class PluginSurfaceStore;
 class PluginDecorationStore;
 struct GhostTextInset;
 
+// A visual row falls inside the rendered window [scroll, scroll + visible_rows)
+// and within the document's visual line count. Shared by the gap producer and the
+// render view-model builder so both decide visibility identically.
+[[nodiscard]] inline bool VisualRowInWindow(std::size_t visual_row, std::size_t scroll,
+                                            std::size_t visible_rows, std::size_t visual_count) {
+  return visual_row < visual_count && visual_row >= scroll && visual_row < scroll + visible_rows;
+}
+
 // What inline insets to resolve into row gaps. Off by default so the common
 // (no-inset) editor path produces an empty gap list and stays bit-identical to
 // the legacy `first_line_y + row*line_height` mapping.

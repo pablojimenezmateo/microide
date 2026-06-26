@@ -1013,6 +1013,51 @@ Observed:
 
 - No remaining local implementation tasks. The authoritative `perf-runner-v1` gate was intentionally skipped for this archive because runner usage was unavailable, and no perf baselines were updated.
 
+## Plugin-Rendering Zero-Cost Verification (2026-06-26)
+
+Goal: confirm `feat/plugin-rendering` carries **no** measurable cost over `main` when no plugin
+is loaded (or no plugin uses a given presentation capability), matching the debugger's
+gated-behind-`DebugEnabled()` model. This was the merge blocker for the branch.
+
+### Changes made before measuring
+
+- One master gate in `WorkspaceShellRenderFrame.cpp`: the three `plugins.*` inset feature-flag
+  setting reads now run only when `plugin_presentation_if_present() != nullptr`, so a no-plugin
+  frame reads zero `plugins.*` settings (was three per frame). Mirrors the `DebugEnabled()` idiom.
+- Dedup: `util::SamePathNormalized` (`src/util/PathMatch.h`) replaces three copy-pasted
+  raw-then-`lexically_normal()` path matches; `editor::VisualRowInWindow` replaces two open-coded
+  window-membership tests and is now shared with the render builder's ghost-tail check; removed the
+  production-dead `EditorRowYLayout::WindowHeight`. The debug execution-line match now reuses
+  `SamePathNormalized`, dropping two per-frame `generic_string()` allocations on stopped-debug frames.
+
+### Evidence (branch incl. cleanups vs `main`, zero plugins loaded)
+
+- **Gated zero-allocation tests** (`microide-perf` build, `MICROIDE_PERF_HARNESS_BUILD=1`):
+  `microide_tests PluginPresentation` → 14/14 pass with heap-delta assertions active, confirming the
+  presentation bundle is lazily allocated and released and the empty-store/empty-host resolve paths
+  allocate nothing. Added `RenderViewModelBuilder/InsetGapsEmptyWithoutPluginPresentation` locking in
+  the consumer-side early-out the master gate relies on (null bundle ⇒ empty `row_gaps`/no ghost tail
+  regardless of feature flags).
+- **`tools/perf-compare.py`** over `typing_small_file`, `typing_large_file`, `scroll_large_file`,
+  `large_file_open_first_paint`, `cold_startup_no_project`, `cold_startup_small_project`,
+  `repo_open_rss_idle`, `idle_soak_30s`: **"No metric regressed beyond the 2σ noise band."** Per-frame
+  wall and allocation counts on the editing/scroll scenarios, cold-startup wall, idle wake behavior,
+  and steady-state RSS all sit within run-to-run noise of `main` (scattered p50-allocation deltas pair
+  with flat/lower p95/max — the signature of variance, not a systematic regression).
+- **Startup trace** (`MICROIDE_STARTUP_TRACE=1 SDL_VIDEODRIVER=dummy`): the only plugin scopes are the
+  pre-existing runtime reload (`PluginHost::Reload`/`PluginRuntime::Reload`/
+  `ReloadPluginsForCurrentProject`, also present on `main`). **None** of the new rendering features
+  (insets, ghost text, decorations, surfaces) introduce a startup scope.
+- Full `ctest` suite, ASAN, and UBSAN all clean (`/tmp/microide-{tests,asan,ubsan}.log`).
+
+### Method note / pending
+
+- The interactive runtime profile (`MICROIDE_PERF_TRACE` during a live typing session) was covered
+  instead by the reproducible `typing_*`/`scroll_large_file` perf-compare scenarios, which exercise the
+  same per-frame editor render path headlessly. The authoritative `perf-runner-v1` gate was not run
+  (runner unavailable); no perf baselines were moved — consistent with "no regression on the no-plugin
+  path." Local dummy/Xvfb numbers above are advisory per `perf-harness.md`.
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout

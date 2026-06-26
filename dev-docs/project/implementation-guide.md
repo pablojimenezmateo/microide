@@ -113,7 +113,10 @@ These are out of scope unless deliberately added as a separate phase:
 - recent-project and recent-file surfaces
 - native OS menu bar integration
 
-AI, chat, inline-completion, and provider-bridge workflows are retired.
+AI, chat, inline-completion, and provider-bridge workflows are retired as **host-owned**
+features — the host ships no provider, model picker, or chat. (Distinct: `ctx.editor.set_ghost_text`
+is a generic plugin-driven ghost-text *render* seam with no host AI; a plugin may use it to draw
+inline suggestions it computes itself. See `guidelines/plugins.md`.)
 
 Broad LSP coverage is not an implicit requirement of the current shell; only validated workflows
 should stay in scope.

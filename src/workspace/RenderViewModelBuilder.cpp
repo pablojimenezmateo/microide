@@ -7,6 +7,7 @@
 #include "editor/FoldingModel.h"
 #include "editor/PluginSurfaceStore.h"
 #include "util/Parse.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
 
 #include "workspace/StatusBarService.h"
@@ -549,13 +550,16 @@ void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
                                       .code_lens_above = inset_flags.code_lens_above,
                                       .code_lens_height = line_height};
   thread_local editor::GhostTextInset ghost_inset;
+  // SamePathNormalized compares raw first (document paths are stored normalized,
+  // so it matches in the common case), keeping this per-frame check zero-allocation
+  // while a suggestion shows.
   if (inset_flags.ghost_text && pres->ghost_text.has_value() &&
       !pres->ghost_text->lines.empty() &&
-      viewport.path().lexically_normal() == pres->ghost_text->path) {
+      util::SamePathNormalized(viewport.path(), pres->ghost_text->path)) {
     const auto& ghost = *pres->ghost_text;
     const std::size_t vrow = viewport.VisualRowForLine(ghost.anchor_line);
-    const std::size_t scroll = viewport.scroll_line();
-    if (vrow >= scroll && vrow < scroll + visible_rows) {
+    if (editor::VisualRowInWindow(vrow, viewport.scroll_line(), visible_rows,
+                                  viewport.visual_line_count())) {
       out.ghost_text_tail = editor::EditorViewModel::GhostTextTail{vrow, ghost.lines.front()};
       if (ghost.lines.size() > 1) {
         ghost_inset.below_lines = std::span<const std::string>(ghost.lines).subspan(1);
@@ -665,12 +669,12 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   }
 
   // Execution-line marker: set only when a session is stopped on this viewport's
-  // file. Path-matched on lexically-normalized generic strings (the frame source
-  // was normalized the same way when the stop was recorded).
+  // file. Path-matched after normalization (the frame source was normalized the
+  // same way when the stop was recorded); SamePathNormalized skips the per-frame
+  // string allocations the old generic_string() compare paid.
   if (debug_enabled && debug_execution != nullptr && debug_execution->HasLocation() &&
       !viewport.is_placeholder()) {
-    if (viewport.path().lexically_normal().generic_string() ==
-        debug_execution->FocusedPath().lexically_normal().generic_string()) {
+    if (util::SamePathNormalized(viewport.path(), debug_execution->FocusedPath())) {
       out.execution_line_index = debug_execution->FocusedLine();
     }
   }

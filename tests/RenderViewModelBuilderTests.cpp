@@ -174,6 +174,36 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
          "execution line should not be marked when the focused frame is in another file");
 }
 
+void TestBuilderInsetGapsEmptyWithoutPluginPresentation() {
+  WorkspaceContext ctx;  // default context: no plugin presentation bundle
+  RenderViewModelBuilder builder(ctx);
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("line0\nline1\nline2\nline3\n", "/proj/main.py");
+  viewport.SetViewportSize(8, 80);
+
+  // Every inline-inset feature flag is on, but no plugin/LSP presentation has been
+  // published. The builder must early-out so the editor geometry stays byte-identical
+  // to the no-plugin path: no row gaps, no ghost tail. The render frame's master gate
+  // additionally skips even reading the plugins.* settings in this case; this test
+  // locks in the consumer-side early-out that the gate depends on for correctness.
+  const editor::InsetGapFeatureFlags all_on{
+      .inline_surfaces = true, .code_lens_above = true, .ghost_text = true};
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
+                                   /*debug_enabled=*/false, nullptr, nullptr, all_on,
+                                   /*line_height=*/16.0f);
+
+  Expect(ctx.current_project_state.plugin_presentation_if_present() == nullptr,
+         "the default workspace context allocates no plugin presentation bundle");
+  Expect(vm.row_gaps.empty(),
+         "no plugin presentation => no inline-inset row gaps regardless of feature flags");
+  Expect(vm.row_gap_contents.empty(),
+         "no plugin presentation => no row-gap contents regardless of feature flags");
+  Expect(!vm.ghost_text_tail.has_value(),
+         "no plugin presentation => no ghost-text tail regardless of feature flags");
+}
+
 void TestBuilderMarksConditionalAndLogpointGutterDots() {
   WorkspaceContext ctx;
   RenderViewModelBuilder builder(ctx);
@@ -322,6 +352,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderMarksExecutionLineOnlyForMatchingFile);
   AddTest(tests, "RenderViewModelBuilder/MarksConditionalAndLogpointGutterDots",
           TestBuilderMarksConditionalAndLogpointGutterDots);
+  AddTest(tests, "RenderViewModelBuilder/InsetGapsEmptyWithoutPluginPresentation",
+          TestBuilderInsetGapsEmptyWithoutPluginPresentation);
 }
 
 }  // namespace microide::tests

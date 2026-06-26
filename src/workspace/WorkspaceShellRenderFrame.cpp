@@ -393,12 +393,18 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const bool render_whitespace_enabled =
         setting_enabled("editor.view.render_whitespace", false);
     // Phase E1: inline plugin-surface insets. Experimental and off by default, so
-    // the editor geometry stays byte-for-byte identical for everyone else.
-    const editor::InsetGapFeatureFlags inset_flags{
-        .inline_surfaces = setting_enabled("plugins.inline_surfaces", false),
-        .code_lens_above = setting_enabled("plugins.code_lens_above", false),
-        .ghost_text = setting_enabled("plugins.ghost_text", false),
-    };
+    // the editor geometry stays byte-for-byte identical for everyone else. One
+    // master gate, like DebugEnabled(): with no plugin/LSP presentation bundle the
+    // inset flags are unused (BuildEditorInsetGaps early-outs on a null bundle), so
+    // a no-plugin session skips these three per-frame setting reads entirely.
+    const editor::InsetGapFeatureFlags inset_flags =
+        project_state.plugin_presentation_if_present() != nullptr
+            ? editor::InsetGapFeatureFlags{
+                  .inline_surfaces = setting_enabled("plugins.inline_surfaces", false),
+                  .code_lens_above = setting_enabled("plugins.code_lens_above", false),
+                  .ghost_text = setting_enabled("plugins.ghost_text", false),
+              }
+            : editor::InsetGapFeatureFlags{};
     const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
     const bool occurrences_highlight_enabled_global =
         setting_enabled("editor.occurrences.enabled", true);
