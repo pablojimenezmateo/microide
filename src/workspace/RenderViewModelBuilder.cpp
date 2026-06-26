@@ -541,14 +541,35 @@ void RenderViewModelBuilder::BuildEditorInsetGaps(editor::EditorViewModel& out,
     out.row_gap_contents = {};
     return;
   }
+  // Ghost text (gated): the suggestion's first line draws inline at the caret
+  // (tail, set below), and its remaining lines occupy a single Below gap so the
+  // real rows push down. The gap is emitted by the shared producer so the render
+  // and hit-test paths stay in sync; the tail is render-only.
+  editor::InsetGapOptions gap_options{.inline_surfaces = inset_flags.inline_surfaces,
+                                      .code_lens_above = inset_flags.code_lens_above,
+                                      .code_lens_height = line_height};
+  thread_local editor::GhostTextInset ghost_inset;
+  if (inset_flags.ghost_text && pres->ghost_text.has_value() &&
+      !pres->ghost_text->lines.empty() &&
+      viewport.path().lexically_normal() == pres->ghost_text->path) {
+    const auto& ghost = *pres->ghost_text;
+    const std::size_t vrow = viewport.VisualRowForLine(ghost.anchor_line);
+    const std::size_t scroll = viewport.scroll_line();
+    if (vrow >= scroll && vrow < scroll + visible_rows) {
+      out.ghost_text_tail = editor::EditorViewModel::GhostTextTail{vrow, ghost.lines.front()};
+      if (ghost.lines.size() > 1) {
+        ghost_inset.below_lines = std::span<const std::string>(ghost.lines).subspan(1);
+        gap_options.ghost_anchor_line = ghost.anchor_line;
+        gap_options.ghost_height = static_cast<float>(ghost.lines.size() - 1) * line_height;
+        gap_options.ghost_content = &ghost_inset;
+      }
+    }
+  }
+
   thread_local std::vector<editor::RowGap> gaps;
   thread_local std::vector<editor::RowGapContent> contents;
-  editor::BuildRowGapsForWindow(
-      pres->surfaces, pres->decorations, viewport, visible_rows,
-      editor::InsetGapOptions{.inline_surfaces = inset_flags.inline_surfaces,
-                              .code_lens_above = inset_flags.code_lens_above,
-                              .code_lens_height = line_height},
-      gaps, contents);
+  editor::BuildRowGapsForWindow(pres->surfaces, pres->decorations, viewport, visible_rows,
+                                gap_options, gaps, contents);
   out.row_gaps = std::span<const editor::RowGap>(gaps.data(), gaps.size());
   out.row_gap_contents = std::span<const editor::RowGapContent>(contents.data(), contents.size());
 }
@@ -576,6 +597,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   out.occurrence_ranges = {};
   out.row_gaps = {};
   out.row_gap_contents = {};
+  out.ghost_text_tail.reset();
   out.whitespace_glyph_runs.clear();
   out.whitespace_row_offsets.clear();
 

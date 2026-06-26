@@ -85,8 +85,15 @@ void TestArchitectureInvariants() {
              // PluginEditorEventTracker member plus the RefreshPluginEditorEventInterest
              // / SamplePluginEditorEvents / DispatchDuePluginEditorEvents entry points
              // that debounce on_buffer_change/cursor/selection dispatch.
+             // 1597: +6 for the ghost-text (Copilot inline suggestion) seam: the
+             // PublishPluginGhostText / ClearPluginGhostText entry points (plugin
+             // publish + clear), plus AcceptGhostText / DismissGhostText /
+             // InvalidateGhostTextIfStale that handle Tab-accept, Esc-dismiss, and
+             // synchronous staleness invalidation. State itself lives in the lazy
+             // PluginEditorPresentation bundle, so the shell surface grows only by
+             // these declarations.
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1591);
+                                                     1597);
            });
 
   bool hard_failure = false;

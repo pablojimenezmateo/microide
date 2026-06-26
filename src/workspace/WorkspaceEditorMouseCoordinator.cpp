@@ -102,10 +102,19 @@ editor::EditorRowYLayout::HitResult ResolveGapAwareRow(
                                     static_cast<std::uint32_t>(viewport.scroll_line()))
         .HitTest(y, metrics.visible_rows);
   }
-  const editor::InsetGapOptions options{
+  editor::InsetGapOptions options{
       .inline_surfaces = SettingOn(get_setting_value, "plugins.inline_surfaces"),
       .code_lens_above = SettingOn(get_setting_value, "plugins.code_lens_above"),
       .code_lens_height = metrics.line_height};
+  // Mirror the render path's ghost-text Below gap (geometry only) so a click below
+  // a multi-line suggestion lands on the line the user actually sees.
+  if (const auto* ghost = state.ghost_text_if_present();
+      ghost != nullptr && ghost->lines.size() > 1 &&
+      SettingOn(get_setting_value, "plugins.ghost_text") &&
+      viewport.path().lexically_normal() == ghost->path) {
+    options.ghost_anchor_line = ghost->anchor_line;
+    options.ghost_height = static_cast<float>(ghost->lines.size() - 1) * metrics.line_height;
+  }
   return editor::ResolveInsetClick(pres->surfaces, pres->decorations, viewport,
                                    metrics.first_line_y, metrics.line_height, metrics.visible_rows,
                                    y, options)

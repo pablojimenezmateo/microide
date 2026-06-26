@@ -30,6 +30,10 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       add_focus_surface_redraw(focus_after);
     }
   }
+  // Clear any live ghost text the moment the caret/content/focus no longer matches
+  // its anchor, before sampling reactive events. No-op (one null check) unless a
+  // suggestion is showing, so it stays off the hot path.
+  InvalidateGhostTextIfStale();
   // Single chokepoint for reactive editor-event sampling: diff the active buffer's
   // content/caret/selection once per input batch (no-op unless a plugin subscribes).
   SamplePluginEditorEvents();

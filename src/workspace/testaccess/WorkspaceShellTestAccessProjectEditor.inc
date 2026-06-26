@@ -62,6 +62,27 @@
   static void SamplePluginEditorEvents(WorkspaceShell& shell) {
     shell.SamplePluginEditorEvents();
   }
+
+  // Ghost text (Copilot inline suggestion) drivers + state inspection.
+  static void PublishGhostText(WorkspaceShell& shell, std::string_view owner,
+                               const plugin::PluginHost::GhostTextRequest& request) {
+    shell.PublishPluginGhostText(owner, request);
+  }
+  static void ClearGhostText(WorkspaceShell& shell, std::string_view owner) {
+    shell.ClearPluginGhostText(owner);
+  }
+  static bool AcceptGhostText(WorkspaceShell& shell) { return shell.AcceptGhostText(); }
+  static void DismissGhostText(WorkspaceShell& shell) { shell.DismissGhostText(); }
+  static void InvalidateGhostTextIfStale(WorkspaceShell& shell) {
+    shell.InvalidateGhostTextIfStale();
+  }
+  static const ProjectWorkspaceState::PluginEditorPresentation::GhostText* GhostText(
+      const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.ghost_text_if_present();
+  }
+  static bool HasPluginPresentation(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.plugin_presentation_if_present() != nullptr;
+  }
   static bool DispatchDuePluginEditorEvents(WorkspaceShell& shell) {
     return shell.DispatchDuePluginEditorEvents();
   }

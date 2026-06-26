@@ -320,6 +320,22 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Debugger",
       },
       SettingSpec{
+          .id = "plugins.ghost_text",
+          .label = "Inline Suggestions (Ghost Text)",
+          .description = "Let plugins (e.g. a Copilot bridge) show dimmed inline AI suggestions at "
+                         "the caret. Press Tab to accept the whole suggestion, Esc to dismiss; "
+                         "typing or moving the caret clears it. Off by default; when off, no "
+                         "suggestion state is stored and rendering stays zero-cost.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = false,
+          .default_int = 0,
+          .default_float = 0.0f,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Plugins",
+      },
+      SettingSpec{
           .id = "control.enabled",
           .label = "Enable Control Channel",
           .description = "Allow an external tool to drive this instance over a private Unix-domain "

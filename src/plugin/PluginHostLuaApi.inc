@@ -855,6 +855,22 @@
         host != nullptr ? host->callbacks : EmptyCallbacks());
   }
 
+  static int LuaEditorSetGhostText(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    return runtime_api_interop::LuaEditorSetGhostText(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+  }
+
+  static int LuaEditorClearGhostText(lua_State* state) {
+    Impl* host = HostFromUpvalue(state);
+    const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
+    return runtime_api_interop::LuaEditorClearGhostText(
+        state, plugin, host != nullptr ? host->current_project_root : EmptyProjectRoot(),
+        host != nullptr ? host->callbacks : EmptyCallbacks());
+  }
+
   void PushPluginContext(lua_State* state) {
     lua_context_interop::PushPluginContext(
         state, this,
@@ -880,6 +896,8 @@
             .editor_apply_edits = &LuaEditorApplyEdits,
             .editor_set_cursor = &LuaEditorSetCursor,
             .editor_set_selection = &LuaEditorSetSelection,
+            .editor_set_ghost_text = &LuaEditorSetGhostText,
+            .editor_clear_ghost_text = &LuaEditorClearGhostText,
             .sidebar_add = &LuaSidebarAdd,
             .sidebar_show = &LuaSidebarShow,
             .hover_add = &LuaHoverAdd,

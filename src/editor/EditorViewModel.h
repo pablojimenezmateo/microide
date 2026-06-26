@@ -3,11 +3,21 @@
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "editor/EditorRowYLayout.h"
 
 namespace microide::editor {
+
+// Ghost-text (Copilot-style suggestion) rows shown dimmed below the caret line.
+// `below_lines` views the stored suggestion's `lines[1..]`; valid for the render
+// frame. Hosted by a Below RowGap that pushes the real rows down, so the block
+// occupies real space and the caret/hit-test geometry stays correct.
+struct GhostTextInset {
+  std::span<const std::string> below_lines;
+};
 
 struct FoldGutterMark {
   std::size_t line_index = 0;
@@ -75,6 +85,16 @@ struct EditorViewModel {
   // True when above-line code lenses are active; the editor renderer then
   // suppresses the end-of-line code-lens affordance (it is drawn as the inset).
   bool code_lens_above = false;
+  // Caret-line ghost-text tail (the suggestion's first line) drawn dimmed at the
+  // caret on its visual row. Empty unless ghost text is active on this viewport,
+  // the feature flag is on, and the caret row is visible. The renderer draws it at
+  // the primary caret's own x (so no visual-column math is duplicated here).
+  // `text` views the stored suggestion's `lines[0]`; valid for the render frame.
+  struct GhostTextTail {
+    std::size_t visual_row = 0;
+    std::string_view text;
+  };
+  std::optional<GhostTextTail> ghost_text_tail;
   std::vector<WhitespaceGlyphRun> whitespace_glyph_runs;
   // CSR-style index into `whitespace_glyph_runs`: for visible row `r`, runs are in
   // [whitespace_row_offsets[r], whitespace_row_offsets[r+1]). Size is `visible_rows + 1` whenever

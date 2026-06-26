@@ -876,6 +876,13 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
                              theme.cursor.a);
       SDL_RenderFillRect(renderer, &caret);
+      // Ghost-text tail: the suggestion's first line, drawn dimmed starting at the
+      // caret. Below-caret rows (if any) render as a Below inset gap by the shell.
+      if (view_model != nullptr && view_model->ghost_text_tail.has_value() &&
+          view_model->ghost_text_tail->visual_row == visual_row_index) {
+        text_renderer.DrawString(renderer, caret_x, y, theme.text_muted,
+                                 view_model->ghost_text_tail->text);
+      }
     }
 
     if (draw_caret) {

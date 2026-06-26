@@ -388,12 +388,35 @@ struct ProjectWorkspaceState {
   struct PluginEditorPresentation {
     editor::PluginDecorationStore decorations;
     editor::PluginSurfaceStore surfaces;
+    // Ghost text (Copilot-style inline suggestion). At most one is live at a
+    // time (single owner, last writer wins). The host validates the anchor
+    // against the live caret before storing and clears it synchronously on any
+    // edit/caret/focus/buffer change, so it never renders stale. `lines[0]` is
+    // the caret-line tail inserted at `anchor_column`; `lines[1..]` are the
+    // dimmed rows shown below. Split once at publish; the renderer hands out
+    // views into `lines`, never copies per frame.
+    struct GhostText {
+      std::string owner;                   // publishing plugin id
+      std::filesystem::path path;          // normalized target buffer
+      std::size_t anchor_line = 0;         // 0-based caret line it was computed for
+      std::size_t anchor_column = 0;       // 0-based caret column (byte) = insert point
+      std::uint64_t content_revision = 0;  // viewport rev at store time (staleness)
+      std::vector<std::string> lines;
+      bool empty() const { return lines.empty(); }
+    };
+    std::optional<GhostText> ghost_text;
   };
   std::unique_ptr<PluginEditorPresentation> plugin_presentation;
 
   // Reader gate: returns nullptr when nothing is published (the common case).
   const PluginEditorPresentation* plugin_presentation_if_present() const {
     return plugin_presentation.get();
+  }
+  // Ghost-text reader gate: nullptr unless a suggestion is currently live.
+  const PluginEditorPresentation::GhostText* ghost_text_if_present() const {
+    return plugin_presentation && plugin_presentation->ghost_text
+               ? &*plugin_presentation->ghost_text
+               : nullptr;
   }
   // Writer entry: lazily allocates the bundle on the first contribution.
   PluginEditorPresentation& EnsurePluginPresentation() {
@@ -407,7 +430,8 @@ struct ProjectWorkspaceState {
   // mid-render) so no reader holds a store pointer across the reset.
   void MaybeReleasePluginPresentation() {
     if (plugin_presentation && plugin_presentation->decorations.empty() &&
-        plugin_presentation->surfaces.empty()) {
+        plugin_presentation->surfaces.empty() &&
+        !plugin_presentation->ghost_text.has_value()) {
       plugin_presentation.reset();
     }
   }

@@ -397,6 +397,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const editor::InsetGapFeatureFlags inset_flags{
         .inline_surfaces = setting_enabled("plugins.inline_surfaces", false),
         .code_lens_above = setting_enabled("plugins.code_lens_above", false),
+        .ghost_text = setting_enabled("plugins.ghost_text", false),
     };
     const bool fold_enabled = setting_enabled("editor.fold.enabled", true);
     const bool occurrences_highlight_enabled_global =

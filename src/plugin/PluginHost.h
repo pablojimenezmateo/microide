@@ -250,6 +250,20 @@ class PluginHost {
     std::size_t selection_end_column = 0;
   };
 
+  // A ghost-text (inline AI suggestion) proposal from a plugin
+  // (`ctx.editor.set_ghost_text`). The plugin proposes a dimmed, multi-line
+  // completion anchored at a 1-based caret position; the host validates it
+  // against the live caret (active editable buffer, cursor still there, not
+  // stale), owns rendering, and inserts it on Tab. Single-owner: a publish
+  // replaces any existing ghost text. Dormant (no per-frame cost) until a
+  // plugin publishes.
+  struct GhostTextRequest {
+    std::filesystem::path path;     // empty => active editable buffer
+    std::size_t anchor_line = 0;    // 1-based; 0 => use the current caret line
+    std::size_t anchor_column = 0;  // 1-based; 0 => use the current caret column
+    std::string text;               // full suggestion, '\n'-separated
+  };
+
   // A navigation target produced by a plugin go-to-definition / find-references
   // provider. `line`/`column` are 1-based; `path` is resolved against the
   // current project root by the host.
@@ -494,6 +508,13 @@ class PluginHost {
     // plugin never touches the buffer directly. Dormant (no per-frame cost) until
     // a plugin issues an edit.
     std::function<bool(std::string_view owner, const WorkspaceEditRequest&)> apply_workspace_edit;
+    // Publish / clear ghost text (`ctx.editor.set_ghost_text` /
+    // `clear_ghost_text`) on the host thread. The host validates the anchor
+    // against the live caret, stores at most one suggestion (last writer wins),
+    // owns rendering, and inserts it on Tab. `clear_ghost_text` only clears a
+    // suggestion owned by the caller. Dormant until a plugin publishes.
+    std::function<void(std::string_view owner, const GhostTextRequest&)> publish_ghost_text;
+    std::function<void(std::string_view owner)> clear_ghost_text;
     std::function<void(const std::string&)> error_sink;
     std::function<void(const std::string&)> log_sink;
     std::function<std::optional<std::string>(std::string_view)> get_setting;

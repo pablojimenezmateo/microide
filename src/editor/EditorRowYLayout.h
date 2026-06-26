@@ -8,6 +8,7 @@ namespace microide::editor {
 
 struct SurfaceContent;        // editor/PluginSurfaceStore.h (inline surface insets)
 struct CodeLensDecoration;    // editor/PluginDecorationStore.h (above-line code lenses)
+struct GhostTextInset;        // editor/EditorViewModel.h (below-caret ghost-text rows)
 
 // Where an inert vertical gap sits relative to its anchor visual row.
 //  - Below: hosts an inline surface inset directly under the row (Phase E1).
@@ -29,6 +30,7 @@ struct RowGap {
 struct RowGapContent {
   const SurfaceContent* surface = nullptr;        // set for Below surface insets
   const CodeLensDecoration* code_lens = nullptr;  // set for Above code-lens strips
+  const GhostTextInset* ghost_text = nullptr;     // set for the Below ghost-text block
 };
 
 // The single row -> screen-y mapping for the editor viewport. Render, caret,

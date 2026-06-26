@@ -2682,6 +2682,199 @@ void TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath() {
   Expect(editor.lines()[0] == "hello", "a rejected edit must not touch the active buffer");
 }
 
+// Opens a bare project + editable file (no plugin needed) with ghost text enabled,
+// caret parked at the end of the first line. Ghost-text state-machine tests drive
+// the host's publish/accept/dismiss/invalidate entry points directly via TestAccess.
+void OpenGhostTextFixture(WorkspaceShell& shell, const std::filesystem::path& project_root,
+                          const std::filesystem::path& source, std::string_view content) {
+  WriteFile(source, std::string(content));
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "ghost-text fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "plugins.ghost_text", "true"),
+         "plugins.ghost_text should be settable");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, editor.lines()[0].size());
+}
+
+plugin::PluginHost::GhostTextRequest GhostRequest(std::string text) {
+  plugin::PluginHost::GhostTextRequest request;
+  request.text = std::move(text);
+  return request;
+}
+
+void TestWorkspaceShellGhostTextPublishStoresAndSplits() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WorkspaceShell shell;
+  OpenGhostTextFixture(shell, project_root, source, "hello\n");
+
+  WorkspaceShellTestAccess::PublishGhostText(shell, "copilot", GhostRequest("X\nY\nZ"));
+  const auto* ghost = WorkspaceShellTestAccess::GhostText(shell);
+  Expect(ghost != nullptr, "publishing ghost text should store it");
+  Expect(ghost->owner == "copilot", "ghost text should record the publishing owner");
+  Expect(ghost->lines.size() == 3 && ghost->lines[0] == "X" && ghost->lines[1] == "Y" &&
+             ghost->lines[2] == "Z",
+         "ghost text should split the suggestion on newlines into tail + below rows");
+  Expect(ghost->anchor_line == 0 && ghost->anchor_column == 5,
+         "ghost text should anchor at the live caret when no explicit anchor is given");
+}
+
+void TestWorkspaceShellGhostTextDisabledSettingNoOp() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WorkspaceShell shell;
+  OpenGhostTextFixture(shell, project_root, source, "hello\n");
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "plugins.ghost_text", "false"),
+         "plugins.ghost_text should be settable to false");
+
+  WorkspaceShellTestAccess::PublishGhostText(shell, "copilot", GhostRequest("X\nY"));
+  Expect(WorkspaceShellTestAccess::GhostText(shell) == nullptr,
+         "publishing with the feature disabled should store nothing");
+  Expect(!WorkspaceShellTestAccess::HasPluginPresentation(shell),
+         "a disabled-feature publish must not even allocate the presentation bundle");
+}
+
+void TestWorkspaceShellGhostTextStaleAnchorRejected() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WorkspaceShell shell;
+  OpenGhostTextFixture(shell, project_root, source, "hello\n");
+
+  plugin::PluginHost::GhostTextRequest request = GhostRequest("late");
+  request.anchor_line = 1;     // 1-based line 1 => 0-based 0
+  request.anchor_column = 1;   // 1-based col 1 => 0-based 0, but caret is at column 5
+  WorkspaceShellTestAccess::PublishGhostText(shell, "copilot", request);
+  Expect(WorkspaceShellTestAccess::GhostText(shell) == nullptr,
+         "a suggestion whose anchor no longer matches the caret should be dropped as stale");
+}
+
+void TestWorkspaceShellGhostTextAcceptInsertsAndClears() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WorkspaceShell shell;
+  OpenGhostTextFixture(shell, project_root, source, "hello\n");
+
+  WorkspaceShellTestAccess::PublishGhostText(shell, "copilot", GhostRequest("X\nY"));
+  Expect(WorkspaceShellTestAccess::AcceptGhostText(shell),
+         "accepting a live suggestion should consume Tab");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.lines()[0] == "helloX" && editor.lines()[1] == "Y",
+         "accept should insert the whole multi-line suggestion at the caret");
+  Expect(WorkspaceShellTestAccess::GhostText(shell) == nullptr,
+         "accept should clear the suggestion");
+  Expect(!WorkspaceShellTestAccess::HasPluginPresentation(shell),
+         "clearing the only contribution should release the presentation bundle");
+  Expect(editor.Undo() && editor.lines()[0] == "hello" && editor.lines()[1] == "",
+         "the inserted suggestion should revert in a single undo step");
+}
+
+void TestWorkspaceShellGhostTextAcceptWithNoneFallsThrough() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WorkspaceShell shell;
+  OpenGhostTextFixture(shell, project_root, source, "hello\n");
+  Expect(!WorkspaceShellTestAccess::AcceptGhostText(shell),
+         "accept with no suggestion must return false so Tab falls through to snippet/indent");
+}
+
+void TestWorkspaceShellGhostTextInvalidatesOnCaretMove() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WorkspaceShell shell;
+  OpenGhostTextFixture(shell, project_root, source, "hello\n");
+
+  WorkspaceShellTestAccess::PublishGhostText(shell, "copilot", GhostRequest("X"));
+  Expect(WorkspaceShellTestAccess::GhostText(shell) != nullptr, "precondition: ghost text live");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::InvalidateGhostTextIfStale(shell);
+  Expect(WorkspaceShellTestAccess::GhostText(shell) == nullptr,
+         "moving the caret away from the anchor should invalidate the suggestion");
+}
+
+void TestWorkspaceShellGhostTextClearIsOwnerScoped() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WorkspaceShell shell;
+  OpenGhostTextFixture(shell, project_root, source, "hello\n");
+
+  WorkspaceShellTestAccess::PublishGhostText(shell, "copilot", GhostRequest("X"));
+  WorkspaceShellTestAccess::ClearGhostText(shell, "other");
+  Expect(WorkspaceShellTestAccess::GhostText(shell) != nullptr,
+         "clearing under a different owner must leave the suggestion intact");
+  WorkspaceShellTestAccess::ClearGhostText(shell, "copilot");
+  Expect(WorkspaceShellTestAccess::GhostText(shell) == nullptr,
+         "clearing under the owning plugin should remove the suggestion");
+}
+
+void TestWorkspaceShellGhostTextLuaApiPublishesAndClears() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WriteFile(source, "hello\n");
+  WritePluginInit(
+      plugins_root, "ghost",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "ghost",
+  setup = function(ctx)
+    ctx.commands.add("ghost.suggest", function()
+      local ok, err = ctx.editor.set_ghost_text({ text = "foo\nbar" })
+      ctx.log(ok and "set" or ("rejected:" .. tostring(err)))
+    end)
+    ctx.commands.add("ghost.suggest_empty", function()
+      local ok, err = ctx.editor.set_ghost_text({ text = "" })
+      ctx.log(ok and "set" or ("rejected:" .. tostring(err)))
+    end)
+    ctx.commands.add("ghost.dismiss", function()
+      ctx.editor.clear_ghost_text()
+    end)
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "ghost Lua fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "plugins.ghost_text", "true"),
+         "plugins.ghost_text should be settable");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "ghost.suggest"),
+         "ghost.suggest command should dispatch");
+  const auto* ghost = WorkspaceShellTestAccess::GhostText(shell);
+  Expect(ghost != nullptr && ghost->lines.size() == 2 && ghost->lines[0] == "foo" &&
+             ghost->lines[1] == "bar",
+         "ctx.editor.set_ghost_text should publish through the host into ghost state");
+
+  WorkspaceShellTestAccess::ClearPluginMessages(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "ghost.suggest_empty"),
+         "ghost.suggest_empty command should dispatch");
+  const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+  Expect(!messages.empty() && messages.back().rfind("ghost: rejected:", 0) == 0,
+         "empty ghost text should return (false, message) without raising");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "ghost.dismiss"),
+         "ghost.dismiss command should dispatch");
+  Expect(WorkspaceShellTestAccess::GhostText(shell) == nullptr,
+         "ctx.editor.clear_ghost_text should clear the suggestion");
+}
+
 void TestWorkspaceShellPluginApplyEditsClampsOutOfBounds() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2894,6 +3087,22 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginApplyEditsRejectsUnopenedPath);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsClampsOutOfBounds",
           TestWorkspaceShellPluginApplyEditsClampsOutOfBounds);
+  AddTest(tests, "WorkspaceShell/GhostTextPublishStoresAndSplits",
+          TestWorkspaceShellGhostTextPublishStoresAndSplits);
+  AddTest(tests, "WorkspaceShell/GhostTextDisabledSettingNoOp",
+          TestWorkspaceShellGhostTextDisabledSettingNoOp);
+  AddTest(tests, "WorkspaceShell/GhostTextStaleAnchorRejected",
+          TestWorkspaceShellGhostTextStaleAnchorRejected);
+  AddTest(tests, "WorkspaceShell/GhostTextAcceptInsertsAndClears",
+          TestWorkspaceShellGhostTextAcceptInsertsAndClears);
+  AddTest(tests, "WorkspaceShell/GhostTextAcceptWithNoneFallsThrough",
+          TestWorkspaceShellGhostTextAcceptWithNoneFallsThrough);
+  AddTest(tests, "WorkspaceShell/GhostTextInvalidatesOnCaretMove",
+          TestWorkspaceShellGhostTextInvalidatesOnCaretMove);
+  AddTest(tests, "WorkspaceShell/GhostTextClearIsOwnerScoped",
+          TestWorkspaceShellGhostTextClearIsOwnerScoped);
+  AddTest(tests, "WorkspaceShell/GhostTextLuaApiPublishesAndClears",
+          TestWorkspaceShellGhostTextLuaApiPublishesAndClears);
   AddTest(tests, "WorkspaceShell/PluginKeybindingsDispatchCommands",
           TestWorkspaceShellPluginKeybindingsDispatchCommands);
   AddTest(tests, "WorkspaceShell/PluginStatusItemsRenderAndRedraw",

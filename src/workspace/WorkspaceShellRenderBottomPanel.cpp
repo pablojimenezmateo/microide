@@ -676,6 +676,16 @@ void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& p
       continue;
     }
     const float top = layout.RowTop(row) + metrics.line_height;
+    if (content.ghost_text != nullptr) {
+      // Below-caret ghost-text rows, dimmed and aligned under the code (the first
+      // line renders inline at the caret in EditorViewRenderer).
+      for (std::size_t j = 0; j < content.ghost_text->below_lines.size(); ++j) {
+        text_renderer_.DrawString(renderer, metrics.text_x,
+                                  top + static_cast<float>(j) * metrics.line_height,
+                                  theme_.text_muted, content.ghost_text->below_lines[j]);
+      }
+      continue;
+    }
     const SDL_FRect inset{pane_rect.x, top, pane_rect.w, gap.height};
     RenderPluginSurfaceInto(renderer, inset, content.surface, 0.0f);
   }

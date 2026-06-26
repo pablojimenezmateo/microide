@@ -62,6 +62,19 @@ int LuaEditorSetSelection(lua_State* state,
                           const runtime_types::PluginInstance* plugin,
                           const std::filesystem::path& current_project_root,
                           const PluginHost::Callbacks& callbacks);
+
+// ctx.editor.set_ghost_text / clear_ghost_text : publish or clear a Copilot-style
+// inline suggestion. Same (true)/(false, message) convention as the edit helpers;
+// never raise.
+int LuaEditorSetGhostText(lua_State* state,
+                          const runtime_types::PluginInstance* plugin,
+                          const std::filesystem::path& current_project_root,
+                          const PluginHost::Callbacks& callbacks);
+
+int LuaEditorClearGhostText(lua_State* state,
+                            const runtime_types::PluginInstance* plugin,
+                            const std::filesystem::path& current_project_root,
+                            const PluginHost::Callbacks& callbacks);
 #endif
 
 }  // namespace microide::plugin::runtime_api_interop

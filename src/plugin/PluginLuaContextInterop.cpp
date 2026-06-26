@@ -63,10 +63,12 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
   PushBoundFn(state, host_upvalue, fns.surface_clear, "clear");
   lua_setfield(state, -2, "surface");
 
-  lua_createtable(state, 0, 3);
+  lua_createtable(state, 0, 5);
   PushBoundFn(state, host_upvalue, fns.editor_apply_edits, "apply_edits");
   PushBoundFn(state, host_upvalue, fns.editor_set_cursor, "set_cursor");
   PushBoundFn(state, host_upvalue, fns.editor_set_selection, "set_selection");
+  PushBoundFn(state, host_upvalue, fns.editor_set_ghost_text, "set_ghost_text");
+  PushBoundFn(state, host_upvalue, fns.editor_clear_ghost_text, "clear_ghost_text");
   lua_setfield(state, -2, "editor");
 
   lua_createtable(state, 0, 2);

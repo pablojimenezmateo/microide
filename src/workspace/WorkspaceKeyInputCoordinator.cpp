@@ -885,13 +885,16 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() { return assist_service_.ExecuteSelectedCodeAction(); },
           .request_inline_completion =
               [this](std::string* error_message) {
+                // Ghost text is published reactively by plugins; there is no
+                // host-driven manual request. Report unavailable so the action
+                // surfaces a clear message rather than silently doing nothing.
                 if (error_message != nullptr) {
-                  *error_message = "Inline completion is retired";
+                  *error_message = "Inline suggestions are provided by plugins";
                 }
                 return false;
               },
-          .accept_inline_completion = [this]() { return false; },
-          .dismiss_inline_completion = [this]() {},
+          .accept_inline_completion = [this]() { return AcceptGhostText(); },
+          .dismiss_inline_completion = [this]() { DismissGhostText(); },
           .try_snippet_tab_in_editor =
               [this](bool shift_tab) { return assist_service_.TrySnippetTabInEditor(shift_tab); },
           .try_snippet_escape_in_editor = [this]() { return assist_service_.TrySnippetEscapeInEditor(); },

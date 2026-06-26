@@ -10,6 +10,7 @@ namespace microide::editor {
 class TextViewport;
 class PluginSurfaceStore;
 class PluginDecorationStore;
+struct GhostTextInset;
 
 // What inline insets to resolve into row gaps. Off by default so the common
 // (no-inset) editor path produces an empty gap list and stays bit-identical to
@@ -18,6 +19,14 @@ struct InsetGapOptions {
   bool inline_surfaces = false;   // `plugins.inline_surfaces`: anchored surface insets (Below)
   bool code_lens_above = false;   // `plugins.code_lens_above`: above-line code-lens strips (Above)
   float code_lens_height = 0.0f;  // height of the Above code-lens strip (a text line height)
+  // Ghost-text below-caret block (Copilot). Emitted as a single Below gap at
+  // `ghost_anchor_line`'s visual row when `ghost_height > 0`. Routed through this
+  // one producer so the render and hit-test paths share identical geometry; the
+  // content pointer is null on the hit-test path (geometry only) and set on the
+  // render path so the gap can be drawn.
+  std::size_t ghost_anchor_line = 0;             // 0-based logical line of the caret
+  float ghost_height = 0.0f;                     // (below-line count) * line height; 0 => none
+  const GhostTextInset* ghost_content = nullptr;
 };
 
 // The two inline-inset feature toggles, grouped so the render path threads one
@@ -27,6 +36,7 @@ struct InsetGapOptions {
 struct InsetGapFeatureFlags {
   bool inline_surfaces = false;
   bool code_lens_above = false;
+  bool ghost_text = false;
 };
 
 // Resolve the inert row gaps for inline insets visible in the window

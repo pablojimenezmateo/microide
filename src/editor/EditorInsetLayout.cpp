@@ -23,7 +23,8 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
   }
   const bool want_surfaces = options.inline_surfaces;
   const bool want_lenses = options.code_lens_above && options.code_lens_height > 0.0f;
-  if (!want_surfaces && !want_lenses) {
+  const bool want_ghost = options.ghost_height > 0.0f;
+  if (!want_surfaces && !want_lenses && !want_ghost) {
     return;
   }
   const std::size_t scroll = viewport.scroll_line();
@@ -71,6 +72,21 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
                                   RowGapPlacement::Above});
         out_contents.push_back(RowGapContent{.code_lens = &lenses.front()});
       }
+    }
+  }
+
+  // Below: the ghost-text suggestion's trailing lines, hosted in one gap under the
+  // caret line so the real rows below push down. Geometry only depends on the
+  // anchor + height, so render and hit-test agree even though only render supplies
+  // `ghost_content` for drawing.
+  if (want_ghost) {
+    const std::size_t visual_row = viewport.VisualRowForLine(options.ghost_anchor_line);
+    if (visual_row < visual_count && visual_row >= scroll &&
+        visual_row < scroll + visible_rows) {
+      out_gaps.push_back(
+          RowGap{static_cast<std::uint32_t>(visual_row), options.ghost_height,
+                 RowGapPlacement::Below});
+      out_contents.push_back(RowGapContent{.ghost_text = options.ghost_content});
     }
   }
 }

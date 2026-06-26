@@ -872,6 +872,17 @@
   // and clamps every edit, applies them as one grouped-undo step, then optionally
   // moves the caret / sets the selection. Returns true when a buffer was edited.
   bool ApplyPluginWorkspaceEdit(const plugin::PluginHost::WorkspaceEditRequest& request);
+  // Ghost text (Copilot-style inline suggestion). The plugin publishes a proposal;
+  // the host validates it against the live caret, stores at most one (last writer
+  // wins), renders it dimmed, inserts it on Tab (Accept), and clears it on Esc
+  // (Dismiss) or any caret/content/focus change (InvalidateGhostTextIfStale). All
+  // are no-ops when nothing is published, keeping ghost text zero-cost when unused.
+  void PublishPluginGhostText(std::string_view owner,
+                              const plugin::PluginHost::GhostTextRequest& request);
+  void ClearPluginGhostText(std::string_view owner);
+  bool AcceptGhostText();
+  void DismissGhostText();
+  void InvalidateGhostTextIfStale();
   // SEAM 1 reactive editor events: recompute which events any plugin wants (after
   // reload), sample the active buffer once per input batch, and dispatch coalesced
   // events when their debounce deadline elapses.

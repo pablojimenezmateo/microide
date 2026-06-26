@@ -23,12 +23,18 @@ std::size_t ReadIndexField(lua_State* state, int table_index, const char* field)
 // editable buffer.
 void ReadOptionalPathField(lua_State* state,
                            const std::filesystem::path& current_project_root,
-                           PluginHost::WorkspaceEditRequest* request) {
+                           std::filesystem::path* out_path) {
   std::optional<std::string> raw_path = lua_interop::ReadOptionalStringField(state, 1, "path");
   if (raw_path.has_value() && !raw_path->empty()) {
-    request->path =
+    *out_path =
         path_interop::ResolveRuntimePath(current_project_root, std::filesystem::path(*raw_path));
   }
+}
+
+void ReadOptionalPathField(lua_State* state,
+                           const std::filesystem::path& current_project_root,
+                           PluginHost::WorkspaceEditRequest* request) {
+  ReadOptionalPathField(state, current_project_root, &request->path);
 }
 
 // Invokes the host edit callback and pushes the Lua result tuple. `request` must
@@ -300,6 +306,48 @@ int LuaEditorSetSelection(lua_State* state,
     }
   }
   return PushEditResult(state, applied, "editor.set_selection requires a 1-based range");
+}
+
+int LuaEditorSetGhostText(lua_State* state,
+                          const runtime_types::PluginInstance* plugin,
+                          const std::filesystem::path& current_project_root,
+                          const PluginHost::Callbacks& callbacks) {
+  if (lua_type(state, 1) != LUA_TTABLE) {
+    return PushEditResult(state, false, "editor.set_ghost_text requires a spec table");
+  }
+  if (plugin == nullptr || !callbacks.publish_ghost_text) {
+    return PushEditResult(state, false, "editor.set_ghost_text unavailable");
+  }
+  bool published = false;
+  const char* fail_message = "editor.set_ghost_text requires non-empty text";
+  {
+    PluginHost::GhostTextRequest request;
+    ReadOptionalPathField(state, current_project_root, &request.path);
+    lua_getfield(state, 1, "anchor");
+    if (lua_type(state, -1) == LUA_TTABLE) {
+      const int anchor_index = lua_gettop(state);
+      request.anchor_line = ReadIndexField(state, anchor_index, "line");
+      request.anchor_column = ReadIndexField(state, anchor_index, "col");
+    }
+    lua_pop(state, 1);  // anchor
+    lua_interop::ReadStringField(state, 1, "text", &request.text);
+    if (!request.text.empty()) {
+      callbacks.publish_ghost_text(plugin->id, request);
+      published = true;
+    }
+  }
+  return PushEditResult(state, published, fail_message);
+}
+
+int LuaEditorClearGhostText(lua_State* state,
+                            const runtime_types::PluginInstance* plugin,
+                            const std::filesystem::path& /*current_project_root*/,
+                            const PluginHost::Callbacks& callbacks) {
+  if (plugin == nullptr || !callbacks.clear_ghost_text) {
+    return PushEditResult(state, false, "editor.clear_ghost_text unavailable");
+  }
+  callbacks.clear_ghost_text(plugin->id);
+  return PushEditResult(state, true, nullptr);
 }
 
 }  // namespace microide::plugin::runtime_api_interop
