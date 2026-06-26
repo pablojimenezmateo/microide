@@ -425,47 +425,76 @@ bool RegisterStatusItem(
   return true;
 }
 
-bool UpdateStatusItem(lua_State* state,
-                      const runtime_types::PluginInstance* plugin,
-                      std::string_view id,
-                      std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
-                      std::vector<PluginHost::ContributedStatusItem>* status_item_order) {
-  if (plugin == nullptr || status_items == nullptr || status_item_order == nullptr) {
+bool ExtractStatusItemUpdate(lua_State* state,
+                             const runtime_types::PluginInstance* plugin,
+                             std::string_view id,
+                             StatusItemUpdate* out) {
+  if (plugin == nullptr || out == nullptr) {
     return false;
   }
-  const std::string full_id = plugin->id + "." + std::string(id);
-  auto it = status_items->find(full_id);
-  if (it == status_items->end()) {
-    return false;
-  }
+  out->full_id = plugin->id + "." + std::string(id);
   lua_getfield(state, 2, "text");
   if (lua_isstring(state, -1)) {
-    it->second.text = lua_tostring(state, -1);
+    out->has_text = true;
+    out->text = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
   lua_getfield(state, 2, "tooltip");
   if (lua_isstring(state, -1)) {
-    it->second.tooltip = lua_tostring(state, -1);
+    out->has_tooltip = true;
+    out->tooltip = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
   lua_getfield(state, 2, "icon");
   if (lua_isstring(state, -1)) {
-    it->second.icon = lua_tostring(state, -1);
+    out->has_icon = true;
+    out->icon = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
   lua_getfield(state, 2, "tone");
   if (lua_isstring(state, -1)) {
-    it->second.tone = lua_tostring(state, -1);
+    out->has_tone = true;
+    out->tone = lua_tostring(state, -1);
   }
   lua_pop(state, 1);
   lua_getfield(state, 2, "progress");
   if (lua_isnumber(state, -1)) {
     const double value = lua_tonumber(state, -1);
-    it->second.progress = value < 0.0 ? -1.0f : std::clamp(static_cast<float>(value), 0.0f, 1.0f);
+    out->has_progress = true;
+    out->progress = value < 0.0 ? -1.0f : std::clamp(static_cast<float>(value), 0.0f, 1.0f);
   }
   lua_pop(state, 1);
+  return true;
+}
+
+bool ApplyStatusItemUpdate(
+    const StatusItemUpdate& update,
+    std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
+    std::vector<PluginHost::ContributedStatusItem>* status_item_order) {
+  if (status_items == nullptr || status_item_order == nullptr) {
+    return false;
+  }
+  auto it = status_items->find(update.full_id);
+  if (it == status_items->end()) {
+    return false;
+  }
+  if (update.has_text) {
+    it->second.text = update.text;
+  }
+  if (update.has_tooltip) {
+    it->second.tooltip = update.tooltip;
+  }
+  if (update.has_icon) {
+    it->second.icon = update.icon;
+  }
+  if (update.has_tone) {
+    it->second.tone = update.tone;
+  }
+  if (update.has_progress) {
+    it->second.progress = update.progress;
+  }
   for (auto& order_item : *status_item_order) {
-    if (order_item.id == full_id) {
+    if (order_item.id == update.full_id) {
       order_item.text = it->second.text;
       order_item.tooltip = it->second.tooltip;
       order_item.icon = it->second.icon;

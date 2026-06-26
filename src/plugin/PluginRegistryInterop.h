@@ -64,11 +64,37 @@ bool RegisterStatusItem(const runtime_types::PluginInstance* plugin,
                         std::vector<PluginHost::ContributedStatusItem>* status_item_order,
                         std::string* error_message);
 
-bool UpdateStatusItem(lua_State* state,
-                      const runtime_types::PluginInstance* plugin,
-                      std::string_view id,
-                      std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
-                      std::vector<PluginHost::ContributedStatusItem>* status_item_order);
+// A status-item mutation extracted from a Lua table on the worker thread. The
+// Lua read (worker-only) is separated from the registry mutation (UI-thread-only)
+// so a ctx.status.update issued from a reactive event never touches the shared
+// status registries on the worker. Only the fields present in the table are set.
+struct StatusItemUpdate {
+  std::string full_id;
+  bool has_text = false;
+  std::string text;
+  bool has_tooltip = false;
+  std::string tooltip;
+  bool has_icon = false;
+  std::string icon;
+  bool has_tone = false;
+  std::string tone;
+  bool has_progress = false;
+  float progress = -1.0f;
+};
+
+// Worker thread: read the update fields from the Lua table at index 2. Touches no
+// shared registries. Returns false when no calling plugin can be resolved.
+bool ExtractStatusItemUpdate(lua_State* state,
+                             const runtime_types::PluginInstance* plugin,
+                             std::string_view id,
+                             StatusItemUpdate* out);
+
+// UI thread: apply a previously extracted update to the status registries.
+// Returns true when the target item existed and was changed.
+bool ApplyStatusItemUpdate(
+    const StatusItemUpdate& update,
+    std::unordered_map<std::string, PluginHost::ContributedStatusItem>* status_items,
+    std::vector<PluginHost::ContributedStatusItem>* status_item_order);
 #endif
 
 }  // namespace microide::plugin::registry_interop

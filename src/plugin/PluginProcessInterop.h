@@ -18,9 +18,12 @@ namespace microide::plugin::process_interop {
 // message and return lua_error_util::kPendingError for the wrapper to raise.
 int LuaProcessRun(lua_State* state, const PluginFsContext& fs);
 
-int LuaProcessRunAsync(lua_State* state,
-                       const PluginFsContext& fs,
-                       std::shared_ptr<runtime_types::AsyncProcessState> async_process_state);
+// process.run_async runs on the plugin worker thread, where blocking on the
+// subprocess never stalls the UI. It executes the command synchronously and then
+// invokes the supplied callback on the worker (where the lua_State lives) via a
+// protected call. The async detached-thread + UI-thread-callback machinery it
+// replaced is gone, so a plugin callback can never touch a lua_State off-thread.
+int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs);
 #endif
 
 }  // namespace microide::plugin::process_interop

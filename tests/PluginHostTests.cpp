@@ -2,6 +2,7 @@
 
 #include "plugin/PluginHost.h"
 #include "plugin/PluginInstallRoot.h"
+#include "plugin/PluginThread.h"
 #include "plugin/LuaRuntime.h"
 #include "workspace/WorkspacePluginAssetMonitor.h"
 
@@ -1538,7 +1539,7 @@ void TestRepoCppLspPluginRegistersClangdForCLikeLanguages() {
          "repo cpp-lsp plugin should launch the clangd binary by default");
 }
 
-void TestPluginHostCancelsAsyncCallbacksOnReload() {
+void TestPluginHostRunAsyncInvokesCallbackSynchronously() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
@@ -1547,17 +1548,22 @@ void TestPluginHostCancelsAsyncCallbacksOnReload() {
   const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "src" / "main.js";
-  WriteFile(project_root / "README.md", "async reload fixture\n");
+  WriteFile(project_root / "README.md", "async fixture\n");
   WriteFile(source, "console.log('hello');\n");
 
+  // run_async now runs on the plugin worker thread, where blocking on the
+  // subprocess never stalls the UI, and invokes its callback synchronously on that
+  // same thread (the lua_State's owner). The legacy detached-thread + UI-thread
+  // callback machinery is gone, so the callback has already fired by the time the
+  // triggering event returns.
   WritePluginInit(
-      global_plugins, "async-reload",
+      global_plugins, "async-run",
       R"(local ide = require("microide")
 return ide.plugin({
-  id = "async.reload",
+  id = "async.run",
   capabilities = { process = { exec = true } },
   on_buffer_open = function(ctx, buffer)
-    ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
+    ctx.process.run_async({"sh", "-lc", "printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
     end)
   end
@@ -1569,160 +1575,21 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
 
-  Expect(host.Reload(project_root), "async reload fixture should load");
+  Expect(host.Reload(project_root), "async fixture should load");
+  // No worker is wired in this harness, so the event runs inline; the callback has
+  // therefore already fired once OnBufferOpen returns.
   host.OnBufferOpen(source);
-  Expect(host.PendingAsyncProcessCount() > 0,
-         "buffer open should leave an async process in flight before reload");
-  const auto reload_start = std::chrono::steady_clock::now();
-  Expect(host.Reload(project_root), "reloading while an async callback is pending should succeed");
-  const auto reload_elapsed =
-      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                            reload_start);
-  Expect(reload_elapsed < std::chrono::milliseconds(200),
-         "reloading while an async callback is pending should not wait for the subprocess");
+  Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
+                     [](const std::string& entry) {
+                       return entry == "async.run: async-complete:0";
+                     }),
+         "run_async should invoke its callback synchronously with the subprocess result");
+  Expect(host.Errors().empty(), "a successful run_async callback should not surface errors");
 
-  std::this_thread::sleep_for(std::chrono::milliseconds(700));
-  host.ConsumeAsyncProcessCallbacks();
-  Expect(host.PendingAsyncProcessCount() == 0,
-         "reload should drain or discard async callbacks from the previous plugin state");
-  Expect(std::none_of(host.Messages().begin(), host.Messages().end(), [](const std::string& entry) {
-           return entry == "async.reload: async-complete:0";
-         }),
-         "reload should discard async callbacks captured by the old plugin state");
-  Expect(host.Errors().empty(),
-         "reloading while async callbacks are pending should not report callback errors");
-}
-
-void TestPluginHostCancelsAsyncCallbacksOnShutdown() {
-#if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path source = project_root / "src" / "main.js";
-  WriteFile(project_root / "README.md", "async shutdown fixture\n");
-  WriteFile(source, "console.log('hello');\n");
-
-  WritePluginInit(
-      global_plugins, "async-shutdown",
-      R"(local ide = require("microide")
-return ide.plugin({
-  id = "async.shutdown",
-  capabilities = { process = { exec = true } },
-  on_buffer_open = function(ctx, buffer)
-    ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
-      ctx.log("async-complete:" .. tostring(result.exit_code))
-    end)
-  end
-})
-)");
-
-  ScopedPluginConfigHomeEnv config_env(config_home);
-
-  PluginHost host;
-  host.SetCallbacks(MakePluginHostCallbacks());
-
-  Expect(host.Reload(project_root), "async shutdown fixture should load");
-  host.OnBufferOpen(source);
-  Expect(host.PendingAsyncProcessCount() > 0,
-         "buffer open should leave an async process in flight before shutdown");
-  const auto shutdown_start = std::chrono::steady_clock::now();
+  // Reloading and shutting down after a synchronous run_async must stay clean.
+  Expect(host.Reload(project_root), "reload after run_async should succeed");
   host.Shutdown();
-  const auto shutdown_elapsed =
-      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                            shutdown_start);
-  Expect(shutdown_elapsed < std::chrono::milliseconds(200),
-         "shutting down with a pending async callback should not wait for the subprocess");
-  Expect(host.PendingAsyncProcessCount() == 0,
-         "shutdown should stop reporting cancelled async processes as pending work");
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(700));
-  host.ConsumeAsyncProcessCallbacks();
-  Expect(host.PendingAsyncProcessCount() == 0,
-         "shutdown should drain or discard pending async callbacks");
-  Expect(std::none_of(host.Messages().begin(), host.Messages().end(), [](const std::string& entry) {
-           return entry == "async.shutdown: async-complete:0";
-         }),
-         "shutdown should discard async callbacks after Lua teardown");
-  Expect(host.Errors().empty(),
-         "shutting down with pending async callbacks should not report callback errors");
-}
-
-void TestPluginHostRapidReloadDrainsAsyncWorkers() {
-#if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path config_home = temp_dir.path() / "config";
-  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
-  const std::filesystem::path project_root = temp_dir.path() / "project";
-  const std::filesystem::path source = project_root / "src" / "main.js";
-  WriteFile(project_root / "README.md", "rapid reload fixture\n");
-  WriteFile(source, "console.log('hello');\n");
-
-  WritePluginInit(
-      global_plugins, "rapid-reload",
-      R"(local ide = require("microide")
-return ide.plugin({
-  id = "rapid.reload",
-  capabilities = { process = { exec = true } },
-  on_buffer_open = function(ctx, buffer)
-    ctx.process.run_async({"sh", "-lc", "sleep 0.3; printf done"}, nil, function(result)
-      ctx.log("async-complete:" .. tostring(result.exit_code))
-    end)
-  end
-})
-)");
-
-  ScopedPluginConfigHomeEnv config_env(config_home);
-
-  PluginHost host;
-  host.SetCallbacks(MakePluginHostCallbacks());
-
-  Expect(host.Reload(project_root), "rapid reload fixture should load");
-
-  // Drive the reload-while-inflight pattern that previously crashed: schedule an
-  // async subprocess, reload before it finishes, repeat. The drain seam in
-  // Reload must observe the cancellation and let the still-running detached
-  // worker thread complete safely on its own. Under TSAN this exercises the
-  // worker fetch_sub + cv notify path against the drain seam wait_for path.
-  for (int i = 0; i < 8; ++i) {
-    host.OnBufferOpen(source);
-    Expect(host.PendingAsyncProcessCount() > 0,
-           "buffer open should leave an async process in flight before reload");
-    const auto reload_start = std::chrono::steady_clock::now();
-    Expect(host.Reload(project_root),
-           "rapid reload should succeed even with workers still in flight");
-    const auto reload_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - reload_start);
-    Expect(reload_elapsed < std::chrono::milliseconds(250),
-           "rapid reload should bound on the drain deadline, not on the subprocess");
-  }
-
-  // Final shutdown after the rapid sequence must also drain cleanly.
-  host.OnBufferOpen(source);
-  const auto shutdown_start = std::chrono::steady_clock::now();
-  host.Shutdown();
-  const auto shutdown_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - shutdown_start);
-  Expect(shutdown_elapsed < std::chrono::milliseconds(250),
-         "shutdown after rapid reload should bound on the drain deadline");
-
-  // Wait for any still-detached subprocess workers to retire, then confirm no
-  // callback fired after Shutdown returned.
-  std::this_thread::sleep_for(std::chrono::milliseconds(600));
-  host.ConsumeAsyncProcessCallbacks();
-  Expect(host.PendingAsyncProcessCount() == 0,
-         "shutdown should leave no async work pending after workers retire");
-  Expect(std::none_of(host.Messages().begin(), host.Messages().end(),
-                      [](const std::string& entry) {
-                        return entry == "rapid.reload: async-complete:0";
-                      }),
-         "no callback from a torn-down plugin should fire after shutdown");
-  Expect(host.Errors().empty(),
-         "rapid reload-and-shutdown sequence should not surface callback errors");
+  Expect(host.Errors().empty(), "reload/shutdown after run_async should not surface errors");
 }
 
 // Exercises the process.run argument-validation error paths. These raise a Lua
@@ -2240,6 +2107,95 @@ return ide.plugin({
          "the project root should be readable inside the server sandbox");
 }
 
+// Wires a real PluginThread so plugin Lua runs off the calling thread, then proves
+// the routing: a reactive event is dispatched to the worker (not run inline), its
+// host mutations (status.update + log) are deferred to the mailbox rather than
+// applied on the worker, and a blocking round-trip preserves the synchronous API.
+// Run under TSAN this is the load-bearing check that the worker never touches a
+// registry the calling thread reads — the adversarial render-path read below races
+// the in-flight event on purpose.
+void TestPluginHostRoutesEventsThroughWorkerThread() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "worker routing fixture\n");
+  WriteFile(source, "console.log('hello');\n");
+
+  WritePluginInit(
+      global_plugins, "worker-routing",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "worker.routing",
+  setup = function(ctx)
+    ctx.status.add({ id = "beat", text = "idle" })
+    ctx.commands.add("worker.noop", function() end)
+  end,
+  on_cursor_move = function(ctx, buffer, pos)
+    ctx.status.update("beat", { text = "moved:" .. tostring(pos.line) })
+    ctx.log("cursor:" .. tostring(pos.line))
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);  // No SDL loop in this test; we drain the mailbox by hand.
+  host.SetWorker(&thread);
+
+  Expect(host.Reload(project_root), "worker routing fixture should load");
+  Expect(thread.started(), "loading a plugin should lazily spawn the worker");
+
+  bool has_idle = false;
+  for (const auto& item : host.ContributedStatusItems()) {
+    has_idle = has_idle || item.text == "idle";
+  }
+  Expect(has_idle, "setup should register the status item via the round-trip");
+
+  // Fire-and-forget: this must post to the worker and return without running Lua
+  // on this thread. The worker may now be executing on_cursor_move concurrently.
+  host.OnCursorMove(source, 7, 3);
+
+  // Adversarial race: read the render-path status view + revision while the event
+  // is in flight. Safe only because the event defers its status mutation instead of
+  // touching the registry on the worker. TSAN fails here if that contract breaks.
+  (void)host.ContributedStatusItems();
+  (void)host.StatusItemsRevision();
+
+  // A blocking round-trip runs strictly after the queued event (FIFO on one worker),
+  // so once it returns the event has completed and its deferred actions are queued.
+  std::string error_message;
+  std::string feedback;
+  host.ExecuteCommand("worker.noop", {}, &error_message, &feedback);
+
+  const int drained = thread.DrainMainThreadActions();
+  Expect(drained > 0, "the event's deferred status update + log should reach the mailbox");
+
+  bool moved = false;
+  for (const auto& item : host.ContributedStatusItems()) {
+    moved = moved || item.text == "moved:7";
+  }
+  Expect(moved, "the worker's status.update should apply on the UI-thread drain");
+  Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
+                     [](const std::string& entry) { return entry == "worker.routing: cursor:7"; }),
+         "the worker's ctx.log should be delivered through the mailbox drain");
+  Expect(host.Errors().empty(), "routing an event through the worker should not surface errors");
+
+  // Mirror the production teardown order: join the worker, drop the host's pointer,
+  // then tear the host down inline.
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 }  // namespace
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
@@ -2274,12 +2230,10 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
   AddTest(tests, "PluginHost/Phase3HoverApis", TestPluginHostPhase3HoverApis);
   AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
-  AddTest(tests, "PluginHost/CancelsAsyncCallbacksOnReload",
-          TestPluginHostCancelsAsyncCallbacksOnReload);
-  AddTest(tests, "PluginHost/CancelsAsyncCallbacksOnShutdown",
-          TestPluginHostCancelsAsyncCallbacksOnShutdown);
-  AddTest(tests, "PluginHost/RapidReloadDrainsAsyncWorkers",
-          TestPluginHostRapidReloadDrainsAsyncWorkers);
+  AddTest(tests, "PluginHost/RunAsyncInvokesCallbackSynchronously",
+          TestPluginHostRunAsyncInvokesCallbackSynchronously);
+  AddTest(tests, "PluginHost/RoutesEventsThroughWorkerThread",
+          TestPluginHostRoutesEventsThroughWorkerThread);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);
   AddTest(tests, "PluginHost/Phase5WorkspaceApis", TestPluginHostPhase5WorkspaceApis);
   AddTest(tests, "PluginHost/Phase5LspApis", TestPluginHostPhase5LspApis);

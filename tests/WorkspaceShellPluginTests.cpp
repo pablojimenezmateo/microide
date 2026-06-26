@@ -2255,7 +2255,7 @@ void TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches() {
          "restored problems should preserve their location metadata");
 }
 
-void TestWorkspaceShellProjectSwitchCancelsPluginWakePolling() {
+void TestWorkspaceShellProjectOpenRunsSynchronousPluginAsync() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
@@ -2289,18 +2289,21 @@ return ide.plugin({
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_a, false, false),
          "async switch fixture should open the first project");
-  Expect(WorkspaceShellTestAccess::PluginPendingAsyncProcessCount(shell) > 0,
-         "the first project should keep a pending plugin async callback while its subprocess is in flight");
+  // run_async now runs on the plugin worker and invokes its callback synchronously
+  // there, so the project-open hook's subprocess has already completed and logged
+  // by the time the (blocking round-trip) project open returns. There is no longer
+  // any pending async callback to cancel on a project switch.
+  const std::vector<std::string>& messages_a = WorkspaceShellTestAccess::PluginMessages(shell);
+  Expect(std::any_of(messages_a.begin(), messages_a.end(),
+                     [](const std::string& entry) {
+                       return entry == "switch-async: async-complete:0";
+                     }),
+         "project-open run_async should complete synchronously and log its result");
 
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_b, false, false),
          "async switch fixture should open the second project");
-  Expect(WorkspaceShellTestAccess::PluginPendingAsyncProcessCount(shell) == 0,
-         "switching projects should cancel pending async callbacks from the prior project");
-
-  std::this_thread::sleep_for(std::chrono::milliseconds(700));
-  WorkspaceShellTestAccess::ConsumePluginAsyncProcessCallbacks(shell);
-  Expect(WorkspaceShellTestAccess::PluginMessages(shell).empty(),
-         "cancelled project-switch async callbacks should not fire after the old project closes");
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(),
+         "switching projects after a synchronous run_async should not surface errors");
 }
 
 void TestWorkspaceShellProjectSwitchDoesNotReplayPluginBufferOpenHooks() {
@@ -3163,8 +3166,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProblemsSidebarOpensSelectedDiagnostic);
   AddTest(tests, "WorkspaceShell/ProblemsSidebarPersistsAcrossProjectSwitches",
           TestWorkspaceShellProblemsSidebarPersistsAcrossProjectSwitches);
-  AddTest(tests, "WorkspaceShell/ProjectSwitchCancelsPluginWakePolling",
-          TestWorkspaceShellProjectSwitchCancelsPluginWakePolling);
+  AddTest(tests, "WorkspaceShell/ProjectOpenRunsSynchronousPluginAsync",
+          TestWorkspaceShellProjectOpenRunsSynchronousPluginAsync);
   AddTest(tests, "WorkspaceShell/ProjectSwitchDoesNotReplayPluginBufferOpenHooks",
           TestWorkspaceShellProjectSwitchDoesNotReplayPluginBufferOpenHooks);
   AddTest(tests, "WorkspaceShell/PluginSidebarPersistsAcrossProjectSwitches",

@@ -239,6 +239,9 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   } else {
     plugin_thread_event_type_ = 0;
   }
+  // Hand the host the worker so every plugin Lua call routes off the UI thread.
+  // The worker itself stays unspawned until the first Reload that loads a plugin.
+  plugin_runtime_.Host().SetWorker(&plugin_runtime_.Thread());
 
   highlight_prefetch_event_type_ = SDL_RegisterEvents(1);
   if (highlight_prefetch_event_type_ == static_cast<Uint32>(-1)) {

@@ -166,6 +166,10 @@ void WorkspacePluginRuntime::Shutdown() {
   // Join the worker before tearing down the host so no in-flight job touches a
   // lua_State the host is about to destroy.
   plugin_thread_.Shutdown();
+  // The worker is now joined; drop the host's pointer to it so the host's own
+  // teardown (and any late call) runs inline with exclusive access rather than
+  // dead-locking on a post to a stopped worker.
+  plugin_host_.SetWorker(nullptr);
   asset_monitor_.SetWakeEventType(0);
   asset_monitor_.Reset();
   plugin_host_.Shutdown();

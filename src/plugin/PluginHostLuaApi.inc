@@ -110,12 +110,29 @@
                         std::string(message != nullptr ? message : "process error"));
   }
 
+  // Registration verbs only make sense during plugin setup, where the worker holds
+  // exclusive host access (direct). A registration attempt from a reactive event
+  // (detached on the worker) would mutate shared registries the UI thread reads, so
+  // it is refused rather than raced. Returns true when the call must be rejected,
+  // leaving the error message on the Lua stack for the caller to raise.
+  static bool RejectRuntimeRegistration(lua_State* state, Impl* host) {
+    if (host == nullptr || host->direct_host_access_) {
+      return false;
+    }
+    lua_error_util::PushMessage(
+        state, "ctx registration verbs are only supported during plugin setup");
+    return true;
+  }
+
   template <typename RegisterFn>
   static int RegisterTableContribution(lua_State* state,
                                        const char* missing_plugin_message,
                                        const char* default_error_message,
                                        RegisterFn&& register_fn) {
     Impl* host = HostFromUpvalue(state);
+    if (RejectRuntimeRegistration(state, host)) {
+      return lua_error(state);
+    }
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     if (plugin == nullptr) {
       lua_error_util::PushMessage(state, missing_plugin_message);
@@ -137,6 +154,9 @@
                                            RegisterFn&& register_fn) {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
+    if (RejectRuntimeRegistration(state, host)) {
+      return lua_error(state);
+    }
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
     {
       std::string error_message;
@@ -201,6 +221,9 @@
     Impl* host = HostFromUpvalue(state);
     const char* name = luaL_checkstring(state, 1);
     luaL_checktype(state, 2, LUA_TFUNCTION);
+    if (RejectRuntimeRegistration(state, host)) {
+      return lua_error(state);
+    }
     {
       std::string error_message;
       if (host != nullptr && registry_interop::RegisterCommand(
@@ -217,6 +240,9 @@
   static int LuaSidebarAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
+    if (RejectRuntimeRegistration(state, host)) {
+      return lua_error(state);
+    }
     {
       std::string error_message;
       if (host != nullptr && registry_interop::RegisterSidebar(
@@ -233,6 +259,9 @@
   static int LuaHoverAdd(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     luaL_checktype(state, 1, LUA_TTABLE);
+    if (RejectRuntimeRegistration(state, host)) {
+      return lua_error(state);
+    }
     {
       std::string error_message;
       if (host != nullptr && registry_interop::RegisterHoverProvider(
@@ -333,13 +362,24 @@
     if (host == nullptr) {
       return 0;
     }
-    if (registry_interop::UpdateStatusItem(state, host->FindPluginByState(state), id,
-                                           &host->status_items, &host->status_item_order)) {
-      ++host->status_items_revision;
-      if (host->callbacks.request_status_redraw) {
-        host->callbacks.request_status_redraw();
-      }
+    // Read the update off the Lua table here (worker), then defer the registry
+    // mutation + redraw so a status.update from a reactive event never races the
+    // UI thread's reads. Under direct access (setup / round-trip) ApplyHostMutation
+    // runs the closure inline; from a detached event it marshals to the UI thread.
+    registry_interop::StatusItemUpdate update;
+    if (!registry_interop::ExtractStatusItemUpdate(state, host->FindPluginByState(state), id,
+                                                   &update)) {
+      return 0;
     }
+    host->ApplyHostMutation([host, update = std::move(update)]() mutable {
+      if (registry_interop::ApplyStatusItemUpdate(update, &host->status_items,
+                                                  &host->status_item_order)) {
+        ++host->status_items_revision;
+        if (host->raw_callbacks.request_status_redraw) {
+          host->raw_callbacks.request_status_redraw();
+        }
+      }
+    });
     return 0;
   }
 
@@ -742,9 +782,7 @@
   static int LuaProcessRunAsync(lua_State* state) {
     Impl* host = HostFromUpvalue(state);
     const PluginInstance* plugin = host != nullptr ? host->FindPluginByState(state) : nullptr;
-    const int rc = process_interop::LuaProcessRunAsync(
-        state, MakeFsContext(host, plugin),
-        host != nullptr ? host->async_process_state : nullptr);
+    const int rc = process_interop::LuaProcessRunAsync(state, MakeFsContext(host, plugin));
     if (rc == lua_error_util::kPendingError) {
       RecordProcessPendingError(host, plugin, state);
       return lua_error(state);

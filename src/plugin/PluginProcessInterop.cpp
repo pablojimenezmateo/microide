@@ -213,91 +213,56 @@ int LuaProcessRun(lua_State* state, const PluginFsContext& fs) {
   return lua_error_util::kPendingError;
 }
 
-int LuaProcessRunAsync(lua_State* state,
-                       const PluginFsContext& fs,
-                       std::shared_ptr<runtime_types::AsyncProcessState> async_process_state) {
+int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
   if (lua_type(state, 3) != LUA_TFUNCTION) {
     lua_error_util::PushMessage(state, "process.run_async requires a callback function");
     return lua_error_util::kPendingError;
   }
 
   const char* error = nullptr;
+  bool callback_failed = false;
   {
     ProcessRunArgs parsed;
     error = ParseProcessRunArgs(state, fs.project_root, &parsed);
     if (error == nullptr) {
       error = CheckProcessCapability(fs, parsed);
     }
-    if (error != nullptr) {
-      // fall through to the raise below once `parsed` destructs.
-    } else if (!async_process_state) {
-      return 0;
-    } else {
+    if (error == nullptr) {
+      // Runs on the plugin worker, so blocking on the subprocess never stalls the
+      // UI. Invoke the callback through lua_pcall (protected) so a callback error
+      // cannot longjmp over the C++ locals (`parsed`, `result`) still alive here.
+      const platform::SubprocessResult result = platform::RunSubprocess(
+          parsed.argv, platform::SubprocessOptions{
+                           .cwd = parsed.cwd,
+                           .stdin_text = parsed.stdin_text,
+                           .environment_overrides = std::move(parsed.environment_overrides),
+                           .capture_stdout = true,
+                           .capture_stderr = true,
+                           .sandbox = MakeSandbox(fs),
+                       });
       lua_pushvalue(state, 3);
-      const int callback_ref = luaL_ref(state, LUA_REGISTRYINDEX);
-      const auto request = std::make_shared<runtime_types::AsyncProcessRequest>();
-      request->lua_state = state;
-      request->callback_ref = callback_ref;
-      {
-        std::lock_guard lock(async_process_state->mutex);
-        async_process_state->active_requests.push_back(request);
-        async_process_state->queued.store(
-            static_cast<int>(async_process_state->active_requests.size() +
-                             async_process_state->pending_callbacks.size()),
-            std::memory_order_release);
-      }
-
-      platform::SubprocessOptions opts{
-          .cwd = std::move(parsed.cwd),
-          .stdin_text = std::move(parsed.stdin_text),
-          .environment_overrides = std::move(parsed.environment_overrides),
-          .capture_stdout = true,
-          .capture_stderr = true,
-          .sandbox = MakeSandbox(fs),
-      };
-
-      async_process_state->in_flight.fetch_add(1, std::memory_order_relaxed);
-      std::thread([async_process_state,
-                   request,
-                   argv = std::move(parsed.argv),
-                   opts = std::move(opts)]() mutable {
-    platform::SubprocessResult result = platform::RunSubprocess(argv, opts);
-    Uint32 event_type = 0;
-    bool should_push_event = false;
-    {
-      std::lock_guard lock(async_process_state->mutex);
-      auto it = std::find(async_process_state->active_requests.begin(),
-                          async_process_state->active_requests.end(), request);
-      if (it != async_process_state->active_requests.end()) {
-        async_process_state->active_requests.erase(it);
-      }
-      if (!request->cancelled && request->lua_state != nullptr && request->callback_ref != LUA_NOREF) {
-        async_process_state->pending_callbacks.push_back(
-            {request->lua_state, request->callback_ref, std::move(result)});
-        request->lua_state = nullptr;
-        request->callback_ref = LUA_NOREF;
-        event_type = async_process_state->event_type;
-        should_push_event = true;
-      }
-      async_process_state->queued.store(
-          static_cast<int>(async_process_state->active_requests.size() +
-                           async_process_state->pending_callbacks.size()),
-          std::memory_order_release);
-    }
-    async_process_state->in_flight.fetch_sub(1, std::memory_order_release);
-    async_state_interop::NotifyWorkerCompleted(*async_process_state);
-    if (should_push_event && event_type != 0) {
-      SDL_Event event{};
-      event.type = event_type;
-      SDL_PushEvent(&event);
-    }
-  }).detach();
-
-      return 0;
+      lua_createtable(state, 0, 4);
+      lua_pushinteger(state, result.exit_code);
+      lua_setfield(state, -2, "exit_code");
+      lua_pushboolean(state, result.exit_code == 0 ? 1 : 0);
+      lua_setfield(state, -2, "ok");
+      lua_pushlstring(state, result.stdout_text.c_str(), result.stdout_text.size());
+      lua_setfield(state, -2, "stdout");
+      lua_pushlstring(state, result.stderr_text.c_str(), result.stderr_text.size());
+      lua_setfield(state, -2, "stderr");
+      callback_failed = lua_pcall(state, 1, 0, 0) != LUA_OK;
     }
   }
-  lua_error_util::PushMessage(state, error);
-  return lua_error_util::kPendingError;
+  if (error != nullptr) {
+    lua_error_util::PushMessage(state, error);
+    return lua_error_util::kPendingError;
+  }
+  if (callback_failed) {
+    // lua_pcall left the callback's error message on the stack top; surface it
+    // through the wrapper, which records and raises it.
+    return lua_error_util::kPendingError;
+  }
+  return 0;
 }
 
 }  // namespace microide::plugin::process_interop

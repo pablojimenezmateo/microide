@@ -20,25 +20,44 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 #if MICROIDE_HAS_LUA_PLUGINS
   const std::filesystem::path next_project_root =
       project_root.empty() ? std::filesystem::path{} : project_root.lexically_normal();
-  impl_->DrainAsyncProcessWorkers();
-  impl_->TearDownPlugins();
-  impl_->disabled_plugin_meta.clear();
-  impl_->current_project_root = next_project_root;
+  // Discovery is pure filesystem work; keep it on the calling thread so a project
+  // with no plugins never spawns the worker (zero-cost-when-unused).
+  std::vector<std::filesystem::path> plugin_roots = impl_->DiscoverPluginRoots();
+  // The whole load — teardown, state creation, setup, project-open — touches
+  // lua_States, so it must run on the worker whenever one is (or becomes) live.
+  // When there is genuinely nothing to run, stay inline and leave the worker unspawned.
+  const bool needs_worker =
+      impl_->worker_ != nullptr &&
+      (impl_->worker_->started() || !plugin_roots.empty() || !impl_->plugins.empty());
 
-  for (const auto& plugin_root : impl_->DiscoverPluginRoots()) {
-    std::string error_message;
-    if (!impl_->LoadPluginRoot(plugin_root, &error_message) &&
-        !error_message.empty()) {
-      impl_->RecordError(std::move(error_message));
+  auto load_body = [impl = impl_.get(), next_project_root,
+                    plugin_roots = std::move(plugin_roots)]() {
+    impl->DrainAsyncProcessWorkers();
+    impl->TearDownPlugins();
+    impl->disabled_plugin_meta.clear();
+    impl->current_project_root = next_project_root;
+
+    for (const auto& plugin_root : plugin_roots) {
+      std::string error_message;
+      if (!impl->LoadPluginRoot(plugin_root, &error_message) && !error_message.empty()) {
+        impl->RecordError(std::move(error_message));
+      }
     }
-  }
-  if (!impl_->current_project_root.empty()) {
-    project_lifecycle_interop::DispatchProjectOpenCallbacks(
-        &impl_->plugins, [this](runtime_types::PluginInstance* plugin,
-                                int callback_ref,
-                                const char* callback_name) {
-          impl_->CallProjectCallback(plugin, callback_ref, callback_name);
-        });
+    if (!impl->current_project_root.empty()) {
+      project_lifecycle_interop::DispatchProjectOpenCallbacks(
+          &impl->plugins, [impl](runtime_types::PluginInstance* plugin, int callback_ref,
+                                 const char* callback_name) {
+            impl->CallProjectCallback(plugin, callback_ref, callback_name);
+          });
+    }
+  };
+
+  PluginHostSnapshot snapshot = impl_->CaptureSnapshot();
+  snapshot.project_root = next_project_root;
+  if (needs_worker) {
+    impl_->RunOnWorkerBlocking(snapshot, load_body);
+  } else {
+    impl_->ExecuteWithContext(&snapshot, /*direct=*/true, load_body);
   }
 #endif
 
@@ -91,14 +110,14 @@ void PluginHost::OnBufferOpen(const std::filesystem::path& path) {
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  buffer_lifecycle_interop::DispatchBufferCallbacks(
-      &impl_->plugins, &runtime_types::PluginInstance::on_buffer_open_ref, "on_buffer_open", path,
-      [this](runtime_types::PluginInstance* plugin,
-             int callback_ref,
-             const char* callback_name,
-             const std::filesystem::path& callback_path) {
-        impl_->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
-      });
+  impl_->RunOnWorkerDetached(impl_->CaptureSnapshot(), [impl = impl_.get(), path]() {
+    buffer_lifecycle_interop::DispatchBufferCallbacks(
+        &impl->plugins, &runtime_types::PluginInstance::on_buffer_open_ref, "on_buffer_open", path,
+        [impl](runtime_types::PluginInstance* plugin, int callback_ref, const char* callback_name,
+               const std::filesystem::path& callback_path) {
+          impl->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
+        });
+  });
 #endif
 }
 
@@ -108,14 +127,14 @@ void PluginHost::OnBufferSave(const std::filesystem::path& path) {
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  buffer_lifecycle_interop::DispatchBufferCallbacks(
-      &impl_->plugins, &runtime_types::PluginInstance::on_buffer_save_ref, "on_buffer_save", path,
-      [this](runtime_types::PluginInstance* plugin,
-             int callback_ref,
-             const char* callback_name,
-             const std::filesystem::path& callback_path) {
-        impl_->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
-      });
+  impl_->RunOnWorkerDetached(impl_->CaptureSnapshot(), [impl = impl_.get(), path]() {
+    buffer_lifecycle_interop::DispatchBufferCallbacks(
+        &impl->plugins, &runtime_types::PluginInstance::on_buffer_save_ref, "on_buffer_save", path,
+        [impl](runtime_types::PluginInstance* plugin, int callback_ref, const char* callback_name,
+               const std::filesystem::path& callback_path) {
+          impl->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
+        });
+  });
 #endif
 }
 
@@ -139,17 +158,20 @@ void PluginHost::OnBufferChange(const std::filesystem::path& path,
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  for (auto& plugin : impl_->plugins) {
-    impl_->CallBufferEventCallback(
-        &plugin, plugin.on_buffer_change_ref, "on_buffer_change", path,
-        [start_line, end_line](lua_State* state) {
-          lua_createtable(state, 0, 2);
-          lua_pushinteger(state, static_cast<lua_Integer>(start_line));
-          lua_setfield(state, -2, "start_line");
-          lua_pushinteger(state, static_cast<lua_Integer>(end_line));
-          lua_setfield(state, -2, "end_line");
-        });
-  }
+  impl_->RunOnWorkerDetached(impl_->CaptureSnapshot(),
+                             [impl = impl_.get(), path, start_line, end_line]() {
+    for (auto& plugin : impl->plugins) {
+      impl->CallBufferEventCallback(
+          &plugin, plugin.on_buffer_change_ref, "on_buffer_change", path,
+          [start_line, end_line](lua_State* state) {
+            lua_createtable(state, 0, 2);
+            lua_pushinteger(state, static_cast<lua_Integer>(start_line));
+            lua_setfield(state, -2, "start_line");
+            lua_pushinteger(state, static_cast<lua_Integer>(end_line));
+            lua_setfield(state, -2, "end_line");
+          });
+    }
+  });
 #else
   (void)start_line;
   (void)end_line;
@@ -163,17 +185,20 @@ void PluginHost::OnCursorMove(const std::filesystem::path& path,
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  for (auto& plugin : impl_->plugins) {
-    impl_->CallBufferEventCallback(
-        &plugin, plugin.on_cursor_move_ref, "on_cursor_move", path,
-        [line, column](lua_State* state) {
-          lua_createtable(state, 0, 2);
-          lua_pushinteger(state, static_cast<lua_Integer>(line));
-          lua_setfield(state, -2, "line");
-          lua_pushinteger(state, static_cast<lua_Integer>(column));
-          lua_setfield(state, -2, "col");
-        });
-  }
+  impl_->RunOnWorkerDetached(impl_->CaptureSnapshot(),
+                             [impl = impl_.get(), path, line, column]() {
+    for (auto& plugin : impl->plugins) {
+      impl->CallBufferEventCallback(
+          &plugin, plugin.on_cursor_move_ref, "on_cursor_move", path,
+          [line, column](lua_State* state) {
+            lua_createtable(state, 0, 2);
+            lua_pushinteger(state, static_cast<lua_Integer>(line));
+            lua_setfield(state, -2, "line");
+            lua_pushinteger(state, static_cast<lua_Integer>(column));
+            lua_setfield(state, -2, "col");
+          });
+    }
+  });
 #else
   (void)line;
   (void)column;
@@ -190,25 +215,29 @@ void PluginHost::OnSelectionChange(const std::filesystem::path& path,
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  for (auto& plugin : impl_->plugins) {
-    impl_->CallBufferEventCallback(
-        &plugin, plugin.on_selection_change_ref, "on_selection_change", path,
-        [has_selection, start_line, start_column, end_line, end_column](lua_State* state) {
-          if (!has_selection) {
-            lua_pushnil(state);
-            return;
-          }
-          lua_createtable(state, 0, 4);
-          lua_pushinteger(state, static_cast<lua_Integer>(start_line));
-          lua_setfield(state, -2, "start_line");
-          lua_pushinteger(state, static_cast<lua_Integer>(start_column));
-          lua_setfield(state, -2, "start_col");
-          lua_pushinteger(state, static_cast<lua_Integer>(end_line));
-          lua_setfield(state, -2, "end_line");
-          lua_pushinteger(state, static_cast<lua_Integer>(end_column));
-          lua_setfield(state, -2, "end_col");
-        });
-  }
+  impl_->RunOnWorkerDetached(
+      impl_->CaptureSnapshot(),
+      [impl = impl_.get(), path, has_selection, start_line, start_column, end_line, end_column]() {
+        for (auto& plugin : impl->plugins) {
+          impl->CallBufferEventCallback(
+              &plugin, plugin.on_selection_change_ref, "on_selection_change", path,
+              [has_selection, start_line, start_column, end_line, end_column](lua_State* state) {
+                if (!has_selection) {
+                  lua_pushnil(state);
+                  return;
+                }
+                lua_createtable(state, 0, 4);
+                lua_pushinteger(state, static_cast<lua_Integer>(start_line));
+                lua_setfield(state, -2, "start_line");
+                lua_pushinteger(state, static_cast<lua_Integer>(start_column));
+                lua_setfield(state, -2, "start_col");
+                lua_pushinteger(state, static_cast<lua_Integer>(end_line));
+                lua_setfield(state, -2, "end_line");
+                lua_pushinteger(state, static_cast<lua_Integer>(end_column));
+                lua_setfield(state, -2, "end_col");
+              });
+        }
+      });
 #else
   (void)has_selection;
   (void)start_line;
@@ -223,14 +252,15 @@ void PluginHost::OnBufferClose(const std::filesystem::path& path) {
     return;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  buffer_lifecycle_interop::DispatchBufferCallbacks(
-      &impl_->plugins, &runtime_types::PluginInstance::on_buffer_close_ref, "on_buffer_close", path,
-      [this](runtime_types::PluginInstance* plugin,
-             int callback_ref,
-             const char* callback_name,
-             const std::filesystem::path& callback_path) {
-        impl_->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
-      });
+  impl_->RunOnWorkerDetached(impl_->CaptureSnapshot(), [impl = impl_.get(), path]() {
+    buffer_lifecycle_interop::DispatchBufferCallbacks(
+        &impl->plugins, &runtime_types::PluginInstance::on_buffer_close_ref, "on_buffer_close",
+        path,
+        [impl](runtime_types::PluginInstance* plugin, int callback_ref, const char* callback_name,
+               const std::filesystem::path& callback_path) {
+          impl->CallBufferCallback(plugin, callback_ref, callback_name, callback_path);
+        });
+  });
 #endif
 }
 
@@ -249,10 +279,14 @@ bool PluginHost::ExecuteCommand(std::string_view name,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::ExecuteCommand(
-      name, args, impl_->commands,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](lua_State* state) { impl_->PushPluginContext(state); }, error_message, feedback);
+  bool executed = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    executed = provider_query_interop::ExecuteCommand(
+        name, args, impl_->commands,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        [this](lua_State* state) { impl_->PushPluginContext(state); }, error_message, feedback);
+  });
+  return executed;
 #else
   (void)name;
   (void)args;
@@ -304,7 +338,11 @@ bool PluginHost::SnapshotSidebar(std::string_view id,
     return false;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  return impl_->SnapshotSidebarProvider(it->second, items, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = impl_->SnapshotSidebarProvider(it->second, items, error_message);
+  });
+  return ok;
 #else
   if (items != nullptr) {
     items->clear();
@@ -327,7 +365,11 @@ bool PluginHost::ConfirmSidebarItem(std::string_view id,
     return false;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  return impl_->ConfirmSidebarProviderItem(it->second, item, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = impl_->ConfirmSidebarProviderItem(it->second, item, error_message);
+  });
+  return ok;
 #else
   (void)item;
   if (error_message != nullptr) {
@@ -348,7 +390,11 @@ bool PluginHost::ToggleSidebarItem(std::string_view id,
     return false;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  return impl_->ToggleSidebarProviderItem(it->second, item, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = impl_->ToggleSidebarProviderItem(it->second, item, error_message);
+  });
+  return ok;
 #else
   (void)item;
   if (error_message != nullptr) {
@@ -382,18 +428,20 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
   const std::filesystem::path resolved_path =
       path_interop::ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
 #if MICROIDE_HAS_LUA_PLUGINS
-  return hover_query_interop::QueryHover(
-      impl_->hover_provider_order, impl_->hovers, resolved_path, line, column,
-      [this](const runtime_types::HoverProvider& provider,
-             const std::filesystem::path& hover_path,
-             std::size_t hover_line,
-             std::size_t hover_column,
-             HoverResult* hover_result,
-             std::string* hover_error_message) {
-        return impl_->QueryHoverProvider(provider, hover_path, hover_line, hover_column,
-                                         hover_result, hover_error_message);
-      },
-      result, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = hover_query_interop::QueryHover(
+        impl_->hover_provider_order, impl_->hovers, resolved_path, line, column,
+        [this](const runtime_types::HoverProvider& provider,
+               const std::filesystem::path& hover_path, std::size_t hover_line,
+               std::size_t hover_column, HoverResult* hover_result,
+               std::string* hover_error_message) {
+          return impl_->QueryHoverProvider(provider, hover_path, hover_line, hover_column,
+                                           hover_result, hover_error_message);
+        },
+        result, error_message);
+  });
+  return ok;
 #else
   (void)resolved_path;
 #endif
@@ -455,13 +503,17 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::RunSaveParticipants(
-      path, text, impl_->save_participant_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](lua_State* state, const std::filesystem::path& buffer_path, std::string_view value) {
-        impl_->PushBufferContext(state, buffer_path, value);
-      },
-      error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = provider_query_interop::RunSaveParticipants(
+        path, text, impl_->save_participant_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path, std::string_view value) {
+          impl_->PushBufferContext(state, buffer_path, value);
+        },
+        error_message);
+  });
+  return ok;
 #else
   (void)path;
   (void)text;
@@ -486,13 +538,15 @@ std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  results = provider_query_interop::QueryCompletions(
-      language_id, path, line, column, trigger_character, impl_->completion_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](lua_State* state, const std::filesystem::path& buffer_path) {
-        impl_->PushBufferContext(state, buffer_path);
-      },
-      error_message);
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    results = provider_query_interop::QueryCompletions(
+        language_id, path, line, column, trigger_character, impl_->completion_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          impl_->PushBufferContext(state, buffer_path);
+        },
+        error_message);
+  });
 #else
   (void)language_id;
   (void)path;
@@ -521,14 +575,16 @@ std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  results = provider_query_interop::QueryCodeActions(
-      language_id, path, start_line, start_column, end_line, end_column,
-      impl_->code_action_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](lua_State* state, const std::filesystem::path& buffer_path) {
-        impl_->PushBufferContext(state, buffer_path);
-      },
-      error_message);
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    results = provider_query_interop::QueryCodeActions(
+        language_id, path, start_line, start_column, end_line, end_column,
+        impl_->code_action_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          impl_->PushBufferContext(state, buffer_path);
+        },
+        error_message);
+  });
 #else
   (void)language_id;
   (void)path;
@@ -554,8 +610,10 @@ std::vector<PluginHost::LocationResult> PluginHost::QueryDefinition(
     return results;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  results = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::Definition, language_id,
-                                          path, line, column, false, error_message);
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    results = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::Definition,
+                                            language_id, path, line, column, false, error_message);
+  });
 #else
   (void)language_id;
   (void)path;
@@ -580,8 +638,11 @@ std::vector<PluginHost::LocationResult> PluginHost::QueryReferences(
     return results;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  results = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::References, language_id,
-                                          path, line, column, include_declaration, error_message);
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    results = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::References,
+                                            language_id, path, line, column, include_declaration,
+                                            error_message);
+  });
 #else
   (void)language_id;
   (void)path;
@@ -605,7 +666,11 @@ bool PluginHost::QuerySignatureHelp(std::string_view language_id,
     return false;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  return impl_->QueryLanguageSignatureHelp(language_id, path, line, column, result, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = impl_->QueryLanguageSignatureHelp(language_id, path, line, column, result, error_message);
+  });
+  return ok;
 #else
   (void)language_id;
   (void)path;
@@ -627,7 +692,9 @@ std::vector<PluginHost::DocumentSymbolNode> PluginHost::QueryDocumentSymbols(
     return results;
   }
 #if MICROIDE_HAS_LUA_PLUGINS
-  results = impl_->QueryLanguageDocumentSymbols(language_id, path, error_message);
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    results = impl_->QueryLanguageDocumentSymbols(language_id, path, error_message);
+  });
 #else
   (void)language_id;
   (void)path;
@@ -654,16 +721,20 @@ bool PluginHost::DiscoverTests(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::DiscoverTests(
-      provider_id, path, impl_->current_project_root, impl_->test_provider_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](lua_State* state, const std::filesystem::path& buffer_path) {
-        impl_->PushBufferContext(state, buffer_path);
-      },
-      [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
-        return path_interop::ResolveRuntimePath(project_root, runtime_path);
-      },
-      tests, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = provider_query_interop::DiscoverTests(
+        provider_id, path, impl_->current_project_root, impl_->test_provider_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          impl_->PushBufferContext(state, buffer_path);
+        },
+        [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
+          return path_interop::ResolveRuntimePath(project_root, runtime_path);
+        },
+        tests, error_message);
+  });
+  return ok;
 #else
   (void)provider_id;
   (void)path;
@@ -690,10 +761,14 @@ bool PluginHost::RunTests(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::RunTests(
-      provider_id, test_ids, impl_->test_provider_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); }, results,
-      error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = provider_query_interop::RunTests(
+        provider_id, test_ids, impl_->test_provider_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); }, results,
+        error_message);
+  });
+  return ok;
 #else
   (void)provider_id;
   (void)test_ids;
@@ -719,13 +794,17 @@ bool PluginHost::SnapshotScm(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::SnapshotScm(
-      provider_id, impl_->current_project_root, impl_->scm_provider_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
-        return path_interop::ResolveRuntimePath(project_root, runtime_path);
-      },
-      snapshot, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = provider_query_interop::SnapshotScm(
+        provider_id, impl_->current_project_root, impl_->scm_provider_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
+          return path_interop::ResolveRuntimePath(project_root, runtime_path);
+        },
+        snapshot, error_message);
+  });
+  return ok;
 #else
   (void)provider_id;
   return false;
@@ -749,14 +828,16 @@ std::vector<PluginHost::AnnotationLine> PluginHost::QueryAnnotations(
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  lines = provider_query_interop::QueryAnnotations(
-      provider_id, path, language_id, visible_start_line, visible_end_line,
-      impl_->annotation_provider_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); },
-      [this](lua_State* state, const std::filesystem::path& buffer_path) {
-        impl_->PushBufferContext(state, buffer_path);
-      },
-      error_message);
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    lines = provider_query_interop::QueryAnnotations(
+        provider_id, path, language_id, visible_start_line, visible_end_line,
+        impl_->annotation_provider_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        [this](lua_State* state, const std::filesystem::path& buffer_path) {
+          impl_->PushBufferContext(state, buffer_path);
+        },
+        error_message);
+  });
 #else
   (void)provider_id;
   (void)path;
@@ -786,10 +867,14 @@ bool PluginHost::LoginAuthProvider(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::LoginAuthProvider(
-      provider_id, scopes, impl_->auth_provider_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); }, session,
-      error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = provider_query_interop::LoginAuthProvider(
+        provider_id, scopes, impl_->auth_provider_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); }, session,
+        error_message);
+  });
+  return ok;
 #else
   (void)provider_id;
   (void)scopes;
@@ -816,10 +901,14 @@ bool PluginHost::RefreshAuthSession(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::RefreshAuthSession(
-      provider_id, session_id, impl_->auth_provider_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); }, session,
-      error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = provider_query_interop::RefreshAuthSession(
+        provider_id, session_id, impl_->auth_provider_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); }, session,
+        error_message);
+  });
+  return ok;
 #else
   (void)provider_id;
   (void)session_id;
@@ -838,9 +927,13 @@ bool PluginHost::LogoutAuthSession(std::string_view provider_id,
   }
 
 #if MICROIDE_HAS_LUA_PLUGINS
-  return provider_query_interop::LogoutAuthSession(
-      provider_id, session_id, impl_->auth_provider_runtimes,
-      [this](lua_State* state) { return impl_->FindPluginByState(state); }, error_message);
+  bool ok = false;
+  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
+    ok = provider_query_interop::LogoutAuthSession(
+        provider_id, session_id, impl_->auth_provider_runtimes,
+        [this](lua_State* state) { return impl_->FindPluginByState(state); }, error_message);
+  });
+  return ok;
 #else
   (void)provider_id;
   (void)session_id;
