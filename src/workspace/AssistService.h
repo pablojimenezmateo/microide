@@ -105,6 +105,11 @@ class AssistService {
   void BeginLspCompletionFallback(editor::TextViewport& viewport,
                                   const std::string& language_id,
                                   const std::string& provider_error);
+  // Code-action analogue of BeginLspCompletionFallback (carries the request range).
+  void BeginLspCodeActionFallback(editor::TextViewport& viewport,
+                                  const std::string& language_id,
+                                  const editor::SelectionRange& range,
+                                  const std::string& provider_error);
   // Expand a snippet whose `prefix` matches the identifier immediately left of the
   // caret (Tab with no active session). Returns false on no/ambiguous match so the
   // caller falls through to inserting a literal tab.

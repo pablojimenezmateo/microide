@@ -635,6 +635,36 @@ class PluginHost {
       std::size_t column,
       std::string trigger_character,
       std::function<void(std::vector<CompletionCandidate>, std::string)> on_result);
+  // Async siblings of the query methods below. Each dispatches to the plugin worker
+  // and delivers on the UI-thread mailbox drain (inline + synchronous when no worker
+  // is wired). See QueryCompletionsAsync for the contract.
+  void QueryCodeActionsAsync(
+      std::string language_id,
+      std::filesystem::path path,
+      std::size_t start_line,
+      std::size_t start_column,
+      std::size_t end_line,
+      std::size_t end_column,
+      std::function<void(std::vector<CodeActionCandidate>, std::string)> on_result);
+  void QueryDefinitionAsync(
+      std::string language_id,
+      std::filesystem::path path,
+      std::size_t line,
+      std::size_t column,
+      std::function<void(std::vector<LocationResult>, std::string)> on_result);
+  void QueryReferencesAsync(
+      std::string language_id,
+      std::filesystem::path path,
+      std::size_t line,
+      std::size_t column,
+      bool include_declaration,
+      std::function<void(std::vector<LocationResult>, std::string)> on_result);
+  void QuerySignatureHelpAsync(
+      std::string language_id,
+      std::filesystem::path path,
+      std::size_t line,
+      std::size_t column,
+      std::function<void(bool, SignatureHelpResult, std::string)> on_result);
   std::vector<CodeActionCandidate> QueryCodeActions(std::string_view language_id,
                                                     const std::filesystem::path& path,
                                                     std::size_t start_line,

@@ -493,52 +493,80 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message) {
   }
 
   const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::filesystem::path request_path = viewport->path();
   const std::optional<editor::SelectionRange> selection = viewport->selection_range();
   const editor::SelectionRange range = selection.value_or(editor::SelectionRange{
       .start = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
       .end = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()},
   });
-  std::string provider_error;
-  const auto items = plugin_runtime_->Host().QueryCodeActions(
-      language_id, viewport->path(), range.start.line + 1, range.start.column + 1,
-      range.end.line + 1, range.end.column + 1, &provider_error);
+
+  // Open the overlay in a loading state immediately; the plugin code-action query
+  // runs on the worker without blocking the UI. Results (or the LSP fallback) fill
+  // in on the drain. With no worker wired the callback runs inline.
   auto& session = context_->current_project_state.overlay.workflow.code_actions;
   session.items.clear();
   session.selected_index = 0;
   session.source = "plugin";
-  session.error = provider_error;
-  for (const auto& item : items) {
-    session.items.push_back(CodeActionSessionItem{
-        .title = item.title,
-        .command = item.command,
-        .arguments = item.arguments,
-    });
-  }
-  if (!session.items.empty()) {
-    operations_.show_overlay(OverlayMode::CodeActions);
-    return true;
-  }
+  session.error = "Loading...";
+  operations_.show_overlay(OverlayMode::CodeActions);
 
-  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  plugin_runtime_->Host().QueryCodeActionsAsync(
+      language_id, request_path, range.start.line + 1, range.start.column + 1, range.end.line + 1,
+      range.end.column + 1,
+      [this, language_id, request_path, range](
+          std::vector<plugin::PluginHost::CodeActionCandidate> items, std::string provider_error) {
+        editor::TextViewport* current = operations_.active_editable_viewport();
+        if (current == nullptr || current->path() != request_path) {
+          return;  // superseded
+        }
+        auto& current_session = context_->current_project_state.overlay.workflow.code_actions;
+        if (!items.empty()) {
+          current_session.items.clear();
+          current_session.selected_index = 0;
+          current_session.source = "plugin";
+          current_session.error = std::move(provider_error);
+          for (const auto& item : items) {
+            current_session.items.push_back(CodeActionSessionItem{
+                .title = item.title,
+                .command = item.command,
+                .arguments = item.arguments,
+            });
+          }
+          operations_.request_overlay_redraw();
+          return;
+        }
+        BeginLspCodeActionFallback(*current, language_id, range, provider_error);
+      });
+  return true;
+}
+
+void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
+                                               const std::string& language_id,
+                                               const editor::SelectionRange& range,
+                                               const std::string& provider_error) {
+  auto& session = context_->current_project_state.overlay.workflow.code_actions;
+  LspClient* client = operations_.lsp_client_for_viewport(viewport, nullptr);
   if (client == nullptr) {
     const std::string failure =
         LspUnavailableMessage(operations_.current_lsp_manager(), language_id, provider_error);
     output_channels_->AppendLine("lsp.log", "LSP Log", failure);
-    if (error_message != nullptr) {
-      *error_message = failure;
-    }
-    return false;
+    session.items.clear();
+    session.selected_index = 0;
+    session.source = "plugin";
+    session.error = failure;
+    operations_.request_overlay_redraw();
+    return;
   }
 
-  operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+  operations_.ensure_lsp_document_open(viewport, *client, language_id);
   session.items.clear();
   session.selected_index = 0;
   session.source = "lsp";
   session.error = "Loading...";
-  operations_.show_overlay(OverlayMode::CodeActions);
+  operations_.request_overlay_redraw();
   operations_.begin_tracked_lsp_request();
   client->RequestCodeActionAsync(
-      FileUriForPath(viewport->path()),
+      FileUriForPath(viewport.path()),
       LspClient::Range{
           .start = LspClient::Position{static_cast<int>(range.start.line),
                                        static_cast<int>(range.start.column)},
@@ -570,7 +598,6 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message) {
         }
         operations_.request_overlay_redraw();
       });
-  return true;
 }
 
 bool AssistService::ExecuteSelectedCodeAction() {
@@ -604,48 +631,56 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
     return false;
   }
 
-  // Plugin-native definition providers run first (mirrors completion / code
-  // action orchestration); a non-empty result short-circuits the LSP path.
-  {
-    const std::string plugin_language_id = DetectViewportLanguageId(*viewport);
-    std::string provider_error;
-    const auto locations = plugin_runtime_->Host().QueryDefinition(
-        plugin_language_id, viewport->path(), viewport->cursor_line() + 1,
-        viewport->cursor_column() + 1, &provider_error);
-    if (!locations.empty()) {
-      NavigateToPluginLocation(locations.front());
-      return true;
-    }
-  }
-
-  LspClient* client = PrepareLspRequest(*viewport, error_message);
-  if (client == nullptr) {
-    return false;
-  }
-  client->RequestGoToDefinitionAsync(
-      FileUriForPath(viewport->path()),
-      LspClient::Position{static_cast<int>(viewport->cursor_line()),
-                          static_cast<int>(viewport->cursor_column())},
-      [this](std::optional<std::vector<LspClient::Location>> locations) {
-        operations_.finish_tracked_lsp_request();
-        if (!locations.has_value() || locations->empty()) {
-          output_channels_->AppendLine("lsp.definition", "LSP Definition", "No definition found");
+  // Plugin-native definition providers run first (mirrors completion / code action
+  // orchestration), dispatched to the worker so the lookup never blocks the UI. A
+  // non-empty result navigates; otherwise the callback hands off to the LSP path.
+  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::filesystem::path request_path = viewport->path();
+  const std::size_t request_line = viewport->cursor_line();
+  const std::size_t request_column = viewport->cursor_column();
+  plugin_runtime_->Host().QueryDefinitionAsync(
+      language_id, request_path, request_line + 1, request_column + 1,
+      [this, request_path, request_line, request_column](
+          std::vector<plugin::PluginHost::LocationResult> locations, std::string /*provider_error*/) {
+        editor::TextViewport* current = operations_.active_editable_viewport();
+        if (current == nullptr || current->path() != request_path) {
+          return;  // superseded
+        }
+        if (!locations.empty()) {
+          NavigateToPluginLocation(locations.front());
           return;
         }
-        const std::optional<std::filesystem::path> path = PathFromFileUri(locations->front().uri);
-        if (!path.has_value()) {
+        LspClient* client = PrepareLspRequest(*current, nullptr);
+        if (client == nullptr) {
           return;
         }
-        if (!operations_.open_file_in_new_tab(*path)) {
-          return;
-        }
-        if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
-          active->MoveCursorTo(
-              static_cast<std::size_t>(std::max(locations->front().range.start.line, 0)),
-              static_cast<std::size_t>(std::max(locations->front().range.start.character, 0)));
-          operations_.reset_caret_blink();
-          operations_.request_focused_editor_redraw();
-        }
+        client->RequestGoToDefinitionAsync(
+            FileUriForPath(request_path),
+            LspClient::Position{static_cast<int>(request_line), static_cast<int>(request_column)},
+            [this](std::optional<std::vector<LspClient::Location>> locations) {
+              operations_.finish_tracked_lsp_request();
+              if (!locations.has_value() || locations->empty()) {
+                output_channels_->AppendLine("lsp.definition", "LSP Definition",
+                                             "No definition found");
+                return;
+              }
+              const std::optional<std::filesystem::path> path =
+                  PathFromFileUri(locations->front().uri);
+              if (!path.has_value()) {
+                return;
+              }
+              if (!operations_.open_file_in_new_tab(*path)) {
+                return;
+              }
+              if (editor::TextViewport* active = operations_.active_editor_viewport();
+                  active != nullptr) {
+                active->MoveCursorTo(
+                    static_cast<std::size_t>(std::max(locations->front().range.start.line, 0)),
+                    static_cast<std::size_t>(std::max(locations->front().range.start.character, 0)));
+                operations_.reset_caret_blink();
+                operations_.request_focused_editor_redraw();
+              }
+            });
       });
   return true;
 }
@@ -659,49 +694,56 @@ bool AssistService::FindLspReferences(std::string* error_message) {
     return false;
   }
 
-  // Plugin-native reference providers run first; a non-empty result is rendered
-  // into the same References output channel the LSP path uses and short-circuits.
-  {
-    const std::string plugin_language_id = DetectViewportLanguageId(*viewport);
-    std::string provider_error;
-    const auto locations = plugin_runtime_->Host().QueryReferences(
-        plugin_language_id, viewport->path(), viewport->cursor_line() + 1,
-        viewport->cursor_column() + 1, true, &provider_error);
-    if (!locations.empty()) {
-      EmitPluginReferences(locations);
-      return true;
-    }
-  }
-
-  LspClient* client = PrepareLspRequest(*viewport, error_message);
-  if (client == nullptr) {
-    return false;
-  }
-  client->RequestFindReferencesAsync(
-      FileUriForPath(viewport->path()),
-      LspClient::Position{static_cast<int>(viewport->cursor_line()),
-                          static_cast<int>(viewport->cursor_column())},
-      true,
-      [this](std::optional<std::vector<LspClient::Location>> locations) {
-        operations_.finish_tracked_lsp_request();
-        output_channels_->Clear("lsp.references");
-        if (!locations.has_value() || locations->empty()) {
-          output_channels_->AppendLine("lsp.references", "LSP References", "No references found");
+  // Plugin-native reference providers run first, dispatched to the worker so the
+  // lookup never blocks the UI. A non-empty result renders into the References
+  // output channel; otherwise the callback hands off to the LSP path.
+  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::filesystem::path request_path = viewport->path();
+  const std::size_t request_line = viewport->cursor_line();
+  const std::size_t request_column = viewport->cursor_column();
+  plugin_runtime_->Host().QueryReferencesAsync(
+      language_id, request_path, request_line + 1, request_column + 1, true,
+      [this, request_path, request_line, request_column](
+          std::vector<plugin::PluginHost::LocationResult> locations, std::string /*provider_error*/) {
+        editor::TextViewport* current = operations_.active_editable_viewport();
+        if (current == nullptr || current->path() != request_path) {
+          return;  // superseded
+        }
+        if (!locations.empty()) {
+          EmitPluginReferences(locations);
           return;
         }
-        std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
-        for (std::size_t location_index = 0; location_index < locations->size(); ++location_index) {
-          const auto& location = (*locations)[location_index];
-          const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
-          if (!path.has_value()) {
-            continue;
-          }
-          // LSP positions are 0-based; the shared formatter expects 1-based.
-          EmitReferenceEntry("lsp.references", "LSP References", *path,
-                             static_cast<std::size_t>(std::max(location.range.start.line, 0)) + 1,
-                             static_cast<std::size_t>(std::max(location.range.start.character, 0)) + 1,
-                             location_index + 1 < locations->size(), file_line_cache);
+        LspClient* client = PrepareLspRequest(*current, nullptr);
+        if (client == nullptr) {
+          return;
         }
+        client->RequestFindReferencesAsync(
+            FileUriForPath(request_path),
+            LspClient::Position{static_cast<int>(request_line), static_cast<int>(request_column)},
+            true,
+            [this](std::optional<std::vector<LspClient::Location>> locations) {
+              operations_.finish_tracked_lsp_request();
+              output_channels_->Clear("lsp.references");
+              if (!locations.has_value() || locations->empty()) {
+                output_channels_->AppendLine("lsp.references", "LSP References",
+                                             "No references found");
+                return;
+              }
+              std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
+              for (std::size_t index = 0; index < locations->size(); ++index) {
+                const auto& location = (*locations)[index];
+                const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
+                if (!path.has_value()) {
+                  continue;
+                }
+                // LSP positions are 0-based; the shared formatter expects 1-based.
+                EmitReferenceEntry(
+                    "lsp.references", "LSP References", *path,
+                    static_cast<std::size_t>(std::max(location.range.start.line, 0)) + 1,
+                    static_cast<std::size_t>(std::max(location.range.start.character, 0)) + 1,
+                    index + 1 < locations->size(), file_line_cache);
+              }
+            });
       });
   return true;
 }
@@ -718,56 +760,58 @@ bool AssistService::ShowSignatureHelp(std::string* error_message) {
     return false;
   }
 
-  // Plugin language providers own signature help; there is no LSP fallback path
-  // yet, so an empty result is simply "nothing to show".
+  // Plugin language providers own signature help (no LSP fallback yet), dispatched
+  // to the worker so the lookup never blocks the UI. An empty result is simply
+  // "nothing to show"; the popup is built and shown from the callback on the drain.
   const std::string language_id = DetectViewportLanguageId(*viewport);
-  std::string provider_error;
-  plugin::PluginHost::SignatureHelpResult result;
-  const bool resolved = plugin_runtime_->Host().QuerySignatureHelp(
-      language_id, viewport->path(), viewport->cursor_line() + 1, viewport->cursor_column() + 1,
-      &result, &provider_error);
-  if (!resolved || result.signatures.empty()) {
-    if (error_message != nullptr) {
-      *error_message = provider_error.empty() ? "No signature help available" : provider_error;
-    }
-    return false;
-  }
+  const std::filesystem::path request_path = viewport->path();
+  plugin_runtime_->Host().QuerySignatureHelpAsync(
+      language_id, request_path, viewport->cursor_line() + 1, viewport->cursor_column() + 1,
+      [this, request_path](bool resolved, plugin::PluginHost::SignatureHelpResult result,
+                           std::string /*provider_error*/) {
+        editor::TextViewport* current = operations_.active_editable_viewport();
+        if (current == nullptr || current->path() != request_path) {
+          return;  // superseded
+        }
+        if (!resolved || result.signatures.empty()) {
+          return;
+        }
+        const std::size_t active =
+            result.active_signature >= 0 &&
+                    static_cast<std::size_t>(result.active_signature) < result.signatures.size()
+                ? static_cast<std::size_t>(result.active_signature)
+                : 0;
+        const plugin::PluginHost::SignatureInfo& signature = result.signatures[active];
 
-  const std::size_t active = result.active_signature >= 0 &&
-                                     static_cast<std::size_t>(result.active_signature) <
-                                         result.signatures.size()
-                                 ? static_cast<std::size_t>(result.active_signature)
-                                 : 0;
-  const plugin::PluginHost::SignatureInfo& signature = result.signatures[active];
+        // Build the supporting block off the render path: lead with the active
+        // parameter (so the user sees which argument they are typing) then the
+        // signature documentation.
+        std::string documentation;
+        if (signature.active_parameter >= 0 &&
+            static_cast<std::size_t>(signature.active_parameter) < signature.parameters.size()) {
+          const plugin::PluginHost::SignatureParameter& parameter =
+              signature.parameters[static_cast<std::size_t>(signature.active_parameter)];
+          if (!parameter.label.empty()) {
+            documentation = parameter.label;
+          }
+          if (!parameter.documentation.empty()) {
+            if (!documentation.empty()) {
+              documentation += " — ";
+            }
+            documentation += parameter.documentation;
+          }
+        }
+        if (!signature.documentation.empty()) {
+          if (!documentation.empty()) {
+            documentation += "\n";
+          }
+          documentation += signature.documentation;
+        }
 
-  // Build the supporting block off the render path: lead with the active
-  // parameter (so the user sees which argument they are typing) then the
-  // signature documentation.
-  std::string documentation;
-  if (signature.active_parameter >= 0 &&
-      static_cast<std::size_t>(signature.active_parameter) < signature.parameters.size()) {
-    const plugin::PluginHost::SignatureParameter& parameter =
-        signature.parameters[static_cast<std::size_t>(signature.active_parameter)];
-    if (!parameter.label.empty()) {
-      documentation = parameter.label;
-    }
-    if (!parameter.documentation.empty()) {
-      if (!documentation.empty()) {
-        documentation += " — ";
-      }
-      documentation += parameter.documentation;
-    }
-  }
-  if (!signature.documentation.empty()) {
-    if (!documentation.empty()) {
-      documentation += "\n";
-    }
-    documentation += signature.documentation;
-  }
-
-  if (operations_.show_signature_help) {
-    operations_.show_signature_help(signature.label, std::move(documentation));
-  }
+        if (operations_.show_signature_help) {
+          operations_.show_signature_help(signature.label, std::move(documentation));
+        }
+      });
   return true;
 }
 

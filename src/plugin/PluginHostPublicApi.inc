@@ -576,6 +576,163 @@ void PluginHost::QueryCompletionsAsync(
 #endif
 }
 
+void PluginHost::QueryCodeActionsAsync(
+    std::string language_id,
+    std::filesystem::path path,
+    std::size_t start_line,
+    std::size_t start_column,
+    std::size_t end_line,
+    std::size_t end_column,
+    std::function<void(std::vector<CodeActionCandidate>, std::string)> on_result) {
+  if (!impl_->enabled()) {
+    on_result({}, {});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct QueryResult {
+    std::vector<CodeActionCandidate> items;
+    std::string error;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:code_actions",
+      [this, language_id = std::move(language_id), path = std::move(path), start_line, start_column,
+       end_line, end_column]() {
+        QueryResult result;
+        result.items = provider_query_interop::QueryCodeActions(
+            language_id, path, start_line, start_column, end_line, end_column,
+            impl_->code_action_runtimes,
+            [this](lua_State* state) { return impl_->FindPluginByState(state); },
+            [this](lua_State* state, const std::filesystem::path& buffer_path) {
+              impl_->PushBufferContext(state, buffer_path);
+            },
+            &result.error);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(std::move(result.items), std::move(result.error));
+      });
+#else
+  (void)language_id;
+  (void)path;
+  (void)start_line;
+  (void)start_column;
+  (void)end_line;
+  (void)end_column;
+  on_result({}, {});
+#endif
+}
+
+void PluginHost::QueryDefinitionAsync(
+    std::string language_id,
+    std::filesystem::path path,
+    std::size_t line,
+    std::size_t column,
+    std::function<void(std::vector<LocationResult>, std::string)> on_result) {
+  if (!impl_->enabled()) {
+    on_result({}, {});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct QueryResult {
+    std::vector<LocationResult> items;
+    std::string error;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:definition",
+      [this, language_id = std::move(language_id), path = std::move(path), line, column]() {
+        QueryResult result;
+        result.items = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::Definition,
+                                                     language_id, path, line, column, false,
+                                                     &result.error);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(std::move(result.items), std::move(result.error));
+      });
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+  on_result({}, {});
+#endif
+}
+
+void PluginHost::QueryReferencesAsync(
+    std::string language_id,
+    std::filesystem::path path,
+    std::size_t line,
+    std::size_t column,
+    bool include_declaration,
+    std::function<void(std::vector<LocationResult>, std::string)> on_result) {
+  if (!impl_->enabled()) {
+    on_result({}, {});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct QueryResult {
+    std::vector<LocationResult> items;
+    std::string error;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:references",
+      [this, language_id = std::move(language_id), path = std::move(path), line, column,
+       include_declaration]() {
+        QueryResult result;
+        result.items = impl_->QueryLanguageLocations(runtime_types::LanguageQueryKind::References,
+                                                     language_id, path, line, column,
+                                                     include_declaration, &result.error);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(std::move(result.items), std::move(result.error));
+      });
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+  (void)include_declaration;
+  on_result({}, {});
+#endif
+}
+
+void PluginHost::QuerySignatureHelpAsync(
+    std::string language_id,
+    std::filesystem::path path,
+    std::size_t line,
+    std::size_t column,
+    std::function<void(bool, SignatureHelpResult, std::string)> on_result) {
+  if (!impl_->enabled()) {
+    on_result(false, SignatureHelpResult{}, {});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct QueryResult {
+    bool resolved = false;
+    SignatureHelpResult result;
+    std::string error;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:signature_help",
+      [this, language_id = std::move(language_id), path = std::move(path), line, column]() {
+        QueryResult result;
+        result.resolved = impl_->QueryLanguageSignatureHelp(language_id, path, line, column,
+                                                            &result.result, &result.error);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(result.resolved, std::move(result.result), std::move(result.error));
+      });
+#else
+  (void)language_id;
+  (void)path;
+  (void)line;
+  (void)column;
+  on_result(false, SignatureHelpResult{}, {});
+#endif
+}
+
 std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
     std::string_view language_id,
     const std::filesystem::path& path,
