@@ -27,6 +27,16 @@ class LuaRuntime {
   // the .cpp for why the count-hook abort is safe w.r.t. C++ destructors.
   bool PCall(int nargs, int nresults, std::string* error_message) const;
 
+  // Protected call for a *nested* callback invoked from inside a C interop
+  // function that is already running under an outer PCall (today: the
+  // `process.run_async` completion callback). It runs on its own fresh deadline,
+  // then restores the enclosing call's watchdog (deadline + hook) on return. The
+  // outer deadline matters because `run_async` deliberately blocks the worker on
+  // the subprocess: by the time the callback runs, the outer call's budget can
+  // already be spent, and without a reset the watchdog would abort an otherwise
+  // healthy callback on its very first instruction.
+  bool PCallNested(int nargs, int nresults, std::string* error_message) const;
+
   // Override the per-call watchdog budget. Primarily for tests that need to trip
   // the watchdog quickly; production uses the generous default hang guard.
   void set_call_budget(std::chrono::steady_clock::duration budget) { call_budget_ = budget; }

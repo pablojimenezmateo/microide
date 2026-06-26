@@ -1593,6 +1593,66 @@ return ide.plugin({
   Expect(host.Errors().empty(), "reload/shutdown after run_async should not surface errors");
 }
 
+// Regression for the run_async callback inheriting the enclosing call's already
+// spent watchdog deadline. run_async deliberately blocks the worker on the
+// subprocess; that block can outlast the outer call's 750ms budget. Before the
+// fix the callback ran under a bare lua_pcall that kept the outer (now expired)
+// deadline armed, so the watchdog aborted the callback the moment its first
+// instruction batch tripped the count hook. The callback below loops past the
+// 100k-instruction hook batch precisely so the hook fires and checks the
+// deadline — a trivial callback would never trip it and would hide the bug.
+void TestPluginHostRunAsyncCallbackOutlivesOuterWatchdog() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "slow async fixture\n");
+  WriteFile(source, "console.log('hello');\n");
+
+  // The subprocess sleeps a full second — comfortably past the 750ms call budget
+  // — then the callback does real work (>100k Lua instructions) so the watchdog
+  // count hook actually fires inside it.
+  WritePluginInit(
+      global_plugins, "slow-async-run",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "async.slow",
+  capabilities = { process = { exec = true } },
+  on_buffer_open = function(ctx, buffer)
+    ctx.process.run_async({"sh", "-lc", "sleep 1; printf done"}, nil, function(result)
+      local x = 0
+      for i = 1, 500000 do x = x + i end
+      ctx.log("slow-async-complete:" .. tostring(result.exit_code) .. ":" .. tostring(x))
+    end)
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+
+  Expect(host.Reload(project_root), "slow async fixture should load");
+  // No worker is wired in this harness, so the buffer-open event (and thus the
+  // run_async call + callback) runs inline under the lifecycle PCall watchdog.
+  host.OnBufferOpen(source);
+  Expect(std::any_of(host.Messages().begin(), host.Messages().end(),
+                     [](const std::string& entry) {
+                       return entry == "async.slow: slow-async-complete:0:125000250000";
+                     }),
+         "a run_async callback must still run to completion after a subprocess that "
+         "outlasts the outer watchdog budget");
+  Expect(host.Errors().empty(),
+         "the slow-subprocess callback must not be aborted by the stale outer deadline");
+
+  host.Shutdown();
+}
+
 // Exercises the process.run argument-validation error paths. These raise a Lua
 // error from inside a C function that has already built std::vector/std::string
 // locals; raising Lua errors is a C longjmp, so the fix defers the raise until
@@ -2673,6 +2733,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
   AddTest(tests, "PluginHost/RunAsyncInvokesCallbackSynchronously",
           TestPluginHostRunAsyncInvokesCallbackSynchronously);
+  AddTest(tests, "PluginHost/RunAsyncCallbackOutlivesOuterWatchdog",
+          TestPluginHostRunAsyncCallbackOutlivesOuterWatchdog);
   AddTest(tests, "PluginHost/RoutesEventsThroughWorkerThread",
           TestPluginHostRoutesEventsThroughWorkerThread);
   AddTest(tests, "PluginHost/DeferredWorkspaceEditCarriesStalenessGuard",

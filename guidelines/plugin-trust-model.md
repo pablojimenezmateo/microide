@@ -1,6 +1,8 @@
 # Plugin Trust Model
 
-Reviewed on 2026-05-21. Capability sandboxing added 2026-06-15.
+Reviewed on 2026-05-21. Capability sandboxing added 2026-06-15. Worker-thread
+execution model and the plugin rendering surface (decorations, content surfaces,
+ghost text, async edits/queries) re-reviewed 2026-06-26.
 
 This document describes what plugins can do, what they cannot do, and what microide does and does
 not enforce. It is the authoritative reference for trust-related claims about the plugin runtime.
@@ -81,6 +83,25 @@ shell out using plain Lua.
 resolution is available through `package.path` / `package.cpath`. There is no allowlist on those
 paths.
 
+### Execution thread and the per-call watchdog
+
+Every `lua_State` touch runs on a dedicated **plugin worker thread**, not on the UI thread (see
+`src/plugin/PluginThread.h`). The UI thread posts jobs (closures) to the worker and drains a mailbox
+of plain-data results once per frame; no `lua_State*` or Lua registry ref ever crosses the thread
+boundary — the worker extracts every value into native types before posting back. Execution is still
+**serialized per state** (one worker, no concurrency, so Lua's single-thread-per-state rule holds),
+but a slow or hung plugin call can no longer freeze the UI. Read verbs such as
+`ctx.workspace.active_buffer()` and `ctx.settings.get()` resolve against a UI-owned immutable
+snapshot captured at job-dispatch time, so plugin code never reads live shell state off-thread.
+
+Each protected call is bounded by a watchdog (`LuaRuntime::PCall`): a count hook fires every 100k
+Lua instructions and aborts the call once it exceeds a 750ms budget, turning an accidental infinite
+loop into a contained Lua error instead of a permanent hang. This is a generous hang guard, not a
+stutter guard. The one place a callback runs nested inside another call — the `ctx.process.run_async`
+completion callback, which fires after a deliberately-blocking subprocess — gets its own fresh
+deadline (`LuaRuntime::PCallNested`) so a legitimately long subprocess does not cause the watchdog to
+abort the callback on its first instruction.
+
 ## Host API surface
 
 The host API is what plugins actually use to do interesting things. It does grant the capabilities
@@ -108,8 +129,10 @@ project are readable/writable.
 - `ctx.process.run(argv, { cwd = ..., stdin = ..., env = ... })` — synchronous subprocess
   execution. Returns stdout, stderr, and exit code. The plugin chooses the argv, working
   directory, stdin payload, and environment overrides.
-- `ctx.process.run_async(argv, opts, callback)` — async variant; the host wakes the event loop
-  when the process exits and dispatches the callback.
+- `ctx.process.run_async(argv, opts, callback)` — runs the subprocess on the plugin worker thread
+  (so it never blocks the UI) and invokes the callback there with the result. "Async" means
+  off-the-UI-thread, not detached: the worker blocks on the child and dispatches the callback inline
+  when it exits. (The earlier event-loop-wake async-process subsystem was removed.)
 - Contributed language servers cause the host to launch the argv they declare on demand.
 - Contributed formatters (`ctx.formatters.add(...)`) and tasks (`ctx.tasks.add(...)`) likewise
   declare an argv that the host runs.
@@ -147,10 +170,43 @@ that needs to read or write outside the project — e.g. a package cache under `
   `ctx.status.add(...)` / `ctx.status.update(...)`
 - Language contract contributions: `ctx.brackets.add(...)`, `ctx.comments.add(...)`,
   `ctx.indents.add(...)`, `ctx.snippets.add(...)`
+- Buffer mutation: `ctx.editor.apply_edits({ path, edits, cursor, selection })` — the host clamps,
+  validates, and applies the edits atomically (one undo step). Async edits carry a staleness guard
+  (captured content revision + path) and are dropped if the buffer advanced during the worker hop,
+  so a plugin cannot clobber text the user typed after the edit was computed.
+- Inline suggestions: `ctx.editor.set_ghost_text(...)` / `clear_ghost_text()` — single-owner,
+  caret-anchored dimmed proposal the host validates against the live caret and inserts on Tab.
 
 Save participants are particularly worth calling out: they run on every save and can rewrite the
 buffer before it hits disk. A malicious save participant could silently mutate code on every
 save.
+
+### Rendering contributions (host-renders-data)
+
+Plugins can contribute visuals without ever touching the renderer: `ctx.decorations.set(...)`
+(text styles, gutter marks, inline/virtual text, code lenses), `ctx.surface.set(...)` (a content
+surface), and the ghost text above. The boundary is strict — **plugins emit validated data only;
+the host owns all drawing, caching, clipping, and hit-testing.** A content surface is either a flat
+**display list** (rect/line/polyline/text/clip ops) or a **raster** (PNG/JPEG, or raw RGBA8). Three
+things bound this new surface as a matter of trust:
+
+- **Resource caps, rejected not clamped.** Display lists are validated once at publish against hard
+  caps (65,536 ops, 262,144 polyline points, 1 MiB text, 256 images) and must have balanced
+  clip push/pop; oversize or malformed input is refused. Decoded surface pixels live in a host
+  `SurfaceTextureCache` under a 256 MiB VRAM budget with LRU eviction and content-hash dedup, so a
+  plugin cannot exhaust GPU memory by publishing many surfaces.
+- **In-process raster decode is a new memory-safety surface.** Plugin-supplied image bytes are
+  decoded off the UI thread with the vendored `stb_image` (`src/render/RasterDecode.cpp`). Encoded
+  input is capped at 64 MiB and `stb_image` is compiled with `STBI_MAX_DIMENSIONS = 8192` so a
+  forged header cannot trigger a multi-gigabyte `w*h*4` allocation, with a post-decode dimension
+  check as defense in depth. This decoder still runs in the editor process, so — like the rest of
+  the host bindings — a memory-safety bug in it is **not** contained by the capability model (see
+  "What microide does not do" below); the caps and the `SurfaceRasterDecodeFuzz` /
+  `PluginDisplayListParseFuzz` fuzz targets are the mitigation.
+- **Hit regions reuse the validated command path.** Surface hit regions and code lenses dispatch a
+  named command through the host's existing command runner — the same lookup (`HasCommand` /
+  built-in action table) a command-prompt invocation uses. A plugin cannot fabricate a privileged
+  built-in command it did not register; it can only invoke commands the host already exposes.
 
 ### Output and logging
 
@@ -162,9 +218,11 @@ These are real boundaries, not aspirational ones:
 
 - **They cannot replace the editor, compare, merge, search, git, or terminal renderers.** The
   product-vision spec asserts these stay host-owned and the host ignores any plugin that declares
-  itself a replacement for them. This is a correctness boundary, not a security boundary; a
-  hostile plugin can still publish diagnostics that fake compile errors or run subprocesses that
-  modify your repo.
+  itself a replacement for them. They may contribute *data* the host renders (decorations, content
+  surfaces, ghost text), but never raw shell or renderer internals. This is a correctness boundary,
+  not a security boundary; a hostile plugin can still publish diagnostics that fake compile errors,
+  draw misleading decorations/surfaces in the editor area, or run subprocesses that modify your
+  repo.
 - **They cannot directly access `WorkspaceShell`.** This is policy + lint-enforced. They go
   through narrow registries.
 - **They cannot read or write outside their declared filesystem scope.** Host-API file access is
@@ -174,8 +232,9 @@ These are real boundaries, not aspirational ones:
 - **The Lua state is per-plugin, not shared.** Each loaded plugin gets its own `lua_State`, so
   plain Lua globals do not leak between plugins. `package.path` is pinned to the plugin's own
   directory and `package.cpath` / `loadlib` are disabled, so a plugin cannot `require` arbitrary
-  modules or load native libraries. Plugins still run in-process and sequentially (no plugin
-  background threading except via `ctx.process.run_async`'s host-managed wake).
+  modules or load native libraries. Plugins run in-process on a single dedicated worker thread and
+  execute serially per state; they cannot spawn their own threads. `ctx.process.run_async` runs its
+  subprocess on that same worker, not on a plugin-controlled thread.
 
 ## What microide does not do
 

@@ -105,6 +105,43 @@ bool LuaRuntime::PCall(int nargs, int nresults, std::string* error_message) cons
   lua_pop(state_, 1);
   return false;
 }
+
+bool LuaRuntime::PCallNested(int nargs, int nresults, std::string* error_message) const {
+  if (state_ == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "Lua runtime unavailable";
+    }
+    return false;
+  }
+
+  // Save the enclosing call's watchdog so the remainder of the outer call stays
+  // bounded against its original deadline after this callback returns. We arm the
+  // hook explicitly rather than assume the outer PCall left it installed, so this
+  // helper is correct even if a future caller is not itself under a PCall.
+  const std::chrono::steady_clock::time_point outer_deadline = deadline_;
+  const lua_Hook outer_hook = lua_gethook(state_);
+  const int outer_mask = lua_gethookmask(state_);
+  const int outer_count = lua_gethookcount(state_);
+
+  deadline_ = std::chrono::steady_clock::now() + call_budget_;
+  lua_sethook(state_, &LuaRuntime::TimeoutHook, LUA_MASKCOUNT, kHookInstructionBatch);
+  const int status = lua_pcall(state_, nargs, nresults, 0);
+  lua_sethook(state_, outer_hook, outer_mask, outer_count);
+  deadline_ = outer_deadline;
+
+  if (status == LUA_OK) {
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return true;
+  }
+  if (error_message != nullptr) {
+    const char* raw = lua_tostring(state_, -1);
+    *error_message = raw != nullptr ? std::string(raw) : std::string("unknown Lua error");
+  }
+  lua_pop(state_, 1);
+  return false;
+}
 #endif
 
 }  // namespace microide::plugin

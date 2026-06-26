@@ -10,6 +10,7 @@
 
 #include "platform/Subprocess.h"
 #include "plugin/LuaError.h"
+#include "plugin/LuaRuntime.h"
 #include "plugin/PluginPathInterop.h"
 
 namespace microide::plugin::process_interop {
@@ -216,6 +217,7 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
 
   const char* error = nullptr;
   bool callback_failed = false;
+  std::string callback_error;
   {
     ProcessRunArgs parsed;
     error = ParseProcessRunArgs(state, fs.project_root, &parsed);
@@ -224,8 +226,13 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
     }
     if (error == nullptr) {
       // Runs on the plugin worker, so blocking on the subprocess never stalls the
-      // UI. Invoke the callback through lua_pcall (protected) so a callback error
-      // cannot longjmp over the C++ locals (`parsed`, `result`) still alive here.
+      // UI. The subprocess can legitimately outlast the enclosing call's watchdog
+      // budget (that is the whole point of run_async), so the callback is invoked
+      // through PCallNested, which gives it a fresh deadline instead of inheriting
+      // the already-spent outer one — otherwise the watchdog would abort a healthy
+      // callback on its first instruction. PCallNested is also protected, so a
+      // callback error cannot longjmp over the C++ locals (`parsed`, `result`)
+      // still alive here.
       const platform::SubprocessResult result = platform::RunSubprocess(
           parsed.argv, platform::SubprocessOptions{
                            .cwd = parsed.cwd,
@@ -245,7 +252,8 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
       lua_setfield(state, -2, "stdout");
       lua_pushlstring(state, result.stderr_text.c_str(), result.stderr_text.size());
       lua_setfield(state, -2, "stderr");
-      callback_failed = lua_pcall(state, 1, 0, 0) != LUA_OK;
+      LuaRuntime* runtime = *static_cast<LuaRuntime**>(lua_getextraspace(state));
+      callback_failed = runtime == nullptr || !runtime->PCallNested(1, 0, &callback_error);
     }
   }
   if (error != nullptr) {
@@ -253,8 +261,11 @@ int LuaProcessRunAsync(lua_State* state, const PluginFsContext& fs) {
     return lua_error_util::kPendingError;
   }
   if (callback_failed) {
-    // lua_pcall left the callback's error message on the stack top; surface it
-    // through the wrapper, which records and raises it.
+    // PCallNested extracted the callback's error message into `callback_error`;
+    // push it back for the wrapper, which records and raises it once this frame's
+    // locals have destructed. (callback_error itself is gone by then — the raise
+    // happens in the .inc wrapper after this function returns.)
+    lua_error_util::PushMessage(state, callback_error, "process.run_async callback failed");
     return lua_error_util::kPendingError;
   }
   return 0;

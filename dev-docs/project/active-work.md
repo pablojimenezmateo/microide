@@ -270,6 +270,20 @@ Current state:
 - `WorkspaceShell` still acts as the app-facing facade, but the shell-breakdown plan is now
   implemented: event routing, wake routing, action enablement, render composition, and test hooks
   all live behind explicit seams instead of direct shell-owned monoliths
+- worker-thread execution + rendering surface (on `feat/plugin-rendering`): all `lua_State` touches
+  now run on a dedicated plugin worker thread with a UI-owned snapshot/mailbox boundary, and plugins
+  gained a host-renders-data presentation surface (`ctx.decorations`, `ctx.surface`,
+  `ctx.editor.apply_edits`, `ctx.editor.set_ghost_text`) plus async language queries and reactive
+  editor events. The old detached async-process subsystem was deleted; `ctx.process.run_async` now
+  runs on the worker
+- sandbox re-review (2026-06-26): the widened surface stays sound — render contributions are
+  validated, size-capped data the host draws (display-list op/point/text/image caps, 256 MiB
+  `SurfaceTextureCache` budget, `stb_image` decode bounded to 64 MiB / 8192² and fuzzed); capability
+  containment, path checks, and the per-call watchdog are intact. One correctness gap was found and
+  fixed: the `ctx.process.run_async` completion callback inherited the enclosing call's already-spent
+  750ms watchdog deadline (so a subprocess outlasting the budget got its healthy callback aborted on
+  the first instruction); it now runs under `LuaRuntime::PCallNested` with a fresh deadline. Authoritative
+  detail lives in `guidelines/plugin-trust-model.md`
 
 ### 2. Cross-Platform Host Support
 

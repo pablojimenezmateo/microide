@@ -38,7 +38,9 @@ Phase 2 status:
 - the workspace API now supports `ctx.workspace.open_file(path, line, column)`
 - plugins now have basic project-relative file helpers: `ctx.files.read_text`, `ctx.files.write_text`, and `ctx.files.exists`
 - plugins now have an argv-based process helper: `ctx.process.run(argv, { cwd = ..., stdin = ..., env = ... })`
-- the current process surface is intentionally synchronous; the async spawn shape from the design notes remains future work if real plugins need it
+- the process surface started synchronous; `ctx.process.run_async(argv, opts, callback)` later
+  shipped on the plugin worker thread (see Phase 7) — it runs the subprocess off the UI thread and
+  invokes the callback inline on the worker, replacing the original detached-thread design sketch
 
 Phase 3 status:
 
@@ -985,6 +987,32 @@ the summary:
 Not included: first-run capability prompts, signing/marketplace trust, per-server capability
 overrides (a confined language server cannot reach home-directory caches), and out-of-process
 isolation of the Lua state.
+
+### Phase 7: Worker-Thread Execution + Plugin Rendering Surface
+
+Landed on `feat/plugin-rendering`; sandbox re-reviewed 2026-06-26. The authoritative trust
+description is `guidelines/plugin-trust-model.md` and the contribution reference is
+`guidelines/plugins.md`; the summary:
+
+- all `lua_State` touches moved onto a dedicated **plugin worker thread** (`src/plugin/PluginThread.h`).
+  The UI thread posts jobs and drains a mailbox of plain-data results once per frame; no `lua_State*`
+  or Lua ref crosses the boundary, and read verbs resolve against a UI-owned immutable snapshot. A
+  slow/hung plugin call no longer blocks the UI, while per-state execution stays serial.
+- the old detached async-process subsystem was deleted; `ctx.process.run_async` now blocks the worker
+  on the child and dispatches the callback there. That callback runs under `LuaRuntime::PCallNested`,
+  which resets the 750ms watchdog deadline so a legitimately long subprocess does not cause the
+  watchdog to abort an otherwise-healthy callback.
+- plugins gained a host-renders-data presentation surface: `ctx.decorations.*` (text styles, gutter
+  marks, inline text, code lenses), `ctx.surface.*` (display lists or PNG/JPEG/RGBA8 rasters),
+  `ctx.editor.apply_edits` (atomic, staleness-guarded), and `ctx.editor.set_ghost_text`. The host
+  owns all drawing, clipping, hit-testing, and caching; inputs are bounded by hard caps (display-list
+  op/point/text/image limits, a 256 MiB `SurfaceTextureCache` VRAM budget) and rasters decode
+  off-thread through size/dimension-capped `stb_image`, exercised by `PluginDisplayListParseFuzz` /
+  `SurfaceRasterDecodeFuzz`.
+
+Sandbox review outcome: the new surface follows the established *plugins emit validated data, the
+host owns rendering* boundary and stays inside the capability model. The only correctness gap found
+was the `run_async` callback inheriting the outer watchdog deadline, fixed via `PCallNested`.
 
 ## Final Recommendation
 

@@ -206,8 +206,8 @@ If you find a bug or a limitation that is not listed, that itself is a bug — p
 ## Security & Trust Model
 
 microide is a local desktop application that runs with your user privileges. Plugins run in-process
-but under an enforced per-plugin capability sandbox; that narrows, but does not eliminate, the trust
-you place in them. Treat it accordingly.
+(on a dedicated worker thread, off the UI thread) but under an enforced per-plugin capability
+sandbox; that narrows, but does not eliminate, the trust you place in them. Treat it accordingly.
 
 **Plugins are capability-sandboxed local code.** When you open a project, microide loads Lua plugins
 only from:
@@ -229,6 +229,10 @@ Plugins declare a `capabilities` table in their `init.lua` descriptor, which the
 - **The Lua runtime** uses a narrow stdlib (`base`, `table`, `string`, `math`, `utf8`, `package`) —
   no `io`/`os` — with `package.path` pinned to the plugin directory and `package.cpath`/`loadlib`
   disabled, so plugins cannot `require` arbitrary modules or load native libraries.
+- **Execution** runs on a dedicated worker thread under a per-call watchdog (a runaway plugin call
+  is aborted rather than freezing the editor), and rendering contributions (decorations, content
+  surfaces, ghost text) are validated, size-capped *data* that the host draws — plugins never touch
+  the renderer directly.
 
 This is real enforcement, not just documentation. On Linux the kernel confinement applies to both
 `ctx.process.run` children and contributed language-server processes. What it does **not** do:
