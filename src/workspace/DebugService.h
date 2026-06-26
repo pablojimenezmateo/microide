@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "util/Generation.h"
 #include "workspace/DapProtocol.h"
 #include "workspace/DebugSession.h"
 #include "workspace/LaunchConfig.h"
@@ -289,8 +290,8 @@ class DebugService {
   // frame focus + every transient-view clear); `watch_generation_` covers watch
   // evaluates (bumped on each evaluation pass + clear). This generalizes the
   // pattern DebugHoverModel already uses for hover-eval.
-  std::uint64_t frame_generation_ = 0;
-  std::uint64_t watch_generation_ = 0;
+  util::Generation frame_generation_;
+  util::Generation watch_generation_;
 };
 
 }  // namespace microide::workspace

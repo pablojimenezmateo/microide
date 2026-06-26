@@ -165,7 +165,7 @@ void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallba
     std::lock_guard lock(impl_->mutex);
     if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
       auto handler = impl_->test_document_symbol_handler;
-      impl_->ready_callbacks.push_back(
+      impl_->main_mailbox.PostWithoutWake(
           [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
             if (handler) {
               handler(std::move(uri), std::move(cb));
@@ -196,7 +196,7 @@ void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallba
     std::lock_guard lock(impl_->mutex);
     if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
       auto handler = impl_->test_semantic_tokens_handler;
-      impl_->ready_callbacks.push_back(
+      impl_->main_mailbox.PostWithoutWake(
           [handler, uri = std::move(uri), cb = std::move(callback)]() mutable {
             if (handler) {
               handler(std::move(uri), std::move(cb));

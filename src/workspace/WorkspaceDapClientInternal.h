@@ -3,6 +3,7 @@
 #include "workspace/DapProtocol.h"
 #include "workspace/WorkspaceDapClient.h"
 #include "util/DebugTrace.h"
+#include "util/MainThreadMailbox.h"
 
 #include <atomic>
 #include <charconv>
@@ -143,8 +144,10 @@ struct DapClient::Impl {
   };
   // Pending request callbacks keyed by request seq, guarded by mutex.
   std::unordered_map<int, PendingRequest> pending_requests;
-  // Ready callbacks drained on the main thread, guarded by mutex.
-  std::vector<std::function<void()>> ready_callbacks;
+  // Callbacks marshalled to the main thread and drained once per frame. Carries
+  // its own mutex + SDL wake event, so it is the innermost lock: producers may
+  // post while holding `mutex`, and DrainCallbacks() never takes `mutex`.
+  util::MainThreadMailbox main_mailbox;
 
   std::atomic<bool> test_stub_mode{false};
   std::function<void(const std::string&, const util::JsonValue&, ResponseCallback)>
@@ -160,7 +163,6 @@ struct DapClient::Impl {
   std::string last_error_snapshot;
   dap_protocol::DapCapabilities capabilities;
   std::atomic<bool> initialized{false};
-  std::atomic<Uint32> wake_event_type{0};
 
   void SetLastError(std::string message) {
     std::lock_guard lock(mutex);
@@ -309,7 +311,7 @@ struct DapClient::Impl {
   void ResetProtocolState() {
     std::lock_guard lock(mutex);
     pending_requests.clear();
-    ready_callbacks.clear();
+    main_mailbox.Clear();
     shutdown_response_received = false;
     shutdown_request_seq = 0;
   }
@@ -370,16 +372,6 @@ struct DapClient::Impl {
     auto parsed = util::ParseJson(body);
     buf.consume(body_start + content_len);
     return parsed;
-  }
-
-  void PushWakeEvent() const {
-    const Uint32 event_type = wake_event_type.load(std::memory_order_acquire);
-    if (event_type == 0) {
-      return;
-    }
-    SDL_Event ev{};
-    ev.type = event_type;
-    SDL_PushEvent(&ev);
   }
 
   bool WaitStdoutReadable(int timeout_ms) {
@@ -458,7 +450,7 @@ struct DapClient::Impl {
     // stale "paused" UI) until some unrelated event happened to drive a frame.
     if (!shutting_down.load(std::memory_order_acquire)) {
       FailPendingRequests(/*only_expired=*/false);
-      PushWakeEvent();
+      main_mailbox.PushWake();
     }
   }
 
@@ -498,23 +490,20 @@ struct DapClient::Impl {
     if (!cb) {
       return;
     }
-    auto ready_fn = [cb = std::move(cb), m = std::move(msg)]() mutable { cb(std::move(m)); };
-    std::lock_guard lock(mutex);
-    ready_callbacks.push_back(std::move(ready_fn));
-    PushWakeEvent();
+    main_mailbox.Post([cb = std::move(cb), m = std::move(msg)]() mutable { cb(std::move(m)); });
   }
 
   void HandleEvent(util::JsonValue msg) {
     std::string event = msg["event"].AsString();
     util::JsonValue body = msg["body"];
-    std::lock_guard lock(mutex);
-    if (event_callback) {
-      auto cb = event_callback;
-      ready_callbacks.push_back(
-          [cb = std::move(cb), e = std::move(event), b = std::move(body)]() mutable {
-            cb(e, b);
-          });
-      PushWakeEvent();
+    EventCallback cb;
+    {
+      std::lock_guard lock(mutex);
+      cb = event_callback;
+    }
+    if (cb) {
+      main_mailbox.Post(
+          [cb = std::move(cb), e = std::move(event), b = std::move(body)]() mutable { cb(e, b); });
     }
   }
 
@@ -568,13 +557,12 @@ struct DapClient::Impl {
       it = pending_requests.erase(it);
       util::JsonValue envelope = dap_protocol::MakeResponse(
           0, 0, std::string{}, false, "debug adapter did not respond", util::JsonValue(nullptr));
-      ready_callbacks.push_back([cb = std::move(cb), envelope = std::move(envelope)]() mutable {
-        cb(std::move(envelope));
-      });
+      main_mailbox.PostWithoutWake(
+          [cb = std::move(cb), envelope = std::move(envelope)]() mutable { cb(std::move(envelope)); });
       any = true;
     }
     if (any) {
-      PushWakeEvent();
+      main_mailbox.PushWake();
     }
   }
 
@@ -616,12 +604,10 @@ struct DapClient::Impl {
       util::JsonValue envelope = dap_protocol::MakeResponse(0, 0, command, response.success,
                                                             response.message, response.body);
       auto handler_copy = response_handler;
-      std::lock_guard lock(mutex);
-      ready_callbacks.push_back(
+      main_mailbox.Post(
           [handler_copy = std::move(handler_copy), envelope = std::move(envelope)]() mutable {
             handler_copy(std::move(envelope));
           });
-      PushWakeEvent();
     };
     handler(command, arguments, std::move(bridge));
     return true;
@@ -751,7 +737,7 @@ struct DapClient::Impl {
       test_stub_mode.store(false, std::memory_order_release);
       shutting_down.store(false, std::memory_order_release);
       shutdown_complete.store(true, std::memory_order_release);
-      PushWakeEvent();
+      main_mailbox.PushWake();
       return;
     }
 
@@ -773,7 +759,7 @@ struct DapClient::Impl {
       initializing.store(false, std::memory_order_release);
       shutting_down.store(false, std::memory_order_release);
       shutdown_complete.store(true, std::memory_order_release);
-      PushWakeEvent();
+      main_mailbox.PushWake();
       return;
     }
 
@@ -829,7 +815,7 @@ struct DapClient::Impl {
     shutting_down.store(false, std::memory_order_release);
     shutdown_complete.store(true, std::memory_order_release);
     TraceDapLifecycle(adapter_id, -1, "shutdown-complete");
-    PushWakeEvent();
+    main_mailbox.PushWake();
   }
 
   void BeginShutdown() {

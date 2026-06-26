@@ -338,8 +338,8 @@ DebugSession::Callbacks DebugService::BuildSessionCallbacks(int session_id,
 void DebugService::ClearTransientDebugViews() {
   // Invalidate any in-flight scopes/variables/setVariable/watch responses: they
   // belong to the stop being torn down and must not apply to the cleared models.
-  ++frame_generation_;
-  ++watch_generation_;
+  frame_generation_.bump();
+  watch_generation_.bump();
   ProjectWorkspaceState& state = CurrentProjectState();
   state.debug_execution.Clear();
   state.debug_variables.Clear();

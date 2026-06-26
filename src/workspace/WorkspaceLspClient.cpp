@@ -12,7 +12,7 @@ LspClient::~LspClient() {
 }
 
 void LspClient::SetWakeEventType(Uint32 event_type) {
-  impl_->wake_event_type.store(event_type, std::memory_order_release);
+  impl_->main_mailbox.SetWakeEventType(event_type);
 }
 
 bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,
@@ -148,14 +148,7 @@ bool LspClient::HasDiagnosticsCallback() const {
 
 void LspClient::DrainCallbacks() {
   util::StartupTrace::Scope trace_scope("LspClient::DrainCallbacks");
-  std::vector<std::function<void()>> cbs;
-  {
-    std::lock_guard lock(impl_->mutex);
-    cbs.swap(impl_->ready_callbacks);
-  }
-  for (auto& cb : cbs) {
-    cb();
-  }
+  impl_->main_mailbox.Drain();
 }
 
 bool LspClient::DidOpen(std::string uri, std::string language_id, std::string text) {

@@ -2,6 +2,7 @@
 
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/LspProtocol.h"
+#include "util/MainThreadMailbox.h"
 
 #include <algorithm>
 #include <atomic>
@@ -132,8 +133,10 @@ struct LspClient::Impl {
   // Per-request pending callbacks (keyed by request id), guarded by mutex.
   std::unordered_map<int, std::function<void(util::JsonValue)>> pending_requests;
 
-  // Ready callbacks waiting to be drained on the main thread, guarded by mutex.
-  std::vector<std::function<void()>> ready_callbacks;
+  // Callbacks marshalled to the main thread and drained once per frame. Carries
+  // its own mutex + SDL wake event, so it is the innermost lock: producers may
+  // post while holding `mutex`, and DrainCallbacks() never takes `mutex`.
+  util::MainThreadMailbox main_mailbox;
 
   // When true, the client behaves as a connected server for unit tests (no subprocess).
   std::atomic<bool> test_stub_mode{false};
@@ -145,7 +148,7 @@ struct LspClient::Impl {
   std::vector<std::string> semantic_token_types;
   std::atomic<bool> supports_semantic_tokens{false};
 
-  // Diagnostics callback — set from main thread, called on main thread via ready_callbacks.
+  // Diagnostics callback — set from main thread, called on main thread via main_mailbox.
   OnPublishDiagnostics diagnostics_callback;
 
   std::unordered_map<std::string, int> document_versions;
@@ -161,7 +164,6 @@ struct LspClient::Impl {
   LspClient::ReadinessSnapshot readiness_snapshot;
   std::atomic<bool> initialized{false};
   std::atomic<bool> supports_incremental_sync{false};
-  std::atomic<Uint32> wake_event_type{0};
 
   void SetLastError(std::string message) {
     std::lock_guard lock(mutex);
@@ -346,7 +348,7 @@ struct LspClient::Impl {
   void ResetProtocolState() {
     std::lock_guard lock(mutex);
     pending_requests.clear();
-    ready_callbacks.clear();
+    main_mailbox.Clear();
     document_versions.clear();
     shutdown_response_received = false;
     shutdown_request_id = 0;
@@ -449,14 +451,6 @@ struct LspClient::Impl {
       buf.consume(content_len);
       return result;
     }
-  }
-
-  void PushWakeEvent() const {
-    const Uint32 event_type = wake_event_type.load(std::memory_order_acquire);
-    if (event_type == 0) return;
-    SDL_Event ev{};
-    ev.type = event_type;
-    SDL_PushEvent(&ev);
   }
 
   // Wait until stdout has data/EOF or an outbound wake arrives. Returns true when
@@ -664,13 +658,10 @@ struct LspClient::Impl {
       }
       if (cb) {
         util::JsonValue captured = std::move(msg);
-        auto ready_fn = [cb = std::move(cb), m = std::move(captured)]() mutable {
+        main_mailbox.Post([cb = std::move(cb), m = std::move(captured)]() mutable {
           util::StartupTrace::Scope scope("LspClient::DispatchResponse");
           cb(std::move(m));
-        };
-        std::lock_guard lock(mutex);
-        ready_callbacks.push_back(std::move(ready_fn));
-        PushWakeEvent();
+        });
       }
     } else if (msg.HasKey("method")) {
       const std::string& method = msg["method"].AsString();
@@ -679,14 +670,17 @@ struct LspClient::Impl {
         const auto& params = msg["params"];
         std::string uri = params["uri"].AsString();
         std::vector<Diagnostic> diags = lsp_protocol::ParseDiagnostics(params["diagnostics"]);
-        std::lock_guard lock(mutex);
-        if (diagnostics_callback) {
-          auto cb = diagnostics_callback;
-          ready_callbacks.push_back([cb = std::move(cb), u = std::move(uri), ds = std::move(diags)]() mutable {
-            cb(std::move(u), std::move(ds));
-          });
+        OnPublishDiagnostics cb;
+        {
+          std::lock_guard lock(mutex);
+          cb = diagnostics_callback;
         }
-        PushWakeEvent();
+        if (cb) {
+          main_mailbox.Post(
+              [cb = std::move(cb), u = std::move(uri), ds = std::move(diags)]() mutable {
+                cb(std::move(u), std::move(ds));
+              });
+        }
       } else if (method == "$/progress") {
         SetProgressReadiness(msg["params"]["value"]);
       }
@@ -1018,7 +1012,7 @@ struct LspClient::Impl {
       test_stub_mode.store(false, std::memory_order_release);
       shutting_down.store(false, std::memory_order_release);
       shutdown_complete.store(true, std::memory_order_release);
-      PushWakeEvent();
+      main_mailbox.PushWake();
       return;
     }
     if (!initialized.load(std::memory_order_acquire)) {
@@ -1042,7 +1036,7 @@ struct LspClient::Impl {
       supports_incremental_sync.store(false, std::memory_order_release);
       shutting_down.store(false, std::memory_order_release);
       shutdown_complete.store(true, std::memory_order_release);
-      PushWakeEvent();
+      main_mailbox.PushWake();
       return;
     }
 
@@ -1114,7 +1108,7 @@ struct LspClient::Impl {
     } else {
       TraceLspLifecycle(language_id, -1, "shutdown-complete");
     }
-    PushWakeEvent();
+    main_mailbox.PushWake();
   }
 
   void BeginShutdown() {

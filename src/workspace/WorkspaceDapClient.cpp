@@ -12,7 +12,7 @@ DapClient::~DapClient() {
 }
 
 void DapClient::SetWakeEventType(Uint32 event_type) {
-  impl_->wake_event_type.store(event_type, std::memory_order_release);
+  impl_->main_mailbox.SetWakeEventType(event_type);
 }
 
 void DapClient::SetEventCallback(EventCallback callback) {
@@ -73,20 +73,11 @@ const std::string& DapClient::LastError() const {
   return impl_->last_error_snapshot;
 }
 
-void DapClient::DrainCallbacks() {
-  std::vector<std::function<void()>> cbs;
-  {
-    std::lock_guard lock(impl_->mutex);
-    cbs.swap(impl_->ready_callbacks);
-  }
-  for (auto& cb : cbs) {
-    cb();
-  }
-}
+void DapClient::DrainCallbacks() { impl_->main_mailbox.Drain(); }
 
 bool DapClient::HasPendingRequests() const {
   std::lock_guard lock(impl_->mutex);
-  return !impl_->pending_requests.empty() || !impl_->ready_callbacks.empty();
+  return !impl_->pending_requests.empty() || impl_->main_mailbox.PendingCount() > 0;
 }
 
 bool DapClient::SendRequestAsync(const std::string& command, util::JsonValue arguments,
@@ -131,14 +122,16 @@ void DapClient::SetTestRequestHandler(
 }
 
 void DapClient::InjectTestEvent(const std::string& event, util::JsonValue body) {
-  std::lock_guard lock(impl_->mutex);
-  if (!impl_->event_callback) {
+  EventCallback cb;
+  {
+    std::lock_guard lock(impl_->mutex);
+    cb = impl_->event_callback;
+  }
+  if (!cb) {
     return;
   }
-  auto cb = impl_->event_callback;
-  impl_->ready_callbacks.push_back(
+  impl_->main_mailbox.Post(
       [cb = std::move(cb), event, body = std::move(body)]() mutable { cb(event, body); });
-  impl_->PushWakeEvent();
 }
 
 void DapClient::BeginShutdown() {

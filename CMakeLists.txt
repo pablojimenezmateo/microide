@@ -205,7 +205,6 @@ set(MICROIDE_CORE_SOURCES
   src/persistence/PersistedRecordDump.cpp
   src/persistence/PersistedRecordReader.cpp
   src/persistence/PersistedRecordWriter.cpp
-  src/plugin/PluginThread.cpp
   src/plugin/PluginLuaInterop.cpp
   src/plugin/PluginLuaBufferProjectInterop.cpp
   src/plugin/PluginLuaContextInterop.cpp
@@ -291,6 +290,8 @@ set(MICROIDE_CORE_SOURCES
   src/util/DurableFile.cpp
   src/util/JsonValue.cpp
   src/util/GitConflictMarkers.cpp
+  src/util/MainThreadMailbox.cpp
+  src/util/SerialWorkQueue.cpp
   src/util/Parse.cpp
   src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
@@ -661,6 +662,9 @@ add_executable(microide_tests
   tests/RegexUtilTests.cpp
   tests/RuntimePathsTests.cpp
   tests/TaskExecutorTests.cpp
+  tests/MainThreadMailboxTests.cpp
+  tests/SerialWorkQueueTests.cpp
+  tests/GenerationTests.cpp
   tests/ProjectBackgroundExecutorTests.cpp
   tests/RenderViewModelBuilderTests.cpp
   tests/TerminalSessionTests.cpp

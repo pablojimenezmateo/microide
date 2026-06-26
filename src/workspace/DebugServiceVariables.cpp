@@ -25,9 +25,9 @@ void DebugService::FocusFrame(int frame_id) {
   CurrentProjectState().debug_variables.BeginFrame(frame_id);
   // A new frame context: in-flight scopes/variables/setVariable for the prior frame
   // (whose variablesReference values the adapter may now recycle) must not apply.
-  const std::uint64_t generation = ++frame_generation_;
+  const std::uint64_t generation = frame_generation_.bump();
   session->RequestScopes(frame_id, [this, generation](std::vector<dap_protocol::DapScope> scopes) {
-    if (generation != frame_generation_) {
+    if (!frame_generation_.is_current(generation)) {
       return;  // a newer frame focus / stop / clear superseded this request
     }
     DebugVariablesModel& model = CurrentProjectState().debug_variables;
@@ -83,12 +83,12 @@ void DebugService::FetchVariablesPage(int reference, int start, int count) {
   // frame switch / stop / clear is dropped — the adapter recycles
   // variablesReference values, so applying it could attach children to an unrelated
   // node of the new frame.
-  const std::uint64_t generation = frame_generation_;
+  const std::uint64_t generation = frame_generation_.current();
   session->RequestVariables(
       reference, start, count,
       [this, reference, start, generation](bool ok,
                                            std::vector<dap_protocol::DapVariable> variables) {
-        if (generation != frame_generation_) {
+        if (!frame_generation_.is_current(generation)) {
           return;
         }
         if (ok) {
@@ -127,14 +127,14 @@ void DebugService::CommitVariableEdit() {
   if (target.has_value() && session != nullptr) {
     const std::string value = model.EditBuffer().text();
     const std::uint32_t node_id = target->node_id;
-    const std::uint64_t generation = frame_generation_;
+    const std::uint64_t generation = frame_generation_.current();
     session->SetVariable(
         target->container_reference, target->name, value,
         [this, node_id, generation](bool ok, dap_protocol::DapSetVariableResult result) {
           // Drop a response that lands after a frame switch / stop: node ids are
           // globally monotonic so a stale id can no longer alias a live node, but
           // guarding here also avoids a pointless rebuild of a superseded tree.
-          if (generation != frame_generation_) {
+          if (!frame_generation_.is_current(generation)) {
             return;
           }
           // Authoritative: apply only the adapter's returned (possibly normalized)
@@ -254,7 +254,7 @@ void DebugService::EvaluateWatches(int frame_id) {
   // (the user added/removed/edited a watch, or stepped) would otherwise land on a
   // reshuffled index and stamp a value onto the wrong expression. Bind every
   // evaluate to this pass's generation and drop late ones.
-  const std::uint64_t generation = ++watch_generation_;
+  const std::uint64_t generation = watch_generation_.bump();
   DebugSession* session = CurrentDapManager().ActiveSession();
   if (session != nullptr) {
     const std::vector<std::string> expressions = watch.Expressions();
@@ -262,7 +262,7 @@ void DebugService::EvaluateWatches(int frame_id) {
       session->RequestEvaluate(
           expressions[i], frame_id, "watch",
           [this, i, generation](bool ok, dap_protocol::DapEvaluateResult result) {
-            if (generation != watch_generation_) {
+            if (!watch_generation_.is_current(generation)) {
               return;
             }
             if (ok) {
@@ -304,12 +304,12 @@ void DebugService::ToggleWatchRow(std::size_t row) {
       const int start = fetch.start;
       // A re-evaluation pass (add/remove/edit/step) clears the watch tree and the
       // adapter recycles references; drop a child page that returns after one.
-      const std::uint64_t generation = watch_generation_;
+      const std::uint64_t generation = watch_generation_.current();
       session->RequestVariables(
           reference, start, fetch.count,
           [this, reference, start, generation](bool ok,
                                                std::vector<dap_protocol::DapVariable> variables) {
-            if (generation != watch_generation_) {
+            if (!watch_generation_.is_current(generation)) {
               return;
             }
             if (ok) {
@@ -347,11 +347,11 @@ void DebugService::CommitWatchEdit() {
   if (target.has_value() && session != nullptr) {
     const std::string value = model.EditBuffer().text();
     const std::uint32_t node_id = target->node_id;
-    const std::uint64_t generation = watch_generation_;
+    const std::uint64_t generation = watch_generation_.current();
     session->SetVariable(target->container_reference, target->name, value,
                          [this, node_id, generation](
                              bool ok, dap_protocol::DapSetVariableResult result) {
-                           if (generation != watch_generation_) {
+                           if (!watch_generation_.is_current(generation)) {
                              return;
                            }
                            if (ok) {
