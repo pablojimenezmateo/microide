@@ -780,6 +780,110 @@ void PluginHost::QuerySignatureHelpAsync(
 #endif
 }
 
+void PluginHost::QueryDocumentSymbolsAsync(
+    std::string language_id,
+    std::filesystem::path path,
+    std::function<void(std::vector<DocumentSymbolNode>, std::string)> on_result) {
+  if (!impl_->enabled()) {
+    on_result({}, {});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct QueryResult {
+    std::vector<DocumentSymbolNode> items;
+    std::string error;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:document_symbols",
+      [this, language_id = std::move(language_id), path = std::move(path)]() {
+        QueryResult result;
+        result.items = impl_->QueryLanguageDocumentSymbols(language_id, path, &result.error);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(std::move(result.items), std::move(result.error));
+      });
+#else
+  (void)language_id;
+  (void)path;
+  on_result({}, {});
+#endif
+}
+
+void PluginHost::QueryHoverAsync(std::filesystem::path path,
+                                 std::size_t line,
+                                 std::size_t column,
+                                 std::function<void(bool, HoverResult)> on_result) {
+  if (!impl_->enabled() || path.empty() || line == 0 || column == 0) {
+    on_result(false, HoverResult{});
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  const std::filesystem::path resolved_path =
+      path_interop::ResolveRuntimePath(impl_->current_project_root, path).lexically_normal();
+  struct QueryResult {
+    bool ok = false;
+    HoverResult hover;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:hover",
+      [this, resolved_path, line, column]() {
+        QueryResult result;
+        result.ok = hover_query_interop::QueryHover(
+            impl_->hover_provider_order, impl_->hovers, resolved_path, line, column,
+            [this](const runtime_types::HoverProvider& provider,
+                   const std::filesystem::path& hover_path, std::size_t hover_line,
+                   std::size_t hover_column, HoverResult* hover_result,
+                   std::string* hover_error_message) {
+              return impl_->QueryHoverProvider(provider, hover_path, hover_line, hover_column,
+                                               hover_result, hover_error_message);
+            },
+            &result.hover, nullptr);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(result.ok, std::move(result.hover));
+      });
+#else
+  (void)resolved_path;
+  on_result(false, HoverResult{});
+#endif
+}
+
+void PluginHost::SnapshotSidebarAsync(
+    std::string id,
+    std::function<void(bool, std::vector<SidebarItem>, std::string)> on_result) {
+  // Resolve an unknown provider synchronously — there is nothing to run on the worker.
+  if (impl_->sidebars.find(id) == impl_->sidebars.end()) {
+    on_result(false, {}, "unknown plugin sidebar: " + id);
+    return;
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  struct QueryResult {
+    bool ok = false;
+    std::vector<SidebarItem> items;
+    std::string error;
+  };
+  impl_->RunQueryAsync<QueryResult>(
+      "query:sidebar_snapshot",
+      [this, id = std::move(id)]() {
+        QueryResult result;
+        const auto it = impl_->sidebars.find(id);
+        if (it == impl_->sidebars.end()) {
+          result.error = "unknown plugin sidebar: " + id;
+          return result;
+        }
+        result.ok = impl_->SnapshotSidebarProvider(it->second, &result.items, &result.error);
+        return result;
+      },
+      [on_result = std::move(on_result)](QueryResult result) {
+        on_result(result.ok, std::move(result.items), std::move(result.error));
+      });
+#else
+  on_result(false, {}, "Lua plugin runtime unavailable");
+#endif
+}
+
 std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
     std::string_view language_id,
     const std::filesystem::path& path,

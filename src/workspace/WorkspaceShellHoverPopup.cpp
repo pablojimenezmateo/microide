@@ -484,7 +484,7 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
   // The (const) resolver records a debug-value cache miss here; clear it first so a
   // stale request from a previous position is not re-issued.
   pending_hover_eval_.valid = false;
-  const auto target = [&]() -> std::optional<EditorHoverTarget> {
+  auto target = [&]() -> std::optional<EditorHoverTarget> {
     util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateEditorHover::TargetAtPosition");
     return EditorHoverTargetAtPosition(x, y);
   }();
@@ -493,6 +493,18 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
   if (pending_hover_eval_.valid) {
     debug_service_.EvaluateHover(pending_hover_eval_.frame_id, pending_hover_eval_.expression);
     pending_hover_eval_.valid = false;
+  }
+  // Cache miss for a plugin hover: dispatch the worker query. Its completion stores
+  // the result and re-drives this resolution into a cache hit (popup), all without
+  // blocking the UI on the plugin's hover provider.
+  if (plugin_hover_cache_.state == PluginHoverCache::State::Kickoff) {
+    KickOffPluginHover(plugin_hover_cache_.path, plugin_hover_cache_.line,
+                       plugin_hover_cache_.column);
+    // When no worker is wired (the query ran inline), the cache already holds the
+    // result; re-resolve so the popup appears this frame instead of the next one.
+    if (plugin_hover_cache_.state != PluginHoverCache::State::Pending) {
+      target = EditorHoverTargetAtPosition(x, y);
+    }
   }
   if (target.has_value()) {
     if (!previous_target.has_value() || *previous_target != *target) {
@@ -513,6 +525,31 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     ++editor_hover_target_generation_;
   }
   active_editor_hover_target_.reset();
+}
+
+void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::size_t line,
+                                        std::size_t column) {
+  // Mark the cell in flight so the const resolver does not re-kick while we wait.
+  plugin_hover_cache_.state = PluginHoverCache::State::Pending;
+  plugin_runtime_.Host().QueryHoverAsync(
+      path, line, column,
+      [this, path, line, column](bool ok, plugin::PluginHost::HoverResult result) {
+        // Apply only if we are still waiting on this exact cell (not superseded by
+        // a newer hover position).
+        if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
+            !plugin_hover_cache_.Matches(path, line, column)) {
+          return;
+        }
+        if (ok) {
+          plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
+          plugin_hover_cache_.result = std::move(result);
+        } else {
+          plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+        }
+        // Re-resolve at the current mouse position on the next frame -> cache hit.
+        QueueEditorHoverRefresh();
+        RequestFocusedEditorRedraw();
+      });
 }
 
 std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEditorBlamePopupLayout()

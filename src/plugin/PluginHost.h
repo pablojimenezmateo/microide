@@ -677,6 +677,21 @@ class PluginHost {
       std::size_t line,
       std::size_t column,
       std::function<void(bool, SignatureHelpResult, std::string)> on_result);
+  void QueryDocumentSymbolsAsync(
+      std::string language_id,
+      std::filesystem::path path,
+      std::function<void(std::vector<DocumentSymbolNode>, std::string)> on_result);
+  // Async hover query. `on_result(ok, hover)` runs on the UI-thread drain; ok=false
+  // means no provider answered. Mouse-driven, so a superseded request is dropped.
+  void QueryHoverAsync(std::filesystem::path path,
+                       std::size_t line,
+                       std::size_t column,
+                       std::function<void(bool, HoverResult)> on_result);
+  // Async sidebar snapshot. `on_result(ok, items, error)` runs on the UI-thread
+  // drain; an unknown provider resolves synchronously (no worker dispatch).
+  void SnapshotSidebarAsync(
+      std::string id,
+      std::function<void(bool, std::vector<SidebarItem>, std::string)> on_result);
   std::vector<CodeActionCandidate> QueryCodeActions(std::string_view language_id,
                                                     const std::filesystem::path& path,
                                                     std::size_t start_line,

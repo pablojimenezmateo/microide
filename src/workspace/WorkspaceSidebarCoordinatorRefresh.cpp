@@ -263,23 +263,38 @@ bool SidebarCoordinator::RefreshPlugin() {
     return false;
   }
 
-  std::string error_message;
-  if (!plugin_runtime_.Host().SnapshotSidebar(state_.sidebar.view_id, &state_.sidebar.plugin.items,
-                                              &error_message)) {
-    state_.sidebar.plugin.error = std::move(error_message);
-    RecomputePluginSidebarPlaceholder();
-    if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
-      operations_.request_sidebar_redraw();
-    }
-    return false;
-  }
-  ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
-                            &state_.sidebar.plugin.selected_index);
+  // Show the (empty) loading state immediately; the snapshot runs on the plugin
+  // worker and fills items in on the drain without blocking the UI.
+  const std::string request_view_id = state_.sidebar.view_id;
   RecomputePluginSidebarPlaceholder();
-  RevealSelectedPluginLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
     operations_.request_sidebar_redraw();
   }
+
+  plugin_runtime_.Host().SnapshotSidebarAsync(
+      request_view_id,
+      [this, request_view_id](bool ok, std::vector<plugin::PluginHost::SidebarItem> items,
+                              std::string error_message) {
+        if (state_.sidebar.view_id != request_view_id) {
+          return;  // superseded: the active sidebar view changed
+        }
+        state_.sidebar.plugin.items.clear();
+        state_.sidebar.plugin.error.clear();
+        if (!ok) {
+          state_.sidebar.plugin.error = std::move(error_message);
+        } else {
+          state_.sidebar.plugin.items = std::move(items);
+        }
+        ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
+                                  &state_.sidebar.plugin.selected_index);
+        RecomputePluginSidebarPlaceholder();
+        if (ok) {
+          RevealSelectedPluginLine();
+        }
+        if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Plugin) {
+          operations_.request_sidebar_redraw();
+        }
+      });
   return true;
 }
 
@@ -292,25 +307,51 @@ bool SidebarCoordinator::RefreshOutline() {
 
   editor::TextViewport* viewport =
       operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
-  if (viewport != nullptr && !viewport->path().empty()) {
-    const std::string language_id = DetectViewportLanguageId(*viewport);
-    std::string error_message;
-    const auto symbols =
-        plugin_runtime_.Host().QueryDocumentSymbols(language_id, viewport->path(), &error_message);
-    if (symbols.empty() && !error_message.empty()) {
-      state_.sidebar.plugin.error = std::move(error_message);
+  if (viewport == nullptr || viewport->path().empty()) {
+    RecomputePluginSidebarPlaceholder();
+    if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
+      operations_.request_sidebar_redraw();
     }
-    FlattenDocumentSymbols(symbols, viewport->path(), 0, &state_.sidebar.plugin.items);
+    return false;
   }
 
-  ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
-                            &state_.sidebar.plugin.selected_index);
+  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::filesystem::path request_path = viewport->path();
+  // Show the loading state immediately; document symbols are queried on the worker
+  // and flattened in on the drain without blocking the UI.
   RecomputePluginSidebarPlaceholder();
-  RevealSelectedPluginLine();
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
     operations_.request_sidebar_redraw();
   }
-  return !state_.sidebar.plugin.items.empty();
+
+  plugin_runtime_.Host().QueryDocumentSymbolsAsync(
+      language_id, request_path,
+      [this, request_path](std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
+                           std::string error_message) {
+        // Superseded if the user switched away from the outline or changed buffer.
+        if (state_.sidebar.view_id != "outline") {
+          return;
+        }
+        editor::TextViewport* current =
+            operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+        if (current == nullptr || current->path() != request_path) {
+          return;
+        }
+        state_.sidebar.plugin.items.clear();
+        state_.sidebar.plugin.error.clear();
+        if (symbols.empty() && !error_message.empty()) {
+          state_.sidebar.plugin.error = std::move(error_message);
+        }
+        FlattenDocumentSymbols(symbols, request_path, 0, &state_.sidebar.plugin.items);
+        ClampSelectionToItemCount(state_.sidebar.plugin.items.size(),
+                                  &state_.sidebar.plugin.selected_index);
+        RecomputePluginSidebarPlaceholder();
+        RevealSelectedPluginLine();
+        if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Outline) {
+          operations_.request_sidebar_redraw();
+        }
+      });
+  return true;
 }
 
 void SidebarCoordinator::RecomputePluginSidebarPlaceholder() {

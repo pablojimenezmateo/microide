@@ -463,6 +463,29 @@
   };
   mutable PendingHoverEval pending_hover_eval_;
 
+  // Async plugin-hover cache. The const hover resolver classifies the cursor cell
+  // against it: Resolved -> popup, Kickoff/Pending/Failed -> nothing. On a Miss it
+  // records a Kickoff; UpdateEditorHover then dispatches the worker query, whose
+  // completion stores the result and re-drives the hover into a hit. Replaces the
+  // old synchronous QueryHover-on-the-hit-test-path, so a slow plugin hover
+  // provider never blocks the UI.
+  struct PluginHoverCache {
+    enum class State { Empty, Kickoff, Pending, Resolved, Failed };
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+    State state = State::Empty;
+    plugin::PluginHost::HoverResult result;
+    bool Matches(const std::filesystem::path& other_path, std::size_t other_line,
+                 std::size_t other_column) const {
+      return state != State::Empty && line == other_line && column == other_column &&
+             path == other_path;
+    }
+  };
+  mutable PluginHoverCache plugin_hover_cache_;
+  void KickOffPluginHover(const std::filesystem::path& path, std::size_t line,
+                          std::size_t column);
+
   enum class ProjectOpenDialogLaunchResult {
     Launched,
     AlreadyOpen,

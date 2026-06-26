@@ -2268,6 +2268,70 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// QueryHoverAsync dispatches to the worker and delivers on the UI-thread drain.
+// Verified under TSAN.
+void TestPluginHostQueryHoverAsyncDeliversThroughWorker() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "async hover fixture\n");
+  WriteFile(source, "x\n");
+
+  WritePluginInit(
+      global_plugins, "async-hover",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "async.hover",
+  setup = function(ctx)
+    ctx.commands.add("async.hover.noop", function() end)
+    ctx.hover.add({
+      id = "h",
+      provide = function(buffer, position)
+        return { title = "T", content = "hover@" .. tostring(position.line) }
+      end,
+    })
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);
+  host.SetWorker(&thread);
+
+  Expect(host.Reload(project_root), "async hover fixture should load");
+
+  bool delivered = false;
+  bool ok = false;
+  PluginHost::HoverResult hover;
+  host.QueryHoverAsync(source, 1, 1,
+                       [&](bool query_ok, PluginHost::HoverResult result) {
+                         ok = query_ok;
+                         hover = std::move(result);
+                         delivered = true;
+                       });
+  Expect(!delivered, "the hover result must not be delivered synchronously with a worker wired");
+
+  std::string error_message;
+  std::string feedback;
+  host.ExecuteCommand("async.hover.noop", {}, &error_message, &feedback);
+  const int drained = thread.DrainMainThreadActions();
+  Expect(drained > 0 && delivered && ok, "draining should deliver the async hover result");
+  Expect(hover.content == "hover@1", "the async hover query should return the provider's content");
+
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 // ExecuteCommandAsync resolves "handled" synchronously (HasCommand) but runs the
 // handler on the worker and delivers its outcome on the UI-thread drain. Verified
 // under TSAN.
@@ -2371,6 +2435,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostRoutesEventsThroughWorkerThread);
   AddTest(tests, "PluginHost/QueryCompletionsAsyncDeliversThroughWorker",
           TestPluginHostQueryCompletionsAsyncDeliversThroughWorker);
+  AddTest(tests, "PluginHost/QueryHoverAsyncDeliversThroughWorker",
+          TestPluginHostQueryHoverAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/ExecuteCommandAsyncDeliversThroughWorker",
           TestPluginHostExecuteCommandAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/Phase4ContributionApis", TestPluginHostPhase4ContributionApis);

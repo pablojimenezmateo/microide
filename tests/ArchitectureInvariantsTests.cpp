@@ -102,8 +102,11 @@ void TestArchitectureInvariants() {
              // surfaces an async plugin command's outcome (run on the worker,
              // delivered on the drain) for both the keybinding and command-prompt
              // entry points instead of duplicating the logic at each.
+             // 1616: +16 for the PluginHoverCache state machine + kickoff helper that
+             // moves plugin hover off the synchronous hit-test path onto the worker
+             // (sibling of the existing EditorHoverTarget / PendingHoverEval state).
              return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
-                                                     1600);
+                                                     1616);
            });
 
   bool hard_failure = false;
