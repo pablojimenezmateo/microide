@@ -5,7 +5,9 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/HighlightPrefetchService.h"
 #include "editor/SyntaxHighlighter.h"
+#include "editor/TextBuffer.h"
 #include "editor/TextViewport.h"
+#include "perf/AllocationCounter.h"
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
 
@@ -1267,6 +1269,51 @@ void TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists() {
          "CMakeLists.txt should still resolve to the CMake syntax definition");
 }
 
+void TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent() {
+  using microide::editor::SyntaxHighlighter;
+  using microide::editor::TextBuffer;
+  namespace perf = microide::tests::perf;
+
+  // InitialState only inspects a bounded head (kSignatureDetectLineLimit lines),
+  // so its allocation cost must be independent of document size. The previous
+  // implementation snapshot-copied the whole document (one heap allocation per
+  // line) before detection -- this guards against reintroducing that.
+  const std::filesystem::path path = "/tmp/initial-state-alloc.txt";
+
+  const auto make_buffer = [](std::size_t line_count) {
+    std::string content;
+    content.reserve(line_count * 40);
+    for (std::size_t i = 0; i < line_count; ++i) {
+      content += "the quick brown fox jumps over the lazy\n";
+    }
+    TextBuffer buffer;
+    buffer.ResetFromText(std::move(content));
+    return buffer;
+  };
+
+  const TextBuffer small = make_buffer(1000);
+  const TextBuffer large = make_buffer(100000);
+
+  // Warm one-time registry init so it does not skew the measured deltas.
+  (void)SyntaxHighlighter::InitialState(path, small);
+
+  const auto before_small = perf::Allocations::Snapshot();
+  (void)SyntaxHighlighter::InitialState(path, small);
+  const auto small_delta = perf::Allocations::DeltaSince(before_small);
+
+  const auto before_large = perf::Allocations::Snapshot();
+  (void)SyntaxHighlighter::InitialState(path, large);
+  const auto large_delta = perf::Allocations::DeltaSince(before_large);
+
+  // The 100x-larger document must not cost ~100x the bytes. A whole-document
+  // materialization of the large buffer would allocate megabytes (>> head);
+  // generous additive slack still catches that by orders of magnitude.
+  Expect(large_delta.bytes_allocated < small_delta.bytes_allocated + 64 * 1024,
+         "InitialState bytes must not scale with document size (bounded head only)");
+  Expect(large_delta.allocations < small_delta.allocations + 256,
+         "InitialState allocation count must not scale with document size");
+}
+
 void TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -1356,7 +1403,8 @@ void TestSyntaxHighlightNestedRegionResumesParentScope() {
   using microide::editor::SyntaxState;
   const std::filesystem::path path = "/tmp/regions.nest";
 
-  SyntaxState state = SyntaxHighlighter::InitialState(path, {});
+  const std::vector<std::string> no_lines;
+  SyntaxState state = SyntaxHighlighter::InitialState(path, no_lines);
   // AdvanceState must agree with HighlightLine's end_state at every step.
   const auto step = [&](std::string_view text) {
     const auto highlighted = SyntaxHighlighter::HighlightLine(text, path, state);
@@ -2035,6 +2083,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeKeepsCMakeLists",
           TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
+  AddTest(tests, "TextViewport/RuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent",
+          TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
   AddTest(tests, "TextViewport/SyntaxHighlightNestedRegionResumesParentScope",

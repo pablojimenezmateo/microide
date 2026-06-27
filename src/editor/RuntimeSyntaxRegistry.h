@@ -43,7 +43,10 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
     std::vector<std::string>* errors = nullptr);
 void EnsureInitialized();
 std::size_t RegistryRevision();
-SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std::string>& lines);
+// Initial highlight state for a document. Like DetectFiletype, this only
+// inspects a bounded head (signature/shebang scan), so passing a LineSpan over
+// the live buffer never materializes the whole file.
+SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines);
 // Filetype detection only inspects the path and a bounded head of the document
 // (signature/shebang scan). Pass a LineSpan over the live buffer; only the head
 // is read, so no whole-document materialization happens on per-frame callers.

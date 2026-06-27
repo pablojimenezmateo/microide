@@ -5,8 +5,7 @@
 
 namespace microide::editor {
 
-SyntaxState SyntaxHighlighter::InitialState(const std::filesystem::path& path,
-                                            const std::vector<std::string>& lines) {
+SyntaxState SyntaxHighlighter::InitialState(const std::filesystem::path& path, LineSpan lines) {
   util::PerformanceTrace::Scope perf_scope("SyntaxHighlighter::InitialState");
   return runtime_syntax::DetectState(path, lines);
 }
