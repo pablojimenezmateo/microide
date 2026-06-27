@@ -1,26 +1,8 @@
 #include "plugin/PluginPathInterop.h"
 
-#include <system_error>
+#include "util/PathContainment.h"
 
 namespace microide::plugin::path_interop {
-namespace {
-
-// True when `normalized` is `root` itself notwithstanding, strictly inside `root`. Uses the
-// same parent-prefix test the buffer-table builder relies on: lexically_relative yields a
-// path beginning with ".." exactly when the target escapes the root.
-bool WithinRoot(const std::filesystem::path& normalized, const std::filesystem::path& root) {
-  if (root.empty()) {
-    return false;
-  }
-  const std::filesystem::path relative = normalized.lexically_relative(root);
-  if (relative.empty()) {
-    return false;
-  }
-  return !(relative.begin() != relative.end() &&
-           *relative.begin() == std::filesystem::path(".."));
-}
-
-}  // namespace
 
 std::string Basename(const std::filesystem::path& path) {
   return path.filename().empty() ? path.lexically_normal().string() : path.filename().string();
@@ -48,7 +30,7 @@ std::optional<std::filesystem::path> ContainPath(
   // Tier 1: lexical containment. Rejects every `..` escape without touching the filesystem.
   bool lexical_ok = false;
   for (const std::filesystem::path& root : allowed_roots) {
-    if (WithinRoot(normalized, root.lexically_normal())) {
+    if (util::PathWithinRoot(normalized, root.lexically_normal())) {
       lexical_ok = true;
       break;
     }
@@ -57,25 +39,15 @@ std::optional<std::filesystem::path> ContainPath(
     return std::nullopt;
   }
 
-  // Tier 2: symlink containment. Only runs once the lexical test passed and the target
-  // exists, so missing write targets stay allowed and escapes already cost nothing.
-  std::error_code exists_error;
-  if (!std::filesystem::exists(normalized, exists_error) || exists_error) {
-    return normalized;
-  }
-  std::error_code canon_error;
-  const std::filesystem::path canonical = std::filesystem::weakly_canonical(normalized, canon_error);
-  if (canon_error) {
-    return normalized;  // Lexical test already passed; tolerate transient canonicalization errors.
-  }
+  // Tier 2: symlink containment. weakly_canonical resolves symlinks in the existing path
+  // prefix even when the leaf does not exist yet, so a not-yet-created write target reached
+  // through a symlinked parent directory is canonicalized and rejected here rather than
+  // escaping the sandbox. Fails closed: ResolveWithinRoot returns nullopt on escape or any
+  // canonicalization error, so containment must be provable for the path to be allowed.
   for (const std::filesystem::path& root : allowed_roots) {
-    std::error_code root_error;
-    const std::filesystem::path canonical_root = std::filesystem::weakly_canonical(root, root_error);
-    if (root_error) {
-      continue;
-    }
-    if (WithinRoot(canonical, canonical_root)) {
-      return canonical;
+    if (std::optional<std::filesystem::path> contained =
+            util::ResolveWithinRoot(normalized, root)) {
+      return contained;
     }
   }
   return std::nullopt;

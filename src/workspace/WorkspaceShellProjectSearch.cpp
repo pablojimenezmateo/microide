@@ -8,6 +8,7 @@
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "util/PathContainment.h"
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
 
@@ -382,6 +383,14 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
         updated_content, context_.current_project_state.overlay.workflow.project_search.query.text(),
         context_.current_project_state.overlay.workflow.project_search.replace_text.text(), case_sensitive);
     if (replacements == 0) {
+      continue;
+    }
+
+    // Confine the write to the project tree even when an indexed path is (or is reached
+    // through) a symlink. weakly_canonical resolves the link; a target whose real location
+    // escapes the root is skipped so Replace-All cannot truncate files outside the workspace
+    // (e.g. an attacker-authored repo containing `vendor -> /home/victim`).
+    if (!util::ResolveWithinRoot(normalized_absolute, context_.current_project_state.root)) {
       continue;
     }
 

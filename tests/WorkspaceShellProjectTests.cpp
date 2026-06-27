@@ -2942,6 +2942,45 @@ void TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan() {
          "project search start/query refresh/replace-all after index readiness should not trigger project scans");
 }
 
+void TestWorkspaceShellProjectReplaceAllSkipsSymlinkEscapingRoot() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  // A file outside the project tree, reachable only through an in-tree symlink.
+  const std::filesystem::path external = temp_dir.path() / "outside" / "secret.txt";
+  WriteFile(external, "needle stays\n");
+  // A normal in-tree file that legitimately gets replaced.
+  WriteFile(root / "src" / "in_tree.cpp", "needle here\n");
+
+  std::error_code link_error;
+  std::filesystem::create_symlink(external, root / "escape.txt", link_error);
+  Expect(!link_error, "replace-all symlink fixture should create the escaping symlink");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "replace-all symlink fixture should open the project");
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("escape.txt"), true,
+                              std::chrono::milliseconds(1000)),
+         "replace-all symlink fixture should index the symlinked file");
+
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "replace-all symlink fixture should complete the search");
+  // The symlinked file's content is read and matched like any other indexed file.
+  Expect(!WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "replace-all symlink fixture should find matches in indexed files");
+
+  WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
+         "replace-all symlink fixture should refresh after replace-all");
+
+  // The in-tree file is rewritten; the file outside the project root is left untouched
+  // because the write would have escaped the workspace through the symlink.
+  Expect(ReadFile(root / "src" / "in_tree.cpp").find("needle") == std::string::npos,
+         "replace-all should rewrite the legitimate in-tree match");
+  Expect(ReadFile(external) == "needle stays\n",
+         "replace-all must not write through a symlink that escapes the project root");
+}
+
 void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3232,6 +3271,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFileFinderUsesMaintainedIndexWithoutProjectScan);
   AddTest(tests, "WorkspaceShell/ProjectSearchUsesMaintainedIndexWithoutProjectScan",
           TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan);
+  AddTest(tests, "WorkspaceShell/ProjectReplaceAllSkipsSymlinkEscapingRoot",
+          TestWorkspaceShellProjectReplaceAllSkipsSymlinkEscapingRoot);
   AddTest(tests, "WorkspaceShell/InjectedFileIndexBatchUpdatesFinderAndSearch",
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",

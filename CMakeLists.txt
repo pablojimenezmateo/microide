@@ -677,6 +677,7 @@ add_executable(microide_tests
   tests/PluginSurfaceCoverageTests.cpp
   tests/PluginThreadTests.cpp
   tests/ParseTests.cpp
+  tests/PathContainmentTests.cpp
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp
   tests/architecture/ArchitectureRuleHelpers.cpp
