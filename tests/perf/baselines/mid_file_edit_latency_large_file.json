@@ -1,0 +1,1 @@
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":284090,"p50_allocations":166041,"p95_allocations":219164.14999999991,"p95_wall_ms":244.01960664999999,"max_wall_ms":260.638328,"p50_wall_ms":227.88529799999998},"scenario":"mid_file_edit_latency_large_file"}

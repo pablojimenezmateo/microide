@@ -178,6 +178,15 @@ void WorkspaceShell::RequestActiveHighlightPrefetch() {
   if (line_count == 0) {
     return;
   }
+  // Off-thread checkpoint backfill for a deep cold paint: when the synchronous
+  // highlight-state replay was capped short (e.g. session restore scrolled deep
+  // into a large file), this hands the worker a bounded chain segment so the
+  // chain catches up without freezing the frame. Checked before the visible-band
+  // gap early-out so a deep jump that already tokenized its visible window
+  // (approximately) still converges to exact highlighting.
+  if (auto backfill = viewport->TakeHighlightCheckpointBackfillRequest()) {
+    highlight_prefetch_service_.RequestCheckpoints(std::move(*backfill));
+  }
   // Prefetch the visible band plus a look-ahead window below it so scrolling
   // down lands on already-tokenized lines instead of stalling the render path.
   const std::size_t top =
@@ -198,6 +207,11 @@ void WorkspaceShell::ConsumeHighlightPrefetchResults() {
     // results whose document revision has moved on).
     if (active_viewport != nullptr && result.viewport == active_viewport) {
       active_viewport->InstallPrefetchedHighlights(result);
+    }
+  }
+  for (const auto& result : highlight_prefetch_service_.DrainCheckpointResults()) {
+    if (active_viewport != nullptr && result.viewport == active_viewport) {
+      active_viewport->InstallHighlightCheckpoints(result);
     }
   }
 }

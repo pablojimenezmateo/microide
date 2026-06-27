@@ -1058,6 +1058,54 @@ gated-behind-`DebugEnabled()` model. This was the merge blocker for the branch.
   (runner unavailable); no perf baselines were moved — consistent with "no regression on the no-plugin
   path." Local dummy/Xvfb numbers above are advisory per `perf-harness.md`.
 
+## Deep First-Paint Freeze Fix (2026-06-27)
+
+Closes the **2514 ms** first real-window `WorkspaceRootView::Render` recorded in the
+Throughput pass (§4.8 above) when restoring `synthetic_kernel.cpp` deep-scrolled.
+
+Root cause: `TextViewport::HighlightStateBeforeLine` replayed the syntax-state
+checkpoint chain from line 0 to the visible line **synchronously on the main
+thread**. A top-of-file open replays ~0 lines (the existing
+`large_file_open_first_paint` scenario stays ~25 ms p50), but a session restore
+scrolled deep into a large file replayed tens of thousands of lines before the
+first frame. The harness had no deep-restore scenario, so the freeze was invisible
+to the gate.
+
+Fix:
+
+- New harness scenario `large_file_restore_deep_scroll_first_paint` reproduces it
+  (jump to line 45 000 in the 50k C++ fixture with a cold highlight cache, inside
+  the measured region). Sibling `mid_file_edit_latency_large_file` is the oracle
+  for the later piece-tree migration.
+- `HighlightStateBeforeLine` now caps synchronous replay: when the exact resume
+  state is more than `kMaxSyncHighlightReplayLines` (512) past the nearest valid
+  checkpoint, it returns the nearest checkpoint's state as an approximation
+  (marking the result inexact so `HighlightedLineTokens` does not promote it to the
+  authoritative per-line cache) and arms an off-thread checkpoint backfill.
+- `HighlightPrefetchService::RequestCheckpoints` + `ComputeHighlightCheckpoints`
+  replay the chain segment on the existing background worker (sparse output: one
+  `SyntaxState` per 128-line checkpoint, not per-line tokens). The main thread folds
+  results in via `InstallHighlightCheckpoints`, which clears the small token cache so
+  approximate deep-jump tokens recompute exactly on the next repaint. Convergence is
+  chunked across repaints (16 384 lines/chunk).
+
+Evidence (advisory, `SDL_VIDEODRIVER=dummy`):
+
+- `large_file_restore_deep_scroll_first_paint` measured phase
+  `deep_restore.jump_and_first_paint`: **~360 ms → ~3.4 ms** (~106×); p50 allocations
+  257 629 → 122 418.
+- Correctness: new tests `TextViewport/CheckpointBackfillConvergesToExactMultilineState`
+  and `.../HighlightCheckpointBackfillServiceRunsOnWorkerThread` assert the backfill
+  converges to exact multiline (block-comment) state at depth; existing
+  `HighlightCheckpointsBoundFarReplay` / `EditingNearTailDoesNotRebuildFarCheckpoints`
+  updated for the bounded-sync + async-converge model.
+- Full `ctest` green; ASAN clean; TSAN clean on the threaded backfill path
+  (`setarch -R`, no sudo sysctl available locally).
+
+Pending: authoritative `perf-runner-v1` baselines (local numbers are advisory per
+`perf-harness.md`); the per-line `AdvanceState` cost on heavy-syntax files remains
+the residual first-paint cost and is orthogonal (syntax-engine / data-structure work).
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout

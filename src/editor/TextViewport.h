@@ -232,6 +232,17 @@ class TextViewport {
   HighlightPrefetchRequest BuildHighlightPrefetchRequest(std::size_t start_line,
                                                          std::size_t count) const;
   void InstallPrefetchedHighlights(const HighlightPrefetchResult& result);
+  // Off-thread checkpoint-chain backfill. A deep first paint (e.g. session
+  // restore scrolled deep into a large file) needs the syntax state before a far
+  // line; building it synchronously replayed from line 0 and froze the frame.
+  // The synchronous path now caps its replay and, when it falls short, records a
+  // backfill target. TakeHighlightCheckpointBackfillRequest hands the shell one
+  // worker request (bounded line copy) that advances the chain; the worker's
+  // HighlightCheckpointResult is folded back via InstallHighlightCheckpoints.
+  // Returns nullopt when no backfill is pending. Convergence is chunked across
+  // repaints: each install lets the next synchronous replay resume deeper.
+  std::optional<HighlightCheckpointRequest> TakeHighlightCheckpointBackfillRequest() const;
+  void InstallHighlightCheckpoints(const HighlightCheckpointResult& result);
   bool syntax_highlighting_enabled() const { return !document_->placeholder; }
   TextViewportCacheStats CacheStats() const;
   void ResetCacheStats() const;
@@ -453,6 +464,19 @@ class TextViewport {
   mutable std::vector<SyntaxState> highlight_checkpoints_;
   // Same lazy-invalidation pattern for the periodic checkpoint vector.
   mutable std::size_t highlight_checkpoints_valid_through_ = 0;
+  // Set when a synchronous highlight-state replay was capped short of the line a
+  // paint requested (deep cold jump). The shell drains this via
+  // TakeHighlightCheckpointBackfillRequest to schedule off-thread chain catch-up.
+  // 0 means "no backfill pending". Reset whenever the highlight caches are
+  // invalidated (content/syntax revision change).
+  mutable std::size_t pending_checkpoint_backfill_target_line_ = 0;
+  // False when the most recent HighlightStateBeforeLine returned an APPROXIMATE
+  // resume state (a deep jump whose exact state would have needed an over-cap
+  // replay). HighlightedLineTokens uses this to render immediately without
+  // poisoning the authoritative per-line state cache; the off-thread backfill
+  // then makes a later repaint exact (InstallHighlightCheckpoints clears the
+  // token cache so approximate tokens are recomputed).
+  mutable bool last_highlight_state_exact_ = true;
   mutable std::uint64_t highlight_state_content_revision_ = 0;
   mutable std::uint64_t highlight_state_syntax_revision_ = 0;
   mutable std::size_t highlight_queries_ = 0;

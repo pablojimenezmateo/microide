@@ -25,8 +25,15 @@ class HighlightPrefetchService {
   // viewport, so rapid scroll/edit supersedes an unstarted request.
   void Request(HighlightPrefetchRequest request);
 
+  // Queues an off-thread checkpoint-chain backfill (deep first-paint catch-up).
+  // Deduplicated per originating viewport like Request.
+  void RequestCheckpoints(HighlightCheckpointRequest request);
+
   // Main thread: removes and returns all completed results.
   std::vector<HighlightPrefetchResult> DrainResults();
+
+  // Main thread: removes and returns all completed checkpoint-backfill results.
+  std::vector<HighlightCheckpointResult> DrainCheckpointResults();
 
   // Cancels queued work and joins the worker thread.
   void Shutdown();
@@ -36,6 +43,8 @@ class HighlightPrefetchService {
   std::function<void()> wake_;  // set once before any Request; read on the worker
   std::mutex results_mutex_;
   std::vector<HighlightPrefetchResult> results_;
+  std::mutex checkpoint_results_mutex_;
+  std::vector<HighlightCheckpointResult> checkpoint_results_;
 };
 
 }  // namespace microide::editor

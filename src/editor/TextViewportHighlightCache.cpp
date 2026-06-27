@@ -13,6 +13,7 @@
 #include "editor/TextViewportInternal.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "editor/SyntaxHighlighter.h"
 #include "util/PerformanceCounters.h"
@@ -23,6 +24,21 @@ namespace microide::editor {
 namespace {
 
 constexpr std::size_t kHighlightCacheLimit = 256;
+
+// Upper bound on how many lines a *synchronous* highlight-state replay may
+// advance in one call. A deep cold jump (session restore scrolled deep into a
+// large file) previously replayed from the nearest valid checkpoint all the way
+// to the visible line on the main thread — hundreds of ms to seconds. We cap the
+// synchronous work to keep the frame interactive; the remainder is filled
+// off-thread via the checkpoint backfill. Sized comfortably above a screenful
+// (and the look-ahead prefetch window) so ordinary scrolling never trips the
+// backfill path, but far below a large file so a deep jump defers, not freezes.
+constexpr std::size_t kMaxSyncHighlightReplayLines = 512;
+
+// Max lines copied into a single off-thread checkpoint-backfill request. Deep
+// gaps converge across several repaints (each install lets the next synchronous
+// replay resume deeper), bounding both the per-request copy and worker burst.
+constexpr std::size_t kCheckpointBackfillChunkLines = 16384;
 
 bool IsCachedHighlightState(const SyntaxState& state) {
   return state.definition_id != 0;
@@ -53,6 +69,7 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   util::PerformanceTrace::Scope miss_scope("TextViewport::HighlightedLineTokens::CacheMiss");
   util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheForcedMisses);
   const SyntaxState previous_state = HighlightStateBeforeLine(line_index);
+  const bool exact = last_highlight_state_exact_;
   HighlightedLine highlighted;
   {
     util::PerformanceTrace::Scope highlight_scope(
@@ -60,9 +77,15 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
     highlighted = SyntaxHighlighter::HighlightLine(document_->lines[line_index], document_->path,
                                                    previous_state);
   }
-  line_highlight_states_[line_index] = highlighted.end_state;
-  if (line_index >= line_highlight_states_valid_through_) {
-    line_highlight_states_valid_through_ = line_index + 1;
+  // Only record the per-line end state (and advance the validity frontier) when
+  // the resume state was exact. An approximate deep-jump result must not be
+  // promoted to authoritative; the off-thread backfill makes a later repaint
+  // exact (and clears this token-cache entry so it is recomputed).
+  if (exact) {
+    line_highlight_states_[line_index] = highlighted.end_state;
+    if (line_index >= line_highlight_states_valid_through_) {
+      line_highlight_states_valid_through_ = line_index + 1;
+    }
   }
 
   if (highlight_cache_.size() >= kHighlightCacheLimit) {
@@ -122,6 +145,7 @@ void TextViewport::EnsureHighlightCaches() const {
     // full O(N) wipe on every layout-revision bump.
     line_highlight_states_valid_through_ = 0;
     highlight_checkpoints_valid_through_ = 0;
+    pending_checkpoint_backfill_target_line_ = 0;
     highlight_state_content_revision_ = document_->content_revision;
     highlight_state_syntax_revision_ = document_->syntax_revision;
   }
@@ -168,8 +192,18 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
                           ? *initial_highlight_state_
                           : highlight_checkpoints_[previous_checkpoint];
   std::size_t line = previous_checkpoint * detail::kHighlightCheckpointInterval;
-  const std::size_t target_line =
+  std::size_t target_line =
       std::min(document_->lines.size(), checkpoint_index * detail::kHighlightCheckpointInterval);
+  // Bound the synchronous replay so a deep cold jump never blocks the frame. If
+  // we cap short, the requested checkpoint stays invalid; the caller resumes
+  // from the deepest checkpoint we did reach and records a backfill target.
+  if (target_line - line > kMaxSyncHighlightReplayLines) {
+    target_line = line + kMaxSyncHighlightReplayLines;
+    pending_checkpoint_backfill_target_line_ =
+        std::max(pending_checkpoint_backfill_target_line_,
+                 std::min(document_->lines.size(),
+                          checkpoint_index * detail::kHighlightCheckpointInterval));
+  }
   util::PerformanceTrace::Scope replay_scope(
       "TextViewport::EnsureHighlightCheckpoint::ReplayToCheckpoint");
   for (; line < target_line; ++line) {
@@ -279,19 +313,49 @@ void TextViewport::InstallPrefetchedHighlights(const HighlightPrefetchResult& re
 SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const {
   util::PerformanceTrace::Scope perf_scope("TextViewport::HighlightStateBeforeLine");
   EnsureHighlightCaches();
+  last_highlight_state_exact_ = true;
   if (line_index == 0) {
     return *initial_highlight_state_;
   }
 
   const std::size_t checkpoint_index = line_index / detail::kHighlightCheckpointInterval;
+
+  // Find the deepest already-valid checkpoint at/below the target WITHOUT forcing
+  // a replay. This is the cheap resume point and the gate for the deep-jump case.
+  auto deepest_valid_checkpoint = [&]() {
+    std::size_t cp = std::min(checkpoint_index, highlight_checkpoints_valid_through_ == 0
+                                                    ? std::size_t{0}
+                                                    : highlight_checkpoints_valid_through_ - 1);
+    while (cp > 0 && !IsCachedHighlightState(highlight_checkpoints_[cp])) {
+      --cp;
+    }
+    return cp;
+  };
+
+  // Deep cold jump: the exact state is more than one cap away from any valid
+  // checkpoint. Do NOT replay (replaying a capped chunk here is wasted work that
+  // every visible line would repeat). Return the nearest checkpoint's state as an
+  // approximation, mark it inexact, and arm the off-thread backfill. A later
+  // repaint, after the chain catches up, takes the exact path below.
+  if (line_index - deepest_valid_checkpoint() * detail::kHighlightCheckpointInterval >
+      kMaxSyncHighlightReplayLines) {
+    pending_checkpoint_backfill_target_line_ =
+        std::max(pending_checkpoint_backfill_target_line_, line_index);
+    last_highlight_state_exact_ = false;
+    const std::size_t cp = deepest_valid_checkpoint();
+    return cp == 0 ? *initial_highlight_state_ : highlight_checkpoints_[cp];
+  }
+
+  // Exact path: build the checkpoint just below line_index (a bounded replay,
+  // since the gap is within the cap), then replay the short remainder.
   EnsureHighlightCheckpoint(checkpoint_index);
-  const std::size_t checkpoint_line = checkpoint_index * detail::kHighlightCheckpointInterval;
-  SyntaxState state = checkpoint_index == 0
-                          ? *initial_highlight_state_
-                          : highlight_checkpoints_[checkpoint_index];
+  std::size_t usable_checkpoint = deepest_valid_checkpoint();
+  std::size_t line = usable_checkpoint * detail::kHighlightCheckpointInterval;
+  SyntaxState state = usable_checkpoint == 0 ? *initial_highlight_state_
+                                             : highlight_checkpoints_[usable_checkpoint];
 
   util::PerformanceTrace::Scope replay_scope("TextViewport::HighlightStateBeforeLine::Replay");
-  for (std::size_t line = checkpoint_line; line < line_index; ++line) {
+  for (; line < line_index; ++line) {
     if (line < line_highlight_states_valid_through_ &&
         IsCachedHighlightState(line_highlight_states_[line])) {
       state = line_highlight_states_[line];
@@ -309,6 +373,86 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
     ++highlight_state_advances_;
   }
   return state;
+}
+
+std::optional<HighlightCheckpointRequest> TextViewport::TakeHighlightCheckpointBackfillRequest()
+    const {
+  if (!syntax_highlighting_enabled() || document_->lines.empty()) {
+    pending_checkpoint_backfill_target_line_ = 0;
+    return std::nullopt;
+  }
+  if (pending_checkpoint_backfill_target_line_ == 0) {
+    return std::nullopt;
+  }
+  EnsureHighlightCaches();
+  const std::size_t interval = detail::kHighlightCheckpointInterval;
+  const std::size_t target_line =
+      std::min(pending_checkpoint_backfill_target_line_, document_->lines.size());
+
+  // Resume from the deepest valid checkpoint so the install folds in contiguously.
+  std::size_t checkpoint =
+      highlight_checkpoints_valid_through_ == 0 ? 0 : highlight_checkpoints_valid_through_ - 1;
+  while (checkpoint > 0 && !IsCachedHighlightState(highlight_checkpoints_[checkpoint])) {
+    --checkpoint;
+  }
+  const std::size_t first_line = checkpoint * interval;
+  if (first_line >= target_line) {
+    // The chain already reached the target (e.g. a prior chunk caught us up).
+    pending_checkpoint_backfill_target_line_ = 0;
+    return std::nullopt;
+  }
+  const std::size_t end_line =
+      std::min(target_line, first_line + kCheckpointBackfillChunkLines);
+
+  HighlightCheckpointRequest request;
+  request.viewport = this;
+  request.path = document_->path;
+  request.content_revision = document_->content_revision;
+  request.syntax_revision = document_->syntax_revision;
+  request.first_line = first_line;
+  request.start_state =
+      checkpoint == 0 ? *initial_highlight_state_ : highlight_checkpoints_[checkpoint];
+  request.checkpoint_interval = interval;
+  request.lines.assign(document_->lines.begin() + static_cast<std::ptrdiff_t>(first_line),
+                       document_->lines.begin() + static_cast<std::ptrdiff_t>(end_line));
+  // Clear the pending flag; if this chunk does not reach the target, the next
+  // repaint's bounded replay re-detects the shortfall and re-arms it.
+  pending_checkpoint_backfill_target_line_ = 0;
+  return request;
+}
+
+void TextViewport::InstallHighlightCheckpoints(const HighlightCheckpointResult& result) {
+  if (!syntax_highlighting_enabled() || document_->lines.empty()) {
+    return;
+  }
+  // Drop stale results: the document or syntax config moved on since the snapshot.
+  if (result.content_revision != document_->content_revision ||
+      result.syntax_revision != document_->syntax_revision) {
+    return;
+  }
+  EnsureHighlightCaches();
+  const std::size_t previous_valid_through = highlight_checkpoints_valid_through_;
+  for (std::size_t offset = 0; offset < result.checkpoint_states.size(); ++offset) {
+    const std::size_t idx = result.first_checkpoint_index + offset;
+    if (idx >= highlight_checkpoints_.size()) {
+      break;
+    }
+    highlight_checkpoints_[idx] = result.checkpoint_states[offset];
+    // valid_through is a contiguous-from-front cursor: only extend it when this
+    // index sits exactly at the frontier (the request resumed from the deepest
+    // valid checkpoint, so the common case advances it contiguously).
+    if (idx == highlight_checkpoints_valid_through_) {
+      highlight_checkpoints_valid_through_ = idx + 1;
+    }
+  }
+  // If the chain advanced, drop the (small, LRU-bounded) token cache so any
+  // approximate deep-jump tokens are recomputed from the now-exact resume state
+  // on the next repaint. Cheap (<= kHighlightCacheLimit entries) and only happens
+  // while a deep-jump backfill is converging.
+  if (highlight_checkpoints_valid_through_ != previous_valid_through) {
+    highlight_cache_.clear();
+    highlight_cache_order_.clear();
+  }
 }
 
 }  // namespace microide::editor
