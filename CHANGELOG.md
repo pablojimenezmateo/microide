@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [Unreleased]
+
+Substantially widens the **plugin rendering surface**. Plugins now move onto a dedicated worker
+thread (off the UI thread) and contribute rich editor and presentation content under a strict
+host-renders-data model: plugins emit size-capped, validated *data* and the host owns all drawing,
+input, and lifecycle. Every new surface is zero-cost when unused.
+
+### Plugins
+- **Editor decorations** (`ctx.decorations`): per-file text styles (recolor, background, underline,
+  strikethrough, bold/italic, whole-line), gutter marks (built-in icon shapes with color/priority),
+  end-of-line inline text (Error Lens / blame style), and clickable code lenses (end-of-line or an
+  above-line inset strip via `plugins.code_lens_above`).
+- **Content surfaces** (`ctx.surface`): standalone charts/previews drawn from a structured display
+  list (`rect` / `line` / `polyline` / `text` / clip ops) or a raster image (PNG/JPEG/RGBA8, decoded
+  off-thread and texture-cached), shown in a bottom/side panel tab or anchored inline (experimental,
+  gated by `plugins.inline_surfaces`), with clickable hit regions that dispatch host commands.
+- **Ghost-text inline suggestions** (`ctx.editor.set_ghost_text` / `clear_ghost_text`): Copilot-style
+  caret-anchored dimmed proposals with host-owned lifecycle (Tab accepts, Esc dismisses); gated by
+  `plugins.ghost_text`.
+- **Host-owned buffer edits** (`ctx.editor.apply_edits`) plus **reactive editor events**
+  (`on_buffer_change`, `on_cursor_move`, `on_selection_change`, `on_buffer_close`) for live linting
+  and paired-edit workflows.
+- **Language providers**: plugin-native go-to-definition, find-references, signature help, and
+  document symbols (`ctx.definition` / `ctx.references` / `ctx.signature_help` /
+  `ctx.document_symbols`) alongside LSP.
+- **Presentation contributions**: color themes (`ctx.themes`), file-icon themes (`ctx.file_icons`),
+  and rich status items with icon, tone, click command, and live progress (`ctx.status`).
+- **Tree sidebars**: sidebar snapshots may return collapsible nodes (`depth` / `collapsible` /
+  `collapsed`) with plugin-owned expand/collapse state via `on_toggle`.
+- Execution model: all `lua_State` access runs on a dedicated plugin worker thread behind a
+  UI-owned snapshot/mailbox boundary, with a per-call watchdog and non-blocking reload.
+- New repo-owned dogfood plugins: `eol-annotations`, `surface-preview`, `presentation-demo`,
+  `language-tools` (plus `todo-highlight`), each exercising the same narrow host APIs as user plugins.
+
 ## [2.0.1] - 2026-06-20
 
 Patch release adding agent-driven **review verbs** to the control channel. Three new commands

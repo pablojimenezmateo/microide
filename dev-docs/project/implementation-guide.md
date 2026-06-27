@@ -71,7 +71,10 @@ The current SDL shell already includes:
 - project-local editor preferences, colorscheme persistence, and session restore
 - runtime syntax highlighting from an in-tree generated snapshot of the old syntax assets plus runtime-loaded plugin syntax contributions
 - a host-owned plugin runtime service for plugin lifecycle, syntax-asset reload bookkeeping,
-  asset watching, and plugin output logging
+  asset watching, and plugin output logging; all `lua_State` access runs on a dedicated plugin
+  worker thread behind a UI-owned snapshot/mailbox boundary, and plugins contribute editor and
+  presentation content through a host-renders-data surface (plugins emit validated, size-capped
+  data; the host owns all drawing, input, and lifecycle), zero-cost when unused
 - repo-owned Lua dogfood plugins for ESLint diagnostics, formatting, and language-server workflows, exercising the same narrow host APIs exposed to user plugins
 - shared shell render primitives for cards, tooltips, text fields, buttons, list rows, strip tabs,
   and common chrome glyphs across prompts, overlays, sidebar, panel, and editor-empty states
@@ -93,7 +96,7 @@ The authoritative product thesis — including in-scope capabilities, priority o
 - a terminal tab should be open by default for loaded projects
 - colorscheme and editor preferences remain project-local
 - compare, merge, search, git, and terminal workflows are built-in product features, not plugins
-- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, sidebars, file/process helpers, diagnostics publication, hover providers, and host-loaded syntax data, but they do not replace built-in editing, search, git, compare, merge, or terminal workflows
+- manual Lua plugins may extend the shell through narrow host-owned APIs such as commands, tree sidebars, file/process helpers, diagnostics publication, hover providers, host-loaded syntax data, editor decorations, content surfaces, ghost text, host-owned buffer edits, reactive editor events, language providers (definition/references/signature help/document symbols), and presentation contributions (themes, file-icon themes, status items) — but plugins emit data only (the host draws and owns input), and they do not replace built-in editing, search, git, compare, merge, or terminal workflows
 - plugin dogfooding should continue to favor small repo-owned examples over widening the host API speculatively; add new plugin-facing seams only when a real plugin needs them
 
 ## Explicit Non-Goals

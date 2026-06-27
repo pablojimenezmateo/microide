@@ -553,10 +553,13 @@
           <div class="feature">
             <h3>Plugins (Lua 5.4)</h3>
             <ul>
-              <li>Lifecycle hooks, commands, sidebars</li>
-              <li>Diagnostics, hover &amp; completion providers</li>
-              <li>Host-owned registries (keybindings, menus, …)</li>
-              <li>Hot reload on file change (Linux)</li>
+              <li>Lifecycle hooks, commands, tree sidebars</li>
+              <li>Editor decorations: gutter marks, EOL text, code lenses</li>
+              <li>Content surfaces: charts &amp; previews, inline or in a panel</li>
+              <li>Ghost-text suggestions &amp; host-owned buffer edits</li>
+              <li>Language providers: defs, refs, signature, symbols</li>
+              <li>Themes, file-icon themes &amp; rich status items</li>
+              <li>Runs off the UI thread; hot reload (Linux)</li>
             </ul>
           </div>
 
@@ -617,6 +620,7 @@
               <li>Filesystem access contained to the project root</li>
               <li>Process execution is <b>default-deny</b></li>
               <li>Formatters / LSPs / tasks rejected without <code class="inline">process.exec</code></li>
+              <li>Rendering contributions are size-capped <b>data</b> the host draws — plugins never touch the frame</li>
             </ul>
           </div>
 

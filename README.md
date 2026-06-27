@@ -80,19 +80,29 @@ for what is actually measured, and what is not.
 - Tab drag reordering; right-click for "Copy Last Command + Output"
 
 ### Plugins
-- Manual Lua 5.4 plugins from `~/.config/microide/plugins/`
-- Lifecycle hooks, commands, sidebars, diagnostics, hover providers, syntax contributions
+- Manual Lua 5.4 plugins from `~/.config/microide/plugins/`, run on a dedicated worker thread
+  off the UI thread (host-renders-data: plugins emit data, the host owns drawing)
+- Lifecycle hooks, commands, tree sidebars, diagnostics, hover providers, syntax contributions
+- Editor rendering: decorations (text styles, gutter marks, end-of-line text, code lenses) and
+  content surfaces (charts/previews via display lists or raster images, in a panel or anchored inline)
+- Editor integration: ghost-text inline suggestions, host-owned buffer edits, and reactive editor
+  events (`on_buffer_change` / `on_cursor_move` / `on_selection_change` / `on_buffer_close`)
+- Language providers: definition, references, signature help, document symbols
+- Presentation contributions: color themes, file-icon themes, rich status items (tone + progress)
 - Host-owned registries: settings, keybindings, status items, menus, formatters, save participants,
   completion providers, code actions, tests, SCM, auth, annotations
 - `plugins-reload` command; file-watch–triggered asset reload on Linux
-- Repo-owned dogfood examples: `plugins/eslint` (diagnostics)
+- Repo-owned dogfood examples: `plugins/eslint` (diagnostics), `plugins/eol-annotations`
+  (decorations), `plugins/surface-preview` (content surfaces), `plugins/presentation-demo`
+  (themes/icons/status), `plugins/language-tools` (language providers), `plugins/todo-highlight`
+  (decorations)
 
 ## Scope
 
 In-scope and non-goals are declared in `openspec/specs/product-vision/spec.md`.
 
-Short version: built-in editor, diff, merge, search, git, and terminal workflows stay host-owned.
-Out of scope: debugger/DAP support, plugin marketplaces, cloud/collaboration/sync, recent-project surfaces.
+Short version: built-in editor, diff, merge, search, git, terminal, and debugger/DAP workflows stay host-owned.
+Out of scope: plugin marketplaces, cloud/collaboration/sync, recent-project surfaces.
 
 The strongest, most validated workflow today is the **native diff / merge / git workstation**:
 compare tabs (working-tree vs HEAD, arbitrary commits, outgoing base-branch files), three-way
