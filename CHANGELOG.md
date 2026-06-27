@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
-## [Unreleased]
+## [2.3.0] - 2026-06-27
 
 Substantially widens the **plugin rendering surface**. Plugins now move onto a dedicated worker
 thread (off the UI thread) and contribute rich editor and presentation content under a strict

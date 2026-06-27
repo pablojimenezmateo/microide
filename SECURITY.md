@@ -76,5 +76,6 @@ or `MICROIDE_PERF_TRACE` were enabled.
   Landlock/seccomp confinement of both `ctx.process.run` children and contributed language servers);
   but no first-run capability prompt, plugin signing, marketplace trust, or out-of-process isolation
   of the Lua state
-- No signed release binaries yet (build from source; verify checksums when published)
+- Release binaries are GPG-signed; verify the detached signature and SHA256 checksum before
+  installing (see README → Verifying releases). Plugin signing / marketplace trust is still a non-goal.
 - Comparative performance claims against other editors are not made; internal baselines only

@@ -17,13 +17,19 @@ checksum so users have a packaged install path.
    into the binary.
 4. **Build the package.** From `build/`, run `cpack -G DEB` to produce `microide_X.Y.Z_amd64.deb`.
 5. **Generate the checksum.** `sha256sum microide_X.Y.Z_amd64.deb > microide_X.Y.Z_amd64.deb.sha256`.
-6. **Commit and tag.** Commit the version/changelog/README changes, create an annotated tag
-   `vX.Y.Z`, and push both `main` and the tag.
-7. **Create the GitHub release.** `gh release create vX.Y.Z` with notes summarizing scope,
-   limitations, and safe-startup flags.
-8. **Attach artifacts.** `gh release upload vX.Y.Z microide_X.Y.Z_amd64.deb microide_X.Y.Z_amd64.deb.sha256`.
-9. **Verify.** `gh release view vX.Y.Z --json assets` and confirm both the `.deb` and `.deb.sha256`
-   are listed.
+6. **GPG-sign the artifacts.** Sign the package and its checksum with the maintainer release key
+   (`pablojimenezmateo@gmail.com`, fingerprint `0E32 39B7 1B0F 9598 B71A  FB7B 6D33 9CCB FC51 5D70`):
+   `gpg --detach-sign --armor microide_X.Y.Z_amd64.deb` and
+   `gpg --detach-sign --armor microide_X.Y.Z_amd64.deb.sha256` (produces `.asc` files). The exported
+   public key lives at `microide-signing-key.asc` in the repo root and ships with every release.
+7. **Commit and tag.** Commit the version/changelog/README changes, create a **signed** annotated
+   tag (`git tag -s vX.Y.Z`), and push both `main` and the tag.
+8. **Create the GitHub release.** `gh release create vX.Y.Z` with notes summarizing scope,
+   limitations, safe-startup flags, and the verification command.
+9. **Attach artifacts.** `gh release upload vX.Y.Z microide_X.Y.Z_amd64.deb microide_X.Y.Z_amd64.deb.sha256 microide_X.Y.Z_amd64.deb.asc microide_X.Y.Z_amd64.deb.sha256.asc microide-signing-key.asc`.
+10. **Verify.** `gh release view vX.Y.Z --json assets` and confirm the `.deb`, `.sha256`, both `.asc`
+    signatures, and the public key are listed. Round-trip the signature locally:
+    `gpg --verify microide_X.Y.Z_amd64.deb.asc microide_X.Y.Z_amd64.deb`.
 
 ## Pre-tag engineering
 
@@ -37,9 +43,11 @@ checksum so users have a packaged install path.
 ## Tag and artifacts
 
 - [ ] `CHANGELOG.md` updated with the release version, date, and grouped changes
-- [ ] Git annotated tag `v1.3.0` (or chosen version) on the release commit
+- [ ] Signed git annotated tag (`git tag -s vX.Y.Z`) on the release commit
 - [ ] Release notes summarizing scope, limitations, and safe-startup flags
 - [ ] SHA256 checksums for distributed Linux x86_64 binary (if published)
+- [ ] Detached GPG signatures (`.asc`) for the `.deb` and its checksum, plus the public key
+      (`microide-signing-key.asc`) attached to the release
 - [ ] Build-from-source instructions (`dev-docs/platform/linux-build.md` or README build section)
 
 ## User-facing artifacts

@@ -5,9 +5,9 @@ search, and terminal workflows. Single-window, keyboard-first, runs without GPU 
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
-> **Status: stable.** Tagged `v2.2.0` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
-> No signed binaries or third-party comparative benchmarks yet — build from source or package
-> locally. Read [Known Limitations](#known-limitations) and
+> **Status: stable.** Tagged `v2.3.0` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
+> Release binaries are GPG-signed — verify them per [Verifying releases](#verifying-releases).
+> No third-party comparative benchmarks yet. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
 
 ## Start Here
@@ -115,11 +115,29 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Release Status
 
-- Tagged `v2.2.0`. No signed binaries are published yet; the supported paths today are: build from
-  source or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for
-  what shipped.
+- Tagged `v2.3.0`. The published Debian package is GPG-signed; verify the signature and checksum
+  before installing — see [Verifying releases](#verifying-releases). You can also build from source
+  or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for what
+  shipped.
 - No screenshot or demo gallery is committed yet. That is deliberate for now: workflow docs track
   the current UI more honestly than a marketing gallery would.
+
+### Verifying releases
+
+Each GitHub release attaches the Debian package, a detached GPG signature (`.asc`), and a SHA256
+checksum. Releases are signed with the maintainer key published as `microide-signing-key.asc` on the
+release page (fingerprint `0E32 39B7 1B0F 9598 B71A  FB7B 6D33 9CCB FC51 5D70`).
+
+```sh
+# one-time: import the maintainer signing key
+gpg --import microide-signing-key.asc
+
+# verify the package signature and checksum
+gpg --verify microide_2.3.0_amd64.deb.asc microide_2.3.0_amd64.deb
+sha256sum -c microide_2.3.0_amd64.deb.sha256
+```
+
+A "Good signature" line plus a matching checksum means the package is authentic and intact.
 
 ## Current UI Preview
 
@@ -180,8 +198,6 @@ Known workflow boundaries:
 Honest list of what this is not, or what is unfinished. Read this before adopting microide for
 serious work.
 
-- **No signed binaries.** Releases are git-tagged (`v2.0.0`), but build from source or package
-  locally; no signed binaries are published.
 - **No comparative benchmarks.** Internal baselines compare microide against itself; the project
   has not been measured against VSCode, Zed, Helix, or any other editor. Claims like "fastest" or
   "lower CPU than X" are not supported here and are not made.

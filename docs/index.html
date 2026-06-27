@@ -729,14 +729,16 @@
             Install the prebuilt package
             <span style="color:var(--muted); font-weight:400;">&mdash; Linux (amd64)</span>
           </h3>
-<pre><span class="c"># Download microide_&lt;version&gt;_amd64.deb and its .sha256 from Releases</span>
+<pre><span class="c"># Download the .deb, its .asc signature, .sha256, and microide-signing-key.asc from Releases</span>
+<span class="k">gpg</span> --import microide-signing-key.asc
+<span class="k">gpg</span> --verify microide_&lt;version&gt;_amd64.deb.asc microide_&lt;version&gt;_amd64.deb
 <span class="k">sha256sum</span> -c microide_&lt;version&gt;_amd64.deb.sha256
 <span class="k">sudo dpkg</span> -i microide_&lt;version&gt;_amd64.deb</pre>
           <div style="margin-top:16px; display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
             <a class="btn primary" href="https://github.com/pablojimenezmateo/microide/releases/latest">Download latest .deb</a>
             <span style="color:var(--muted-2); font-size:13px;">
-              Each release attaches a prebuilt <code class="inline">.deb</code> + checksum. Builds are
-              unsigned &mdash; prefer to verify it yourself? Build from source below.
+              Each release attaches a prebuilt <code class="inline">.deb</code>, a detached GPG
+              signature, and a checksum &mdash; verify both before installing, or build from source below.
             </span>
           </div>
         </div>
