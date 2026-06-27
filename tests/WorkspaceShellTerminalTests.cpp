@@ -740,12 +740,12 @@ void TestWorkspaceShellTerminalPasteActionTargetsPanelFocus() {
       shell, []() -> std::optional<std::string> { return std::string("pwd"); });
 
   const std::vector<std::string> editor_before =
-      WorkspaceShellTestAccess::ActiveEditor(shell).lines();
+      WorkspaceShellTestAccess::ActiveEditor(shell).lines().Snapshot();
   Expect(WorkspaceShellTestAccess::ExecutePasteClipboard(shell),
          "paste should execute while the terminal owns focus");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "pwd",
          "terminal-focused paste should send clipboard text to the terminal");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines() == editor_before,
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines().Snapshot() == editor_before,
          "terminal-focused paste should not modify the editor buffer");
 }
 

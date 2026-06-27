@@ -224,14 +224,14 @@ bool TextViewport::TrySurroundInsert(char ch) {
     return false;
   }
   const SelectionRange norm = NormalizeRange(*sel);
-  if (!detail::ValidateRangeColumns(document_->lines, norm)) {
+  if (!detail::ValidateRangeColumns(document_->lines.Snapshot(), norm)) {
     return false;
   }
   if (InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
     return false;
   }
 
-  const std::string inner = detail::TextBetweenLines(document_->lines, norm);
+  const std::string inner = detail::TextBetweenLines(document_->lines.Snapshot(), norm);
   const std::string replacement = pair->open + inner + pair->close;
   const std::string first_prefix = document_->lines[norm.start.line].substr(0, norm.start.column);
   TextPosition inner_anchor{};
@@ -400,7 +400,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
-    document_->lines.push_back("");
+    document_->lines.PushBackLine("");
   }
 
   struct Slot {
@@ -508,7 +508,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
 
     if (slot.selection.has_value()) {
       const SelectionRange norm = NormalizeRange(*slot.selection);
-      if (!detail::ValidateRangeColumns(document_->lines, norm)) {
+      if (!detail::ValidateRangeColumns(document_->lines.Snapshot(), norm)) {
         // Range no longer valid: keep this caret in place (it still shifts if a
         // lower edit moves it).
         recorded.push_back(Recorded{
@@ -522,7 +522,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
           lc_view_.surround_enabled ? FindSurroundOpener(lc_view_, ch) : nullptr;
       if (sur_pair != nullptr && !sur_pair->open.empty() && !sur_pair->close.empty() &&
           !InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
-        const std::string inner = detail::TextBetweenLines(document_->lines, norm);
+        const std::string inner = detail::TextBetweenLines(document_->lines.Snapshot(), norm);
         const std::string replacement = sur_pair->open + inner + sur_pair->close;
         const std::string first_prefix =
             document_->lines[norm.start.line].substr(0, norm.start.column);
@@ -647,12 +647,8 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   const std::size_t after_slice_start = std::min(before_lines_start, document_->lines.size());
   const std::size_t after_slice_end =
       std::min(document_->lines.size(), before_lines_start + after_slice_size);
-  std::vector<std::string> after_lines_slice;
-  if (after_slice_start < after_slice_end) {
-    after_lines_slice.assign(
-        document_->lines.begin() + static_cast<std::ptrdiff_t>(after_slice_start),
-        document_->lines.begin() + static_cast<std::ptrdiff_t>(after_slice_end));
-  }
+  std::vector<std::string> after_lines_slice =
+      document_->lines.SliceLines(after_slice_start, after_slice_end);
   HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
       before_lines, before_state, after_lines_slice, CaptureViewState());
   aggregate_entry.start_line += before_lines_start;

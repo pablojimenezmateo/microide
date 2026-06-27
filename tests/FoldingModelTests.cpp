@@ -122,7 +122,7 @@ void TestBracketFoldSkipsStringAndCommentRegions() {
   (void)viewport.HighlightedLineTokens(4);
 
   FoldingModel model;
-  Expect(model.ComputeWithBudget(viewport.lines(), DefaultCStyleOptions(), /*max_lines=*/0,
+  Expect(model.ComputeWithBudget(viewport.lines().Snapshot(), DefaultCStyleOptions(), /*max_lines=*/0,
                                  std::numeric_limits<std::size_t>::max(),
                                  std::numeric_limits<std::size_t>::max(), &viewport),
          "syntax-aware fold compute should complete");

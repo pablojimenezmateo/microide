@@ -1300,7 +1300,7 @@ void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
   merge.selected_hunk = 1;
   WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Incoming);
 
-  const auto& lines = merge.result_viewport.lines();
+  const auto& lines = merge.result_viewport.lines().Snapshot();
   Expect(lines[1] == "one",
          "accepting a later conflict should not rebuild earlier untouched conflicts");
   Expect(lines[2] == "edited two",
@@ -1334,7 +1334,7 @@ void TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion() {
   merge.selected_hunk = 1;
   WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Current);
 
-  const auto& lines = merge.result_viewport.lines();
+  const auto& lines = merge.result_viewport.lines().Snapshot();
   Expect(lines[2].empty(),
          "manual result insertions should remain in place after tracked-span updates");
   Expect(lines[4] == "three current",
@@ -1368,7 +1368,7 @@ void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
          "merge editor should open for hover-preview fixture");
 
   auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
-  const auto before_lines = merge.result_viewport.lines();
+  const auto before_lines = merge.result_viewport.lines().Snapshot();
   const bool before_dirty = merge.result_viewport.dirty();
   const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
   const auto& conflict = merge.conflicts.front();
@@ -1387,7 +1387,7 @@ void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
          "hovering incoming content should preview the incoming choice");
   Expect(WorkspaceShellTestAccess::ActiveMergeHoverPreviewChoice(shell) == MergeChoice::Incoming,
          "incoming hover preview should advertise the incoming merge choice");
-  Expect(merge.result_viewport.lines() == before_lines,
+  Expect(merge.result_viewport.lines().Snapshot() == before_lines,
          "hover preview should not mutate the committed result buffer");
   Expect(merge.result_viewport.dirty() == before_dirty,
          "hover preview should not dirty the merge result");

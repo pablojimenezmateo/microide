@@ -73,7 +73,7 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
-    document_->lines.push_back("");
+    document_->lines.PushBackLine("");
   }
 
   std::vector<TextPosition> carets = secondary_carets();
@@ -92,7 +92,7 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
     affected_end = std::max(affected_end, line + 1);
   }
   const std::size_t before_document_line_count = document_->lines.size();
-  const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
+  const LineSlice before_slice = CaptureLineSlice(document_->lines.Snapshot(), affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   // Identify the primary by its index in the sorted/deduped vector rather than
@@ -172,7 +172,7 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
   EnsureCursorVisible();
 
   const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
-      before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
+      before_slice, before_document_line_count, before_state, document_->lines.Snapshot(), CaptureViewState());
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
@@ -186,7 +186,7 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
-    document_->lines.push_back("");
+    document_->lines.PushBackLine("");
   }
 
   std::vector<TextPosition> carets = secondary_carets();
@@ -217,7 +217,7 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
     return false;
   }
   const std::size_t before_document_line_count = document_->lines.size();
-  const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
+  const LineSlice before_slice = CaptureLineSlice(document_->lines.Snapshot(), affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   const std::size_t primary_index = static_cast<std::size_t>(
@@ -293,7 +293,7 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
   EnsureCursorVisible();
 
   const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
-      before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
+      before_slice, before_document_line_count, before_state, document_->lines.Snapshot(), CaptureViewState());
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);
@@ -307,7 +307,7 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   last_applied_edit_.reset();
   EnsureDocument();
   if (document_->lines.empty()) {
-    document_->lines.push_back("");
+    document_->lines.PushBackLine("");
   }
 
   std::vector<TextPosition> carets = secondary_carets();
@@ -338,7 +338,7 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
     return false;
   }
   const std::size_t before_document_line_count = document_->lines.size();
-  const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
+  const LineSlice before_slice = CaptureLineSlice(document_->lines.Snapshot(), affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   const std::size_t primary_index = static_cast<std::size_t>(
@@ -411,7 +411,7 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
   EnsureCursorVisible();
 
   const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
-      before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
+      before_slice, before_document_line_count, before_state, document_->lines.Snapshot(), CaptureViewState());
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(aggregate_entry, true);
   if (record_undo) {
     PushHistoryEntry(aggregate_entry);

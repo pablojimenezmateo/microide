@@ -60,7 +60,7 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   const std::size_t visible_start = viewport.scroll_line();
   const std::size_t visible_end =
       visible_rows == 0 ? visible_start : visible_start + visible_rows - 1;
-  model.EnsureFoldsForVisibleRange(viewport.lines(), options, visible_start, visible_end,
+  model.EnsureFoldsForVisibleRange(viewport.lines().Snapshot(), options, visible_start, visible_end,
                                    kFoldingModelComputeBudget, fold_resume_line, &viewport);
   model.SetFingerprint(fingerprint);
 }

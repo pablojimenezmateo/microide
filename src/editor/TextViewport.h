@@ -16,6 +16,7 @@
 #include "editor/LanguageContractView.h"
 #include "editor/FoldingModel.h"
 #include "editor/SyntaxHighlighter.h"
+#include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
 #include "editor/TextLayoutCache.h"
 #include "editor/TextViewportUndoHistory.h"
@@ -142,7 +143,7 @@ class TextViewport {
   // Cached normalized key for the per-file presentation stores. Pass this to the
   // hot-path *ByPathKey lookups to avoid re-normalizing the path every frame.
   std::string_view path_key() const { return document_->path_key; }
-  const std::vector<std::string>& lines() const { return document_->lines; }
+  const TextBuffer& lines() const { return document_->lines; }
 
   // On-disk identity recorded at the last load/save. `disk_signature().exists`
   // is false for untitled buffers and files that were absent when last sampled.
@@ -298,7 +299,7 @@ class TextViewport {
     // Lets per-frame presentation-store lookups pass a precomputed key instead
     // of re-normalizing (and re-allocating) every frame. See SetDocumentPath.
     std::string path_key;
-    std::vector<std::string> lines;
+    TextBuffer lines;
     LineEnding line_ending = LineEnding::LF;
     bool mixed_line_endings = false;
     TextEncoding encoding = TextEncoding::ASCII;
@@ -422,9 +423,6 @@ class TextViewport {
   std::size_t ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const;
   static TextEncoding DetectEncoding(std::string_view content);
   static TextEncoding DetectEncoding(const std::vector<std::string>& lines);
-  static std::vector<std::string> SliceLines(const std::vector<std::string>& lines,
-                                             std::size_t start_line,
-                                             std::size_t end_line);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
   std::size_t fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();

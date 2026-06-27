@@ -279,7 +279,7 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
       --end_line;
     }
   } else {
-    const std::vector<std::string>& lines = viewport->lines();
+    const std::vector<std::string>& lines = viewport->lines().Snapshot();
     const std::size_t cursor = viewport->cursor_line();
     if (cursor >= lines.size()) {
       return std::nullopt;

@@ -61,7 +61,7 @@ MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
     return MergeResultState::Invalid;
   }
   const std::string serialized =
-      util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
+      util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
   if (util::ContainsCompleteConflictMarkers(serialized)) {
     return MergeResultState::Invalid;
   }
@@ -80,9 +80,9 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
   }
 
   const std::string serialized =
-      util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
+      util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
   if (util::ContainsCompleteConflictMarkers(serialized) && !request.allow_conflict_marker_override) {
-    const auto marker_line = util::FirstConflictMarkerLine(merge_tab.result_viewport.lines());
+    const auto marker_line = util::FirstConflictMarkerLine(merge_tab.result_viewport.lines().Snapshot());
     return MergeValidationResult{
         .ok = false,
         .issue = MergeValidationIssue::ConflictMarkers,

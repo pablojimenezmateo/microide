@@ -70,7 +70,7 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
       setting_enabled("editor.save.ensure_final_newline", true));
 
   const std::string language_id =
-      editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
+      editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines().Snapshot());
   viewport.SetLanguageContractView(BuildEditorLanguageContractView(
       language_contract_,
       language_id,
@@ -149,7 +149,7 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
     return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
   const std::string language_id =
-      editor::runtime_syntax::DetectFiletype(active_viewport->path(), active_viewport->lines());
+      editor::runtime_syntax::DetectFiletype(active_viewport->path(), active_viewport->lines().Snapshot());
   const auto resolved = language_contract_.ResolveView(language_id);
   EnsureFoldingModelFresh(*editor_tab, *active_viewport, resolved.contract,
                           context_.current_project_state.editor_preferences.tab_size,

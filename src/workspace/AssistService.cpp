@@ -48,7 +48,7 @@ std::string JsonValueToArgumentString(const util::JsonValue& value) {
 }
 
 editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& viewport) {
-  const std::string_view line = LineAtOrEmpty(viewport.lines(), viewport.cursor_line());
+  const std::string_view line = LineAtOrEmpty(viewport.lines().Snapshot(), viewport.cursor_line());
   std::size_t start_column = std::min(viewport.cursor_column(), line.size());
   while (start_column > 0) {
     const char ch = line[start_column - 1];
@@ -204,7 +204,7 @@ AssistService::EditSideEffectsSnapshot AssistService::CaptureEditSnapshot(
   snapshot.cursor_before_line = viewport.cursor_line();
   if (auto* merge_tab = operations_.active_merge_tab();
       merge_tab != nullptr && &viewport == &merge_tab->result_viewport) {
-    snapshot.before_lines = viewport.lines();
+    snapshot.before_lines = viewport.lines().Snapshot();
     snapshot.selection_before = viewport.selection_range();
     snapshot.cursor_before = editor::TextPosition{viewport.cursor_line(), viewport.cursor_column()};
   }
@@ -353,7 +353,7 @@ bool AssistService::TrySnippetPrefixExpansion(TabEntry::EditorTabState& tab,
   if (range.start.line != range.end.line || range.end.column <= range.start.column) {
     return false;
   }
-  const std::string_view line = LineAtOrEmpty(viewport.lines(), range.start.line);
+  const std::string_view line = LineAtOrEmpty(viewport.lines().Snapshot(), range.start.line);
   if (range.end.column > line.size()) {
     return false;
   }

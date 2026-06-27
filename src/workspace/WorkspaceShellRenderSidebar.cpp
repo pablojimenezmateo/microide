@@ -76,7 +76,7 @@ void RenderCommitBodyField(const render::TextRenderer& tr, const render::Theme& 
   }
   body.SetScrollLine(scroll);
 
-  const std::vector<std::string>& lines = body.lines();
+  const std::vector<std::string>& lines = body.lines().Snapshot();
   scroll = body.scroll_line();
   const std::optional<editor::SelectionRange> selection = body.selection_range();
   const std::size_t caret_line = body.cursor_line();

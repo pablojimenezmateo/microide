@@ -166,6 +166,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
+  src/editor/TextBuffer.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp
@@ -951,6 +952,7 @@ add_executable(microide_diff_bench
   src/editor/SyntaxHighlighter.cpp
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
+  src/editor/TextBuffer.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp

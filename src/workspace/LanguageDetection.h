@@ -11,7 +11,7 @@ namespace microide::workspace {
 // path. Extension/content detection runs through the shared runtime syntax
 // registry; callers that hit this per-frame should cache the result by path.
 inline std::string DetectViewportLanguageId(const editor::TextViewport& viewport) {
-  return editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
+  return editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines().Snapshot());
 }
 
 }  // namespace microide::workspace

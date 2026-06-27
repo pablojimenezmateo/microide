@@ -391,7 +391,7 @@ void TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs() {
 
   if (modified_tab.has_value()) {
     WorkspaceShellTestAccess::ActivateTab(shell, *modified_tab);
-    const auto& modified_lines = WorkspaceShellTestAccess::ActiveEditor(shell).lines();
+    const auto& modified_lines = WorkspaceShellTestAccess::ActiveEditor(shell).lines().Snapshot();
     Expect(std::find(modified_lines.begin(), modified_lines.end(), "throwaway change") ==
                modified_lines.end(),
            "bulk discard should reload open modified tabs from the restored file");

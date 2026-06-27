@@ -250,7 +250,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (!sel || sel->start.line != sel->end.line || sel->start.column == sel->end.column) {
         return DispatchResult::Handled;
       }
-      const auto& lines = viewport->lines();
+      const auto& lines = viewport->lines().Snapshot();
       if (sel->start.line >= lines.size()) return DispatchResult::Handled;
       const std::string& line = lines[sel->start.line];
       std::size_t a = std::min(sel->start.column, sel->end.column);

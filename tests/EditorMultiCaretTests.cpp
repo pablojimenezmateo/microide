@@ -125,7 +125,7 @@ void TestFoldAwareMultiCaretVerticalMotionSkipsHiddenLines() {
                        "/tmp/mc-fold-vertical.cpp");
 
   FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold fixture should compute");
   Expect(folding_model.Collapse(1), "function fold should collapse");
   viewport.SetFoldingModel(&folding_model);
@@ -153,7 +153,7 @@ void TestMultiCaretPageUpAcrossCollapsedFoldUsesVisibleRows() {
   viewport.LoadContent("line0\nvoid f() {\n  a();\n  b();\n}\nline5\nline6\n",
                        "/tmp/mc-fold-page.cpp");
   FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "page fixture should compute folds");
   Expect(folding_model.Collapse(1), "inner fold should collapse");
 

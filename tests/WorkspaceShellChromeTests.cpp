@@ -1159,7 +1159,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
 
   const SDL_FRect cut_editor_surface = WorkspaceShellTestAccess::CurrentLayout(cut_shell).editor_surface;
   const std::vector<std::string> original_lines =
-      WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines();
+      WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines().Snapshot();
 
   const auto select_all = handle_shortcut(cut_shell, SDLK_A);
   Expect(select_all.handled, "Ctrl+A should be handled by the editor");
@@ -1178,7 +1178,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
          "Ctrl+X redraws should include the editor surface");
   Expect(!clipboard_text.empty(),
          "Ctrl+X should write the selected editor text to the clipboard");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines() != original_lines,
+  Expect(WorkspaceShellTestAccess::ActiveEditor(cut_shell).lines().Snapshot() != original_lines,
          "Ctrl+X should modify the active editor buffer");
 
   WorkspaceShell copy_line_shell;
@@ -1219,7 +1219,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
   Expect(cut_line.handled, "Ctrl+X without a selection should still be handled by the editor");
   Expect(clipboard_text == "beta\n",
          "Ctrl+X without a selection should copy the full active line");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(cut_line_shell).lines() ==
+  Expect(WorkspaceShellTestAccess::ActiveEditor(cut_line_shell).lines().Snapshot() ==
              std::vector<std::string>({"alpha", "gamma"}),
          "Ctrl+X without a selection should remove the full active line");
 
@@ -1239,7 +1239,7 @@ void TestWorkspaceShellShortcutEditActionsReturnEditorInvalidation() {
          "Ctrl+Z should request a partial editor redraw");
   Expect(AnyRectIntersects(undo.redraw.rects, undo_editor_surface),
          "Ctrl+Z redraws should include the editor surface");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(undo_shell).lines() == original_lines,
+  Expect(WorkspaceShellTestAccess::ActiveEditor(undo_shell).lines().Snapshot() == original_lines,
          "Ctrl+Z should restore the editor buffer after typing");
 }
 

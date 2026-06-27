@@ -432,7 +432,7 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
   merge_tab.result_viewport.SetDirty(
       !merge_tab.persisted_output_baseline.has_value() ||
       *merge_tab.persisted_output_baseline !=
-          util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending));
+          util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending));
   merge_tab.conflicts = BuildMergeTrackedConflicts(merge_tab.model);
   merge_tab.hover_state.reset();
   merge_tab.max_visual_columns =
@@ -494,7 +494,7 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
     const std::vector<std::string>& before_lines,
     std::optional<editor::SelectionRange> selection_before,
     editor::TextPosition cursor_before) {
-  const auto changed_span = ComputeChangedLineSpan(before_lines, merge_tab.result_viewport.lines());
+  const auto changed_span = ComputeChangedLineSpan(before_lines, merge_tab.result_viewport.lines().Snapshot());
   if (!changed_span.has_value()) {
     merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
     merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
@@ -651,11 +651,11 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
     merge_tab.result_viewport.SetDirty(false);
     if (parsed_output.has_value()) {
       merge_tab.conflicts = BuildMergeTrackedConflictsForResult(
-          merge_tab.model, merge_tab.result_viewport.lines(), parsed_output->conflict_lines,
+          merge_tab.model, merge_tab.result_viewport.lines().Snapshot(), parsed_output->conflict_lines,
           parsed_output->conflict_choices);
     } else {
       merge_tab.conflicts =
-          BuildMergeTrackedConflictsForResult(merge_tab.model, merge_tab.result_viewport.lines());
+          BuildMergeTrackedConflictsForResult(merge_tab.model, merge_tab.result_viewport.lines().Snapshot());
     }
     merge_tab.hover_state.reset();
     merge_tab.max_visual_columns =

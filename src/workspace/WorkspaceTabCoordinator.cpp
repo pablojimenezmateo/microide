@@ -137,7 +137,7 @@ bool TabCoordinator::Save(std::size_t index) {
       return false;
     }
     merge_tab.persisted_output_baseline =
-        util::SerializeLines(merge_tab.result_viewport.lines(), merge_tab.result_line_ending);
+        util::SerializeLines(merge_tab.result_viewport.lines().Snapshot(), merge_tab.result_line_ending);
     refresh_directory_tree();
     operations_.notify_plugin_buffer_save(merge_tab.result_viewport.path());
     return true;
