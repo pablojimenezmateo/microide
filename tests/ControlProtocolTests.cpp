@@ -103,7 +103,7 @@ void TestManPageMatchesGenerator() {
 void TestDocsHaveNoSocatRecipe() {
   const std::filesystem::path repo_root =
       std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).parent_path();
-  for (const std::filesystem::path doc :
+  for (const std::filesystem::path& doc :
        {repo_root / "docs" / "microide.1",
         repo_root / "dev-docs" / "control" / "control-channel.md"}) {
     const std::string text = ReadFile(doc);

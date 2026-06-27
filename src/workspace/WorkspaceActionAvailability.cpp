@@ -143,6 +143,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::BreakpointFunctionCondition:
     case ActionId::BreakpointExceptionCondition:
     case ActionId::DebugLaunch:
+    case ActionId::DebugRun:
       // Headless breakpoint/launch control; valid whenever the debugger is on.
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::DebugPaneToggle:
