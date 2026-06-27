@@ -303,6 +303,46 @@ void TestSubprocessLargeStdinDoesNotDeadlock() {
          "large-stdin cat should echo the payload byte-for-byte");
   Expect(result.stderr_text.empty(), "large-stdin cat should not write to stderr");
 }
+
+// A formatter that hangs (or runs pathologically long) must not freeze the
+// synchronous save path forever. A finite timeout_ms kills the child and reports
+// timed_out with a non-zero exit code.
+void TestSubprocessTimeoutKillsHungChild() {
+  const auto start = std::chrono::steady_clock::now();
+  const auto result = RunSubprocess({"sleep", "30"}, SubprocessOptions{
+                                                         .cwd = {},
+                                                         .stdin_text = {},
+                                                         .environment_overrides = {},
+                                                         .capture_stdout = true,
+                                                         .capture_stderr = true,
+                                                         .silence_stderr = false,
+                                                         .timeout_ms = 200,
+                                                     });
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+  Expect(result.timed_out, "a child that outlives timeout_ms should report timed_out");
+  Expect(!result.success(), "a timed-out child should not report success");
+  Expect(elapsed.count() < 5000,
+         "timeout should return promptly after the deadline, not wait for the child to exit");
+}
+
+// A finite timeout must not falsely trip on a command that finishes well within
+// it: the bound only catches genuine hangs.
+void TestSubprocessTimeoutDoesNotTripFastCommand() {
+  const auto result = RunSubprocess({"cat"}, SubprocessOptions{
+                                                 .cwd = {},
+                                                 .stdin_text = "fast payload\n",
+                                                 .environment_overrides = {},
+                                                 .capture_stdout = true,
+                                                 .capture_stderr = true,
+                                                 .silence_stderr = false,
+                                                 .timeout_ms = 5000,
+                                             });
+  Expect(!result.timed_out, "a fast command should not be reported as timed out");
+  Expect(result.exit_code == 0, "a fast command under a generous timeout should still succeed");
+  Expect(result.stdout_text == "fast payload\n",
+         "a timed run should still capture stdout when it completes in time");
+}
 #endif
 
 }  // namespace
@@ -321,6 +361,9 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestIgnoreBrokenPipeSignalPreventsCrash);
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",
           TestSubprocessLargeStdinDoesNotDeadlock);
+  AddTest(tests, "Subprocess/TimeoutKillsHungChild", TestSubprocessTimeoutKillsHungChild);
+  AddTest(tests, "Subprocess/TimeoutDoesNotTripFastCommand",
+          TestSubprocessTimeoutDoesNotTripFastCommand);
 #endif
 }
 

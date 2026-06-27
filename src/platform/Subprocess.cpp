@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <array>
+#include <csignal>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/wait.h>
@@ -127,12 +129,22 @@ void DrainReadyPipe(UniqueFd* fd, std::string* output) {
 // of stdin up front (as the old code did) deadlocks when the child fills its
 // stdout pipe before consuming stdin — the child blocks on write(stdout) and we
 // block on write(stdin). Interleaving the two directions cannot deadlock.
-void PumpChildIo(UniqueFd* stdin_fd,
+// Pumps stdio until both directions are done, or until `timeout_ms` (> 0)
+// elapses. Returns true if the deadline expired with the child still active --
+// the caller then kills and reaps it. timeout_ms <= 0 means wait indefinitely
+// (poll(-1)), preserving the historical behavior for every caller that does not
+// opt in.
+bool PumpChildIo(UniqueFd* stdin_fd,
                  const std::string& stdin_text,
                  UniqueFd* stdout_fd,
                  std::string* stdout_text,
                  UniqueFd* stderr_fd,
-                 std::string* stderr_text) {
+                 std::string* stderr_text,
+                 int timeout_ms) {
+  using Clock = std::chrono::steady_clock;
+  const bool bounded = timeout_ms > 0;
+  const Clock::time_point deadline =
+      bounded ? Clock::now() + std::chrono::milliseconds(timeout_ms) : Clock::time_point{};
   if (stdin_fd != nullptr && stdin_fd->IsValid()) {
     SetNonBlocking(stdin_fd->Get());
     if (stdin_text.empty()) {
@@ -171,12 +183,26 @@ void PumpChildIo(UniqueFd* stdin_fd,
       break;
     }
 
-    const int poll_result = poll(poll_fds.data(), count, -1);
+    int poll_timeout = -1;
+    if (bounded) {
+      const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+          deadline - Clock::now());
+      if (remaining.count() <= 0) {
+        return true;  // Deadline already passed; report timeout to the caller.
+      }
+      poll_timeout = static_cast<int>(remaining.count());
+    }
+
+    const int poll_result = poll(poll_fds.data(), count, poll_timeout);
     if (poll_result < 0) {
       if (errno == EINTR) {
         continue;
       }
       break;
+    }
+    if (poll_result == 0) {
+      // poll() can only return 0 when we passed a finite (bounded) timeout.
+      return true;
     }
 
     if (stdout_index >= 0 &&
@@ -203,6 +229,7 @@ void PumpChildIo(UniqueFd* stdin_fd,
       }
     }
   }
+  return false;  // stdio fully drained (or poll error) before any deadline.
 }
 
 void ApplyEnvironmentOverrides(const std::vector<SubprocessEnvironmentOverride>& overrides) {
@@ -465,12 +492,22 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   stderr_pipe[1].Reset();
   stdin_pipe[0].Reset();
 
-  PumpChildIo(&stdin_pipe[1], options.stdin_text,
-              options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
-              options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text);
+  const bool timed_out =
+      PumpChildIo(&stdin_pipe[1], options.stdin_text,
+                  options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
+                  options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text,
+                  options.timeout_ms);
   stdin_pipe[1].Reset();
   stdout_pipe[0].Reset();
   stderr_pipe[0].Reset();
+
+  if (timed_out) {
+    // Deadline exceeded: kill the child so the (synchronous) caller is not held
+    // hostage by a hung or pathologically slow process, then reap it below to
+    // avoid a zombie.
+    result.timed_out = true;
+    kill(pid, SIGKILL);
+  }
 
   int status = 0;
   while (waitpid(pid, &status, 0) < 0) {
