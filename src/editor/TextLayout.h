@@ -18,16 +18,16 @@ struct LayoutLine {
 
 class TextLayout {
  public:
-  static std::size_t VisualColumnForTextColumn(const std::string& line,
+  static std::size_t VisualColumnForTextColumn(std::string_view line,
                                                std::size_t text_column,
                                                std::size_t tab_size);
-  static std::size_t TextColumnForVisualColumn(const std::string& line,
+  static std::size_t TextColumnForVisualColumn(std::string_view line,
                                                std::size_t visual_column,
                                                std::size_t tab_size);
-  static std::size_t ClampTextColumn(const std::string& line, std::size_t text_column);
-  static std::size_t PreviousTextColumn(const std::string& line, std::size_t text_column);
-  static std::size_t NextTextColumn(const std::string& line, std::size_t text_column);
-  static LayoutLine BuildVisibleLine(const std::string& line,
+  static std::size_t ClampTextColumn(std::string_view line, std::size_t text_column);
+  static std::size_t PreviousTextColumn(std::string_view line, std::size_t text_column);
+  static std::size_t NextTextColumn(std::string_view line, std::size_t text_column);
+  static LayoutLine BuildVisibleLine(std::string_view line,
                                      std::size_t horizontal_scroll,
                                      std::size_t visible_columns,
                                      std::size_t tab_size);
@@ -38,7 +38,7 @@ class TextLayout {
   // per-line tab/UTF-8 walk runs once instead of once per query.
   class LineVisualColumnMap {
    public:
-    LineVisualColumnMap(const std::string& line, std::size_t tab_size);
+    LineVisualColumnMap(std::string_view line, std::size_t tab_size);
     std::size_t VisualColumnFor(std::size_t text_column) const;
     std::size_t LineVisualWidth() const { return line_visual_width_; }
 
@@ -86,7 +86,7 @@ class TextLayout {
   // expression. Identifier bytes are ASCII, so multibyte UTF-8 bytes (>= 0x80) terminate the run.
   // TODO(phase>5): optionally extend leftward across member-access (`.`/`->`) for richer
   // expressions; the `evaluate` plumbing is identical either way.
-  static ByteRange IdentifierRangeAt(const std::string& line, std::size_t text_column);
+  static ByteRange IdentifierRangeAt(std::string_view line, std::size_t text_column);
 };
 
 }  // namespace microide::editor

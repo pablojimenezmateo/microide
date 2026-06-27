@@ -2,7 +2,10 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <vector>
+
+#include "editor/LineSpan.h"
 
 namespace microide::editor {
 
@@ -33,7 +36,7 @@ struct IndentGuideRun {
 // When `folding_model` is non-null, the caret's active-indent column prefers
 // the innermost enclosing fold opener's indentation (when the caret is past
 // the opener line); otherwise the legacy leading-indent scan applies.
-void ComputeIndentGuides(const std::vector<std::string>& lines,
+void ComputeIndentGuides(LineSpan lines,
                          const std::vector<std::size_t>& visible_rows,
                          std::size_t tab_size,
                          std::size_t indent_width,
@@ -44,6 +47,6 @@ void ComputeIndentGuides(const std::vector<std::string>& lines,
 
 // Returns the leading visual indent count for `line`, expanding tabs to
 // `tab_size` cells. Stops at the first non-whitespace character.
-std::size_t LeadingVisualIndent(const std::string& line, std::size_t tab_size);
+std::size_t LeadingVisualIndent(std::string_view line, std::size_t tab_size);
 
 }  // namespace microide::editor

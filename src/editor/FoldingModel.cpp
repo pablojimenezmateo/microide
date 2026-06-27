@@ -99,7 +99,7 @@ inline bool IsSuppressedBracketAt(std::span<const SyntaxTokenKind> tokens, std::
 }
 
 // Silent bracket walk used to seed the bracket stack at `resume_line`.
-bool BuildBracketStackPrefix(const std::vector<std::string>& lines,
+bool BuildBracketStackPrefix(LineSpan lines,
                              const std::vector<std::pair<char, char>>& pairs,
                              std::size_t prefix_end_exclusive,
                              std::size_t max_line_visits,
@@ -122,7 +122,7 @@ bool BuildBracketStackPrefix(const std::vector<std::string>& lines,
       return false;
     }
     lines_visited++;
-    const std::string& line = lines[line_index];
+    const std::string_view line = lines[line_index];
     // Hoist the syntax-highlight token lookup out of the per-byte loop and use
     // the non-forcing accessor. Empty span = uncached → no suppression. See
     // IsSuppressedBracketAt and perf round-4 Finding 1.
@@ -151,7 +151,7 @@ bool BuildBracketStackPrefix(const std::vector<std::string>& lines,
 }
 
 // Lines `[begin_line, size)` with emission; honours `stack` seed from prefix walk.
-void ScanBracketRangesTail(const std::vector<std::string>& lines,
+void ScanBracketRangesTail(LineSpan lines,
                            const std::vector<std::pair<char, char>>& pairs,
                            std::size_t begin_line,
                            std::size_t end_line_exclusive,
@@ -170,7 +170,7 @@ void ScanBracketRangesTail(const std::vector<std::string>& lines,
       return;
     }
     lines_visited++;
-    const std::string& line = lines[line_index];
+    const std::string_view line = lines[line_index];
     const std::span<const SyntaxTokenKind> tokens =
         syntax_viewport != nullptr
             ? syntax_viewport->HighlightedLineTokensIfCached(line_index)
@@ -198,7 +198,7 @@ void ScanBracketRangesTail(const std::vector<std::string>& lines,
   }
 }
 
-void ScanBracketRanges(const std::vector<std::string>& lines,
+void ScanBracketRanges(LineSpan lines,
                        const std::vector<std::pair<char, char>>& pairs,
                        std::size_t end_line_exclusive,
                        std::size_t max_line_visits,
@@ -212,7 +212,7 @@ void ScanBracketRanges(const std::vector<std::string>& lines,
   ScanBracketRangesTail(lines, pairs, 0, end_line_exclusive, /*stack=*/{}, max_line_visits,
                         lines_visited, out_ranges, complete, syntax_viewport);
 }
-void ScanIndentRanges(const std::vector<std::string>& lines,
+void ScanIndentRanges(LineSpan lines,
                       std::size_t end_line_exclusive,
                       std::size_t tab_size,
                       const std::vector<FoldRange>& bracket_ranges,
@@ -343,7 +343,7 @@ void SortDedupeRangesByOpener(std::vector<FoldRange>& ranges) {
 
 }  // namespace
 
-bool FoldingModel::Compute(const std::vector<std::string>& lines,
+bool FoldingModel::Compute(LineSpan lines,
                            const ComputeOptions& options) {
   return ComputeWithBudget(lines, options, /*max_lines=*/0,
                            std::numeric_limits<std::size_t>::max(),
@@ -351,7 +351,7 @@ bool FoldingModel::Compute(const std::vector<std::string>& lines,
                            nullptr);
 }
 
-bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
+bool FoldingModel::ComputeWithBudget(LineSpan lines,
                                      const ComputeOptions& options,
                                      std::size_t max_lines,
                                      std::size_t incremental_resume_line,
@@ -462,7 +462,7 @@ bool FoldingModel::ComputeWithBudget(const std::vector<std::string>& lines,
 }
 
 bool FoldingModel::EnsureFoldsForVisibleRange(
-    const std::vector<std::string>& lines,
+    LineSpan lines,
     const ComputeOptions& options,
     std::size_t visible_start_line,
     std::size_t visible_end_line,

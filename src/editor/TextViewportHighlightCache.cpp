@@ -74,7 +74,7 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   {
     util::PerformanceTrace::Scope highlight_scope(
         "TextViewport::HighlightedLineTokens::HighlightLine");
-    highlighted = SyntaxHighlighter::HighlightLine(document_->lines[line_index], document_->path,
+    highlighted = SyntaxHighlighter::HighlightLine(document_->lines.LineView(line_index), document_->path,
                                                    previous_state);
   }
   // Only record the per-line end state (and advance the validity frontier) when
@@ -214,7 +214,7 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
       {
         util::PerformanceTrace::Scope advance_scope(
             "TextViewport::EnsureHighlightCheckpoint::AdvanceState");
-        state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
+        state = SyntaxHighlighter::AdvanceState(document_->lines.LineView(line), document_->path, state);
       }
       line_highlight_states_[line] = state;
       if (line >= line_highlight_states_valid_through_) {
@@ -364,7 +364,7 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
     {
       util::PerformanceTrace::Scope advance_scope(
           "TextViewport::HighlightStateBeforeLine::AdvanceState");
-      state = SyntaxHighlighter::AdvanceState(document_->lines[line], document_->path, state);
+      state = SyntaxHighlighter::AdvanceState(document_->lines.LineView(line), document_->path, state);
     }
     line_highlight_states_[line] = state;
     if (line >= line_highlight_states_valid_through_) {

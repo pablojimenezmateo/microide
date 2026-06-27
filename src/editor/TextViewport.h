@@ -337,6 +337,13 @@ class TextViewport {
   void SetDocumentPath(const std::filesystem::path& path);
   void InvalidateLayoutCaches();
   void RefreshEncoding();
+  // Incremental, upgrade-only encoding refresh for the per-edit hot path: scans
+  // only the inserted lines and raises the document encoding if they introduce
+  // non-ASCII / non-UTF-8 bytes. Avoids the O(document) full re-detection that
+  // RefreshEncoding performs on every keystroke. Encoding is re-detected fully
+  // on load/reset, so a downgrade after deleting the last non-ASCII content is
+  // recovered on the next reload (matching typical editor behavior).
+  void UpgradeEncodingForInsertedLines(const std::vector<std::string>& inserted_lines);
   void EnsureInitialHighlightState() const;
   void EnsureHighlightCaches() const;
   void EnsureHighlightCheckpoints() const;
@@ -422,7 +429,7 @@ class TextViewport {
                                                        std::size_t target_row) const;
   std::size_t ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const;
   static TextEncoding DetectEncoding(std::string_view content);
-  static TextEncoding DetectEncoding(const std::vector<std::string>& lines);
+  static TextEncoding DetectEncoding(LineSpan lines);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
   std::size_t fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();

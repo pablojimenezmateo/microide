@@ -12,6 +12,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/LineSpan.h"
 #include "editor/TextViewport.h"
 
 namespace microide::editor::detail {
@@ -49,8 +50,7 @@ inline TextPosition RangeEndExclusive(const SelectionRange& r) {
   return PositionLess(r.start, r.end) ? r.end : r.start;
 }
 
-inline bool ValidateRangeColumns(const std::vector<std::string>& lines,
-                                  const SelectionRange& n) {
+inline bool ValidateRangeColumns(LineSpan lines, const SelectionRange& n) {
   if (n.start.line >= lines.size() || n.end.line >= lines.size()) {
     return false;
   }
@@ -61,12 +61,11 @@ inline bool ValidateRangeColumns(const std::vector<std::string>& lines,
   return true;
 }
 
-inline std::string TextBetweenLines(const std::vector<std::string>& lines,
-                                     const SelectionRange& n) {
+inline std::string TextBetweenLines(LineSpan lines, const SelectionRange& n) {
   const auto& a = n.start;
   const auto& b = n.end;
   if (a.line == b.line) {
-    return lines[a.line].substr(a.column, b.column - a.column);
+    return std::string(lines[a.line].substr(a.column, b.column - a.column));
   }
   std::string out;
   out += lines[a.line].substr(a.column);

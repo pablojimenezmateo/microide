@@ -1044,9 +1044,24 @@ SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std
   };
 }
 
-std::string DetectFiletype(const std::filesystem::path& path, const std::vector<std::string>& lines) {
+std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines) {
   const Registry& registry = GetRegistry();
-  const std::uint32_t definition_id = DetectDefinitionId(registry, path, &lines, {});
+  // Signature detection inspects at most kSignatureDetectLineLimit lines, so
+  // materialize only that bounded head -- never the whole document.
+  std::vector<std::string> head;
+  const std::size_t head_count = std::min(lines.size(), kSignatureDetectLineLimit);
+  head.reserve(head_count);
+  for (std::size_t i = 0; i < head_count; ++i) {
+    head.emplace_back(lines[i]);
+  }
+  const std::uint32_t definition_id = DetectDefinitionId(registry, path, &head, {});
+  const Definition* definition = DefinitionById(registry, definition_id);
+  return definition == nullptr ? std::string{} : definition->filetype;
+}
+
+std::string DetectFiletype(const std::filesystem::path& path) {
+  const Registry& registry = GetRegistry();
+  const std::uint32_t definition_id = DetectDefinitionId(registry, path, nullptr, {});
   const Definition* definition = DefinitionById(registry, definition_id);
   return definition == nullptr ? std::string{} : definition->filetype;
 }
