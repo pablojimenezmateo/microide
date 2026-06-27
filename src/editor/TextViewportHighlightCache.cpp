@@ -114,11 +114,6 @@ std::span<const SyntaxTokenKind> TextViewport::HighlightedLineTokensIfCached(
 }
 
 void TextViewport::EnsureInitialHighlightState() const {
-  std::string perf_label = "TextViewport::EnsureInitialHighlightState";
-  if (util::PerformanceTrace::Enabled() && !document_->path.empty()) {
-    perf_label += "(path=" + document_->path.string() + ")";
-  }
-  util::PerformanceTrace::Scope perf_scope(perf_label);
   if (!syntax_highlighting_enabled()) {
     initial_highlight_state_.reset();
     return;
@@ -126,7 +121,22 @@ void TextViewport::EnsureInitialHighlightState() const {
   if (initial_highlight_state_.has_value()) {
     return;
   }
-  initial_highlight_state_ = SyntaxHighlighter::InitialState(document_->path, document_->lines.Snapshot());
+  // Build the trace label only when tracing is on and only past the early-outs
+  // above -- this is reached from every EnsureHighlightCaches, so an
+  // unconditional std::string here was a heap allocation on every highlight
+  // query.
+  std::string perf_label;
+  std::string_view perf_label_view = "TextViewport::EnsureInitialHighlightState";
+  if (util::PerformanceTrace::Enabled() && !document_->path.empty()) {
+    perf_label = "TextViewport::EnsureInitialHighlightState(path=" + document_->path.string() + ")";
+    perf_label_view = perf_label;
+  }
+  util::PerformanceTrace::Scope perf_scope(perf_label_view);
+  // Pass the live buffer directly: InitialState only inspects a bounded head, so
+  // this never materializes the whole document (the previous Snapshot() copied
+  // the entire file -- megabytes, one alloc per line -- just to read 64 lines,
+  // and left that copy resident in the buffer's snapshot cache).
+  initial_highlight_state_ = SyntaxHighlighter::InitialState(document_->path, document_->lines);
 }
 
 void TextViewport::EnsureHighlightCaches() const {

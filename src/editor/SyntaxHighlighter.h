@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/LineSpan.h"
+
 namespace microide::editor {
 
 enum class SyntaxTokenKind {
@@ -57,8 +59,10 @@ struct HighlightedLine {
 
 class SyntaxHighlighter {
  public:
-  static SyntaxState InitialState(const std::filesystem::path& path,
-                                  const std::vector<std::string>& lines);
+  // `lines` may be the live (piece-tree-backed) document: detection only ever
+  // inspects a bounded head, so passing a TextBuffer here never materializes the
+  // whole file. See runtime_syntax::DetectState.
+  static SyntaxState InitialState(const std::filesystem::path& path, LineSpan lines);
   static HighlightedLine HighlightLine(std::string_view line,
                                        const std::filesystem::path& path,
                                        const SyntaxState& state = {},

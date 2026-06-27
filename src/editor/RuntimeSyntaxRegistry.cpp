@@ -26,6 +26,20 @@ namespace {
 constexpr std::size_t kSignatureDetectLineLimit = 64;
 constexpr uint32_t kRegexCompileOptions = PCRE2_UTF | PCRE2_UCP;
 
+// Materialize at most kSignatureDetectLineLimit head lines from `lines`.
+// DetectDefinitionId inspects no further (see the line_limit clamp in its
+// signature scan), so this bounds the copy to the head -- a LineSpan over a
+// multi-megabyte buffer never materializes more than 64 short strings.
+std::vector<std::string> SignatureDetectHead(LineSpan lines) {
+  std::vector<std::string> head;
+  const std::size_t head_count = std::min(lines.size(), kSignatureDetectLineLimit);
+  head.reserve(head_count);
+  for (std::size_t i = 0; i < head_count; ++i) {
+    head.emplace_back(lines[i]);
+  }
+  return head;
+}
+
 struct MatchRange {
   std::size_t start = 0;
   std::size_t end = 0;
@@ -1036,11 +1050,13 @@ std::size_t RegistryRevision() {
   return MutableRegistryRevision();
 }
 
-SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std::string>& lines) {
+SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines) {
   util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::DetectState");
   const Registry& registry = GetRegistry();
+  // Bounded head only -- never materialize the whole (possibly huge) document.
+  const std::vector<std::string> head = SignatureDetectHead(lines);
   return SyntaxState{
-      .definition_id = DetectDefinitionId(registry, path, &lines, {}),
+      .definition_id = DetectDefinitionId(registry, path, &head, {}),
   };
 }
 
@@ -1048,12 +1064,7 @@ std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines) {
   const Registry& registry = GetRegistry();
   // Signature detection inspects at most kSignatureDetectLineLimit lines, so
   // materialize only that bounded head -- never the whole document.
-  std::vector<std::string> head;
-  const std::size_t head_count = std::min(lines.size(), kSignatureDetectLineLimit);
-  head.reserve(head_count);
-  for (std::size_t i = 0; i < head_count; ++i) {
-    head.emplace_back(lines[i]);
-  }
+  const std::vector<std::string> head = SignatureDetectHead(lines);
   const std::uint32_t definition_id = DetectDefinitionId(registry, path, &head, {});
   const Definition* definition = DefinitionById(registry, definition_id);
   return definition == nullptr ? std::string{} : definition->filetype;
