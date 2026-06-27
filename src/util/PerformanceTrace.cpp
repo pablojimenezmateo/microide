@@ -84,11 +84,16 @@ double PerformanceTrace::MinimumDurationMs() {
   return minimum_ms;
 }
 
-PerformanceTrace::Scope::Scope(std::string_view label) : label_(label) {
+PerformanceTrace::Scope::Scope(std::string_view label) {
   if (!Enabled()) {
     return;
   }
 
+  // Copy the label only on the enabled path -- `label_` is read solely by the
+  // destructor when `enabled_`. These scopes sit in hot paths (the highlight
+  // query path constructs several per call), so an unconditional copy here was a
+  // per-scope heap allocation in production even though tracing was off.
+  label_.assign(label);
   TraceState& state = GetTraceState();
   std::lock_guard<std::mutex> lock(state.mutex);
   EnsureStarted(state);
