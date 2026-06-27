@@ -106,6 +106,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void EnsureAsciiAtlas();
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
   CacheEntry* ResolveEntry(std::string_view text, SDL_Color color);
+  // Approximate VRAM footprint of a cached entry (RGBA texture: w * h * 4). Used
+  // to bound the cache by bytes, not just entry count -- a few thousand wide
+  // whole-string textures can pin far more VRAM than the entry cap implies.
+  static std::size_t EntryByteCost(int width, int height);
 
   SDL_Renderer* renderer_ = nullptr;
   TTF_Font* font_ = nullptr;
@@ -119,6 +123,9 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   bool ttf_initialized_ = false;
   std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual> cache_;
   std::list<CacheKey> cache_order_;
+  // Running sum of EntryByteCost over every live cache_ entry; kept in lockstep
+  // with cache_ so eviction can enforce a VRAM budget without rescanning.
+  std::size_t cache_bytes_ = 0;
 
   // Colour-independent coverage atlas for ASCII composites. Built lazily on the
   // first ASCII miss and rebuilt (via ClearCache) when the font size changes.

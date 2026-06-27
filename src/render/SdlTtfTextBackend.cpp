@@ -26,8 +26,20 @@ constexpr float kFontPointSize = 13.0f;
 // (text, color) pairs than the legacy per-glyph cache, so the upper bound is
 // larger than the 2048 used when each entry held a single glyph.
 constexpr std::size_t kMaxCacheEntries = 4096;
+// Upper bound on approximate cached-texture VRAM. The entry cap alone does not
+// bound memory: whole-string composites have arbitrary width, so a few thousand
+// wide entries can pin hundreds of MB. Eviction enforces whichever bound (count
+// or bytes) binds first. In normal use most text goes through the ASCII atlas,
+// so the cache stays small and neither bound is hit.
+constexpr std::size_t kMaxCacheBytes = 48ull * 1024 * 1024;
 constexpr float kMinPresentationScale = 0.1f;
 }  // namespace
+
+std::size_t SdlTtfTextBackend::EntryByteCost(int width, int height) {
+  const std::size_t w = width > 0 ? static_cast<std::size_t>(width) : 0;
+  const std::size_t h = height > 0 ? static_cast<std::size_t>(height) : 0;
+  return w * h * 4;
+}
 
 std::unique_ptr<SdlTtfTextBackend> SdlTtfTextBackend::Create(SDL_Renderer* renderer) {
   auto backend = std::unique_ptr<SdlTtfTextBackend>(new SdlTtfTextBackend());
@@ -462,21 +474,30 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
       .text = std::string(text),
       .color = color,
   };
+  const std::size_t entry_bytes = EntryByteCost(entry.width, entry.height);
   auto [map_it, inserted] = cache_.emplace(std::move(key), std::move(entry));
   if (!inserted) {
+    cache_bytes_ -= EntryByteCost(map_it->second.width, map_it->second.height);
     if (map_it->second.texture != nullptr) {
       SDL_DestroyTexture(map_it->second.texture);
     }
     map_it->second = std::move(entry);
   }
+  cache_bytes_ += entry_bytes;
   cache_order_.push_back(map_it->first);
   map_it->second.order = std::prev(cache_order_.end());
 
-  while (cache_order_.size() > kMaxCacheEntries) {
+  // Evict oldest entries until both the count and VRAM budgets are satisfied.
+  // Keep at least the just-inserted entry (>1 guard) so a single oversized
+  // composite that alone exceeds kMaxCacheBytes never evicts itself, which would
+  // dangle the returned pointer.
+  while (cache_order_.size() > 1 &&
+         (cache_order_.size() > kMaxCacheEntries || cache_bytes_ > kMaxCacheBytes)) {
     auto evict_it = cache_.find(cache_order_.front());
     cache_order_.pop_front();
     if (evict_it != cache_.end()) {
       util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheEvictions);
+      cache_bytes_ -= EntryByteCost(evict_it->second.width, evict_it->second.height);
       if (evict_it->second.texture != nullptr) {
         SDL_DestroyTexture(evict_it->second.texture);
       }
