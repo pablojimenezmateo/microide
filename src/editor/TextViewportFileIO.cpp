@@ -23,9 +23,20 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   }
   util::PerformanceTrace::Scope perf_scope(perf_label);
   EnsureDocument();
-  const std::optional<std::string> content = util::ReadTextFile(path);
+  std::optional<std::string> content = util::ReadTextFile(path);
   if (!content.has_value()) {
     return false;
+  }
+
+  // Fast path: a file with no '\r' is already in the document's canonical
+  // representation (lines joined by '\n'), so hand the bytes straight to the
+  // buffer instead of splitting into a vector<string> and rejoining. This skips
+  // two full copies of the file plus one heap allocation per line on the open
+  // path -- the dominant cost for large files.
+  if (content->find('\r') == std::string::npos) {
+    const TextEncoding encoding = DetectEncoding(*content);
+    ResetStateFromText(std::move(*content), path, LineEnding::LF, false, encoding, false, false);
+    return true;
   }
 
   const util::DecodedText decoded = util::DecodeLines(*content);
@@ -96,6 +107,13 @@ void TextViewport::LoadContent(std::string_view content,
                                const std::filesystem::path& path,
                                std::optional<LineEnding> line_ending) {
   EnsureDocument();
+  // Fast path mirrors OpenFile: when the caller does not force a line ending and
+  // the content is already '\n'-canonical, skip the split/rejoin round-trip.
+  if (!line_ending.has_value() && content.find('\r') == std::string_view::npos) {
+    const TextEncoding encoding = DetectEncoding(content);
+    ResetStateFromText(std::string(content), path, LineEnding::LF, false, encoding, false, false);
+    return;
+  }
   const util::DecodedText decoded = util::DecodeLines(content);
   ResetState(decoded.lines, path, line_ending.value_or(decoded.line_ending),
              line_ending.has_value() ? false : decoded.mixed_line_endings, DetectEncoding(content),

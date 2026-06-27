@@ -43,6 +43,15 @@ class PieceTree {
   // Replace the whole document with `lines` (load / ResetState).
   void Reset(const std::vector<std::string>& lines);
 
+  // Replace the whole document by taking ownership of `content` directly as the
+  // original buffer -- no split-into-lines / rejoin round-trip. `content` must
+  // already be the canonical document representation (lines joined by '\n', i.e.
+  // it contains no '\r'); the line count is derived from its '\n' count. This is
+  // the large-file load fast path: the file bytes are moved in once and scanned
+  // for newlines a single time, instead of being copied through a
+  // vector<string>. Empty content yields a single empty line.
+  void ResetFromText(std::string content);
+
   // --- Read ---
   std::size_t LineCount() const noexcept { return line_count_; }
   bool Empty() const noexcept { return line_count_ == 0; }
@@ -103,6 +112,9 @@ class PieceTree {
   std::uint32_t NthNewlineOffset(std::uint8_t buffer, std::uint32_t from, std::uint32_t nth) const;
   // Append `text` to the add buffer; returns its start offset there.
   std::uint32_t AppendToAdd(std::string_view text);
+  // Rebuild the newline index + single root piece from the current `original_`
+  // (shared by Reset / ResetFromText). Does not set line_count_.
+  void RebuildFromOriginal();
 
   // --- node pool ---
   NodeId Allocate(std::uint8_t buffer, std::uint32_t start, std::uint32_t length);

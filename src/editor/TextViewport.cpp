@@ -723,8 +723,29 @@ void TextViewport::ResetState(std::vector<std::string> lines,
                               bool placeholder,
                               bool dirty) {
   EnsureDocument();
-  SetDocumentPath(path);
   document_->lines.Reset(lines.empty() ? std::vector<std::string>{""} : std::move(lines));
+  ResetMetadataAfterContent(path, line_ending, mixed_line_endings, encoding, placeholder, dirty);
+}
+
+void TextViewport::ResetStateFromText(std::string text,
+                                      const std::filesystem::path& path,
+                                      LineEnding line_ending,
+                                      bool mixed_line_endings,
+                                      TextEncoding encoding,
+                                      bool placeholder,
+                                      bool dirty) {
+  EnsureDocument();
+  document_->lines.ResetFromText(std::move(text));
+  ResetMetadataAfterContent(path, line_ending, mixed_line_endings, encoding, placeholder, dirty);
+}
+
+void TextViewport::ResetMetadataAfterContent(const std::filesystem::path& path,
+                                             LineEnding line_ending,
+                                             bool mixed_line_endings,
+                                             TextEncoding encoding,
+                                             bool placeholder,
+                                             bool dirty) {
+  SetDocumentPath(path);
   document_->line_ending = line_ending;
   document_->mixed_line_endings = mixed_line_endings;
   document_->encoding = encoding;

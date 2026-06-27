@@ -200,6 +200,30 @@ void RunLargeFileOpenFirstPaint(ScenarioContext& context) {
   }
 }
 
+// Companion to large_file_open_first_paint, but opens an LF-only 50k-line file.
+// large_file_open_first_paint's fixture has mixed line endings and therefore
+// takes the DecodeLines normalization path; this scenario exercises the Phase 4
+// direct-load fast path (no '\r' -> bytes handed straight to the piece tree's
+// original buffer, skipping the split-into-vector<string> + rejoin round-trip).
+// It is the open-time gate for the large-file load fast path.
+void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
+  const std::filesystem::path file =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!std::filesystem::exists(file)) {
+    std::cerr << "large_file_open_lf_first_paint: missing fixture " << file << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.Measure("large_file.open_lf_to_first_paint", [&] {
+    context.OpenTab(file);
+    context.PumpFrames(2);
+  });
+  if (context.ActiveViewport().lines().size() < 1000) {
+    throw std::runtime_error(
+        "large_file_open_lf_first_paint: large fixture did not load as expected");
+  }
+}
+
 void RunMergeScrollLargeFixture(ScenarioContext& context) {
   const std::filesystem::path seed = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
   if (!std::filesystem::exists(seed)) {
@@ -344,6 +368,13 @@ const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{
     .baseline_gated = true,
     .run_by_default = true,
     .run = RunLargeFileOpenFirstPaint,
+}});
+const ScenarioRegistration g_perf_large_file_open_lf_first_paint({Scenario{
+    .name = "large_file_open_lf_first_paint",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .run = RunLargeFileOpenLfFirstPaint,
 }});
 const ScenarioRegistration g_perf_merge_scroll_large_fixture({Scenario{
     .name = "merge_scroll_large_fixture",

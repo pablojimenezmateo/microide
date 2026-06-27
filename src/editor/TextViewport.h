@@ -332,6 +332,25 @@ class TextViewport {
                   TextEncoding encoding,
                   bool placeholder,
                   bool dirty);
+  // Large-file load fast path: reset the document by handing canonical
+  // '\n'-joined `text` straight to the buffer (no split-into-lines round-trip).
+  // `text` must contain no '\r'. Shares all post-reset bookkeeping with
+  // ResetState via ResetMetadataAfterContent.
+  void ResetStateFromText(std::string text,
+                          const std::filesystem::path& path,
+                          LineEnding line_ending,
+                          bool mixed_line_endings,
+                          TextEncoding encoding,
+                          bool placeholder,
+                          bool dirty);
+  // Shared tail of ResetState / ResetStateFromText: applies path + metadata and
+  // resets cursor/selection/undo/caches once the buffer content is in place.
+  void ResetMetadataAfterContent(const std::filesystem::path& path,
+                                 LineEnding line_ending,
+                                 bool mixed_line_endings,
+                                 TextEncoding encoding,
+                                 bool placeholder,
+                                 bool dirty);
   // Sets document_->path and refreshes the cached document_->path_key together
   // so the two never drift. All path assignments must go through here.
   void SetDocumentPath(const std::filesystem::path& path);
