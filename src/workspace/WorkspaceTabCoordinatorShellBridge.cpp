@@ -135,7 +135,7 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
     return false;
   }
 
-  const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines().Snapshot());
+  const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines());
   if (const FormatterSpec* formatter =
           filetype.empty() ? nullptr : formatter_registry_.FindFormatter(filetype);
       formatter != nullptr && !formatter->command.empty()) {

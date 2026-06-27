@@ -257,7 +257,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   // rather than once per replacement.
   std::string new_line;
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
-    std::string& current_line = document_->lines.MutableLine(line_index);
+    std::string current_line(document_->lines.LineView(line_index));
     std::string lowered_line = util::ToLowerAscii(current_line);
     std::size_t offset = lowered_line.find(lowered_needle);
     if (offset == std::string::npos) {
@@ -280,12 +280,12 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
       first_changed_line = line_index;
     } else if (line_index > last_changed_line + 1) {
       for (std::size_t gap = last_changed_line + 1; gap < line_index; ++gap) {
-        before_changed_lines.push_back(document_->lines[gap]);
+        before_changed_lines.emplace_back(document_->lines.LineView(gap));
       }
     }
-    before_changed_lines.push_back(current_line);
+    before_changed_lines.push_back(std::move(current_line));
     last_changed_line = line_index;
-    current_line = std::move(new_line);
+    document_->lines.SetLine(line_index, std::move(new_line));
   }
 
   if (replacements > 0) {
@@ -368,7 +368,9 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   TextViewportUndoHistory::ApplyEntryToBuffer(document_->lines, entry, forward);
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
-  RefreshEncoding();
+  // Incremental, upgrade-only: scan just the inserted lines instead of
+  // re-detecting the whole document's encoding on every keystroke.
+  UpgradeEncodingForInsertedLines(inserted_lines);
   // Undo/redo replays a content delta starting at start_line.
   InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line);
   UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines);

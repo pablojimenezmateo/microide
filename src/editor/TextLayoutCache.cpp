@@ -8,7 +8,7 @@
 
 namespace microide::editor {
 
-LayoutLine TextLayoutCache::VisibleLineLayoutCached(const std::vector<std::string>& lines,
+LayoutLine TextLayoutCache::VisibleLineLayoutCached(LineSpan lines,
                                                     std::size_t line_index,
                                                     std::size_t horizontal_scroll,
                                                     std::size_t visible_columns,
@@ -35,7 +35,7 @@ LayoutLine TextLayoutCache::VisibleLineLayoutCached(const std::vector<std::strin
   return layout;
 }
 
-void TextLayoutCache::EnsureWrappedRowLayouts(const std::vector<std::string>& lines,
+void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
                                               std::size_t tab_size,
                                               std::size_t visible_columns,
                                               bool soft_wrap,
@@ -117,7 +117,7 @@ void TextLayoutCache::EnsureWrappedRowLayouts(const std::vector<std::string>& li
       wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
       last_visible_row = wrapped_row_layouts_.size();
 
-      const std::string& line_text = lines[line_index];
+      const std::string_view line_text = lines[line_index];
       if (line_text.empty()) {
         wrapped_row_layouts_.push_back(WrappedRow{line_index, 0, 0, 0});
         continue;
@@ -262,7 +262,7 @@ std::size_t TextLayoutCache::WrappedLineRowOffset(std::size_t line_index) const 
   return wrapped_line_row_offsets_[line_index];
 }
 
-std::size_t TextLayoutCache::MaxVisualColumns(const std::vector<std::string>& lines,
+std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
                                               std::size_t tab_size,
                                               std::uint64_t content_revision) const {
   if (cached_max_visual_columns_.has_value() && cached_max_visual_columns_tab_size_ == tab_size &&
@@ -296,7 +296,7 @@ std::size_t TextLayoutCache::MaxVisualColumns(const std::vector<std::string>& li
 
 void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     std::size_t start_line, std::size_t removed_count,
-    const std::vector<std::string>& inserted_lines, const std::vector<std::string>& lines,
+    const std::vector<std::string>& inserted_lines, LineSpan lines,
     std::size_t tab_size, std::uint64_t content_revision) {
   if (cached_max_visual_columns_tab_size_ != tab_size ||
       cached_visual_line_columns_.size() != lines.size() - inserted_lines.size() + removed_count) {

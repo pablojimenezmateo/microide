@@ -149,7 +149,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
         language_cache_.path == viewport_path) {
       filetype = language_cache_.filetype;
     } else {
-      filetype = editor::runtime_syntax::DetectFiletype(viewport_path, viewport->lines().Snapshot());
+      filetype = editor::runtime_syntax::DetectFiletype(viewport_path, viewport->lines());
       language_cache_.viewport = viewport;
       language_cache_.content_revision = viewport->content_revision();
       language_cache_.path = viewport_path;

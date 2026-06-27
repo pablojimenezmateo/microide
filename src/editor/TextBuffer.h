@@ -3,90 +3,143 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
+
+#include "editor/PieceTree.h"
 
 namespace microide::editor {
 
 // Line-oriented document storage behind a stable interface.
 //
-// Phase 2 of the large-file overhaul introduces this seam so the underlying
-// representation can be swapped (Phase 3: a piece tree) without touching the
-// edit engine, undo history, or the ~30 read-only consumers. The current
-// implementation is a thin wrapper over `std::vector<std::string>`, so it is
-// behavior- and performance-identical to the previous raw member.
+// Phase 2 of the large-file overhaul introduced this seam; Phase 3 swaps the
+// underlying representation to a piece tree (see PieceTree) without touching the
+// edit engine, undo history, or the read-only consumers.
 //
-// Design rules that keep the door open for the piece-tree swap:
-//   * Line reads return `std::string_view` (zero-copy for the vector impl; a
-//     piece tree materializes only when a logical line spans a piece boundary).
-//   * All mutation funnels through `ReplaceLineRange` — "replace `removed`
-//     whole lines starting at `start` with `inserted`". This is exactly the
-//     undo-entry model and maps directly onto an offset-range splice in a piece
-//     tree. The convenience mutators are thin wrappers over it.
-//   * `Snapshot()` is the explicit "I need the whole document as a vector"
-//     bridge for inherently whole-document cold paths (serialize, persist,
-//     filetype detect, full-buffer search). The piece-tree impl will satisfy it
-//     via revision-cached materialization; hot paths must use `LineView`.
+// Representation:
+//   * `tree_` is the authoritative store -- a piece tree over an immutable
+//     original buffer plus an append-only add buffer. Edits are O(log n) splices
+//     and never reshuffle line storage; there is no per-line heap allocation.
+//   * `LineView` reads a single line zero-copy (the common case) and is the
+//     accessor hot/per-line code must use.
+//
+// Compatibility accessors returning `const std::string&`:
+//   * `operator[]`, `front`, and `back` return a reference into a per-line
+//     materialization cache (`line_cache_`): the requested line is copied out of
+//     the tree once and memoized, so repeated access and `&buffer[i]` pointers
+//     stay valid. Only *accessed* lines are materialized -- never the whole
+//     document -- so the render path (which touches one viewport's worth of
+//     lines) does not pay an O(n) rebuild per frame or per keystroke. New
+//     per-line code should still prefer `LineView` (zero-copy view).
+//   * `Snapshot()` and the iterators return a lazily materialized whole-document
+//     `snapshot_` vector for inherently O(n) cold paths (serialize, persist,
+//     filetype detect, full-buffer search, range scans). Never call these on a
+//     hot/per-frame path.
+//   * Every reference returned by the above is invalidated by the next mutation
+//     -- the same contract `std::vector<std::string>` already imposed.
+//   * All mutation funnels through `ReplaceLineRange`, which maps directly onto a
+//     piece-tree offset-range splice; the convenience mutators wrap it.
 class TextBuffer {
  public:
-  // Phase 2 keeps a vector-backed iterator (yields `const std::string&`) so the
-  // ~30 read-only consumers compile unchanged. Phase 3 replaces this with a
-  // representation-agnostic line iterator yielding `std::string_view`, at which
-  // point the compiler flags every consumer that must move to LineView.
+  // Iterates the materialized snapshot (yields `const std::string&`). Building
+  // the snapshot is O(n); prefer index + LineView in per-line code.
   using const_iterator = std::vector<std::string>::const_iterator;
 
   TextBuffer() = default;
-  explicit TextBuffer(std::vector<std::string> lines) : lines_(std::move(lines)) {}
+  explicit TextBuffer(const std::vector<std::string>& lines) : tree_(lines) {}
 
   // Replace the entire contents (used by load / ResetState).
-  void Reset(std::vector<std::string> lines) { lines_ = std::move(lines); }
+  void Reset(const std::vector<std::string>& lines) {
+    tree_.Reset(lines);
+    InvalidateSnapshot();
+  }
 
   // --- Read ---
-  std::size_t LineCount() const noexcept { return lines_.size(); }
-  std::size_t size() const noexcept { return lines_.size(); }
-  bool empty() const noexcept { return lines_.empty(); }
+  std::size_t LineCount() const noexcept { return tree_.LineCount(); }
+  std::size_t size() const noexcept { return tree_.LineCount(); }
+  bool empty() const noexcept { return tree_.Empty(); }
 
   // Zero-copy view of line `index` (no trailing newline). `index` must be < size().
   // Prefer this in hot/per-line code; it is the accessor the piece tree keeps.
-  std::string_view LineView(std::size_t index) const { return lines_[index]; }
-  // Vector-impl line access kept as `const std::string&` for Phase 2 so reader
-  // call sites are behavior-identical. Phase 3 narrows this to LineView.
-  const std::string& operator[](std::size_t index) const { return lines_[index]; }
-  std::size_t LineLength(std::size_t index) const { return lines_[index].size(); }
+  std::string_view LineView(std::size_t index) const { return tree_.LineView(index); }
+  std::size_t LineLength(std::size_t index) const { return tree_.LineLength(index); }
 
-  const_iterator begin() const { return lines_.begin(); }
-  const_iterator end() const { return lines_.end(); }
-  const std::string& front() const { return lines_.front(); }
-  const std::string& back() const { return lines_.back(); }
+  // Per-line compatibility accessors (line-cache backed; see class comment).
+  // Materialize only the requested line, not the whole document.
+  const std::string& operator[](std::size_t index) const { return LineRef(index); }
+  const std::string& front() const { return LineRef(0); }
+  const std::string& back() const { return LineRef(tree_.LineCount() - 1); }
+  // Iterators materialize the whole document (cold paths only).
+  const_iterator begin() const { return Snapshot().begin(); }
+  const_iterator end() const { return Snapshot().end(); }
 
   // Copy lines [begin, end) into a fresh vector (undo before/after capture).
-  std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const;
+  std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const {
+    return tree_.SliceLines(begin, end);
+  }
   // Full materialized copy of the document.
-  std::vector<std::string> ToVector() const { return lines_; }
+  std::vector<std::string> ToVector() const { return tree_.ToVector(); }
 
   // Whole-document bridge for inherently O(n) cold paths (see class comment).
   // Prefer LineView for anything per-line or hot.
-  const std::vector<std::string>& Snapshot() const { return lines_; }
+  const std::vector<std::string>& Snapshot() const {
+    if (!snapshot_valid_) {
+      snapshot_ = tree_.ToVector();
+      snapshot_valid_ = true;
+    }
+    return snapshot_;
+  }
 
   // --- Mutate ---
   // Universal primitive: erase `removed` lines starting at `start`, then insert
   // `inserted` at `start`. Mirrors the undo-entry apply model.
   void ReplaceLineRange(std::size_t start, std::size_t removed,
-                        const std::vector<std::string>& inserted);
+                        const std::vector<std::string>& inserted) {
+    tree_.ReplaceLineRange(start, removed, inserted);
+    InvalidateSnapshot();
+  }
 
-  void SetLine(std::size_t index, std::string value) { lines_[index] = std::move(value); }
-  void InsertLine(std::size_t index, std::string value);
-  void EraseLine(std::size_t index);
-  void EraseLineRange(std::size_t begin, std::size_t end);
-  void PushBackLine(std::string value) { lines_.push_back(std::move(value)); }
-
-  // Direct mutable access to a single line for in-place edits in the hot edit
-  // path. The vector impl returns a real reference; the piece-tree impl will
-  // route per-line edits through ReplaceLineRange instead, so new code should
-  // prefer SetLine + LineView. Kept narrow on purpose.
-  std::string& MutableLine(std::size_t index) { return lines_[index]; }
+  void SetLine(std::size_t index, const std::string& value) {
+    tree_.SetLine(index, value);
+    InvalidateSnapshot();
+  }
+  void InsertLine(std::size_t index, const std::string& value) {
+    tree_.InsertLine(index, value);
+    InvalidateSnapshot();
+  }
+  void EraseLine(std::size_t index) {
+    tree_.EraseLine(index);
+    InvalidateSnapshot();
+  }
+  void EraseLineRange(std::size_t begin, std::size_t end) {
+    tree_.EraseLineRange(begin, end);
+    InvalidateSnapshot();
+  }
+  void PushBackLine(const std::string& value) {
+    tree_.PushBackLine(value);
+    InvalidateSnapshot();
+  }
 
  private:
-  std::vector<std::string> lines_;
+  // Memoized single-line materialization. unordered_map node values are
+  // reference-stable across inserts/rehashes, so `&LineRef(i)` stays valid until
+  // the next mutation clears the cache.
+  const std::string& LineRef(std::size_t index) const {
+    const auto it = line_cache_.find(index);
+    if (it != line_cache_.end()) return it->second;
+    return line_cache_.emplace(index, std::string(tree_.LineView(index))).first->second;
+  }
+
+  void InvalidateSnapshot() {
+    snapshot_valid_ = false;
+    snapshot_.clear();
+    line_cache_.clear();
+  }
+
+  PieceTree tree_;
+  mutable std::vector<std::string> snapshot_;
+  mutable bool snapshot_valid_ = false;
+  mutable std::unordered_map<std::size_t, std::string> line_cache_;
 };
 
 }  // namespace microide::editor

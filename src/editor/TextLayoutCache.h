@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/LineSpan.h"
 #include "editor/TextLayout.h"
 
 namespace microide::editor {
@@ -48,7 +49,7 @@ class TextLayoutCache {
   // Returns the LayoutLine for `line_index` from the cache, or builds it on
   // miss. Caller is responsible for caret-row decoration (the cache does not
   // know which row the cursor is on).
-  LayoutLine VisibleLineLayoutCached(const std::vector<std::string>& lines,
+  LayoutLine VisibleLineLayoutCached(LineSpan lines,
                                      std::size_t line_index,
                                      std::size_t horizontal_scroll,
                                      std::size_t visible_columns,
@@ -59,7 +60,7 @@ class TextLayoutCache {
   // trivial-layout fast path (no soft-wrap, no collapsed fold) leaves the
   // vectors empty and lets the readers synthesize rows from
   // `horizontal_scroll` + `visible_columns` directly.
-  void EnsureWrappedRowLayouts(const std::vector<std::string>& lines,
+  void EnsureWrappedRowLayouts(LineSpan lines,
                                std::size_t tab_size,
                                std::size_t visible_columns,
                                bool soft_wrap,
@@ -84,7 +85,7 @@ class TextLayoutCache {
   bool wrapped_row_layouts_trivial() const { return wrapped_row_layouts_trivial_; }
 
   // ---- max visual columns cache -----------------------------------------
-  std::size_t MaxVisualColumns(const std::vector<std::string>& lines,
+  std::size_t MaxVisualColumns(LineSpan lines,
                                std::size_t tab_size,
                                std::uint64_t content_revision) const;
   // Maintains the per-line visual-column cache after an in-place line edit.
@@ -93,7 +94,7 @@ class TextLayoutCache {
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
                                         const std::vector<std::string>& inserted_lines,
-                                        const std::vector<std::string>& lines,
+                                        LineSpan lines,
                                         std::size_t tab_size,
                                         std::uint64_t content_revision);
 

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/LineSpan.h"
 #include "editor/RuntimeSyntaxData.h"
 #include "editor/SyntaxHighlighter.h"
 
@@ -43,8 +44,12 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
 void EnsureInitialized();
 std::size_t RegistryRevision();
 SyntaxState DetectState(const std::filesystem::path& path, const std::vector<std::string>& lines);
-std::string DetectFiletype(const std::filesystem::path& path,
-                           const std::vector<std::string>& lines);
+// Filetype detection only inspects the path and a bounded head of the document
+// (signature/shebang scan). Pass a LineSpan over the live buffer; only the head
+// is read, so no whole-document materialization happens on per-frame callers.
+std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines);
+// Path-only detection for callers with no content available.
+std::string DetectFiletype(const std::filesystem::path& path);
 
 HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,

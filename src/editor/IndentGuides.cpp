@@ -24,7 +24,7 @@ std::size_t ActiveGuideColumnFromLeading(std::size_t caret_leading_visual_indent
 
 }  // namespace
 
-std::size_t LeadingVisualIndent(const std::string& line, std::size_t tab_size) {
+std::size_t LeadingVisualIndent(std::string_view line, std::size_t tab_size) {
   std::size_t visual = 0;
   for (char c : line) {
     if (c == ' ') {
@@ -39,7 +39,7 @@ std::size_t LeadingVisualIndent(const std::string& line, std::size_t tab_size) {
   return visual;
 }
 
-void ComputeIndentGuides(const std::vector<std::string>& lines,
+void ComputeIndentGuides(LineSpan lines,
                          const std::vector<std::size_t>& visible_rows,
                          std::size_t tab_size,
                          std::size_t indent_width,

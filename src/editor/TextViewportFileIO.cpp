@@ -136,7 +136,19 @@ std::string TextViewport::EncodingLabel() const {
 
 void TextViewport::RefreshEncoding() {
   util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
-  document_->encoding = DetectEncoding(document_->lines.Snapshot());
+  document_->encoding = DetectEncoding(document_->lines);
+}
+
+void TextViewport::UpgradeEncodingForInsertedLines(
+    const std::vector<std::string>& inserted_lines) {
+  util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
+  if (document_->encoding == TextEncoding::Bytes) {
+    return;  // already the worst classification; an insert cannot raise it further.
+  }
+  const TextEncoding delta = DetectEncoding(LineSpan(inserted_lines));
+  if (static_cast<int>(delta) > static_cast<int>(document_->encoding)) {
+    document_->encoding = delta;
+  }
 }
 
 TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content) {
@@ -154,10 +166,11 @@ TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content
   return util::IsValidUtf8(content) ? TextEncoding::UTF8 : TextEncoding::Bytes;
 }
 
-TextViewport::TextEncoding TextViewport::DetectEncoding(const std::vector<std::string>& lines) {
+TextViewport::TextEncoding TextViewport::DetectEncoding(LineSpan lines) {
   bool ascii_only = true;
-  for (const std::string& line : lines) {
-    if (line.find('\0') != std::string::npos) {
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    const std::string_view line = lines[i];
+    if (line.find('\0') != std::string_view::npos) {
       return TextEncoding::Bytes;
     }
 

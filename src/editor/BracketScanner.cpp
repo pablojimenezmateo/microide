@@ -203,7 +203,7 @@ std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
   thread_local std::vector<std::string_view> views;
   views.resize(lines.size());
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    views[i] = lines[i];
+    views[i] = lines.LineView(i);
   }
   return FindBracketMatchInLines(views, caret_line, caret_column, max_lines_each_side, &viewport);
 }

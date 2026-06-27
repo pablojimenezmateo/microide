@@ -413,7 +413,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
       }
       restored_tab.deferred_handle = TabEntry::DeferredTabHandle{
           .path = tab_path,
-          .language_hint = editor::runtime_syntax::DetectFiletype(tab_path, {}),
+          .language_hint = editor::runtime_syntax::DetectFiletype(tab_path),
           .cursor_line = editor_state.restored_cursor_line,
           .cursor_column = editor_state.restored_cursor_column,
           .scroll_line = editor_state.restored_scroll_line,

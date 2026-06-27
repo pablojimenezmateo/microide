@@ -6,7 +6,7 @@
 
 namespace microide::editor {
 
-TextLayout::LineVisualColumnMap::LineVisualColumnMap(const std::string& line,
+TextLayout::LineVisualColumnMap::LineVisualColumnMap(std::string_view line,
                                                      std::size_t tab_size) {
   boundaries_.reserve(line.size() + 1);
   visuals_.reserve(line.size() + 1);
@@ -42,7 +42,7 @@ std::size_t TextLayout::LineVisualColumnMap::VisualColumnFor(std::size_t text_co
   return visuals_[index];
 }
 
-std::size_t TextLayout::VisualColumnForTextColumn(const std::string& line,
+std::size_t TextLayout::VisualColumnForTextColumn(std::string_view line,
                                                   std::size_t text_column,
                                                   std::size_t tab_size) {
   const std::size_t clamped_column = ClampTextColumn(line, text_column);
@@ -54,7 +54,7 @@ std::size_t TextLayout::VisualColumnForTextColumn(const std::string& line,
   return visual_column;
 }
 
-std::size_t TextLayout::TextColumnForVisualColumn(const std::string& line,
+std::size_t TextLayout::TextColumnForVisualColumn(std::string_view line,
                                                   std::size_t visual_column,
                                                   std::size_t tab_size) {
   std::size_t current_visual = 0;
@@ -71,7 +71,7 @@ std::size_t TextLayout::TextColumnForVisualColumn(const std::string& line,
   return line.size();
 }
 
-std::size_t TextLayout::ClampTextColumn(const std::string& line, std::size_t text_column) {
+std::size_t TextLayout::ClampTextColumn(std::string_view line, std::size_t text_column) {
   const std::size_t clamped_column = std::min(text_column, line.size());
   if (clamped_column >= line.size()) {
     return line.size();
@@ -88,7 +88,7 @@ std::size_t TextLayout::ClampTextColumn(const std::string& line, std::size_t tex
   return current;
 }
 
-std::size_t TextLayout::PreviousTextColumn(const std::string& line, std::size_t text_column) {
+std::size_t TextLayout::PreviousTextColumn(std::string_view line, std::size_t text_column) {
   const std::size_t clamped_column = ClampTextColumn(line, text_column);
   if (clamped_column == 0) {
     return 0;
@@ -101,7 +101,7 @@ std::size_t TextLayout::PreviousTextColumn(const std::string& line, std::size_t 
   return pos;
 }
 
-std::size_t TextLayout::NextTextColumn(const std::string& line, std::size_t text_column) {
+std::size_t TextLayout::NextTextColumn(std::string_view line, std::size_t text_column) {
   const std::size_t clamped_column = ClampTextColumn(line, text_column);
   if (clamped_column >= line.size()) {
     return line.size();
@@ -110,7 +110,7 @@ std::size_t TextLayout::NextTextColumn(const std::string& line, std::size_t text
                   clamped_column + util::Utf8SequenceLength(line, clamped_column));
 }
 
-LayoutLine TextLayout::BuildVisibleLine(const std::string& line,
+LayoutLine TextLayout::BuildVisibleLine(std::string_view line,
                                         std::size_t horizontal_scroll,
                                         std::size_t visible_columns,
                                         std::size_t tab_size) {
@@ -199,7 +199,7 @@ std::size_t TextLayout::AdvanceVisualColumn(std::size_t visual_column,
   return visual_column + (remainder == 0 ? safe_tab_size : safe_tab_size - remainder);
 }
 
-TextLayout::ByteRange TextLayout::IdentifierRangeAt(const std::string& line,
+TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
                                                     std::size_t text_column) {
   const auto is_ident = [](unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';

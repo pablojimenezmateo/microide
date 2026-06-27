@@ -165,19 +165,31 @@ runtime, project, terminal, compare, and rendering work should continue to move 
 subsystems and services rather than accrete more logic on the shell or in one file.
 
 Within `src/editor`, `TextViewport` still owns viewport behavior, but the document's line storage
-now lives behind `editor::TextBuffer` (`src/editor/TextBuffer.h`). `DocumentState` holds a
-`TextBuffer`, and **all** mutation funnels through its line-granular splice primitive
-`ReplaceLineRange(start, removed, inserted)` (plus the thin `SetLine`/`InsertLine`/`EraseLine`/
-`PushBackLine` wrappers); the undo history applies entries through `ApplyEntryToBuffer` and reads
-through the buffer. This is the interface seam for the large-file text-model swap: Phase 3 replaces
-`TextBuffer`'s internals (currently a `std::vector<std::string>`) with a piece tree without touching
-the edit engine or undo history. Three transitional accessors are deliberately vector-shaped and are
-the work Phase 3 retires: `operator[]`/`begin`/`end`/`front`/`back` return `const std::string&`
-(piece tree narrows readers to the zero-copy `LineView`), `Snapshot()` returns the whole vector for
-inherently O(n) cold paths (serialize, persist, filetype/indent detect — piece tree satisfies it via
-revision-cached materialization), and `MutableLine()` hands out a single mutable line reference.
-File I/O still routes through the shared text-file helper, and undo/redo stores changed line ranges
-plus view state instead of whole-buffer snapshots.
+lives behind `editor::TextBuffer` (`src/editor/TextBuffer.h`), and as of the large-file overhaul
+(Phase 3) `TextBuffer` is backed by a **piece tree** (`src/editor/PieceTree.{h,cpp}`): an implicit
+treap (rope) over an immutable `original` buffer plus an append-only `add` buffer, with per-buffer
+newline-offset indices for O(log n) line lookup. Edits are O(log n) offset-range splices with no
+per-line heap allocation and no line-pointer reshuffle. The data structure is pinned to a naive
+`vector<std::string>` oracle by a unit test (`tests/PieceTreeTests.cpp`) and a libFuzzer target
+(`tests/fuzz/PieceTreeEquivalenceFuzz.cpp`, ASAN-clean over 200k+ runs); it must never diverge.
+
+**All** mutation funnels through `ReplaceLineRange(start, removed, inserted)` (plus the thin
+`SetLine`/`InsertLine`/`EraseLine`/`PushBackLine` wrappers); the undo history applies entries through
+`ApplyEntryToBuffer` and reads through the buffer. Reads come in two shapes. The zero-copy `LineView`
+(returns a `std::string_view`, materializing into a small per-revision cache only when a line spans a
+piece boundary) is what **hot/per-line code must use** — the editor exposes it to layout, syntax,
+indent-guide, bracket-match, encoding-detect, and folding paths through `editor::LineSpan`
+(`src/editor/LineSpan.h`), a non-owning, allocation-free adapter that unifies a `TextBuffer` and a
+plain `std::vector<std::string>` (compare/merge models, undo deltas) behind `size()` + `operator[]`.
+The compatibility accessors — `operator[]`/`front`/`back` (per-line materialization cache) and
+`Snapshot()`/iterators (whole-document `vector` rebuilt lazily on first touch after a mutation) —
+exist for inherently O(n) cold paths (serialize, persist) and must never be called per-frame or
+per-keystroke; doing so reintroduces an O(n) rebuild per edit. Two related rules keep the piece tree
+winning: layout/highlight/fold/render consume `LineSpan`, never `.Snapshot()`, and encoding
+detection on the edit path is incremental (`UpgradeEncodingForInsertedLines` scans only inserted
+lines, upgrade-only) instead of re-detecting the whole document on every keystroke. File I/O still
+routes through the shared text-file helper, and undo/redo stores changed line ranges plus view state
+instead of whole-buffer snapshots.
 The next `TextViewport` refactor should reduce ownership (document buffer, edit engine, undo
 history, layout cache seams), not just split more `TextViewport*.cpp` files.
 

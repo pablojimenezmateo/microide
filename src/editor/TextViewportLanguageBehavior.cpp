@@ -224,14 +224,14 @@ bool TextViewport::TrySurroundInsert(char ch) {
     return false;
   }
   const SelectionRange norm = NormalizeRange(*sel);
-  if (!detail::ValidateRangeColumns(document_->lines.Snapshot(), norm)) {
+  if (!detail::ValidateRangeColumns(document_->lines, norm)) {
     return false;
   }
   if (InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
     return false;
   }
 
-  const std::string inner = detail::TextBetweenLines(document_->lines.Snapshot(), norm);
+  const std::string inner = detail::TextBetweenLines(document_->lines, norm);
   const std::string replacement = pair->open + inner + pair->close;
   const std::string first_prefix = document_->lines[norm.start.line].substr(0, norm.start.column);
   TextPosition inner_anchor{};
@@ -508,7 +508,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
 
     if (slot.selection.has_value()) {
       const SelectionRange norm = NormalizeRange(*slot.selection);
-      if (!detail::ValidateRangeColumns(document_->lines.Snapshot(), norm)) {
+      if (!detail::ValidateRangeColumns(document_->lines, norm)) {
         // Range no longer valid: keep this caret in place (it still shifts if a
         // lower edit moves it).
         recorded.push_back(Recorded{
@@ -522,7 +522,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
           lc_view_.surround_enabled ? FindSurroundOpener(lc_view_, ch) : nullptr;
       if (sur_pair != nullptr && !sur_pair->open.empty() && !sur_pair->close.empty() &&
           !InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
-        const std::string inner = detail::TextBetweenLines(document_->lines.Snapshot(), norm);
+        const std::string inner = detail::TextBetweenLines(document_->lines, norm);
         const std::string replacement = sur_pair->open + inner + sur_pair->close;
         const std::string first_prefix =
             document_->lines[norm.start.line].substr(0, norm.start.column);

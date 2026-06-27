@@ -741,7 +741,7 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
                                                              changed_languages.end());
   const auto should_invalidate_viewport = [&changed_language_set](const editor::TextViewport& viewport) {
     const std::string language =
-        editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines().Snapshot());
+        editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
     return !language.empty() &&
            changed_language_set.contains(std::string_view(language));
   };
@@ -763,7 +763,7 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         !tab.compare->right_viewport.path().empty()) {
       const std::string language = editor::runtime_syntax::DetectFiletype(
-          tab.compare->right_viewport.path(), tab.compare->right_viewport.lines().Snapshot());
+          tab.compare->right_viewport.path(), tab.compare->right_viewport.lines());
       if (language.empty() || !changed_language_set.contains(std::string_view(language))) {
         continue;
       }
@@ -775,7 +775,7 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
       auto& merge_tab = *tab.merge;
       const std::string language =
           editor::runtime_syntax::DetectFiletype(merge_tab.result_viewport.path(),
-                                                 merge_tab.result_viewport.lines().Snapshot());
+                                                 merge_tab.result_viewport.lines());
       if (language.empty() || !changed_language_set.contains(std::string_view(language))) {
         continue;
       }
@@ -846,7 +846,7 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
     return;
   }
-  const std::string language_id = editor::runtime_syntax::DetectFiletype(viewport->path(), viewport->lines().Snapshot());
+  const std::string language_id = editor::runtime_syntax::DetectFiletype(viewport->path(), viewport->lines());
   if (language_id.empty()) {
     return;
   }
@@ -884,7 +884,7 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
       RequestEditorSurfaceRedraw();
     }
   }
-  const std::string language_id = editor::runtime_syntax::DetectFiletype(normalized_path, {});
+  const std::string language_id = editor::runtime_syntax::DetectFiletype(normalized_path);
   if (language_id.empty()) {
     return;
   }

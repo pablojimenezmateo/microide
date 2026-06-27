@@ -167,6 +167,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
   src/editor/TextBuffer.cpp
+  src/editor/PieceTree.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp
@@ -703,6 +704,7 @@ add_executable(microide_tests
   tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
+  tests/PieceTreeTests.cpp
   tests/EditorEssentialsTests.cpp
   tests/EditorRenderViewModelAllocationTests.cpp
   tests/PluginPresentationAllocationTests.cpp
@@ -806,6 +808,12 @@ if(MICROIDE_FUZZ)
     tests/fuzz/DebugStateRecordFuzz.cpp
   )
   microide_configure_fuzz_target(DebugStateRecordFuzz)
+
+  add_executable(PieceTreeEquivalenceFuzz
+    src/editor/PieceTree.cpp
+    tests/fuzz/PieceTreeEquivalenceFuzz.cpp
+  )
+  microide_configure_fuzz_target(PieceTreeEquivalenceFuzz)
 
   add_executable(SearchRegexFuzz
     tests/fuzz/SearchRegexFuzz.cpp
@@ -963,6 +971,7 @@ add_executable(microide_diff_bench
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
   src/editor/TextBuffer.cpp
+  src/editor/PieceTree.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp

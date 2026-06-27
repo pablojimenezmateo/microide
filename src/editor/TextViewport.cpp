@@ -181,7 +181,7 @@ LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
     return LayoutLine{};
   }
 
-  LayoutLine layout = layout_cache_.VisibleLineLayoutCached(document_->lines.Snapshot(), line_index,
+  LayoutLine layout = layout_cache_.VisibleLineLayoutCached(document_->lines, line_index,
                                                             horizontal_scroll_, visible_columns_,
                                                             tab_size_);
 
@@ -389,7 +389,7 @@ void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
     return;
   }
   const SelectionRange norm = NormalizeRange(range);
-  if (!detail::ValidateRangeColumns(document_->lines.Snapshot(), norm)) {
+  if (!detail::ValidateRangeColumns(document_->lines, norm)) {
     return;
   }
   if (norm.start.line == norm.end.line && norm.start.column == norm.end.column) {
@@ -905,19 +905,19 @@ void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                                     std::size_t removed_count,
                                                     const std::vector<std::string>& inserted_lines) {
   layout_cache_.UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines,
-                                                  document_->lines.Snapshot(), tab_size_,
+                                                  document_->lines, tab_size_,
                                                   document_->content_revision);
 }
 
 std::size_t TextViewport::MaxVisualColumns() const {
-  return layout_cache_.MaxVisualColumns(document_->lines.Snapshot(), tab_size_, document_->content_revision);
+  return layout_cache_.MaxVisualColumns(document_->lines, tab_size_, document_->content_revision);
 }
 
 void TextViewport::EnsureWrappedRowLayouts() const {
   if (!document_) {
     return;
   }
-  layout_cache_.EnsureWrappedRowLayouts(document_->lines.Snapshot(), tab_size_, visible_columns_, soft_wrap_,
+  layout_cache_.EnsureWrappedRowLayouts(document_->lines, tab_size_, visible_columns_, soft_wrap_,
                                         folding_model_, document_->layout_shape_revision);
 }
 

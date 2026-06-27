@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/LineSpan.h"
+
 namespace microide::editor {
 
 class TextViewport;
@@ -54,7 +56,7 @@ class FoldingModel {
   };
 
   // Replace the stored ranges with a fresh scan. Returns true on completion.
-  bool Compute(const std::vector<std::string>& lines, const ComputeOptions& options);
+  bool Compute(LineSpan lines, const ComputeOptions& options);
 
   // Same as `Compute` but stop scanning once `max_lines` of work is done; the
   // returned ranges are partial and `complete()` will report `false`. This is
@@ -65,7 +67,7 @@ class FoldingModel {
   // they match the previous model, and bracket balance is seeded from lines
   // `[0, incremental_resume_line)`. `std::numeric_limits<std::size_t>::max()`
   // forces a whole-file bracket scan.
-  bool ComputeWithBudget(const std::vector<std::string>& lines,
+  bool ComputeWithBudget(LineSpan lines,
                          const ComputeOptions& options,
                          std::size_t max_lines,
                          std::size_t incremental_resume_line = std::numeric_limits<std::size_t>::max(),
@@ -76,7 +78,7 @@ class FoldingModel {
   // plus a bounded look-ahead. When the requested range is already resolved
   // and the model is not dirty, this is a no-op.
   bool EnsureFoldsForVisibleRange(
-      const std::vector<std::string>& lines,
+      LineSpan lines,
       const ComputeOptions& options,
       std::size_t visible_start_line,
       std::size_t visible_end_line,
