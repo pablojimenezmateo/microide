@@ -141,18 +141,25 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
       formatter != nullptr && !formatter->command.empty()) {
     // Save is synchronous from the UI's perspective, so the formatter has to complete before
     // we return. Running it inline avoids the misleading executor-post-then-wait pattern that
-    // implied background work but still blocked the calling thread.
+    // implied background work but still blocked the calling thread. To keep a hung or
+    // pathologically slow formatter from freezing the UI indefinitely, bound the run with a
+    // deadline: on expiry the child is killed and the file saves unformatted (warned below).
+    // The cap is generous so legitimate slow formatters on large files still complete.
+    constexpr int kFormatterTimeoutMs = 5000;
     platform::SubprocessResult result =
         project::RunSubprocess(formatter->command,
                                platform::SubprocessOptions{
                                    .cwd = context_.current_project_state.root,
                                    .stdin_text = text,
                                    .environment_overrides = {},
+                                   .timeout_ms = kFormatterTimeoutMs,
                                });
 
     if (!result.success()) {
       if (error_message != nullptr) {
-        *error_message = "formatter '" + formatter->id + "' failed";
+        *error_message = result.timed_out
+                             ? "formatter '" + formatter->id + "' timed out"
+                             : "formatter '" + formatter->id + "' failed";
         if (!result.stderr_text.empty()) {
           *error_message += ": " + result.stderr_text;
         }
@@ -160,7 +167,9 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
       // The file still saves (unformatted); warn so the silent formatter failure
       // is visible rather than swallowed.
       Notify(NotificationService::Tone::Warning,
-             "Formatter '" + formatter->id + "' failed; saved unformatted");
+             result.timed_out
+                 ? "Formatter '" + formatter->id + "' timed out; saved unformatted"
+                 : "Formatter '" + formatter->id + "' failed; saved unformatted");
       return true;
     }
     if (!result.stdout_text.empty()) {
