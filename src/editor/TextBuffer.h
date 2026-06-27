@@ -54,6 +54,14 @@ class TextBuffer {
     InvalidateSnapshot();
   }
 
+  // Large-file load fast path: take ownership of canonical '\n'-joined `content`
+  // directly as the backing buffer (no per-line split/rejoin). `content` must
+  // not contain '\r'. See PieceTree::ResetFromText.
+  void ResetFromText(std::string content) {
+    tree_.ResetFromText(std::move(content));
+    InvalidateSnapshot();
+  }
+
   // --- Read ---
   std::size_t LineCount() const noexcept { return tree_.LineCount(); }
   std::size_t size() const noexcept { return tree_.LineCount(); }

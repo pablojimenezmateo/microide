@@ -1106,6 +1106,46 @@ Pending: authoritative `perf-runner-v1` baselines (local numbers are advisory pe
 `perf-harness.md`); the per-line `AdvanceState` cost on heavy-syntax files remains
 the residual first-paint cost and is orthogonal (syntax-engine / data-structure work).
 
+## Large-file overhaul — Phase 4: direct-load fast path
+
+The piece tree (Phase 3) already backs the document, but the load path still
+round-tripped the file through `DecodeLines` into a `vector<std::string>` and then
+rejoined it into the tree's original buffer — two extra full copies of the file
+plus one heap allocation per line, all one-time-per-open work the Phase 3 commit
+explicitly left for Phase 4 (it showed up as a small open-path allocation
+regression).
+
+Fix: when a file's bytes contain no `'\r'` they are already the document's
+canonical representation (lines joined by `'\n'`), so `OpenFile`/`LoadContent`
+hand the bytes straight to `PieceTree::ResetFromText`, which moves them into the
+original buffer and scans newlines once. CRLF/CR/mixed files still take the
+normalizing `DecodeLines` path. Equivalence (LF vs CRLF content, no-trailing-
+newline, empty file, UTF-8/NUL encoding classification) is pinned by
+`TextViewport/FastLoad*` unit tests.
+
+Measured (local advisory A/B, Phase 3 `HEAD` vs Phase 4 working tree, both built
+`microide-perf` RelWithDebInfo, 15 iterations):
+
+- `large_file_restore_deep_scroll_first_paint` — clean load-path isolation: the
+  measured region (`deep_restore.jump_and_first_paint`) is **identical** at 10,802
+  allocations on both, while whole-iteration allocations drop **172,875 → 72,848
+  (−57.9%)** and bytes **−53.3%**. The entire delta is the one-time load, the only
+  thing Phase 4 changed.
+- `large_file_open_lf_first_paint` — new baseline-gated scenario opening the LF-only
+  50k-line `synthetic_kernel.cpp` (the existing `large_file_open_first_paint`
+  fixture has mixed line endings and so never exercised the fast path). p50 ≈ 66k
+  allocations / ~46 ms to open + first paint.
+- `mid_file_edit_latency_large_file` — unchanged within noise (Phase 4 does not
+  touch the edit path).
+
+Not done: memory-mapping the original buffer. It would cut steady-state RSS for
+files that are never fully read, but a SIGBUS on external truncation while mapped
+is a hard crash; the project's correctness-over-memory priority does not accept it.
+The original buffer stays a heap `std::string`.
+
+Pending: authoritative `perf-runner-v1` baseline for `large_file_open_lf_first_paint`
+(the committed baseline is locally seeded / advisory per `perf-harness.md`).
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout

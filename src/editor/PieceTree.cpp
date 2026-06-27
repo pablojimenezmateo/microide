@@ -34,6 +34,22 @@ PieceTree::PieceTree(const std::vector<std::string>& lines) {
 
 void PieceTree::Reset(const std::vector<std::string>& lines) {
   original_ = JoinLines(lines);
+  RebuildFromOriginal();
+  // A vector of N lines joins to N-1 newlines, so the newline-derived count
+  // would be N. The one case the join cannot express is the empty document
+  // (0 lines vs the single empty line ""), so honor the caller's count here.
+  line_count_ = lines.size();
+}
+
+void PieceTree::ResetFromText(std::string content) {
+  original_ = std::move(content);
+  RebuildFromOriginal();
+  // Canonical '\n'-joined text: N newlines means N+1 lines (the final line may
+  // be empty), and empty content is one empty line -- matching DecodeLines.
+  line_count_ = original_newlines_.size() + 1;
+}
+
+void PieceTree::RebuildFromOriginal() {
   add_.clear();
   add_newlines_.clear();
   original_newlines_.clear();
@@ -43,7 +59,6 @@ void PieceTree::Reset(const std::vector<std::string>& lines) {
   nodes_.resize(1);  // keep only the sentinel
   free_list_.clear();
   root_ = kNull;
-  line_count_ = lines.size();
   priority_state_ = 0x9e3779b9u;
   line_view_cache_.clear();
   if (!original_.empty()) {

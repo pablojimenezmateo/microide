@@ -190,6 +190,22 @@ detection on the edit path is incremental (`UpgradeEncodingForInsertedLines` sca
 lines, upgrade-only) instead of re-detecting the whole document on every keystroke. File I/O still
 routes through the shared text-file helper, and undo/redo stores changed line ranges plus view state
 instead of whole-buffer snapshots.
+
+The load path (Phase 4) takes a direct-load fast path for the common case: when a
+file's bytes contain no `'\r'` they are already the document's canonical
+representation (lines joined by `'\n'`), so `OpenFile`/`LoadContent` move the
+bytes straight into the piece tree's original buffer via
+`ResetStateFromText` → `TextBuffer::ResetFromText` → `PieceTree::ResetFromText`,
+scanning newlines once. This skips the `DecodeLines` split into a
+`vector<std::string>` and the rejoin into the original buffer — two full copies of
+the file plus one heap allocation per line — and is measured at roughly **−58%
+load-time allocations** on a 50k-line file (gated by
+`large_file_open_lf_first_paint`). Files containing `'\r'` (CRLF/CR/mixed) still
+take the normalizing `DecodeLines` path, which strips the carriage returns the
+canonical model does not store. The original buffer is a heap `std::string`, not
+an `mmap`: memory-mapping it would cut steady-state RSS for never-fully-read files
+but risks `SIGBUS` if the file is truncated externally while mapped, which the
+project's correctness-over-memory priority does not accept.
 The next `TextViewport` refactor should reduce ownership (document buffer, edit engine, undo
 history, layout cache seams), not just split more `TextViewport*.cpp` files.
 

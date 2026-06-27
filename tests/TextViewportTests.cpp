@@ -7,10 +7,12 @@
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextViewport.h"
 #include "util/PerformanceCounters.h"
+#include "util/TextFileIO.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1829,9 +1831,84 @@ void TestTextViewportContentEditInvalidatesBracketAndHighlightCaches() {
          "ContentEdit bumps content_revision so downstream caches re-key correctly");
 }
 
+// --- Phase 4: large-file direct-load fast path (no split/rejoin round-trip) ---
+
+std::filesystem::path WriteScratchFile(const std::string& name, std::string_view bytes) {
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / ("microide-phase4-" + name);
+  Expect(microide::util::WriteTextFileAtomically(path, bytes),
+         "scratch fixture should write");
+  return path;
+}
+
+void TestTextViewportFastLoadMatchesCrlfDecode() {
+  // An LF file and a CRLF file with identical logical lines must open to the
+  // same buffer content and line count -- the '\r'-free fast path and the
+  // DecodeLines path are required to agree on everything but the line-ending
+  // label.
+  const std::string lf = "alpha\nbeta\ngamma\n";
+  const std::string crlf = "alpha\r\nbeta\r\ngamma\r\n";
+  TextViewport lf_view;
+  TextViewport crlf_view;
+  Expect(lf_view.OpenFile(WriteScratchFile("lf.txt", lf)), "LF file opens");
+  Expect(crlf_view.OpenFile(WriteScratchFile("crlf.txt", crlf)), "CRLF file opens");
+
+  Expect(lf_view.line_count() == crlf_view.line_count(),
+         "fast path and decode path agree on line count");
+  Expect(lf_view.line_count() == 4,
+         "trailing newline yields a final empty line (alpha,beta,gamma,\"\")");
+  for (std::size_t i = 0; i < lf_view.line_count(); ++i) {
+    Expect(lf_view.lines().LineView(i) == crlf_view.lines().LineView(i),
+           "fast path and decode path agree on every line's content");
+  }
+  Expect(lf_view.LineEndingLabel() == "LF", "LF file labels as LF");
+  Expect(crlf_view.LineEndingLabel() == "CRLF", "CRLF file labels as CRLF");
+}
+
+void TestTextViewportFastLoadNoTrailingNewline() {
+  TextViewport view;
+  Expect(view.OpenFile(WriteScratchFile("notrail.txt", "one\ntwo")),
+         "file without trailing newline opens via fast path");
+  Expect(view.line_count() == 2, "no trailing newline means no extra empty line");
+  Expect(view.lines().LineView(0) == "one" && view.lines().LineView(1) == "two",
+         "fast path preserves content with no trailing newline");
+}
+
+void TestTextViewportFastLoadEmptyFile() {
+  TextViewport view;
+  Expect(view.OpenFile(WriteScratchFile("empty.txt", "")),
+         "empty file opens via fast path");
+  Expect(view.line_count() == 1 && view.lines().LineView(0).empty(),
+         "empty file is a single empty line");
+}
+
+void TestTextViewportFastLoadDetectsEncoding() {
+  TextViewport utf8;
+  Expect(utf8.OpenFile(WriteScratchFile("utf8.txt", "café\nrésumé\n")),
+         "utf-8 file opens via fast path");
+  Expect(utf8.EncodingLabel() == "UTF-8",
+         "fast path classifies non-ASCII UTF-8 as UTF-8");
+
+  TextViewport bytes;
+  const std::string with_nul("a\0b\nc", 5);
+  Expect(bytes.OpenFile(WriteScratchFile("nul.bin", with_nul)),
+         "NUL-containing file (no '\\r') still opens via fast path");
+  Expect(bytes.EncodingLabel() == "Bytes",
+         "fast path classifies NUL bytes as Bytes");
+  Expect(bytes.line_count() == 2, "NUL is in-line content, only '\\n' splits lines");
+}
+
 }  // namespace
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/FastLoadMatchesCrlfDecode",
+          TestTextViewportFastLoadMatchesCrlfDecode);
+  AddTest(tests, "TextViewport/FastLoadNoTrailingNewline",
+          TestTextViewportFastLoadNoTrailingNewline);
+  AddTest(tests, "TextViewport/FastLoadEmptyFile",
+          TestTextViewportFastLoadEmptyFile);
+  AddTest(tests, "TextViewport/FastLoadDetectsEncoding",
+          TestTextViewportFastLoadDetectsEncoding);
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/LargeCodeFixtureKeepsSyntaxHighlighting",

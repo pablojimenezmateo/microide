@@ -147,6 +147,47 @@ void TestPieceTreeSliceLines() {
   Expect(tree.SliceLines(4, 99).size() == 1, "slice clamps to end");
 }
 
+// ResetFromText (the Phase 4 large-file load fast path) must be exactly
+// equivalent to splitting the same canonical '\n'-joined bytes into lines and
+// feeding them through Reset -- it just skips the intermediate vector.
+void TestPieceTreeResetFromTextMatchesReset() {
+  const std::vector<std::string> cases = {
+      "",                       // empty file -> single empty line
+      "solo",                   // no trailing newline, one line
+      "a\nb\nc",                // multiple lines, no trailing newline
+      "a\nb\nc\n",              // trailing newline -> final empty line
+      "\n",                     // single newline -> two empty lines
+      "\n\n\n",                 // only newlines
+      std::string("a\0b\nc", 5) // embedded NUL is in-line content
+  };
+  for (const std::string& text : cases) {
+    // Split exactly the way the canonical model joins: on '\n' only.
+    std::vector<std::string> lines;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+      if (i == text.size() || text[i] == '\n') {
+        lines.emplace_back(text.substr(start, i - start));
+        start = i + 1;
+      }
+    }
+
+    PieceTree from_text;
+    from_text.ResetFromText(text);
+    PieceTree from_lines(lines);
+
+    Expect(from_text.LineCount() == from_lines.LineCount(),
+           "ResetFromText line count matches Reset");
+    Expect(from_text.LineCount() == lines.size(),
+           "ResetFromText derives the canonical line count");
+    for (std::size_t i = 0; i < from_text.LineCount(); ++i) {
+      Expect(from_text.LineView(i) == from_lines.LineView(i),
+             "ResetFromText line content matches Reset");
+    }
+    Expect(from_text.ToVector() == from_lines.ToVector(),
+           "ResetFromText materializes the same document");
+  }
+}
+
 }  // namespace
 
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
@@ -154,6 +195,7 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/MidLineEdits", TestPieceTreeMidLineEdits);
   AddTest(tests, "PieceTree/RandomizedEquivalence", TestPieceTreeRandomizedEquivalence);
   AddTest(tests, "PieceTree/SliceLines", TestPieceTreeSliceLines);
+  AddTest(tests, "PieceTree/ResetFromTextMatchesReset", TestPieceTreeResetFromTextMatchesReset);
 }
 
 }  // namespace microide::tests
