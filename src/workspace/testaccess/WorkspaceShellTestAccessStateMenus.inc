@@ -425,6 +425,13 @@
   static std::size_t BufferSearchMatchCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.buffer_search.matches.size();
   }
+  // Drives one find-as-you-type keystroke: sets the buffer-search query and runs
+  // the refresh that recomputes matches (the incremental-find hot path).
+  static void SetBufferSearchQueryAndRefresh(WorkspaceShell& shell, std::string query) {
+    shell.context_.current_project_state.overlay.workflow.buffer_search.query.SetText(
+        std::move(query));
+    shell.RefreshBufferSearch();
+  }
   static std::size_t BufferSearchSelectedIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.buffer_search.selected_index;
   }

@@ -224,6 +224,43 @@ void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
   }
 }
 
+// Find-as-you-type over a large file. The fixture has the token "perfocc" on
+// essentially every line, so the first keystroke matches tens of thousands of
+// lines and each further keystroke narrows the set. The incremental refine path
+// (WorkspaceShell::RefreshBufferSearch) filters the prior match set instead of
+// rescanning the whole document, so total work across the typed query should stay
+// roughly flat in document size rather than O(document) per keystroke.
+void RunEditorBufferFindIncremental(ScenarioContext& context) {
+  const std::filesystem::path file =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!std::filesystem::exists(file)) {
+    std::cerr << "editor_buffer_find_incremental: missing fixture " << file << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(file);
+  context.PumpFrames(2);
+  if (context.ActiveViewport().lines().size() < 1000) {
+    throw std::runtime_error(
+        "editor_buffer_find_incremental: large fixture did not load as expected");
+  }
+
+  // Type the query one character at a time, refreshing matches each keystroke,
+  // exactly as find-as-you-type does. "perfocc" appears on nearly every line.
+  static constexpr std::string_view kQuery = "perfocc";
+  context.Measure("buffer_find.find_as_you_type", [&] {
+    std::string typed;
+    for (const char ch : kQuery) {
+      typed.push_back(ch);
+      workspace::WorkspaceShell::TestAccess::SetBufferSearchQueryAndRefresh(context.Shell(), typed);
+    }
+  });
+  if (workspace::WorkspaceShell::TestAccess::BufferSearchMatchCount(context.Shell()) < 1000) {
+    throw std::runtime_error(
+        "editor_buffer_find_incremental: expected many matches for the typed query");
+  }
+}
+
 void RunMergeScrollLargeFixture(ScenarioContext& context) {
   const std::filesystem::path seed = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
   if (!std::filesystem::exists(seed)) {
@@ -375,6 +412,13 @@ const ScenarioRegistration g_perf_large_file_open_lf_first_paint({Scenario{
     .baseline_gated = true,
     .run_by_default = true,
     .run = RunLargeFileOpenLfFirstPaint,
+}});
+const ScenarioRegistration g_perf_editor_buffer_find_incremental({Scenario{
+    .name = "editor_buffer_find_incremental",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .run = RunEditorBufferFindIncremental,
 }});
 const ScenarioRegistration g_perf_merge_scroll_large_fixture({Scenario{
     .name = "merge_scroll_large_fixture",

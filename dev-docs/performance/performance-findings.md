@@ -1146,6 +1146,52 @@ The original buffer stays a heap `std::string`.
 Pending: authoritative `perf-runner-v1` baseline for `large_file_open_lf_first_paint`
 (the committed baseline is locally seeded / advisory per `perf-harness.md`).
 
+## Large-file overhaul — Phase 5: incremental buffer-local find
+
+Find-as-you-type (`WorkspaceShell::RefreshBufferSearch`) rebuilt the entire match
+set on every keystroke: it materialized the whole document into a
+`vector<std::string>` via `TextBuffer::Snapshot()` and rescanned all lines —
+O(document) per keystroke regardless of how much had already been typed.
+
+Two changes:
+
+1. **No snapshot.** `FindLiteralSearchMatches` gained a `TextBuffer` overload that
+   scans line-by-line through the piece tree's zero-copy `LineView`, so the cold
+   path no longer materializes a whole-document `vector<std::string>` (the old
+   `Snapshot()` allocated one `std::string` per line on the first keystroke of a
+   session).
+2. **Incremental refine.** When the new query merely extends the previously searched
+   one over an unchanged buffer (`QueryExtendsCaseInsensitive` + viewport identity +
+   `content_revision` guard), every match of the longer query is also a match of the
+   shorter prefix, so the new set is a subset. `RefineLiteralSearchMatches` filters
+   the cached `matches` in O(prior matches · needle) instead of rescanning the
+   document. Each kept match is re-validated against the current buffer, so a stale
+   cache can only drop matches, never invent them. A non-extending edit (backspace, a
+   new word) or a buffer mutation falls back to the full `LineView` scan.
+
+Measured (local advisory, `editor_buffer_find_incremental`, new baseline-gated
+scenario typing `perfocc` one char at a time over the 50k-line `synthetic_kernel.cpp`
+where the token sits on nearly every line): the whole 7-keystroke find-as-you-type
+phase settles at **~1,735 allocations / ~10 ms** total — the per-keystroke cost is
+flat in query length rather than O(document) each stroke. Equivalence (refine of a
+prefix's match set == a fresh full scan for the longer query, plus the
+`QueryExtendsCaseInsensitive` gate) is pinned by
+`WorkspaceTextSearch/IncrementalLiteralSearch`.
+
+The same whole-document `Snapshot()` sat in the Ctrl-D multi-caret path
+(`AddCursorAtNextMatch` / `AddCursorAtAllMatches`), which materialized a
+`vector<std::string>` of the entire file on every press just to scan for the next
+match. Both now scan through `LineView` (the next-match scan got a `TextBuffer`
+overload of `FindNextLiteralMatchAfterSeedWrapOnce`; "all matches" iterates
+`LineView`). Measured on `editor_add_cursor_next_match` (96 Ctrl-D presses on the
+50k-line fixture): p50 **121,639 → 74,378 allocations (−38.9%)**, wall ~41.5 → ~32 ms.
+The eliminated work is the one-time 50k-string snapshot (it was amortized across the
+96 presses in this loop, but a real edit between presses rebuilds it each time).
+Baseline refreshed (`perf-baseline:` — snapshot removal, allocations-only mover).
+
+Pending: authoritative `perf-runner-v1` baseline for `editor_buffer_find_incremental`
+(the committed baseline is locally seeded / advisory per `perf-harness.md`).
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout

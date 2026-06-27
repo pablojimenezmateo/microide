@@ -123,43 +123,50 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
   return std::nullopt;
 }
 
-std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
-    const std::vector<std::string>& lines,
-    std::size_t seed_line,
-    std::size_t seed_start_col,
-    std::size_t seed_end_col,
-    std::string_view needle,
-    bool case_sensitive) {
-  if (needle.empty() || seed_line >= lines.size()) {
+namespace {
+
+// Shared seed-relative next-match scan. `line_at(i)` yields line `i` as a
+// string_view; the same body serves the vector<string> and TextBuffer overloads.
+// Held line views stay valid for the duration: neither backing store mutates here.
+template <typename LineAt>
+std::optional<editor::TextPosition> FindNextLiteralMatchImpl(std::size_t line_count,
+                                                             LineAt&& line_at,
+                                                             std::size_t seed_line,
+                                                             std::size_t seed_start_col,
+                                                             std::size_t seed_end_col,
+                                                             std::string_view needle,
+                                                             bool case_sensitive) {
+  if (needle.empty() || seed_line >= line_count) {
     return std::nullopt;
   }
 
-  const std::string& seed_line_text = lines[seed_line];
+  const std::string_view seed_line_text = line_at(seed_line);
   if (seed_start_col > seed_end_col || seed_end_col > seed_line_text.size() ||
       seed_start_col > seed_line_text.size()) {
     return std::nullopt;
   }
 
-  auto forward_from_cursor = [&](std::size_t li, std::size_t start_from_column) -> std::optional<editor::TextPosition> {
-    if (li >= lines.size()) {
+  auto forward_from_cursor = [&](std::size_t li,
+                                 std::size_t start_from_column) -> std::optional<editor::TextPosition> {
+    if (li >= line_count) {
       return std::nullopt;
     }
     const auto pos =
-        FindLiteralNeedleInLine(lines[li], start_from_column, needle, case_sensitive);
+        FindLiteralNeedleInLine(line_at(li), start_from_column, needle, case_sensitive);
     if (pos.has_value()) {
       return editor::TextPosition{li, *pos};
     }
     return std::nullopt;
   };
 
-  for (std::size_t li = seed_line; li < lines.size(); ++li) {
+  for (std::size_t li = seed_line; li < line_count; ++li) {
     const std::size_t start_from = (li == seed_line) ? seed_end_col : 0;
     if (auto found = forward_from_cursor(li, start_from); found.has_value()) {
       return found;
     }
   }
 
-  for (std::size_t li = 0; li < seed_line && li < lines.size(); ++li) {
+  for (std::size_t li = 0; li < seed_line && li < line_count; ++li) {
     if (auto found = forward_from_cursor(li, 0); found.has_value()) {
       return found;
     }
@@ -182,9 +189,45 @@ std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
   return std::nullopt;
 }
 
-std::vector<editor::SelectionRange> FindLiteralSearchMatches(
+}  // namespace
+
+std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
     const std::vector<std::string>& lines,
-    std::string_view query) {
+    std::size_t seed_line,
+    std::size_t seed_start_col,
+    std::size_t seed_end_col,
+    std::string_view needle,
+    bool case_sensitive) {
+  return FindNextLiteralMatchImpl(
+      lines.size(), [&](std::size_t i) -> std::string_view { return lines[i]; }, seed_line,
+      seed_start_col, seed_end_col, needle, case_sensitive);
+}
+
+std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
+    const editor::TextBuffer& buffer,
+    std::size_t seed_line,
+    std::size_t seed_start_col,
+    std::size_t seed_end_col,
+    std::string_view needle,
+    bool case_sensitive) {
+  return FindNextLiteralMatchImpl(
+      buffer.LineCount(), [&](std::size_t i) { return buffer.LineView(i); }, seed_line,
+      seed_start_col, seed_end_col, needle, case_sensitive);
+}
+
+namespace {
+
+constexpr char AsciiLower(char c) {
+  return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
+}
+
+// Shared all-occurrences case-insensitive scan. `line_at(i)` yields line `i` as a
+// string_view; the same body serves both the vector<string> and TextBuffer
+// overloads so the two cannot drift.
+template <typename LineAt>
+std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_count,
+                                                           LineAt&& line_at,
+                                                           std::string_view query) {
   std::vector<editor::SelectionRange> matches;
   if (query.empty()) {
     return matches;
@@ -192,9 +235,8 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
 
   const std::string lowered_query = ToLower(query);
   std::string lowered_line;
-  for (std::size_t line_index = 0; line_index < lines.size(); ++line_index) {
-    const std::string& line = lines[line_index];
-    util::ToLowerAsciiInto(line, lowered_line);
+  for (std::size_t line_index = 0; line_index < line_count; ++line_index) {
+    util::ToLowerAsciiInto(line_at(line_index), lowered_line);
     std::size_t offset = lowered_line.find(lowered_query);
     while (offset != std::string::npos) {
       matches.push_back(editor::SelectionRange{
@@ -202,6 +244,74 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
           .end = editor::TextPosition{line_index, offset + lowered_query.size()},
       });
       offset = lowered_line.find(lowered_query, offset + 1);
+    }
+  }
+
+  return matches;
+}
+
+}  // namespace
+
+std::vector<editor::SelectionRange> FindLiteralSearchMatches(
+    const std::vector<std::string>& lines,
+    std::string_view query) {
+  return FindLiteralMatchesImpl(
+      lines.size(), [&](std::size_t i) -> std::string_view { return lines[i]; }, query);
+}
+
+std::vector<editor::SelectionRange> FindLiteralSearchMatches(
+    const editor::TextBuffer& buffer,
+    std::string_view query) {
+  return FindLiteralMatchesImpl(
+      buffer.LineCount(), [&](std::size_t i) { return buffer.LineView(i); }, query);
+}
+
+bool QueryExtendsCaseInsensitive(std::string_view prefix, std::string_view query) {
+  if (prefix.size() > query.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < prefix.size(); ++i) {
+    if (AsciiLower(prefix[i]) != AsciiLower(query[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
+    const editor::TextBuffer& buffer,
+    std::string_view query,
+    const std::vector<editor::SelectionRange>& previous) {
+  std::vector<editor::SelectionRange> matches;
+  if (query.empty()) {
+    return matches;
+  }
+
+  const std::string lowered_query = ToLower(query);
+  const std::size_t needle = lowered_query.size();
+  matches.reserve(previous.size());
+  for (const editor::SelectionRange& match : previous) {
+    const std::size_t line = match.start.line;
+    const std::size_t column = match.start.column;
+    if (line >= buffer.LineCount()) {
+      continue;
+    }
+    const std::string_view text = buffer.LineView(line);
+    if (column > text.size() || needle > text.size() - column) {
+      continue;
+    }
+    bool still_matches = true;
+    for (std::size_t i = 0; i < needle; ++i) {
+      if (AsciiLower(text[column + i]) != lowered_query[i]) {
+        still_matches = false;
+        break;
+      }
+    }
+    if (still_matches) {
+      matches.push_back(editor::SelectionRange{
+          .start = editor::TextPosition{line, column},
+          .end = editor::TextPosition{line, column + needle},
+      });
     }
   }
 
