@@ -1,5 +1,7 @@
 #include "editor/DiagnosticsStore.h"
 
+#include "editor/PathKey.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -84,7 +86,7 @@ std::filesystem::path ReplacePathPrefix(const std::filesystem::path& path,
 }  // namespace
 
 std::string DiagnosticsStore::PathKey(const std::filesystem::path& path) {
-  return path.empty() ? std::string{} : path.lexically_normal().generic_string();
+  return NormalizedPathKey(path);
 }
 
 void DiagnosticsStore::SortDiagnostics(std::vector<PublishedDiagnostic>* diagnostics) {
@@ -397,10 +399,24 @@ void DiagnosticsStore::Clear() {
   BumpRevision();
 }
 
+const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPathKey(
+    std::string_view path_key) const {
+  // Hot path: called per visible pane per frame with a precomputed key. Skip
+  // the lookup when no diagnostics have been published; the heterogeneous find
+  // never allocates because the key string already lives on the document.
+  if (merged_by_path_.empty()) {
+    return nullptr;
+  }
+  const auto it = merged_by_path_.find(path_key);
+  return it == merged_by_path_.end() ? nullptr : &it->second.diagnostics;
+}
+
 const std::vector<PublishedDiagnostic>* DiagnosticsStore::FindByPath(
     const std::filesystem::path& path) const {
-  const auto it = merged_by_path_.find(PathKey(path));
-  return it == merged_by_path_.end() ? nullptr : &it->second.diagnostics;
+  if (merged_by_path_.empty()) {
+    return nullptr;
+  }
+  return FindByPathKey(PathKey(path));
 }
 
 std::vector<PublishedDiagnostic> DiagnosticsStore::SnapshotAll() const {

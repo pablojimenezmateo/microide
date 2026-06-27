@@ -1,4 +1,5 @@
 #include "editor/TextViewport.h"
+#include "editor/PathKey.h"
 #include "editor/TextViewportInternal.h"
 
 #include <algorithm>
@@ -709,6 +710,11 @@ void TextViewport::SelectLineAtCursor() {
   EnsureCursorVisible();
 }
 
+void TextViewport::SetDocumentPath(const std::filesystem::path& path) {
+  document_->path = path;
+  document_->path_key = NormalizedPathKey(path);
+}
+
 void TextViewport::ResetState(std::vector<std::string> lines,
                               const std::filesystem::path& path,
                               LineEnding line_ending,
@@ -717,7 +723,7 @@ void TextViewport::ResetState(std::vector<std::string> lines,
                               bool placeholder,
                               bool dirty) {
   EnsureDocument();
-  document_->path = path;
+  SetDocumentPath(path);
   document_->lines = lines.empty() ? std::vector<std::string>{""} : std::move(lines);
   document_->line_ending = line_ending;
   document_->mixed_line_endings = mixed_line_endings;

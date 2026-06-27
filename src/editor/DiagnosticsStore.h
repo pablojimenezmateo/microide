@@ -62,6 +62,9 @@ class DiagnosticsStore {
   bool ClearPathPrefix(const std::filesystem::path& path_prefix);
   void Clear();
   const std::vector<PublishedDiagnostic>* FindByPath(const std::filesystem::path& path) const;
+  // Hot-path variant taking a precomputed NormalizedPathKey (see
+  // TextViewport::path_key). Allocation-free: the map uses heterogeneous lookup.
+  const std::vector<PublishedDiagnostic>* FindByPathKey(std::string_view path_key) const;
   std::vector<PublishedDiagnostic> SnapshotAll() const;
   std::vector<PublishedDiagnostic> SnapshotForOwner(std::string_view owner) const;
   std::size_t ErrorCount() const { return error_count_; }

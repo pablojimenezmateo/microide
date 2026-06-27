@@ -184,7 +184,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const auto* right_diagnostics =
       compare_tab->right_editable && !compare_tab->right_viewport.path().empty() &&
               !compare_tab->right_viewport.dirty()
-          ? diagnostics_store.FindByPath(compare_tab->right_viewport.path())
+          ? diagnostics_store.FindByPathKey(compare_tab->right_viewport.path_key())
           : nullptr;
   editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay);
   const float bottom_reserved =

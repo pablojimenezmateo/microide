@@ -36,7 +36,7 @@ void BuildRowGapsForWindow(const PluginSurfaceStore& surface_store,
   // surface, so the feature-on-but-unused case stays allocation-free.
   if (want_surfaces && surface_store.has_anchored()) {
     const std::span<const AnchoredSurface> anchored =
-        surface_store.AnchoredSurfacesForPath(viewport.path());
+        surface_store.AnchoredSurfacesForPathKey(viewport.path_key());
     for (const AnchoredSurface& anchor : anchored) {
       if (anchor.content == nullptr || !anchor.content->has_body()) {
         continue;

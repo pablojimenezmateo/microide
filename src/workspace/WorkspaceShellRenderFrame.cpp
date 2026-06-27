@@ -336,7 +336,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (viewport.path().empty() || viewport.dirty()) {
         return {};
       }
-      const auto* diagnostics = project_state.diagnostics_store.FindByPath(viewport.path());
+      const auto* diagnostics = project_state.diagnostics_store.FindByPathKey(viewport.path_key());
       return diagnostics != nullptr ? std::span<const editor::PublishedDiagnostic>(*diagnostics)
                                     : std::span<const editor::PublishedDiagnostic>{};
     };
@@ -346,7 +346,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         return nullptr;
       }
       const auto* pres = project_state.plugin_presentation_if_present();
-      return pres != nullptr ? pres->decorations.FindByPath(viewport.path()) : nullptr;
+      return pres != nullptr ? pres->decorations.FindByPathKey(viewport.path_key()) : nullptr;
     };
     const auto draw_review_comment_markers =
         [this, renderer](const editor::TextViewport& viewport,

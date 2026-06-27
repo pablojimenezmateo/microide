@@ -139,6 +139,9 @@ class TextViewport {
   std::size_t ReplaceAll(std::string_view needle, std::string_view replacement);
 
   const std::filesystem::path& path() const { return document_->path; }
+  // Cached normalized key for the per-file presentation stores. Pass this to the
+  // hot-path *ByPathKey lookups to avoid re-normalizing the path every frame.
+  std::string_view path_key() const { return document_->path_key; }
   const std::vector<std::string>& lines() const { return document_->lines; }
 
   // On-disk identity recorded at the last load/save. `disk_signature().exists`
@@ -280,6 +283,10 @@ class TextViewport {
 
   struct DocumentState {
     std::filesystem::path path;
+    // Cached NormalizedPathKey(path), recomputed only when `path` changes.
+    // Lets per-frame presentation-store lookups pass a precomputed key instead
+    // of re-normalizing (and re-allocating) every frame. See SetDocumentPath.
+    std::string path_key;
     std::vector<std::string> lines;
     LineEnding line_ending = LineEnding::LF;
     bool mixed_line_endings = false;
@@ -313,6 +320,9 @@ class TextViewport {
                   TextEncoding encoding,
                   bool placeholder,
                   bool dirty);
+  // Sets document_->path and refreshes the cached document_->path_key together
+  // so the two never drift. All path assignments must go through here.
+  void SetDocumentPath(const std::filesystem::path& path);
   void InvalidateLayoutCaches();
   void RefreshEncoding();
   void EnsureInitialHighlightState() const;

@@ -689,7 +689,7 @@ std::optional<std::string> WorkspaceShell::CodeLensCommandAtPosition(float x, fl
     if (viewport.path().empty() || viewport.dirty()) {
       return nullptr;
     }
-    return store.FindByPath(viewport.path());
+    return store.FindByPathKey(viewport.path_key());
   };
 
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);

@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "editor/PathKey.h"
+#include "editor/PluginDecorationStore.h"
 #include "editor/PluginSurfaceStore.h"
 #include "perf/AllocationCounter.h"
 #include "plugin/PluginHost.h"
@@ -152,6 +154,65 @@ void TestPreviewSurfacesEmptyStoreIsAllocationFree() {
       microide::tests::perf::Allocations::DeltaSince(before);
   Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
          "PreviewSurfaces on an empty store must not allocate");
+#endif
+}
+
+// Per-pane-per-frame lookups must not allocate when no plugin has published
+// decorations/surfaces. Both stores short-circuit ahead of the PathKey() string
+// normalization when their merged maps are empty, so a stable frame with a
+// plugin loaded (but contributing only status items/themes) pays nothing here.
+void TestEmptyStorePathLookupsAreAllocationFree() {
+  microide::editor::PluginDecorationStore decorations;
+  PluginSurfaceStore surfaces;
+  const std::filesystem::path path = "/project/src/main.cpp";
+  Expect(decorations.FindByPath(path) == nullptr, "empty decoration store finds nothing");
+  Expect(surfaces.AnchoredSurfacesForPath(path).empty(), "empty surface store anchors nothing");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationSnapshot before =
+      microide::tests::perf::Allocations::Snapshot();
+  for (int i = 0; i < 64; ++i) {
+    (void)decorations.FindByPath(path);
+    (void)surfaces.AnchoredSurfacesForPath(path);
+  }
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
+         "empty-store path lookups must not allocate on the render hot path");
+#endif
+}
+
+// Even when decorations ARE published, the render path looks them up via a
+// precomputed key (TextViewport::path_key, the same NormalizedPathKey the store
+// keys on). That key-based lookup must not re-allocate per frame: the stores'
+// maps use heterogeneous hashing, so find(string_view) touches no heap.
+void TestPopulatedStoreKeyLookupIsAllocationFree() {
+  using microide::editor::NormalizedPathKey;
+  using microide::editor::PluginDecorationData;
+  using microide::editor::TextStyleDecoration;
+
+  microide::editor::PluginDecorationStore decorations;
+  const std::filesystem::path path = "/project/src/main.cpp";
+  PluginDecorationData data;
+  data.text_styles = {TextStyleDecoration{.line = 1, .start_column = 0, .end_column = 4}};
+  Expect(decorations.ReplaceForOwnerFile("lsp", path, std::move(data)),
+         "publishing decorations should change the store");
+
+  // The document caches this exact key once; the render loop reuses it.
+  const std::string cached_key = NormalizedPathKey(path);
+  Expect(decorations.FindByPathKey(cached_key) != nullptr,
+         "key lookup should find the published decorations");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationSnapshot before =
+      microide::tests::perf::Allocations::Snapshot();
+  for (int i = 0; i < 64; ++i) {
+    (void)decorations.FindByPathKey(cached_key);
+  }
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
+         "key-based lookup against a populated store must not allocate per frame");
 #endif
 }
 
@@ -367,6 +428,10 @@ void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests) {
           TestFileIconCacheRebuildsOnlyOnRevisionChange);
   AddTest(tests, "PluginPresentation/PreviewSurfacesEmptyStoreIsAllocationFree",
           TestPreviewSurfacesEmptyStoreIsAllocationFree);
+  AddTest(tests, "PluginPresentation/EmptyStorePathLookupsAreAllocationFree",
+          TestEmptyStorePathLookupsAreAllocationFree);
+  AddTest(tests, "PluginPresentation/PopulatedStoreKeyLookupIsAllocationFree",
+          TestPopulatedStoreKeyLookupIsAllocationFree);
   AddTest(tests, "PluginPresentation/PreviewSurfacesCacheInvalidatesOnRevisionChange",
           TestPreviewSurfacesCacheInvalidatesOnRevisionChange);
   AddTest(tests, "PluginPresentation/StatusItemsEmptyHostIsAllocationFree",

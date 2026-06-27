@@ -104,7 +104,7 @@ void TextViewport::LoadContent(std::string_view content,
 
 void TextViewport::SetPath(const std::filesystem::path& path) {
   EnsureDocument();
-  document_->path = path;
+  SetDocumentPath(path);
 }
 
 void TextViewport::SetDirty(bool dirty) {

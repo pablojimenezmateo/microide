@@ -157,6 +157,9 @@ class PluginDecorationStore {
   // Merged decorations for `path`, or nullptr if none. The pointer and the
   // string_views/spans reachable through it stay valid until the next mutation.
   const FileDecorations* FindByPath(const std::filesystem::path& path) const;
+  // Hot-path variant taking a precomputed NormalizedPathKey (see
+  // TextViewport::path_key). Allocation-free: the map uses heterogeneous lookup.
+  const FileDecorations* FindByPathKey(std::string_view path_key) const;
 
   bool empty() const { return merged_by_path_.empty(); }
 

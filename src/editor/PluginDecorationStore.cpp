@@ -1,5 +1,7 @@
 #include "editor/PluginDecorationStore.h"
 
+#include "editor/PathKey.h"
+
 #include <algorithm>
 #include <system_error>
 #include <utility>
@@ -109,7 +111,7 @@ std::span<const CodeLensDecoration> FileDecorations::CodeLensesForLine(std::uint
 }
 
 std::string PluginDecorationStore::PathKey(const std::filesystem::path& path) {
-  return path.empty() ? std::string{} : path.lexically_normal().generic_string();
+  return NormalizedPathKey(path);
 }
 
 void PluginDecorationStore::RebuildPath(std::string_view path_key) {
@@ -355,9 +357,23 @@ void PluginDecorationStore::Clear() {
   merged_by_path_.clear();
 }
 
-const FileDecorations* PluginDecorationStore::FindByPath(const std::filesystem::path& path) const {
-  const auto it = merged_by_path_.find(PathKey(path));
+const FileDecorations* PluginDecorationStore::FindByPathKey(std::string_view path_key) const {
+  // Hot path: called per visible pane per frame with a precomputed key (see
+  // NormalizedPathKey / TextViewport::path_key). Skip the lookup entirely when
+  // no plugin has published any decorations; the heterogeneous find never
+  // allocates because the key string already lives on the document.
+  if (merged_by_path_.empty()) {
+    return nullptr;
+  }
+  const auto it = merged_by_path_.find(path_key);
   return it == merged_by_path_.end() ? nullptr : &it->second;
+}
+
+const FileDecorations* PluginDecorationStore::FindByPath(const std::filesystem::path& path) const {
+  if (merged_by_path_.empty()) {
+    return nullptr;
+  }
+  return FindByPathKey(PathKey(path));
 }
 
 }  // namespace microide::editor

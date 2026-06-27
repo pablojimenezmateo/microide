@@ -114,6 +114,9 @@ class PluginSurfaceStore {
   // Anchored surfaces for `path`, sorted by line. Empty span when none.
   std::span<const AnchoredSurface> AnchoredSurfacesForPath(
       const std::filesystem::path& path) const;
+  // Hot-path variant taking a precomputed NormalizedPathKey (see
+  // TextViewport::path_key). Allocation-free: the map uses heterogeneous lookup.
+  std::span<const AnchoredSurface> AnchoredSurfacesForPathKey(std::string_view path_key) const;
 
   bool has_anchored() const { return !anchored_by_path_.empty(); }
   std::uint64_t revision() const { return revision_; }

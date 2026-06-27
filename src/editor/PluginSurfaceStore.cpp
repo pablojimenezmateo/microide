@@ -1,12 +1,14 @@
 #include "editor/PluginSurfaceStore.h"
 
+#include "editor/PathKey.h"
+
 #include <algorithm>
 #include <utility>
 
 namespace microide::editor {
 
 std::string PluginSurfaceStore::PathKey(const std::filesystem::path& path) {
-  return path.empty() ? std::string{} : path.lexically_normal().generic_string();
+  return NormalizedPathKey(path);
 }
 
 void PluginSurfaceStore::RebuildAnchorIndex() {
@@ -156,13 +158,27 @@ const std::vector<SurfaceRef>& PluginSurfaceStore::PreviewSurfaces() const {
   return preview_cache_;
 }
 
-std::span<const AnchoredSurface> PluginSurfaceStore::AnchoredSurfacesForPath(
-    const std::filesystem::path& path) const {
-  const auto it = anchored_by_path_.find(PathKey(path));
+std::span<const AnchoredSurface> PluginSurfaceStore::AnchoredSurfacesForPathKey(
+    std::string_view path_key) const {
+  // Hot path: called per frame with a precomputed key. Skip the lookup when no
+  // surfaces are anchored; the heterogeneous find never allocates because the
+  // key string already lives on the document.
+  if (anchored_by_path_.empty()) {
+    return {};
+  }
+  const auto it = anchored_by_path_.find(path_key);
   if (it == anchored_by_path_.end()) {
     return {};
   }
   return std::span<const AnchoredSurface>(it->second.data(), it->second.size());
+}
+
+std::span<const AnchoredSurface> PluginSurfaceStore::AnchoredSurfacesForPath(
+    const std::filesystem::path& path) const {
+  if (anchored_by_path_.empty()) {
+    return {};
+  }
+  return AnchoredSurfacesForPathKey(PathKey(path));
 }
 
 }  // namespace microide::editor

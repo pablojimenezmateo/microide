@@ -456,7 +456,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   editor_blame_overlay_service_.SetVisibleOverlay(merge_blame_overlay);
   const auto* merge_diagnostics =
       !merge_tab->result_viewport.path().empty() && !merge_tab->result_viewport.dirty()
-          ? diagnostics_store.FindByPath(merge_tab->result_viewport.path())
+          ? diagnostics_store.FindByPathKey(merge_tab->result_viewport.path_key())
           : nullptr;
   const auto merge_setting_enabled = [this](std::string_view id, bool default_value) {
     return SettingFlagEnabled(GetSettingValue(id), default_value);
