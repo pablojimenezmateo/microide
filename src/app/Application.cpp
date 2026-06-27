@@ -115,6 +115,7 @@ int Application::Run() {
 
   running_ = true;
   bool full_redraw_pending = true;
+  bool window_shown = false;
   std::vector<SDL_FRect> dirty_rects;
   const char* redraw_reason = "startup";
 
@@ -135,6 +136,21 @@ int Application::Run() {
       // around the (possibly newly scrolled) editor viewport so later frames
       // hit the highlight cache instead of tokenizing on the render path.
       workspace_shell_.RequestActiveHighlightPrefetch();
+
+      // Map the window exactly once, after the first real frame is painted. The
+      // window was created hidden, so this is its first and only map: it appears
+      // already borderless and already drawn, with no black flash or remap. The
+      // present above may be dropped while hidden, so re-blit the retained scene
+      // texture to the freshly-mapped window (a cheap texture copy, not a second
+      // full render).
+      if (!window_shown && first_render_complete_ && window_ != nullptr) {
+        SDL_ShowWindow(window_);
+        if (scene_texture_.valid()) {
+          SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
+          SDL_RenderPresent(renderer_);
+        }
+        window_shown = true;
+      }
     }
 
     SDL_Event event;
@@ -222,8 +238,13 @@ bool Application::Initialize() {
     }
   }
 
+  // Create the window hidden so all chrome setup (borderless, hit test) happens
+  // before it is ever mapped, and so the first frame the user sees is the real,
+  // fully-painted UI. Showing it later (after the first render, in Run()) maps
+  // the window exactly once and avoids the black-flash + borderless-remap
+  // "double popup" that toggling decorations on an already-mapped window caused.
   const SDL_WindowFlags window_flags =
-      SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+      SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
 
   {
     util::StartupTrace::Scope create_window_scope("SDL_CreateWindow");
@@ -250,20 +271,13 @@ bool Application::Initialize() {
   SDL_SetRenderVSync(renderer_, 1);
 
   // Warm up the syntax-highlight registry on a background thread so its
-  // ~30ms parse cost overlaps with the vsync-blocked blank present and the
-  // WorkspaceShell construction below. Magic-static init in MutableRegistry()
-  // synchronizes against the first foreground access, so the worker can race
-  // safely; whichever thread arrives second blocks on the same init barrier.
+  // ~30ms parse cost overlaps with the WorkspaceShell construction below.
+  // Magic-static init in MutableRegistry() synchronizes against the first
+  // foreground access, so the worker can race safely; whichever thread arrives
+  // second blocks on the same init barrier.
   syntax_registry_warmup_ = std::thread([]() {
     editor::runtime_syntax::EnsureInitialized();
   });
-
-  // Present a blank frame before the (potentially slow) workspace initialization
-  // so the compositor gets a committed frame immediately. This satisfies the
-  // desktop startup-notification protocol (xdg-activation / _NET_STARTUP_INFO)
-  // and dismisses the launcher busy indicator without waiting for the full init.
-  SDL_RenderClear(renderer_);
-  SDL_RenderPresent(renderer_);
 
   {
     // Parse a cold-start control spec (if any) up front: its `project` selects
