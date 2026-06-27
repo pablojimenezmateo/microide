@@ -4,7 +4,7 @@ namespace microide::workspace {
 
 std::string CommitWorkflowBodyText(const editor::TextViewport& viewport) {
   std::string body;
-  const auto& lines = viewport.lines();
+  const auto& lines = viewport.lines().Snapshot();
   for (std::size_t line = 0; line < lines.size(); ++line) {
     if (line > 0) {
       body.push_back('\n');

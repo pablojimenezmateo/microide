@@ -15,7 +15,7 @@ void WorkspaceShell::RefreshBufferSearch() {
     return;
   }
   buffer_search.matches =
-      FindLiteralSearchMatches(viewport->lines(), buffer_search.query.text());
+      FindLiteralSearchMatches(viewport->lines().Snapshot(), buffer_search.query.text());
   buffer_search.selected_index = 0;
 
   if (!buffer_search.matches.empty()) {

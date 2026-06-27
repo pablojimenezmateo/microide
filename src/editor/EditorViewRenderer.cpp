@@ -437,7 +437,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       target_entry->visible_rows_count = visible_rows_for_guides.size();
       target_entry->indent_width = indent_width;
       target_entry->caret_line = cursor_line;
-      ComputeIndentGuides(lines, visible_rows_for_guides, viewport.tab_size(),
+      ComputeIndentGuides(lines.Snapshot(), visible_rows_for_guides, viewport.tab_size(),
                           indent_width, cursor_line, caret_indent, &target_entry->runs,
                           folding_model);
       indent_guides_to_paint = &target_entry->runs;

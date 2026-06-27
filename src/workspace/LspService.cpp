@@ -40,7 +40,7 @@ std::string DetectActiveLanguageIdCached(const editor::TextViewport& viewport,
 }
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  return util::SerializeLines(viewport.lines(), viewport.line_ending());
+  return util::SerializeLines(viewport.lines().Snapshot(), viewport.line_ending());
 }
 
 // Map an LSP standard semantic-token type name to the editor's lexical token
@@ -456,14 +456,14 @@ void LspService::SyncLspForActiveEditableLastChange() {
   if (!applied_edit.has_value()) {
     util::PerformanceTrace::Scope scope(
         "LspService::SyncLspForActiveEditableLastChange::FullSyncNoAppliedEdit");
-    client->DidChange(uri, util::SerializeLines(viewport->lines(), viewport->line_ending()));
+    client->DidChange(uri, util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending()));
     return;
   }
 
   if (!client->SupportsIncrementalSync()) {
     util::PerformanceTrace::Scope scope(
         "LspService::SyncLspForActiveEditableLastChange::FullSyncNoIncrementalSupport");
-    client->DidChange(uri, util::SerializeLines(viewport->lines(), viewport->line_ending()));
+    client->DidChange(uri, util::SerializeLines(viewport->lines().Snapshot(), viewport->line_ending()));
     return;
   }
 

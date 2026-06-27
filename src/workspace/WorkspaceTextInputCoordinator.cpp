@@ -332,7 +332,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
         std::optional<editor::TextPosition> cursor_before;
         if (auto* merge_tab = operations_.active_merge_tab();
             merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-          before_lines = viewport->lines();
+          before_lines = viewport->lines().Snapshot();
           selection_before = viewport->selection_range();
           cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
         }

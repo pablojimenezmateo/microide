@@ -671,7 +671,7 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   persisted_tab.horizontal_scroll = horizontal_scroll;
   persisted_tab.dirty_snapshot = dirty_snapshot;
   persisted_tab.line_ending = persisted_viewport->line_ending();
-  persisted_tab.buffer_lines = dirty_snapshot ? persisted_viewport->lines() : std::vector<std::string>{};
+  persisted_tab.buffer_lines = dirty_snapshot ? persisted_viewport->lines().Snapshot() : std::vector<std::string>{};
   return persisted_tab;
 }
 

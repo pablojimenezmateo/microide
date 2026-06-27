@@ -470,7 +470,7 @@ void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
   auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   editor.SelectAll();
   editor.InsertText("alpha\n");
-  Expect(editor::runtime_syntax::DetectFiletype(source, editor.lines()) == "todo",
+  Expect(editor::runtime_syntax::DetectFiletype(source, editor.lines().Snapshot()) == "todo",
          "save pipeline fixture should register the contributed todo syntax before save");
   {
     std::string prepare_error;
@@ -482,7 +482,7 @@ void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
           "save pipeline fixture should not report save-preparation errors (" +
           prepare_error + ")");
     }
-    const std::string prepared_text = util::SerializeLines(editor.lines(), editor.line_ending());
+    const std::string prepared_text = util::SerializeLines(editor.lines().Snapshot(), editor.line_ending());
     if (prepared_text != "BETA\n") {
       throw std::runtime_error(
           "save pipeline fixture should apply save participants and formatter during save preparation "

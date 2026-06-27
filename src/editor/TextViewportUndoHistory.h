@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "editor/EditTypes.h"
+#include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
 
 namespace microide::editor {
@@ -75,7 +76,7 @@ class TextViewportUndoHistory {
   // mode; with no group active it either coalesces into the top undo entry
   // (per `hint`) or pushes a fresh entry, clearing the redo stack either way
   // (same base semantics as the prior PushHistoryEntry).
-  void RecordEntry(Entry entry, const std::vector<std::string>& current_lines,
+  void RecordEntry(Entry entry, const TextBuffer& current_lines,
                    CoalesceHint hint = CoalesceHint{});
   // Bypass-grouping push (matches PushHistoryEntryDirect): clears redo,
   // pushes onto undo, enforces the history cap. Used by paths that have
@@ -84,7 +85,7 @@ class TextViewportUndoHistory {
   // Closes the innermost group. Returns the aggregate Entry the caller
   // should push onto the undo stack via RecordEntryDirect (or nullopt if
   // the group ended up as a no-op).
-  std::optional<Entry> FinishActiveGroup(const std::vector<std::string>& current_lines,
+  std::optional<Entry> FinishActiveGroup(const TextBuffer& current_lines,
                                           ViewState after_state);
 
   // Undo / redo stack access -------------------------------------------
@@ -100,6 +101,9 @@ class TextViewportUndoHistory {
   // Pure helpers -------------------------------------------------------
   static void ApplyEntryToLines(std::vector<std::string>& lines, const Entry& entry,
                                  bool forward);
+  // Same as ApplyEntryToLines but mutating the document's TextBuffer in place
+  // through its splice primitive. Used by the live undo/redo apply path.
+  static void ApplyEntryToBuffer(TextBuffer& lines, const Entry& entry, bool forward);
   static std::optional<AppliedEdit> BuildAppliedEdit(const Entry& entry, bool forward);
   static Entry BuildEntryForDocumentChange(const std::vector<std::string>& before_lines,
                                             const ViewState& before_state,

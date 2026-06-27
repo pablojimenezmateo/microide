@@ -75,7 +75,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   std::string right_content;
   if (compare_tab.right_ref == "WORKTREE") {
     right_content = compare_tab.right_viewport.dirty()
-                        ? util::SerializeLines(compare_tab.right_viewport.lines(),
+                        ? util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
                                                compare_tab.right_viewport.line_ending())
                         : util::ReadTextFile(right_source_path).value_or("");
   } else {
@@ -433,7 +433,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
 
 void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab) const {
   const std::string right_content =
-      util::SerializeLines(compare_tab.right_viewport.lines(),
+      util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
                            compare_tab.right_viewport.line_ending());
   compare_tab.model =
       compare::BuildCompareModel(compare_tab.left_content, right_content, compare_tab.build_options);

@@ -230,7 +230,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           text.has_value()) {
         const bool was_dirty = merge_tab->result_viewport.dirty();
         const std::size_t cursor_before_line = merge_tab->result_viewport.cursor_line();
-        const std::vector<std::string> before_lines = merge_tab->result_viewport.lines();
+        const std::vector<std::string> before_lines = merge_tab->result_viewport.lines().Snapshot();
         const std::optional<editor::SelectionRange> selection_before =
             merge_tab->result_viewport.selection_range();
         const editor::TextPosition cursor_before{merge_tab->result_viewport.cursor_line(),

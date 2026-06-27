@@ -182,7 +182,7 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
       std::unique(visible_line_indices.begin(), visible_line_indices.end()),
       visible_line_indices.end());
 
-  const auto& lines = viewport.lines();
+  const auto& lines = viewport.lines().Snapshot();
   const std::string_view needle_view(needle.data(), needle.size());
 
   auto append_occurrences = [&](std::size_t line_index, const std::string& haystack) {
@@ -269,7 +269,7 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
   // CSR layout: out_row_offsets has size visible_rows + 1; the last entry is the total run count.
   out_row_offsets->reserve(visible_rows + 1);
   out_row_offsets->push_back(0);
-  const auto& lines = viewport.lines();
+  const auto& lines = viewport.lines().Snapshot();
   const std::size_t scroll_line = viewport.scroll_line();
   const std::size_t visual_total = viewport.visual_line_count();
   const std::size_t tab_size = viewport.tab_size();

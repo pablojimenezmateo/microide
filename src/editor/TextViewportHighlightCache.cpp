@@ -126,7 +126,7 @@ void TextViewport::EnsureInitialHighlightState() const {
   if (initial_highlight_state_.has_value()) {
     return;
   }
-  initial_highlight_state_ = SyntaxHighlighter::InitialState(document_->path, document_->lines);
+  initial_highlight_state_ = SyntaxHighlighter::InitialState(document_->path, document_->lines.Snapshot());
 }
 
 void TextViewport::EnsureHighlightCaches() const {
@@ -413,8 +413,7 @@ std::optional<HighlightCheckpointRequest> TextViewport::TakeHighlightCheckpointB
   request.start_state =
       checkpoint == 0 ? *initial_highlight_state_ : highlight_checkpoints_[checkpoint];
   request.checkpoint_interval = interval;
-  request.lines.assign(document_->lines.begin() + static_cast<std::ptrdiff_t>(first_line),
-                       document_->lines.begin() + static_cast<std::ptrdiff_t>(end_line));
+  request.lines = document_->lines.SliceLines(first_line, end_line);
   // Clear the pending flag; if this chunk does not reach the target, the next
   // repaint's bounded replay re-detects the shortfall and re-arms it.
   pending_checkpoint_backfill_target_line_ = 0;

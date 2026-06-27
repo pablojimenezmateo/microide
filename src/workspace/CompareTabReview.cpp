@@ -68,7 +68,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
       .path = compare_tab.path,
       .left_content = compare_tab.left_content,
       .right_content =
-          util::SerializeLines(compare_tab.right_viewport.lines(),
+          util::SerializeLines(compare_tab.right_viewport.lines().Snapshot(),
                                compare_tab.right_viewport.line_ending()),
       .git_entry = input.git_entry,
       .old_path = {},

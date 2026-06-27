@@ -113,7 +113,7 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
   viewport.SetScrollLine(40);
   viewport.SetViewportSize(24, 160);
   viewport.MoveCursorTo(50, 2, false);
-  Expect(model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold model should compute for capacity-discipline fixture");
 
   microide::editor::EditorViewModel vm;
@@ -307,7 +307,7 @@ void TestIndentGuideRunsPreserveCapacityAcrossStableRenders() {
   viewport.MoveCursorTo(2, 8);
 
   microide::editor::FoldingModel model;
-  Expect(model.Compute(viewport.lines(), DefaultFoldOptions()), "fold model should compute");
+  Expect(model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()), "fold model should compute");
   viewport.SetFoldingModel(&model);
 
   const SDL_FRect rect{0.0f, 0.0f, 240.0f, 140.0f};
@@ -374,7 +374,7 @@ void TestPerFrameCacheInvalidationKeysRenderPaths() {
     viewport.SetIndentWidth(4);
     viewport.MoveCursorTo(1, 2);
     microide::editor::FoldingModel model;
-    Expect(model.Compute(viewport.lines(), DefaultFoldOptions()), "fold model should compute");
+    Expect(model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()), "fold model should compute");
     viewport.SetFoldingModel(&model);
     const SDL_FRect rect{0.0f, 0.0f, 220.0f, 140.0f};
     microide::editor::EditorViewRenderer renderer;
@@ -406,7 +406,7 @@ void TestRendererCachesReuseWarmEntriesAcrossViewportSwitches() {
     viewport.SetTabSize(4);
     viewport.SetIndentWidth(4);
     viewport.MoveCursorTo(0, 7);
-    Expect(model.Compute(viewport.lines(), DefaultFoldOptions()),
+    Expect(model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
            "alternating-cache fixture should compute a fold model");
     viewport.SetFoldingModel(&model);
   };

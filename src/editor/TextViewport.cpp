@@ -181,7 +181,7 @@ LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
     return LayoutLine{};
   }
 
-  LayoutLine layout = layout_cache_.VisibleLineLayoutCached(document_->lines, line_index,
+  LayoutLine layout = layout_cache_.VisibleLineLayoutCached(document_->lines.Snapshot(), line_index,
                                                             horizontal_scroll_, visible_columns_,
                                                             tab_size_);
 
@@ -389,7 +389,7 @@ void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
     return;
   }
   const SelectionRange norm = NormalizeRange(range);
-  if (!detail::ValidateRangeColumns(document_->lines, norm)) {
+  if (!detail::ValidateRangeColumns(document_->lines.Snapshot(), norm)) {
     return;
   }
   if (norm.start.line == norm.end.line && norm.start.column == norm.end.column) {
@@ -548,13 +548,13 @@ bool TextViewport::DeleteCurrentLine() {
     const std::size_t before_lines_start = lines_to_delete.front();
     const std::size_t before_lines_end = lines_to_delete.back() + 1;
     const std::vector<std::string> before_lines =
-        SliceLines(document_->lines, before_lines_start, before_lines_end);
+        document_->lines.SliceLines(before_lines_start, before_lines_end);
     const ViewState before_state = CaptureViewState();
     for (auto it = lines_to_delete.rbegin(); it != lines_to_delete.rend(); ++it) {
-      document_->lines.erase(document_->lines.begin() + static_cast<std::ptrdiff_t>(*it));
+      document_->lines.EraseLine(*it);
     }
     if (document_->lines.empty()) {
-      document_->lines.push_back("");
+      document_->lines.PushBackLine("");
     }
     cursor_line_ = std::min(cursor_line_, document_->lines.size() - 1);
     cursor_column_ = 0;
@@ -577,7 +577,7 @@ bool TextViewport::DeleteCurrentLine() {
     const std::size_t after_lines_end =
         std::min(document_->lines.size(), before_lines_start + after_slice_size);
     const std::vector<std::string> after_lines =
-        SliceLines(document_->lines, after_lines_start, after_lines_end);
+        document_->lines.SliceLines(after_lines_start, after_lines_end);
     HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
         before_lines, before_state, after_lines, CaptureViewState());
     aggregate_entry.start_line += before_lines_start;
@@ -623,7 +623,7 @@ void TextViewport::SelectAll() {
 
   selection_anchor_ = TextPosition{0, 0};
   cursor_line_ = document_->lines.size() - 1;
-  cursor_column_ = document_->lines.back().size();
+  cursor_column_ = document_->lines.LineLength(cursor_line_);
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }
@@ -724,7 +724,7 @@ void TextViewport::ResetState(std::vector<std::string> lines,
                               bool dirty) {
   EnsureDocument();
   SetDocumentPath(path);
-  document_->lines = lines.empty() ? std::vector<std::string>{""} : std::move(lines);
+  document_->lines.Reset(lines.empty() ? std::vector<std::string>{""} : std::move(lines));
   document_->line_ending = line_ending;
   document_->mixed_line_endings = mixed_line_endings;
   document_->encoding = encoding;
@@ -905,29 +905,20 @@ void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                                     std::size_t removed_count,
                                                     const std::vector<std::string>& inserted_lines) {
   layout_cache_.UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines,
-                                                  document_->lines, tab_size_,
+                                                  document_->lines.Snapshot(), tab_size_,
                                                   document_->content_revision);
 }
 
 std::size_t TextViewport::MaxVisualColumns() const {
-  return layout_cache_.MaxVisualColumns(document_->lines, tab_size_, document_->content_revision);
+  return layout_cache_.MaxVisualColumns(document_->lines.Snapshot(), tab_size_, document_->content_revision);
 }
 
 void TextViewport::EnsureWrappedRowLayouts() const {
   if (!document_) {
     return;
   }
-  layout_cache_.EnsureWrappedRowLayouts(document_->lines, tab_size_, visible_columns_, soft_wrap_,
+  layout_cache_.EnsureWrappedRowLayouts(document_->lines.Snapshot(), tab_size_, visible_columns_, soft_wrap_,
                                         folding_model_, document_->layout_shape_revision);
-}
-
-std::vector<std::string> TextViewport::SliceLines(const std::vector<std::string>& lines,
-                                                  std::size_t start_line,
-                                                  std::size_t end_line) {
-  const std::size_t clamped_start = std::min(start_line, lines.size());
-  const std::size_t clamped_end = std::clamp(end_line, clamped_start, lines.size());
-  return std::vector<std::string>(lines.begin() + static_cast<std::ptrdiff_t>(clamped_start),
-                                  lines.begin() + static_cast<std::ptrdiff_t>(clamped_end));
 }
 
 SelectionRange TextViewport::NormalizeRange(const SelectionRange& range) {

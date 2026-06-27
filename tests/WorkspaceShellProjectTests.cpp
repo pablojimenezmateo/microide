@@ -1529,7 +1529,7 @@ void TestWorkspaceShellTabKeyIndentsMultiLineSelection() {
 
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "Tab should be handled when a multi-line selection is active");
-  const auto& after_indent = viewport.lines();
+  const auto& after_indent = viewport.lines().Snapshot();
   Expect(after_indent.size() >= 3, "indent should preserve line count");
   Expect(after_indent[0].rfind("\t", 0) == 0 || after_indent[0].rfind("    ", 0) == 0,
          "first selected line should gain one indent unit on Tab");
@@ -1540,7 +1540,7 @@ void TestWorkspaceShellTabKeyIndentsMultiLineSelection() {
 
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
          "Shift+Tab should be handled when a multi-line selection is active");
-  const auto& after_outdent = viewport.lines();
+  const auto& after_outdent = viewport.lines().Snapshot();
   Expect(after_outdent[0] == "alpha" && after_outdent[1] == "beta" &&
              after_outdent[2] == "gamma",
          "Shift+Tab should outdent the previously indented selection back to original");
@@ -1618,7 +1618,7 @@ void TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab(
          "fixture should re-enable line-operation shaping");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "Tab should indent after line ops are re-enabled");
-  const auto& indented = line_vp.lines();
+  const auto& indented = line_vp.lines().Snapshot();
   Expect(indented.size() >= 2, "indent should keep two lines");
   Expect((indented[0].rfind("\t", 0) == 0) || (indented[0].rfind("    ", 0) == 0) ||
              (indented[0].rfind("  ", 0) == 0),

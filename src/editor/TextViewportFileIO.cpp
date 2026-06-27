@@ -45,7 +45,7 @@ bool TextViewport::Save() {
   // in-memory buffer untouched unless the toggles change the content; this
   // keeps subsequent edits idempotent and avoids the noise of a re-layout
   // immediately after save.
-  std::vector<std::string> normalized = document_->lines;
+  std::vector<std::string> normalized = document_->lines.ToVector();
   bool changed = false;
   if (save_trim_trailing_whitespace_) {
     if (TrimTrailingWhitespace(normalized)) changed = true;
@@ -55,7 +55,7 @@ bool TextViewport::Save() {
   }
 
   const std::string text = util::SerializeLines(
-      changed ? normalized : document_->lines, document_->line_ending);
+      changed ? normalized : document_->lines.Snapshot(), document_->line_ending);
   if (!util::WriteTextFileAtomically(document_->path, text)) {
     return false;
   }
@@ -136,7 +136,7 @@ std::string TextViewport::EncodingLabel() const {
 
 void TextViewport::RefreshEncoding() {
   util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
-  document_->encoding = DetectEncoding(document_->lines);
+  document_->encoding = DetectEncoding(document_->lines.Snapshot());
 }
 
 TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content) {

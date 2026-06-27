@@ -1042,7 +1042,7 @@ void TestTextViewportCollapsedFoldHidesBodyRows() {
   TextViewport viewport;
   viewport.LoadContent("void f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/fold.cpp");
   FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold compute should complete for viewport fold fixture");
   Expect(folding_model.Collapse(0), "outer fold should collapse");
   viewport.SetFoldingModel(&folding_model);
@@ -1070,7 +1070,7 @@ void TestTextViewportCollapsedFoldRowSpansTrackHorizontalScroll() {
       "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nvoid f() {\n  a();\n  b();\n}\nx();\n",
       "/tmp/fold-hscroll.cpp");
   FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold compute should complete for the horizontal-scroll fixture");
   Expect(folding_model.Collapse(1), "function fold should collapse");
   viewport.SetFoldingModel(&folding_model);
@@ -1094,7 +1094,7 @@ void TestTextViewportCollapsedFoldVerticalMotionSkipsHiddenLines() {
   TextViewport viewport;
   viewport.LoadContent("before();\nvoid f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/fold-motion.cpp");
   FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold compute should complete for motion fixture");
   Expect(folding_model.Collapse(1), "inner function fold should collapse");
   viewport.SetFoldingModel(&folding_model);
@@ -1117,7 +1117,7 @@ void TestTextViewportCollapsedFoldPageMovesByVisibleRows() {
   TextViewport viewport;
   viewport.LoadContent("line0\nvoid f() {\n  a();\n  b();\n}\nline5\nline6\n", "/tmp/fold-page.cpp");
   FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold compute should complete for page fixture");
   Expect(folding_model.Collapse(1), "function fold should collapse");
   viewport.SetFoldingModel(&folding_model);
@@ -1145,7 +1145,7 @@ void TestTextViewportCollapsedFoldHitTestingUsesVisibleRows() {
   TextViewport viewport;
   viewport.LoadContent("void f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/fold-hit.cpp");
   FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold compute should complete for hit-testing fixture");
   Expect(folding_model.Collapse(0), "outer fold should collapse");
   viewport.SetFoldingModel(&folding_model);

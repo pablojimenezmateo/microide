@@ -257,7 +257,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   // rather than once per replacement.
   std::string new_line;
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
-    std::string& current_line = document_->lines[line_index];
+    std::string& current_line = document_->lines.MutableLine(line_index);
     std::string lowered_line = util::ToLowerAscii(current_line);
     std::size_t offset = lowered_line.find(lowered_needle);
     if (offset == std::string::npos) {
@@ -298,7 +298,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
     PushHistoryEntry(HistoryEntry{
         .start_line = first_changed_line,
         .before_lines = std::move(before_changed_lines),
-        .after_lines = SliceLines(document_->lines, first_changed_line, last_changed_line + 1),
+        .after_lines = document_->lines.SliceLines(first_changed_line, last_changed_line + 1),
         .before_state = before_state,
         .after_state = after_state,
     });
@@ -365,7 +365,7 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
-  TextViewportUndoHistory::ApplyEntryToLines(document_->lines, entry, forward);
+  TextViewportUndoHistory::ApplyEntryToBuffer(document_->lines, entry, forward);
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   RefreshEncoding();
@@ -398,7 +398,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
   }
 
   const std::vector<std::string> before_lines =
-      SliceLines(document_->lines, start.line, end.line + 1);
+      document_->lines.SliceLines(start.line, end.line + 1);
   const std::vector<std::string> replacement_lines =
       util::SplitLines(util::NormalizeLineEndings(replacement));
 
@@ -459,7 +459,7 @@ TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
 
   return HistoryEntry{
       .start_line = clamped_start,
-      .before_lines = SliceLines(document_->lines, clamped_start, clamped_end),
+      .before_lines = document_->lines.SliceLines(clamped_start, clamped_end),
       .after_lines = std::move(after_lines),
       .before_state = CaptureViewState(),
       .after_state = after_state,
@@ -472,7 +472,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
                                   CoalesceHint hint) {
   EnsureDocument();
   if (document_->lines.empty()) {
-    document_->lines.push_back("");
+    document_->lines.PushBackLine("");
   }
 
   const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(range, replacement);
@@ -499,7 +499,7 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
                                  bool record_undo) {
   EnsureDocument();
   if (document_->lines.empty()) {
-    document_->lines.push_back("");
+    document_->lines.PushBackLine("");
   }
 
   const HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);

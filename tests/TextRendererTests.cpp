@@ -1184,7 +1184,7 @@ void TestEditorViewRendererPaintsFoldGutterMarkers() {
   microide::editor::TextViewport viewport;
   viewport.LoadContent("void f() {\n  body();\n}\n", "/tmp/editor-fold-gutter.cpp");
   microide::editor::FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "fold gutter renderer test should compute fold ranges");
 
   const SDL_FRect rect{0.0f, 0.0f, 220.0f, 72.0f};
@@ -1219,7 +1219,7 @@ void TestEditorViewRendererFoldGutterMarkerTracksCollapsedState() {
   microide::editor::TextViewport viewport;
   viewport.LoadContent("void f() {\n  body();\n}\n", "/tmp/editor-fold-gutter-collapse.cpp");
   microide::editor::FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "collapsed fold gutter renderer test should compute fold ranges");
   Expect(folding_model.Collapse(0),
          "collapsed fold gutter renderer test should collapse the fold");
@@ -1731,7 +1731,7 @@ void TestEditorEssentialsDisablingLayersClearsRendererCaches() {
   viewport.SetScrollLine(2);
 
   microide::editor::FoldingModel folding_model;
-  Expect(folding_model.Compute(viewport.lines(), DefaultFoldOptions()),
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), DefaultFoldOptions()),
          "essentials toggle fixture should compute folds");
 
   microide::workspace::WorkspaceContext ctx;

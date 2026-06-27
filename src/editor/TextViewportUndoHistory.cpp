@@ -15,7 +15,7 @@ void TextViewportUndoHistory::BeginGroup(ViewState before_state) {
 }
 
 void TextViewportUndoHistory::RecordEntry(Entry entry,
-                                          const std::vector<std::string>& current_lines,
+                                          const TextBuffer& current_lines,
                                           CoalesceHint hint) {
   redo_stack_.clear();
   if (group_stack_.empty()) {
@@ -47,7 +47,7 @@ void TextViewportUndoHistory::RecordEntry(Entry entry,
       frame.aggregate_entry = std::move(merged);
       continue;
     }
-    frame.fallback_lines = ReconstructFallbackLines(current_lines, frame.child_entries);
+    frame.fallback_lines = ReconstructFallbackLines(current_lines.Snapshot(), frame.child_entries);
     frame.aggregate_entry.reset();
     frame.child_entries.clear();
     frame.using_fallback = true;
@@ -96,7 +96,7 @@ void TextViewportUndoHistory::RecordEntryDirect(Entry entry) {
 }
 
 std::optional<TextViewportUndoHistory::Entry>
-TextViewportUndoHistory::FinishActiveGroup(const std::vector<std::string>& current_lines,
+TextViewportUndoHistory::FinishActiveGroup(const TextBuffer& current_lines,
                                            ViewState after_state) {
   if (group_stack_.empty()) {
     return std::nullopt;
@@ -106,7 +106,7 @@ TextViewportUndoHistory::FinishActiveGroup(const std::vector<std::string>& curre
 
   Entry agg;
   if (frame.using_fallback) {
-    agg = BuildEntryForDocumentChange(frame.fallback_lines, frame.state, current_lines,
+    agg = BuildEntryForDocumentChange(frame.fallback_lines, frame.state, current_lines.Snapshot(),
                                       std::move(after_state));
   } else if (frame.aggregate_entry.has_value()) {
     agg = *frame.aggregate_entry;
@@ -179,6 +179,26 @@ void TextViewportUndoHistory::ApplyEntryToLines(std::vector<std::string>& lines,
   }
   if (lines.empty()) {
     lines.push_back("");
+  }
+}
+
+void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry& entry,
+                                                 bool forward) {
+  const std::size_t start_line = std::min(entry.start_line, lines.size());
+  const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
+  const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
+
+  const bool same_count_replacement = removed_count > 0 && removed_count == inserted_lines.size() &&
+                                      start_line + removed_count <= lines.size();
+  if (same_count_replacement) {
+    for (std::size_t i = 0; i < removed_count; ++i) {
+      lines.SetLine(start_line + i, inserted_lines[i]);
+    }
+  } else {
+    lines.ReplaceLineRange(start_line, removed_count, inserted_lines);
+  }
+  if (lines.empty()) {
+    lines.PushBackLine("");
   }
 }
 

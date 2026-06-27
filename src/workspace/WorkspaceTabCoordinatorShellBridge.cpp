@@ -20,7 +20,7 @@ namespace microide::workspace {
 namespace {
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  return util::SerializeLines(viewport.lines(), viewport.line_ending());
+  return util::SerializeLines(viewport.lines().Snapshot(), viewport.line_ending());
 }
 
 void RestoreViewportText(editor::TextViewport& viewport, std::string_view text) {
@@ -135,7 +135,7 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
     return false;
   }
 
-  const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines());
+  const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines().Snapshot());
   if (const FormatterSpec* formatter =
           filetype.empty() ? nullptr : formatter_registry_.FindFormatter(filetype);
       formatter != nullptr && !formatter->command.empty()) {

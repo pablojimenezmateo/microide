@@ -46,7 +46,7 @@ void TestViewportDetachFoldingModelRestoresVisualRows() {
   viewport.LoadContent("void f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/editor-fold-detach.cpp");
 
   FoldingModel model;
-  Expect(model.Compute(viewport.lines(), DefaultCStyleOptions()),
+  Expect(model.Compute(viewport.lines().Snapshot(), DefaultCStyleOptions()),
          "fold compute should succeed for detach fixture");
   Expect(model.Collapse(0), "outer fold should collapse");
   viewport.SetFoldingModel(&model);
@@ -154,7 +154,7 @@ void TestTextViewportCopyClearsFoldingModelBinding() {
   TextViewport original;
   original.LoadContent("void f() {\n  a();\n}\n", "/tmp/fold-copy.cpp");
   FoldingModel model;
-  Expect(model.Compute(original.lines(), DefaultCStyleOptions()),
+  Expect(model.Compute(original.lines().Snapshot(), DefaultCStyleOptions()),
          "fold compute should succeed for copy fixture");
   Expect(model.Collapse(0), "outer fold should collapse");
   original.SetFoldingModel(&model);
@@ -173,7 +173,7 @@ void TestTextViewportMoveClearsFoldingModelBinding() {
   TextViewport original;
   original.LoadContent("void f() {\n  a();\n}\n", "/tmp/fold-move.cpp");
   FoldingModel model;
-  Expect(model.Compute(original.lines(), DefaultCStyleOptions()),
+  Expect(model.Compute(original.lines().Snapshot(), DefaultCStyleOptions()),
          "fold compute should succeed for move fixture");
   Expect(model.Collapse(0), "outer fold should collapse");
   original.SetFoldingModel(&model);

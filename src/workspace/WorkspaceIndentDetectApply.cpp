@@ -17,7 +17,7 @@ void ApplyDetectedIndentAfterPreferences(
     return;
   }
 
-  const editor::IndentDetection detected = editor::DetectIndent(viewport.lines());
+  const editor::IndentDetection detected = editor::DetectIndent(viewport.lines().Snapshot());
   if (!detected.detected) {
     return;
   }
