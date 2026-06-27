@@ -128,9 +128,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
 
   if (HandleSingleLineInputMouseDown(event, layout)) {
     switch (context_.interaction_state.single_line_drag_surface) {
-      case TextInputSurface::Command:
-        ensure_redraw([this]() { RequestBottomPanelRedraw(); });
-        break;
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace:
       case TextInputSurface::CommitSubject:
@@ -256,6 +253,22 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
+  // Editor-group split divider: grab it to resize the two groups.
+  if (event.button.button == SDL_BUTTON_LEFT) {
+    for (const EditorSplitDividerLayout& divider :
+         ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
+      const float inflate = kWorkspaceResizeHandleHitInflate;
+      const SDL_FRect hit = MakeRect(divider.rect.x - inflate, divider.rect.y - inflate,
+                                     divider.rect.w + 2.0f * inflate, divider.rect.h + 2.0f * inflate);
+      if (Contains(hit, event.button.x, event.button.y)) {
+        context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
+        context_.interaction_state.drag_editor_split_divider_index = divider.divider_index;
+        context_.interaction_state.drag_editor_split_path = divider.node_path;
+        return true;
+      }
+    }
+  }
+
   if (MakeDebugPaneMouseCoordinator().HandleButtonDown(event, layout)) {
     ensure_redraw([this]() { RequestDebugPaneRedraw(); });
     return true;
@@ -290,9 +303,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (event.button.button == SDL_BUTTON_RIGHT && ActiveTabIsEditor() &&
       Contains(layout.editor_surface, event.button.x, event.button.y)) {
     SyncActiveEditorTab();
-    if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-      NormalizeEditorSplitTree(*editor_tab);
-    }
     if (MakeEditorMouseCoordinator().HandleGutterContextMenu(event, layout)) {
       ensure_redraw([this]() { RequestChromeRedraw(); });
       return true;
@@ -308,11 +318,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
 
       SyncActiveEditorTab();
-      auto* editor_tab = ActiveEditorTab();
-      if (editor_tab == nullptr) {
+      if (ActiveEditorTab() == nullptr) {
         return false;
       }
-      NormalizeEditorSplitTree(*editor_tab);
 
       const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
       const auto pane_it = std::find_if(
@@ -323,8 +331,15 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (pane_it == panes.end()) {
         return false;
       }
-      if (!pane_it->active) {
-        SetActiveEditorSplit(pane_it->leaf_id);
+
+      // Right-clicking a split group focuses it first (like left-click) so the
+      // context menu and the retargeted caret act on the clicked group, not the
+      // previously-focused one.
+      auto& project_state = context_.current_project_state;
+      if (pane_it->group_index != project_state.focused_group_index &&
+          pane_it->group_index < project_state.editor_groups.size()) {
+        project_state.focused_group_index = pane_it->group_index;
+        RequestTabStripRedraw();
       }
 
       editor::TextViewport* viewport = ActiveEditorViewport();
@@ -414,9 +429,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  // Welcome home surface: a placeholder editor shows clickable recent projects and an
-  // open-folder affordance. Intercept those clicks before the editor coordinator turns
-  // them into a text-selection drag on the empty buffer.
+  // Welcome home surface: a placeholder editor shows clickable recent projects/files plus
+  // primary-action buttons (open folder, or new/open/find when a project is open).
+  // Intercept those clicks before the editor coordinator turns them into a text-selection
+  // drag on the empty buffer.
   if (event.button.button == SDL_BUTTON_LEFT) {
     editor::WelcomeViewModel welcome_model;
     editor::WelcomeLayout welcome_layout;
@@ -427,12 +443,32 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         if (!Contains(region.rect, click_x, click_y)) {
           continue;
         }
-        if (region.kind == editor::WelcomeHitRegion::Kind::RecentProject &&
-            region.recent_index < welcome_model.recent_projects.size()) {
-          OpenProjectTab(welcome_model.recent_projects[region.recent_index].path, true, true);
-        } else if (region.kind == editor::WelcomeHitRegion::Kind::OpenFolder) {
-          ActionCoordinator(MakeActionContext())
-              .Execute(ActionId::ProjectOpen, {}, ActionSource::Menu);
+        const auto run_action = [this](ActionId id) {
+          ActionCoordinator(MakeActionContext()).Execute(id, {}, ActionSource::Menu);
+        };
+        switch (region.kind) {
+          case editor::WelcomeHitRegion::Kind::RecentProject:
+            if (region.recent_index < welcome_model.recent_projects.size()) {
+              OpenProjectTab(welcome_model.recent_projects[region.recent_index].path, true, true);
+            }
+            break;
+          case editor::WelcomeHitRegion::Kind::OpenFolder:
+            run_action(ActionId::ProjectOpen);
+            break;
+          case editor::WelcomeHitRegion::Kind::RecentFile:
+            if (region.recent_index < welcome_model.recent_files.size()) {
+              OpenFile(welcome_model.recent_files[region.recent_index].path);
+            }
+            break;
+          case editor::WelcomeHitRegion::Kind::NewFile:
+            run_action(ActionId::Tab);
+            break;
+          case editor::WelcomeHitRegion::Kind::OpenFile:
+            run_action(ActionId::Open);
+            break;
+          case editor::WelcomeHitRegion::Kind::FindInProject:
+            run_action(ActionId::ProjectSearch);
+            break;
         }
         ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
         return true;
@@ -461,7 +497,7 @@ bool WorkspaceShell::ProbeWelcomeSurface(editor::WelcomeViewModel* model,
   if (!layout.has_value()) {
     return false;
   }
-  *model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_.RecentProjects());
+  *model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_);
   *layout_out = editor::ComputeWelcomeLayout(layout->editor_surface, *model,
                                              text_renderer_.LineHeight());
   return true;
@@ -516,9 +552,6 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
       case TextInputSurface::PromptInput:
         ensure_redraw([this]() { RequestPromptRedraw(); });
         break;
-      case TextInputSurface::Command:
-        ensure_redraw([this]() { RequestBottomPanelRedraw(); });
-        break;
       case TextInputSurface::SidebarSearchQuery:
       case TextInputSurface::SidebarSearchReplace:
         ensure_redraw([this]() { RequestSidebarRedraw(); });
@@ -555,7 +588,6 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
     return std::nullopt;
   }
   const WorkspaceLayout layout = *layout_state;
-  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
 
   // No plugin/LSP contribution: no above-line code lenses can exist.
   const auto* pres = context_.current_project_state.plugin_presentation_if_present();
@@ -591,9 +623,7 @@ std::optional<std::string> WorkspaceShell::AboveLensCommandAtPosition(float x, f
     if (!Contains(pane.rect, x, y)) {
       continue;
     }
-    const editor::TextViewport* viewport =
-        pane.active ? ActiveEditorViewport()
-                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr) {
       return std::nullopt;
     }

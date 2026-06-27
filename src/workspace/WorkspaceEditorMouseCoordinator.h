@@ -11,11 +11,8 @@ namespace microide::workspace {
 class EditorMouseCoordinator {
  public:
   struct Operations {
-    std::function<std::vector<WorkspaceShell::EditorSplitDividerLayout>(const SDL_FRect&)>
-        compute_editor_split_divider_layouts;
     std::function<std::vector<WorkspaceShell::EditorPaneLayout>(const SDL_FRect&)>
         compute_editor_pane_layouts;
-    std::function<void(std::size_t)> set_active_editor_split;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<ScrollSurfaceLayout(const SDL_FRect&,
                                       const editor::TextViewport&,
@@ -28,13 +25,6 @@ class EditorMouseCoordinator {
     std::function<void()> request_tab_strip_redraw;
     std::function<void()> request_focused_editor_redraw;
     std::function<TabEntry::EditorTabState*()> active_editor_tab;
-    std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
-    std::function<TabEntry::EditorTabState::EditorSplitNode*(
-        TabEntry::EditorTabState::EditorSplitNode*, const std::vector<std::size_t>&)>
-        find_editor_split_node;
-    std::function<std::optional<SDL_FRect>(const SDL_FRect&, const std::vector<std::size_t>&)>
-        compute_editor_split_node_rect;
-    std::function<void(TabEntry::EditorTabState::EditorSplitNode&)> normalize_editor_split_node;
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::string>(std::string_view id)> get_setting_value;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;

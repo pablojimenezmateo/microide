@@ -209,6 +209,25 @@ struct EditorSplitAxisLayout {
   std::vector<SDL_FRect> divider_rects;
 };
 
+// Rects for one editor group's chrome. `breadcrumb` has w==0 when the group has
+// no breadcrumb band (the stacked second group, which synthesizes only a tab
+// strip above its surface).
+struct EditorGroupRects {
+  SDL_FRect tab_strip{};
+  SDL_FRect breadcrumb{};
+  SDL_FRect editor_surface{};
+};
+
+// Layout of 1 or 2 editor groups carved from the editor column. For a single
+// group the rects are byte-identical to `layout.tab_strip` / `.breadcrumb` /
+// `.editor_surface`. For two groups they are split side-by-side (vertical
+// divider) or stacked (horizontal divider) at `first_fraction`.
+struct EditorGroupRectsLayout {
+  std::vector<EditorGroupRects> groups;
+  std::optional<SDL_FRect> divider;  // present iff two groups
+  bool vertical_divider = true;      // true: side-by-side; false: stacked
+};
+
 inline constexpr float kWorkspaceHeaderHeight = 26.0f;
 inline constexpr float kWorkspaceDividerThickness = 1.0f;
 inline constexpr float kWorkspaceResizeHandleThickness = 6.0f;
@@ -220,11 +239,6 @@ inline constexpr float kWorkspaceMaxRightPaneWidth = 520.0f;
 inline constexpr float kWorkspaceMinEditorAreaWidth = 280.0f;
 inline constexpr float kWorkspaceMinEditorAreaHeight = 120.0f;
 inline constexpr float kWorkspaceBottomPanelHeaderHeight = 28.0f;
-inline constexpr float kWorkspaceBottomPanelCommandReserveHeight = 56.0f;
-inline constexpr float kWorkspaceBottomPanelCommandPromptHeight = 18.0f;
-inline constexpr float kWorkspaceBottomPanelCommandInset = 10.0f;
-inline constexpr float kWorkspaceBottomPanelCommandTopPadding = 8.0f;
-inline constexpr float kWorkspaceBottomPanelCommandBottomPadding = 8.0f;
 inline constexpr float kWorkspaceOverlayMaxHeight = 360.0f;
 inline constexpr float kWorkspaceEditorSplitDividerThickness = 6.0f;
 inline constexpr float kWorkspaceSidebarRowHeight = 20.0f;
@@ -278,6 +292,13 @@ std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
     const SDL_FRect& rect,
     bool vertical,
     std::span<const float> size_fractions);
+// Carve the editor column into `group_count` (1 or 2) editor-group rects.
+// `vertical_divider` selects side-by-side (true) vs stacked (false); ignored for
+// a single group. `first_fraction` is the first group's share of the split axis.
+EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
+                                               std::size_t group_count,
+                                               bool vertical_divider,
+                                               float first_fraction);
 bool Contains(const SDL_FRect& rect, float x, float y);
 // Exact four-float equality for SDL_FRect.
 inline bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {
@@ -293,7 +314,7 @@ float ClampSidebarWidth(float width, float window_width);
 // resolved sidebar width (0 when hidden).
 float ClampRightPaneWidth(float width, float window_width, float sidebar_width);
 float ClampBottomPanelHeight(float height, float window_height);
-int BottomPanelVisibleRowsForHeight(float panel_height, float line_height, bool command_mode);
+int BottomPanelVisibleRowsForHeight(float panel_height, float line_height);
 // Resolve the vertical coordinate `y` to an absolute bottom-panel log line index, or
 // nullopt when `y` is above the first row, below the last visible row, or past the
 // content. Floors the row offset so coordinates above `text_y` reject rather than
@@ -326,10 +347,7 @@ SDL_FRect EmptyTabStripPlaceholderRect(const SDL_FRect& tab_strip);
 SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect);
 LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs);
 SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count);
-float BottomPanelCommandReservedHeight(bool command_mode);
-SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout, bool command_mode);
-SDL_FRect BottomPanelCommandAreaRect(const WorkspaceLayout& layout);
-SDL_FRect BottomPanelCommandPromptRect(const WorkspaceLayout& layout);
+SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout);
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full);
 std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 // The banner strip occupies the top `kWorkspaceEditorBannerHeight` of the editor

@@ -10,7 +10,7 @@
 
 namespace microide::workspace {
 
-class CommandPromptCoordinator {
+class CommandLineCoordinator {
  public:
   struct PluginCommandResult {
     bool handled = false;
@@ -24,28 +24,23 @@ class CommandPromptCoordinator {
     std::function<std::vector<std::string>()> sidebar_view_ids;
     std::function<PluginCommandResult(const std::string&, const std::vector<std::string>&)>
         execute_plugin_command;
-    std::function<bool()> bottom_panel_visible;
-    std::function<void(bool)> request_command_mode_transition_redraw;
   };
 
-  CommandPromptCoordinator(ProjectWorkspaceState& state,
-                           std::vector<std::string>& available_colorscheme_names,
-                           Operations operations);
+  CommandLineCoordinator(ProjectWorkspaceState& state,
+                         std::vector<std::string>& available_colorscheme_names,
+                         Operations operations);
 
-  void ResetSessionState();
-  void ClearFeedback();
-  void SetFeedback(std::string feedback);
   bool RejectAction(ActionSource source, std::string feedback);
-  void AppendInput(std::string_view input);
-  bool HandleKeyDown(const SDL_KeyboardEvent& event);
+  // Parse and run a full command line (verb + arguments), dispatching to the matching
+  // workspace action or plugin command. Feedback lands in CommandFeedbackState::text.
   bool ExecuteCommandLine(const std::string& command_line);
-
-  static std::string PromptStatusText(const CommandState& command);
+  // Tab-complete the active token of `input` in place (command verbs, paths, colorscheme
+  // names, sidebar ids, …) and record a feedback line describing the result.
+  void CompleteInput(editor::SingleLineEditor& input);
 
  private:
-  void PushHistory(std::string command_line);
-  void StepHistory(int delta);
-  void CompleteInput();
+  void ClearFeedback();
+  void SetFeedback(std::string feedback);
 
   ProjectWorkspaceState& state_;
   std::vector<std::string>& available_colorscheme_names_;

@@ -464,14 +464,6 @@ void WorkspaceShell::RequestDebugPaneRedraw() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::RequestBottomPanelCommandRedraw() {
-  if (const auto rect = CurrentBottomPanelCommandRedrawRect(); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestBottomPanelRedraw();
-}
-
 void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
     const WorkspaceLayout& previous_layout) {
   MarkLayoutDirty();
@@ -489,15 +481,6 @@ void WorkspaceShell::RequestBottomPanelLayoutChangeRedraw(
   // Bottom-panel resize changes multiple surface boundaries at once. Until retained redraw
   // can prove equivalence here, fall back to a full redraw for correctness.
   RequestFullRedraw();
-}
-
-void WorkspaceShell::RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible) {
-  if (bottom_panel_was_visible != BottomPanelVisible()) {
-    MarkLayoutDirty();
-    RequestFullRedraw();
-    return;
-  }
-  RequestBottomPanelRedraw();
 }
 
 void WorkspaceShell::RequestBottomPanelContentRedraw() {
@@ -592,11 +575,9 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const 
     return std::nullopt;
   }
 
-  auto* editor_tab = const_cast<WorkspaceShell*>(this)->ActiveEditorTab();
-  if (editor_tab == nullptr) {
+  if (const_cast<WorkspaceShell*>(this)->ActiveEditorTab() == nullptr) {
     return layout->editor_surface;
   }
-  const_cast<WorkspaceShell*>(this)->NormalizeEditorSplitTree(*editor_tab);
   const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
   const auto active_pane =
       std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
@@ -615,10 +596,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
     return std::nullopt;
   }
 
-  auto* editor_tab = const_cast<WorkspaceShell*>(this)->ActiveEditorTab();
-  if (editor_tab != nullptr) {
-    const_cast<WorkspaceShell*>(this)->NormalizeEditorSplitTree(*editor_tab);
-  }
   const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
   const auto active_pane =
       std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
@@ -665,15 +642,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
   if (!layout.has_value() || !BottomPanelVisible()) {
     return std::nullopt;
   }
-  return BottomPanelContentRect(*layout, context_.current_project_state.panel.command_mode);
-}
-
-std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelCommandRedrawRect() const {
-  const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value() || !context_.current_project_state.panel.command_mode) {
-    return std::nullopt;
-  }
-  return BottomPanelCommandAreaRect(*layout);
+  return BottomPanelContentRect(*layout);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {

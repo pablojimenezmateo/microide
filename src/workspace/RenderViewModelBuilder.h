@@ -76,8 +76,6 @@ struct OverlaySurfaceViewModel {
 struct TextInputSurfaceViewModel {
   TextInputSurface current_surface = TextInputSurface::None;
   bool prompt_editing = false;
-  bool command_mode = false;
-  const editor::SingleLineEditor* command_input = nullptr;
   const editor::SingleLineEditor* prompt_input = nullptr;
   const editor::SingleLineEditor* buffer_search_query = nullptr;
   const editor::SingleLineEditor* buffer_search_replace = nullptr;
@@ -112,13 +110,11 @@ struct BottomPanelTabDragViewModel {
 };
 
 struct BottomPanelSurfaceViewModel {
-  bool command_mode = false;
   PanelContentKind content = PanelContentKind::None;
   float height = 0.0f;
   std::string output_channel_id;
   std::filesystem::path project_root;
   FocusTarget focus = FocusTarget::Sidebar;
-  const CommandState* command_state = nullptr;
   // Live view into the current project state, so render TUs can drive
   // `TabStripService` queries (which take ProjectWorkspaceState by const ref)
   // without reaching into `context_.current_project_state` directly.
@@ -270,11 +266,14 @@ class RenderViewModelBuilder {
   StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
                                     const class StatusBarService& service) const;
   NotificationsViewModel BuildNotifications(const NotificationService& service) const;
-  // Welcome / placeholder home surface. `recent_projects` is the MRU list from
-  // RecentsService (newest-first); the curated shortcut rows are sourced from the
+  // Welcome / placeholder home surface. The variant is chosen from the live project
+  // root (empty => NoProject cold-start home with recent projects + Open Folder; non-empty
+  // => ProjectHome with this project's recent files + new/open/find actions). Recent
+  // projects/files are pulled from `recents`; the curated shortcut rows come from the
   // command registry so the displayed key chords never drift from the real bindings.
-  editor::WelcomeViewModel BuildWelcomeView(
-      std::span<const std::filesystem::path> recent_projects) const;
+  // Taking the service (not a span) lets both the render and hit-test callsites issue the
+  // identical one-arg call, so their layouts can never drift apart.
+  editor::WelcomeViewModel BuildWelcomeView(const class RecentsService& recents) const;
   SettingsOverlayViewModel BuildSettingsOverlay(
       const WorkspaceLayout& layout,
       const class SettingsOverlayService& service) const;

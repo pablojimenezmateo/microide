@@ -30,11 +30,6 @@ class EditorTabService {
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
   void SyncActiveEditorTabMetadata();
-  void SetActiveEditorSplit(std::size_t leaf_id);
-  bool ActivateOrderedEditorSplit(std::size_t order_index);
-  bool SplitActiveEditor(EditorSplitOrientation orientation);
-  bool UnsplitActiveEditor();
-  bool CycleEditorSplit(int delta);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
@@ -48,6 +43,10 @@ class EditorTabService {
   void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                  std::string_view content);
   void Close(std::size_t index);
+  bool SplitEditorGroup(EditorSplitOrientation orientation);
+  bool FocusOtherGroup();
+  bool CloseEditorGroup();
+  std::size_t EditorGroupCount() const;
   bool MoveActiveTo(std::size_t index);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;

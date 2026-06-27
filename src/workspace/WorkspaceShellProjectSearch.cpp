@@ -385,9 +385,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       continue;
     }
 
-    for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
-      if (context_.current_project_state.open_tabs[i].kind == TabEntry::Kind::Editor &&
-          context_.current_project_state.open_tabs[i].path.lexically_normal() == normalized_absolute && TabIsDirty(i)) {
+    for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
+      if (context_.current_project_state.focused_group().open_tabs[i].kind == TabEntry::Kind::Editor &&
+          context_.current_project_state.focused_group().open_tabs[i].path.lexically_normal() == normalized_absolute && TabIsDirty(i)) {
         return;
       }
     }
@@ -413,10 +413,13 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       return;
     }
 
-    for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
-      auto& tab = context_.current_project_state.open_tabs[i];
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          tab.editor_state->views.empty()) {
+    for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
+      auto& tab = context_.current_project_state.focused_group().open_tabs[i];
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      auto& editor_state = *tab.editor_state;
+      if (EditorViewPath(editor_state) != change.absolute_path) {
         continue;
       }
 
@@ -426,30 +429,14 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       }
       ApplyEditorPreferences(reopened_view);
       ApplyDetectedIndentOnOpen(reopened_view);
-      bool reloaded_any = false;
-      for (auto& view : tab.editor_state->views) {
-        const bool active_view =
-            i == context_.current_project_state.active_tab_index && view.leaf_id == tab.editor_state->active_leaf_id &&
-            !view.needs_restore;
-        const std::filesystem::path current_path =
-            active_view ? ActiveEditorViewport()->path().lexically_normal() : EditorViewPath(view);
-        if (current_path != change.absolute_path) {
-          continue;
-        }
-        view.viewport = reopened_view;
-        view.restored_path = change.absolute_path;
-        view.restored_cursor_line = reopened_view.cursor_line();
-        view.restored_cursor_column = reopened_view.cursor_column();
-        view.restored_scroll_line = reopened_view.scroll_line();
-        view.restored_horizontal_scroll = reopened_view.horizontal_scroll();
-        view.needs_restore = false;
-        if (active_view) {
-          context_.current_project_state.welcome_surface.viewport = reopened_view;
-        }
-        reloaded_any = true;
-      }
-      if (reloaded_any && i == context_.current_project_state.active_tab_index) {
-        NormalizeEditorSplitTree(*tab.editor_state);
+      editor_state.viewport = reopened_view;
+      editor_state.restored_path = change.absolute_path;
+      editor_state.restored_cursor_line = reopened_view.cursor_line();
+      editor_state.restored_cursor_column = reopened_view.cursor_column();
+      editor_state.restored_scroll_line = reopened_view.scroll_line();
+      editor_state.restored_horizontal_scroll = reopened_view.horizontal_scroll();
+      editor_state.needs_restore = false;
+      if (i == context_.current_project_state.focused_group().active_tab_index) {
         SyncActiveEditorTabMetadata();
       }
     }

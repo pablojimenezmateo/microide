@@ -200,7 +200,6 @@
   using TerminalTabState = workspace::TerminalTabState;
   using EditorPreferences = workspace::EditorPreferences;
   using ProjectSurfaceState = workspace::ProjectSurfaceState;
-  using CommandState = workspace::CommandState;
   using BufferSearchState = workspace::BufferSearchState;
   using ProjectSearchState = workspace::ProjectSearchState;
   using ComparePickerState = workspace::ComparePickerState;
@@ -367,7 +366,7 @@
   };
 
   struct EditorPaneLayout {
-    std::size_t leaf_id = 0;
+    std::size_t group_index = 0;
     SDL_FRect rect{};
     bool active = false;
   };
@@ -382,11 +381,6 @@
   using BottomPanelTabModel = workspace::BottomPanelTabModel;
 
  private:
-  struct EditorSplitSlot {
-    TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
-    std::size_t index = 0;
-    std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot = nullptr;
-  };
 
   struct EditorBlamePopupLayout {
     std::size_t line_index = 0;
@@ -572,7 +566,7 @@
   ProjectCatalogService MakeProjectCatalogService();
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
-  CommandPromptCoordinator MakeCommandPromptCoordinator();
+  CommandLineCoordinator MakeCommandLineCoordinator();
   PromptSurfaceService MakePromptSurfaceService();
   DirtyPromptCoordinator MakeDirtyPromptCoordinator(EditorTabService& editor_tabs,
                                                     PromptSurfaceService& prompt_surfaces);
@@ -669,7 +663,9 @@
   bool SaveTab(std::size_t index);
   bool TabIsDirty(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
+  std::string TabDisplayTitle(std::size_t group_index, std::size_t index) const;
   std::string TabTooltipLabel(std::size_t index) const;
+  std::string TabTooltipLabel(std::size_t group_index, std::size_t index) const;
   std::vector<std::size_t> DirtyEditorTabIndices() const;
   static std::vector<std::size_t> DirtyEditorTabIndices(const ProjectWorkspaceState& state);
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
@@ -696,59 +692,45 @@
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
-  std::filesystem::path EditorViewPath(const TabEntry::EditorTabState::EditorViewState& view) const;
+  std::filesystem::path EditorViewPath(const TabEntry::EditorTabState& editor_state) const;
   bool ActivateCurrentTabAfterStateLoad();
   bool ActiveTabIsEditor() const;
   TabEntry::EditorTabState* ActiveEditorTab();
   const TabEntry::EditorTabState* ActiveEditorTab() const;
+  // Group-aware viewport/tab resolution: the editor render/cursor/mouse paths
+  // drive each split group through these instead of the focused-group helpers.
+  TabEntry::EditorTabState* GroupActiveEditorTab(EditorGroup& group);
+  const TabEntry::EditorTabState* GroupActiveEditorTab(const EditorGroup& group) const;
+  editor::TextViewport* GroupActiveViewport(EditorGroup& group);
+  const editor::TextViewport* GroupActiveViewport(const EditorGroup& group) const;
+  // Resolve the viewport for a specific editor pane (split group) rather than the
+  // globally-focused group. Read/hit-test paths (hover, cursor shape, right-click)
+  // must use this so they inspect the pane under the cursor, not the active group.
+  editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane);
+  const editor::TextViewport* ViewportForPane(const EditorPaneLayout& pane) const;
   static TabEntry::EditorTabState MakeEditorTabState(const editor::TextViewport& view);
-  static std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode> MakeEditorLeafNode(
-      std::size_t leaf_id,
-      float size_fraction = 1.0f);
   void SyncActiveEditorTabMetadata();
   bool ReplaceActiveEditorView(const editor::TextViewport& viewport);
-  TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
-      TabEntry::EditorTabState& editor_tab,
-      std::size_t leaf_id);
-  const TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
-      const TabEntry::EditorTabState& editor_tab,
-      std::size_t leaf_id) const;
-  editor::TextViewport* FindEditorView(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
-  const editor::TextViewport* FindEditorView(const TabEntry::EditorTabState& editor_tab,
-                                             std::size_t leaf_id) const;
   editor::TextViewport* ActiveEditorViewport();
   const editor::TextViewport* ActiveEditorViewport() const;
   editor::TextViewport* ActiveNavigableViewport();
   const editor::TextViewport* ActiveNavigableViewport() const;
   std::filesystem::path ActiveTabPath() const;
-  EditorSplitSlot FindEditorLeafSlot(TabEntry::EditorTabState& editor_tab, std::size_t leaf_id);
-  TabEntry::EditorTabState::EditorSplitNode* FindEditorSplitNode(
-      TabEntry::EditorTabState::EditorSplitNode* node,
-      const std::vector<std::size_t>& path);
-  const TabEntry::EditorTabState::EditorSplitNode* FindEditorSplitNode(
-      const TabEntry::EditorTabState::EditorSplitNode* node,
-      const std::vector<std::size_t>& path) const;
-  void NormalizeEditorSplitNode(TabEntry::EditorTabState::EditorSplitNode& node);
-  void NormalizeEditorSplitTree(TabEntry::EditorTabState& editor_tab);
-  void CollectEditorLeafOrder(const TabEntry::EditorTabState::EditorSplitNode* node,
-                              std::vector<std::size_t>& order) const;
-  std::vector<std::size_t> EditorLeafOrder(const TabEntry::EditorTabState& editor_tab) const;
-  void SetActiveEditorSplit(std::size_t index);
-  bool ActivateOrderedEditorSplit(std::size_t order_index);
-  bool SplitActiveEditor(EditorSplitOrientation orientation);
-  bool UnsplitActiveEditor();
-  bool CycleEditorSplit(int delta);
-  void CollectEditorPaneLayouts(const TabEntry::EditorTabState& editor_tab,
-                                const TabEntry::EditorTabState::EditorSplitNode* node,
-                                const SDL_FRect& rect,
-                                std::vector<EditorPaneLayout>& panes,
-                                std::vector<EditorSplitDividerLayout>* dividers,
-                                std::vector<std::size_t>* path) const;
-  std::optional<SDL_FRect> ComputeEditorSplitNodeRect(const SDL_FRect& editor_surface,
-                                                      const std::vector<std::size_t>& path) const;
   std::vector<EditorPaneLayout> ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
   std::vector<EditorSplitDividerLayout> ComputeEditorSplitDividerLayouts(
       const SDL_FRect& editor_surface) const;
+  // Derive pane / divider layouts from already-computed group rects, so a render
+  // pass that needs both does not recompute the surface split twice per frame.
+  std::vector<EditorPaneLayout> EditorPaneLayoutsFromGroupRects(
+      const EditorGroupRectsLayout& group_rects) const;
+  std::vector<EditorSplitDividerLayout> EditorSplitDividerLayoutsFromGroupRects(
+      const EditorGroupRectsLayout& group_rects) const;
+  EditorGroupRectsLayout ComputeEditorSurfaceGroupRects(const SDL_FRect& editor_surface) const;
+  // Per-group chrome rects (tab strip / breadcrumb / surface) for the current
+  // editor-group state, carved from `layout`. Single source of truth shared by
+  // the render, cursor, and mouse paths so they cannot drift apart.
+  EditorGroupRectsLayout ComputeEditorGroupRectsForState(const WorkspaceLayout& layout) const;
+  std::size_t FocusedEditorGroupIndex() const;
   SDL_FRect EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const;
   ScrollSurfaceLayout ComputeEditorScrollLayout(const SDL_FRect& rect,
                                                 const editor::TextViewport& viewport,
@@ -849,9 +831,17 @@
   void OpenLaunchConfigPicker();
   void RefreshLaunchConfigPicker();
   void ConfirmLaunchConfigSelection();
-  void OpenCommandPalette();
+  // Open the command palette, optionally pre-filling the query (e.g. "project-open ") so the
+  // user only types the argument. The palette is also the command-line surface: typing a
+  // verb + arguments and pressing Enter runs it via the shared command executor.
+  void OpenCommandPalette(std::string seed = {});
   void RefreshCommandPalette();
   void ConfirmCommandPaletteSelection();
+  // True when the palette query should run as a command line (verb + args) rather than
+  // confirming the highlighted fuzzy row.
+  bool CommandPaletteQueryIsCommandLine() const;
+  // Tab-complete the palette query (command verbs, paths, colorscheme names, …) in place.
+  void CompleteCommandPaletteQuery();
   // Build the welcome-surface model + geometry for the current placeholder editor, so
   // the click handler and cursor resolver hit-test the same regions the renderer drew.
   // Returns false when the welcome home surface is not currently showing.
@@ -1225,6 +1215,9 @@
   // tab is active. Callers (render path, fold-action handlers) consume the
   // model directly.
   editor::FoldingModel* EnsureActiveFoldingModelFresh();
+  editor::FoldingModel* EnsureGroupFoldingModelFresh(EditorGroup& group);
+  editor::FoldingModel* EnsureFoldingModelFreshForTab(TabEntry::EditorTabState* editor_tab,
+                                                      editor::TextViewport* active_viewport);
   bool WriteClipboardText(std::string_view text) const;
   std::optional<std::string> ReadClipboardText() const;
   bool WritePrimarySelectionText(std::string_view text) const;
@@ -1233,6 +1226,9 @@
   void SyncPrimarySelectionWithActiveEditor();
   void SyncPrimarySelectionWithTerminalSelection();
   std::size_t CountOpenBufferViews(const std::filesystem::path& path) const;
+  // Per-path open-view counts across all groups, built in a single pass for
+  // bulk-close callers that would otherwise call CountOpenBufferViews per tab.
+  std::unordered_map<std::string, std::size_t> OpenBufferViewCounts() const;
   // Thin forwarders to lsp_service_ (see src/workspace/LspService.*).
   bool HasActiveCompletionProvider() const;
   bool HasActiveCodeActionProvider() const;
@@ -1389,6 +1385,11 @@
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
+  bool SplitEditorGroup(EditorSplitOrientation orientation);
+  bool FocusOtherEditorGroup();
+  void FocusEditorGroup(std::size_t group_index);
+  bool CloseEditorGroup();
+  std::size_t EditorGroupCount() const;
   bool MoveActiveTabTo(std::size_t index);
   std::optional<std::size_t> FindTabIndexBySpecifier(std::string_view specifier,
                                                      std::string* error_message = nullptr) const;
@@ -1610,10 +1611,8 @@
   void RequestMergeConflictRedraw(std::size_t conflict_index);
   void RequestBottomPanelRedraw();
   void RequestDebugPaneRedraw();
-  void RequestBottomPanelCommandRedraw();
   void RequestBottomPanelLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
   void RequestBottomPanelContentRedraw();
-  void RequestCommandModeTransitionRedraw(bool bottom_panel_was_visible);
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
   void QueueEditorHoverRefresh();
@@ -1629,7 +1628,6 @@
                                                            std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
   std::optional<SDL_FRect> CurrentMergeConflictRect(std::size_t conflict_index) const;
-  std::optional<SDL_FRect> CurrentBottomPanelCommandRedrawRect() const;
   std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
   std::optional<SDL_FRect> CurrentPromptRedrawRect() const;

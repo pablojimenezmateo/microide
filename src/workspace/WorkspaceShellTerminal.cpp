@@ -165,17 +165,14 @@ bool WorkspaceShell::BottomPanelShowsOutput() const {
 }
 
 bool WorkspaceShell::BottomPanelVisible() const {
-  return context_.current_project_state.panel.command_mode ||
-         BottomPanelShowsTerminal() || BottomPanelShowsOutput();
+  return BottomPanelShowsTerminal() || BottomPanelShowsOutput();
 }
 
 WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
     const WorkspaceLayout& layout,
     std::size_t line_count) const {
   LogSurfaceLayout panel_layout;
-  const bool reserve_prompt =
-      context_.current_project_state.panel.command_mode;
-  panel_layout.content_rect = BottomPanelContentRect(layout, reserve_prompt);
+  panel_layout.content_rect = BottomPanelContentRect(layout);
   panel_layout.text_x = panel_layout.content_rect.x + kBottomPanelTextInset;
   panel_layout.text_y = panel_layout.content_rect.y + kBottomPanelTextTopInset;
   panel_layout.line_height = text_renderer_.LineHeight();
@@ -192,8 +189,7 @@ WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
 }
 
 int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
-  return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight(),
-                                         context_.current_project_state.panel.command_mode);
+  return BottomPanelVisibleRowsForHeight(panel_height, text_renderer_.LineHeight());
 }
 
 int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_rows) const {
@@ -472,8 +468,7 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
     return std::nullopt;
   }
   const WorkspaceLayout layout = *layout_state;
-  const SDL_FRect panel_content =
-      BottomPanelContentRect(layout, context_.current_project_state.panel.command_mode);
+  const SDL_FRect panel_content = BottomPanelContentRect(layout);
   if (!Contains(panel_content, x, y)) {
     return std::nullopt;
   }

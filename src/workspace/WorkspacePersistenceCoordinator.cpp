@@ -66,22 +66,9 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
               },
           .refresh_merge_tab_derived_state =
               [this](MergeTabState& merge_state) { RefreshMergeTabDerivedState(merge_state); },
-          .find_editor_split_node =
-              [this](PersistenceCoordinator::EditorSplitNode* node,
-                     const std::vector<std::size_t>& path) {
-                return FindEditorSplitNode(node, path);
-              },
-          .normalize_editor_split_tree =
-              [this](TabEntry::EditorTabState& editor_state) {
-                NormalizeEditorSplitTree(editor_state);
-              },
-          .find_editor_view_state =
-              [this](const TabEntry::EditorTabState& editor_state, std::size_t leaf_id) {
-                return FindEditorViewState(editor_state, leaf_id);
-              },
           .editor_view_path =
-              [this](const PersistenceCoordinator::EditorViewState& view_state) {
-                return EditorViewPath(view_state);
+              [this](const TabEntry::EditorTabState& editor_state) {
+                return EditorViewPath(editor_state);
               },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
           .resolve_project_root_input =

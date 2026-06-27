@@ -40,6 +40,85 @@ input, and lifecycle. Every new surface is zero-cost when unused.
 - New repo-owned dogfood plugins: `eol-annotations`, `surface-preview`, `presentation-demo`,
   `language-tools` (plus `todo-highlight`), each exercising the same narrow host APIs as user plugins.
 
+## [2.2.0] - 2026-06-23
+
+Focused follow-up to the 2.1.0 navigation work. The **welcome surface** becomes
+state-aware, the **command palette** absorbs the standalone command prompt to
+become the single command surface, and a theme-switch repaint bug is fixed.
+
+### Shell & navigation
+- The welcome surface is now state-aware: a cold-start variant (Open Folder +
+  recent projects) when no project is open, and a project-home variant (project
+  name, recent files, New File / Open File / Find in Project) when a project is
+  open with no editor tab. The duplicated command-palette hint is removed.
+- The command palette (Ctrl+Shift+P) is now the single command surface: its
+  query doubles as a command line, so queries with arguments or no fuzzy match
+  run through the shared command-line executor (e.g. `colorscheme dark`), and
+  Tab completes command/path tokens. The separate Ctrl+E command prompt and its
+  bottom-panel command-mode UI are retired; the native-picker fallback opens the
+  palette pre-filled instead.
+- Editor tabs gain a "Copy Absolute Path" action.
+
+### Theming
+- Switching color theme via the command palette or keybinding (`toggle-theme` /
+  `colorscheme <name>`) now repaints the whole window immediately, instead of
+  leaving stale colors until the next unrelated event.
+
+### Internal & tests
+- Retire the lingering "command prompt" naming across the executor coordinator,
+  state, and test accessors now that the surface is gone.
+- Make the real-gdb function-breakpoint E2E test deterministic under CPU load,
+  and fix a flaky `ProjectBackgroundExecutor` shutdown test.
+
+## [2.1.0] - 2026-06-22
+
+Feature release focused on **multi-view editing** and **navigation**. Editor tabs can now be
+split into independent editor groups (right/down) with per-group tab strips, group-aware input,
+and session persistence. A new searchable **command palette** (Ctrl+Shift+P) and **recent
+projects/files** tracking make navigation faster, and the **welcome screen** is rebuilt into a
+data-driven home surface. Rounding it out: a built-in **light theme**, a themed app icon, and
+reverse-debugging support in the DAP integration.
+
+### Editor groups & splitting
+- Collapse legacy in-tab splits to a single viewport and introduce a first-class `EditorGroup`
+  model, with per-group layout, render, and tab strips.
+- Split/focus/close commands operate on editor groups, with group-aware keyboard input routed to
+  the focused group.
+- Split right / split down available from both the tab context menu and the file-tree context
+  menu.
+- Editor groups are persisted in session state and restored on reopen.
+
+### Welcome / home surface
+- Overhaul the welcome screen into a data-driven home surface with a bold single-card layout and
+  fixed empty-state overlap.
+- Recents on the home surface are clickable and correct, with a hand cursor and no color halo.
+
+### Navigation & discovery
+- Add a searchable command palette overlay (Ctrl+Shift+P).
+- Track recent projects/files (MRU) and surface them in the file finder, backed by a new
+  persistence record.
+
+### Theming & branding
+- Add a built-in light theme and a stronger selection focus bar.
+- Add a themed two-tone "m" application icon with a hicolor multi-size icon set.
+
+### Debugger
+- Handle a late DAP capabilities event so reverse debugging is recognized when the adapter
+  reports it after launch.
+
+### Fixes
+- Resolve the per-pane group viewport in split hit-test paths so clicks land in the correct
+  group.
+
+### Performance
+- Dedup editor-group hot paths and harden group accessors.
+- Cache the normalized focused path for per-pane path matching in the debug pane.
+
+### Docs & tests
+- Add a GitHub Pages showcase site for microide.
+- De-flake fixed-wait timing races in search/subprocess tests and the control-socket self-heal
+  test.
+
 ## [2.0.1] - 2026-06-20
 
 Patch release adding agent-driven **review verbs** to the control channel. Three new commands

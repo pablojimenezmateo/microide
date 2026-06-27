@@ -105,6 +105,13 @@
         WorkspaceShell::ActionId::ShowInFileExplorer, {},
         WorkspaceShell::ActionSource::ContextMenu);
   }
+  static bool ExecuteContextMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return ActionCoordinator(shell.MakeActionContext())
+        .Execute(id, {}, WorkspaceShell::ActionSource::ContextMenu);
+  }
+  static bool IsActionEnabled(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return shell.MakeActionAvailability().IsEnabled(id);
+  }
   static bool ExecutePasteClipboard(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::PasteClipboard, {}, WorkspaceShell::ActionSource::Menu);
@@ -294,10 +301,10 @@
   static int ProjectTabScrollIndex(const WorkspaceShell& shell) {
     return shell.context_.project_catalog.tab_scroll_index;
   }
-  static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.tab_scroll_index; }
+  static int EditorTabScrollIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.focused_group().tab_scroll_index; }
   static SDL_FRect BottomPanelContentRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return microide::workspace::BottomPanelContentRect(layout, shell.context_.current_project_state.panel.command_mode);
+    return microide::workspace::BottomPanelContentRect(layout);
   }
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
                                       std::size_t row,

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include <utility>
+#include <vector>
 
 #include "workspace/WorkspaceShell.h"
 
@@ -46,6 +48,11 @@ class TabMouseCoordinator {
     std::function<bool(int)> scroll_project_tab_strip;
     std::function<bool(int)> scroll_editor_tab_strip;
     std::function<bool(int)> scroll_bottom_panel_tab_strip;
+    // Per-group editor tab strips: maps each group index to its on-screen tab
+    // strip rect (one entry for a single group, two in a split). Lets the tab
+    // mouse path resolve which group's strip the pointer hit and focus it.
+    std::function<std::vector<std::pair<std::size_t, SDL_FRect>>()> compute_editor_group_tab_strips;
+    std::function<void(std::size_t)> focus_editor_group;
   };
 
   TabMouseCoordinator(ProjectCatalogState& project_catalog,

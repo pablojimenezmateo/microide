@@ -119,7 +119,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   bool workspace_layout_recomputed = false;
   if (layout_dirty_ || !prepared_frame_layout_.has_value()) {
     layout = ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
-                           panel_vm.command_mode || panel_vm.content != PanelContentKind::None,
+                           panel_vm.content != PanelContentKind::None,
                            project_state.sidebar.width, project_state.panel.height,
                            layout_mode_service_.SnapshotInputs(),
                            layout_mode_service_.StatusBarVisible(),
@@ -135,11 +135,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   RefreshSettingsOverlayCatalog();
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);
-  if (ActiveTabIsEditor()) {
-    if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-      NormalizeEditorSplitTree(*editor_tab);
-    }
-  }
   if (panel_vm.content == PanelContentKind::Terminal && ActiveTerminalTab() != nullptr) {
     const SDL_FRect& panel = layout.bottom_panel;
     const auto& cached = last_terminal_panel_rect_;
@@ -302,9 +297,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   ProjectWorkspaceState& project_state = *frame_vm.project_state;
   CompareTabState* active_compare_tab = nullptr;
   MergeTabState* active_merge_tab = nullptr;
-  if (frame_vm.compare_surface.has_value() &&
-      project_state.active_tab_index < project_state.open_tabs.size()) {
-    TabEntry& active_tab = project_state.open_tabs[project_state.active_tab_index];
+  EditorGroup& focused_group = project_state.focused_group();
+  if (frame_vm.compare_surface.has_value() && focused_group.has_active_tab()) {
+    TabEntry& active_tab = focused_group.active_tab();
     if (frame_vm.compare_surface->kind == TabEntry::Kind::Compare && active_tab.compare.has_value()) {
       active_compare_tab = &active_tab.compare.value();
     } else if (frame_vm.compare_surface->kind == TabEntry::Kind::Merge &&
@@ -313,8 +308,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     }
   }
   const bool render_editor_surface = active_compare_tab == nullptr && active_merge_tab == nullptr;
+  // Carve the editor surface into per-group rects once; both the pane layouts and
+  // the split divider below are derived from this single split.
+  const EditorGroupRectsLayout editor_surface_group_rects =
+      render_editor_surface ? ComputeEditorSurfaceGroupRects(layout.editor_surface)
+                            : EditorGroupRectsLayout{};
   const std::vector<EditorPaneLayout> editor_panes =
-      render_editor_surface ? ComputeEditorPaneLayouts(layout.editor_surface)
+      render_editor_surface ? EditorPaneLayoutsFromGroupRects(editor_surface_group_rects)
                             : std::vector<EditorPaneLayout>{};
   if (active_compare_tab != nullptr) {
     const bool draw_compare_caret =
@@ -352,7 +352,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         [this, renderer](const editor::TextViewport& viewport,
                          const SDL_FRect& pane_rect,
                          const editor::EditorViewMetrics& editor_metrics) {
-          if (renderer == nullptr || viewport.path().empty() || viewport.is_placeholder()) {
+          if (renderer == nullptr || viewport.path().empty() || viewport.is_placeholder() ||
+              review_comments_registry_.Empty()) {
             return;
           }
 
@@ -417,11 +418,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         debug_enabled ? &project_state.breakpoint_store : nullptr;
     const DebugExecutionView* debug_execution =
         debug_enabled ? &project_state.debug_execution : nullptr;
-    const editor::FoldingModel* active_folding_model = nullptr;
     if (!fold_enabled) {
-      if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
-        for (auto& view : editor_tab->views) {
-          view.viewport.SetFoldingModel(nullptr);
+      for (EditorGroup& group : project_state.editor_groups) {
+        if (auto* editor_tab = GroupActiveEditorTab(group); editor_tab != nullptr) {
+          editor_tab->viewport.SetFoldingModel(nullptr);
         }
       }
     }
@@ -436,66 +436,62 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     thread_local std::vector<unsigned char> tls_pane_scroll_metrics_valid;
     tls_pane_scroll_metrics.resize(panes.size());
     tls_pane_scroll_metrics_valid.assign(panes.size(), 0);
-    editor::TextViewport* active_viewport = ActiveEditorViewport();
-    if (panes.empty() && active_viewport != nullptr && active_viewport->is_placeholder()) {
-      if (active_editor_pane_rect != nullptr) {
-        *active_editor_pane_rect = layout.editor_surface;
-      }
-      editor::EditorViewMetrics metrics =
-          editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *active_viewport,
-                                                     layout.editor_surface, 0);
-      active_viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      active_folding_model = fold_enabled ? EnsureActiveFoldingModelFresh() : nullptr;
-      const bool sticky_active =
-          fold_enabled && sticky_scroll_setting_enabled && active_folding_model != nullptr;
-      editor_render_builder.BuildEditorViewModelInto(
-          tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
-          occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-          sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
-          debug_execution, inset_flags, metrics.line_height);
-      if (!tls_editor_surface_vm.sticky_lines.empty()) {
-        metrics = editor::EditorViewRenderer::ComputeMetrics(
-            text_renderer_, *active_viewport, layout.editor_surface,
-            tls_editor_surface_vm.sticky_lines.size());
-        active_viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-        editor_render_builder.BuildEditorViewModelInto(
-            tls_editor_surface_vm, *active_viewport, metrics.visible_rows, active_folding_model,
-            occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
-            debug_execution, inset_flags, metrics.line_height);
-      }
-      // The welcome home surface (recents + curated shortcuts + hints) is built in the
-      // view-model layer so this render TU never materializes its strings.
-      thread_local editor::WelcomeViewModel tls_welcome_vm;
-      tls_welcome_vm = editor_render_builder.BuildWelcomeView(recents_service_.RecentProjects());
-      editor_view_renderer_.Render(renderer, text_renderer_, theme_, *active_viewport,
-                                   layout.editor_surface, draw_editor_caret, "", std::nullopt,
-                                   std::nullopt, {}, &tls_editor_surface_vm,
-                                   bracket_match_highlight_enabled,
-                                   indent_guides_enabled, render_whitespace_enabled,
-                                   active_folding_model, &tls_welcome_vm);
-    }
-    auto* editor_tab = ActiveEditorTab();
+    // Per-group editor render: each pane resolves its own group's active viewport
+    // and folding model, so the two groups in a split scroll/fold independently.
     for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
       const EditorPaneLayout& pane = panes[pane_index];
-      editor::TextViewport* viewport =
-          pane.active ? ActiveEditorViewport()
-                      : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
-                                               : nullptr);
+      if (pane.group_index >= project_state.editor_groups.size()) {
+        continue;
+      }
+      EditorGroup& group = project_state.editor_groups[pane.group_index];
+      editor::TextViewport* viewport = GroupActiveViewport(group);
       if (viewport == nullptr) {
         continue;
       }
       if (pane.active && active_editor_pane_rect != nullptr) {
         *active_editor_pane_rect = pane.rect;
       }
+
+      // An empty group renders the welcome home surface (recents + shortcuts).
+      if (viewport->is_placeholder()) {
+        editor::EditorViewMetrics metrics =
+            editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
+        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+        editor::FoldingModel* welcome_fold =
+            fold_enabled ? EnsureGroupFoldingModelFresh(group) : nullptr;
+        const bool sticky_active =
+            fold_enabled && sticky_scroll_setting_enabled && welcome_fold != nullptr;
+        editor_render_builder.BuildEditorViewModelInto(
+            tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
+            occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
+            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
+            debug_execution);
+        if (!tls_editor_surface_vm.sticky_lines.empty()) {
+          metrics = editor::EditorViewRenderer::ComputeMetrics(
+              text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size());
+          viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+          editor_render_builder.BuildEditorViewModelInto(
+              tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
+              occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
+              sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
+              debug_execution);
+        }
+        thread_local editor::WelcomeViewModel tls_welcome_vm;
+        tls_welcome_vm = editor_render_builder.BuildWelcomeView(recents_service_);
+        editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
+                                     pane.active && draw_editor_caret, "", std::nullopt,
+                                     std::nullopt, {}, &tls_editor_surface_vm,
+                                     bracket_match_highlight_enabled, indent_guides_enabled,
+                                     render_whitespace_enabled, welcome_fold, &tls_welcome_vm);
+        continue;
+      }
+
       editor::EditorViewMetrics metrics =
           editor::EditorViewRenderer::ComputeMetrics(text_renderer_, *viewport, pane.rect, 0);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      if (pane.active) {
-        active_folding_model = fold_enabled ? EnsureActiveFoldingModelFresh() : nullptr;
-      }
-      const editor::FoldingModel* folding_for_vm =
-          fold_enabled ? active_folding_model : nullptr;
+      editor::FoldingModel* group_folding_model =
+          fold_enabled ? EnsureGroupFoldingModelFresh(group) : nullptr;
+      const editor::FoldingModel* folding_for_vm = fold_enabled ? group_folding_model : nullptr;
       const bool sticky_active =
           fold_enabled && sticky_scroll_setting_enabled && folding_for_vm != nullptr;
       const bool occurrences_for_pane =
@@ -538,7 +534,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    &tls_editor_surface_vm,
                                    pane.active && bracket_match_highlight_enabled,
                                    indent_guides_enabled, render_whitespace_enabled,
-                                   active_folding_model, nullptr,
+                                   group_folding_model, nullptr,
                                    decorations_for_viewport(*viewport));
       DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
                        tls_editor_surface_vm);
@@ -547,10 +543,11 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     }
     for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
       const EditorPaneLayout& pane = panes[pane_index];
+      if (pane.group_index >= project_state.editor_groups.size()) {
+        continue;
+      }
       editor::TextViewport* viewport =
-          pane.active ? ActiveEditorViewport()
-                      : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id)
-                                               : nullptr);
+          GroupActiveViewport(project_state.editor_groups[pane.group_index]);
       if (viewport == nullptr || viewport->is_placeholder() ||
           pane_index >= tls_pane_scroll_metrics_valid.size() ||
           tls_pane_scroll_metrics_valid[pane_index] == 0) {
@@ -572,7 +569,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       }
     }
     for (const EditorSplitDividerLayout& divider :
-         ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
+         EditorSplitDividerLayoutsFromGroupRects(editor_surface_group_rects)) {
       const bool divider_active =
           context_.interaction_state.drag_target == DragTarget::EditorSplitDivider &&
           divider.divider_index == context_.interaction_state.drag_editor_split_divider_index &&

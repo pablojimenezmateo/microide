@@ -5,7 +5,7 @@ search, and terminal workflows. Single-window, keyboard-first, runs without GPU 
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
-> **Status: stable.** Tagged `v2.0.1` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
+> **Status: stable.** Tagged `v2.2.0` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
 > No signed binaries or third-party comparative benchmarks yet — build from source or package
 > locally. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
@@ -115,7 +115,7 @@ Current validation flow is still intentionally narrow and practical:
 
 ## Release Status
 
-- Tagged `v2.0.1`. No signed binaries are published yet; the supported paths today are: build from
+- Tagged `v2.2.0`. No signed binaries are published yet; the supported paths today are: build from
   source or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for
   what shipped.
 - No screenshot or demo gallery is committed yet. That is deliberate for now: workflow docs track
@@ -507,10 +507,6 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `sidebar-width <n>`
 - `soft-tabs [on|off]`
 - `wrap [on|off]`
-- `split-first`
-- `split-last`
-- `split-next`
-- `split-prev`
 - `tab [path]`
 - `tab-size [n]`
 - `tabmove <n>`
@@ -523,8 +519,10 @@ Run commands with `Ctrl+e` (command prompt). Current commands:
 - `ui-scale [n|up|down|reset]`
 - `layout-mode-toggle`
 - `status-bar-toggle`
-- `unsplit`
-- `vsplit [path]`
+- `split-right [path]`
+- `split-down [path]`
+- `focus-other-group`
+- `close-group`
 - `jump-to-matching-bracket`
 - `toggle-line-comment`
 - `toggle-block-comment`

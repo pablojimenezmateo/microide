@@ -159,17 +159,6 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::EwResize;
     case DragTarget::BottomPanelDivider:
       return CursorKind::NsResize;
-    case DragTarget::EditorSplitDivider: {
-      const auto* editor_tab = ActiveEditorTab();
-      const auto* split_node = editor_tab != nullptr
-                                   ? FindEditorSplitNode(editor_tab->split_root.get(),
-                                                         context_.interaction_state.drag_editor_split_path)
-                                   : nullptr;
-      return split_node != nullptr &&
-                     split_node->orientation == EditorSplitOrientation::Horizontal
-                 ? CursorKind::NsResize
-                 : CursorKind::EwResize;
-    }
     default:
       break;
   }
@@ -412,7 +401,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (context_.current_project_state.root.empty()) {
       return CursorKind::Default;
     }
-    if (context_.current_project_state.open_tabs.empty()) {
+    if (context_.current_project_state.focused_group().open_tabs.empty()) {
       return Contains(EmptyTabStripPlaceholderRect(layout.tab_strip), x, y)
                  ? CursorKind::Pointer
                  : CursorKind::Default;
@@ -641,10 +630,6 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         }
       }
     }
-    if (context_.current_project_state.panel.command_mode &&
-        Contains(BottomPanelCommandPromptRect(layout), x, y)) {
-      return CursorKind::Text;
-    }
     if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr &&
         y >= layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight) {
       if (TerminalUrlAtPoint(x, y).has_value()) {
@@ -843,11 +828,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
-  const editor::TextViewport* viewport =
-      pane_it->active ? &context_.current_project_state.welcome_surface.viewport
-                      : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane_it->leaf_id)
-                                               : nullptr);
+  const editor::TextViewport* viewport = ViewportForPane(*pane_it);
   if (viewport == nullptr || viewport->is_placeholder()) {
     // Welcome surface is hit-tested above (before the pane logic), so any placeholder
     // pane here just shows the text caret.
@@ -880,18 +861,21 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     const float gutter_right = pane_it->rect.x + metrics.gutter_width;
     const float fold_hit_left = gutter_right - 18.0f;
     if (x >= fold_hit_left && x < gutter_right && y >= metrics.first_line_y) {
-      const editor::TextViewport* fold_viewport =
-          pane_it->active ? ActiveEditorViewport() : viewport;
-      if (fold_viewport != nullptr) {
-        const std::size_t visual_row =
-            fold_viewport->scroll_line() +
-            static_cast<std::size_t>((y - metrics.first_line_y) / metrics.line_height);
-        if (visual_row < fold_viewport->visual_line_count()) {
-          const std::size_t opener_line = fold_viewport->VisualRowLineIndex(visual_row);
-          if (editor_tab != nullptr &&
-              editor_tab->folding_model->FoldStartingAt(opener_line).has_value()) {
-            return CursorKind::Pointer;
-          }
+      // `viewport` is already this pane's group viewport, which carries the
+      // FoldingModel whose visual-row layout matches what's painted in the pane.
+      const std::size_t visual_row =
+          viewport->scroll_line() +
+          static_cast<std::size_t>((y - metrics.first_line_y) / metrics.line_height);
+      if (visual_row < viewport->visual_line_count()) {
+        const std::size_t opener_line = viewport->VisualRowLineIndex(visual_row);
+        const std::vector<EditorGroup>& groups = context_.current_project_state.editor_groups;
+        const TabEntry::EditorTabState* editor_tab =
+            pane_it->group_index < groups.size()
+                ? GroupActiveEditorTab(groups[pane_it->group_index])
+                : nullptr;
+        if (editor_tab != nullptr &&
+            editor_tab->folding_model->FoldStartingAt(opener_line).has_value()) {
+          return CursorKind::Pointer;
         }
       }
     }
@@ -1038,7 +1022,7 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
       .window_width = window_presentation_.logical_width,
       .window_height = window_presentation_.logical_height,
       .active_tab_index =
-          static_cast<std::uint32_t>(context_.current_project_state.active_tab_index),
+          static_cast<std::uint32_t>(context_.current_project_state.focused_group().active_tab_index),
       .cursor_hit_generation = cursor_hit_generation_,
       .editor_hover_target_generation = editor_hover_target_generation_,
   };

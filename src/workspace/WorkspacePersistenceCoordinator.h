@@ -15,9 +15,6 @@ namespace microide::workspace {
 
 class PersistenceCoordinator {
  public:
-  using EditorSplitNode = TabEntry::EditorTabState::EditorSplitNode;
-  using EditorViewState = TabEntry::EditorTabState::EditorViewState;
-
   struct Operations {
     std::function<std::filesystem::path()> config_state_path;
     std::function<std::filesystem::path()> user_config_path;
@@ -38,12 +35,7 @@ class PersistenceCoordinator {
                                           const std::filesystem::path&)>
         build_merge_tab_entry;
     std::function<void(MergeTabState&)> refresh_merge_tab_derived_state;
-    std::function<EditorSplitNode*(EditorSplitNode*, const std::vector<std::size_t>&)>
-        find_editor_split_node;
-    std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
-    std::function<const EditorViewState*(const TabEntry::EditorTabState&, std::size_t)>
-        find_editor_view_state;
-    std::function<std::filesystem::path(const EditorViewState&)> editor_view_path;
+    std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;
     std::function<void()> sync_active_editor_tab;
     std::function<std::filesystem::path(const std::filesystem::path&)> resolve_project_root_input;
     std::function<void()> reset_project_catalog_to_welcome_state;

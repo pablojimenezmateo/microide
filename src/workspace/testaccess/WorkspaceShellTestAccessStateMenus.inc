@@ -10,6 +10,9 @@
   static void SaveSessionState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveSessionState();
   }
+  static bool ActivateCurrentTabAfterStateLoad(WorkspaceShell& shell) {
+    return shell.ActivateCurrentTabAfterStateLoad();
+  }
   static bool RestoreWorkspaceSession(WorkspaceShell& shell) {
     return shell.MakePersistenceCoordinator().RestoreWorkspaceSession();
   }
@@ -99,7 +102,7 @@
     return shell.context_.prompts.surface.button_count;
   }
   static const std::vector<WorkspaceShell::TabEntry>& OpenTabs(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.open_tabs;
+    return shell.context_.current_project_state.focused_group().open_tabs;
   }
   static const std::vector<ResolvedKeybinding>& ResolvedKeybindings(WorkspaceShell& shell) {
     return shell.ResolvedKeybindings();
@@ -107,7 +110,7 @@
   static void SetDisabledKeybindingIds(WorkspaceShell& shell, std::vector<std::string> ids) {
     shell.context_.disabled_keybinding_ids = std::move(ids);
   }
-  static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.active_tab_index; }
+  static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.focused_group().active_tab_index; }
   static const TabDragState& TabDrag(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.tab_drag;
   }
@@ -401,12 +404,17 @@
   static bool ProjectOpenDialogActive(const WorkspaceShell& shell) {
     return shell.project_dialog_state_.active;
   }
-  static bool CommandMode(const WorkspaceShell& shell) { return shell.context_.current_project_state.panel.command_mode; }
-  static const std::string& CommandInput(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.panel.command.input.text();
+  // The command line lives entirely in the command palette: "palette open" is the surface,
+  // the palette query is the command input, and the feedback text is the executor's result.
+  static bool CommandPaletteOpen(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.visible &&
+           shell.context_.current_project_state.overlay.mode == OverlayMode::CommandPalette;
   }
-  static std::string CommandPromptStatusText(const WorkspaceShell& shell) {
-    return CommandPromptCoordinator::PromptStatusText(shell.context_.current_project_state.panel.command);
+  static const std::string& CommandPaletteQuery(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.command_palette.query.text();
+  }
+  static const std::string& CommandFeedbackText(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.feedback.text;
   }
   static const std::string& ProjectSearchQuery(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.query.text();
@@ -481,6 +489,9 @@
   static float SidebarWidth(const WorkspaceShell& shell) { return shell.context_.current_project_state.sidebar.width; }
   static bool SoftTabsEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_tabs;
+  }
+  static std::size_t CommandPaletteMatchCount(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.command_palette.matches.size();
   }
   static std::size_t EditorTabSize(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.tab_size;

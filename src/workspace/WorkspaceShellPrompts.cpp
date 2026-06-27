@@ -53,7 +53,7 @@ void WorkspaceShell::ShowDirtyPromptForQuit() {
     dirty_count += DirtyEditorTabIndicesForProject(i).size();
   }
 
-  MakePromptSurfaceService().ShowDirtyPromptForQuit(context_.current_project_state.active_tab_index,
+  MakePromptSurfaceService().ShowDirtyPromptForQuit(context_.current_project_state.focused_group().active_tab_index,
                                                     context_.project_catalog.active_index,
                                                     DirtyEditorTabIndices(),
                                                     dirty_count);
@@ -143,7 +143,7 @@ std::string WorkspaceShell::DirtyPromptMessage() const {
   }
 
   const std::size_t index = context_.prompts.dirty.tab_index;
-  const std::string label = index < context_.current_project_state.open_tabs.size() ? context_.current_project_state.open_tabs[index].title : "this tab";
+  const std::string label = index < context_.current_project_state.focused_group().open_tabs.size() ? context_.current_project_state.focused_group().open_tabs[index].title : "this tab";
   return "Save changes to " + label + " before closing it?";
 }
 

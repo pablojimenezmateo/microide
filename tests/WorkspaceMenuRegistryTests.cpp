@@ -12,6 +12,7 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::ActionId;
 using microide::workspace::FindWorkspaceActionSpec;
 using microide::workspace::FindWorkspaceMenuSpec;
 using microide::workspace::MenuId;
@@ -47,6 +48,21 @@ bool MenuContainsLabel(MenuId id, std::string_view label) {
   }
   return std::any_of(spec->items.begin(), spec->items.end(),
                      [label](const MenuItemSpec& item) { return item.label == label; });
+}
+
+bool MenuContainsAction(MenuId id, ActionId action) {
+  const auto* spec = FindWorkspaceMenuSpec(id);
+  if (spec == nullptr) {
+    return false;
+  }
+  return std::any_of(spec->items.begin(), spec->items.end(),
+                     [action](const MenuItemSpec& item) { return item.action == action; });
+}
+
+bool TreeMenuContainsAction(TreeContextTargetKind target, ActionId action) {
+  const auto items = WorkspaceTreeContextMenuItems(target);
+  return std::any_of(items.begin(), items.end(),
+                     [action](const MenuItemSpec& item) { return item.action == action; });
 }
 
 void TestMenuRegistryTopLevelSnapshot() {
@@ -145,6 +161,33 @@ void TestMenuRegistryEveryItemIsWired() {
   }
 }
 
+void TestMenuRegistrySplitItemsPresentInTabAndTreeMenus() {
+  // The editor tab strip and project-tree file rows both expose Split Right /
+  // Split Down. They route through the same SplitEditorRight/SplitEditorDown
+  // actions; availability (greyed once a split exists) is asserted elsewhere.
+  Expect(MenuContainsAction(MenuId::EditorTabContext, ActionId::SplitEditorRight),
+         "editor tab context menu should expose Split Right");
+  Expect(MenuContainsAction(MenuId::EditorTabContext, ActionId::SplitEditorDown),
+         "editor tab context menu should expose Split Down");
+  Expect(TreeMenuContainsAction(TreeContextTargetKind::File, ActionId::SplitEditorRight),
+         "project-tree file context menu should expose Split Right");
+  Expect(TreeMenuContainsAction(TreeContextTargetKind::File, ActionId::SplitEditorDown),
+         "project-tree file context menu should expose Split Down");
+}
+
+void TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot() {
+  // The project tab context menu owns project-level lifecycle: it exposes both
+  // Close Project and a dedicated Copy Absolute Path (copies the project root via
+  // ExecuteProject, not the active editor file). The project-tree root no longer
+  // duplicates Close Project.
+  Expect(MenuContainsAction(MenuId::ProjectTabContext, ActionId::ProjectClose),
+         "project tab context menu should keep Close Project");
+  Expect(MenuContainsAction(MenuId::ProjectTabContext, ActionId::ProjectCopyAbsolutePath),
+         "project tab context menu should expose Copy Absolute Path");
+  Expect(!TreeMenuContainsAction(TreeContextTargetKind::Root, ActionId::ProjectClose),
+         "project-tree root context menu should no longer expose Close Project");
+}
+
 }  // namespace
 
 void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
@@ -156,6 +199,10 @@ void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
           TestMenuRegistryDebugMenuLeadsWithEnableToggle);
   AddTest(tests, "WorkspaceMenuRegistry/EveryItemIsWired",
           TestMenuRegistryEveryItemIsWired);
+  AddTest(tests, "WorkspaceMenuRegistry/SplitItemsPresentInTabAndTreeMenus",
+          TestMenuRegistrySplitItemsPresentInTabAndTreeMenus);
+  AddTest(tests, "WorkspaceMenuRegistry/ProjectTabContextExposesCopyAbsolutePathNotTreeRoot",
+          TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot);
 }
 
 }  // namespace microide::tests

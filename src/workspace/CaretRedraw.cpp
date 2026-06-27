@@ -52,7 +52,6 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
 
   switch (CurrentTextInputSurface()) {
     case TextInputSurface::PromptInput:
-    case TextInputSurface::Command:
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
@@ -158,7 +157,7 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(
   auto pane_it = std::find_if(panes.begin(), panes.end(),
                               [](const EditorPaneLayout& pane) { return pane.active; });
   if (pane_it == panes.end()) {
-    return context_.current_project_state.welcome_surface.viewport.is_placeholder()
+    return context_.current_project_state.focused_group().welcome_surface.viewport.is_placeholder()
                ? std::optional<SDL_FRect>(layout.editor_surface)
                : std::nullopt;
   }

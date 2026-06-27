@@ -352,7 +352,6 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   }
 
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(active_viewport->path());
@@ -366,9 +365,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   }
 
   for (const EditorPaneLayout& pane : panes) {
-    const editor::TextViewport* viewport =
-        pane.active ? ActiveEditorViewport()
-                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }
@@ -456,7 +453,6 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   }
 
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return PluginHoverTargetForViewport(
@@ -465,9 +461,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   }
 
   for (const EditorPaneLayout& pane : panes) {
-    const editor::TextViewport* viewport =
-        pane.active ? ActiveEditorViewport()
-                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }
@@ -511,7 +505,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   // silently resolve against the wrong scope. Match the same way the execution-line
   // marker does (lexically-normalized generic strings).
   if (viewport.path().lexically_normal().generic_string() !=
-      execution.FocusedPath().lexically_normal().generic_string()) {
+      execution.FocusedPathNormalized()) {
     LogHoverGate("file-not-focused-frame");
     return std::nullopt;
   }
@@ -613,7 +607,6 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   }
   const WorkspaceLayout layout = *layout_state;
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return DebugValueHoverTargetForViewport(
@@ -621,9 +614,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
         BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface), x, y);
   }
   for (const EditorPaneLayout& pane : panes) {
-    const editor::TextViewport* viewport =
-        pane.active ? ActiveEditorViewport()
-                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }
@@ -693,7 +684,6 @@ std::optional<std::string> WorkspaceShell::CodeLensCommandAtPosition(float x, fl
   };
 
   const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
-  const TabEntry::EditorTabState* editor_tab = ActiveEditorTab();
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return CodeLensCommandForViewport(
@@ -703,9 +693,7 @@ std::optional<std::string> WorkspaceShell::CodeLensCommandAtPosition(float x, fl
   }
 
   for (const EditorPaneLayout& pane : panes) {
-    const editor::TextViewport* viewport =
-        pane.active ? ActiveEditorViewport()
-                    : (editor_tab != nullptr ? FindEditorView(*editor_tab, pane.leaf_id) : nullptr);
+    const editor::TextViewport* viewport = ViewportForPane(pane);
     if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
       continue;
     }

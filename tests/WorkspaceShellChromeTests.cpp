@@ -676,21 +676,13 @@ void TestWorkspaceShellEditorCaretDirtyRectFollowsActiveCaret() {
 void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path left = root / "left.cpp";
-  const std::filesystem::path right = root / "right.cpp";
-  WriteFile(left, "alpha\nbeta\n");
-  WriteFile(right, "gamma\ndelta\n");
+  const std::filesystem::path source = root / "left.cpp";
+  WriteFile(source, "alpha\nbeta\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  WorkspaceShellTestAccess::OpenFile(shell, left);
-  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell, true),
-         "editor invalidation fixture should split the active editor");
-  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
-         "editor invalidation fixture should populate the active split");
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "editor invalidation fixture should activate the left split");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
   (void)shell.ConsumePendingRenderInvalidation();
 
   SDL_Event event{};
@@ -699,7 +691,6 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
   const SDL_FRect active_pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
-  const SDL_FRect inactive_pane = WorkspaceShellTestAccess::InactiveEditorPaneRect(shell);
   const auto edited_line_rect = WorkspaceShellTestAccess::ActiveEditorLineRangeRect(shell, 0, 1);
 
   Expect(result.handled, "editor typing should be handled");
@@ -707,8 +698,6 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "editor typing should request a partial redraw");
   Expect(AnyRectIntersects(result.redraw.rects, active_pane),
          "editor typing redraws should include the active editor pane");
-  Expect(!AnyRectIntersects(result.redraw.rects, inactive_pane),
-         "editor typing redraws should avoid repainting the inactive split pane");
   Expect(edited_line_rect.has_value() && AnyRectIntersects(result.redraw.rects, *edited_line_rect),
          "editor typing redraws should include the edited line band");
   Expect(MaxRectHeight(result.redraw.rects) < active_pane.h,
@@ -778,11 +767,11 @@ void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
 
   SDL_Event open_event{};
   open_event.type = SDL_EVENT_KEY_DOWN;
-  open_event.key.key = SDLK_E;
-  open_event.key.mod = SDL_KMOD_CTRL;
+  open_event.key.key = SDLK_P;
+  open_event.key.mod = SDL_KMOD_CTRL | SDL_KMOD_SHIFT;
   const auto open_result = shell.HandleEvent(open_event);
   Expect(open_result.handled,
-         "command prompt invalidation fixture should open command mode");
+         "command palette invalidation fixture should open the palette");
   (void)open_result.redraw;
 
   SDL_Event event{};
@@ -791,30 +780,25 @@ void TestWorkspaceShellCommandTextInputReturnsPartialCommandInvalidation() {
   event.text.text = text.c_str();
   const auto result = shell.HandleEvent(event);
 
-  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  const SDL_FRect command_area = microide::workspace::BottomPanelCommandAreaRect(layout);
-
-  Expect(result.handled, "command prompt typing should be handled");
+  Expect(result.handled, "command palette typing should be handled");
   Expect(!result.redraw.full && !result.redraw.rects.empty(),
-         "command prompt typing should stay on the partial redraw path");
-  Expect(AnyRectIntersects(result.redraw.rects, command_area),
-         "command prompt typing redraws should include the command area");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == text,
-         "command prompt typing should append to the visible command input");
+         "command palette typing should stay on the partial (overlay) redraw path");
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == text,
+         "command palette typing should append to the palette query");
 }
 
 void TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "command paste fixture should open the command prompt");
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "command paste fixture should open the command palette");
   WorkspaceShellTestAccess::SetClipboardTextReader(
       shell, []() -> std::optional<std::string> { return std::string("palette"); });
 
   Expect(SendKeyDown(shell, SDLK_V, SDL_KMOD_CTRL),
-         "Ctrl+V should be handled by the command prompt");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "palette",
+         "Ctrl+V should be handled by the command palette query");
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "palette",
          "Ctrl+V should route clipboard text through the shared command text-input path");
 }
 
@@ -1337,6 +1321,39 @@ void TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions() {
          "Copy Absolute Path should execute from the active tab");
   Expect(clipboard_text == target.lexically_normal().string(),
          "Copy Absolute Path should copy the active tab path");
+}
+
+void TestWorkspaceShellProjectTabContextMenuCopiesProjectRoot() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target = root / "src" / "alpha.cpp";
+  WriteFile(target, "int alpha() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // Open an editor tab so the active-tab path is non-empty; the project-tab
+  // Copy Absolute Path must still copy the project root, not the editor file.
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, target);
+
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::ProjectCopyAbsolutePath),
+         "Copy Absolute Path should be enabled while a project is open");
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(
+      shell, [&](std::string_view text) {
+        clipboard_text = std::string(text);
+        return true;
+      });
+
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
+             shell, ActionId::ProjectCopyAbsolutePath),
+         "project tab Copy Absolute Path should execute");
+  Expect(clipboard_text == root.lexically_normal().string(),
+         ("project tab Copy Absolute Path should copy the project root "
+          "(actual: " +
+          clipboard_text + ")")
+             .c_str());
 }
 
 void TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir() {
@@ -2149,9 +2166,56 @@ void TestWorkspaceShellBreakpointGutterMenu() {
          "clear-condition keeps the hit-count modifier");
 }
 
+void TestColorschemeChangeRequestsRepaint() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "theme check\n");
+
+  constexpr float kWindowWidth = 1280.0f;
+  constexpr float kWindowHeight = 720.0f;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, static_cast<int>(kWindowWidth),
+                                          static_cast<int>(kWindowHeight));
+
+  // A theme change recolors the whole UI, so it must repaint the entire window —
+  // not just the chrome strips that other action side effects happen to dirty.
+  // Without that full repaint the shell idles on events and keeps showing the
+  // previous theme's colors (the reported bug).
+  const auto repaints_whole_window = [&](const auto& inv) {
+    if (inv.full) {
+      return true;
+    }
+    return std::any_of(inv.rects.begin(), inv.rects.end(), [&](const SDL_FRect& r) {
+      return r.w >= kWindowWidth && r.h >= kWindowHeight;
+    });
+  };
+
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "colorscheme light"),
+         "the colorscheme command should run");
+  Expect(repaints_whole_window(shell.ConsumePendingRenderInvalidation()),
+         "selecting a colorscheme must repaint the whole window");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") ==
+             std::optional<std::string>("light"),
+         "the colorscheme command should activate the requested theme");
+
+  // toggle-theme flips between light and dark and must repaint the whole window too.
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "toggle-theme"),
+         "the toggle-theme command should run");
+  Expect(repaints_whole_window(shell.ConsumePendingRenderInvalidation()),
+         "toggling the theme must repaint the whole window");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") !=
+             std::optional<std::string>("light"),
+         "toggle-theme should switch away from the light theme");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ColorschemeChangeRequestsRepaint",
+          TestColorschemeChangeRequestsRepaint);
   AddTest(tests, "WorkspaceShell/BreakpointGutterMenu", TestWorkspaceShellBreakpointGutterMenu);
   AddTest(tests, "WorkspaceShell/ViewMenuToggleReflectsBackingSetting",
           TestViewMenuToggleReflectsBackingSetting);
@@ -2219,6 +2283,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabRightClickOpensContextMenu);
   AddTest(tests, "WorkspaceShell/EditorTabContextMenuShowsAndExecutesPathActions",
           TestWorkspaceShellEditorTabContextMenuShowsAndExecutesPathActions);
+  AddTest(tests, "WorkspaceShell/ProjectTabContextMenuCopiesProjectRoot",
+          TestWorkspaceShellProjectTabContextMenuCopiesProjectRoot);
   AddTest(tests, "WorkspaceShell/TabContextActionsCloseAdjacentTabs",
           TestWorkspaceShellTabContextActionsCloseAdjacentTabs);
   AddTest(tests, "WorkspaceShell/TreeContextMenuShowsInFileExplorerContainingDir",

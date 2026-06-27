@@ -51,8 +51,8 @@ ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
               [this]() { ApplyEditorPreferencesToAllTabs(); },
           .apply_welcome_editor_preferences_if_placeholder =
               [this]() {
-                if (context_.current_project_state.welcome_surface.viewport.is_placeholder()) {
-                  ApplyEditorPreferences(context_.current_project_state.welcome_surface.viewport);
+                if (context_.current_project_state.focused_group().welcome_surface.viewport.is_placeholder()) {
+                  ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
                 }
               },
           .ensure_terminal_tab_open =

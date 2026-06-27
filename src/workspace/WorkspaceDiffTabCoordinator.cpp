@@ -40,8 +40,8 @@ DiffTabCoordinator::DiffTabCoordinator(ProjectWorkspaceState& state, Operations 
 std::optional<std::size_t> DiffTabCoordinator::FindOpenCompareTabIndex(
     const std::filesystem::path& path, std::string_view left_ref, std::string_view right_ref) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
-    const auto& tab = state_.open_tabs[i];
+  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
+    const auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
       continue;
     }
@@ -56,8 +56,8 @@ std::optional<std::size_t> DiffTabCoordinator::FindOpenCompareTabIndex(
 std::optional<std::size_t> DiffTabCoordinator::FindOpenMergeTabIndex(
     const std::filesystem::path& path) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
-    const auto& tab = state_.open_tabs[i];
+  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
+    const auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
       continue;
     }
@@ -69,7 +69,7 @@ std::optional<std::size_t> DiffTabCoordinator::FindOpenMergeTabIndex(
 }
 
 void DiffTabCoordinator::ActivateCompareTab(std::size_t index, bool dismiss_overlay) {
-  state_.active_tab_index = index;
+  state_.focused_group().active_tab_index = index;
   operations_.reveal_active_compare_selection();
   operations_.ensure_active_tab_visible();
   if (dismiss_overlay) {
@@ -81,7 +81,7 @@ void DiffTabCoordinator::ActivateCompareTab(std::size_t index, bool dismiss_over
 }
 
 void DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
-  state_.active_tab_index = index;
+  state_.focused_group().active_tab_index = index;
   operations_.reveal_active_merge_selection();
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
@@ -91,16 +91,16 @@ void DiffTabCoordinator::ActivateMergeTab(std::size_t index) {
 void DiffTabCoordinator::RefreshExistingCompareTab(std::size_t index,
                                                    const std::filesystem::path& normalized_path,
                                                    bool only_when_clean) {
-  if (!state_.open_tabs[index].compare.has_value()) {
+  if (!state_.focused_group().open_tabs[index].compare.has_value()) {
     return;
   }
-  if (only_when_clean && state_.open_tabs[index].compare->right_viewport.dirty()) {
+  if (only_when_clean && state_.focused_group().open_tabs[index].compare->right_viewport.dirty()) {
     return;
   }
   auto rebuilt = operations_.rebuild_compare_tab_entry(normalized_path,
-                                                       state_.open_tabs[index].compare.value());
+                                                       state_.focused_group().open_tabs[index].compare.value());
   if (rebuilt.has_value() && rebuilt->compare.has_value()) {
-    state_.open_tabs[index] = std::move(*rebuilt);
+    state_.focused_group().open_tabs[index] = std::move(*rebuilt);
   }
 }
 
@@ -143,8 +143,8 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
   }
 
   operations_.sync_active_editor_tab();
-  state_.open_tabs.push_back(std::move(*compare_tab));
-  TabEntry& opened = state_.open_tabs.back();
+  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
+  TabEntry& opened = state_.focused_group().open_tabs.back();
   if (opened.compare.has_value()) {
     opened.compare->opened_from_commit_picker = true;
     opened.compare->review_mode = compare::CompareReviewMode::Commit;
@@ -156,7 +156,7 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
           static_cast<std::size_t>(current - review_files.begin());
     }
   }
-  ActivateCompareTab(state_.open_tabs.size() - 1, true);
+  ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, true);
   NotifyBufferOpenForEditableTab(opened, operations_);
 }
 
@@ -171,14 +171,14 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
 
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_output); existing_index.has_value()) {
     operations_.sync_active_editor_tab();
-    if (state_.open_tabs[*existing_index].merge.has_value() &&
-        !state_.open_tabs[*existing_index].merge->result_viewport.dirty()) {
+    if (state_.focused_group().open_tabs[*existing_index].merge.has_value() &&
+        !state_.focused_group().open_tabs[*existing_index].merge->result_viewport.dirty()) {
       auto rebuilt = operations_.build_merge_tab_entry(normalized_base, normalized_incoming,
                                                        normalized_current, normalized_output);
       if (rebuilt.has_value() && rebuilt->merge.has_value()) {
         RestoreMergeViewState(rebuilt->merge.value(),
-                              state_.open_tabs[*existing_index].merge.value());
-        state_.open_tabs[*existing_index] = std::move(*rebuilt);
+                              state_.focused_group().open_tabs[*existing_index].merge.value());
+        state_.focused_group().open_tabs[*existing_index] = std::move(*rebuilt);
       }
     }
     ActivateMergeTab(*existing_index);
@@ -192,9 +192,9 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
   }
 
   operations_.sync_active_editor_tab();
-  state_.open_tabs.push_back(std::move(*merge_tab));
-  ActivateMergeTab(state_.open_tabs.size() - 1);
-  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
+  state_.focused_group().open_tabs.push_back(std::move(*merge_tab));
+  ActivateMergeTab(state_.focused_group().open_tabs.size() - 1);
+  NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
   return true;
 }
 
@@ -232,9 +232,9 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
       compare::InferWorkingTreeStagingView(left_ref, compare_tab->compare->right_ref);
 
   operations_.sync_active_editor_tab();
-  state_.open_tabs.push_back(std::move(*compare_tab));
-  ActivateCompareTab(state_.open_tabs.size() - 1, false);
-  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
+  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
+  ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
+  NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
   return true;
 }
 
@@ -285,17 +285,17 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
   }
 
   operations_.sync_active_editor_tab();
-  state_.open_tabs.push_back(std::move(*compare_tab));
-  ActivateCompareTab(state_.open_tabs.size() - 1, false);
-  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
+  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
+  ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
+  NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
   return true;
 }
 
 bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path);
-      existing_index.has_value() && state_.open_tabs[*existing_index].merge.has_value() &&
-      state_.open_tabs[*existing_index].merge->result_viewport.dirty()) {
+      existing_index.has_value() && state_.focused_group().open_tabs[*existing_index].merge.has_value() &&
+      state_.focused_group().open_tabs[*existing_index].merge->result_viewport.dirty()) {
     operations_.sync_active_editor_tab();
     ActivateMergeTab(*existing_index);
     return true;
@@ -325,18 +325,18 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
 
   operations_.sync_active_editor_tab();
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path); existing_index.has_value()) {
-    if (state_.open_tabs[*existing_index].merge.has_value()) {
+    if (state_.focused_group().open_tabs[*existing_index].merge.has_value()) {
       RestoreMergeViewState(merge_tab->merge.value(),
-                            state_.open_tabs[*existing_index].merge.value());
+                            state_.focused_group().open_tabs[*existing_index].merge.value());
     }
-    state_.open_tabs[*existing_index] = std::move(*merge_tab);
+    state_.focused_group().open_tabs[*existing_index] = std::move(*merge_tab);
     ActivateMergeTab(*existing_index);
     return true;
   }
 
-  state_.open_tabs.push_back(std::move(*merge_tab));
-  ActivateMergeTab(state_.open_tabs.size() - 1);
-  NotifyBufferOpenForEditableTab(state_.open_tabs.back(), operations_);
+  state_.focused_group().open_tabs.push_back(std::move(*merge_tab));
+  ActivateMergeTab(state_.focused_group().open_tabs.size() - 1);
+  NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
   return true;
 }
 

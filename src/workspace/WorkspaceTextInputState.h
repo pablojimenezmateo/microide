@@ -7,7 +7,6 @@ namespace microide::workspace {
 enum class TextInputSurface {
   None,
   Editor,
-  Command,
   PromptInput,
   FileFinder,
   BufferSearch,

@@ -38,10 +38,20 @@ class ScopedProjectAppHomes {
   ScopedEnvVar appdata_;
 };
 
+// Drive the merged command surface: open the command palette (Ctrl+Shift+P), type the
+// command line, and run it with Enter. Argument-bearing commands and unmatched verbs run
+// through the shared command executor (ExecuteCommandLine); the palette dismisses after.
 bool ExecuteCommand(WorkspaceShell& shell, std::string_view command) {
-  return SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL) &&
+  return SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT) &&
          WorkspaceShellTestAccess::HandleTextInput(shell, command) &&
          SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
+}
+
+// Run a command line directly through the shared executor, bypassing the palette UI. Used
+// where a bare verb would otherwise fuzzy-match a palette row (e.g. "open" → "Open File")
+// instead of reaching the executor.
+bool RunCommandLine(WorkspaceShell& shell, std::string_view command) {
+  return WorkspaceShellTestAccess::ExecuteCommandLine(shell, std::string(command));
 }
 
 bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
@@ -138,8 +148,8 @@ void TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection() {
          "menu open-project should provide a default location to the picker");
   Expect(WorkspaceShellTestAccess::ProjectOpenDialogActive(shell),
          "menu open-project should mark the picker as active while waiting");
-  Expect(!WorkspaceShellTestAccess::CommandMode(shell),
-         "menu open-project should not fall back to command mode when native launch succeeds");
+  Expect(!WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+         "menu open-project should not fall back to the command palette when native launch succeeds");
 
   WorkspaceShellTestAccess::QueueProjectOpenDialogSelection(shell, root);
   WorkspaceShellTestAccess::ConsumePendingProjectOpenDialogResult(shell);
@@ -196,9 +206,9 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu open-project should stay handled when native launch fails");
   Expect(!WorkspaceShellTestAccess::ProjectOpenDialogActive(shell),
          "failed picker launch should not leave the picker marked active");
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "menu open-project should fall back to the typed command prompt");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "project-open ",
+  Expect(WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+         "menu open-project should fall back to the prefilled command palette");
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "project-open ",
          "menu fallback should prefill the typed open-project command");
 }
 
@@ -590,43 +600,26 @@ void TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt");
+  // An unknown verb has no fuzzy match, so the palette routes it to the executor, which
+  // reports the failure. Driving via the palette UI exercises that no-match → execute rule.
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the command palette");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "bogus-command"),
-         "text input should populate the command prompt");
+         "text input should populate the palette query");
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should attempt to execute the typed command");
+         "Enter should run the unmatched query as a command line");
 
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "unknown commands should keep the command prompt open");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Unknown command: bogus-command",
-         "unknown commands should report an explicit prompt error");
-}
-
-void TestWorkspaceShellLeftCtrlShortcutOpensCommandPrompt() {
-  WorkspaceShell shell;
-  WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
-
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_LCTRL),
-         "left-control Ctrl+E should open the command prompt");
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "left-control Ctrl+E should enter command mode");
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Unknown command: bogus-command",
+         "unknown commands should report an explicit executor error");
 }
 
 void TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::ResetProjectScopedState(shell, true);
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before the missing-project test");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "search"),
-         "text input should populate the missing-project command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should attempt the missing-project command");
-
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "project-dependent command failures should keep the prompt open");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "No active project",
+  Expect(!RunCommandLine(shell, "search"),
+         "a project-dependent command should fail without an active project");
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "No active project",
          "project-dependent command failures should report the missing project");
 }
 
@@ -638,16 +631,9 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before the open-path test");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "open"),
-         "text input should populate the open command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should attempt the open command");
-
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "open without a path should keep the prompt open");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "open requires a path",
+  Expect(!RunCommandLine(shell, "open"),
+         "open without a path should fail");
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "open requires a path",
          "open without a path should report the missing path explicitly");
 }
 
@@ -668,21 +654,13 @@ void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_c, false, false),
          "third project should open");
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before cycling projects");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-prev"),
-         "text input should populate the project-prev command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should execute the project-prev command");
+  Expect(ExecuteCommand(shell, "project-prev"),
+         "the palette should run the project-prev command line");
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_b.lexically_normal(),
          "project-prev should activate the previous project tab");
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should reopen the command prompt for project-next");
-  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "project-next"),
-         "text input should populate the project-next command");
-  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "Enter should execute the project-next command");
+  Expect(ExecuteCommand(shell, "project-next"),
+         "the palette should run the project-next command line");
   Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_c.lexically_normal(),
          "project-next should activate the next project tab");
 }
@@ -715,25 +693,11 @@ void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
          "switching back to the first project should succeed");
   Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching back should restore the first project's editor preferences");
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt after switching back");
-  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
-         "up should recall command history for the restored first project");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
-         "switching back should restore the first project's command history");
-  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
-         "escape should dismiss the recalled first-project command prompt");
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
          "switching to the second project should succeed");
   Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching forward should restore the second project's editor preferences");
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt after switching forward");
-  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
-         "up should recall command history for the restored second project");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs off",
-         "switching forward should restore the second project's command history");
 }
 
 void TestWorkspaceShellProjectSwitchPreservesSearchSidebarSurfaceState() {
@@ -890,10 +854,8 @@ void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
          "sidebar-width command should apply the parsed width");
 
   Expect(ExecuteCommand(shell, "sidebar-width wide"),
-         "sidebar-width command should still route through the command prompt");
-  Expect(WorkspaceShellTestAccess::CommandMode(shell),
-         "invalid sidebar-width input should keep the command prompt open");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) ==
+         "sidebar-width command should still route through the command line");
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) ==
              "sidebar-width requires a numeric width",
          "invalid sidebar-width input should report the parser failure");
 }
@@ -977,54 +939,16 @@ void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
          "jump should move the cursor relative to the current line");
 }
 
-void TestWorkspaceShellGotoTargetsActiveSplitViewport() {
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path left = root / "left.cpp";
-  const std::filesystem::path right = root / "right.cpp";
-  WriteFile(left, "left-1\nleft-2\nleft-3\n");
-  WriteFile(right, "right-1\nright-2\nright-3\nright-4\n");
-
-  WorkspaceShell shell;
-  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenFile(shell, left);
-  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
-         "split-editor goto fixture should create the second pane");
-  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
-         "split-editor goto fixture should replace the active pane");
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split-editor goto fixture should revisit the left pane");
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
-         "split-editor goto fixture should reactivate the right pane");
-
-  Expect(ExecuteCommand(shell, "goto 4:1"),
-         "goto should execute against the active split viewport");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
-         "goto should keep the right split active");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3 &&
-             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
-         "goto should move the active split cursor instead of a stale editor copy");
-
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split-editor goto fixture should allow verifying the inactive pane");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
-         "the left split should still reference the original file");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
-             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
-         "goto should not mutate the inactive split viewport");
-}
-
 void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   (void)shell.ConsumePendingRenderInvalidation();
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "ui-scale should open the command prompt");
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "ui-scale should open the command palette");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "ui-scale 125%"),
-         "ui-scale should populate the command prompt");
+         "ui-scale should populate the palette query");
   const auto ui_scale_submit =
       SendKeyDownResult(shell, SDLK_RETURN, SDL_KMOD_NONE);
   Expect(ui_scale_submit.handled,
@@ -1055,50 +979,68 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
          "focus panel should move focus to the bottom panel when available");
 }
 
-void TestWorkspaceShellCommandPromptCompletionAndHistory() {
+void TestWorkspaceShellCommandPaletteTabCompletion() {
   WorkspaceShell shell;
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should open the command prompt before completion");
+  // The merged palette query supports Tab-completion over command verbs (no history — the
+  // palette's Up/Down navigate the result list instead).
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the command palette before completion");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "soft"),
-         "text input should populate the command prompt before completion");
+         "text input should populate the palette query before completion");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "tab should trigger command completion");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs ",
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "soft-tabs ",
          "tab completion should expand the unique built-in command name");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Completed soft-tabs",
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Completed soft-tabs",
          "tab completion should report the completed command name");
 
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "on"),
          "completion fixture should allow finishing the completed command");
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
-         "enter should execute the completed command");
-  Expect(!WorkspaceShellTestAccess::CommandMode(shell),
-         "successful command execution should close the command prompt");
+         "enter should execute the completed command line");
+  Expect(!WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+         "successful command execution should close the palette");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "the completed 'soft-tabs on' command line should apply");
 
-  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL),
-         "Ctrl+E should reopen the command prompt before history recall");
-  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
-         "up should recall the previous command from history");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "soft-tabs on",
-         "history recall should restore the last executed command");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("History 1 / 1") !=
-             std::string::npos,
-         "history recall should report the active history position");
-
-  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
-         "down should restore the pending empty command input");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell).empty(),
-         "history navigation back to the pending input should restore an empty prompt");
-
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should reopen the command palette for a second completion");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "wr"),
          "completion fixture should allow typing a second command prefix");
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "tab should complete the wrap command");
-  Expect(WorkspaceShellTestAccess::CommandInput(shell) == "wrap ",
+  Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == "wrap ",
          "tab completion should expand the wrap command name");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell) == "Completed wrap",
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Completed wrap",
          "tab completion should report the wrap command completion");
+}
+
+void TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+
+  // A typed command line with arguments runs through the executor (soft-tabs applies).
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "soft tabs should start disabled");
+  Expect(ExecuteCommand(shell, "soft-tabs on"),
+         "an argument-bearing query should run as a command line");
+  Expect(!WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+         "running a command line should dismiss the palette");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "the soft-tabs command line should apply its argument");
+
+  // A single-token fragment that fuzzy-matches a command label keeps matches, so Enter would
+  // confirm the highlighted row rather than executing a bare verb.
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+P should open the palette");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "settings"),
+         "typing a label fragment should filter the palette");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) > 0,
+         "a label fragment should keep at least one fuzzy match (Settings)");
 }
 
 void TestWorkspaceShellCtrlNOpensUntitledTab() {
@@ -1553,7 +1495,7 @@ void TestWorkspaceShellAutoCloseToggleUpdatesViewportContract() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
          "auto-close should start enabled from the default setting");
   Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
-         "toggle-editor-auto-close should execute from the command prompt");
+         "toggle-editor-auto-close should execute from the command line");
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_enabled,
          "toggling auto-close off should update the active viewport contract immediately");
   const auto stored_disabled = WorkspaceShellTestAccess::ProjectStoredSettingValue(
@@ -2040,80 +1982,6 @@ void TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 0 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 12,
          "right-clicking a symbol should retarget the caret before opening the context menu");
-}
-
-void OpenSplitEditorMouseFixture(WorkspaceShell& shell,
-                                 TemporaryDirectory& temp_dir,
-                                 std::filesystem::path* left_path,
-                                 std::filesystem::path* right_path) {
-  const std::filesystem::path root = temp_dir.path() / "project";
-  const std::filesystem::path left = root / "left.txt";
-  const std::filesystem::path right = root / "right.txt";
-  WriteFile(left, "left line 1\nleft line 2\nleft line 3\n");
-  WriteFile(right, "right line 1\nright line 2\nright line 3\n");
-
-  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, left);
-  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
-  Expect(WorkspaceShellTestAccess::SplitActiveEditor(shell),
-         "editor mouse fixture should open a split pane");
-  Expect(WorkspaceShellTestAccess::ReplaceActiveEditorWithFile(shell, right),
-         "editor mouse fixture should load the second file into the active pane");
-
-  if (left_path != nullptr) {
-    *left_path = left;
-  }
-  if (right_path != nullptr) {
-    *right_path = right;
-  }
-}
-
-void TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit() {
-  TemporaryDirectory temp_dir;
-  WorkspaceShell shell;
-  std::filesystem::path left;
-  std::filesystem::path right;
-  OpenSplitEditorMouseFixture(shell, temp_dir, &left, &right);
-
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
-         "split click fixture should expose the right pane");
-  const SDL_FRect right_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split click fixture should restore the left pane before the click");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
-         "split click fixture should start from the left editor");
-
-  const float click_x = right_rect.x + right_rect.w * 0.5f;
-  const float click_y = right_rect.y + right_rect.h * 0.5f;
-  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT),
-         "clicking an inactive editor pane should be handled");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
-         "clicking an inactive editor pane should activate that split");
-  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
-         "clicking an inactive editor pane should keep editor focus");
-}
-
-void TestWorkspaceShellEditorWheelActivatesHoveredSplit() {
-  TemporaryDirectory temp_dir;
-  WorkspaceShell shell;
-  std::filesystem::path left;
-  std::filesystem::path right;
-  OpenSplitEditorMouseFixture(shell, temp_dir, &left, &right);
-
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 1),
-         "split wheel fixture should expose the right pane");
-  const SDL_FRect right_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
-  Expect(WorkspaceShellTestAccess::ActivateOrderedEditorSplit(shell, 0),
-         "split wheel fixture should restore the left pane before scrolling");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == left.lexically_normal(),
-         "split wheel fixture should start from the left editor");
-
-  const float wheel_x = right_rect.x + right_rect.w * 0.5f;
-  const float wheel_y = right_rect.y + right_rect.h * 0.5f;
-  Expect(SendMouseWheel(shell, wheel_x, wheel_y, -1),
-         "scrolling over an inactive editor pane should be handled");
-  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == right.lexically_normal(),
-         "scrolling over an inactive editor pane should activate that split first");
 }
 
 void TestWorkspaceShellEditorDragSelectionTracksPointer() {
@@ -3134,7 +3002,200 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
 
 }  // namespace
 
+void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  std::string many_lines;
+  for (int i = 0; i < 200; ++i) {
+    many_lines += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(file_a, many_lines);
+  WriteFile(file_b, "only b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+
+  // Scroll group 0 down so we can prove the split keeps an independent view.
+  WorkspaceShellTestAccess::SetGroupScrollLine(shell, 0, 40);
+
+  // Split right: clones the active tab into a new, focused second group sharing the
+  // same document (shared buffer) but with an independent view.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should succeed when an editor tab is active");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "splitting should create a second editor group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "splitting should focus the new group");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::Vertical,
+         "split-right should set the vertical (side-by-side) orientation");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_a.lexically_normal(),
+         "the split clone should start on the same document");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).line_count() ==
+             WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).line_count(),
+         "both groups should observe the same shared buffer contents");
+
+  // The clone starts at the source view position, but scrolling it must not move
+  // group 0 (independent views over the shared buffer).
+  WorkspaceShellTestAccess::SetGroupScrollLine(shell, 1, 5);
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 40,
+         "scrolling the second group must not disturb the first group's scroll");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).scroll_line() == 5,
+         "the second group should keep its own scroll position");
+
+  // Open a different document in the focused (second) group: the two groups now show
+  // distinct files.
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
+         "the first group should still show the original document");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_b.lexically_normal(),
+         "the second group should show the newly opened document");
+
+  // Focus toggles back and forth without disturbing either view.
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell),
+         "focus-other-group should switch focus when two groups exist");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "focus should move to group 0");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 40,
+         "group 0 scroll should survive a focus switch (guards the original scroll-reset bug)");
+
+  // Splitting again is capped at two groups.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
+         "splitting with two groups should still report success (retarget + refocus)");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "editor groups should be capped at two");
+
+  // Closing the focused group collapses back to a single full-area group.
+  Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
+         "close-group should succeed while a second group exists");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
+         "closing a group should collapse back to one group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "the surviving group should become focused");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::None,
+         "collapsing should clear the split orientation");
+  Expect(!WorkspaceShellTestAccess::FocusOtherEditorGroup(shell),
+         "focus-other-group should be a no-op with a single group");
+  Expect(!WorkspaceShellTestAccess::CloseEditorGroup(shell),
+         "close-group should be a no-op with a single group");
+}
+
+void TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen() {
+  using microide::workspace::TreeContextTargetKind;
+  using ActionId = WorkspaceShell::ActionId;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+
+  // No editor open: split is unavailable (nothing to split from).
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
+         "split-right should be disabled with no active editor");
+
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  // Single group + active editor: both split items are available.
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
+         "split-right should be enabled with one editor group");
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
+         "split-down should be enabled with one editor group");
+
+  // Right-click file B in the tree and choose Split Right: B opens in a new group
+  // while the original group keeps file A.
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, TreeContextTargetKind::File, file_b);
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(shell, ActionId::SplitEditorRight),
+         "tree Split Right should execute");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "tree Split Right should create a second group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "the new split group should be focused");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_b.lexically_normal(),
+         "the tree-split group should show the right-clicked file");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
+         "the original group should keep its own file");
+
+  // With a split now present, both items are greyed out (cap = 2 groups).
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
+         "split-right should be disabled once a split exists");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
+         "split-down should be disabled once a split exists");
+}
+
+// OpenBufferViewCounts feeds the bulk-close LSP didClose decision: a buffer must
+// be reported as still open while any group keeps a view of it, and as a single
+// view only when exactly one tab references it. This guards the per-tab-count ->
+// single-pass-map refactor in CloseEditorGroup, including that closing a split
+// group does not drop a buffer the surviving group still shows.
+void TestWorkspaceShellOpenBufferViewCountsAcrossGroups() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  const std::filesystem::path file_b = root / "b.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1000, 700);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+
+  const std::string key_a = file_a.lexically_normal().generic_string();
+  const std::string key_b = file_b.lexically_normal().generic_string();
+
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 1, "a single open tab counts as one view");
+    Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, file_a) == 1,
+           "the map and the single-path count agree for one view");
+  }
+
+  // Splitting clones the active tab into a second group sharing the same buffer.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should succeed when an editor tab is active");
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 2, "a buffer viewed by both groups counts as two views");
+    Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, file_a) == 2,
+           "the map and the single-path count agree for a shared buffer");
+  }
+
+  // Distinguish the two groups: open b.txt in the focused (second) group so it
+  // also holds a view the surviving group will not.
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 2, "a.txt is still viewed by both groups");
+    Expect(counts.at(key_b) == 1, "b.txt has a single view in the second group");
+  }
+
+  // Closing the focused group drops its tabs: the shared a.txt survives in group 0
+  // (back to one view, no spurious didClose), while b.txt is gone entirely.
+  Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
+         "close-group should succeed while a second group exists");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
+         "closing a group collapses back to one group");
+  {
+    const auto counts = WorkspaceShellTestAccess::OpenBufferViewCounts(shell);
+    Expect(counts.at(key_a) == 1, "the surviving group keeps its only view of a.txt");
+    Expect(counts.find(key_b) == counts.end(), "b.txt has no remaining views after the group closes");
+    Expect(WorkspaceShellTestAccess::CountOpenBufferViews(shell, file_b) == 0,
+           "the single-path count also reports b.txt fully closed");
+  }
+}
+
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/OpenBufferViewCountsAcrossGroups",
+          TestWorkspaceShellOpenBufferViewCountsAcrossGroups);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
   AddTest(tests, "WorkspaceShell/ProjectOpenCommandUsesNativePickerAtActiveProjectRoot",
@@ -3175,8 +3236,6 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/UnknownCommandKeepsPromptOpenWithFeedback",
           TestWorkspaceShellUnknownCommandKeepsPromptOpenWithFeedback);
-  AddTest(tests, "WorkspaceShell/LeftCtrlShortcutOpensCommandPrompt",
-          TestWorkspaceShellLeftCtrlShortcutOpensCommandPrompt);
   AddTest(tests, "WorkspaceShell/CommandReportsMissingProjectInsteadOfSilentNoOp",
           TestWorkspaceShellCommandReportsMissingProjectInsteadOfSilentNoOp);
   AddTest(tests, "WorkspaceShell/OpenCommandRequiresPath",
@@ -3203,12 +3262,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
           TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests);
-  AddTest(tests, "WorkspaceShell/GotoTargetsActiveSplitViewport",
-          TestWorkspaceShellGotoTargetsActiveSplitViewport);
   AddTest(tests, "WorkspaceShell/GlobalCommandsApplyTypedRequests",
           TestWorkspaceShellGlobalCommandsApplyTypedRequests);
-  AddTest(tests, "WorkspaceShell/CommandPromptCompletionAndHistory",
-          TestWorkspaceShellCommandPromptCompletionAndHistory);
+  AddTest(tests, "WorkspaceShell/CommandPaletteTabCompletion",
+          TestWorkspaceShellCommandPaletteTabCompletion);
+  AddTest(tests, "WorkspaceShell/CommandPaletteRunsCommandLineVsFuzzyPick",
+          TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick);
   AddTest(tests, "WorkspaceShell/CtrlNOpensUntitledTab",
           TestWorkspaceShellCtrlNOpensUntitledTab);
   AddTest(tests, "WorkspaceShell/FilesShortcutEscapeRestoresSidebarFocus",
@@ -3275,10 +3334,6 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCopySelectionWithContextOnBlankLineExpandsToEnclosingFold);
   AddTest(tests, "WorkspaceShell/EditorRightClickOpensSymbolAwareContextMenu",
           TestWorkspaceShellEditorRightClickOpensSymbolAwareContextMenu);
-  AddTest(tests, "WorkspaceShell/ClickingInactiveEditorPaneActivatesSplit",
-          TestWorkspaceShellClickingInactiveEditorPaneActivatesSplit);
-  AddTest(tests, "WorkspaceShell/EditorWheelActivatesHoveredSplit",
-          TestWorkspaceShellEditorWheelActivatesHoveredSplit);
   AddTest(tests, "WorkspaceShell/EditorDragSelectionTracksPointer",
           TestWorkspaceShellEditorDragSelectionTracksPointer);
   AddTest(tests, "WorkspaceShell/AltClickAddsSecondaryCaret",
@@ -3325,6 +3380,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabWheelScrollsStrip);
   AddTest(tests, "WorkspaceShell/ProjectWatcherReloadDoesNotContinuouslyRearm",
           TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm);
+  AddTest(tests, "WorkspaceShell/EditorGroupSplitFocusCloseSemantics",
+          TestWorkspaceShellEditorGroupSplitFocusCloseSemantics);
+  AddTest(tests, "WorkspaceShell/SplitContextMenuAvailabilityAndTreeOpen",
+          TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen);
 }
 
 }  // namespace microide::tests

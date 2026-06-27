@@ -33,9 +33,9 @@ DebugExecutionView BuildExecutionView(const dap_protocol::DapStoppedEvent& stop,
   for (const dap_protocol::DapStackFrame& frame : frames) {
     DebugStackFrameView row;
     row.id = frame.id;
-    if (!frame.source.path.empty()) {
-      row.source_path = std::filesystem::path(frame.source.path).lexically_normal();
-    }
+    // Normalizes `source_path` and caches its generic-string form together so the
+    // render/hover path-match reuses it per pane instead of re-normalizing.
+    row.SetSource(frame.source.path);
     // DAP lines are 1-based; the editor buffer is 0-based.
     row.line = frame.line > 0 ? static_cast<std::size_t>(frame.line - 1) : 0;
     row.display_primary = frame.name;

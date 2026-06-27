@@ -24,28 +24,48 @@ struct WelcomeRecent {
   std::filesystem::path path;
 };
 
+// The welcome surface renders one of two layouts depending on whether a project is
+// open. NoProject is the cold-start home (open a folder / recent projects); ProjectHome
+// is shown when a project is open but its focused editor group has no tab (recent files
+// in this project / new-file / open-file / find-in-project).
+enum class WelcomeKind { NoProject, ProjectHome };
+
+// Number of recent files surfaced on the ProjectHome variant. Shared by the renderer and
+// the shell hit-test so both agree on how many rows exist.
+inline constexpr std::size_t kWelcomeRecentFileLimit = 8;
+
 // View model for the welcome / placeholder surface. All display strings are
 // precomputed by RenderViewModelBuilder so the render TU only draws them.
 struct WelcomeViewModel {
+  WelcomeKind kind = WelcomeKind::NoProject;
   std::string title;
   std::string subtitle;
+  // NoProject captions/labels.
   std::string start_heading;
   std::string recents_heading;
-  std::string shortcuts_heading;
   std::string open_folder_label;
   std::string empty_recents_label;
-  std::string palette_hint;
-  std::vector<WelcomeRecent> recent_projects;
+  // ProjectHome captions/labels.
+  std::string actions_heading;
+  std::string recent_files_heading;
+  std::string new_file_label;
+  std::string open_file_label;
+  std::string find_in_project_label;
+  std::string empty_recent_files_label;
+  // Shared right column.
+  std::string shortcuts_heading;
+  std::vector<WelcomeRecent> recent_projects;  // NoProject
+  std::vector<WelcomeRecent> recent_files;      // ProjectHome
   std::vector<WelcomeShortcut> shortcuts;
 };
 
 // An interactive region on the welcome surface, produced by ComputeWelcomeLayout and
 // shared by the renderer (to draw it) and the shell (to hit-test clicks / hover).
 struct WelcomeHitRegion {
-  enum class Kind { RecentProject, OpenFolder };
+  enum class Kind { RecentProject, OpenFolder, RecentFile, NewFile, OpenFile, FindInProject };
   SDL_FRect rect{};
   Kind kind = Kind::OpenFolder;
-  std::size_t recent_index = 0;  // valid when kind == RecentProject
+  std::size_t recent_index = 0;  // valid when kind == RecentProject or RecentFile
 };
 
 struct WelcomeLayout {

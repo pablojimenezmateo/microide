@@ -23,6 +23,13 @@ using persistence::TaggedRecordView;
 
 constexpr std::uint32_t kSchemaVersion = 1;
 
+// The project-session record carries editor groups (splits above tabs). This
+// shape diverged from the original single-tab-list layout, so the session record
+// is versioned independently of the other records: an older session file is
+// cleanly rejected on decode (the workspace then starts with an empty session)
+// rather than being misread against the new tag scheme.
+constexpr std::uint32_t kProjectSessionSchemaVersion = 2;
+
 enum class UserConfigTag : std::uint16_t {
   Schema = 1,
   UiScale = 2,
@@ -150,21 +157,34 @@ enum class ProjectSessionTag : std::uint16_t {
   SidebarVisible = 2,
   SidebarWidth = 3,
   BottomPanelHeight = 4,
-  ActiveTabIndex = 5,
-  Tab = 6,
+  FocusedGroupIndex = 5,
+  Group = 6,
   ChatRegistry = 7,
   OutgoingBaseKind = 8,
   OutgoingBaseCustomRef = 9,
   RightPaneVisible = 10,
   RightPaneWidth = 11,
   RightPaneMode = 12,
+  GroupSplitOrientation = 13,
+  GroupSplitFraction = 14,
+};
+
+enum class EditorGroupTag : std::uint16_t {
+  ActiveTabIndex = 1,
+  Tab = 2,
 };
 
 enum class EditorTabTag : std::uint16_t {
   Kind = 1,
-  ActiveLeafId = 2,
-  View = 3,
-  SplitNode = 4,
+  // Inline single-view editor fields (formerly nested EditorView records).
+  Path = 2,
+  CursorLine = 3,
+  CursorColumn = 4,
+  ScrollLine = 26,
+  HorizontalScroll = 27,
+  DirtySnapshot = 28,
+  LineEnding = 29,
+  BufferLine = 30,
   ComparePath = 5,
   CompareLeftPath = 6,
   CompareRightPath = 7,
@@ -186,18 +206,6 @@ enum class EditorTabTag : std::uint16_t {
   MergeLeftDividerFraction = 22,
   MergeRightDividerFraction = 23,
   MergeHunkChoice = 24,
-};
-
-enum class EditorViewTag : std::uint16_t {
-  LeafId = 1,
-  Path = 2,
-  CursorLine = 3,
-  CursorColumn = 4,
-  ScrollLine = 5,
-  HorizontalScroll = 6,
-  DirtySnapshot = 7,
-  LineEnding = 8,
-  BufferLine = 9,
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
@@ -555,133 +563,28 @@ bool DecodeMessage(std::span<const std::byte> input, PersistedMessageState* mess
       });
 }
 
-bool EncodeEditorView(const PersistedEditorViewState& view, std::vector<std::byte>* out) {
-  if (out == nullptr) {
-    return false;
-  }
-  out->clear();
-  if (!AppendRecord(EditorViewTag::LeafId, [&](PrimitiveWriter& w) { return WriteSize(w, view.leaf_id); },
-                    out) ||
-      !AppendRecord(EditorViewTag::Path, [&](PrimitiveWriter& w) { return w.WritePath(view.path); }, out) ||
-      !AppendRecord(EditorViewTag::CursorLine,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, view.cursor_line); }, out) ||
-      !AppendRecord(EditorViewTag::CursorColumn,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, view.cursor_column); }, out) ||
-      !AppendRecord(EditorViewTag::ScrollLine,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, view.scroll_line); }, out) ||
-      !AppendRecord(EditorViewTag::HorizontalScroll,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, view.horizontal_scroll); }, out) ||
-      !AppendRecord(EditorViewTag::DirtySnapshot,
-                    [&](PrimitiveWriter& w) { return w.WriteBool(view.dirty_snapshot); }, out) ||
-      !AppendRecord(EditorViewTag::LineEnding,
-                    [&](PrimitiveWriter& w) {
-                      return w.WriteU8(static_cast<std::uint8_t>(view.line_ending));
-                    },
-                    out)) {
-    return false;
-  }
-  for (const std::string& line : view.buffer_lines) {
-    if (!AppendRecord(EditorViewTag::BufferLine,
-                      [&](PrimitiveWriter& w) { return w.WriteString(line); }, out)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool DecodeEditorView(std::span<const std::byte> input, PersistedEditorViewState* view) {
-  if (view == nullptr) {
-    return false;
-  }
-  *view = PersistedEditorViewState{};
-  return ParseRecordStream<EditorViewTag>(
-      input, [&](EditorViewTag tag, std::span<const std::byte> payload) {
-        PrimitiveReader reader(payload);
-        switch (tag) {
-          case EditorViewTag::LeafId: return ReadSize(reader, &view->leaf_id) && reader.remaining() == 0;
-          case EditorViewTag::Path: return reader.ReadPath(&view->path) && reader.remaining() == 0;
-          case EditorViewTag::CursorLine:
-            return ReadSize(reader, &view->cursor_line) && reader.remaining() == 0;
-          case EditorViewTag::CursorColumn:
-            return ReadSize(reader, &view->cursor_column) && reader.remaining() == 0;
-          case EditorViewTag::ScrollLine:
-            return ReadSize(reader, &view->scroll_line) && reader.remaining() == 0;
-          case EditorViewTag::HorizontalScroll:
-            return ReadSize(reader, &view->horizontal_scroll) && reader.remaining() == 0;
-          case EditorViewTag::DirtySnapshot:
-            return reader.ReadBool(&view->dirty_snapshot) && reader.remaining() == 0;
-          case EditorViewTag::LineEnding: {
-            std::uint8_t line_ending = 0;
-            if (!reader.ReadU8(&line_ending) || reader.remaining() != 0 || line_ending > 2) {
-              return false;
-            }
-            view->line_ending = static_cast<util::LineEnding>(line_ending);
-            return true;
-          }
-          case EditorViewTag::BufferLine: {
-            std::string line;
-            if (!reader.ReadString(&line) || reader.remaining() != 0) {
-              return false;
-            }
-            view->buffer_lines.push_back(std::move(line));
-            return true;
-          }
-        }
-        return true;
-      });
-}
-
-bool EncodeSplitNode(const PersistedSplitNodeState& node, std::vector<std::byte>* out) {
-  if (out == nullptr) {
-    return false;
-  }
-  out->clear();
-  PrimitiveWriter writer(out);
-  if (!WriteSize(writer, node.path.size())) {
-    return false;
-  }
-  for (std::size_t index : node.path) {
-    if (!WriteSize(writer, index)) {
-      return false;
-    }
-  }
-  return writer.WriteString(node.orientation) && writer.WriteF32(node.size_fraction) &&
-         WriteSize(writer, node.leaf_id);
-}
-
-bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* node) {
-  if (node == nullptr) {
-    return false;
-  }
-  *node = PersistedSplitNodeState{};
-  PrimitiveReader reader(input);
-  std::size_t count = 0;
-  if (!ReadSize(reader, &count)) {
-    return false;
-  }
-  // Bound the reservation by the bytes actually available: each path element is a
-  // ReadSize (4-byte u32), so a corrupt/adversarial `count` cannot force an
-  // allocation larger than the remaining input. Prevents OOM on malformed state.
-  node->path.reserve(std::min<std::size_t>(count, reader.remaining() / sizeof(std::uint32_t)));
-  for (std::size_t i = 0; i < count; ++i) {
-    std::size_t value = 0;
-    if (!ReadSize(reader, &value)) {
-      return false;
-    }
-    node->path.push_back(value);
-  }
-  return reader.ReadString(&node->orientation) && reader.ReadF32(&node->size_fraction) &&
-         ReadSize(reader, &node->leaf_id) && reader.remaining() == 0;
-}
-
 [[maybe_unused]] bool EncodeEditorTab(const PersistedEditorTabState& tab, std::vector<std::byte>* out) {
   if (out == nullptr) {
     return false;
   }
   out->clear();
   if (!AppendRecord(EditorTabTag::Kind, [&](PrimitiveWriter& w) { return w.WriteString(tab.kind); }, out) ||
-      !AppendRecord(EditorTabTag::ActiveLeafId,
-                    [&](PrimitiveWriter& w) { return WriteSize(w, tab.active_leaf_id); }, out) ||
+      !AppendRecord(EditorTabTag::Path, [&](PrimitiveWriter& w) { return w.WritePath(tab.path); }, out) ||
+      !AppendRecord(EditorTabTag::CursorLine,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, tab.cursor_line); }, out) ||
+      !AppendRecord(EditorTabTag::CursorColumn,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, tab.cursor_column); }, out) ||
+      !AppendRecord(EditorTabTag::ScrollLine,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, tab.scroll_line); }, out) ||
+      !AppendRecord(EditorTabTag::HorizontalScroll,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, tab.horizontal_scroll); }, out) ||
+      !AppendRecord(EditorTabTag::DirtySnapshot,
+                    [&](PrimitiveWriter& w) { return w.WriteBool(tab.dirty_snapshot); }, out) ||
+      !AppendRecord(EditorTabTag::LineEnding,
+                    [&](PrimitiveWriter& w) {
+                      return w.WriteU8(static_cast<std::uint8_t>(tab.line_ending));
+                    },
+                    out) ||
       !AppendRecord(EditorTabTag::ComparePath,
                     [&](PrimitiveWriter& w) { return w.WritePath(tab.compare_path); }, out) ||
       !AppendRecord(EditorTabTag::CompareLeftPath,
@@ -730,17 +633,9 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
     return false;
   }
 
-  for (const auto& view : tab.views) {
-    std::vector<std::byte> payload;
-    if (!EncodeEditorView(view, &payload) ||
-        !AppendTaggedRecord(static_cast<std::uint16_t>(EditorTabTag::View), payload, out)) {
-      return false;
-    }
-  }
-  for (const auto& node : tab.split_nodes) {
-    std::vector<std::byte> payload;
-    if (!EncodeSplitNode(node, &payload) ||
-        !AppendTaggedRecord(static_cast<std::uint16_t>(EditorTabTag::SplitNode), payload, out)) {
+  for (const std::string& line : tab.buffer_lines) {
+    if (!AppendRecord(EditorTabTag::BufferLine,
+                      [&](PrimitiveWriter& w) { return w.WriteString(line); }, out)) {
       return false;
     }
   }
@@ -763,8 +658,33 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
         PrimitiveReader reader(payload);
         switch (tag) {
           case EditorTabTag::Kind: return reader.ReadString(&tab->kind) && reader.remaining() == 0;
-          case EditorTabTag::ActiveLeafId:
-            return ReadSize(reader, &tab->active_leaf_id) && reader.remaining() == 0;
+          case EditorTabTag::Path: return reader.ReadPath(&tab->path) && reader.remaining() == 0;
+          case EditorTabTag::CursorLine:
+            return ReadSize(reader, &tab->cursor_line) && reader.remaining() == 0;
+          case EditorTabTag::CursorColumn:
+            return ReadSize(reader, &tab->cursor_column) && reader.remaining() == 0;
+          case EditorTabTag::ScrollLine:
+            return ReadSize(reader, &tab->scroll_line) && reader.remaining() == 0;
+          case EditorTabTag::HorizontalScroll:
+            return ReadSize(reader, &tab->horizontal_scroll) && reader.remaining() == 0;
+          case EditorTabTag::DirtySnapshot:
+            return reader.ReadBool(&tab->dirty_snapshot) && reader.remaining() == 0;
+          case EditorTabTag::LineEnding: {
+            std::uint8_t line_ending = 0;
+            if (!reader.ReadU8(&line_ending) || reader.remaining() != 0 || line_ending > 2) {
+              return false;
+            }
+            tab->line_ending = static_cast<util::LineEnding>(line_ending);
+            return true;
+          }
+          case EditorTabTag::BufferLine: {
+            std::string line;
+            if (!reader.ReadString(&line) || reader.remaining() != 0) {
+              return false;
+            }
+            tab->buffer_lines.push_back(std::move(line));
+            return true;
+          }
           case EditorTabTag::ComparePath:
             return reader.ReadPath(&tab->compare_path) && reader.remaining() == 0;
           case EditorTabTag::CompareLeftPath:
@@ -805,28 +725,58 @@ bool DecodeSplitNode(std::span<const std::byte> input, PersistedSplitNodeState* 
             return reader.ReadF32(&tab->merge_left_divider_fraction) && reader.remaining() == 0;
           case EditorTabTag::MergeRightDividerFraction:
             return reader.ReadF32(&tab->merge_right_divider_fraction) && reader.remaining() == 0;
-          case EditorTabTag::View: {
-            PersistedEditorViewState view;
-            if (!DecodeEditorView(payload, &view)) {
-              return false;
-            }
-            tab->views.push_back(std::move(view));
-            return true;
-          }
-          case EditorTabTag::SplitNode: {
-            PersistedSplitNodeState node;
-            if (!DecodeSplitNode(payload, &node)) {
-              return false;
-            }
-            tab->split_nodes.push_back(std::move(node));
-            return true;
-          }
           case EditorTabTag::MergeHunkChoice: {
             std::string choice;
             if (!reader.ReadString(&choice) || reader.remaining() != 0) {
               return false;
             }
             tab->merge_hunk_choices.push_back(std::move(choice));
+            return true;
+          }
+        }
+        return true;
+      });
+}
+
+[[maybe_unused]] bool EncodeEditorGroup(const PersistedEditorGroupState& group,
+                                        std::vector<std::byte>* out) {
+  if (out == nullptr) {
+    return false;
+  }
+  out->clear();
+  if (!AppendRecord(EditorGroupTag::ActiveTabIndex,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, group.active_tab_index); }, out)) {
+    return false;
+  }
+  for (const auto& tab : group.tabs) {
+    std::vector<std::byte> payload;
+    if (!EncodeEditorTab(tab, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(EditorGroupTag::Tab), payload, out)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+[[maybe_unused]] bool DecodeEditorGroup(std::span<const std::byte> input,
+                                        PersistedEditorGroupState* group) {
+  if (group == nullptr) {
+    return false;
+  }
+  *group = PersistedEditorGroupState{};
+  return ParseRecordStream<EditorGroupTag>(
+      input, [&](EditorGroupTag tag, std::span<const std::byte> payload) {
+        switch (tag) {
+          case EditorGroupTag::ActiveTabIndex: {
+            PrimitiveReader reader(payload);
+            return ReadSize(reader, &group->active_tab_index) && reader.remaining() == 0;
+          }
+          case EditorGroupTag::Tab: {
+            PersistedEditorTabState tab;
+            if (!DecodeEditorTab(payload, &tab)) {
+              return false;
+            }
+            group->tabs.push_back(std::move(tab));
             return true;
           }
         }

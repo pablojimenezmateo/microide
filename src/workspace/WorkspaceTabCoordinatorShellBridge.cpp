@@ -62,6 +62,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               [this](const std::filesystem::path& path) { NotifyLspBufferClose(path); },
           .count_open_buffer_views =
               [this](const std::filesystem::path& path) { return CountOpenBufferViews(path); },
+          .open_buffer_view_counts = [this]() { return OpenBufferViewCounts(); },
           .prepare_editor_view_for_save =
               [this](const std::filesystem::path& path,
                      editor::TextViewport& viewport,
@@ -75,15 +76,9 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .make_editor_tab_state =
               [this](const editor::TextViewport& viewport) { return MakeEditorTabState(viewport); },
           .editor_view_path =
-              [this](const TabEntry::EditorTabState::EditorViewState& view) {
-                return EditorViewPath(view);
+              [this](const TabEntry::EditorTabState& editor_state) {
+                return EditorViewPath(editor_state);
               },
-          .find_editor_view =
-              [this](TabEntry::EditorTabState& editor_tab, std::size_t leaf_id) {
-                return FindEditorView(editor_tab, leaf_id);
-              },
-          .normalize_editor_split_tree =
-              [this](TabEntry::EditorTabState& editor_tab) { NormalizeEditorSplitTree(editor_tab); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
@@ -227,33 +222,47 @@ bool WorkspaceShell::TabIsDirty(std::size_t index) const {
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
-  if (index >= context_.current_project_state.open_tabs.size()) {
+  return TabDisplayTitle(context_.current_project_state.focused_group_index, index);
+}
+
+std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  if (group_index >= state.editor_groups.size() ||
+      index >= state.editor_groups[group_index].open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = context_.current_project_state.open_tabs[index];
+  const TabEntry& tab = state.editor_groups[group_index].open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     path = tab.merge->output_path;
   }
-  return BuildWorkspaceTabTextModel(context_.current_project_state.root, path, tab.title, TabIsDirty(index)).display_title;
+  return BuildWorkspaceTabTextModel(state.root, path, tab.title,
+                                    TabCoordinator::TabStateIsDirty(tab)).display_title;
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
-  if (index >= context_.current_project_state.open_tabs.size()) {
+  return TabTooltipLabel(context_.current_project_state.focused_group_index, index);
+}
+
+std::string WorkspaceShell::TabTooltipLabel(std::size_t group_index, std::size_t index) const {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  if (group_index >= state.editor_groups.size() ||
+      index >= state.editor_groups[group_index].open_tabs.size()) {
     return {};
   }
 
-  const TabEntry& tab = context_.current_project_state.open_tabs[index];
+  const TabEntry& tab = state.editor_groups[group_index].open_tabs[index];
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
   } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     path = tab.merge->output_path;
   }
-  return BuildWorkspaceTabTextModel(context_.current_project_state.root, path, tab.title, TabIsDirty(index)).tooltip_label;
+  return BuildWorkspaceTabTextModel(state.root, path, tab.title,
+                                    TabCoordinator::TabStateIsDirty(tab)).tooltip_label;
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {
@@ -263,9 +272,9 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices(
     const ProjectWorkspaceState& state) {
   std::vector<std::size_t> dirty_tabs;
-  dirty_tabs.reserve(state.open_tabs.size());
-  for (std::size_t i = 0; i < state.open_tabs.size(); ++i) {
-    if (TabCoordinator::TabStateIsDirty(state.open_tabs[i])) {
+  dirty_tabs.reserve(state.focused_group().open_tabs.size());
+  for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
+    if (TabCoordinator::TabStateIsDirty(state.focused_group().open_tabs[i])) {
       dirty_tabs.push_back(i);
     }
   }
@@ -283,6 +292,34 @@ void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
 
 bool WorkspaceShell::OpenUntitledTab() {
   return MakeEditorTabService().OpenUntitled();
+}
+
+bool WorkspaceShell::SplitEditorGroup(EditorSplitOrientation orientation) {
+  return MakeEditorTabService().SplitEditorGroup(orientation);
+}
+
+bool WorkspaceShell::FocusOtherEditorGroup() {
+  return MakeEditorTabService().FocusOtherGroup();
+}
+
+void WorkspaceShell::FocusEditorGroup(std::size_t group_index) {
+  ProjectWorkspaceState& state = context_.current_project_state;
+  if (group_index >= state.editor_groups.size() || group_index == state.focused_group_index) {
+    state.surface.focus = FocusTarget::Editor;
+    return;
+  }
+  state.focused_group_index = group_index;
+  state.surface.focus = FocusTarget::Editor;
+  RequestChromeRedraw();
+  RequestEditorSurfaceRedraw();
+}
+
+bool WorkspaceShell::CloseEditorGroup() {
+  return MakeEditorTabService().CloseEditorGroup();
+}
+
+std::size_t WorkspaceShell::EditorGroupCount() const {
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().EditorGroupCount();
 }
 
 bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
@@ -330,8 +367,8 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
 
   editor::TextViewport* viewport = ActiveEditorViewport();
   if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
-    for (std::size_t i = 0; i < context_.current_project_state.open_tabs.size(); ++i) {
-      const auto& tab = context_.current_project_state.open_tabs[i];
+    for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
+      const auto& tab = context_.current_project_state.focused_group().open_tabs[i];
       if (tab.kind == TabEntry::Kind::Editor && tab.path == normalized_path) {
         ActivateTab(i);
         viewport = ActiveEditorViewport();

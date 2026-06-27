@@ -1,6 +1,6 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-06-20.
+Reviewed on 2026-06-23 (v2.2.0 shipped).
 
 This is the single source of truth for:
 
@@ -38,7 +38,10 @@ These are implemented and should not be treated as open migration work:
   popup-menu rows, strip tabs, and common shell glyphs now route through shared workspace render
   primitives instead of staying fully surface-local
 - project-local workspace state plus app-level restore of open project tabs
-- normal editor tabs, compare tabs, merge tabs, and nested shared-buffer splits, with deferred-commit tab drag (ghost preview) consistent across all three tab types
+- normal editor tabs, compare tabs, and merge tabs, with deferred-commit tab drag (ghost preview) consistent across all three tab types
+- first-class editor groups (`EditorGroup`): split right/down from tab and tree context menus, per-group layout/render/tab-strips, group-aware keyboard input, split/focus/close commands, and session persistence/restore (this supersedes the older nested in-tab shared-buffer split model, collapsed in v2.1.0)
+- searchable command palette overlay (Ctrl+Shift+P) that doubles as the command line: typing a verb plus arguments (e.g. `colorscheme dark`) or any unmatched query runs through the shared command executor, and Tab completes command/path tokens. This is now the *only* command surface — the separate Ctrl+E bottom-panel command prompt (and per-session command history) was retired and folded in
+- recent projects/files (MRU) surfaced in the file finder, and a state-aware welcome/home surface: a cold-start variant (Open Folder + recent projects) when no project is open, and a project-home variant (project name, recent files in the project, New File / Open File / Find in Project) when a project is open with no editor tab. Plus a built-in light theme
 - decorated-row assembly is unified across editor, compare, and merge surfaces (shared intra-line underline and conflict-marker helpers), keeping the three diff/merge surfaces convergent
 - multi-caret editing with position remap across edits, region-stack highlighting, and copy-with-context
 - editor open/save/reopen, selection, clipboard, undo/redo, line numbers, **word wrap (soft-wrap)** with wrap-aware caret motion and hit-testing, horizontal scrolling when wrap is off, dirty tracking, IME hooks, and project-local preferences (this supersedes any older roadmap note that listed soft wrap as out of scope)

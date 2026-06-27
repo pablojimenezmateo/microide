@@ -272,14 +272,6 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     }
   }
 
-  // Bottom panel command prompt.
-  if (context_.current_project_state.panel.command_mode) {
-    const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
-    if (Contains(prompt_rect, x, y)) {
-      return FilledHit(TextInputSurface::Command, prompt_rect, "> ",
-                       &context_.current_project_state.panel.command.input);
-    }
-  }
 
   return std::nullopt;
 }
@@ -358,9 +350,6 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     case TextInputSurface::PromptInput:
       // Prompt is modal; focus already pinned by the prompt service.
       break;
-    case TextInputSurface::Command:
-      context_.current_project_state.surface.focus = FocusTarget::Panel;
-      break;
     case TextInputSurface::BufferReplaceSearch:
       context_.current_project_state.overlay.buffer_search_field = BufferSearchField::Search;
       context_.current_project_state.surface.focus = FocusTarget::Overlay;
@@ -424,13 +413,6 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
         const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
         hit = FilledHit(surface, ComputePromptSurfaceInputRect(dialog), "",
                         &context_.prompts.surface.input);
-      }
-      break;
-    }
-    case TextInputSurface::Command: {
-      if (context_.current_project_state.panel.command_mode) {
-        hit = FilledHit(surface, BottomPanelCommandPromptRect(layout), "> ",
-                        &context_.current_project_state.panel.command.input);
       }
       break;
     }

@@ -153,30 +153,19 @@ struct TabEntry {
   };
 
   struct EditorTabState {
-    struct EditorViewState {
-      std::size_t leaf_id = 0;
-      editor::TextViewport viewport;
-      std::filesystem::path restored_path;
-      std::size_t restored_cursor_line = 0;
-      std::size_t restored_cursor_column = 0;
-      std::size_t restored_scroll_line = 0;
-      std::size_t restored_horizontal_scroll = 0;
-      bool needs_restore = false;
-    };
-
-    struct EditorSplitNode {
-      std::size_t leaf_id = 0;
-      EditorSplitOrientation orientation = EditorSplitOrientation::None;
-      float size_fraction = 1.0f;
-      std::vector<std::unique_ptr<EditorSplitNode>> children;
-
-      bool IsLeaf() const { return children.empty(); }
-    };
-
-    std::vector<EditorViewState> views;
-    std::size_t active_leaf_id = 0;
-    std::size_t next_leaf_id = 1;
-    std::unique_ptr<EditorSplitNode> split_root;
+    // A tab owns exactly one editor viewport. Side-by-side / stacked layouts are
+    // modelled as editor *groups* above the tab level (see `EditorGroup`), not as
+    // a split tree inside a tab.
+    editor::TextViewport viewport;
+    // Deferred-restore metadata: while `needs_restore` is true the viewport is a
+    // placeholder and these fields carry the real on-disk path + caret/scroll so
+    // the tab can be hydrated lazily (session restore / background open).
+    std::filesystem::path restored_path;
+    std::size_t restored_cursor_line = 0;
+    std::size_t restored_cursor_column = 0;
+    std::size_t restored_scroll_line = 0;
+    std::size_t restored_horizontal_scroll = 0;
+    bool needs_restore = false;
     // Per-tab fold-region model. Lazily computed by the renderer / fold action
     // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
     // close; rekeyed implicitly through its `(layout_revision, tab_size,
@@ -194,7 +183,6 @@ struct TabEntry {
     std::size_t scroll_line = 0;
     std::size_t horizontal_scroll = 0;
     std::optional<editor::SelectionRange> selection;
-    std::size_t active_leaf_id = 1;
   };
 
   Kind kind = Kind::Editor;

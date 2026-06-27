@@ -107,10 +107,9 @@ class WorkspaceActionContext {
     std::function<void()> reset_caret_blink;
     std::function<void()> notify_snippet_session_caret_moved;
     std::function<void()> clear_active_snippet_session_after_undo;
-    std::function<bool(EditorSplitOrientation)> split_active_editor;
-    std::function<bool()> unsplit_active_editor;
-    std::function<bool(int)> cycle_editor_split;
-    std::function<bool(std::size_t)> activate_ordered_editor_split;
+    std::function<bool(EditorSplitOrientation)> split_editor_group;
+    std::function<bool()> focus_other_group;
+    std::function<bool()> close_editor_group;
     std::function<void(std::size_t)> request_close_tab;
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
     std::function<void()> close_all_tabs;
@@ -160,8 +159,6 @@ class WorkspaceActionContext {
     std::function<void()> mark_layout_dirty;
     std::function<void()> request_window_redraw;
     std::function<TerminalTabState*()> active_terminal_tab;
-    std::function<void()> reset_command_prompt_session;
-    std::function<void(bool)> request_command_mode_transition_redraw;
     std::function<bool()> plugin_runtime_enabled;
     std::function<void()> reload_plugins_for_current_project;
     std::function<std::string()> plugin_runtime_reload_summary;
@@ -202,8 +199,9 @@ class WorkspaceActionContext {
     // Launch-config picker (Phase 9): open the fuzzy picker over the project's
     // launch configs.
     std::function<void()> open_launch_config_picker;
-    // Open the fuzzy command palette over all built-in + plugin commands.
-    std::function<void()> open_command_palette;
+    // Open the command palette over all built-in + plugin commands, optionally pre-filling
+    // the query (e.g. "project-open ") so the user only types the argument.
+    std::function<void(std::string)> open_command_palette;
     // Breakpoint-modifier context-menu handlers (Phase 6); read the gutter
     // menu's target line on the shell side.
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
@@ -340,12 +338,13 @@ class WorkspaceActionContext {
   void ReopenActiveTab();
   bool SaveTab(std::size_t index);
   void ResetCaretBlink();
-  bool OpenVerticalSplitPath(const std::filesystem::path& path, std::string* error_message);
-  void SplitActiveEditorVertically();
-  void UnsplitActiveEditor();
-  void CycleEditorSplit(int delta);
-  void ActivateOrderedEditorSplit(std::size_t index);
-  std::size_t ActiveEditorSplitCount() const;
+  // Split the focused editor group in the given orientation, optionally opening
+  // `path` in the new group instead of the cloned active document.
+  bool SplitEditorGroup(EditorSplitOrientation orientation,
+                        const std::filesystem::path& path,
+                        std::string* error_message);
+  bool FocusOtherGroup();
+  bool CloseEditorGroup();
   void RequestCloseTab(std::size_t index);
   void RequestCloseTabs(std::vector<std::size_t> indices);
   void CloseAllTabs();
@@ -371,7 +370,6 @@ class WorkspaceActionContext {
   bool SoftWrapEnabled() const;
   void SetSoftWrap(bool enabled);
   bool Focus(FocusRequestTarget target);
-  void OpenCommandPrompt(std::string input = {});
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
   void RequestQuit();
@@ -401,7 +399,7 @@ class WorkspaceActionContext {
   // Debug-console REPL + launch-config picker (Phase 9).
   void OpenDebugReplPrompt();
   void OpenLaunchConfigPicker();
-  void OpenCommandPalette();
+  void OpenCommandPalette(std::string seed = {});
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();
   void ShowDebugPaneSurface(DebugPaneMode mode);
@@ -450,6 +448,10 @@ class WorkspaceActionContext {
   bool SetSettingValue(std::string_view id, std::string value);
 
  private:
+  // Mark layout dirty and request a full-window repaint after a live config
+  // change (theme, UI scale). Shared so the redraw idiom is not duplicated.
+  void RequestLiveConfigRedraw();
+
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;
   float& ui_scale_;

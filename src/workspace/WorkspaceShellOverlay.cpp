@@ -8,6 +8,8 @@
 
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceCommandParsing.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
 
@@ -340,9 +342,9 @@ bool WorkspaceShell::ActivateOverlaySelection() {
   }
 }
 
-void WorkspaceShell::OpenCommandPalette() {
+void WorkspaceShell::OpenCommandPalette(std::string seed) {
   CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
-  palette.query.SetText("");
+  palette.query.SetText(seed);
   palette.items.clear();
 
   // Built-in commands: every action that carries a human label. The label and key
@@ -402,8 +404,35 @@ void WorkspaceShell::RefreshCommandPalette() {
   RequestOverlayRedraw();
 }
 
+bool WorkspaceShell::CommandPaletteQueryIsCommandLine() const {
+  // The palette query doubles as a command line so commands can take arguments
+  // (e.g. "colorscheme dark"). Run it as a command line when it carries arguments OR when
+  // no fuzzy row matched it (a bare verb that still matches a row just picks that row, but
+  // typed-out input with arguments or no match goes to the shared command executor — which
+  // also surfaces "Unknown command: …" for genuine typos).
+  const CommandPaletteState& palette =
+      context_.current_project_state.overlay.workflow.command_palette;
+  const ParsedCommandLine parsed = ParseCommandLine(palette.query.text());
+  if (parsed.tokens.empty() || parsed.open_quote != '\0') {
+    return false;
+  }
+  return parsed.tokens.size() > 1 || palette.matches.empty();
+}
+
 void WorkspaceShell::ConfirmCommandPaletteSelection() {
   CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
+  // Command-line path: run the typed line (verb + args) through the shared executor.
+  if (CommandPaletteQueryIsCommandLine()) {
+    // Copy the query before dismissing — the dispatch may reopen overlays / mutate state.
+    const std::string command_line = palette.query.text();
+    DismissOverlay(true);
+    const bool ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+    if (const std::string& feedback = context_.current_project_state.panel.feedback.text;
+        !feedback.empty()) {
+      Notify(ok ? NotificationService::Tone::Info : NotificationService::Tone::Error, feedback);
+    }
+    return;
+  }
   if (palette.matches.empty() || palette.selected_index >= palette.matches.size()) {
     return;
   }
@@ -417,6 +446,12 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
     return;
   }
   ActionCoordinator(MakeActionContext()).Execute(selected.action, {}, ActionSource::Menu);
+}
+
+void WorkspaceShell::CompleteCommandPaletteQuery() {
+  CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
+  MakeCommandLineCoordinator().CompleteInput(palette.query);
+  RefreshCommandPalette();
 }
 
 }  // namespace microide::workspace

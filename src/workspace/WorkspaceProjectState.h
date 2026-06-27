@@ -92,12 +92,12 @@ struct ProjectSurfaceState {
   bool editor_ctrl_k_leader_armed = false;
 };
 
-struct CommandState {
-  editor::SingleLineEditor input;
-  std::vector<std::string> history;
-  std::optional<std::size_t> history_index;
-  std::string history_pending_input;
-  std::string feedback_text;
+// Backing state for the command-line executor. The command palette is now the sole entry
+// surface (its own `query` editor drives input); this carries only the executor feedback
+// string that the control channel and command dispatch read back. No on-screen prompt, no
+// history (the palette's Up/Down navigate its result list).
+struct CommandFeedbackState {
+  std::string text;
 };
 
 struct BufferSearchState {
@@ -296,13 +296,12 @@ struct LspUiState {
 
 struct PanelState {
   PanelContentKind content = PanelContentKind::None;
-  bool command_mode = false;
   float height = 156.0f;
   // Horizontal scroll offset (first visible tab index) for the bottom-panel tab
   // strip, shared by terminal and output tabs so an overflowed strip stays
   // reachable via the chevrons or the header wheel.
   int tab_scroll_index = 0;
-  CommandState command;
+  CommandFeedbackState feedback;
   OutputPanelState output;
   // Active plugin surface shown when `content == PluginSurface` (Phase E0). Keyed
   // by owner+id into `surface_store`; scroll is host-owned and panel-local.
@@ -351,6 +350,20 @@ struct FileIconRenderCache {
   }
 };
 
+// A single editor group: its own tab strip (open_tabs + active index + scroll)
+// and its own home/placeholder surface. The editor area holds 1 or 2 groups
+// arranged side-by-side or stacked (see `ProjectWorkspaceState::editor_groups`).
+struct EditorGroup {
+  WelcomeSurfaceState welcome_surface;
+  std::vector<TabEntry> open_tabs;
+  std::size_t active_tab_index = 0;
+  int tab_scroll_index = 0;
+
+  bool has_active_tab() const { return active_tab_index < open_tabs.size(); }
+  TabEntry& active_tab() { return open_tabs[active_tab_index]; }
+  const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
+};
+
 struct ProjectWorkspaceState {
   std::filesystem::path root;
   bool initialized = false;
@@ -361,10 +374,26 @@ struct ProjectWorkspaceState {
   mutable FileIconRenderCache file_icon_cache;
   project::FileIndex file_index;
   project::FileFinder file_finder;
-  WelcomeSurfaceState welcome_surface;
-  std::vector<TabEntry> open_tabs;
-  std::size_t active_tab_index = 0;
-  int tab_scroll_index = 0;
+  // Editor groups: always 1 or 2. Group 0 is the primary. `focused_group_index`
+  // selects which group owns keyboard focus / receives newly opened files.
+  std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);
+  std::size_t focused_group_index = 0;
+  EditorSplitOrientation group_split_orientation = EditorSplitOrientation::None;
+  float group_split_fraction = 0.5f;
+
+  // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the
+  // mutation sites that erase/clear a group always restore at least one), and
+  // `focused_group_index` is kept valid by those same sites; a stale index here
+  // is clamped on read rather than silently mutated, so const and non-const
+  // resolve to the same group.
+  std::size_t clamped_focused_group_index() const {
+    return focused_group_index < editor_groups.size() ? focused_group_index : 0;
+  }
+  EditorGroup& focused_group() { return editor_groups[clamped_focused_group_index()]; }
+  const EditorGroup& focused_group() const {
+    return editor_groups[clamped_focused_group_index()];
+  }
+
   ProjectSurfaceState surface;
   SidebarState sidebar;
   OverlayState overlay;

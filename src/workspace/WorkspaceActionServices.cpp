@@ -9,7 +9,7 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceLayout.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/WorkspaceShell.h"
@@ -317,13 +317,13 @@ bool WorkspaceActionContext::RequestInlineCompletion(std::string* error_message)
 }
 
 bool WorkspaceActionContext::ActiveTabIsCompare() const {
-  return state_.active_tab_index < state_.open_tabs.size() &&
-         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Compare;
+  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
+         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Compare;
 }
 
 bool WorkspaceActionContext::ActiveTabIsMerge() const {
-  return state_.active_tab_index < state_.open_tabs.size() &&
-         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Merge;
+  return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
+         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Merge;
 }
 
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
@@ -418,7 +418,7 @@ ReviewOpenOutcome FinishReviewOutcome(ProjectWorkspaceState& state,
                                       ReviewOpenOutcome outcome) {
   // Always surface the summary as command feedback so the control channel
   // reports it (as feedback on success, as error on failure).
-  state.panel.command.feedback_text = outcome.message;
+  state.panel.feedback.text = outcome.message;
   if (operations.notify && !outcome.message.empty()) {
     operations.notify(outcome.ok ? NotificationService::Tone::Info
                                  : NotificationService::Tone::Warning,
@@ -451,24 +451,7 @@ ReviewOpenOutcome WorkspaceActionContext::ReviewCommit(const std::string& ref) {
 }
 
 bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
-                                      std::string* error_message) {
-  if (auto* editor_tab = operations_.active_editor_tab();
-      editor_tab != nullptr && editor_tab->views.size() > 1) {
-    editor::TextViewport opened_view;
-    if (!opened_view.OpenFile(path)) {
-      if (error_message != nullptr) {
-        *error_message = "Failed to open file: " + path.string();
-      }
-      return false;
-    }
-    if (!operations_.replace_active_editor_view(opened_view)) {
-      if (error_message != nullptr) {
-        *error_message = "Failed to replace the active split with: " + path.string();
-      }
-      return false;
-    }
-    return true;
-  }
+                                      std::string* /*error_message*/) {
   operations_.open_file(path);
   return true;
 }
@@ -492,15 +475,15 @@ void WorkspaceActionContext::ActivateTab(std::size_t index) {
 }
 
 bool WorkspaceActionContext::HasOpenTabs() const {
-  return !state_.open_tabs.empty();
+  return !state_.focused_group().open_tabs.empty();
 }
 
 std::size_t WorkspaceActionContext::OpenTabCount() const {
-  return state_.open_tabs.size();
+  return state_.focused_group().open_tabs.size();
 }
 
 std::size_t WorkspaceActionContext::ActiveTabIndex() const {
-  return state_.active_tab_index;
+  return state_.focused_group().active_tab_index;
 }
 
 void WorkspaceActionContext::MoveActiveTabTo(std::size_t index) {
@@ -519,49 +502,40 @@ void WorkspaceActionContext::ResetCaretBlink() {
   operations_.reset_caret_blink();
 }
 
-bool WorkspaceActionContext::OpenVerticalSplitPath(const std::filesystem::path& path,
-                                                   std::string* error_message) {
+bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation,
+                                              const std::filesystem::path& path,
+                                              std::string* error_message) {
+  // When a path is given, open it first so a failure aborts before mutating the
+  // group layout.
   editor::TextViewport opened_view;
-  if (!opened_view.OpenFile(path)) {
+  const bool open_path = !path.empty();
+  if (open_path && !opened_view.OpenFile(path)) {
     if (error_message != nullptr) {
       *error_message = "Failed to open file: " + path.string();
     }
     return false;
   }
-  if (!operations_.split_active_editor(EditorSplitOrientation::Vertical)) {
+  if (!operations_.split_editor_group(orientation)) {
     if (error_message != nullptr) {
       *error_message = "Failed to split the active editor";
     }
     return false;
   }
-  if (!operations_.replace_active_editor_view(opened_view)) {
+  if (open_path && !operations_.replace_active_editor_view(opened_view)) {
     if (error_message != nullptr) {
-      *error_message = "Failed to replace the active split with: " + path.string();
+      *error_message = "Failed to open in the split: " + path.string();
     }
     return false;
   }
   return true;
 }
 
-void WorkspaceActionContext::SplitActiveEditorVertically() {
-  operations_.split_active_editor(EditorSplitOrientation::Vertical);
+bool WorkspaceActionContext::FocusOtherGroup() {
+  return operations_.focus_other_group();
 }
 
-void WorkspaceActionContext::UnsplitActiveEditor() {
-  operations_.unsplit_active_editor();
-}
-
-void WorkspaceActionContext::CycleEditorSplit(int delta) {
-  operations_.cycle_editor_split(delta);
-}
-
-void WorkspaceActionContext::ActivateOrderedEditorSplit(std::size_t index) {
-  operations_.activate_ordered_editor_split(index);
-}
-
-std::size_t WorkspaceActionContext::ActiveEditorSplitCount() const {
-  const auto* editor_tab = operations_.active_editor_tab();
-  return editor_tab == nullptr ? 0 : editor_tab->views.size();
+bool WorkspaceActionContext::CloseEditorGroup() {
+  return operations_.close_editor_group();
 }
 
 void WorkspaceActionContext::RequestCloseTab(std::size_t index) {
@@ -868,8 +842,20 @@ void WorkspaceActionContext::RefreshAvailableColorschemeNames() {
   operations_.refresh_available_colorscheme_names();
 }
 
+void WorkspaceActionContext::RequestLiveConfigRedraw() {
+  if (operations_.mark_layout_dirty) {
+    operations_.mark_layout_dirty();
+  }
+  if (operations_.request_window_redraw) {
+    operations_.request_window_redraw();
+  }
+}
+
 void WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
   operations_.apply_colorscheme(name);
+  // A theme change repaints with new colors but does not change geometry; the
+  // window redraw is what makes it visible (the shell otherwise idles on events).
+  RequestLiveConfigRedraw();
 }
 
 std::string_view WorkspaceActionContext::CurrentColorschemeName() const {
@@ -894,12 +880,7 @@ float WorkspaceActionContext::UiScale() const {
 
 void WorkspaceActionContext::ApplyUiScale(float scale) {
   operations_.apply_ui_scale(scale);
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
-  }
-  if (operations_.request_window_redraw) {
-    operations_.request_window_redraw();
-  }
+  RequestLiveConfigRedraw();
 }
 
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {
@@ -1007,7 +988,7 @@ bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
       state_.surface.focus = FocusTarget::Editor;
       return true;
     case FocusRequestTarget::Panel:
-      if (state_.panel.command_mode || operations_.active_terminal_tab() != nullptr) {
+      if (operations_.active_terminal_tab() != nullptr) {
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }

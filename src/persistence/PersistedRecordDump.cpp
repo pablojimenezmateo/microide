@@ -30,8 +30,13 @@ void AppendProjectSessionSummary(const workspace::PersistedProjectSessionState& 
          << '\n';
   stream << "decoded.project_session.sidebar_width: " << state.sidebar_width << '\n';
   stream << "decoded.project_session.bottom_panel_height: " << state.bottom_panel_height << '\n';
-  stream << "decoded.project_session.active_tab_index: " << state.active_tab_index << '\n';
-  stream << "decoded.project_session.tab_count: " << state.tabs.size() << '\n';
+  stream << "decoded.project_session.focused_group_index: " << state.focused_group_index << '\n';
+  stream << "decoded.project_session.group_count: " << state.groups.size() << '\n';
+  std::size_t tab_count = 0;
+  for (const auto& group : state.groups) {
+    tab_count += group.tabs.size();
+  }
+  stream << "decoded.project_session.tab_count: " << tab_count << '\n';
 }
 
 void AppendUserConfigSummary(const workspace::PersistedUserConfigState& state,

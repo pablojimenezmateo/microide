@@ -560,7 +560,7 @@ void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
 
   Expect(!WorkspaceShellTestAccess::StageGitSidebarEntry(shell, 0),
          "staging must report failure when the underlying git command cannot run");
-  const std::string feedback = WorkspaceShellTestAccess::CommandPromptStatusText(shell);
+  const std::string feedback = WorkspaceShellTestAccess::CommandFeedbackText(shell);
   Expect(feedback.find("Failed to stage") != std::string::npos,
          "a failed stage must surface feedback to the user instead of failing silently");
   Expect(feedback.find("changed.cpp") != std::string::npos,

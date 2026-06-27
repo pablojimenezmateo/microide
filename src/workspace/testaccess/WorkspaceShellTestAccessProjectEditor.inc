@@ -36,8 +36,8 @@
     }
     shell.ApplyEditorPreferences(opened_view);
     shell.ApplyDetectedIndentOnOpen(opened_view);
-    shell.context_.current_project_state.welcome_surface.viewport = opened_view;
-    shell.context_.current_project_state.open_tabs.push_back(WorkspaceShell::TabEntry{
+    shell.context_.current_project_state.focused_group().welcome_surface.viewport = opened_view;
+    shell.context_.current_project_state.focused_group().open_tabs.push_back(WorkspaceShell::TabEntry{
         .kind = WorkspaceShell::TabEntry::Kind::Editor,
         .path = path.lexically_normal(),
         .title = path.filename().string(),
@@ -46,7 +46,7 @@
         .compare = std::nullopt,
         .merge = std::nullopt,
     });
-    shell.context_.current_project_state.active_tab_index = 0;
+    shell.context_.current_project_state.focused_group().active_tab_index = 0;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
 
@@ -109,18 +109,18 @@
     return shell.ActiveEditorViewport()->SelectedText();
   }
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].compare.value();
+    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].compare.value();
   }
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge.value();
+    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge.value();
   }
   static bool ActiveMergeHasSelection(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index]
+    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index]
         .merge->result_viewport.selection_range()
         .has_value();
   }
   static std::string ActiveMergeSelectedText(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->result_viewport.SelectedText();
+    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->result_viewport.SelectedText();
   }
   static void ApplyMergeChoice(WorkspaceShell& shell, microide::compare::MergeChoice choice) {
     shell.ApplyMergeChoice(choice);
@@ -133,15 +133,15 @@
   }
   static const std::optional<WorkspaceShell::MergeHoverState>& ActiveMergeHoverState(
       const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state;
+    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state;
   }
   static bool ActiveMergeHoverIsIncomingConflict(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state.has_value() &&
-           shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state->kind ==
+    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state.has_value() &&
+           shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state->kind ==
                WorkspaceShell::MergeHoverState::Kind::IncomingConflict;
   }
   static microide::compare::MergeChoice ActiveMergeHoverPreviewChoice(const WorkspaceShell& shell) {
-    const auto& hover = shell.context_.current_project_state.open_tabs[shell.context_.current_project_state.active_tab_index].merge->hover_state;
+    const auto& hover = shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state;
     return hover.has_value() ? hover->preview_choice : microide::compare::MergeChoice::Base;
   }
   static WorkspaceLayout CurrentLayout(WorkspaceShell& shell) {
@@ -198,7 +198,7 @@
   }
   static std::optional<CompareHoverKind> ActiveCompareHoverKind(const WorkspaceShell& shell) {
     const auto& compare = shell.context_.current_project_state
-                              .open_tabs[shell.context_.current_project_state.active_tab_index]
+                              .focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index]
                               .compare;
     return compare.has_value() && compare->hover_state.has_value()
                ? std::optional<CompareHoverKind>(compare->hover_state->kind)
@@ -206,7 +206,7 @@
   }
   static std::optional<std::size_t> ActiveCompareHoverPresentationRow(const WorkspaceShell& shell) {
     const auto& compare = shell.context_.current_project_state
-                              .open_tabs[shell.context_.current_project_state.active_tab_index]
+                              .focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index]
                               .compare;
     return compare.has_value() && compare->hover_state.has_value()
                ? std::optional<std::size_t>(compare->hover_state->presentation_row)
@@ -299,13 +299,6 @@
   static void ConfirmPromptSurface(WorkspaceShell& shell, int selected_button) {
     shell.context_.prompts.surface.selected_button = selected_button;
     shell.ConfirmPromptSurface();
-  }
-  static bool SplitActiveEditor(WorkspaceShell& shell, bool vertical = true) {
-    return shell.SplitActiveEditor(vertical ? WorkspaceShell::EditorSplitOrientation::Vertical
-                                            : WorkspaceShell::EditorSplitOrientation::Horizontal);
-  }
-  static bool ActivateOrderedEditorSplit(WorkspaceShell& shell, std::size_t order_index) {
-    return shell.ActivateOrderedEditorSplit(order_index);
   }
   static bool ReplaceActiveEditorWithFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     editor::TextViewport opened_view;
@@ -465,6 +458,37 @@
   static bool OpenFileInNewTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     return shell.OpenFileInNewTab(path);
   }
+  static bool SplitEditorGroup(WorkspaceShell& shell,
+                               microide::workspace::EditorSplitOrientation orientation) {
+    return shell.SplitEditorGroup(orientation);
+  }
+  static bool FocusOtherEditorGroup(WorkspaceShell& shell) {
+    return shell.FocusOtherEditorGroup();
+  }
+  static bool CloseEditorGroup(WorkspaceShell& shell) { return shell.CloseEditorGroup(); }
+  static std::size_t EditorGroupCount(WorkspaceShell& shell) { return shell.EditorGroupCount(); }
+  static std::size_t CountOpenBufferViews(WorkspaceShell& shell,
+                                          const std::filesystem::path& path) {
+    return shell.CountOpenBufferViews(path);
+  }
+  static std::unordered_map<std::string, std::size_t> OpenBufferViewCounts(WorkspaceShell& shell) {
+    return shell.OpenBufferViewCounts();
+  }
+  static std::size_t FocusedGroupIndex(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.focused_group_index;
+  }
+  static microide::workspace::EditorSplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.group_split_orientation;
+  }
+  // The active editor viewport of group `gi` (path + scroll line live here).
+  static const editor::TextViewport& GroupActiveViewport(WorkspaceShell& shell, std::size_t gi) {
+    auto& group = shell.context_.current_project_state.editor_groups[gi];
+    return *shell.GroupActiveViewport(group);
+  }
+  static void SetGroupScrollLine(WorkspaceShell& shell, std::size_t gi, std::size_t line) {
+    auto& group = shell.context_.current_project_state.editor_groups[gi];
+    shell.GroupActiveViewport(group)->SetScrollLine(line);
+  }
   static void RegisterVirtualDocument(WorkspaceShell& shell,
                                       const microide::workspace::VirtualDocumentSpec& spec) {
     shell.virtual_document_registry_.Register(spec);
@@ -478,7 +502,7 @@
     return shell.OpenVirtualDocumentInNewTab(uri);
   }
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
-    return shell.MakeCommandPromptCoordinator().ExecuteCommandLine(command_line);
+    return shell.MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
   }
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Messages();
@@ -606,10 +630,10 @@
       return false;
     }
     auto& project = shell.context_.current_project_state;
-    if (project.active_tab_index >= project.open_tabs.size()) {
+    if (project.focused_group().active_tab_index >= project.focused_group().open_tabs.size()) {
       return false;
     }
-    TabEntry& tab = project.open_tabs[project.active_tab_index];
+    TabEntry& tab = project.focused_group().open_tabs[project.focused_group().active_tab_index];
     if (tab.kind != TabEntry::Kind::Editor) {
       return false;
     }

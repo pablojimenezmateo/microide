@@ -5,7 +5,7 @@
 #include <string_view>
 #include <vector>
 
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
@@ -167,17 +167,11 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
       TextInputCoordinator::Operations{
           .current_text_input_surface = [this]() { return CurrentTextInputSurface(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
-          .request_bottom_panel_command_redraw =
-              [this]() { RequestBottomPanelCommandRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
-          .command_prompt_append_input =
-              [this](std::string_view input) {
-                MakeCommandPromptCoordinator().AppendInput(input);
-              },
           .refresh_compare_picker = [this]() { RefreshComparePicker(); },
           .refresh_launch_config_picker = [this]() { RefreshLaunchConfigPicker(); },
           .refresh_command_palette = [this]() { RefreshCommandPalette(); },

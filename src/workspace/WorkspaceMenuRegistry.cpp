@@ -220,6 +220,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CloseTabsToRight),
       MenuItem(ActionId::CloseTabsToLeft),
       MenuSeparator(),
+      MenuItem(ActionId::SplitEditorRight, "Split Right"),
+      MenuItem(ActionId::SplitEditorDown, "Split Down"),
+      MenuSeparator(),
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),
   });
@@ -228,6 +231,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kProjectTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::ProjectClose, "Close Project"),
+      MenuSeparator(),
+      MenuItem(ActionId::ProjectCopyAbsolutePath, "Copy Absolute Path"),
   });
   static const auto kMenus = std::to_array<MenuSpec>({
       MenuSpec{MenuId::File, "File", kFileItems},
@@ -260,6 +265,8 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
   static const auto kFileItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSelectedTreeItem),
       MenuItem(ActionId::OpenSelectedTreeItemInNewTab),
+      MenuItem(ActionId::SplitEditorRight, "Split Right"),
+      MenuItem(ActionId::SplitEditorDown, "Split Down"),
       MenuSeparator(),
       MenuItem(ActionId::CompareHead),
       MenuItem(ActionId::Compare),
@@ -289,7 +296,6 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::CreateDirectory),
       MenuSeparator(),
       MenuItem(ActionId::TreeRefresh, "Refresh"),
-      MenuItem(ActionId::ProjectClose),
       MenuSeparator(),
       MenuItem(ActionId::CopyAbsolutePath),
   });

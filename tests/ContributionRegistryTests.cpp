@@ -133,13 +133,13 @@ void TestFindBuiltinKeybindingByKey() {
 }
 
 void TestFindBuiltinKeybindingByLeftCtrlKey() {
-  const auto* command_prompt_spec = FindBuiltinKeybinding("command-prompt");
-  Expect(command_prompt_spec != nullptr, "command prompt spec should exist");
-  const auto* found = FindBuiltinKeybindingByKey(command_prompt_spec->key, SDL_KMOD_LCTRL,
-                                                 KeybindingContext::Global);
-  Expect(found != nullptr, "left control should match Ctrl bindings");
-  Expect(found->id == command_prompt_spec->id,
-         "left control should resolve the command prompt shortcut");
+  const auto* palette_spec = FindBuiltinKeybinding("command-palette");
+  Expect(palette_spec != nullptr, "command palette spec should exist");
+  const auto* found = FindBuiltinKeybindingByKey(
+      palette_spec->key, SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT, KeybindingContext::Global);
+  Expect(found != nullptr, "left control/shift should match Ctrl+Shift bindings");
+  Expect(found->id == palette_spec->id,
+         "left modifiers should resolve the command palette shortcut");
 }
 
 void TestResolveKeybindingsEmpty() {
@@ -161,10 +161,11 @@ void TestResolveKeybindingsDisabled() {
 void TestResolveKeybindingsFindLeftCtrlMatch() {
   PluginHost host;
   const auto bindings = ResolveKeybindings(host);
-  const auto* found = FindKeybinding(bindings, SDLK_E, SDL_KMOD_LCTRL, KeybindingContext::Global);
-  Expect(found != nullptr, "resolved bindings should match left-control shortcuts");
-  Expect(found->id == "command-prompt",
-         "left control should resolve to the command prompt shortcut");
+  const auto* found = FindKeybinding(bindings, SDLK_P, SDL_KMOD_LCTRL | SDL_KMOD_LSHIFT,
+                                     KeybindingContext::Global);
+  Expect(found != nullptr, "resolved bindings should match left-modifier shortcuts");
+  Expect(found->id == "command-palette",
+         "left modifiers should resolve to the command palette shortcut");
 }
 
 // ---------------------------------------------------------------------------

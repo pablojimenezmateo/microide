@@ -66,23 +66,21 @@ bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
     return tab.merge->result_viewport.dirty();
   }
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-      tab.editor_state->views.empty()) {
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return false;
   }
-  return std::any_of(tab.editor_state->views.begin(), tab.editor_state->views.end(),
-                     [](const auto& view) { return view.viewport.dirty(); });
+  return tab.editor_state->viewport.dirty();
 }
 
 std::string TabCoordinator::ActiveTitle() const {
-  if (state_.active_tab_index >= state_.open_tabs.size()) {
-    return EditorTabLabel(state_.welcome_surface.viewport);
+  if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
+    return EditorTabLabel(state_.focused_group().welcome_surface.viewport);
   }
-  return state_.open_tabs[state_.active_tab_index].title;
+  return state_.focused_group().open_tabs[state_.focused_group().active_tab_index].title;
 }
 
 bool TabCoordinator::Save(std::size_t index) {
-  if (index >= state_.open_tabs.size()) {
+  if (index >= state_.focused_group().open_tabs.size()) {
     return false;
   }
 
@@ -93,9 +91,9 @@ bool TabCoordinator::Save(std::size_t index) {
     }
   };
 
-  if (state_.open_tabs[index].kind == TabEntry::Kind::Compare &&
-      state_.open_tabs[index].compare.has_value()) {
-    auto& compare_tab = state_.open_tabs[index].compare.value();
+  if (state_.focused_group().open_tabs[index].kind == TabEntry::Kind::Compare &&
+      state_.focused_group().open_tabs[index].compare.has_value()) {
+    auto& compare_tab = state_.focused_group().open_tabs[index].compare.value();
     if (!compare_tab.right_editable || !compare_tab.right_viewport.dirty()) {
       return true;
     }
@@ -118,9 +116,9 @@ bool TabCoordinator::Save(std::size_t index) {
     return true;
   }
 
-  if (state_.open_tabs[index].kind == TabEntry::Kind::Merge &&
-      state_.open_tabs[index].merge.has_value()) {
-    auto& merge_tab = state_.open_tabs[index].merge.value();
+  if (state_.focused_group().open_tabs[index].kind == TabEntry::Kind::Merge &&
+      state_.focused_group().open_tabs[index].merge.has_value()) {
+    auto& merge_tab = state_.focused_group().open_tabs[index].merge.value();
     if (!merge_tab.result_viewport.dirty()) {
       return true;
     }
@@ -145,75 +143,59 @@ bool TabCoordinator::Save(std::size_t index) {
     return true;
   }
 
-  if (state_.open_tabs[index].kind != TabEntry::Kind::Editor) {
+  if (state_.focused_group().open_tabs[index].kind != TabEntry::Kind::Editor) {
     return false;
   }
 
-  auto& editor_state = state_.open_tabs[index].editor_state;
-  if (!editor_state.has_value() || editor_state->views.empty()) {
+  auto& editor_state = state_.focused_group().open_tabs[index].editor_state;
+  if (!editor_state.has_value()) {
     return false;
   }
 
-  bool attempted_save = false;
-  std::set<std::filesystem::path> open_paths;
-  std::vector<std::filesystem::path> saved_paths;
-  for (auto& view : editor_state->views) {
-    editor::TextViewport* candidate = &view.viewport;
-    if (candidate->path().empty()) {
-      if (candidate->dirty()) {
-        return false;
-      }
-      continue;
-    }
-    open_paths.insert(candidate->path().lexically_normal());
-    if (!candidate->dirty()) {
-      continue;
-    }
-    // Refuse to overwrite a file that changed on disk since we loaded/last saved
-    // it. Surface the external-change banner instead so the user can choose to
-    // Reload, Overwrite, or Keep. Checked before formatters run so we don't
-    // mutate the buffer for a save we're about to abort.
-    if (candidate->DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
-      if (operations_.request_external_change_banner) {
-        operations_.request_external_change_banner(candidate->path().lexically_normal());
-      }
-      return false;
-    }
-    if (operations_.prepare_editor_view_for_save &&
-        !operations_.prepare_editor_view_for_save(candidate->path(), *candidate, nullptr)) {
-      return false;
-    }
-    if (!candidate->Save()) {
-      if (operations_.notify_save_failed) {
-        operations_.notify_save_failed(candidate->path());
-      }
-      return false;
-    }
-    attempted_save = true;
-    saved_paths.push_back(candidate->path().lexically_normal());
+  editor::TextViewport* candidate = &editor_state->viewport;
+  if (candidate->path().empty()) {
+    // Untitled buffers cannot be saved through this path; refuse if dirty.
+    return !candidate->dirty();
   }
-  if (attempted_save) {
-    for (const auto& path : saved_paths) {
-      operations_.invalidate_editor_blame_path(path);
-      operations_.notify_plugin_buffer_save(path);
-    }
-    refresh_directory_tree();
+  const std::filesystem::path normalized_path = candidate->path().lexically_normal();
+  if (!candidate->dirty()) {
+    operations_.notify_plugin_buffer_save(normalized_path);
     return true;
   }
-  for (const auto& path : open_paths) {
-    operations_.notify_plugin_buffer_save(path);
+  // Refuse to overwrite a file that changed on disk since we loaded/last saved
+  // it. Surface the external-change banner instead so the user can choose to
+  // Reload, Overwrite, or Keep. Checked before formatters run so we don't
+  // mutate the buffer for a save we're about to abort.
+  if (candidate->DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
+    if (operations_.request_external_change_banner) {
+      operations_.request_external_change_banner(normalized_path);
+    }
+    return false;
   }
-  return !editor_state->views.empty();
+  if (operations_.prepare_editor_view_for_save &&
+      !operations_.prepare_editor_view_for_save(candidate->path(), *candidate, nullptr)) {
+    return false;
+  }
+  if (!candidate->Save()) {
+    if (operations_.notify_save_failed) {
+      operations_.notify_save_failed(candidate->path());
+    }
+    return false;
+  }
+  operations_.invalidate_editor_blame_path(normalized_path);
+  operations_.notify_plugin_buffer_save(normalized_path);
+  refresh_directory_tree();
+  return true;
 }
 
 bool TabCoordinator::IsDirty(std::size_t index) const {
-  return index < state_.open_tabs.size() && TabStateIsDirty(state_.open_tabs[index]);
+  return index < state_.focused_group().open_tabs.size() && TabStateIsDirty(state_.focused_group().open_tabs[index]);
 }
 
 std::vector<std::size_t> TabCoordinator::DirtyIndices() const {
   std::vector<std::size_t> dirty_tabs;
-  dirty_tabs.reserve(state_.open_tabs.size());
-  for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
+  dirty_tabs.reserve(state_.focused_group().open_tabs.size());
+  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
     if (IsDirty(i)) {
       dirty_tabs.push_back(i);
     }
@@ -233,9 +215,9 @@ std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t proj
     return {};
   }
   std::vector<std::size_t> dirty_tabs;
-  dirty_tabs.reserve(project_state->open_tabs.size());
-  for (std::size_t i = 0; i < project_state->open_tabs.size(); ++i) {
-    if (TabStateIsDirty(project_state->open_tabs[i])) {
+  dirty_tabs.reserve(project_state->focused_group().open_tabs.size());
+  for (std::size_t i = 0; i < project_state->focused_group().open_tabs.size(); ++i) {
+    if (TabStateIsDirty(project_state->focused_group().open_tabs[i])) {
       dirty_tabs.push_back(i);
     }
   }
@@ -243,83 +225,73 @@ std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t proj
 }
 
 bool TabCoordinator::ActiveTabIsEditor() const {
-  return state_.active_tab_index < state_.open_tabs.size() &&
-         state_.open_tabs[state_.active_tab_index].kind == TabEntry::Kind::Editor &&
-         state_.open_tabs[state_.active_tab_index].editor_state.has_value();
+  const EditorGroup& group = state_.focused_group();
+  return group.has_active_tab() && group.active_tab().kind == TabEntry::Kind::Editor &&
+         group.active_tab().editor_state.has_value();
 }
 
 TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
   if (!ActiveTabIsEditor()) {
     return nullptr;
   }
-  return &state_.open_tabs[state_.active_tab_index].editor_state.value();
+  return &state_.focused_group().open_tabs[state_.focused_group().active_tab_index].editor_state.value();
 }
 
 const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {
   if (!ActiveTabIsEditor()) {
     return nullptr;
   }
-  return &state_.open_tabs[state_.active_tab_index].editor_state.value();
+  return &state_.focused_group().open_tabs[state_.focused_group().active_tab_index].editor_state.value();
 }
 
 editor::TextViewport* TabCoordinator::ActiveEditorViewport() {
   auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.empty()) {
-    return &state_.welcome_surface.viewport;
+  if (editor_tab == nullptr) {
+    return &state_.focused_group().welcome_surface.viewport;
   }
-  if (auto* viewport = operations_.find_editor_view(*editor_tab, editor_tab->active_leaf_id);
-      viewport != nullptr) {
-    return viewport;
-  }
-  return &editor_tab->views.front().viewport;
+  return &editor_tab->viewport;
 }
 
 const editor::TextViewport* TabCoordinator::ActiveEditorViewport() const {
   const auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.empty()) {
-    return &state_.welcome_surface.viewport;
+  if (editor_tab == nullptr) {
+    return &state_.focused_group().welcome_surface.viewport;
   }
-  const auto it =
-      std::find_if(editor_tab->views.begin(), editor_tab->views.end(), [&](const auto& view) {
-        return view.leaf_id == editor_tab->active_leaf_id;
-      });
-  if (it != editor_tab->views.end()) {
-    return &it->viewport;
-  }
-  return &editor_tab->views.front().viewport;
+  return &editor_tab->viewport;
 }
 
 void TabCoordinator::Activate(std::size_t index) {
-  if (index >= state_.open_tabs.size()) {
+  if (index >= state_.focused_group().open_tabs.size()) {
     return;
   }
   std::string perf_label = "TabCoordinator::Activate";
   if (util::PerformanceTrace::Enabled()) {
     perf_label += "(index=" + std::to_string(index);
-    if (!state_.open_tabs[index].path.empty()) {
-      perf_label += ",path=" + state_.open_tabs[index].path.string();
+    if (!state_.focused_group().open_tabs[index].path.empty()) {
+      perf_label += ",path=" + state_.focused_group().open_tabs[index].path.string();
     }
     perf_label += ")";
   }
   util::StartupTrace::Scope trace_scope("TabCoordinator::Activate");
   util::PerformanceTrace::Scope perf_scope(perf_label);
 
-  if (state_.active_tab_index == index) {
-    auto& active_tab = state_.open_tabs[index];
+  if (state_.focused_group().active_tab_index == index) {
+    auto& active_tab = state_.focused_group().open_tabs[index];
     SyncActiveEditorTabMetadata();
     state_.surface.focus = FocusTarget::Editor;
     operations_.reset_caret_blink();
-    operations_.request_active_tab_redraw(
-        active_tab.kind == TabEntry::Kind::Editor && !state_.welcome_surface.viewport.path().empty());
+    const editor::TextViewport* active_vp = ActiveEditorViewport();
+    operations_.request_active_tab_redraw(active_tab.kind == TabEntry::Kind::Editor &&
+                                          active_vp != nullptr && !active_vp->path().empty());
     return;
   }
 
-  if (state_.active_tab_index < state_.open_tabs.size() && state_.active_tab_index != index) {
+  if (state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() && state_.focused_group().active_tab_index != index) {
     SyncActiveEditorTab();
   }
 
-  state_.active_tab_index = index;
-  auto& tab = state_.open_tabs[index];
+  state_.focused_group().active_tab_index = index;
+  auto& tab = state_.focused_group().open_tabs[index];
   // Editor loading is best-effort: if the file disappeared while the IDE was
   // closed, we still want the tab strip + project tree to reflect this tab as
   // the active one (otherwise the activation looks like a no-op to the user).
@@ -329,21 +301,11 @@ void TabCoordinator::Activate(std::size_t index) {
     if (tab.kind != TabEntry::Kind::Editor) {
       return true;
     }
-    if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
+    if (tab.editor_state.has_value()) {
       if (!EnsureEditorTabLoaded(tab)) {
         return false;
       }
-      operations_.normalize_editor_split_tree(*tab.editor_state);
-      editor::TextViewport* active_view =
-          operations_.find_editor_view(*tab.editor_state, tab.editor_state->active_leaf_id);
-      if (active_view == nullptr && !tab.editor_state->views.empty()) {
-        tab.editor_state->active_leaf_id = tab.editor_state->views.front().leaf_id;
-        active_view = &tab.editor_state->views.front().viewport;
-      }
-      if (active_view != nullptr) {
-        state_.welcome_surface.viewport = *active_view;
-        operations_.apply_editor_preferences(state_.welcome_surface.viewport);
-      }
+      operations_.apply_editor_preferences(tab.editor_state->viewport);
       return true;
     }
     if (tab.deferred_handle.has_value()) {
@@ -363,7 +325,6 @@ void TabCoordinator::Activate(std::size_t index) {
         loaded_view.MoveCursorTo(selection.start.line, selection.start.column);
         loaded_view.MoveCursorTo(selection.end.line, selection.end.column, true);
       }
-      state_.welcome_surface.viewport = loaded_view;
       tab.editor_state = operations_.make_editor_tab_state(loaded_view);
       tab.deferred_handle.reset();
       return true;
@@ -374,97 +335,103 @@ void TabCoordinator::Activate(std::size_t index) {
     }
     operations_.apply_editor_preferences(loaded_view);
     operations_.apply_detected_indent_on_open(loaded_view);
-    state_.welcome_surface.viewport = loaded_view;
     tab.editor_state = operations_.make_editor_tab_state(loaded_view);
     return true;
   };
   (void)attempt_editor_load();
   SyncActiveEditorTabMetadata();
+  const editor::TextViewport* active_vp =
+      (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value())
+          ? &tab.editor_state->viewport
+          : nullptr;
+  const std::filesystem::path active_vp_path =
+      active_vp != nullptr ? active_vp->path().lexically_normal() : std::filesystem::path{};
   if (tab.kind == TabEntry::Kind::Compare) {
     operations_.reveal_active_compare_selection();
   } else if (tab.kind == TabEntry::Kind::Merge) {
     operations_.reveal_active_merge_selection();
-  } else if (tab.kind == TabEntry::Kind::Editor && !state_.welcome_surface.viewport.path().empty()) {
+  } else if (tab.kind == TabEntry::Kind::Editor && !active_vp_path.empty()) {
     util::StartupTrace::Scope select_path_scope("TabCoordinator::Activate::SelectDirectoryPath");
-    if (state_.directory_tree.SelectPathIfVisible(
-            state_.welcome_surface.viewport.path().lexically_normal())) {
+    if (state_.directory_tree.SelectPathIfVisible(active_vp_path)) {
       operations_.reveal_selected_tree_sidebar_line();
     }
   }
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
-  operations_.request_active_tab_redraw(
-      tab.kind == TabEntry::Kind::Editor && !state_.welcome_surface.viewport.path().empty());
+  operations_.request_active_tab_redraw(tab.kind == TabEntry::Kind::Editor &&
+                                        !active_vp_path.empty());
 }
 
 void TabCoordinator::SyncActiveEditorTab() {
-  if (state_.active_tab_index >= state_.open_tabs.size()) {
+  if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
     return;
   }
 
-  auto& tab = state_.open_tabs[state_.active_tab_index];
+  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return;
   }
 
-  if (tab.editor_state->views.empty()) {
-    tab.editor_state = operations_.make_editor_tab_state(state_.welcome_surface.viewport);
+  auto& editor_state = *tab.editor_state;
+  if (editor_state.needs_restore) {
+    tab.path = operations_.editor_view_path(editor_state);
+    tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
     return;
   }
-
-  operations_.normalize_editor_split_tree(*tab.editor_state);
-  auto* active_view_state =
-      FindEditorViewState(*tab.editor_state, tab.editor_state->active_leaf_id);
-  if (active_view_state != nullptr) {
-    if (active_view_state->needs_restore) {
-      tab.path = operations_.editor_view_path(*active_view_state);
-      tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
-      return;
-    }
-    active_view_state->restored_path = active_view_state->viewport.path().lexically_normal();
-    active_view_state->restored_cursor_line = active_view_state->viewport.cursor_line();
-    active_view_state->restored_cursor_column = active_view_state->viewport.cursor_column();
-    active_view_state->restored_scroll_line = active_view_state->viewport.scroll_line();
-    active_view_state->restored_horizontal_scroll = active_view_state->viewport.horizontal_scroll();
-    active_view_state->needs_restore = false;
-  }
-  if (state_.active_tab_index < state_.open_tabs.size() &&
-      &tab == &state_.open_tabs[state_.active_tab_index]) {
+  editor_state.restored_path = editor_state.viewport.path().lexically_normal();
+  editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
+  editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
+  editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
+  editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
+  if (state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
+      &tab == &state_.focused_group().open_tabs[state_.focused_group().active_tab_index]) {
     SyncActiveEditorTabMetadata();
   }
 }
 
 bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
-  if (state_.open_tabs.empty()) {
+  // Eagerly hydrate the active editor tab of every non-focused group so a restored
+  // split shows content in both panes, not just the focused one. The focused group
+  // is hydrated below via Activate().
+  for (std::size_t gi = 0; gi < state_.editor_groups.size(); ++gi) {
+    if (gi == state_.focused_group_index) {
+      continue;
+    }
+    EditorGroup& group = state_.editor_groups[gi];
+    if (group.active_tab_index >= group.open_tabs.size()) {
+      continue;
+    }
+    TabEntry& tab = group.open_tabs[group.active_tab_index];
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+        EnsureEditorTabLoaded(tab)) {
+      operations_.apply_editor_preferences(tab.editor_state->viewport);
+    }
+  }
+
+  if (state_.focused_group().open_tabs.empty()) {
     return true;
   }
 
-  const std::size_t active_index = std::min(state_.active_tab_index, state_.open_tabs.size() - 1);
-  state_.active_tab_index = state_.open_tabs.size();
+  const std::size_t active_index = std::min(state_.focused_group().active_tab_index, state_.focused_group().open_tabs.size() - 1);
+  state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size();
   Activate(active_index);
-  return state_.active_tab_index == active_index;
+  return state_.focused_group().active_tab_index == active_index;
 }
 
 void TabCoordinator::SyncActiveEditorTabMetadata() {
-  if (state_.active_tab_index >= state_.open_tabs.size()) {
+  if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
     return;
   }
 
-  auto& tab = state_.open_tabs[state_.active_tab_index];
+  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
   if (tab.kind != TabEntry::Kind::Editor) {
     return;
   }
 
-  const editor::TextViewport* viewport = nullptr;
-  if (tab.editor_state.has_value() && !tab.editor_state->views.empty()) {
-    viewport = operations_.find_editor_view(*tab.editor_state, tab.editor_state->active_leaf_id);
-    if (viewport == nullptr) {
-      viewport = &tab.editor_state->views.front().viewport;
-    }
-  } else {
-    viewport = &state_.welcome_surface.viewport;
-  }
+  const editor::TextViewport* viewport = tab.editor_state.has_value()
+                                             ? &tab.editor_state->viewport
+                                             : &state_.focused_group().welcome_surface.viewport;
 
   const std::filesystem::path active_path =
       viewport != nullptr ? viewport->path().lexically_normal() : std::filesystem::path{};
@@ -484,17 +451,13 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
   operations_.invalidate_editor_blame_path(normalized_path);
 
   std::vector<std::size_t> matching_clean_tab_indices;
-  matching_clean_tab_indices.reserve(state_.open_tabs.size());
-  for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
-    auto& tab = state_.open_tabs[i];
+  matching_clean_tab_indices.reserve(state_.focused_group().open_tabs.size());
+  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
+    auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || IsDirty(i)) {
       continue;
     }
-    const bool has_matching_view = std::any_of(
-        tab.editor_state->views.begin(), tab.editor_state->views.end(), [&](const auto& view) {
-          return operations_.editor_view_path(view) == normalized_path;
-        });
-    if (has_matching_view) {
+    if (operations_.editor_view_path(*tab.editor_state) == normalized_path) {
       matching_clean_tab_indices.push_back(i);
     }
   }
@@ -510,36 +473,24 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
   operations_.apply_detected_indent_on_open(reopened_view);
 
   for (std::size_t i : matching_clean_tab_indices) {
-    auto& tab = state_.open_tabs[i];
-
-    bool reloaded_any = false;
-    for (auto& view : tab.editor_state->views) {
-      const std::filesystem::path current_path = operations_.editor_view_path(view);
-      if (current_path != normalized_path) {
-        continue;
-      }
-      const editor::TextViewport* current_view = &view.viewport;
-      editor::TextViewport restored_view = reopened_view;
-      restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
-      restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
-      restored_view.SetScrollLine(current_view->scroll_line());
-      restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
-      view.viewport = restored_view;
-      view.restored_path = normalized_path;
-      view.restored_cursor_line = restored_view.cursor_line();
-      view.restored_cursor_column = restored_view.cursor_column();
-      view.restored_scroll_line = restored_view.scroll_line();
-      view.restored_horizontal_scroll = restored_view.horizontal_scroll();
-      view.needs_restore = false;
-      reloaded_any = true;
-    }
-    if (reloaded_any && i == state_.active_tab_index) {
-      tab.editor_state->folding_model->Clear();
-      operations_.normalize_editor_split_tree(*tab.editor_state);
+    auto& editor_state = *state_.focused_group().open_tabs[i].editor_state;
+    const editor::TextViewport* current_view = &editor_state.viewport;
+    editor::TextViewport restored_view = reopened_view;
+    restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
+    restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
+    restored_view.SetScrollLine(current_view->scroll_line());
+    restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
+    editor_state.viewport = restored_view;
+    editor_state.restored_path = normalized_path;
+    editor_state.restored_cursor_line = restored_view.cursor_line();
+    editor_state.restored_cursor_column = restored_view.cursor_column();
+    editor_state.restored_scroll_line = restored_view.scroll_line();
+    editor_state.restored_horizontal_scroll = restored_view.horizontal_scroll();
+    editor_state.needs_restore = false;
+    editor_state.folding_model->Clear();
+    if (i == state_.focused_group().active_tab_index) {
       SyncActiveEditorTabMetadata();
       operations_.request_editor_surface_redraw();
-    } else if (reloaded_any) {
-      tab.editor_state->folding_model->Clear();
     }
   }
 }
@@ -549,17 +500,13 @@ void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path
   operations_.invalidate_editor_blame_path(normalized_path);
 
   std::vector<std::size_t> matching_tab_indices;
-  matching_tab_indices.reserve(state_.open_tabs.size());
-  for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
-    const auto& tab = state_.open_tabs[i];
+  matching_tab_indices.reserve(state_.focused_group().open_tabs.size());
+  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
+    const auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
       continue;
     }
-    const bool has_matching_view = std::any_of(
-        tab.editor_state->views.begin(), tab.editor_state->views.end(), [&](const auto& view) {
-          return operations_.editor_view_path(view) == normalized_path;
-        });
-    if (has_matching_view) {
+    if (operations_.editor_view_path(*tab.editor_state) == normalized_path) {
       matching_tab_indices.push_back(i);
     }
   }
@@ -575,35 +522,24 @@ void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path
   operations_.apply_detected_indent_on_open(reopened_view);
 
   for (std::size_t i : matching_tab_indices) {
-    auto& tab = state_.open_tabs[i];
-    bool reloaded_any = false;
-    for (auto& view : tab.editor_state->views) {
-      const std::filesystem::path current_path = operations_.editor_view_path(view);
-      if (current_path != normalized_path) {
-        continue;
-      }
-      const editor::TextViewport* current_view = &view.viewport;
-      editor::TextViewport restored_view = reopened_view;
-      restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
-      restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
-      restored_view.SetScrollLine(current_view->scroll_line());
-      restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
-      view.viewport = restored_view;
-      view.restored_path = normalized_path;
-      view.restored_cursor_line = restored_view.cursor_line();
-      view.restored_cursor_column = restored_view.cursor_column();
-      view.restored_scroll_line = restored_view.scroll_line();
-      view.restored_horizontal_scroll = restored_view.horizontal_scroll();
-      view.needs_restore = false;
-      reloaded_any = true;
-    }
-    if (reloaded_any && i == state_.active_tab_index) {
-      tab.editor_state->folding_model->Clear();
-      operations_.normalize_editor_split_tree(*tab.editor_state);
+    auto& editor_state = *state_.focused_group().open_tabs[i].editor_state;
+    const editor::TextViewport* current_view = &editor_state.viewport;
+    editor::TextViewport restored_view = reopened_view;
+    restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
+    restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
+    restored_view.SetScrollLine(current_view->scroll_line());
+    restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
+    editor_state.viewport = restored_view;
+    editor_state.restored_path = normalized_path;
+    editor_state.restored_cursor_line = restored_view.cursor_line();
+    editor_state.restored_cursor_column = restored_view.cursor_column();
+    editor_state.restored_scroll_line = restored_view.scroll_line();
+    editor_state.restored_horizontal_scroll = restored_view.horizontal_scroll();
+    editor_state.needs_restore = false;
+    editor_state.folding_model->Clear();
+    if (i == state_.focused_group().active_tab_index) {
       SyncActiveEditorTabMetadata();
       operations_.request_editor_surface_redraw();
-    } else if (reloaded_any) {
-      tab.editor_state->folding_model->Clear();
     }
   }
 }
@@ -616,9 +552,8 @@ bool TabCoordinator::OpenUntitled() {
   editor::TextViewport untitled_view;
   untitled_view.SetUntitledBuffer();
   operations_.apply_editor_preferences(untitled_view);
-  state_.welcome_surface.viewport = untitled_view;
 
-  state_.open_tabs.push_back(TabEntry{
+  state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = {},
       .title = "untitled",
@@ -627,7 +562,7 @@ bool TabCoordinator::OpenUntitled() {
       .compare = std::nullopt,
       .merge = std::nullopt,
   });
-  state_.active_tab_index = state_.open_tabs.size() - 1;
+  state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size() - 1;
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
@@ -645,7 +580,7 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   }
   const std::filesystem::path normalized_path = path.lexically_normal();
 
-  auto existing = std::find_if(state_.open_tabs.begin(), state_.open_tabs.end(),
+  auto existing = std::find_if(state_.focused_group().open_tabs.begin(), state_.focused_group().open_tabs.end(),
                                [&](const TabEntry& tab) {
                                  return tab.kind == TabEntry::Kind::Editor &&
                                         tab.path == normalized_path;
@@ -659,9 +594,9 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
     }
   }
 
-  if (existing != state_.open_tabs.end()) {
+  if (existing != state_.focused_group().open_tabs.end()) {
     const std::size_t existing_index =
-        static_cast<std::size_t>(std::distance(state_.open_tabs.begin(), existing));
+        static_cast<std::size_t>(std::distance(state_.focused_group().open_tabs.begin(), existing));
     if (!IsDirty(existing_index)) {
       ReloadCleanEditorTabsForPath(normalized_path);
     }
@@ -678,9 +613,8 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   }
   operations_.apply_editor_preferences(opened_view);
   operations_.apply_detected_indent_on_open(opened_view);
-  state_.welcome_surface.viewport = opened_view;
 
-  state_.open_tabs.push_back(TabEntry{
+  state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = normalized_path,
       .title = normalized_path.filename().string(),
@@ -689,7 +623,7 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
       .compare = std::nullopt,
       .merge = std::nullopt,
   });
-  state_.active_tab_index = state_.open_tabs.size() - 1;
+  state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size() - 1;
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
@@ -704,21 +638,17 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
     return false;
   }
 
-  auto existing = std::find_if(state_.open_tabs.begin(), state_.open_tabs.end(),
+  auto existing = std::find_if(state_.focused_group().open_tabs.begin(), state_.focused_group().open_tabs.end(),
                                [&](const TabEntry& tab) {
                                  return tab.kind == TabEntry::Kind::Editor &&
                                         tab.path == virtual_path;
                                });
-  if (existing != state_.open_tabs.end()) {
+  if (existing != state_.focused_group().open_tabs.end()) {
     const std::size_t index =
-        static_cast<std::size_t>(std::distance(state_.open_tabs.begin(), existing));
-    if (!IsDirty(index) && existing->editor_state.has_value()) {
-      for (auto& view : existing->editor_state->views) {
-        if (operations_.editor_view_path(view) != virtual_path) {
-          continue;
-        }
-        RestoreViewportText(view.viewport, content);
-      }
+        static_cast<std::size_t>(std::distance(state_.focused_group().open_tabs.begin(), existing));
+    if (!IsDirty(index) && existing->editor_state.has_value() &&
+        operations_.editor_view_path(*existing->editor_state) == virtual_path) {
+      RestoreViewportText(existing->editor_state->viewport, content);
     }
     Activate(index);
     return true;
@@ -728,9 +658,8 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
   viewport.LoadContent(content, virtual_path);
   operations_.apply_editor_preferences(viewport);
   operations_.apply_detected_indent_on_open(viewport);
-  state_.welcome_surface.viewport = viewport;
 
-  state_.open_tabs.push_back(TabEntry{
+  state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = virtual_path,
       .title = std::string(title),
@@ -739,7 +668,7 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
       .compare = std::nullopt,
       .merge = std::nullopt,
   });
-  state_.active_tab_index = state_.open_tabs.size() - 1;
+  state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size() - 1;
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
@@ -753,38 +682,21 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
   }
 
   bool reloaded_any = false;
-  for (std::size_t i = 0; i < state_.open_tabs.size(); ++i) {
-    auto& tab = state_.open_tabs[i];
+  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
+    auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() || IsDirty(i)) {
       continue;
     }
 
-    bool reloaded_tab = false;
-    for (auto& view : tab.editor_state->views) {
-      if (operations_.editor_view_path(view) != virtual_path) {
-        continue;
-      }
-      RestoreViewportText(view.viewport, content);
-      reloaded_tab = true;
-    }
-    if (!reloaded_tab) {
+    if (operations_.editor_view_path(*tab.editor_state) != virtual_path) {
       continue;
     }
-
+    RestoreViewportText(tab.editor_state->viewport, content);
     reloaded_any = true;
-    if (i != state_.active_tab_index) {
+    if (i != state_.focused_group().active_tab_index) {
       continue;
     }
-    operations_.normalize_editor_split_tree(*tab.editor_state);
-    auto active_view = std::find_if(tab.editor_state->views.begin(), tab.editor_state->views.end(),
-                                    [&](const auto& view) {
-                                      return view.leaf_id == tab.editor_state->active_leaf_id;
-                                    });
-    if (active_view == tab.editor_state->views.end()) {
-      continue;
-    }
-    state_.welcome_surface.viewport = active_view->viewport;
-    operations_.apply_editor_preferences(state_.welcome_surface.viewport);
+    operations_.apply_editor_preferences(tab.editor_state->viewport);
   }
 
   if (reloaded_any) {
@@ -792,22 +704,20 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
   }
 }
 void TabCoordinator::Close(std::size_t index) {
-  if (index >= state_.open_tabs.size()) {
+  if (index >= state_.focused_group().open_tabs.size()) {
     return;
   }
-  const bool closing_active = index == state_.active_tab_index;
-  const TabEntry& closing_tab = state_.open_tabs[index];
+  const bool closing_active = index == state_.focused_group().active_tab_index;
+  const TabEntry& closing_tab = state_.focused_group().open_tabs[index];
 
-  if (state_.active_tab_index < state_.open_tabs.size() && index != state_.active_tab_index) {
+  if (state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() && index != state_.focused_group().active_tab_index) {
     SyncActiveEditorTab();
   }
 
   if (closing_tab.kind == TabEntry::Kind::Editor && closing_tab.editor_state.has_value()) {
-    for (const auto& view : closing_tab.editor_state->views) {
-      const std::filesystem::path path = operations_.editor_view_path(view);
-      if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
-        operations_.notify_lsp_buffer_close(path);
-      }
+    const std::filesystem::path path = operations_.editor_view_path(*closing_tab.editor_state);
+    if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
+      operations_.notify_lsp_buffer_close(path);
     }
   } else if (closing_tab.kind == TabEntry::Kind::Compare && closing_tab.compare.has_value()) {
     const auto& compare_tab = *closing_tab.compare;
@@ -823,12 +733,21 @@ void TabCoordinator::Close(std::size_t index) {
     }
   }
 
-  state_.open_tabs.erase(state_.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
+  state_.focused_group().open_tabs.erase(state_.focused_group().open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
 
-  if (state_.open_tabs.empty()) {
-    state_.active_tab_index = 0;
-    state_.tab_scroll_index = 0;
-    state_.welcome_surface.viewport.SetPlaceholderText("microide\n\n"
+  if (state_.focused_group().open_tabs.empty()) {
+    // Closing the last tab of a split group collapses that group; the surviving
+    // group takes the full editor area.
+    if (state_.editor_groups.size() >= 2) {
+      CollapseFocusedGroup();
+      const editor::TextViewport* active_vp = ActiveEditorViewport();
+      operations_.ensure_active_tab_visible();
+      operations_.request_active_tab_redraw(active_vp != nullptr && !active_vp->path().empty());
+      return;
+    }
+    state_.focused_group().active_tab_index = 0;
+    state_.focused_group().tab_scroll_index = 0;
+    state_.focused_group().welcome_surface.viewport.SetPlaceholderText("microide\n\n"
                                             "Project loaded.\n"
                                             "Use the sidebar to open files.\n");
     state_.surface.focus = FocusTarget::Editor;
@@ -836,28 +755,20 @@ void TabCoordinator::Close(std::size_t index) {
     return;
   }
 
-  if (index < state_.active_tab_index) {
-    --state_.active_tab_index;
-  } else if (index == state_.active_tab_index) {
-    state_.active_tab_index = std::min(index, state_.open_tabs.size() - 1);
-    auto& tab = state_.open_tabs[state_.active_tab_index];
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-        !tab.editor_state->views.empty()) {
+  if (index < state_.focused_group().active_tab_index) {
+    --state_.focused_group().active_tab_index;
+  } else if (index == state_.focused_group().active_tab_index) {
+    state_.focused_group().active_tab_index = std::min(index, state_.focused_group().open_tabs.size() - 1);
+    auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       if (EnsureEditorTabLoaded(tab)) {
-        operations_.normalize_editor_split_tree(*tab.editor_state);
-        if (auto* active_view =
-                operations_.find_editor_view(*tab.editor_state, tab.editor_state->active_leaf_id);
-            active_view != nullptr) {
-          state_.welcome_surface.viewport = *active_view;
-          operations_.apply_editor_preferences(state_.welcome_surface.viewport);
-        }
+        operations_.apply_editor_preferences(tab.editor_state->viewport);
       }
     } else if (tab.kind == TabEntry::Kind::Editor) {
       editor::TextViewport loaded_view;
       if (loaded_view.OpenFile(tab.path)) {
         operations_.apply_editor_preferences(loaded_view);
         operations_.apply_detected_indent_on_open(loaded_view);
-        state_.welcome_surface.viewport = loaded_view;
         tab.editor_state = operations_.make_editor_tab_state(loaded_view);
       }
     }
@@ -868,22 +779,145 @@ void TabCoordinator::Close(std::size_t index) {
     state_.surface.focus = FocusTarget::Editor;
   }
 
-  state_.tab_scroll_index = std::clamp(state_.tab_scroll_index, 0,
-                                       std::max(0, static_cast<int>(state_.open_tabs.size()) - 1));
+  state_.focused_group().tab_scroll_index = std::clamp(state_.focused_group().tab_scroll_index, 0,
+                                       std::max(0, static_cast<int>(state_.focused_group().open_tabs.size()) - 1));
   operations_.ensure_active_tab_visible();
   if (closing_active) {
-    operations_.request_active_tab_redraw(!state_.welcome_surface.viewport.path().empty());
+    const editor::TextViewport* active_vp = ActiveEditorViewport();
+    operations_.request_active_tab_redraw(active_vp != nullptr && !active_vp->path().empty());
   } else {
     operations_.request_tab_strip_redraw();
   }
 }
 bool TabCoordinator::MoveActiveTo(std::size_t index) {
-  if (!ReorderActive(state_.open_tabs, state_.active_tab_index, index)) {
+  if (!ReorderActive(state_.focused_group().open_tabs, state_.focused_group().active_tab_index, index)) {
     return false;
   }
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.request_tab_strip_redraw();
+  return true;
+}
+
+TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
+  TabEntry clone;
+  clone.kind = TabEntry::Kind::Editor;
+  clone.path = tab.path;
+  clone.title = tab.title;
+  if (tab.editor_state.has_value()) {
+    TabEntry::EditorTabState editor_state;
+    // Copying the viewport shares the underlying DocumentState (live shared
+    // buffer) while keeping an independent scroll/cursor/selection. The folding
+    // model is non-copyable and view-local, so the clone gets a fresh one.
+    editor_state.viewport = tab.editor_state->viewport;
+    editor_state.restored_path = tab.editor_state->restored_path;
+    editor_state.restored_cursor_line = tab.editor_state->restored_cursor_line;
+    editor_state.restored_cursor_column = tab.editor_state->restored_cursor_column;
+    editor_state.restored_scroll_line = tab.editor_state->restored_scroll_line;
+    editor_state.restored_horizontal_scroll = tab.editor_state->restored_horizontal_scroll;
+    editor_state.needs_restore = tab.editor_state->needs_restore;
+    editor_state.snippet_session = tab.editor_state->snippet_session;
+    clone.editor_state = std::move(editor_state);
+  } else if (tab.deferred_handle.has_value()) {
+    clone.deferred_handle = tab.deferred_handle;
+  }
+  return clone;
+}
+
+bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
+  if (orientation == EditorSplitOrientation::None || state_.editor_groups.empty()) {
+    return false;
+  }
+
+  // With two groups already open, just retarget the divider orientation and move
+  // focus to the other group (capped at two groups).
+  if (state_.editor_groups.size() >= 2) {
+    state_.group_split_orientation = orientation;
+    state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
+    state_.surface.focus = FocusTarget::Editor;
+    RefreshFocusedGroupActiveTab(true);
+    return true;
+  }
+
+  EditorGroup& source = state_.focused_group();
+  if (source.active_tab_index >= source.open_tabs.size()) {
+    return false;
+  }
+  const TabEntry& active = source.open_tabs[source.active_tab_index];
+  if (active.kind != TabEntry::Kind::Editor || !active.editor_state.has_value()) {
+    return false;
+  }
+  // Capture fresh scroll/cursor into the source tab before cloning so the new
+  // group starts at the same view position.
+  SyncActiveEditorTabMetadata();
+
+  EditorGroup new_group;
+  new_group.open_tabs.push_back(CloneEditorTabForSplit(active));
+  new_group.active_tab_index = 0;
+  state_.editor_groups.push_back(std::move(new_group));
+  state_.group_split_orientation = orientation;
+  state_.group_split_fraction = 0.5f;
+  state_.focused_group_index = state_.editor_groups.size() - 1;
+  state_.surface.focus = FocusTarget::Editor;
+  RefreshFocusedGroupActiveTab(true);
+  return true;
+}
+
+bool TabCoordinator::FocusOtherGroup() {
+  if (state_.editor_groups.size() < 2) {
+    return false;
+  }
+  state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
+  state_.surface.focus = FocusTarget::Editor;
+  RefreshFocusedGroupActiveTab(true);
+  return true;
+}
+
+void TabCoordinator::RefreshFocusedGroupActiveTab(bool editor_redraw) {
+  operations_.ensure_active_tab_visible();
+  operations_.request_active_tab_redraw(editor_redraw);
+}
+
+void TabCoordinator::CollapseFocusedGroup() {
+  const std::size_t removed =
+      state_.focused_group_index < state_.editor_groups.size() ? state_.focused_group_index : 0;
+  state_.editor_groups.erase(state_.editor_groups.begin() +
+                             static_cast<std::ptrdiff_t>(removed));
+  if (state_.editor_groups.empty()) {
+    state_.editor_groups.emplace_back();
+  }
+  state_.focused_group_index = 0;
+  state_.group_split_orientation = EditorSplitOrientation::None;
+  state_.group_split_fraction = 0.5f;
+  state_.surface.focus = FocusTarget::Editor;
+}
+
+bool TabCoordinator::CloseEditorGroup() {
+  if (state_.editor_groups.size() < 2) {
+    return false;
+  }
+  // Releasing this group's tabs may drop the last open view of a shared buffer;
+  // fire LSP didClose for any path now unreferenced by the surviving group.
+  // Count views once up front so this is O(views), not O(tabs * views).
+  const std::unordered_map<std::string, std::size_t> view_counts =
+      operations_.open_buffer_view_counts ? operations_.open_buffer_view_counts()
+                                          : std::unordered_map<std::string, std::size_t>{};
+  const EditorGroup& closing = state_.focused_group();
+  for (const TabEntry& tab : closing.open_tabs) {
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      const std::filesystem::path path = operations_.editor_view_path(*tab.editor_state);
+      if (path.empty()) {
+        continue;
+      }
+      const auto it = view_counts.find(path.generic_string());
+      if (it != view_counts.end() && it->second == 1) {
+        operations_.notify_lsp_buffer_close(path);
+      }
+    }
+  }
+  CollapseFocusedGroup();
+  const editor::TextViewport* active_vp = ActiveEditorViewport();
+  RefreshFocusedGroupActiveTab(active_vp != nullptr && !active_vp->path().empty());
   return true;
 }
 }  // namespace microide::workspace

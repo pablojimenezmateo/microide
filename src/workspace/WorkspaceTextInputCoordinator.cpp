@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "editor/SingleLineKeyHandler.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 
 namespace microide::workspace {
@@ -72,9 +72,6 @@ void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
     case TextInputSurface::PromptInput:
       operations_.request_prompt_redraw();
       break;
-    case TextInputSurface::Command:
-      operations_.request_bottom_panel_command_redraw();
-      break;
     case TextInputSurface::DebugVariableEdit:
       // The Variables inline edit now lives in the right-side debug pane.
       operations_.request_window_redraw();
@@ -109,8 +106,6 @@ editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState() {
   switch (operations_.current_text_input_surface()) {
     case TextInputSurface::PromptInput:
       return &prompts_.surface.input;
-    case TextInputSurface::Command:
-      return &state_.panel.command.input;
     case TextInputSurface::CommitPicker:
       return &state_.overlay.workflow.compare_picker.query;
     case TextInputSurface::LaunchConfigPicker:
@@ -148,23 +143,11 @@ const editor::SingleLineEditor* TextInputCoordinator::ActiveSingleLineTextState(
   return const_cast<TextInputCoordinator*>(this)->ActiveSingleLineTextState();
 }
 
-void TextInputCoordinator::DidMutateCommandInputText() {
-  state_.panel.command.history_index.reset();
-  state_.panel.command.history_pending_input.clear();
-  state_.panel.command.feedback_text.clear();
-}
-
 void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
                                                        bool text_changed) {
   switch (surface) {
     case TextInputSurface::PromptInput:
       operations_.request_prompt_redraw();
-      break;
-    case TextInputSurface::Command:
-      if (text_changed) {
-        DidMutateCommandInputText();
-      }
-      operations_.request_bottom_panel_command_redraw();
       break;
     case TextInputSurface::CommitPicker:
       if (text_changed) {
@@ -305,7 +288,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
     return true;
   }
   switch (surface) {
-    case TextInputSurface::Command:
     case TextInputSurface::PromptInput:
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:

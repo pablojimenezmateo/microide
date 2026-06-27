@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(microide VERSION 2.0.1 LANGUAGES CXX)
+project(microide VERSION 2.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -323,7 +323,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/ControlSpec.cpp
   src/workspace/ManPage.cpp
   src/workspace/WorkspaceCommandRegistry.cpp
-  src/workspace/WorkspaceCommandPromptCoordinator.cpp
+  src/workspace/WorkspaceCommandLineCoordinator.cpp
   src/workspace/WorkspaceEditActionExecutor.cpp
   src/workspace/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceEventOrchestrator.cpp
@@ -696,6 +696,7 @@ add_executable(microide_tests
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
   tests/DebugPaneTests.cpp
+  tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/StringUtilTests.cpp
   tests/SubprocessTests.cpp

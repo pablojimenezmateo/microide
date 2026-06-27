@@ -50,12 +50,10 @@ using microide::workspace::ParseSidebarViewRequest;
 using microide::workspace::ParseUiScaleValue;
 using microide::workspace::PathEqualsOrWithin;
 using microide::workspace::PersistedEditorTabState;
-using microide::workspace::PersistedEditorViewState;
 using microide::workspace::PersistedMessageState;
 using microide::workspace::PersistedProjectConfigState;
 using microide::workspace::PersistedConversationState;
 using microide::workspace::PersistedProjectSessionState;
-using microide::workspace::PersistedSplitNodeState;
 using microide::workspace::PersistedUserConfigState;
 using microide::workspace::PersistedWorkspaceSessionState;
 using microide::workspace::QuoteCommandArg;
@@ -295,9 +293,9 @@ void TestWorkspaceMenuRegistry() {
 
   const auto root_items = WorkspaceTreeContextMenuItems(TreeContextTargetKind::Root);
   Expect(std::find_if(root_items.begin(), root_items.end(),
-                      [](const auto& item) { return item.action == ActionId::ProjectClose; }) !=
+                      [](const auto& item) { return item.action == ActionId::ProjectClose; }) ==
              root_items.end(),
-         "tree-context registry should keep the root close-project action");
+         "tree-context registry should not expose close-project on the root (project tab owns it)");
 
   const auto file_items = WorkspaceTreeContextMenuItems(TreeContextTargetKind::File);
   Expect(std::find_if(file_items.begin(), file_items.end(),

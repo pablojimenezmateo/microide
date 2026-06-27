@@ -42,9 +42,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         case TextInputSurface::PromptInput:
           ensure_redraw([this]() { RequestPromptRedraw(); });
           break;
-        case TextInputSurface::Command:
-          ensure_redraw([this]() { RequestBottomPanelRedraw(); });
-          break;
         case TextInputSurface::SidebarSearchQuery:
         case TextInputSurface::SidebarSearchReplace:
           ensure_redraw([this]() { RequestSidebarRedraw(); });
@@ -235,6 +232,21 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       // The pane hugs the right edge, so its width grows as the divider moves left.
       context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
           window_width - static_cast<float>(event.motion.x), window_width, resolved_sidebar_width);
+      MarkLayoutDirty();
+      ensure_redraw([this]() { RequestWindowRedraw(); });
+      return true;
+    }
+
+    if (context_.interaction_state.drag_target == DragTarget::EditorSplitDivider) {
+      const SDL_FRect es = drag_layout.editor_surface;
+      ProjectWorkspaceState& ps = context_.current_project_state;
+      float fraction = ps.group_split_fraction;
+      if (ps.group_split_orientation == EditorSplitOrientation::Horizontal && es.h > 0.0f) {
+        fraction = (static_cast<float>(event.motion.y) - es.y) / es.h;
+      } else if (es.w > 0.0f) {
+        fraction = (static_cast<float>(event.motion.x) - es.x) / es.w;
+      }
+      ps.group_split_fraction = std::clamp(fraction, 0.1f, 0.9f);
       MarkLayoutDirty();
       ensure_redraw([this]() { RequestWindowRedraw(); });
       return true;

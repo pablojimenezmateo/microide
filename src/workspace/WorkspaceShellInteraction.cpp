@@ -106,10 +106,6 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
     return TextInputSurface::None;
   }
 
-  if (context_.current_project_state.panel.command_mode) {
-    return TextInputSurface::Command;
-  }
-
   if (context_.current_project_state.overlay.visible) {
     // The find/replace widget is non-modal: while it floats, focus may be on the
     // editor (so the user can keep editing). Only claim the buffer-search input

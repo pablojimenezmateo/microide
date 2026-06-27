@@ -75,7 +75,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
     operations_.show_git_sidebar();
   }
 
-  const std::vector<TabEntry>& tabs = state_.open_tabs;
+  const std::vector<TabEntry>& tabs = state_.focused_group().open_tabs;
   std::vector<ReviewTabRef> existing;
   existing.reserve(tabs.size());
   for (std::size_t i = 0; i < tabs.size(); ++i) {

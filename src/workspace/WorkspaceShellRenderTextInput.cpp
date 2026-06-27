@@ -201,25 +201,6 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           .selection_bytes = std::nullopt,
       };
     }
-    case TextInputSurface::Command: {
-      const SDL_FRect prompt_rect = BottomPanelCommandPromptRect(layout);
-      const float text_x = prompt_rect.x + 6.0f;
-      const float text_y =
-          prompt_rect.y + std::floor((prompt_rect.h - text_renderer_.LineHeight()) * 0.5f);
-      const float available_width = std::max(1.0f, prompt_rect.w - 12.0f);
-      auto vm = ComputeSingleLineViewMetrics(*text_input_vm.command_input, "> ", available_width);
-      return TextInputVisual{
-          .surface = surface,
-          .area = MakeRect(text_x, text_y, available_width, line_height),
-          .text_x = text_x,
-          .text_y = text_y,
-          .cursor_x = text_x + vm.cursor_x,
-          .foreground = theme_.text_primary,
-          .background = theme_.surface_background,
-          .displayed_text = std::move(vm.displayed_text),
-          .selection_bytes = vm.selection_bytes,
-      };
-    }
     case TextInputSurface::PromptInput: {
       const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
       const SDL_FRect input_rect = ComputePromptSurfaceInputRect(dialog);
@@ -401,7 +382,6 @@ void WorkspaceShell::RenderSingleLineTextSelection(
 
   switch (visual->surface) {
     case TextInputSurface::PromptInput:
-    case TextInputSurface::Command:
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:
@@ -464,7 +444,6 @@ void WorkspaceShell::RenderActiveTextInputCaret(
 
   switch (visual->surface) {
     case TextInputSurface::PromptInput:
-    case TextInputSurface::Command:
     case TextInputSurface::FileFinder:
     case TextInputSurface::BufferSearch:
     case TextInputSurface::BufferReplaceSearch:

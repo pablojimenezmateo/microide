@@ -923,13 +923,7 @@ void TestDedentOnCloseSkippedOnNonIndentOnlyLine() {
 }
 
 microide::workspace::TabEntry::EditorTabState MakeFoldingTab() {
-  microide::workspace::TabEntry::EditorTabState tab;
-  microide::workspace::TabEntry::EditorTabState::EditorViewState view;
-  view.leaf_id = 1;
-  tab.views.push_back(std::move(view));
-  tab.active_leaf_id = 1;
-  tab.next_leaf_id = 2;
-  return tab;
+  return microide::workspace::TabEntry::EditorTabState{};
 }
 
 microide::workspace::LanguageContract MakeCStyleFoldContract() {
@@ -943,7 +937,7 @@ microide::workspace::LanguageContract MakeCStyleFoldContract() {
 
 void TestFoldingRefreshComputesBracketRanges() {
   auto tab = MakeFoldingTab();
-  auto& viewport = tab.views.front().viewport;
+  auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
   viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
@@ -961,7 +955,7 @@ void TestFoldingRefreshComputesBracketRanges() {
 
 void TestFoldingRefreshFingerprintReusedAcrossCalls() {
   auto tab = MakeFoldingTab();
-  auto& viewport = tab.views.front().viewport;
+  auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
   viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
@@ -981,7 +975,7 @@ void TestFoldingRefreshFingerprintReusedAcrossCalls() {
 
 void TestFoldingRefreshDisabledExpandsAndClears() {
   auto tab = MakeFoldingTab();
-  auto& viewport = tab.views.front().viewport;
+  auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\nvoid g() {\n  body;\n}\n", "/tmp/sample.cpp");
   viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
@@ -1003,7 +997,7 @@ void TestFoldingRefreshDisabledExpandsAndClears() {
 
 void TestFoldingRefreshLanguageChangeRebuilds() {
   auto tab = MakeFoldingTab();
-  auto& viewport = tab.views.front().viewport;
+  auto& viewport = tab.viewport;
   viewport.LoadContent("void f() {\n  body;\n}\n", "/tmp/sample.cpp");
   viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto cpp = MakeCStyleFoldContract();

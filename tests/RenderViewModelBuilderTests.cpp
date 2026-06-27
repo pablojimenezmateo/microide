@@ -5,6 +5,7 @@
 #include "editor/TextViewport.h"
 #include "editor/WelcomeView.h"
 #include "workspace/DebugViewModel.h"
+#include "workspace/RecentsService.h"
 #include "workspace/RenderViewModelBuilder.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarService.h"
@@ -13,6 +14,7 @@
 #include "workspace/WorkspaceLayout.h"
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -24,6 +26,7 @@ namespace {
 using microide::workspace::ComputeLayout;
 using microide::workspace::LayoutMode;
 using microide::workspace::LayoutModeInputs;
+using microide::workspace::RecentsService;
 using microide::workspace::RenderViewModelBuilder;
 using microide::workspace::SettingsOverlayService;
 using microide::workspace::StatusBarService;
@@ -146,7 +149,7 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
   exec.stopped = true;
   exec.thread_id = 1;
   microide::workspace::DebugStackFrameView frame;
-  frame.source_path = std::filesystem::path("/proj/main.py").lexically_normal();
+  frame.SetSource("/proj/main.py");
   frame.line = 2;  // 0-based
   exec.frames.push_back(frame);
 
@@ -167,7 +170,7 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
          "execution line should not be marked when the debugger is disabled");
 
   // A frame in a different file leaves this viewport unmarked.
-  exec.frames[0].source_path = std::filesystem::path("/proj/other.py").lexically_normal();
+  exec.frames[0].SetSource("/proj/other.py");
   builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr, false, false, false, 3, false,
                                    /*debug_enabled=*/true, nullptr, &exec);
   Expect(!vm.execution_line_index.has_value(),
@@ -249,19 +252,23 @@ void TestBuilderMarksConditionalAndLogpointGutterDots() {
 }
 
 void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
-  WorkspaceContext context;
+  WorkspaceContext context;  // empty root => NoProject cold-start variant
   RenderViewModelBuilder builder(context);
 
   // Only existing roots are surfaced, so create real directories on disk. A trailing
-  // separator is preserved to exercise the folder-name-from-parent path.
+  // separator is preserved to exercise the folder-name-from-parent path. Record beta then
+  // alpha so the newest-first MRU surfaces them in [alpha, beta] order.
   TemporaryDirectory temp;
   std::filesystem::create_directories(temp.path() / "alpha");
   std::filesystem::create_directories(temp.path() / "beta");
   const std::filesystem::path alpha = temp.path() / "alpha";
   const std::filesystem::path beta_slash = (temp.path() / "beta").string() + "/";
-  const std::vector<std::filesystem::path> recents = {alpha, beta_slash};
+  RecentsService recents;
+  recents.RecordProjectOpen(beta_slash);
+  recents.RecordProjectOpen(alpha);
   const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
 
+  Expect(vm.kind == editor::WelcomeKind::NoProject, "no open project => NoProject variant");
   // Recents map to folder name + full path, preserved in order.
   Expect(vm.recent_projects.size() == 2, "every existing recent project should be surfaced");
   Expect(vm.recent_projects[0].name == "alpha" && vm.recent_projects[0].path == alpha,
@@ -269,8 +276,8 @@ void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
   Expect(vm.recent_projects[1].name == "beta",
          "a trailing slash should still yield the folder name");
 
-  // Shortcuts are sourced from the command registry: the command-palette row must
-  // carry the registry's accelerator, and the hint must echo the same chord.
+  // Shortcuts are sourced from the command registry: the command-palette row must carry
+  // the registry's accelerator (the palette is advertised here, once — no footer hint).
   const microide::workspace::ActionSpec* palette =
       microide::workspace::FindWorkspaceActionSpec(microide::workspace::ActionId::OpenCommandPalette);
   Expect(palette != nullptr && !palette->accelerator.empty(),
@@ -282,8 +289,6 @@ void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
     }
   }
   Expect(found_palette_row, "the welcome shortcuts should be registry-sourced (no drift)");
-  Expect(vm.palette_hint.find(std::string(palette->accelerator)) != std::string::npos,
-         "the palette hint should reference the real key chord");
 }
 
 void TestBuilderWelcomeViewPrunesMissingRecents() {
@@ -296,8 +301,10 @@ void TestBuilderWelcomeViewPrunesMissingRecents() {
   const std::filesystem::path missing = temp.path() / "deleted-temp-project";
 
   // A stale root (e.g. a removed temp project) must not appear — every surfaced row has to
-  // be openable. The existing root, listed second, should still come through.
-  const std::vector<std::filesystem::path> recents = {missing, present};
+  // be openable. The existing root should still come through.
+  RecentsService recents;
+  recents.RecordProjectOpen(present);
+  recents.RecordProjectOpen(missing);
   const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
 
   Expect(vm.recent_projects.size() == 1, "non-existent recent roots should be pruned");
@@ -305,32 +312,103 @@ void TestBuilderWelcomeViewPrunesMissingRecents() {
          "the surviving recent should be the one that still exists on disk");
 }
 
-void TestComputeWelcomeLayoutProducesHitRegions() {
-  editor::WelcomeViewModel vm;
-  vm.recent_projects = {
-      {.name = "a", .path_display = "/a", .path = "/a"},
-      {.name = "b", .path_display = "/b", .path = "/b"},
-  };
-  const SDL_FRect rect{0.0f, 0.0f, 1200.0f, 800.0f};
-  const editor::WelcomeLayout layout = editor::ComputeWelcomeLayout(rect, vm, 14.0f);
+void TestBuilderWelcomeViewProjectHomeShowsRecentFiles() {
+  // A project is open but its focused group has no tab => ProjectHome variant: the hero is
+  // the project name, the list shows this project's recent files, and the no-project
+  // affordances (open-folder / recent projects) are absent.
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "myproject";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path present = root / "main.cpp";
+  { std::ofstream(present) << "int main() {}\n"; }
+  const std::filesystem::path missing = root / "ghost.cpp";
 
-  std::size_t recent_regions = 0;
-  std::size_t open_folder_regions = 0;
-  for (const editor::WelcomeHitRegion& region : layout.hit_regions) {
-    if (region.kind == editor::WelcomeHitRegion::Kind::RecentProject) {
-      ++recent_regions;
-      Expect(region.recent_index < vm.recent_projects.size(),
-             "recent hit regions index into the model");
-    } else {
-      ++open_folder_regions;
+  WorkspaceContext context;
+  context.current_project_state.root = root;
+  RenderViewModelBuilder builder(context);
+
+  RecentsService recents;
+  recents.RecordFileOpen(present, root);
+  recents.RecordFileOpen(missing, root);
+  // A file recorded under a different project must not leak into this project's home.
+  recents.RecordFileOpen(temp.path() / "other.cpp", temp.path() / "other");
+  const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
+
+  Expect(vm.kind == editor::WelcomeKind::ProjectHome, "an open project => ProjectHome variant");
+  Expect(vm.title == "myproject", "the hero title should be the project folder name");
+  Expect(vm.recent_projects.empty(), "ProjectHome must not surface recent projects");
+  Expect(!vm.new_file_label.empty() && !vm.open_file_label.empty() &&
+             !vm.find_in_project_label.empty(),
+         "ProjectHome should carry the new/open/find action labels");
+  Expect(vm.recent_files.size() == 1,
+         "only this project's existing recent files should be surfaced (missing + other pruned)");
+  Expect(vm.recent_files[0].path == present && vm.recent_files[0].name == "main.cpp",
+         "the surviving recent file should be the one that still exists on disk");
+}
+
+void TestComputeWelcomeLayoutProducesHitRegions() {
+  const SDL_FRect rect{0.0f, 0.0f, 1200.0f, 800.0f};
+  const auto within_card = [](const editor::WelcomeLayout& layout,
+                              const editor::WelcomeHitRegion& region) {
+    return region.rect.x >= layout.card.x - 0.5f &&
+           region.rect.x + region.rect.w <= layout.card.x + layout.card.w + 0.5f;
+  };
+
+  // NoProject: one open-folder button + one row per recent project.
+  {
+    editor::WelcomeViewModel vm;
+    vm.kind = editor::WelcomeKind::NoProject;
+    vm.recent_projects = {
+        {.name = "a", .path_display = "/a", .path = "/a"},
+        {.name = "b", .path_display = "/b", .path = "/b"},
+    };
+    const editor::WelcomeLayout layout = editor::ComputeWelcomeLayout(rect, vm, 14.0f);
+    std::size_t recent_regions = 0;
+    std::size_t open_folder_regions = 0;
+    for (const editor::WelcomeHitRegion& region : layout.hit_regions) {
+      if (region.kind == editor::WelcomeHitRegion::Kind::RecentProject) {
+        ++recent_regions;
+        Expect(region.recent_index < vm.recent_projects.size(),
+               "recent hit regions index into the model");
+      } else {
+        ++open_folder_regions;
+      }
+      Expect(within_card(layout, region), "hit regions should stay inside the welcome card");
     }
-    // Every interactive region stays within the card.
-    Expect(region.rect.x >= layout.card.x - 0.5f &&
-               region.rect.x + region.rect.w <= layout.card.x + layout.card.w + 0.5f,
-           "hit regions should stay inside the welcome card");
+    Expect(recent_regions == 2, "one hit region per recent project");
+    Expect(open_folder_regions == 1, "exactly one open-folder affordance");
   }
-  Expect(recent_regions == 2, "one hit region per recent project");
-  Expect(open_folder_regions == 1, "exactly one open-folder affordance");
+
+  // ProjectHome: three action buttons + one row per recent file.
+  {
+    editor::WelcomeViewModel vm;
+    vm.kind = editor::WelcomeKind::ProjectHome;
+    vm.recent_files = {
+        {.name = "x", .path_display = "/x", .path = "/x"},
+        {.name = "y", .path_display = "/y", .path = "/y"},
+    };
+    const editor::WelcomeLayout layout = editor::ComputeWelcomeLayout(rect, vm, 14.0f);
+    std::size_t recent_file_regions = 0;
+    bool saw_new = false, saw_open = false, saw_find = false;
+    for (const editor::WelcomeHitRegion& region : layout.hit_regions) {
+      switch (region.kind) {
+        case editor::WelcomeHitRegion::Kind::RecentFile:
+          ++recent_file_regions;
+          Expect(region.recent_index < vm.recent_files.size(),
+                 "recent-file hit regions index into the model");
+          break;
+        case editor::WelcomeHitRegion::Kind::NewFile: saw_new = true; break;
+        case editor::WelcomeHitRegion::Kind::OpenFile: saw_open = true; break;
+        case editor::WelcomeHitRegion::Kind::FindInProject: saw_find = true; break;
+        default:
+          Expect(false, "ProjectHome should not emit no-project regions");
+          break;
+      }
+      Expect(within_card(layout, region), "hit regions should stay inside the welcome card");
+    }
+    Expect(recent_file_regions == 2, "one hit region per recent file");
+    Expect(saw_new && saw_open && saw_find, "ProjectHome exposes new/open/find buttons");
+  }
 }
 
 }  // namespace
@@ -340,6 +418,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewPrunesMissingRecents",
           TestBuilderWelcomeViewPrunesMissingRecents);
+  AddTest(tests, "RenderViewModelBuilder/WelcomeViewProjectHomeShowsRecentFiles",
+          TestBuilderWelcomeViewProjectHomeShowsRecentFiles);
   AddTest(tests, "RenderViewModelBuilder/ComputeWelcomeLayoutProducesHitRegions",
           TestComputeWelcomeLayoutProducesHitRegions);
   AddTest(tests, "RenderViewModelBuilder/ConstructsAllSurfaceViewModels",

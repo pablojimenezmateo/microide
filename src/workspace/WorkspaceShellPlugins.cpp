@@ -49,14 +49,12 @@ void ResetGhostText(ProjectWorkspaceState& state) {
 
 template <typename Callback>
 void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& callback) {
-  for (const auto& tab : state.open_tabs) {
+  for (const auto& tab : state.focused_group().open_tabs) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      for (const auto& view : tab.editor_state->views) {
-        const std::filesystem::path path =
-            (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
-        if (path.empty()) {
-          continue;
-        }
+      const auto& view = *tab.editor_state;
+      const std::filesystem::path path =
+          (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
+      if (!path.empty()) {
         if (view.needs_restore) {
           callback(path, nullptr);
         } else {
@@ -104,9 +102,13 @@ WorkspaceShell::WorkspaceShell() {
           .project_catalog_root =
               [this](std::size_t index) { return ProjectCatalogRoot(index); },
           .editor_tab_display_title =
-              [this](std::size_t index) { return TabDisplayTitle(index); },
+              [this](std::size_t group_index, std::size_t index) {
+                return TabDisplayTitle(group_index, index);
+              },
           .editor_tab_tooltip_label =
-              [this](std::size_t index) { return TabTooltipLabel(index); },
+              [this](std::size_t group_index, std::size_t index) {
+                return TabTooltipLabel(group_index, index);
+              },
           .current_window_rect = [this]() { return CurrentWindowRect(); },
           .measure_width =
               [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
@@ -749,12 +751,11 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
     viewport->InvalidateSyntaxHighlighting();
   }
 
-  for (auto& tab : context_.current_project_state.open_tabs) {
+  for (auto& tab : context_.current_project_state.focused_group().open_tabs) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
-      for (auto& view : tab.editor_state->views) {
-        if (!view.needs_restore && should_invalidate_viewport(view.viewport)) {
-          view.viewport.InvalidateSyntaxHighlighting();
-        }
+      auto& editor_state = *tab.editor_state;
+      if (!editor_state.needs_restore && should_invalidate_viewport(editor_state.viewport)) {
+        editor_state.viewport.InvalidateSyntaxHighlighting();
       }
       continue;
     }
@@ -932,14 +933,15 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
         active != nullptr && active->path().lexically_normal() == normalized) {
       viewport = active;
     } else {
-      for (auto& tab : context_.current_project_state.open_tabs) {
-        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-          continue;
-        }
-        for (auto& view : tab.editor_state->views) {
-          if (!view.needs_restore &&
-              view.viewport.path().lexically_normal() == normalized) {
-            viewport = &view.viewport;
+      for (auto& group : context_.current_project_state.editor_groups) {
+        for (auto& tab : group.open_tabs) {
+          if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+            continue;
+          }
+          auto& state = *tab.editor_state;
+          if (!state.needs_restore &&
+              state.viewport.path().lexically_normal() == normalized) {
+            viewport = &state.viewport;
             break;
           }
         }

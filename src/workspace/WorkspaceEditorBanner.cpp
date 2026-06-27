@@ -12,20 +12,18 @@
 namespace microide::workspace {
 
 const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state) {
-  if (state.editor_banners.empty() || state.active_tab_index >= state.open_tabs.size()) {
+  const EditorGroup& group = state.focused_group();
+  if (state.editor_banners.empty() || !group.has_active_tab()) {
     return nullptr;
   }
-  const TabEntry& tab = state.open_tabs[state.active_tab_index];
+  const TabEntry& tab = group.active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return nullptr;
   }
+  const std::filesystem::path active_path =
+      tab.editor_state->viewport.path().lexically_normal();
   for (const EditorBannerState& banner : state.editor_banners) {
-    const bool matches_view = std::any_of(
-        tab.editor_state->views.begin(), tab.editor_state->views.end(),
-        [&](const auto& view) {
-          return view.viewport.path().lexically_normal() == banner.path;
-        });
-    if (matches_view) {
+    if (active_path == banner.path) {
       return &banner;
     }
   }

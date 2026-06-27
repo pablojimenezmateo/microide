@@ -34,14 +34,7 @@ class PathMutationCoordinator {
     std::function<void()> request_editor_surface_redraw;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
-    std::function<const editor::TextViewport*(const TabEntry::EditorTabState&, std::size_t)>
-        find_editor_view;
-    std::function<TabEntry::EditorTabState::EditorViewState*(TabEntry::EditorTabState&, std::size_t)>
-        find_editor_view_state;
-    std::function<std::filesystem::path(const TabEntry::EditorTabState::EditorViewState&)>
-        editor_view_path;
-    std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
-    std::function<std::vector<std::size_t>(const TabEntry::EditorTabState&)> editor_leaf_order;
+    std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;
     std::function<void()> sync_active_editor_tab_metadata;
     std::function<void()> reset_caret_blink;
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;
@@ -74,7 +67,6 @@ class PathMutationCoordinator {
 
     Kind kind = Kind::EditorView;
     std::size_t tab_index = 0;
-    std::size_t leaf_id = 0;
   };
 
   std::vector<DirtyPathTarget> DirtyPathTargetsForPath(const std::filesystem::path& path) const;

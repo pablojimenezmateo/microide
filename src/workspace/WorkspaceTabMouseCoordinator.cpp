@@ -118,12 +118,28 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  if (Contains(layout.tab_strip, event.button.x, event.button.y)) {
+  // Editor tab strips, one per group. Resolve which group's strip the pointer hit
+  // (falls back to the global tab strip when the per-group op is unavailable) and
+  // focus that group before activating/closing/scrolling within it.
+  std::vector<std::pair<std::size_t, SDL_FRect>> editor_group_strips;
+  if (operations_.compute_editor_group_tab_strips) {
+    editor_group_strips = operations_.compute_editor_group_tab_strips();
+  }
+  if (editor_group_strips.empty()) {
+    editor_group_strips.emplace_back(state_.focused_group_index, layout.tab_strip);
+  }
+  for (const auto& [hit_group_index, group_strip] : editor_group_strips) {
+    if (!Contains(group_strip, event.button.x, event.button.y)) {
+      continue;
+    }
     if (state_.root.empty()) {
       return false;
     }
-    if (state_.open_tabs.empty()) {
-      const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(layout.tab_strip);
+    if (hit_group_index != state_.focused_group_index && operations_.focus_editor_group) {
+      operations_.focus_editor_group(hit_group_index);
+    }
+    if (state_.focused_group().open_tabs.empty()) {
+      const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(group_strip);
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(placeholder_tab, event.button.x, event.button.y)) {
         state_.surface.focus = FocusTarget::Editor;
@@ -132,11 +148,11 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       return false;
     }
 
-    const auto visible_tabs = operations_.compute_visible_tabs(layout.tab_strip);
+    const auto visible_tabs = operations_.compute_visible_tabs(group_strip);
     if (event.button.button == SDL_BUTTON_LEFT &&
         operations_.compute_tab_overflow_controls) {
       const auto overflow =
-          operations_.compute_tab_overflow_controls(layout.tab_strip, visible_tabs);
+          operations_.compute_tab_overflow_controls(group_strip, visible_tabs);
       if (overflow.hidden_left > 0 &&
           Contains(overflow.left_button, event.button.x, event.button.y)) {
         if (operations_.scroll_editor_tab_strip) {
@@ -289,13 +305,22 @@ TabMouseCoordinator::DragStrip TabMouseCoordinator::ResolveDragStrip(const Works
       d.valid = true;
       return d;
     case TabDragKind::Editor:
-      if (state_.open_tabs.empty()) {
+      if (state_.focused_group().open_tabs.empty()) {
         return d;
       }
       d.strip = layout.tab_strip;
+      if (operations_.compute_editor_group_tab_strips) {
+        for (const auto& [group_index, group_strip] :
+             operations_.compute_editor_group_tab_strips()) {
+          if (group_index == state_.focused_group_index) {
+            d.strip = group_strip;
+            break;
+          }
+        }
+      }
       d.tabs = operations_.compute_visible_tabs(d.strip);
-      d.count = state_.open_tabs.size();
-      d.active = state_.active_tab_index;
+      d.count = state_.focused_group().open_tabs.size();
+      d.active = state_.focused_group().active_tab_index;
       d.move = operations_.move_active_tab_to;
       d.valid = true;
       return d;
@@ -440,10 +465,24 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
     return true;
   }
 
-  if (Contains(layout.tab_strip, event.wheel.mouse_x, event.wheel.mouse_y) &&
-      !state_.open_tabs.empty()) {
-    scroll_strip(state_.open_tabs.size(), state_.tab_scroll_index);
-    return true;
+  {
+    std::vector<std::pair<std::size_t, SDL_FRect>> editor_group_strips;
+    if (operations_.compute_editor_group_tab_strips) {
+      editor_group_strips = operations_.compute_editor_group_tab_strips();
+    }
+    if (editor_group_strips.empty()) {
+      editor_group_strips.emplace_back(state_.focused_group_index, layout.tab_strip);
+    }
+    for (const auto& [group_index, group_strip] : editor_group_strips) {
+      if (!Contains(group_strip, event.wheel.mouse_x, event.wheel.mouse_y) ||
+          group_index >= state_.editor_groups.size() ||
+          state_.editor_groups[group_index].open_tabs.empty()) {
+        continue;
+      }
+      EditorGroup& group = state_.editor_groups[group_index];
+      scroll_strip(group.open_tabs.size(), group.tab_scroll_index);
+      return true;
+    }
   }
 
   // Bottom-panel tab strip. Gated strictly to the header band so wheeling over
@@ -551,6 +590,21 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
               [this](int direction) { return tab_strip_chrome_.ScrollEditorTabStrip(direction); },
           .scroll_bottom_panel_tab_strip =
               [this](int direction) { return tab_strip_chrome_.ScrollBottomPanelTabStrip(direction); },
+          .compute_editor_group_tab_strips =
+              [this]() {
+                std::vector<std::pair<std::size_t, SDL_FRect>> strips;
+                const auto layout_state = CurrentWorkspaceLayout();
+                if (!layout_state.has_value()) {
+                  return strips;
+                }
+                const auto group_rects = ComputeEditorGroupRectsForState(*layout_state);
+                for (std::size_t i = 0; i < group_rects.groups.size(); ++i) {
+                  strips.emplace_back(i, group_rects.groups[i].tab_strip);
+                }
+                return strips;
+              },
+          .focus_editor_group =
+              [this](std::size_t group_index) { FocusEditorGroup(group_index); },
       });
 }
 

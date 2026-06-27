@@ -13,8 +13,6 @@
 namespace microide::tests {
 namespace {
 
-using microide::workspace::BottomPanelCommandAreaRect;
-using microide::workspace::BottomPanelCommandPromptRect;
 using microide::workspace::BottomPanelContentRect;
 using microide::workspace::BottomPanelLineIndexAtY;
 using microide::workspace::CompareCollapsedContextBlockRect;
@@ -261,13 +259,14 @@ void TestWorkspaceSharedMergeScrollbarMarkers() {
 
 void TestWorkspaceSharedPanelGeometryHelpers() {
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 200.0f);
-  const auto content = BottomPanelContentRect(layout, true);
-  const auto command_area = BottomPanelCommandAreaRect(layout);
-  const auto prompt = BottomPanelCommandPromptRect(layout);
+  const auto content = BottomPanelContentRect(layout);
 
-  Expect(command_area.y >= content.y + content.h, "command area should sit below panel content");
-  Expect(prompt.y >= command_area.y, "command prompt should stay inside the command area");
-  Expect(prompt.x > command_area.x, "command prompt should honor horizontal inset");
+  // The bottom panel content fills below the header with no reserved command-prompt strip
+  // (the command surface is now the overlay command palette).
+  Expect(content.y > layout.bottom_panel.y, "panel content should sit below the panel header");
+  Expect(content.y + content.h <= layout.bottom_panel.y + layout.bottom_panel.h + 0.5f,
+         "panel content should stay within the bottom panel");
+  Expect(content.w == layout.bottom_panel.w, "panel content should span the panel width");
 }
 
 void TestWorkspaceSharedPromptGeometry() {
@@ -494,6 +493,55 @@ void TestWorkspaceSharedEditorSplitLayout() {
   Expect(!ComputeEditorSplitAxisLayout(MakeRect(0.0f, 0.0f, 100.0f, 100.0f), true, {})
               .has_value(),
          "editor split layout should be absent for empty split-node children");
+}
+
+void TestWorkspaceEditorGroupRects() {
+  // A reference single-window layout: sidebar hidden, no bottom panel.
+  const auto layout = microide::workspace::ComputeLayout(1000.0f, 700.0f, /*sidebar_visible=*/false,
+                                                         /*bottom_panel_visible=*/false, 0.0f, 0.0f);
+
+  // Single group reproduces the base layout rects byte-for-byte.
+  const auto one = microide::workspace::ComputeEditorGroupRects(layout, 1, true, 0.5f);
+  Expect(one.groups.size() == 1 && !one.divider.has_value(),
+         "single editor group should produce one rect and no divider");
+  Expect(microide::workspace::RectsEqual(one.groups[0].tab_strip, layout.tab_strip) &&
+             microide::workspace::RectsEqual(one.groups[0].breadcrumb, layout.breadcrumb) &&
+             microide::workspace::RectsEqual(one.groups[0].editor_surface, layout.editor_surface),
+         "single editor group rects should equal the base layout rects");
+
+  // Side-by-side split: surfaces partition the editor-area width with a divider
+  // between them; both groups keep their own breadcrumb band.
+  const auto vertical = microide::workspace::ComputeEditorGroupRects(layout, 2, true, 0.5f);
+  Expect(vertical.groups.size() == 2 && vertical.divider.has_value() && vertical.vertical_divider,
+         "side-by-side split should produce two groups and a vertical divider");
+  Expect(vertical.groups[0].editor_surface.x == layout.editor_surface.x,
+         "left group surface should start at the editor area left edge");
+  Expect(vertical.groups[1].editor_surface.x ==
+             vertical.groups[0].editor_surface.x + vertical.groups[0].editor_surface.w +
+                 microide::workspace::kWorkspaceEditorSplitDividerThickness,
+         "right group surface should begin after the left surface plus the divider");
+  Expect(vertical.groups[0].editor_surface.y == layout.editor_surface.y &&
+             vertical.groups[0].editor_surface.h == layout.editor_surface.h,
+         "side-by-side surfaces should keep the full editor-surface height");
+  Expect(vertical.groups[1].breadcrumb.w > 0.0f,
+         "side-by-side second group should keep its own breadcrumb band");
+
+  // Stacked split: group 0 keeps the top tab strip; group 1 synthesizes a tab
+  // strip inside the editor surface, with no breadcrumb of its own.
+  const auto horizontal = microide::workspace::ComputeEditorGroupRects(layout, 2, false, 0.5f);
+  Expect(horizontal.groups.size() == 2 && horizontal.divider.has_value() &&
+             !horizontal.vertical_divider,
+         "stacked split should produce two groups and a horizontal divider");
+  Expect(microide::workspace::RectsEqual(horizontal.groups[0].tab_strip, layout.tab_strip),
+         "stacked first group should keep the global top tab strip");
+  Expect(horizontal.groups[1].breadcrumb.w == 0.0f,
+         "stacked second group should have no breadcrumb band");
+  Expect(horizontal.groups[1].tab_strip.y >= layout.editor_surface.y &&
+             horizontal.groups[1].tab_strip.h > 0.0f,
+         "stacked second group should synthesize a tab strip inside the editor surface");
+  Expect(horizontal.groups[1].editor_surface.y >=
+             horizontal.groups[1].tab_strip.y + horizontal.groups[1].tab_strip.h,
+         "stacked second group surface should sit below its synthesized tab strip");
 }
 
 void TestWorkspaceSharedMergeInteractionGeometry() {
@@ -947,6 +995,7 @@ void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/ChromeTabRenderItems",
           TestWorkspaceSharedChromeTabRenderItems);
   AddTest(tests, "WorkspaceShared/EditorSplitLayout", TestWorkspaceSharedEditorSplitLayout);
+  AddTest(tests, "WorkspaceShared/EditorGroupRects", TestWorkspaceEditorGroupRects);
   AddTest(tests, "WorkspaceShared/MergeHoverClassifier",
           TestWorkspaceSharedMergeHoverClassifier);
   AddTest(tests, "WorkspaceShared/MergeInteractionGeometry",

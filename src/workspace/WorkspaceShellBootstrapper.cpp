@@ -4,7 +4,7 @@
 
 #include "workspace/TerminalPanelService.h"
 #include "workspace/WorkspaceActionCoordinator.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceKeyInputCoordinator.h"
 #include "workspace/WorkspaceShell.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
@@ -60,11 +60,11 @@ TerminalPanelService WorkspaceShell::MakeTerminalPanelService() {
   });
 }
 
-CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
-  return CommandPromptCoordinator(
+CommandLineCoordinator WorkspaceShell::MakeCommandLineCoordinator() {
+  return CommandLineCoordinator(
       context_.current_project_state,
       available_colorscheme_names_,
-      CommandPromptCoordinator::Operations{
+      CommandLineCoordinator::Operations{
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
@@ -77,7 +77,7 @@ CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
           .sidebar_view_ids = [this]() { return OrderedSidebarViewIds(); },
           .execute_plugin_command =
               [this](const std::string& command, const std::vector<std::string>& args) {
-                CommandPromptCoordinator::PluginCommandResult result;
+                CommandLineCoordinator::PluginCommandResult result;
                 // Recognition is synchronous; execution runs on the plugin worker
                 // and its real outcome surfaces as a toast on the drain. Confirm
                 // dispatch in the prompt so the user never sees silence.
@@ -92,11 +92,6 @@ CommandPromptCoordinator WorkspaceShell::MakeCommandPromptCoordinator() {
                       NotifyPluginCommandOutcome(command, ran, error, feedback);
                     });
                 return result;
-              },
-          .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
-          .request_command_mode_transition_redraw =
-              [this](bool bottom_panel_was_visible) {
-                RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
               },
       });
 }
@@ -125,6 +120,7 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .last_terminal_command_text = [shell]() { return shell->LastTerminalCommandText(); },
           .terminal_has_selection = [shell]() { return shell->TerminalHasSelection(); },
           .active_tab_is_editor = [shell]() { return shell->ActiveTabIsEditor(); },
+          .editor_group_count = [shell]() { return shell->EditorGroupCount(); },
           .active_tab_is_compare = [shell]() { return shell->ActiveTabIsCompare(); },
           .active_tab_is_merge = [shell]() { return shell->ActiveTabIsMerge(); },
           .active_compare_tab = [shell]() { return shell->ActiveCompareTab(); },

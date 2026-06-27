@@ -9,23 +9,13 @@
 
 #include "workspace/WorkspaceActionServices.h"
 #include "workspace/WorkspaceCommandParsing.h"
-#include "workspace/WorkspaceCommandPromptCoordinator.h"
+#include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceMenuCoordinator.h"
 #include "workspace/WorkspacePersistenceCoordinator.h"
 #include "workspace/ReviewSessionCoordinator.h"
 #include "workspace/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
-
-void WorkspaceActionContext::OpenCommandPrompt(std::string input) {
-  const bool bottom_panel_was_visible =
-      state_.panel.command_mode || operations_.active_terminal_tab() != nullptr;
-  state_.panel.command_mode = true;
-  state_.surface.focus = FocusTarget::Panel;
-  state_.panel.command.input.SetText(std::move(input));
-  operations_.reset_command_prompt_session();
-  operations_.request_command_mode_transition_redraw(bottom_panel_was_visible);
-}
 
 bool WorkspaceActionContext::PluginRuntimeEnabled() const {
   return operations_.plugin_runtime_enabled();
@@ -34,7 +24,7 @@ bool WorkspaceActionContext::PluginRuntimeEnabled() const {
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
   operations_.reload_plugins_for_current_project();
   std::string summary = operations_.plugin_runtime_reload_summary();
-  state_.panel.command.feedback_text = summary;
+  state_.panel.feedback.text = summary;
   if (operations_.notify && !summary.empty()) {
     // Heuristic: surface failures/warnings as Warning, otherwise Info.
     const bool looks_problematic =
@@ -77,7 +67,7 @@ void WorkspaceActionContext::StartDebuggingWithFeedback() {
     return;
   }
   const std::string error = operations_.start_debugging();
-  state_.panel.command.feedback_text =
+  state_.panel.feedback.text =
       error.empty() ? std::string("Debugging started") : ("Debug: " + error);
   if (operations_.notify) {
     operations_.notify(error.empty() ? NotificationService::Tone::Info
@@ -90,7 +80,7 @@ void WorkspaceActionContext::StopDebuggingWithFeedback() {
   if (operations_.stop_debugging) {
     operations_.stop_debugging();
   }
-  state_.panel.command.feedback_text = "Debugging stopped";
+  state_.panel.feedback.text = "Debugging stopped";
   if (operations_.notify) {
     operations_.notify(NotificationService::Tone::Info, "Debugging stopped");
   }
@@ -198,9 +188,9 @@ void WorkspaceActionContext::OpenLaunchConfigPicker() {
   }
 }
 
-void WorkspaceActionContext::OpenCommandPalette() {
+void WorkspaceActionContext::OpenCommandPalette(std::string seed) {
   if (operations_.open_command_palette) {
-    operations_.open_command_palette();
+    operations_.open_command_palette(std::move(seed));
   }
 }
 
@@ -305,7 +295,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](ActionSource source, std::string feedback) {
                 const std::string feedback_copy = feedback;
                 const bool accepted =
-                    MakeCommandPromptCoordinator().RejectAction(source, std::move(feedback));
+                    MakeCommandLineCoordinator().RejectAction(source, std::move(feedback));
                 if (source != ActionSource::Command && !feedback_copy.empty()) {
                   output_channels_.AppendLine("actions.log", "Actions", feedback_copy);
                 }
@@ -473,12 +463,12 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this]() { assist_service_.NotifySnippetSessionCaretMoved(); },
           .clear_active_snippet_session_after_undo =
               [this]() { assist_service_.ClearActiveSnippetSessionAfterUndo(); },
-          .split_active_editor =
-              [this](EditorSplitOrientation orientation) { return SplitActiveEditor(orientation); },
-          .unsplit_active_editor = [this]() { return UnsplitActiveEditor(); },
-          .cycle_editor_split = [this](int delta) { return CycleEditorSplit(delta); },
-          .activate_ordered_editor_split =
-              [this](std::size_t index) { return ActivateOrderedEditorSplit(index); },
+          .split_editor_group =
+              [this](EditorSplitOrientation orientation) {
+                return SplitEditorGroup(orientation);
+              },
+          .focus_other_group = [this]() { return FocusOtherEditorGroup(); },
+          .close_editor_group = [this]() { return CloseEditorGroup(); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
           .request_close_tabs =
               [this](std::vector<std::size_t> indices) { RequestCloseTabs(std::move(indices)); },
@@ -571,12 +561,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
-          .reset_command_prompt_session =
-              [this]() { MakeCommandPromptCoordinator().ResetSessionState(); },
-          .request_command_mode_transition_redraw =
-              [this](bool bottom_panel_was_visible) {
-                RequestCommandModeTransitionRedraw(bottom_panel_was_visible);
-              },
           .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
           .plugin_runtime_reload_summary = [this]() { return PluginRuntimeReloadSummary(); },
@@ -600,7 +584,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
           .open_launch_config_picker = [this]() { OpenLaunchConfigPicker(); },
-          .open_command_palette = [this]() { OpenCommandPalette(); },
+          .open_command_palette = [this](std::string seed) { OpenCommandPalette(std::move(seed)); },
           .edit_breakpoint_modifier_from_menu =
               [this](ActionId id) { EditBreakpointModifierFromMenu(id); },
           .breakpoint_quick_action_from_menu =

@@ -2,277 +2,17 @@
 
 #include <algorithm>
 #include <optional>
+#include <vector>
 
 #include "workspace/EditorTabService.h"
 
 namespace microide::workspace {
 
-WorkspaceShell::EditorSplitSlot WorkspaceShell::FindEditorLeafSlot(
-    TabEntry::EditorTabState& editor_tab,
-    std::size_t leaf_id) {
-  EditorSplitSlot result;
-  const auto find_slot =
-      [&](auto&& self,
-          std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot,
-          TabEntry::EditorTabState::EditorSplitNode* parent,
-          std::size_t index) -> bool {
-    if (slot == nullptr || slot->get() == nullptr) {
-      return false;
-    }
-
-    auto* node = slot->get();
-    if (node->IsLeaf()) {
-      if (node->leaf_id != leaf_id) {
-        return false;
-      }
-      result.parent = parent;
-      result.index = index;
-      result.slot = slot;
-      return true;
-    }
-
-    for (std::size_t child_index = 0; child_index < node->children.size(); ++child_index) {
-      if (self(self, &node->children[child_index], node, child_index)) {
-        return true;
-      }
-    }
-    return false;
-  };
-  find_slot(find_slot, &editor_tab.split_root, nullptr, 0);
-  return result;
-}
-
-WorkspaceShell::TabEntry::EditorTabState::EditorSplitNode* WorkspaceShell::FindEditorSplitNode(
-    TabEntry::EditorTabState::EditorSplitNode* node,
-    const std::vector<std::size_t>& path) {
-  auto* current = node;
-  for (std::size_t index : path) {
-    if (current == nullptr || index >= current->children.size()) {
-      return nullptr;
-    }
-    current = current->children[index].get();
-  }
-  return current;
-}
-
-const WorkspaceShell::TabEntry::EditorTabState::EditorSplitNode*
-WorkspaceShell::FindEditorSplitNode(const TabEntry::EditorTabState::EditorSplitNode* node,
-                                    const std::vector<std::size_t>& path) const {
-  auto* current = node;
-  for (std::size_t index : path) {
-    if (current == nullptr || index >= current->children.size()) {
-      return nullptr;
-    }
-    current = current->children[index].get();
-  }
-  return current;
-}
-
-void WorkspaceShell::NormalizeEditorSplitNode(TabEntry::EditorTabState::EditorSplitNode& node) {
-  if (node.IsLeaf()) {
-    node.orientation = EditorSplitOrientation::None;
-    node.size_fraction = std::max(0.0f, node.size_fraction);
-    return;
-  }
-
-  float total = 0.0f;
-  for (auto& child : node.children) {
-    NormalizeEditorSplitNode(*child);
-    child->size_fraction = std::max(0.0f, child->size_fraction);
-    total += child->size_fraction;
-  }
-
-  if (total <= 0.0f) {
-    const float even_fraction = node.children.empty() ? 1.0f : 1.0f / node.children.size();
-    for (auto& child : node.children) {
-      child->size_fraction = even_fraction;
-    }
-  } else {
-    for (auto& child : node.children) {
-      child->size_fraction /= total;
-    }
-  }
-}
-
-void WorkspaceShell::NormalizeEditorSplitTree(TabEntry::EditorTabState& editor_tab) {
-  if (editor_tab.views.empty()) {
-    editor_tab.active_leaf_id = 0;
-    editor_tab.next_leaf_id = 1;
-    editor_tab.split_root.reset();
-    return;
-  }
-
-  if (editor_tab.split_root == nullptr) {
-    editor_tab.split_root = MakeEditorLeafNode(editor_tab.views.front().leaf_id);
-  }
-
-  while (editor_tab.split_root != nullptr && !editor_tab.split_root->IsLeaf() &&
-         editor_tab.split_root->children.size() == 1) {
-    editor_tab.split_root = std::move(editor_tab.split_root->children.front());
-  }
-
-  if (editor_tab.split_root != nullptr) {
-    editor_tab.split_root->size_fraction = 1.0f;
-    NormalizeEditorSplitNode(*editor_tab.split_root);
-  }
-
-  std::vector<std::size_t> leaf_ids = EditorLeafOrder(editor_tab);
-  if (leaf_ids.empty()) {
-    editor_tab.split_root = MakeEditorLeafNode(editor_tab.views.front().leaf_id);
-    leaf_ids = EditorLeafOrder(editor_tab);
-  }
-
-  const auto active_it = std::find(leaf_ids.begin(), leaf_ids.end(), editor_tab.active_leaf_id);
-  if (active_it == leaf_ids.end()) {
-    editor_tab.active_leaf_id = leaf_ids.front();
-  }
-
-  std::size_t next_leaf_id = 1;
-  for (const auto& view : editor_tab.views) {
-    next_leaf_id = std::max(next_leaf_id, view.leaf_id + 1);
-  }
-  editor_tab.next_leaf_id = next_leaf_id;
-}
-
-void WorkspaceShell::CollectEditorLeafOrder(
-    const TabEntry::EditorTabState::EditorSplitNode* node,
-    std::vector<std::size_t>& order) const {
-  if (node == nullptr) {
-    return;
-  }
-  if (node->IsLeaf()) {
-    order.push_back(node->leaf_id);
-    return;
-  }
-  for (const auto& child : node->children) {
-    CollectEditorLeafOrder(child.get(), order);
-  }
-}
-
-std::vector<std::size_t> WorkspaceShell::EditorLeafOrder(
-    const TabEntry::EditorTabState& editor_tab) const {
-  std::vector<std::size_t> order;
-  CollectEditorLeafOrder(editor_tab.split_root.get(), order);
-  return order;
-}
-
-void WorkspaceShell::SetActiveEditorSplit(std::size_t index) {
-  MakeEditorTabService().SetActiveEditorSplit(index);
-}
-
-bool WorkspaceShell::ActivateOrderedEditorSplit(std::size_t order_index) {
-  return MakeEditorTabService().ActivateOrderedEditorSplit(order_index);
-}
-
-bool WorkspaceShell::SplitActiveEditor(EditorSplitOrientation orientation) {
-  return MakeEditorTabService().SplitActiveEditor(orientation);
-}
-
-bool WorkspaceShell::UnsplitActiveEditor() {
-  return MakeEditorTabService().UnsplitActiveEditor();
-}
-
-bool WorkspaceShell::CycleEditorSplit(int delta) {
-  return MakeEditorTabService().CycleEditorSplit(delta);
-}
-
-void WorkspaceShell::CollectEditorPaneLayouts(
-    const TabEntry::EditorTabState& editor_tab,
-    const TabEntry::EditorTabState::EditorSplitNode* node,
-    const SDL_FRect& rect,
-    std::vector<EditorPaneLayout>& panes,
-    std::vector<EditorSplitDividerLayout>* dividers,
-    std::vector<std::size_t>* path) const {
-  if (node == nullptr) {
-    return;
-  }
-
-  if (node->IsLeaf() || node->orientation == EditorSplitOrientation::None ||
-      node->children.empty()) {
-    panes.push_back(EditorPaneLayout{
-        .leaf_id = node->leaf_id,
-        .rect = rect,
-        .active = node->leaf_id == editor_tab.active_leaf_id,
-    });
-    return;
-  }
-
-  const bool vertical = node->orientation == EditorSplitOrientation::Vertical;
-  std::vector<float> size_fractions(node->children.size(), 0.0f);
-  for (std::size_t i = 0; i < node->children.size(); ++i) {
-    size_fractions[i] = node->children[i]->size_fraction;
-  }
-  const auto split_layout = ComputeEditorSplitAxisLayout(rect, vertical, size_fractions);
-  if (!split_layout.has_value()) {
-    return;
-  }
-
-  for (std::size_t i = 0; i < node->children.size(); ++i) {
-    if (path != nullptr) {
-      path->push_back(i);
-    }
-    CollectEditorPaneLayouts(editor_tab, node->children[i].get(), split_layout->child_rects[i],
-                             panes, dividers, path);
-    if (path != nullptr) {
-      path->pop_back();
-    }
-
-    if (i < split_layout->divider_rects.size()) {
-      if (dividers != nullptr && path != nullptr) {
-        dividers->push_back(EditorSplitDividerLayout{
-            .node_path = *path,
-            .divider_index = i,
-            .rect = split_layout->divider_rects[i],
-        });
-      }
-    }
-  }
-}
-
-std::optional<SDL_FRect> WorkspaceShell::ComputeEditorSplitNodeRect(
-    const SDL_FRect& editor_surface,
-    const std::vector<std::size_t>& path) const {
-  const auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->split_root == nullptr) {
-    return std::nullopt;
-  }
-
-  const auto compute_rect = [&](auto&& self,
-                                const TabEntry::EditorTabState::EditorSplitNode* node,
-                                const SDL_FRect& rect,
-                                std::size_t depth) -> std::optional<SDL_FRect> {
-    if (node == nullptr) {
-      return std::nullopt;
-    }
-    if (depth >= path.size()) {
-      return rect;
-    }
-    if (node->IsLeaf() || node->orientation == EditorSplitOrientation::None ||
-        node->children.empty()) {
-      return std::nullopt;
-    }
-
-    const std::size_t child_index = path[depth];
-    if (child_index >= node->children.size()) {
-      return std::nullopt;
-    }
-
-    const bool vertical = node->orientation == EditorSplitOrientation::Vertical;
-    std::vector<float> size_fractions(node->children.size(), 0.0f);
-    for (std::size_t i = 0; i < node->children.size(); ++i) {
-      size_fractions[i] = node->children[i]->size_fraction;
-    }
-    const auto split_layout = ComputeEditorSplitAxisLayout(rect, vertical, size_fractions);
-    if (!split_layout.has_value()) {
-      return std::nullopt;
-    }
-
-    return self(self, node->children[child_index].get(), split_layout->child_rects[child_index],
-                depth + 1);
-  };
-
-  return compute_rect(compute_rect, editor_tab->split_root.get(), editor_surface, 0);
-}
+// Editor splits are modelled as editor *groups* above the tab level (Phase B+).
+// The editor area hosts 1 or 2 groups; each group's active tab renders into its
+// own surface rect. Here we carve the editor surface into per-group panes; the
+// matching per-group tab strips are produced from the full layout in the chrome
+// pass (see ComputeEditorGroupRects).
 
 SDL_FRect WorkspaceShell::EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const {
   if (ActiveEditorBannerForTab(context_.current_project_state) == nullptr) {
@@ -285,33 +25,103 @@ SDL_FRect WorkspaceShell::EditorSurfaceBelowBanner(const SDL_FRect& editor_surfa
   return content;
 }
 
-std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneLayouts(
+namespace {
+
+// Build the minimal WorkspaceLayout the geometry helper needs to split a surface
+// rect into per-group editor-surface rects. Only `editor_surface` / `editor_area`
+// participate in the surface split (tab strip / breadcrumb are chrome-only), and
+// editor_surface shares the editor_area x/width, so this reproduces the chrome
+// pass's split exactly.
+WorkspaceLayout SurfaceOnlyLayout(const SDL_FRect& editor_surface) {
+  WorkspaceLayout tmp{};
+  tmp.editor_surface = editor_surface;
+  tmp.editor_area =
+      MakeRect(editor_surface.x, editor_surface.y, editor_surface.w, editor_surface.h);
+  return tmp;
+}
+
+}  // namespace
+
+std::size_t WorkspaceShell::FocusedEditorGroupIndex() const {
+  return context_.current_project_state.focused_group_index;
+}
+
+editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayout& pane) {
+  std::vector<EditorGroup>& groups = context_.current_project_state.editor_groups;
+  if (pane.group_index >= groups.size()) {
+    return nullptr;
+  }
+  return GroupActiveViewport(groups[pane.group_index]);
+}
+
+const editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayout& pane) const {
+  const std::vector<EditorGroup>& groups = context_.current_project_state.editor_groups;
+  if (pane.group_index >= groups.size()) {
+    return nullptr;
+  }
+  return GroupActiveViewport(groups[pane.group_index]);
+}
+
+EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
+    const WorkspaceLayout& layout) const {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  const std::size_t group_count = std::min<std::size_t>(state.editor_groups.size(), 2);
+  const bool split = group_count >= 2 &&
+                     state.group_split_orientation != EditorSplitOrientation::None;
+  const bool vertical = state.group_split_orientation == EditorSplitOrientation::Vertical;
+  return ComputeEditorGroupRects(layout, split ? group_count : 1, vertical,
+                                 state.group_split_fraction);
+}
+
+EditorGroupRectsLayout WorkspaceShell::ComputeEditorSurfaceGroupRects(
     const SDL_FRect& editor_surface) const {
+  return ComputeEditorGroupRectsForState(SurfaceOnlyLayout(editor_surface));
+}
+
+std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::EditorPaneLayoutsFromGroupRects(
+    const EditorGroupRectsLayout& group_rects) const {
   std::vector<EditorPaneLayout> panes;
-  const auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.empty()) {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  if (state.editor_groups.empty()) {
     return panes;
   }
-
-  CollectEditorPaneLayouts(*editor_tab, editor_tab->split_root.get(),
-                           EditorSurfaceBelowBanner(editor_surface), panes, nullptr, nullptr);
+  const std::size_t focused = state.focused_group_index < group_rects.groups.size()
+                                  ? state.focused_group_index
+                                  : 0;
+  panes.reserve(group_rects.groups.size());
+  for (std::size_t i = 0; i < group_rects.groups.size(); ++i) {
+    const bool active = i == focused;
+    // The external-change banner belongs to the focused group; trim it from that
+    // group's surface so the editor content lays out below the strip.
+    const SDL_FRect surface = active ? EditorSurfaceBelowBanner(group_rects.groups[i].editor_surface)
+                                     : group_rects.groups[i].editor_surface;
+    panes.push_back(EditorPaneLayout{.group_index = i, .rect = surface, .active = active});
+  }
   return panes;
 }
 
 std::vector<WorkspaceShell::EditorSplitDividerLayout>
-WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface) const {
+WorkspaceShell::EditorSplitDividerLayoutsFromGroupRects(
+    const EditorGroupRectsLayout& group_rects) const {
   std::vector<EditorSplitDividerLayout> dividers;
-  const auto* editor_tab = ActiveEditorTab();
-  if (editor_tab == nullptr || editor_tab->views.size() < 2 || editor_tab->split_root == nullptr) {
-    return dividers;
+  if (group_rects.divider.has_value()) {
+    dividers.push_back(EditorSplitDividerLayout{.node_path = {}, .divider_index = 0,
+                                                .rect = *group_rects.divider});
   }
-
-  std::vector<std::size_t> path;
-  std::vector<EditorPaneLayout> ignored_panes;
-  CollectEditorPaneLayouts(*editor_tab, editor_tab->split_root.get(),
-                           EditorSurfaceBelowBanner(editor_surface), ignored_panes, &dividers,
-                           &path);
   return dividers;
+}
+
+std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneLayouts(
+    const SDL_FRect& editor_surface) const {
+  if (context_.current_project_state.editor_groups.empty()) {
+    return {};
+  }
+  return EditorPaneLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
+}
+
+std::vector<WorkspaceShell::EditorSplitDividerLayout>
+WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface) const {
+  return EditorSplitDividerLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
 }
 
 }  // namespace microide::workspace

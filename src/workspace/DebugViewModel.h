@@ -17,9 +17,26 @@ namespace microide::workspace {
 struct DebugStackFrameView {
   int id = 0;                         // DAP frame id (used by scopes/evaluate in Phase 4/5)
   std::filesystem::path source_path;  // normalized; empty when the frame has no source
+  // `source_path` as a normalized generic string, cached at frame-build time so the
+  // per-pane execution-line marker and debug-value hover path-match do not
+  // re-normalize and re-allocate it for every editor pane each frame. Empty when
+  // the frame has no source.
+  std::string source_path_normalized;
   std::size_t line = 0;               // 0-based buffer line (DAP line - 1)
   std::string display_primary;        // e.g. "main"        (prebuilt)
   std::string display_secondary;      // e.g. "main.c:42"   (prebuilt, muted)
+
+  // Set `source_path` (normalizing) and its cached generic-string form together so
+  // the two never desync. Takes the raw DAP source path; empty input clears both.
+  void SetSource(const std::string& raw_path) {
+    if (raw_path.empty()) {
+      source_path.clear();
+      source_path_normalized.clear();
+      return;
+    }
+    source_path = std::filesystem::path(raw_path).lexically_normal();
+    source_path_normalized = source_path.generic_string();
+  }
 };
 
 // One entry in the thread selector (Phase 7 multi-thread). `display` is prebuilt
@@ -94,6 +111,15 @@ struct DebugExecutionView {
     static const std::filesystem::path kEmpty;
     const DebugStackFrameView* frame = FocusedFrame();
     return frame != nullptr ? frame->source_path : kEmpty;
+  }
+
+  // Cached normalized generic-string form of FocusedPath(), for per-pane path
+  // comparison without re-normalizing and allocating on every editor pane.
+  // Empty when the focused frame has no source.
+  const std::string& FocusedPathNormalized() const {
+    static const std::string kEmpty;
+    const DebugStackFrameView* frame = FocusedFrame();
+    return frame != nullptr ? frame->source_path_normalized : kEmpty;
   }
 
   std::size_t FocusedLine() const {

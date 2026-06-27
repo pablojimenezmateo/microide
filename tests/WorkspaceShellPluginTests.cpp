@@ -825,7 +825,7 @@ return ide.plugin({
 
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "events.ping hello plugins"),
-         "plugin commands should execute through the shell command prompt");
+         "plugin commands should execute through the shell command line");
   Expect(!WorkspaceShellTestAccess::PluginMessages(shell).empty() &&
              WorkspaceShellTestAccess::PluginMessages(shell).back() == "events: command:hello plugins",
          "plugin commands should receive shell-split arguments");
@@ -882,9 +882,9 @@ return ide.plugin({
   WorkspaceShellTestAccess::ClearPluginMessages(shell);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"),
          "plugins-reload should succeed when Lua plugin support is enabled");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("Loaded 1 plugin") !=
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell).find("Loaded 1 plugin") !=
              std::string::npos,
-         "plugins-reload should report a load summary in the command prompt");
+         "plugins-reload should report a load summary as command feedback");
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reloadable.ping"),
          "reloaded plugin command should execute");
@@ -957,7 +957,7 @@ return ide.plugin({
                         return kind == microide::editor::SyntaxTokenKind::Keyword;
                       }),
          "plugins-reload should invalidate active editor syntax caches when definitions change");
-  Expect(WorkspaceShellTestAccess::CommandPromptStatusText(shell).find("1 syntax definition") !=
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell).find("1 syntax definition") !=
              std::string::npos,
          "plugins-reload feedback should include loaded plugin syntax definitions");
 }
@@ -1677,6 +1677,71 @@ return ide.plugin({
          "switching back should restore the first project's stored diagnostics");
   Expect(normalize_path_text(restored_diagnostics->front().message) == expected_project_a,
          "restored diagnostics should match the project that originally published them");
+}
+
+// With two editor groups split side-by-side, hit-test paths (hover/cursor/
+// right-click) must resolve the viewport of the pane under the cursor, not the
+// globally-focused group's viewport. The bug: these loops read
+// ActiveEditorViewport() for every pane, so hovering the unfocused group hit-tested
+// the focused group's content. This pins the per-pane resolution (ViewportForPane)
+// and the user-visible symptom: a diagnostic in the *unfocused* group still shows
+// its hover popup.
+void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = project_root / "a.md";
+  const std::filesystem::path file_b = project_root / "b.md";
+  WriteFile(file_a, "alpha beta\n");
+  WriteFile(file_b, "gamma delta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+
+  // Split right (clones a.md into a new, focused group), then open b.md in that
+  // focused group. Result: group 0 (inactive) shows a.md, group 1 (focused) b.md.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should succeed when an editor tab is active");
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups should be open");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "the freshly-split group should hold focus");
+
+  const std::string key_a = file_a.lexically_normal().generic_string();
+  const std::string key_b = file_b.lexically_normal().generic_string();
+  const auto pane_paths = WorkspaceShellTestAccess::PaneViewportPaths(shell);
+  Expect(pane_paths.size() == 2, "two panes should resolve");
+  Expect(pane_paths[0] == key_a,
+         "the inactive pane must resolve its own group's viewport (a.md), not the focused one");
+  Expect(pane_paths[1] == key_b, "the focused pane resolves the focused group's viewport (b.md)");
+
+  // Publish a diagnostic on a.md, which lives in the *inactive* group.
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "diagnostics", file_a,
+             {microide::editor::Diagnostic{
+                 .range =
+                     microide::editor::SelectionRange{
+                         .start = microide::editor::TextPosition{.line = 0, .column = 1},
+                         .end = microide::editor::TextPosition{.line = 0, .column = 5},
+                     },
+                 .severity = microide::editor::DiagnosticSeverity::Warning,
+                 .message = "Unexpected token near alpha",
+             }}),
+         "diagnostic should publish on the inactive group's file");
+
+  // Hover the diagnostic inside the inactive pane. Pre-fix this hit-tested the
+  // focused group's b.md (no diagnostic) and produced no popup.
+  const auto metrics = WorkspaceShellTestAccess::InactiveEditorPaneMetrics(shell);
+  const float hover_x = metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 2.0f;
+  const float hover_y = metrics.first_line_y + metrics.line_height - 1.5f;
+  Expect(SendMouseMotion(shell, hover_x, hover_y, 0),
+         "hovering the inactive pane's diagnostic underline should be handled");
+
+  const auto message = WorkspaceShellTestAccess::ActiveEditorDiagnosticHoverMessage(shell);
+  Expect(message.has_value() && *message == "Unexpected token near alpha",
+         "hovering the unfocused group's diagnostic should surface its message");
 }
 
 void TestWorkspaceShellDiagnosticHoverPopupShowsMessages() {
@@ -3125,6 +3190,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarModeMenuListsPluginSidebars);
   AddTest(tests, "WorkspaceShell/PluginDiagnosticsPersistAcrossProjectSwitches",
           TestWorkspaceShellPluginDiagnosticsPersistAcrossProjectSwitches);
+  AddTest(tests, "WorkspaceShell/SplitGroupHoverResolvesPaneViewport",
+          TestWorkspaceShellSplitGroupHoverResolvesPaneViewport);
   AddTest(tests, "WorkspaceShell/DiagnosticHoverPopupShowsMessages",
           TestWorkspaceShellDiagnosticHoverPopupShowsMessages);
   AddTest(tests, "WorkspaceShell/PluginHoverPopupShowsMessages",

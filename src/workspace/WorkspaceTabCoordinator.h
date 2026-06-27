@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "workspace/WorkspaceProjectState.h"
@@ -20,15 +21,15 @@ class TabCoordinator {
     std::function<void(const std::filesystem::path&)> notify_plugin_buffer_open;
     std::function<void(const std::filesystem::path&)> notify_lsp_buffer_close;
     std::function<std::size_t(const std::filesystem::path&)> count_open_buffer_views;
+    // Whole-workspace open-view counts keyed by normalized generic path, built
+    // once so closing a multi-tab group is O(views) rather than O(tabs*views).
+    std::function<std::unordered_map<std::string, std::size_t>()> open_buffer_view_counts;
     std::function<bool(const std::filesystem::path&, editor::TextViewport&, std::string*)>
         prepare_editor_view_for_save;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<TabEntry::EditorTabState(const editor::TextViewport&)> make_editor_tab_state;
-    std::function<std::filesystem::path(const TabEntry::EditorTabState::EditorViewState&)>
-        editor_view_path;
-    std::function<editor::TextViewport*(TabEntry::EditorTabState&, std::size_t)> find_editor_view;
-    std::function<void(TabEntry::EditorTabState&)> normalize_editor_split_tree;
+    std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;
     std::function<void()> reveal_selected_tree_sidebar_line;
     std::function<void()> reveal_active_compare_selection;
     std::function<void()> reveal_active_merge_selection;
@@ -67,11 +68,6 @@ class TabCoordinator {
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
   void SyncActiveEditorTabMetadata();
-  void SetActiveEditorSplit(std::size_t leaf_id);
-  bool ActivateOrderedEditorSplit(std::size_t order_index);
-  bool SplitActiveEditor(EditorSplitOrientation orientation);
-  bool UnsplitActiveEditor();
-  bool CycleEditorSplit(int delta);
   void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   // Force-saves every dirty editor view on `path`, bypassing the save-time
@@ -91,6 +87,14 @@ class TabCoordinator {
   void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                  std::string_view content);
   void Close(std::size_t index);
+  // Editor groups (max 2). Splitting clones the focused group's active editor tab
+  // into a new group (shared buffer, independent view) and focuses it; if two
+  // groups already exist it just sets the orientation and focuses the other.
+  // Returns false when there is no active editor tab to clone.
+  bool SplitEditorGroup(EditorSplitOrientation orientation);
+  bool FocusOtherGroup();
+  bool CloseEditorGroup();
+  std::size_t EditorGroupCount() const { return state_.editor_groups.size(); }
   bool MoveActiveTo(std::size_t index);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
@@ -99,28 +103,17 @@ class TabCoordinator {
   static bool TabStateIsDirty(const TabEntry& tab);
 
  private:
-  struct EditorSplitSlot {
-    TabEntry::EditorTabState::EditorSplitNode* parent = nullptr;
-    std::size_t index = 0;
-    std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode>* slot = nullptr;
-  };
-
-  static std::unique_ptr<TabEntry::EditorTabState::EditorSplitNode> MakeEditorLeafNode(
-      std::size_t leaf_id,
-      float size_fraction = 1.0f);
-  EditorSplitSlot FindEditorLeafSlot(TabEntry::EditorTabState& editor_tab,
-                                     std::size_t leaf_id);
-  bool RestoreEditorView(TabEntry::EditorTabState::EditorViewState& view);
-  TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
-      TabEntry::EditorTabState& editor_tab,
-      std::size_t leaf_id);
-  const TabEntry::EditorTabState::EditorViewState* FindEditorViewState(
-      const TabEntry::EditorTabState& editor_tab,
-      std::size_t leaf_id) const;
-  void CollectEditorLeafOrder(const TabEntry::EditorTabState::EditorSplitNode* node,
-                              std::vector<std::size_t>& order) const;
-  std::vector<std::size_t> EditorLeafOrder(const TabEntry::EditorTabState& editor_tab) const;
+  bool RestoreEditorTab(TabEntry::EditorTabState& editor_state);
   bool EnsureEditorTabLoaded(TabEntry& tab);
+  // Remove the focused (expected-empty) group and collapse back to a single
+  // full-area group, resetting split orientation/fraction.
+  void CollapseFocusedGroup();
+  // Shared tail for group split/focus/close: scroll the (new) focused group's
+  // active tab into view and request the matching redraw.
+  void RefreshFocusedGroupActiveTab(bool editor_redraw);
+  // Clone an editor tab for a split: copies the viewport (sharing the underlying
+  // DocumentState for a live shared buffer) with a fresh folding model.
+  static TabEntry CloneEditorTabForSplit(const TabEntry& tab);
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;

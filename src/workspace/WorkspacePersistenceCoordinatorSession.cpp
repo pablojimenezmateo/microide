@@ -168,7 +168,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
   persisted_session.sidebar_width = CurrentProjectState().sidebar.width;
   persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
   persisted_session.outgoing_base_choice = CurrentProjectState().sidebar.git.outgoing_base_choice;
-  persisted_session.active_tab_index = CurrentProjectState().active_tab_index;
+  persisted_session.focused_group_index = CurrentProjectState().focused_group_index;
   persisted_session.right_pane_visible = CurrentProjectState().debug_pane.visible;
   persisted_session.right_pane_width = CurrentProjectState().debug_pane.width;
   persisted_session.right_pane_mode =
@@ -183,10 +183,12 @@ bool PersistenceCoordinator::RestoreSessionState() {
   auto& state = CurrentProjectState();
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::ResetState");
-    state.open_tabs.clear();
-    state.active_tab_index = 0;
+    state.editor_groups.clear();
+    state.editor_groups.emplace_back();
+    state.focused_group_index = 0;
+    state.group_split_orientation = EditorSplitOrientation::None;
+    state.group_split_fraction = 0.5f;
     state.overlay.visible = false;
-    state.panel.command_mode = false;
     state.overlay.workflow.compare_picker.matches.clear();
     state.overlay.workflow.compare_picker.items.clear();
     state.overlay.workflow.compare_picker.selected_index = 0;
@@ -198,8 +200,11 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RebuildTabs");
-    std::size_t restored_tab_index = 0;
-    for (const PersistedEditorTabState& persisted_tab : persisted_session.tabs) {
+    // Rebuild one persisted tab into a runtime TabEntry. `should_eager_hydrate`
+    // controls whether an editor tab is opened immediately or left deferred;
+    // compare/merge tabs are always materialized fully.
+    auto rebuild_tab = [&](const PersistedEditorTabState& persisted_tab,
+                           bool should_eager_hydrate) -> std::optional<TabEntry> {
     if (persisted_tab.kind == "compare") {
       std::filesystem::path compare_path = persisted_tab.compare_path;
       if (compare_path.is_relative()) {
@@ -209,7 +214,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
       if (compare_path.empty() || persisted_tab.compare_commit_hash.empty() ||
           persisted_tab.compare_commit_short_hash.empty()) {
-        continue;
+        return std::nullopt;
       }
 
       const project::GitCommitEntry commit{
@@ -275,16 +280,14 @@ bool PersistenceCoordinator::RestoreSessionState() {
                                                                 persisted_tab.compare_selected_row);
       }
       if (!compare_tab.has_value()) {
-        continue;
+        return std::nullopt;
       }
       compare_tab->compare->scroll_row = static_cast<int>(std::min<std::size_t>(
           persisted_tab.compare_scroll_row,
           static_cast<std::size_t>(std::numeric_limits<int>::max())));
       compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
       compare_tab->compare->divider_fraction = persisted_tab.compare_divider_fraction;
-      state.open_tabs.push_back(std::move(*compare_tab));
-      ++restored_tab_index;
-      continue;
+      return compare_tab;
     }
     if (persisted_tab.kind == "merge") {
       auto resolve_path = [&](std::filesystem::path path) {
@@ -300,13 +303,13 @@ bool PersistenceCoordinator::RestoreSessionState() {
       const std::filesystem::path merge_output = resolve_path(persisted_tab.merge_output_path);
       if (merge_base.empty() || merge_incoming.empty() || merge_current.empty() ||
           merge_output.empty()) {
-        continue;
+        return std::nullopt;
       }
 
       auto merge_tab =
           operations_.build_merge_tab_entry(merge_base, merge_incoming, merge_current, merge_output);
       if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
-        continue;
+        return std::nullopt;
       }
 
       const auto parse_choice = [](std::string_view text) {
@@ -354,121 +357,43 @@ bool PersistenceCoordinator::RestoreSessionState() {
           static_cast<std::size_t>(std::max(0, merge_state.scroll_row)));
       merge_state.result_viewport.SetHorizontalScroll(merge_state.horizontal_scroll);
       merge_state.scroll_row = static_cast<int>(merge_state.result_viewport.scroll_line());
-      state.open_tabs.push_back(std::move(*merge_tab));
-      ++restored_tab_index;
-      continue;
+      return merge_tab;
     }
 
-    const bool contains_dirty_snapshot = std::any_of(
-        persisted_tab.views.begin(), persisted_tab.views.end(),
-        [](const PersistedEditorViewState& view) { return view.dirty_snapshot; });
-    const bool should_eager_hydrate =
-        restored_tab_index == persisted_session.active_tab_index || contains_dirty_snapshot;
+    // Editor tab: restores exactly one viewport from its inline single-view fields.
+    std::filesystem::path view_path = persisted_tab.path;
+    if (!view_path.empty() && view_path.is_relative()) {
+      view_path = state.root / view_path;
+    }
+    view_path = view_path.lexically_normal();
 
     TabEntry::EditorTabState editor_state;
-    editor_state.active_leaf_id = persisted_tab.active_leaf_id;
+    editor_state.restored_path = view_path;
+    editor_state.restored_cursor_line = persisted_tab.cursor_line;
+    editor_state.restored_cursor_column = persisted_tab.cursor_column;
+    editor_state.restored_scroll_line = persisted_tab.scroll_line;
+    editor_state.restored_horizontal_scroll = persisted_tab.horizontal_scroll;
 
-    for (const PersistedEditorViewState& persisted_view : persisted_tab.views) {
-      std::filesystem::path view_path = persisted_view.path;
-      if (!view_path.empty() && view_path.is_relative()) {
-        view_path = state.root / view_path;
-      }
-      view_path = view_path.lexically_normal();
-
-      if (persisted_view.dirty_snapshot) {
-        editor::TextViewport restored_view;
-        restored_view.LoadContent(
-            util::SerializeLines(persisted_view.buffer_lines, persisted_view.line_ending), view_path,
-            persisted_view.line_ending);
-        restored_view.MoveCursorTo(persisted_view.cursor_line, persisted_view.cursor_column);
-        restored_view.SetScrollLine(persisted_view.scroll_line);
-        restored_view.SetHorizontalScroll(persisted_view.horizontal_scroll);
-        restored_view.SetDirty(true);
-        operations_.apply_editor_preferences(restored_view);
-        operations_.apply_detected_indent_on_open(restored_view);
-        editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
-            .leaf_id = persisted_view.leaf_id,
-            .viewport = std::move(restored_view),
-            .restored_path = view_path,
-            .restored_cursor_line = persisted_view.cursor_line,
-            .restored_cursor_column = persisted_view.cursor_column,
-            .restored_scroll_line = persisted_view.scroll_line,
-            .restored_horizontal_scroll = persisted_view.horizontal_scroll,
-            .needs_restore = false,
-        });
-        continue;
-      }
-
-      if (view_path.empty() || !std::filesystem::exists(view_path)) {
-        continue;
-      }
-      editor_state.views.push_back(TabEntry::EditorTabState::EditorViewState{
-          .leaf_id = persisted_view.leaf_id,
-          .viewport = editor::TextViewport{},
-          .restored_path = view_path,
-          .restored_cursor_line = persisted_view.cursor_line,
-          .restored_cursor_column = persisted_view.cursor_column,
-          .restored_scroll_line = persisted_view.scroll_line,
-          .restored_horizontal_scroll = persisted_view.horizontal_scroll,
-          .needs_restore = true,
-      });
+    if (persisted_tab.dirty_snapshot) {
+      editor::TextViewport restored_view;
+      restored_view.LoadContent(
+          util::SerializeLines(persisted_tab.buffer_lines, persisted_tab.line_ending), view_path,
+          persisted_tab.line_ending);
+      restored_view.MoveCursorTo(persisted_tab.cursor_line, persisted_tab.cursor_column);
+      restored_view.SetScrollLine(persisted_tab.scroll_line);
+      restored_view.SetHorizontalScroll(persisted_tab.horizontal_scroll);
+      restored_view.SetDirty(true);
+      operations_.apply_editor_preferences(restored_view);
+      operations_.apply_detected_indent_on_open(restored_view);
+      editor_state.viewport = std::move(restored_view);
+      editor_state.needs_restore = false;
+    } else if (!view_path.empty() && std::filesystem::exists(view_path)) {
+      editor_state.needs_restore = true;
+    } else {
+      return std::nullopt;
     }
 
-    if (editor_state.views.empty()) {
-      continue;
-    }
-
-    if (!persisted_tab.split_nodes.empty()) {
-      std::vector<PersistedSplitNodeState> split_nodes = persisted_tab.split_nodes;
-      std::sort(split_nodes.begin(), split_nodes.end(), [](const auto& lhs, const auto& rhs) {
-        if (lhs.path.size() != rhs.path.size()) {
-          return lhs.path.size() < rhs.path.size();
-        }
-        return lhs.path < rhs.path;
-      });
-
-      for (const PersistedSplitNodeState& node_state : split_nodes) {
-        auto make_node = [&]() {
-          auto node = std::make_unique<TabEntry::EditorTabState::EditorSplitNode>();
-          node->leaf_id = node_state.leaf_id;
-          node->size_fraction = std::max(0.0f, node_state.size_fraction);
-          if (node_state.orientation == "vertical") {
-            node->orientation = EditorSplitOrientation::Vertical;
-          } else if (node_state.orientation == "horizontal") {
-            node->orientation = EditorSplitOrientation::Horizontal;
-          } else {
-            node->orientation = EditorSplitOrientation::None;
-          }
-          return node;
-        };
-
-        if (node_state.path.empty()) {
-          editor_state.split_root = make_node();
-          continue;
-        }
-
-        std::vector<std::size_t> parent_path(node_state.path.begin(), node_state.path.end() - 1);
-        auto* parent = operations_.find_editor_split_node(editor_state.split_root.get(), parent_path);
-        if (parent == nullptr) {
-          continue;
-        }
-        const std::size_t child_index = node_state.path.back();
-        if (parent->children.size() <= child_index) {
-          parent->children.resize(child_index + 1);
-        }
-        parent->children[child_index] = make_node();
-      }
-    }
-
-    operations_.normalize_editor_split_tree(editor_state);
-    const TabEntry::EditorTabState::EditorViewState* active_view =
-        operations_.find_editor_view_state(editor_state, editor_state.active_leaf_id);
-    const TabEntry::EditorTabState::EditorViewState* fallback_view =
-        active_view != nullptr ? active_view : &editor_state.views.front();
-    if (active_view == nullptr) {
-      editor_state.active_leaf_id = editor_state.views.front().leaf_id;
-    }
-    const std::filesystem::path tab_path = operations_.editor_view_path(*fallback_view);
+    const std::filesystem::path tab_path = operations_.editor_view_path(editor_state);
 
     TabEntry restored_tab{
         .kind = TabEntry::Kind::Editor,
@@ -483,25 +408,65 @@ bool PersistenceCoordinator::RestoreSessionState() {
       restored_tab.editor_state = std::move(editor_state);
     } else {
       std::optional<editor::SelectionRange> selection;
-      if (const auto* leaf_view =
-              operations_.find_editor_view_state(editor_state, editor_state.active_leaf_id);
-          leaf_view != nullptr && !leaf_view->needs_restore) {
-        selection = leaf_view->viewport.selection_range();
+      if (!editor_state.needs_restore) {
+        selection = editor_state.viewport.selection_range();
       }
       restored_tab.deferred_handle = TabEntry::DeferredTabHandle{
           .path = tab_path,
           .language_hint = editor::runtime_syntax::DetectFiletype(tab_path, {}),
-          .cursor_line = fallback_view->restored_cursor_line,
-          .cursor_column = fallback_view->restored_cursor_column,
-          .scroll_line = fallback_view->restored_scroll_line,
-          .horizontal_scroll = fallback_view->restored_horizontal_scroll,
+          .cursor_line = editor_state.restored_cursor_line,
+          .cursor_column = editor_state.restored_cursor_column,
+          .scroll_line = editor_state.restored_scroll_line,
+          .horizontal_scroll = editor_state.restored_horizontal_scroll,
           .selection = selection,
-          .active_leaf_id = editor_state.active_leaf_id,
       };
     }
-    state.open_tabs.push_back(std::move(restored_tab));
-    ++restored_tab_index;
-  }
+    return restored_tab;
+    };  // rebuild_tab
+
+    state.editor_groups.clear();
+    for (const PersistedEditorGroupState& persisted_group : persisted_session.groups) {
+      if (state.editor_groups.size() >= 2) {
+        break;  // Editor groups are capped at 2.
+      }
+      EditorGroup group;
+      std::size_t restored_active = 0;
+      for (std::size_t i = 0; i < persisted_group.tabs.size(); ++i) {
+        const PersistedEditorTabState& persisted_tab = persisted_group.tabs[i];
+        const bool is_active = i == persisted_group.active_tab_index;
+        const bool should_eager_hydrate = is_active || persisted_tab.dirty_snapshot;
+        std::optional<TabEntry> tab = rebuild_tab(persisted_tab, should_eager_hydrate);
+        if (!tab.has_value()) {
+          continue;
+        }
+        if (is_active) {
+          restored_active = group.open_tabs.size();
+        }
+        group.open_tabs.push_back(std::move(*tab));
+      }
+      if (!group.open_tabs.empty()) {
+        group.active_tab_index = std::min(restored_active, group.open_tabs.size() - 1);
+      }
+      state.editor_groups.push_back(std::move(group));
+    }
+    if (state.editor_groups.empty()) {
+      state.editor_groups.emplace_back();
+    }
+    if (state.editor_groups.size() >= 2) {
+      EditorSplitOrientation orientation =
+          persisted_session.group_split_orientation <=
+                  static_cast<std::uint8_t>(EditorSplitOrientation::Horizontal)
+              ? static_cast<EditorSplitOrientation>(persisted_session.group_split_orientation)
+              : EditorSplitOrientation::Vertical;
+      // Two groups always imply a visible divider; never leave the orientation None.
+      state.group_split_orientation =
+          orientation == EditorSplitOrientation::None ? EditorSplitOrientation::Vertical : orientation;
+    } else {
+      state.group_split_orientation = EditorSplitOrientation::None;
+    }
+    state.group_split_fraction = std::clamp(persisted_session.group_split_fraction, 0.1f, 0.9f);
+    state.focused_group_index =
+        std::min(persisted_session.focused_group_index, state.editor_groups.size() - 1);
   }
 
   {
@@ -523,20 +488,18 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.debug_pane.visible = persisted_session.right_pane_visible && debugger_enabled;
   }
 
-  if (state.open_tabs.empty()) {
-    state.welcome_surface.viewport.SetPlaceholderText(
-        "microide\n\n"
-        "Project loaded.\n"
-        "Use the sidebar to open files.\n");
-    state.surface.focus = state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
-    return true;
-  }
-
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::FinalizeState");
-    const std::size_t active_index =
-        std::min(persisted_session.active_tab_index, state.open_tabs.size() - 1);
-    state.active_tab_index = active_index;
+    // Each empty group shows the welcome placeholder; per-group active index was
+    // already clamped during rebuild.
+    for (EditorGroup& group : state.editor_groups) {
+      if (group.open_tabs.empty()) {
+        group.welcome_surface.viewport.SetPlaceholderText(
+            "microide\n\n"
+            "Project loaded.\n"
+            "Use the sidebar to open files.\n");
+      }
+    }
     state.surface.focus = state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
   }
   return true;
@@ -554,35 +517,46 @@ void PersistenceCoordinator::SaveSessionState() {
     return;
   }
 
-  PersistedProjectSessionState persisted_session;
-  persisted_session.sidebar_visible = CurrentProjectState().sidebar.visible;
-  persisted_session.sidebar_width = CurrentProjectState().sidebar.width;
-  persisted_session.bottom_panel_height = CurrentProjectState().panel.height;
-  persisted_session.outgoing_base_choice = CurrentProjectState().sidebar.git.outgoing_base_choice;
-  persisted_session.active_tab_index = 0;
-  persisted_session.right_pane_visible = CurrentProjectState().debug_pane.visible;
-  persisted_session.right_pane_width = CurrentProjectState().debug_pane.width;
-  persisted_session.right_pane_mode =
-      static_cast<std::uint8_t>(CurrentProjectState().debug_pane.mode);
-
   auto& state = CurrentProjectState();
-  for (std::size_t tab_index = 0; tab_index < state.open_tabs.size(); ++tab_index) {
-    auto& tab = state.open_tabs[tab_index];
-    std::optional<PersistedEditorTabState> persisted_tab;
-    if (tab.kind == TabEntry::Kind::Compare) {
-      persisted_tab = BuildPersistedCompareTabState(tab);
-    } else if (tab.kind == TabEntry::Kind::Merge) {
-      persisted_tab = BuildPersistedMergeTabState(tab);
-    } else {
-      persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
+
+  PersistedProjectSessionState persisted_session;
+  persisted_session.sidebar_visible = state.sidebar.visible;
+  persisted_session.sidebar_width = state.sidebar.width;
+  persisted_session.bottom_panel_height = state.panel.height;
+  persisted_session.outgoing_base_choice = state.sidebar.git.outgoing_base_choice;
+  persisted_session.focused_group_index = state.focused_group_index;
+  persisted_session.group_split_orientation =
+      static_cast<std::uint8_t>(state.group_split_orientation);
+  persisted_session.group_split_fraction = state.group_split_fraction;
+  persisted_session.right_pane_visible = state.debug_pane.visible;
+  persisted_session.right_pane_width = state.debug_pane.width;
+  persisted_session.right_pane_mode = static_cast<std::uint8_t>(state.debug_pane.mode);
+
+  for (auto& group : state.editor_groups) {
+    PersistedEditorGroupState persisted_group;
+    for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
+      auto& tab = group.open_tabs[tab_index];
+      std::optional<PersistedEditorTabState> persisted_tab;
+      if (tab.kind == TabEntry::Kind::Compare) {
+        persisted_tab = BuildPersistedCompareTabState(tab);
+      } else if (tab.kind == TabEntry::Kind::Merge) {
+        persisted_tab = BuildPersistedMergeTabState(tab);
+      } else {
+        persisted_tab = BuildPersistedEditorTabState(tab_index, tab);
+      }
+      if (!persisted_tab.has_value()) {
+        continue;
+      }
+      if (tab_index == group.active_tab_index) {
+        persisted_group.active_tab_index = persisted_group.tabs.size();
+      }
+      persisted_group.tabs.push_back(std::move(*persisted_tab));
     }
-    if (!persisted_tab.has_value()) {
-      continue;
-    }
-    if (tab_index == state.active_tab_index) {
-      persisted_session.active_tab_index = persisted_session.tabs.size();
-    }
-    persisted_session.tabs.push_back(std::move(*persisted_tab));
+    persisted_session.groups.push_back(std::move(persisted_group));
+  }
+  if (persisted_session.focused_group_index >= persisted_session.groups.size()) {
+    persisted_session.focused_group_index =
+        persisted_session.groups.empty() ? 0 : persisted_session.groups.size() - 1;
   }
 
   operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
@@ -649,100 +623,55 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
     return std::nullopt;
   }
 
-  if (!tab.editor_state.has_value() || tab.editor_state->views.empty()) {
+  if (!tab.editor_state.has_value()) {
     if (!tab.deferred_handle.has_value() || tab.deferred_handle->path.empty()) {
       return std::nullopt;
     }
     PersistedEditorTabState persisted_tab;
     persisted_tab.kind = "editor";
-    persisted_tab.active_leaf_id = tab.deferred_handle->active_leaf_id;
-    persisted_tab.views.push_back(PersistedEditorViewState{
-        .leaf_id = tab.deferred_handle->active_leaf_id,
-        .path = tab.deferred_handle->path.lexically_normal(),
-        .cursor_line = tab.deferred_handle->cursor_line,
-        .cursor_column = tab.deferred_handle->cursor_column,
-        .scroll_line = tab.deferred_handle->scroll_line,
-        .horizontal_scroll = tab.deferred_handle->horizontal_scroll,
-        .dirty_snapshot = false,
-        .line_ending = editor::TextViewport::LineEnding::LF,
-        .buffer_lines = {},
-    });
-    persisted_tab.split_nodes.push_back(PersistedSplitNodeState{
-        .path = {},
-        .orientation = "leaf",
-        .size_fraction = 1.0f,
-        .leaf_id = tab.deferred_handle->active_leaf_id,
-    });
+    persisted_tab.path = tab.deferred_handle->path.lexically_normal();
+    persisted_tab.cursor_line = tab.deferred_handle->cursor_line;
+    persisted_tab.cursor_column = tab.deferred_handle->cursor_column;
+    persisted_tab.scroll_line = tab.deferred_handle->scroll_line;
+    persisted_tab.horizontal_scroll = tab.deferred_handle->horizontal_scroll;
+    persisted_tab.dirty_snapshot = false;
+    persisted_tab.line_ending = editor::TextViewport::LineEnding::LF;
     return persisted_tab;
   }
 
   auto& editor_state = tab.editor_state.value();
-  operations_.normalize_editor_split_tree(editor_state);
+  const editor::TextViewport* persisted_viewport = &editor_state.viewport;
+  const std::filesystem::path normalized_path =
+      editor_state.needs_restore ? editor_state.restored_path.lexically_normal()
+                                 : persisted_viewport->path().lexically_normal();
+  const bool dirty_snapshot = !editor_state.needs_restore && persisted_viewport->dirty();
+  if ((normalized_path.empty() && !dirty_snapshot) ||
+      (editor_state.needs_restore && !dirty_snapshot && normalized_path.empty())) {
+    return std::nullopt;
+  }
+  const std::size_t cursor_line =
+      editor_state.needs_restore ? editor_state.restored_cursor_line
+                                 : persisted_viewport->cursor_line();
+  const std::size_t cursor_column =
+      editor_state.needs_restore ? editor_state.restored_cursor_column
+                                 : persisted_viewport->cursor_column();
+  const std::size_t scroll_line =
+      editor_state.needs_restore ? editor_state.restored_scroll_line
+                                 : persisted_viewport->scroll_line();
+  const std::size_t horizontal_scroll =
+      editor_state.needs_restore ? editor_state.restored_horizontal_scroll
+                                 : persisted_viewport->horizontal_scroll();
 
   PersistedEditorTabState persisted_tab;
   persisted_tab.kind = "editor";
-  persisted_tab.active_leaf_id = editor_state.active_leaf_id;
-  for (const auto& view : editor_state.views) {
-    const editor::TextViewport* persisted_viewport = &view.viewport;
-    const std::filesystem::path normalized_path =
-        view.needs_restore ? view.restored_path.lexically_normal()
-                           : persisted_viewport->path().lexically_normal();
-    const bool dirty_snapshot = !view.needs_restore && persisted_viewport->dirty();
-    if (normalized_path.empty()) {
-      if (!dirty_snapshot) {
-        continue;
-      }
-    } else if (view.needs_restore && !dirty_snapshot) {
-      continue;
-    }
-    const std::size_t cursor_line =
-        view.needs_restore ? view.restored_cursor_line : persisted_viewport->cursor_line();
-    const std::size_t cursor_column =
-        view.needs_restore ? view.restored_cursor_column : persisted_viewport->cursor_column();
-    const std::size_t scroll_line =
-        view.needs_restore ? view.restored_scroll_line : persisted_viewport->scroll_line();
-    const std::size_t horizontal_scroll =
-        view.needs_restore ? view.restored_horizontal_scroll
-                           : persisted_viewport->horizontal_scroll();
-    persisted_tab.views.push_back(PersistedEditorViewState{
-        .leaf_id = view.leaf_id,
-        .path = normalized_path,
-        .cursor_line = cursor_line,
-        .cursor_column = cursor_column,
-        .scroll_line = scroll_line,
-        .horizontal_scroll = horizontal_scroll,
-        .dirty_snapshot = dirty_snapshot,
-        .line_ending = persisted_viewport->line_ending(),
-        .buffer_lines = dirty_snapshot ? persisted_viewport->lines() : std::vector<std::string>{},
-    });
-  }
-
-  std::vector<std::size_t> node_path;
-  const auto collect_split_node =
-      [&](auto&& self,
-          const TabEntry::EditorTabState::EditorSplitNode* node) -> void {
-    if (node == nullptr) {
-      return;
-    }
-
-    std::string orientation = "leaf";
-    if (!node->IsLeaf()) {
-      orientation = node->orientation == EditorSplitOrientation::Horizontal ? "horizontal"
-                                                                            : "vertical";
-    }
-    persisted_tab.split_nodes.push_back(PersistedSplitNodeState{
-        .path = node_path,
-        .orientation = orientation,
-        .size_fraction = node->size_fraction,
-        .leaf_id = node->leaf_id,
-    });
-    for (std::size_t child_index = 0; child_index < node->children.size(); ++child_index) {
-      node_path.push_back(child_index);
-      self(self, node->children[child_index].get());
-      node_path.pop_back();
-    }
-  };
-  collect_split_node(collect_split_node, editor_state.split_root.get());
+  persisted_tab.path = normalized_path;
+  persisted_tab.cursor_line = cursor_line;
+  persisted_tab.cursor_column = cursor_column;
+  persisted_tab.scroll_line = scroll_line;
+  persisted_tab.horizontal_scroll = horizontal_scroll;
+  persisted_tab.dirty_snapshot = dirty_snapshot;
+  persisted_tab.line_ending = persisted_viewport->line_ending();
+  persisted_tab.buffer_lines = dirty_snapshot ? persisted_viewport->lines() : std::vector<std::string>{};
   return persisted_tab;
 }
 

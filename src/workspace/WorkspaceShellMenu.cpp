@@ -435,7 +435,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
       return context_.current_project_state.sidebar.visible;
     }
     if (item.args[0] == "panel") {
-      return context_.current_project_state.panel.command_mode || ActiveTerminalTab() != nullptr;
+      return ActiveTerminalTab() != nullptr;
     }
     return true;
   }

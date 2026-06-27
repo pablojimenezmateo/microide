@@ -59,7 +59,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleColorTheme:
     case ActionId::Files:
     case ActionId::OpenCommandPalette:
-    case ActionId::OpenCommandPrompt:
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
     case ActionId::OpenSettings:
@@ -157,18 +156,18 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // session starts; Show Output no-ops gracefully without a live session).
       return SettingEnabled(operations_, "debug.enabled", false);
     case ActionId::CloseActiveTab:
-      return !context_.current_project_state.open_tabs.empty();
+      return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseAllTabs:
-      return !context_.current_project_state.open_tabs.empty();
+      return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseOtherTabs:
-      return context_.current_project_state.open_tabs.size() > 1;
+      return context_.current_project_state.focused_group().open_tabs.size() > 1;
     case ActionId::CloseTabsToRight:
-      return !context_.current_project_state.open_tabs.empty() &&
-             context_.current_project_state.active_tab_index + 1 <
-                 context_.current_project_state.open_tabs.size();
+      return !context_.current_project_state.focused_group().open_tabs.empty() &&
+             context_.current_project_state.focused_group().active_tab_index + 1 <
+                 context_.current_project_state.focused_group().open_tabs.size();
     case ActionId::CloseTabsToLeft:
-      return !context_.current_project_state.open_tabs.empty() &&
-             context_.current_project_state.active_tab_index > 0;
+      return !context_.current_project_state.focused_group().open_tabs.empty() &&
+             context_.current_project_state.focused_group().active_tab_index > 0;
     case ActionId::CompareHead:
     case ActionId::OpenSelectedTreeItem:
     case ActionId::OpenSelectedTreeItemInNewTab:
@@ -202,6 +201,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReviewCommit:
     case ActionId::Open:
     case ActionId::ProjectClose:
+    case ActionId::ProjectCopyAbsolutePath:
     case ActionId::ProjectSearch:
     case ActionId::Tab:
     case ActionId::Term:
@@ -226,7 +226,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SelectAll:
       return active_viewport != nullptr ||
              text_input_surface == TextInputSurface::PromptInput ||
-             text_input_surface == TextInputSurface::Command ||
              text_input_surface == TextInputSurface::FileFinder ||
              text_input_surface == TextInputSurface::BufferSearch ||
              text_input_surface == TextInputSurface::BufferReplaceSearch ||
@@ -238,7 +237,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::PasteClipboard:
       return active_editable_viewport != nullptr ||
              text_input_surface == TextInputSurface::PromptInput ||
-             text_input_surface == TextInputSurface::Command ||
              text_input_surface == TextInputSurface::FileFinder ||
              text_input_surface == TextInputSurface::BufferSearch ||
              text_input_surface == TextInputSurface::BufferReplaceSearch ||
@@ -254,13 +252,17 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ReplaceInBuffer:
     case ActionId::Reopen:
     case ActionId::Search:
-    case ActionId::SplitFirst:
-    case ActionId::SplitLast:
-    case ActionId::SplitNext:
-    case ActionId::SplitPrev:
-    case ActionId::Unsplit:
-    case ActionId::Vsplit:
-      return operations_.active_tab_is_editor();
+    case ActionId::SplitEditorRight:
+    case ActionId::SplitEditorDown:
+      // Available only with an editor to split from AND no split yet (the editor
+      // area caps at two groups, so a second split would be a confusing retarget
+      // no-op). Gates the tab/tree context menus and the split-right/split-down
+      // palette entries alike.
+      return operations_.active_tab_is_editor() && operations_.editor_group_count() <= 1;
+    case ActionId::FocusOtherGroup:
+    case ActionId::CloseGroup:
+      // Group focus/close only make sense once a second group exists.
+      return operations_.editor_group_count() > 1;
     case ActionId::Save:
       return operations_.active_tab_is_editor() || operations_.active_tab_is_merge() ||
              (operations_.active_tab_is_compare() &&
@@ -298,7 +300,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TabMove:
     case ActionId::TabSwitch:
       return !context_.current_project_state.root.empty() &&
-             !context_.current_project_state.open_tabs.empty();
+             !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::TestsRun:
       return !context_.current_project_state.sidebar.tests.entries.empty();
     case ActionId::ToggleLineComment:
