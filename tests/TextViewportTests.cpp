@@ -160,6 +160,22 @@ void TestTextViewportCaretMovementKeepsVisibleLineLayoutCached() {
          "cursor-only movement should reuse cached visible-line text layout");
 }
 
+// Drives the off-thread checkpoint backfill synchronously to completion for
+// `target_line`, mirroring the shell's schedule (TakeHighlightCheckpointBackfillRequest)
+// + worker (ComputeHighlightCheckpoints) + install (InstallHighlightCheckpoints)
+// loop. Lets single-threaded tests observe the converged (exact) highlight state.
+void DrainHighlightCheckpointBackfill(TextViewport& viewport, std::size_t target_line) {
+  for (int guard = 0; guard < 1000; ++guard) {
+    (void)viewport.HighlightedLineTokens(target_line);
+    auto request = viewport.TakeHighlightCheckpointBackfillRequest();
+    if (!request.has_value()) {
+      return;
+    }
+    viewport.InstallHighlightCheckpoints(
+        microide::editor::ComputeHighlightCheckpoints(*request));
+  }
+}
+
 void TestTextViewportHighlightCheckpointsBoundFarReplay() {
   TextViewport viewport;
   std::string content;
@@ -172,14 +188,28 @@ void TestTextViewportHighlightCheckpointsBoundFarReplay() {
   viewport.LoadContent(content, "/tmp/highlight-checkpoints.cpp");
 
   (void)viewport.HighlightedLineTokens(0);
-  viewport.ResetCacheStats();
 
+  // A deep cold jump must NOT synchronously replay the whole prefix (that was the
+  // multi-second first-paint freeze). The first far query bounds its synchronous
+  // replay and arms an off-thread checkpoint backfill for the rest.
+  viewport.ResetCacheStats();
+  const auto& first_tokens = viewport.HighlightedLineTokens(4095);
+  Expect(!first_tokens.empty(), "far-line syntax queries should produce tokens immediately");
+  const auto first_stats = viewport.CacheStats();
+  Expect(first_stats.highlight_state_advances <= 600,
+         "a deep cold jump must bound synchronous replay (remainder deferred off-thread)");
+  Expect(viewport.TakeHighlightCheckpointBackfillRequest().has_value(),
+         "a deep cold jump should arm an off-thread checkpoint backfill");
+
+  // Once the backfill converges, a far query resumes from a nearby checkpoint and
+  // replays at most one checkpoint window.
+  DrainHighlightCheckpointBackfill(viewport, 4095);
+  viewport.ResetCacheStats();
   const auto& tokens = viewport.HighlightedLineTokens(4095);
   Expect(!tokens.empty(), "far-line syntax queries should still produce tokens");
-
   const auto stats = viewport.CacheStats();
   Expect(stats.highlight_state_advances < 128,
-         "far-line syntax queries should replay at most one checkpoint window");
+         "once the checkpoint chain is built, far queries replay at most one window");
 }
 
 void TestTextViewportHighlightCheckpointsPreserveMultilineState() {
@@ -211,6 +241,42 @@ void TestTextViewportHighlightCheckpointsPreserveMultilineState() {
   Expect(std::any_of(after_comment_tokens.begin(), after_comment_tokens.end(),
                      [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Comment; }),
          "syntax should still recover to non-comment token classes after a multiline region closes");
+}
+
+void TestTextViewportCheckpointBackfillConvergesToExactMultilineState() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 2000; ++i) {
+    if (!content.empty()) {
+      content.push_back('\n');
+    }
+    if (i == 5) {
+      content += "/* begin block comment";
+    } else if (i == 1500) {
+      content += "end comment */ int value = 42;";
+    } else {
+      content += "comment payload";
+    }
+  }
+  viewport.LoadContent(content, "/tmp/highlight-backfill-comment.cpp");
+  (void)viewport.HighlightedLineTokens(0);
+
+  // Deep cold jump well beyond the synchronous replay cap, into the middle of a
+  // multiline comment. The first paint is bounded (possibly approximate); the
+  // off-thread checkpoint backfill must converge to the exact comment state —
+  // this is the correctness guarantee for the first-paint freeze fix.
+  DrainHighlightCheckpointBackfill(viewport, 1000);
+  const auto& inside = viewport.HighlightedLineTokens(1000);
+  Expect(!inside.empty(), "deep query inside a multiline comment should produce tokens");
+  Expect(std::all_of(inside.begin(), inside.end(),
+                     [](SyntaxTokenKind k) { return k == SyntaxTokenKind::Comment; }),
+         "checkpoint backfill must converge to the exact multiline comment state at depth");
+
+  DrainHighlightCheckpointBackfill(viewport, 1600);
+  const auto& after = viewport.HighlightedLineTokens(1600);
+  Expect(std::any_of(after.begin(), after.end(),
+                     [](SyntaxTokenKind k) { return k != SyntaxTokenKind::Comment; }),
+         "highlighting must recover to non-comment classes after the comment closes");
 }
 
 void TestTextViewportLineCommentEndsAtLineBoundary() {
@@ -247,6 +313,10 @@ void TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints() {
   viewport.LoadContent(content, "/tmp/highlight-edit-tail.cpp");
 
   (void)viewport.HighlightedLineTokens(4095);
+  // Build the full checkpoint chain (the off-thread backfill in production) so
+  // this exercises a *post-convergence* tail edit, matching the invariant under
+  // test: a tail edit must not rebuild previously valid far checkpoints.
+  DrainHighlightCheckpointBackfill(viewport, 4095);
   viewport.MoveCursorTo(4095, viewport.lines().back().size());
   viewport.InsertText(" // tail");
   viewport.ResetCacheStats();
@@ -255,8 +325,14 @@ void TestTextViewportEditingNearTailDoesNotRebuildFarCheckpoints() {
   Expect(!tokens.empty(), "tail edits should preserve syntax tokens for the edited line");
 
   const auto stats = viewport.CacheStats();
-  Expect(stats.highlight_checkpoint_advances == 0,
-         "tail edits should not rebuild previously valid highlight checkpoints");
+  // The edit truncates the checkpoint chain at the edited window only; checkpoints
+  // below it stay valid (no replay from line 0). Rebuilding the single edited
+  // window may replay up to one checkpoint interval when its per-line states were
+  // filled off-thread (the backfill snapshots checkpoint states, not every line
+  // state) rather than by a synchronous paint — that is at most one window, never
+  // the whole chain, which is the invariant under test.
+  Expect(stats.highlight_checkpoint_advances <= 128,
+         "tail edits must not rebuild the whole checkpoint chain (at most one window)");
   Expect(stats.highlight_state_advances < 128,
          "tail edits should only replay the local checkpoint window");
 }
@@ -1383,6 +1459,54 @@ void TestHighlightPrefetchServiceTokenizesOnWorkerThread() {
          "installing the worker result should fill the cache gap");
 }
 
+void TestHighlightCheckpointBackfillServiceRunsOnWorkerThread() {
+  std::string content;
+  for (int i = 0; i < 4000; ++i) {
+    if (i == 5) {
+      content += "/* open block comment";
+    } else if (i == 3000) {
+      content += "close */ int x = 1;";
+    } else {
+      content += "payload payload";
+    }
+    content.push_back('\n');
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/checkpoint-service.cpp");
+  (void)viewport.HighlightedLineTokens(0);
+
+  microide::editor::HighlightPrefetchService service;
+  std::atomic<int> wakes{0};
+  service.SetWakeCallback([&]() { wakes.fetch_add(1); });
+
+  // A deep cold jump arms an off-thread checkpoint backfill (the freeze fix path).
+  (void)viewport.HighlightedLineTokens(2000);
+  auto request = viewport.TakeHighlightCheckpointBackfillRequest();
+  Expect(request.has_value(), "a deep jump should arm a checkpoint backfill request");
+  service.RequestCheckpoints(std::move(*request));
+
+  std::vector<microide::editor::HighlightCheckpointResult> results;
+  for (int attempt = 0; attempt < 400 && results.empty(); ++attempt) {
+    results = service.DrainCheckpointResults();
+    if (results.empty()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  service.Shutdown();
+
+  Expect(results.size() == 1, "the worker should produce exactly one checkpoint result");
+  Expect(wakes.load() >= 1, "the checkpoint worker should fire the wake callback");
+  viewport.InstallHighlightCheckpoints(results.front());
+
+  // Line 2000 sits inside the multiline comment; after the backfill installs the
+  // chain, the deep query resolves to the exact comment state (not approximate).
+  const auto& inside = viewport.HighlightedLineTokens(2000);
+  Expect(!inside.empty(), "deep query inside the comment should produce tokens");
+  Expect(std::all_of(inside.begin(), inside.end(),
+                     [](SyntaxTokenKind k) { return k == SyntaxTokenKind::Comment; }),
+         "installed worker-computed checkpoints should yield exact multiline comment state");
+}
+
 void TestTextViewportOccurrenceSeedSpanUsesWordUnderCaret() {
   TextViewport viewport;
   viewport.LoadContent("aaa name bbb name\n", "/tmp/oc-caret.txt");
@@ -1726,6 +1850,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportHighlightCheckpointsBoundFarReplay);
   AddTest(tests, "TextViewport/HighlightCheckpointsPreserveMultilineState",
           TestTextViewportHighlightCheckpointsPreserveMultilineState);
+  AddTest(tests, "TextViewport/CheckpointBackfillConvergesToExactMultilineState",
+          TestTextViewportCheckpointBackfillConvergesToExactMultilineState);
   AddTest(tests, "TextViewport/LineCommentEndsAtLineBoundary",
           TestTextViewportLineCommentEndsAtLineBoundary);
   AddTest(tests, "TextViewport/EditingNearTailDoesNotRebuildFarCheckpoints",
@@ -1840,6 +1966,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness);
   AddTest(tests, "TextViewport/HighlightPrefetchServiceTokenizesOnWorkerThread",
           TestHighlightPrefetchServiceTokenizesOnWorkerThread);
+  AddTest(tests, "TextViewport/HighlightCheckpointBackfillServiceRunsOnWorkerThread",
+          TestHighlightCheckpointBackfillServiceRunsOnWorkerThread);
   AddTest(tests, "TextViewport/Tiers/ContentEditBumpsContentAndPresentationOnly",
           TestTextViewportContentEditBumpsContentAndPresentationOnly);
   AddTest(tests, "TextViewport/Tiers/SyntaxConfigBumpsSyntaxAndPresentationOnly",

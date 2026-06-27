@@ -1128,4 +1128,32 @@ HighlightPrefetchResult ComputeHighlightPrefetch(const HighlightPrefetchRequest&
   return result;
 }
 
+HighlightCheckpointResult ComputeHighlightCheckpoints(const HighlightCheckpointRequest& request) {
+  HighlightCheckpointResult result;
+  result.viewport = request.viewport;
+  result.content_revision = request.content_revision;
+  result.syntax_revision = request.syntax_revision;
+  // `first_line` is a checkpoint boundary (cp_index * interval). The first state
+  // we can report is the boundary at first_line + interval, i.e. checkpoint index
+  // (first_line / interval) + 1. Guard against a zero interval defensively.
+  const std::size_t interval = request.checkpoint_interval == 0 ? 1 : request.checkpoint_interval;
+  result.first_checkpoint_index = (request.first_line / interval) + 1;
+  result.checkpoint_states.reserve(request.lines.size() / interval + 1);
+
+  std::shared_lock<std::shared_mutex> lock(runtime_syntax::RegistryMutex());
+  SyntaxState state = request.start_state;
+  for (std::size_t i = 0; i < request.lines.size(); ++i) {
+    // AdvanceState updates the resume state without materializing per-line tokens
+    // (cheaper than HighlightLine; we only need the checkpoint snapshots).
+    state = SyntaxHighlighter::AdvanceState(request.lines[i], request.path, state);
+    const std::size_t next_line = request.first_line + i + 1;
+    if (next_line % interval == 0) {
+      // `state` is now the end-of-line state for next_line - 1, i.e. the state
+      // *before* next_line == checkpoints_[next_line / interval].
+      result.checkpoint_states.push_back(state);
+    }
+  }
+  return result;
+}
+
 }  // namespace microide::editor

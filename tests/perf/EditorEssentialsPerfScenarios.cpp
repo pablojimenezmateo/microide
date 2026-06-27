@@ -409,6 +409,70 @@ void RunEditorIndentDetectOpen(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
+// Reproduces the multi-second first-paint freeze recorded in
+// dev-docs/performance/performance-findings.md (§4.8): restoring a session whose
+// saved cursor/scroll sat deep in a large syntax-highlighted file forces the
+// syntax-checkpoint chain to replay from line 0 synchronously on the main thread
+// during the first paint at that position. The existing large-file scenarios open
+// at the top (replay distance ~0) and so never exercise this. We jump deep with a
+// cold highlight cache *inside* the measured region; the driver persists across
+// iterations, so InvalidateSyntaxHighlighting() resets the checkpoint cursors to
+// keep every iteration cold and the measurement stable.
+void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!std::filesystem::exists(cpp_50k)) {
+    std::cerr << "large_file_restore_deep_scroll_first_paint: missing fixture " << cpp_50k << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  constexpr std::size_t kDeepLine = 45000;
+  if (vp.lines().size() <= kDeepLine) {
+    throw std::runtime_error("large_file_restore_deep_scroll_first_paint: file too short");
+  }
+  // Settle at the top so each measured jump starts from a comparable scroll state.
+  vp.MoveCursorTo(0, 0, false);
+  context.PumpFrames(1);
+  context.Measure("deep_restore.jump_and_first_paint", [&] {
+    vp.InvalidateSyntaxHighlighting();
+    vp.MoveCursorTo(kDeepLine, 0, false);
+    context.PumpFrames(2);
+  });
+}
+
+// Single-character line-count churn (Enter then Backspace) in the *middle* of a
+// 50k-line file. With the vector<std::string> document model every newline
+// insert/delete shifts ~n/2 line entries (O(n)); this scenario is the oracle for
+// the piece-tree migration (Phase 3) which makes mid-file edits O(log n). The
+// deep region is warmed before the measured burst so this isolates edit-apply
+// cost from the syntax-replay first-paint cost measured above.
+void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!std::filesystem::exists(cpp_50k)) {
+    std::cerr << "mid_file_edit_latency_large_file: missing fixture " << cpp_50k << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  constexpr std::size_t kMidLine = 25000;
+  if (vp.lines().size() <= kMidLine) {
+    throw std::runtime_error("mid_file_edit_latency_large_file: file too short");
+  }
+  vp.MoveCursorTo(kMidLine, 0, false);
+  context.PumpFrames(2);  // warm highlights/layout for the visible window
+  context.Measure("mid_file_edit.enter_backspace_burst", [&] {
+    for (int i = 0; i < 24; ++i) {
+      context.KeyDown(SDLK_RETURN);
+      context.KeyDown(SDLK_BACKSPACE);
+      context.PumpFrames(1);
+    }
+  });
+}
+
 const ScenarioRegistration g_perf_editor_occurrences_scan({Scenario{
     .name = "editor_occurrences_scan",
     .smoke = false,
@@ -468,6 +532,16 @@ const ScenarioRegistration g_perf_editor_indent_detect_open({Scenario{
     .name = "editor_indent_detect_open",
     .smoke = false,
     .run = RunEditorIndentDetectOpen,
+}});
+const ScenarioRegistration g_perf_large_file_restore_deep_scroll_first_paint({Scenario{
+    .name = "large_file_restore_deep_scroll_first_paint",
+    .smoke = false,
+    .run = RunLargeFileRestoreDeepScrollFirstPaint,
+}});
+const ScenarioRegistration g_perf_mid_file_edit_latency_large_file({Scenario{
+    .name = "mid_file_edit_latency_large_file",
+    .smoke = false,
+    .run = RunMidFileEditLatencyLargeFile,
 }});
 
 }  // namespace
