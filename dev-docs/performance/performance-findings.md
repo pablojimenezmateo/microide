@@ -1192,6 +1192,58 @@ Baseline refreshed (`perf-baseline:` — snapshot removal, allocations-only move
 Pending: authoritative `perf-runner-v1` baseline for `editor_buffer_find_incremental`
 (the committed baseline is locally seeded / advisory per `perf-harness.md`).
 
+## Large-file overhaul — Phase 6: multi-caret edit capture regression + Snapshot audit
+
+Migration-completeness pass over the piece-tree work. Two findings:
+
+### Multi-caret edit undo capture was snapshotting the whole document (regression)
+
+The Phase 3 piece-tree refactor routed all three multi-caret edit paths
+(`ApplyMultiCaretInsert` / `Backspace` / `Delete` in
+`src/editor/TextViewportMultiCaret.cpp`) through two file-local helpers,
+`CaptureLineSlice` and `BuildAggregateFromLineSlice`, both of which took a
+`std::vector<std::string>` and were fed `document_->lines.Snapshot()`. That
+materializes the entire document via `ToVector()` **twice per op** (before + after
+state), silently reverting the earlier slice-based multi-caret aggregate
+optimization (see *Slice-based multi-caret aggregate `§3.4`* above) — the §3.4 win
+was written for the vector model and the piece-tree seam re-introduced the
+whole-document copy.
+
+Fix: both helpers now take `const TextBuffer&` and copy only the affected line
+range via `TextBuffer::SliceLines(start, end)` — the same range-scoped capture the
+single-caret / range paths already use (`TextViewport.cpp:548-583`,
+`TextViewportLanguageBehavior.cpp:642-656`). This restores slice-only capture and
+extends it to *all* multi-caret edit kinds (the §3.4 version only covered
+non-newline pair-insert).
+
+Measured `editor_surround_multi_caret` (8 carets, `InsertCharacter` on the 50k-line
+fixture; local advisory A/B, 10 iterations): whole-iteration allocations p50
+**297,660 → 203,232 (−32%)**; the measured `insert` phase drops to ~76k
+allocations / ~7 ms p50. Both removed `ToVector()` copies were ~47k allocations
+each. Committed baseline (`editor_surround_multi_caret.json`) is unchanged — it now
+has ~32% headroom and the gate passes comfortably; re-seed it on `perf-runner-v1`
+rather than from a local-advisory run.
+
+Correctness guard: the apply→undo→redo round-trip in `editor_surround_multi_caret`
+plus the `PieceTreeEquivalenceFuzz` oracle and the multi-caret/undo unit fixtures.
+
+### Snapshot() audit — remaining call sites are legitimate cold paths
+
+Swept every remaining `TextBuffer::Snapshot()` / `ToVector()` caller. All are
+inherently O(document) cold paths and are correct as-is: file save/normalize
+(`TextViewportFileIO`), LSP `DidChange` (`LspService`), session persistence
+(`WorkspacePersistenceCoordinatorSession`), filetype/indent detection, initial
+syntax state (`TextViewportHighlightCache`), compare/merge serialize + validate,
+and the undo-history **fallback** path (`TextViewportUndoHistory.cpp:50,109`, which
+genuinely reconstructs the whole document only when grouped child edits cannot be
+merged into one contiguous aggregate). One redundant cold-path round-trip was
+removed: `RefreshCompareTabDerivedState` (`WorkspaceShellCompare.cpp`) no longer
+re-splits (`SplitSyntaxLines`) the string it just serialized from the right buffer
+for `SyntaxHighlighter::InitialState` — it reuses the memoized `Snapshot()` vector
+directly. The `line_cache_` design (`TextBuffer.h`) is left as-is: no hot path
+indexes the whole document through `operator[]`, and its node-stability backs the
+`&buffer[i]`-stays-valid contract.
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout
