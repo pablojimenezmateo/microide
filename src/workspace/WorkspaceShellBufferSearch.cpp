@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceShell.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <string>
 
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -12,10 +14,35 @@ void WorkspaceShell::RefreshBufferSearch() {
   if (viewport == nullptr) {
     buffer_search.matches.clear();
     buffer_search.selected_index = 0;
+    buffer_search.incremental = {};
     return;
   }
-  buffer_search.matches =
-      FindLiteralSearchMatches(viewport->lines().Snapshot(), buffer_search.query.text());
+
+  const std::string& query = buffer_search.query.text();
+  const editor::TextBuffer& buffer = viewport->lines();
+  const std::uint64_t content_revision = viewport->content_revision();
+
+  // Find-as-you-type fast path: when the query only grows onto the end of the
+  // previously searched query over the same unchanged buffer, every match for the
+  // longer query is also a match for the shorter one, so the new set is a subset
+  // of the cached `matches`. Refine it in O(prior matches) instead of rescanning
+  // the whole document each keystroke. Identity (viewport pointer) + content
+  // revision guard against a stale or wrong-buffer cache.
+  auto& incremental = buffer_search.incremental;
+  const bool can_refine = incremental.valid &&
+                          incremental.viewport == static_cast<const void*>(viewport) &&
+                          incremental.content_revision == content_revision &&
+                          !incremental.query.empty() &&
+                          QueryExtendsCaseInsensitive(incremental.query, query);
+  buffer_search.matches = can_refine
+                              ? RefineLiteralSearchMatches(buffer, query, buffer_search.matches)
+                              : FindLiteralSearchMatches(buffer, query);
+
+  incremental.valid = true;
+  incremental.viewport = viewport;
+  incremental.content_revision = content_revision;
+  incremental.query = query;
+
   buffer_search.selected_index = 0;
 
   if (!buffer_search.matches.empty()) {

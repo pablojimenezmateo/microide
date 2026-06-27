@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/TextBuffer.h"
 #include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
@@ -24,7 +25,9 @@ using microide::workspace::GitSidebarEntry;
 using microide::workspace::GitSidebarLineKind;
 using microide::workspace::GitSidebarState;
 using microide::compare::BranchReviewStateService;
+using microide::workspace::QueryExtendsCaseInsensitive;
 using microide::workspace::QuerySupportsLiteralReplace;
+using microide::workspace::RefineLiteralSearchMatches;
 using microide::workspace::ReplaceLiteralMatchesInText;
 using microide::workspace::UsesCaseSensitiveLiteralMatch;
 
@@ -289,19 +292,20 @@ void TestWorkspaceNextLiteralMatchAfterSeedWrapOnce() {
   }
 
   {
-    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({}, 0, 0, 0, "x", false),
+    using Lines = std::vector<std::string>;
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce(Lines{}, 0, 0, 0, "x", false),
                    "empty lines buffer yields no match");
-    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"a"}, 1, 0, 1, "a", false),
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce(Lines{"a"}, 1, 0, 1, "a", false),
                    "seed line past end of buffer yields no match");
-    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"a"}, 0, 0, 1, "", false),
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce(Lines{"a"}, 0, 0, 1, "", false),
                    "empty needle yields no match");
-    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 0, 10, "foo", false),
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce(Lines{"foo"}, 0, 0, 10, "foo", false),
                    "seed end column past the line length yields no match");
-    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 4, 7, "foo", false),
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce(Lines{"foo"}, 0, 4, 7, "foo", false),
                    "seed start column past the line length yields no match");
-    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"foo"}, 0, 2, 1, "foo", false),
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce(Lines{"foo"}, 0, 2, 1, "foo", false),
                    "inverted seed span yields no match");
-    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce({"Foo"}, 0, 0, 3, "foo", true),
+    expect_missing(FindNextLiteralMatchAfterSeedWrapOnce(Lines{"Foo"}, 0, 0, 3, "foo", true),
                    "case-sensitive scan does not match a different-cased needle to the buffer");
   }
 }
@@ -336,6 +340,74 @@ void TestWorkspaceSharedProjectSearchLineMapHelpers() {
          "project search line lookup should fall back to zero for missing results");
 }
 
+// The incremental find-as-you-type path must produce exactly what a fresh full
+// scan would: for every query that extends a prefix, refining the prefix's match
+// set over the buffer equals scanning the whole buffer for the longer query.
+void TestWorkspaceIncrementalLiteralSearch() {
+  auto same = [](const std::vector<microide::editor::SelectionRange>& a,
+                 const std::vector<microide::editor::SelectionRange>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+      if (a[i].start.line != b[i].start.line || a[i].start.column != b[i].start.column ||
+          a[i].end.line != b[i].end.line || a[i].end.column != b[i].end.column) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  Expect(QueryExtendsCaseInsensitive("ab", "abc"), "extend should accept appended characters");
+  Expect(QueryExtendsCaseInsensitive("AB", "abc"), "extend should be case-insensitive");
+  Expect(QueryExtendsCaseInsensitive("abc", "abc"), "extend should accept the equal query");
+  Expect(!QueryExtendsCaseInsensitive("abc", "ab"), "extend should reject a shorter query");
+  Expect(!QueryExtendsCaseInsensitive("ax", "abc"), "extend should reject a divergent prefix");
+  Expect(QueryExtendsCaseInsensitive("", "abc"), "empty prefix extends anything");
+
+  const std::vector<std::string> lines = {
+      "Alpha alphabet ALPHA",
+      "no match here",
+      "alpha and Alphanumeric alph",
+      "aLpHaBeT",
+  };
+  microide::editor::TextBuffer buffer(lines);
+
+  // The TextBuffer overload must agree with the vector overload.
+  Expect(same(FindLiteralSearchMatches(buffer, "alpha"), FindLiteralSearchMatches(lines, "alpha")),
+         "buffer-scan overload should match the vector overload");
+
+  // The seed-relative next-match (Ctrl-D) buffer overload must also agree with the
+  // vector overload it replaced.
+  using microide::workspace::FindNextLiteralMatchAfterSeedWrapOnce;
+  for (std::size_t seed = 0; seed < lines.size(); ++seed) {
+    const auto from_vec =
+        FindNextLiteralMatchAfterSeedWrapOnce(lines, seed, 0, 0, "alpha", false);
+    const auto from_buf =
+        FindNextLiteralMatchAfterSeedWrapOnce(buffer, seed, 0, 0, "alpha", false);
+    Expect(from_vec.has_value() == from_buf.has_value() &&
+               (!from_vec.has_value() ||
+                (from_vec->line == from_buf->line && from_vec->column == from_buf->column)),
+           "next-match buffer overload should match the vector overload");
+  }
+
+  // Refining each prefix step must equal a fresh scan for the longer query --
+  // this is exactly the substitution RefreshBufferSearch makes per keystroke.
+  const std::vector<std::string> queries = {"a", "al", "alp", "alph", "alpha", "alphab", "alphabe"};
+  for (std::size_t i = 1; i < queries.size(); ++i) {
+    const auto previous = FindLiteralSearchMatches(buffer, queries[i - 1]);
+    const auto refined = RefineLiteralSearchMatches(buffer, queries[i], previous);
+    const auto fresh = FindLiteralSearchMatches(buffer, queries[i]);
+    Expect(same(refined, fresh),
+           "incremental refine of a prefix match set must equal a fresh full scan");
+  }
+
+  // A refine that starts from an empty match set yields nothing (callers must not
+  // refine across a non-extending query); and refine over an empty query is empty.
+  Expect(RefineLiteralSearchMatches(buffer, "alpha", {}).empty(),
+         "refine over an empty previous set yields nothing");
+  Expect(RefineLiteralSearchMatches(buffer, "", FindLiteralSearchMatches(buffer, "a")).empty(),
+         "refine with an empty query yields nothing");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
@@ -355,6 +427,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceLiteralNeedleScanCaseModeInLine);
   AddTest(tests, "WorkspaceTextSearch/NextLiteralMatchAfterSeedWrapOnce",
           TestWorkspaceNextLiteralMatchAfterSeedWrapOnce);
+  AddTest(tests, "WorkspaceTextSearch/IncrementalLiteralSearch",
+          TestWorkspaceIncrementalLiteralSearch);
   AddTest(tests, "WorkspaceProjectSearchPresentation/LineMapHelpers",
           TestWorkspaceSharedProjectSearchLineMapHelpers);
 }

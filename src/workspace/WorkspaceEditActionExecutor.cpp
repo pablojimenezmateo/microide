@@ -250,13 +250,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (!sel || sel->start.line != sel->end.line || sel->start.column == sel->end.column) {
         return DispatchResult::Handled;
       }
-      const auto& lines = viewport->lines().Snapshot();
-      if (sel->start.line >= lines.size()) return DispatchResult::Handled;
-      const std::string& line = lines[sel->start.line];
+      // Scan through the piece tree's zero-copy LineView rather than snapshotting
+      // the whole document into a vector<std::string> on every press.
+      const editor::TextBuffer& lines = viewport->lines();
+      if (sel->start.line >= lines.LineCount()) return DispatchResult::Handled;
+      const std::string_view line = lines.LineView(sel->start.line);
       std::size_t a = std::min(sel->start.column, sel->end.column);
       std::size_t b = std::max(sel->start.column, sel->end.column);
       if (b > line.size()) return DispatchResult::Handled;
-      const std::string needle = line.substr(a, b - a);
+      const std::string needle(line.substr(a, b - a));
       if (needle.empty()) return DispatchResult::Handled;
       const std::string_view needle_view = needle;
       const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
@@ -271,8 +273,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         }
       } else {
         // Add cursor at every match in the file.
-        for (std::size_t li = 0; li < lines.size(); ++li) {
-          const std::string& current = lines[li];
+        for (std::size_t li = 0; li < lines.LineCount(); ++li) {
+          const std::string_view current = lines.LineView(li);
           std::size_t from = 0;
           while (true) {
             const auto pos =

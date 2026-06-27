@@ -206,6 +206,22 @@ canonical model does not store. The original buffer is a heap `std::string`, not
 an `mmap`: memory-mapping it would cut steady-state RSS for never-fully-read files
 but risks `SIGBUS` if the file is truncated externally while mapped, which the
 project's correctness-over-memory priority does not accept.
+
+Buffer-local find (Phase 5) is incremental. `WorkspaceShell::RefreshBufferSearch`
+scans the document through the piece tree's zero-copy `LineView`
+(`FindLiteralSearchMatches`'s `TextBuffer` overload) rather than materializing a
+whole-document snapshot. When a keystroke only extends the previously searched
+query over the same unchanged buffer (guarded by `QueryExtendsCaseInsensitive` plus
+viewport identity and `content_revision`), the new match set is a subset of the
+cached one, so `RefineLiteralSearchMatches` filters it in O(prior matches) instead
+of rescanning the file. Refined matches are re-validated against the buffer, so a
+stale cache can only drop matches, never invent them; any non-extending query or
+buffer mutation falls back to a full `LineView` scan. Gated by
+`editor_buffer_find_incremental`. The Ctrl-D multi-caret match scans
+(`AddCursorAtNextMatch` / `AddCursorAtAllMatches`) likewise dropped their
+whole-document `Snapshot()` for `LineView` (via a `TextBuffer` overload of
+`FindNextLiteralMatchAfterSeedWrapOnce`); gated by `editor_add_cursor_next_match`.
+
 The next `TextViewport` refactor should reduce ownership (document buffer, edit engine, undo
 history, layout cache seams), not just split more `TextViewport*.cpp` files.
 

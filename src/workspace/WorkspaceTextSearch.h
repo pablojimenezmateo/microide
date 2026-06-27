@@ -5,6 +5,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/TextBuffer.h"
 #include "editor/TextViewport.h"
 
 namespace microide::workspace {
@@ -26,6 +27,31 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
     const std::vector<std::string>& lines,
     std::string_view query);
 
+// Same all-occurrences case-insensitive search, but scanned directly over the
+// buffer's zero-copy `LineView` accessor -- no whole-document snapshot vector is
+// materialized. This is the find-as-you-type cold path (first keystroke / a query
+// that does not extend the previous one).
+std::vector<editor::SelectionRange> FindLiteralSearchMatches(
+    const editor::TextBuffer& buffer,
+    std::string_view query);
+
+// Find-as-you-type fast path. `previous` must be the complete match set for some
+// query that `query` extends (see `QueryExtendsCaseInsensitive`), taken over the
+// *current* buffer contents. Because every occurrence of the longer `query` is
+// also an occurrence of the shorter prefix, the new match set is a subset of
+// `previous`: this returns that subset in O(|previous| * |query|), independent of
+// document size. Every kept match is re-validated against the buffer, so a stale
+// `previous` can only drop matches, never invent them.
+std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
+    const editor::TextBuffer& buffer,
+    std::string_view query,
+    const std::vector<editor::SelectionRange>& previous);
+
+// True when `query` equals `prefix` followed by zero or more characters, compared
+// case-insensitively (ASCII) -- i.e. `query` is `prefix` with more typed onto the
+// end. Gates whether `RefineLiteralSearchMatches` may be used.
+bool QueryExtendsCaseInsensitive(std::string_view prefix, std::string_view query);
+
 std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
                                                    std::size_t start_from,
                                                    std::string_view needle,
@@ -39,6 +65,17 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
 /// out of range for the seed line.
 std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
     const std::vector<std::string>& lines,
+    std::size_t seed_line,
+    std::size_t seed_start_col,
+    std::size_t seed_end_col,
+    std::string_view needle,
+    bool case_sensitive);
+
+// Same seed-relative next-match scan over a TextBuffer's zero-copy `LineView`, so
+// the Ctrl-D "add cursor at next match" path does not snapshot the whole document
+// into a vector<std::string> on every press.
+std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
+    const editor::TextBuffer& buffer,
     std::size_t seed_line,
     std::size_t seed_start_col,
     std::size_t seed_end_col,

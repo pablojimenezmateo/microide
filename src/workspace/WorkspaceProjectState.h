@@ -108,6 +108,19 @@ struct BufferSearchState {
   std::vector<std::size_t> temporarily_expanded_fold_openers;
   std::filesystem::path temporarily_expanded_fold_tab_path;
   bool preserve_temporarily_expanded_folds = false;
+
+  // Find-as-you-type incremental cache (see WorkspaceShell::RefreshBufferSearch).
+  // Identifies the query + buffer state that produced the current `matches`. When
+  // the next query merely extends `query` over the same unchanged buffer, the new
+  // match set is a subset and is refined from `matches` instead of rescanning the
+  // whole document. `viewport` is an opaque identity token (never dereferenced).
+  struct IncrementalSearchCache {
+    bool valid = false;
+    const void* viewport = nullptr;
+    std::uint64_t content_revision = 0;
+    std::string query;
+  };
+  IncrementalSearchCache incremental;
 };
 
 struct ProjectSearchState {
