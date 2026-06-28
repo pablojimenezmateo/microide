@@ -248,7 +248,7 @@ class TextViewport {
   bool HasHighlightPrefetchGap(std::size_t start_line, std::size_t count) const;
   HighlightPrefetchRequest BuildHighlightPrefetchRequest(std::size_t start_line,
                                                          std::size_t count) const;
-  void InstallPrefetchedHighlights(const HighlightPrefetchResult& result);
+  void InstallPrefetchedHighlights(HighlightPrefetchResult result);
   // Off-thread checkpoint-chain backfill. A deep first paint (e.g. session
   // restore scrolled deep into a large file) needs the syntax state before a far
   // line; building it synchronously replayed from line 0 and froze the frame.

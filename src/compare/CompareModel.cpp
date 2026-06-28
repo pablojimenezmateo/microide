@@ -156,14 +156,18 @@ std::size_t TokenMatchWeight(const LineToken& token) {
   }
 }
 
-std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const TokenizedLine& right) {
+std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const TokenizedLine& right,
+                                        std::vector<std::size_t>& dp) {
   const std::size_t left_count = left.significant_token_indices.size();
   const std::size_t right_count = right.significant_token_indices.size();
   if (left_count == 0 || right_count == 0) {
     return 0;
   }
 
-  std::vector<std::size_t> dp((left_count + 1) * (right_count + 1), 0);
+  // Reuse the caller-owned scratch (assign re-zeroes the boundary that value-init
+  // provided), so a dense modified hunk that calls this up to left*right times no
+  // longer mallocs a throwaway DP buffer per pair.
+  dp.assign((left_count + 1) * (right_count + 1), 0);
   auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
     return dp[i * (right_count + 1) + j];
   };
@@ -192,7 +196,8 @@ std::size_t LineMatchWeight(std::string_view text,
   return std::max<std::size_t>(1, (informative_bytes + 8) / rarity);
 }
 
-double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right) {
+double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right,
+                      std::vector<std::size_t>& token_scratch) {
   if (left.text == right.text) {
     return 1.0;
   }
@@ -203,7 +208,7 @@ double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right) {
     return 0.0;
   }
 
-  const std::size_t common_bytes = CommonSignificantTokenBytes(left, right);
+  const std::size_t common_bytes = CommonSignificantTokenBytes(left, right, token_scratch);
   if (common_bytes == 0) {
     return 0.0;
   }
@@ -278,10 +283,11 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view
 
   // Compute similarities lazily: -1 means "not yet computed".
   std::vector<double> similarity(left_count * right_count, -1.0);
+  std::vector<std::size_t> common_token_scratch;
   auto similarity_at = [&](std::size_t i, std::size_t j) -> double {
     double& val = similarity[i * right_count + j];
     if (val < 0.0) {
-      val = LineSimilarity(left_tokenized[i], right_tokenized[j]);
+      val = LineSimilarity(left_tokenized[i], right_tokenized[j], common_token_scratch);
     }
     return val;
   };
@@ -712,8 +718,30 @@ void AppendInsertOps(const std::vector<std::string_view>& lines,
   }
 }
 
+// Defined further down in this file; declared here so the line-op builders can
+// honour ignore_whitespace inside changed hunks, not just on the matched edges.
+bool LinesEqualForDiff(std::string_view left,
+                       std::string_view right,
+                       const CompareBuildOptions& options);
+
+// Emit a run of Equal ops carrying both columns' text for the lockstep-matched
+// pair range [left_begin, left_end) <-> [right_begin, ...). The two ranges have
+// equal length by construction at every caller.
+void AppendEqualPairs(const std::vector<std::string_view>& left_lines,
+                      std::size_t left_begin,
+                      std::size_t left_end,
+                      const std::vector<std::string_view>& right_lines,
+                      std::size_t right_begin,
+                      std::vector<DiffOp>& ops) {
+  for (std::size_t offset = 0; left_begin + offset < left_end; ++offset) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[left_begin + offset],
+                         right_lines[right_begin + offset]});
+  }
+}
+
 std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_lines,
-                                      const std::vector<std::string_view>& right_lines) {
+                                      const std::vector<std::string_view>& right_lines,
+                                      const CompareBuildOptions& options) {
   const std::size_t left_count = left_lines.size();
   const std::size_t right_count = right_lines.size();
   std::vector<DiffOp> ops;
@@ -744,7 +772,7 @@ std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_
   for (std::size_t i = left_count; i-- > 0;) {
     for (std::size_t j = right_count; j-- > 0;) {
       std::size_t best = std::max(at(i + 1, j), at(i, j + 1));
-      if (left_lines[i] == right_lines[j]) {
+      if (LinesEqualForDiff(left_lines[i], right_lines[j], options)) {
         best = std::max(best, left_match_weight[i] + at(i + 1, j + 1));
       }
       at(i, j) = best;
@@ -754,10 +782,10 @@ std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_
   std::size_t i = 0;
   std::size_t j = 0;
   while (i < left_count && j < right_count) {
-    if (left_lines[i] == right_lines[j]) {
+    if (LinesEqualForDiff(left_lines[i], right_lines[j], options)) {
       const std::size_t diagonal = left_match_weight[i] + at(i + 1, j + 1);
       if (diagonal >= at(i + 1, j) && diagonal >= at(i, j + 1) && at(i, j) == diagonal) {
-        ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
+        ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i], right_lines[j]});
         ++i;
         ++j;
         continue;
@@ -857,10 +885,11 @@ void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
                                const std::vector<std::string_view>& right_lines,
                                std::size_t right_begin,
                                std::size_t right_end,
+                               const CompareBuildOptions& options,
                                std::vector<DiffOp>& ops) {
   while (left_begin < left_end && right_begin < right_end &&
-         left_lines[left_begin] == right_lines[right_begin]) {
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[left_begin]});
+         LinesEqualForDiff(left_lines[left_begin], right_lines[right_begin], options)) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[left_begin], right_lines[right_begin]});
     ++left_begin;
     ++right_begin;
   }
@@ -868,29 +897,25 @@ void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
   std::size_t left_suffix = left_end;
   std::size_t right_suffix = right_end;
   while (left_suffix > left_begin && right_suffix > right_begin &&
-         left_lines[left_suffix - 1] == right_lines[right_suffix - 1]) {
+         LinesEqualForDiff(left_lines[left_suffix - 1], right_lines[right_suffix - 1], options)) {
     --left_suffix;
     --right_suffix;
   }
+  // The matched suffix [left_suffix, left_end) <-> [right_suffix, right_end) is
+  // emitted (with both columns) by every return branch below.
 
   if (left_begin == left_suffix && right_begin == right_suffix) {
-    for (std::size_t i = left_suffix; i < left_end; ++i) {
-      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-    }
+    AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
     return;
   }
   if (left_begin == left_suffix) {
     AppendInsertOps(right_lines, right_begin, right_suffix, ops);
-    for (std::size_t i = left_suffix; i < left_end; ++i) {
-      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-    }
+    AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
     return;
   }
   if (right_begin == right_suffix) {
     AppendDeleteOps(left_lines, left_begin, left_suffix, ops);
-    for (std::size_t i = left_suffix; i < left_end; ++i) {
-      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-    }
+    AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
     return;
   }
 
@@ -903,11 +928,9 @@ void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
     const std::vector<std::string_view> right_slice(
         right_lines.begin() + static_cast<std::ptrdiff_t>(right_begin),
         right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
-    const std::vector<DiffOp> exact_ops = BuildExactLineOps(left_slice, right_slice);
+    const std::vector<DiffOp> exact_ops = BuildExactLineOps(left_slice, right_slice, options);
     ops.insert(ops.end(), exact_ops.begin(), exact_ops.end());
-    for (std::size_t i = left_suffix; i < left_end; ++i) {
-      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-    }
+    AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
     return;
   }
 
@@ -917,9 +940,7 @@ void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
   if (anchors.empty()) {
     AppendDeleteOps(left_lines, left_begin, left_suffix, ops);
     AppendInsertOps(right_lines, right_begin, right_suffix, ops);
-    for (std::size_t i = left_suffix; i < left_end; ++i) {
-      ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-    }
+    AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
     return;
   }
 
@@ -927,24 +948,23 @@ void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
   std::size_t segment_right_begin = right_begin;
   for (const auto& [anchor_left, anchor_right] : anchors) {
     AppendAnchoredFallbackOps(left_lines, segment_left_begin, anchor_left, right_lines,
-                              segment_right_begin, anchor_right, ops);
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[anchor_left]});
+                              segment_right_begin, anchor_right, options, ops);
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[anchor_left], right_lines[anchor_right]});
     segment_left_begin = anchor_left + 1;
     segment_right_begin = anchor_right + 1;
   }
   AppendAnchoredFallbackOps(left_lines, segment_left_begin, left_suffix, right_lines,
-                            segment_right_begin, right_suffix, ops);
-  for (std::size_t i = left_suffix; i < left_end; ++i) {
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[i]});
-  }
+                            segment_right_begin, right_suffix, options, ops);
+  AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
 }
 
 std::vector<DiffOp> BuildAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
-                                             const std::vector<std::string_view>& right_lines) {
+                                             const std::vector<std::string_view>& right_lines,
+                                             const CompareBuildOptions& options) {
   std::vector<DiffOp> ops;
   ops.reserve(left_lines.size() + right_lines.size());
   AppendAnchoredFallbackOps(left_lines, 0, left_lines.size(), right_lines, 0, right_lines.size(),
-                            ops);
+                            options, ops);
   return ops;
 }
 
@@ -1013,7 +1033,7 @@ std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_l
   std::vector<DiffOp> ops;
   ops.reserve(left_lines.size() + right_lines.size());
   for (std::size_t index = 0; index < prefix; ++index) {
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index]});
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index], right_lines[index]});
   }
 
   const std::vector<std::string_view> left_middle(
@@ -1030,18 +1050,22 @@ std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_l
       if (stats != nullptr) {
         ++stats->anchored_alignment_calls;
       }
-      middle_ops = BuildAnchoredFallbackOps(left_middle, right_middle);
+      middle_ops = BuildAnchoredFallbackOps(left_middle, right_middle, options);
     } else {
       if (stats != nullptr) {
         ++stats->exact_alignment_calls;
       }
-      middle_ops = BuildExactLineOps(left_middle, right_middle);
+      middle_ops = BuildExactLineOps(left_middle, right_middle, options);
     }
     ops.insert(ops.end(), middle_ops.begin(), middle_ops.end());
   }
 
+  // The matched suffix [left_suffix, end) <-> [right_suffix, end) has equal
+  // length on both sides, so the right counterpart for left index `index` sits
+  // at the same offset past right_suffix.
   for (std::size_t index = left_suffix; index < left_lines.size(); ++index) {
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index]});
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index],
+                         right_lines[index - left_suffix + right_suffix]});
   }
   return ops;
 }
@@ -1152,7 +1176,9 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
     if (op.kind == DiffOpKind::Equal) {
       model.rows.push_back(CompareRow{
           .left_text = std::string(op.text),
-          .right_text = std::string(op.text),
+          // Under ignore_whitespace an Equal op can pair two whitespace-different
+          // lines, so the right column must show the right file's own text.
+          .right_text = std::string(op.right_text),
           .left_line = left_line++,
           .right_line = right_line++,
           .kind = CompareRowKind::Unchanged,

@@ -69,6 +69,14 @@ class AssistService {
                  WorkspaceLanguageContract& language_contract,
                  Operations operations);
 
+  // An async assist result (plugin/LSP completion or code action) is stale when
+  // the active editable buffer has gone away or changed path since the request
+  // was issued; writing it would clobber a newer session or land across a
+  // file/project switch. Pure so the drop decision is unit-testable without the
+  // subprocess-backed LSP client.
+  static bool ResultIsStale(const editor::TextViewport* active_editable,
+                            const std::filesystem::path& request_path);
+
   bool EditorSnippetsSettingEnabled() const;
   bool ShowCompletionOverlay(std::string* error_message = nullptr);
   bool ApplySelectedCompletion();

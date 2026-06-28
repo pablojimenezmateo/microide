@@ -675,6 +675,7 @@ add_executable(microide_tests
   tests/TestRunnerCli.cpp
   tests/TestRunnerCliTests.cpp
   tests/TestSupport.cpp
+  tests/AssistServiceTests.cpp
   tests/PluginHostTests.cpp
   tests/PluginSurfaceCoverageTests.cpp
   tests/PluginThreadTests.cpp

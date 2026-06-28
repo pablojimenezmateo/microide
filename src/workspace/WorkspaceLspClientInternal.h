@@ -173,6 +173,12 @@ struct LspClient::Impl {
   std::vector<std::string> semantic_token_types;
   std::atomic<bool> supports_semantic_tokens{false};
 
+  // Negotiated position encoding (LSP `capabilities.positionEncoding`), captured at
+  // initialize. Guarded by `mutex`. We advertise utf-8 first, so a conformant server
+  // that supports it reports "utf-8" and our editor byte offsets are then exact LSP
+  // positions with zero conversion. Per spec the default when unreported is "utf-16".
+  std::string position_encoding = "utf-16";
+
   // Diagnostics callback — set from main thread, called on main thread via main_mailbox.
   OnPublishDiagnostics diagnostics_callback;
 
@@ -906,10 +912,25 @@ struct LspClient::Impl {
     JsonObject window_caps;
     window_caps["workDoneProgress"] = JsonValue(true);
 
+    // The editor measures columns in UTF-8 bytes, which is exactly LSP's UTF-8
+    // position encoding. Advertise it first (then UTF-16 as the mandatory
+    // fallback) so a conformant server emits/consumes byte offsets and positions
+    // past non-ASCII characters stay correct. Without this the server assumes the
+    // UTF-16 default and our byte offsets corrupt every position past any
+    // non-ASCII char on the incremental-sync mirror.
+    JsonObject general_caps;
+    {
+      JsonArray encodings;
+      encodings.push_back(JsonValue("utf-8"));
+      encodings.push_back(JsonValue("utf-16"));
+      general_caps["positionEncodings"] = JsonValue(std::move(encodings));
+    }
+
     JsonObject caps;
     caps["textDocument"] = JsonValue(std::move(text_document_caps));
     caps["workspace"] = JsonValue(std::move(workspace_caps));
     caps["window"] = JsonValue(std::move(window_caps));
+    caps["general"] = JsonValue(std::move(general_caps));
 
     JsonObject client_info;
     client_info["name"] = JsonValue("microide");
@@ -983,6 +1004,28 @@ struct LspClient::Impl {
               sync_kind = sync["change"].AsInt(1);
             }
             supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
+
+            // Capture the negotiated position encoding. utf-8 means our editor
+            // byte offsets are already exact; anything else (or the unreported
+            // utf-16 default) means non-ASCII positions need conversion that is
+            // not yet implemented, so surface it rather than silently corrupting.
+            {
+              std::string negotiated = "utf-16";
+              if (server_caps.HasKey("positionEncoding") &&
+                  server_caps["positionEncoding"].IsString()) {
+                negotiated = server_caps["positionEncoding"].AsString();
+              }
+              {
+                std::lock_guard lock(mutex);
+                position_encoding = negotiated;
+              }
+              if (negotiated != "utf-8") {
+                std::fprintf(stderr,
+                             "[lsp] server negotiated position encoding '%s'; positions past "
+                             "non-ASCII characters may be inaccurate (utf-8 preferred)\n",
+                             negotiated.c_str());
+              }
+            }
 
             // Capture the semantic-token legend (type names) so the host can map
             // a response's token-type indices back to names at publish time.

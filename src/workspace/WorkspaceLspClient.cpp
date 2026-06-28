@@ -77,6 +77,11 @@ bool LspClient::SupportsIncrementalSync() const {
   return impl_->supports_incremental_sync.load(std::memory_order_acquire);
 }
 
+std::string LspClient::ServerPositionEncoding() const {
+  std::lock_guard lock(impl_->mutex);
+  return impl_->position_encoding;
+}
+
 bool LspClient::HasOpenDocument(const std::string& uri) const {
   std::lock_guard lock(impl_->mutex);
   return impl_->document_versions.contains(uri);

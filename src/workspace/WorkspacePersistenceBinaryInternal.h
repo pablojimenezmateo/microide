@@ -301,9 +301,11 @@ bool ReadSize(PrimitiveReader& reader, std::size_t* value) {
   return true;
 }
 
-template <typename EnumTag>
-bool ParseRecordStream(std::span<const std::byte> input,
-                       const std::function<bool(EnumTag, std::span<const std::byte>)>& on_record) {
+// OnRecord is a deduced callable bool(EnumTag, std::span<const std::byte>); taking
+// it as a template param (mirroring AppendRecord) avoids std::function type-erasure
+// on the decode tree — all 25 call sites pass inline lambdas.
+template <typename EnumTag, typename OnRecord>
+bool ParseRecordStream(std::span<const std::byte> input, OnRecord on_record) {
   std::size_t offset = 0;
   while (offset < input.size()) {
     TaggedRecordView record;

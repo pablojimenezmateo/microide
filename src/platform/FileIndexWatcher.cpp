@@ -636,12 +636,12 @@ struct FileIndexWatcher::Impl {
         break;
       }
 
-      const auto current = build_snapshot();
+      auto current = build_snapshot();
 
       std::vector<IndexUpdateBatch::Change> changes =
           detail::BuildPollSnapshotDiff(snapshot, current);
 
-      snapshot = current;
+      snapshot = std::move(current);
 
       if (!changes.empty() && callback) {
         IndexUpdateBatch batch;
@@ -883,11 +883,11 @@ struct FileIndexWatcher::Impl {
         break;
       }
 
-      const auto current = build_snapshot();
+      auto current = build_snapshot();
       std::vector<IndexUpdateBatch::Change> changes =
           detail::BuildPollSnapshotDiff(snapshot, current);
 
-      snapshot = current;
+      snapshot = std::move(current);
 
       if (!changes.empty() && callback) {
         IndexUpdateBatch batch;
@@ -1165,11 +1165,11 @@ struct FileIndexWatcher::Impl {
         break;
       }
 
-      const auto current = build_snapshot();
+      auto current = build_snapshot();
       std::vector<IndexUpdateBatch::Change> changes =
           detail::BuildPollSnapshotDiff(snapshot, current);
 
-      snapshot = current;
+      snapshot = std::move(current);
 
       if (!changes.empty() && callback) {
         IndexUpdateBatch batch;
@@ -1261,11 +1261,11 @@ struct FileIndexWatcher::Impl {
         break;
       }
 
-      const auto current = build_snapshot();
+      auto current = build_snapshot();
       std::vector<IndexUpdateBatch::Change> changes =
           detail::BuildPollSnapshotDiff(snapshot, current);
 
-      snapshot = current;
+      snapshot = std::move(current);
 
       if (!changes.empty() && callback) {
         IndexUpdateBatch batch;
