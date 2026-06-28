@@ -35,6 +35,13 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     prefix = body.front();
     body.remove_prefix(1);
   }
+  // SGR (`CSI ... m` with no prefix/intermediate) re-parses the body itself via
+  // ApplySgrParameters, so the general parameter vector would be built and
+  // discarded. Short-circuit the most common colored-output sequence before it.
+  if (prefix == '\0' && intermediate == '\0' && final == 'm') {
+    detail::ApplySgrParameters(current_style_, body);
+    return;
+  }
   std::vector<int> params = ParseCsiParameters(body);
 
   // Kitty keyboard protocol negotiation: CSI ? u (query), CSI > flags u (push),

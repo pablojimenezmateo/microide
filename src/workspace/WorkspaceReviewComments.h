@@ -35,6 +35,8 @@ struct ReviewThread {
 
 // Review comments registry: manages code review comments and threads.
 class ReviewCommentsRegistry {
+  struct UriIndex;  // forward declaration; defined in the private section below
+
  public:
   ReviewCommentsRegistry();
   ~ReviewCommentsRegistry();
@@ -54,6 +56,23 @@ class ReviewCommentsRegistry {
   // Check whether a document line has review markers.
   bool HasComments(const std::string& uri, int line) const;
   bool HasThreads(const std::string& uri, int line) const;
+
+  // Resolve a document's marker index once (a single URI hash), then test
+  // individual lines without re-hashing the URI per row. The handle is false
+  // when the document has no markers. Used by the per-row review-marker render
+  // pass to avoid two full-string-hash lookups per visible line.
+  class DocumentMarkers {
+   public:
+    // Constructed only via MarkersForUri: the parameter type is the registry's
+    // private UriIndex, so external code cannot name it to call this directly.
+    explicit DocumentMarkers(const UriIndex* index) : index_(index) {}
+    bool HasMarkerAtLine(int line) const;
+    explicit operator bool() const { return index_ != nullptr; }
+
+   private:
+    const UriIndex* index_ = nullptr;
+  };
+  DocumentMarkers MarkersForUri(const std::string& uri) const;
 
   // True when no comments or threads exist at all. Lets hot render paths skip
   // per-frame work (e.g. materializing a viewport's URI) in the common case.

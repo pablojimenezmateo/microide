@@ -36,6 +36,14 @@ struct GitBlameRequest {
   std::size_t visible_line_count = 0;
   std::size_t total_line_count = 0;
   bool dirty = false;
+  // Optional narrower window for the *returned* snapshot lines. The visible_*
+  // window still drives cache loading / prefetch (so scrolling stays warm); when
+  // result_line_count is non-zero the snapshot only materializes
+  // [result_start_line, result_start_line + result_line_count), intersected with
+  // the visible window. Inline blame consumes only the caret +/- a row, so this
+  // avoids copying (and discarding ~94% of) the whole visible window each frame.
+  std::size_t result_start_line = 0;
+  std::size_t result_line_count = 0;
 };
 
 struct GitBlameLine {

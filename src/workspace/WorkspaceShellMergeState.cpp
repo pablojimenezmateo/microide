@@ -16,7 +16,7 @@ namespace microide::workspace {
 
 namespace {
 
-std::size_t MaxVisualColumnsForLines(const std::vector<std::string>& lines) {
+std::size_t MaxVisualColumnsForLines(std::span<const std::string> lines) {
   std::size_t max_columns = 0;
   for (const std::string& line : lines) {
     max_columns = std::max(max_columns, util::Utf8CodepointCount(line));
@@ -413,13 +413,8 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
 void WorkspaceShell::UpdateMergeMaxVisualColumns(
     MergeTabState& merge_tab,
     std::span<const std::string> result_lines) const {
-  std::vector<std::string> owned_lines;
-  owned_lines.reserve(result_lines.size());
-  for (std::string_view line : result_lines) {
-    owned_lines.emplace_back(line);
-  }
   merge_tab.max_visual_columns =
-      std::max(merge_tab.max_visual_columns, MaxVisualColumnsForLines(owned_lines));
+      std::max(merge_tab.max_visual_columns, MaxVisualColumnsForLines(result_lines));
 }
 
 void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const {

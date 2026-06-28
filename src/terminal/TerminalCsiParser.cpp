@@ -58,29 +58,51 @@ int CsiParamOrDefault(const std::vector<int>& params, std::size_t index, int fal
   return params[index];
 }
 
-std::vector<std::vector<int>> ParseSgrParameters(std::string_view body) {
-  std::vector<std::vector<int>> groups;
-  groups.emplace_back();
-  std::string current;
+void ParseSgrParametersInto(std::string_view body, std::vector<std::vector<int>>& groups) {
+  // SGR fields are unsigned decimal only (no signs), so accumulate the integer
+  // inline and clamp during accumulation to avoid overflow on hostile long runs.
+  constexpr int kMaxParam = 65535;
+  std::size_t group_count = 1;
+  if (groups.empty()) {
+    groups.emplace_back();
+  }
+  groups[0].clear();
+  int value = 0;
   const auto flush_field = [&]() {
-    groups.back().push_back(ParseCsiField(current));
-    current.clear();
+    groups[group_count - 1].push_back(std::min(value, kMaxParam));
+    value = 0;
   };
   for (char character : body) {
     if (character == ';') {
       flush_field();
-      groups.emplace_back();
+      ++group_count;
+      if (groups.size() < group_count) {
+        groups.emplace_back();
+      }
+      groups[group_count - 1].clear();
       continue;
     }
     if (character == ':') {
       flush_field();
       continue;
     }
-    if (std::isdigit(static_cast<unsigned char>(character))) {
-      current.push_back(character);
+    if (character >= '0' && character <= '9') {
+      // Cap the running value so value*10 can never overflow int; the exact
+      // saturated magnitude is irrelevant (downstream clamps to color ranges).
+      if (value < 100000) {
+        value = value * 10 + (character - '0');
+      }
     }
   }
   flush_field();
+  // Drop any stale groups left over from a previous, longer sequence while
+  // keeping the outer vector's capacity (and the surviving inner vectors').
+  groups.resize(group_count);
+}
+
+std::vector<std::vector<int>> ParseSgrParameters(std::string_view body) {
+  std::vector<std::vector<int>> groups;
+  ParseSgrParametersInto(body, groups);
   return groups;
 }
 

@@ -176,30 +176,37 @@ void TextViewport::SetUntitledBuffer() {
   ResetState({""}, {}, LineEnding::LF, false, TextEncoding::ASCII, false, false);
 }
 
+TextViewport::LineCaret TextViewport::CaretForLine(std::size_t line_index) const {
+  if (line_index != cursor_line_ || line_index >= document_->lines.size()) {
+    return {};
+  }
+  const std::size_t caret_visual = TextLayout::VisualColumnForTextColumn(
+      document_->lines[line_index], cursor_column_, tab_size_);
+  if (caret_visual >= horizontal_scroll_ &&
+      caret_visual <= horizontal_scroll_ + visible_columns_) {
+    return LineCaret{true, caret_visual - horizontal_scroll_};
+  }
+  return {};
+}
+
+const LayoutLine& TextViewport::VisibleLineLayoutRef(std::size_t line_index) const {
+  if (line_index >= document_->lines.size()) {
+    static const LayoutLine kEmpty;
+    return kEmpty;
+  }
+  return layout_cache_.VisibleLineLayoutRefCached(document_->lines, line_index, horizontal_scroll_,
+                                                  visible_columns_, tab_size_);
+}
+
 LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
   if (line_index >= document_->lines.size()) {
     return LayoutLine{};
   }
 
-  LayoutLine layout = layout_cache_.VisibleLineLayoutCached(document_->lines, line_index,
-                                                            horizontal_scroll_, visible_columns_,
-                                                            tab_size_);
-
-  if (line_index == cursor_line_) {
-    const std::size_t caret_visual = TextLayout::VisualColumnForTextColumn(
-        document_->lines[line_index], cursor_column_, tab_size_);
-    if (caret_visual >= horizontal_scroll_ &&
-        caret_visual <= horizontal_scroll_ + visible_columns_) {
-      layout.caret_visible = true;
-      layout.caret_column = caret_visual - horizontal_scroll_;
-    } else {
-      layout.caret_visible = false;
-      layout.caret_column = 0;
-    }
-  } else {
-    layout.caret_visible = false;
-    layout.caret_column = 0;
-  }
+  LayoutLine layout = VisibleLineLayoutRef(line_index);
+  const LineCaret caret = CaretForLine(line_index);
+  layout.caret_visible = caret.visible;
+  layout.caret_column = caret.column;
   return layout;
 }
 

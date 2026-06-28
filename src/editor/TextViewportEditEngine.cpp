@@ -256,9 +256,10 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   // so that InvalidateDerivedCaches / RefreshEncoding are called once at the end
   // rather than once per replacement.
   std::string new_line;
+  std::string lowered_line;  // reused across lines to avoid a per-line allocation
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
     std::string current_line(document_->lines.LineView(line_index));
-    std::string lowered_line = util::ToLowerAscii(current_line);
+    util::ToLowerAsciiInto(current_line, lowered_line);
     std::size_t offset = lowered_line.find(lowered_needle);
     if (offset == std::string::npos) {
       continue;
@@ -399,7 +400,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     return std::nullopt;
   }
 
-  const std::vector<std::string> before_lines =
+  std::vector<std::string> before_lines =
       document_->lines.SliceLines(start.line, end.line + 1);
   const std::vector<std::string> replacement_lines =
       util::SplitLines(util::NormalizeLineEndings(replacement));
@@ -430,7 +431,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
 
   return HistoryEntry{
       .start_line = start.line,
-      .before_lines = before_lines,
+      .before_lines = std::move(before_lines),
       .after_lines = std::move(after_lines),
       .before_state = CaptureViewState(),
       .after_state = after_state,
@@ -477,7 +478,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
     document_->lines.PushBackLine("");
   }
 
-  const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(range, replacement);
+  std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(range, replacement);
   if (!entry.has_value()) {
     last_applied_edit_.reset();
     return false;
@@ -486,7 +487,9 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
   ApplyHistoryEntry(*entry, true);
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(*entry, true);
   if (record_undo) {
-    HistoryEntry saved_entry = *entry;
+    // `entry` is dead after this read, so move its line vectors into the saved
+    // entry instead of deep-copying them on every keystroke.
+    HistoryEntry saved_entry = std::move(*entry);
     saved_entry.after_state = CaptureViewState();
     PushHistoryEntry(std::move(saved_entry), hint);
   } else {
@@ -504,11 +507,12 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
     document_->lines.PushBackLine("");
   }
 
-  const HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
+  HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
   ApplyHistoryEntry(entry, true);
   last_applied_edit_ = TextViewportUndoHistory::BuildAppliedEdit(entry, true);
   if (record_undo) {
-    HistoryEntry saved_entry = entry;
+    // `entry` is dead after this read; move rather than deep-copy the lines.
+    HistoryEntry saved_entry = std::move(entry);
     saved_entry.after_state = CaptureViewState();
     PushHistoryEntry(std::move(saved_entry));
   } else {

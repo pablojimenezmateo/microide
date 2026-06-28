@@ -8,11 +8,11 @@
 
 namespace microide::editor {
 
-LayoutLine TextLayoutCache::VisibleLineLayoutCached(LineSpan lines,
-                                                    std::size_t line_index,
-                                                    std::size_t horizontal_scroll,
-                                                    std::size_t visible_columns,
-                                                    std::size_t tab_size) const {
+const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
+                                                              std::size_t line_index,
+                                                              std::size_t horizontal_scroll,
+                                                              std::size_t visible_columns,
+                                                              std::size_t tab_size) const {
   ++visible_line_queries_;
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
@@ -30,9 +30,18 @@ LayoutLine TextLayoutCache::VisibleLineLayoutCached(LineSpan lines,
     visible_line_cache_.erase(visible_line_cache_order_.front());
     visible_line_cache_order_.pop_front();
   }
-  visible_line_cache_.emplace(cache_key, layout);
+  const auto [it, _] = visible_line_cache_.emplace(cache_key, std::move(layout));
   visible_line_cache_order_.push_back(cache_key);
-  return layout;
+  return it->second;
+}
+
+LayoutLine TextLayoutCache::VisibleLineLayoutCached(LineSpan lines,
+                                                    std::size_t line_index,
+                                                    std::size_t horizontal_scroll,
+                                                    std::size_t visible_columns,
+                                                    std::size_t tab_size) const {
+  return VisibleLineLayoutRefCached(lines, line_index, horizontal_scroll, visible_columns,
+                                    tab_size);
 }
 
 void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,

@@ -60,6 +60,19 @@ bool ReviewCommentsRegistry::HasThreads(const std::string& uri, int line) const 
          index->thread_indices_by_line.find(line) != index->thread_indices_by_line.end();
 }
 
+ReviewCommentsRegistry::DocumentMarkers ReviewCommentsRegistry::MarkersForUri(
+    const std::string& uri) const {
+  return DocumentMarkers(IndexForUri(uri));
+}
+
+bool ReviewCommentsRegistry::DocumentMarkers::HasMarkerAtLine(int line) const {
+  if (index_ == nullptr) {
+    return false;
+  }
+  return index_->comment_indices_by_line.find(line) != index_->comment_indices_by_line.end() ||
+         index_->thread_indices_by_line.find(line) != index_->thread_indices_by_line.end();
+}
+
 void ReviewCommentsRegistry::UpdateCommentState(const std::string& comment_id,
                                                 ReviewCommentState state) {
   for (auto& comment : comments_) {

@@ -204,6 +204,22 @@ class TextViewport {
   std::string LineEndingLabel() const;
   std::string EncodingLabel() const;
   LayoutLine VisibleLineLayout(std::size_t line_index) const;
+
+  // Caret placement for one logical line, resolved against the current cursor
+  // position and scroll window. Split out of VisibleLineLayout so the layout
+  // itself can be served by reference from the cache (see VisibleLineLayoutRef)
+  // without baking the per-call caret into the cached object.
+  struct LineCaret {
+    bool visible = false;
+    std::size_t column = 0;
+  };
+  LineCaret CaretForLine(std::size_t line_index) const;
+
+  // Reference to the cached visible-line layout (no caret fields set). Hot
+  // render paths bind this to avoid copying the LayoutLine (string + 2 vectors)
+  // per visible row; pair it with CaretForLine for caret drawing.
+  const LayoutLine& VisibleLineLayoutRef(std::size_t line_index) const;
+
   LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index) const;
   WrappedVisualRow WrappedVisualRowLayout(std::size_t visual_row_index) const;
   LogicalPosition LogicalPositionForVisualHit(int visual_row, int visual_col) const;
