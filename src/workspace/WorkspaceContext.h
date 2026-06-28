@@ -29,6 +29,12 @@ struct WorkspaceContext {
   // clobbers the user's saved config.
   std::set<std::string> transient_setting_keys;
 
+  // SDL renderer backend microide is drawing through, captured once at startup
+  // (Application -> WorkspaceShell::SetRenderBackendInfo). Surfaced by the
+  // control-channel `status` query and read by the GPU-gated batched-text path.
+  std::string render_driver_name;
+  bool render_is_gpu = false;
+
   WorkspaceContext() { RebindProjectState(current_project_state); }
 
   static void RebindProjectState(ProjectWorkspaceState& state) {

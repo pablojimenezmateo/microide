@@ -20,6 +20,7 @@
 #include "app/ApplicationPresentationCache.h"
 #include "app/IdleWaitStrategy.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "render/RendererInfo.h"
 #include "workspace/ControlSpec.h"
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
@@ -269,6 +270,18 @@ bool Application::Initialize() {
   }
 
   SDL_SetRenderVSync(renderer_, 1);
+
+  // Record + report which SDL backend we actually got. The batched-text path is
+  // GPU-only (it regresses on the software renderer), so this gate is what makes
+  // that path safe to enable, and the log line confirms GPU vs software at
+  // runtime / in CI without a profiler.
+  {
+    const std::string_view driver = render::RendererDriverName(renderer_);
+    const bool is_gpu = render::RendererIsGpu(renderer_);
+    SDL_Log("microide render: SDL renderer driver='%.*s' (gpu=%s)",
+            static_cast<int>(driver.size()), driver.data(), is_gpu ? "yes" : "no");
+    workspace_shell_.SetRenderBackendInfo(std::string(driver), is_gpu);
+  }
 
   // Warm up the syntax-highlight registry on a background thread so its
   // ~30ms parse cost overlaps with the WorkspaceShell construction below.

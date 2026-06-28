@@ -106,6 +106,13 @@
   // Invoked by Application after Initialize.
   void ApplyStartupSettingOverrides();
   void Shutdown();
+  // Record the SDL renderer driver Application created (name + GPU/software).
+  // Set once after SDL_CreateRenderer; backs the control `status` query and the
+  // GPU-gated batched-text path. Cheap value setter; no rendering side effects.
+  void SetRenderBackendInfo(std::string driver_name, bool is_gpu) {
+    context_.render_driver_name = std::move(driver_name);
+    context_.render_is_gpu = is_gpu;
+  }
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
   FrameToken PrepareFrameOnce(SDL_Renderer* renderer, int width, int height);

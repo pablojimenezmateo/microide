@@ -509,6 +509,8 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   object["tabCount"] = util::JsonValue(static_cast<std::int64_t>(state.focused_group().open_tabs.size()));
   object["debugStopped"] = util::JsonValue(state.debug_execution.stopped);
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
+  object["renderer"] = util::JsonValue(context_->render_driver_name);
+  object["rendererIsGpu"] = util::JsonValue(context_->render_is_gpu);
   return util::JsonValue(std::move(object));
 }
 
