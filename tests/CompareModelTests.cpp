@@ -15,6 +15,7 @@ using microide::compare::BuildCompareModel;
 using microide::compare::BuildCompareModelProfiled;
 using microide::compare::CompareBuildOptions;
 using microide::compare::CompareModel;
+using microide::compare::CompareRow;
 using microide::compare::CompareRowKind;
 using microide::compare::CompareTextSpan;
 
@@ -823,11 +824,51 @@ void TestCompareIgnoreWhitespacePreservesRightText() {
          "right column must reflect the right file, not a copy of the left line");
 }
 
+// Regression: a whitespace-only-different line interior to a changed hunk (not on
+// the matched prefix/suffix, so it flows through the LCS line-op builder) must be
+// Unchanged under ignore_whitespace. It previously rendered Modified because the
+// LCS used raw `==` instead of the whitespace-aware comparator, so the toggle
+// silently no-opped interior lines. The right column must still show the right
+// file's own (un-trimmed) text.
+const CompareRow* FindRowByRightText(const CompareModel& model, std::string_view right_text) {
+  for (const auto& row : model.rows) {
+    if (row.right_text == right_text) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+void TestCompareIgnoreWhitespaceInteriorHunkLine() {
+  const std::string left = "head\nAAA\n    mid\nBBB\ntail\n";
+  const std::string right = "head\nXXX\nmid\nYYY\ntail\n";
+
+  CompareBuildOptions ignore_ws;
+  ignore_ws.ignore_whitespace = true;
+  const CompareModel ignored = BuildCompareModel(left, right, ignore_ws);
+  const CompareRow* mid = FindRowByRightText(ignored, "mid");
+  Expect(mid != nullptr, "the whitespace-only interior line should produce a single paired row");
+  Expect(mid->kind == CompareRowKind::Unchanged,
+         "an interior whitespace-only difference must be Unchanged when whitespace is ignored");
+  Expect(mid->left_text == "    mid",
+         "the left column must keep the left file's indented text");
+  Expect(mid->right_text == "mid",
+         "the right column must reflect the right file, not a copy of the left line");
+
+  // Without the toggle the same interior line is a real Modified change.
+  const CompareModel exact = BuildCompareModel(left, right);
+  const CompareRow* mid_exact = FindRowByRightText(exact, "mid");
+  Expect(mid_exact != nullptr && mid_exact->kind == CompareRowKind::Modified,
+         "without ignore_whitespace the interior line stays Modified");
+}
+
 }  // namespace
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Compare/IgnoreWhitespacePreservesRightText",
           TestCompareIgnoreWhitespacePreservesRightText);
+  AddTest(tests, "Compare/IgnoreWhitespaceInteriorHunkLine",
+          TestCompareIgnoreWhitespaceInteriorHunkLine);
   AddTest(tests, "Compare/SimpleFixture", TestCompareSimpleFixture);
   AddTest(tests, "Compare/CodeFixture", TestCompareCodeFixture);
   AddTest(tests, "Compare/AsciiChangedSpans", TestCompareAsciiChangedSpans);

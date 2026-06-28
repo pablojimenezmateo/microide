@@ -73,8 +73,14 @@ enum class DiffOpKind {
 struct DiffOp {
   DiffOpKind kind = DiffOpKind::Equal;
   // View into the caller-owned source buffers passed to the diff routine. Valid
-  // only while those buffers outlive the returned ops.
+  // only while those buffers outlive the returned ops. For Delete this is the
+  // left line; for Insert the right line; for Equal the left line.
   std::string_view text;
+  // For Equal ops the matched right line. Under ignore_whitespace the two sides
+  // can be considered equal while differing in whitespace, so the right column
+  // must reproduce the right file's text rather than a copy of `text`. Unused
+  // (empty) for Delete/Insert.
+  std::string_view right_text;
 };
 
 struct LineDiffBuildStats {
