@@ -746,10 +746,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::size_t run_end = view_model->whitespace_row_offsets[row + 1];
         for (std::size_t gi = run_begin; gi < run_end; ++gi) {
           const WhitespaceGlyphRun& glyph = view_model->whitespace_glyph_runs[gi];
-          if (glyph.row_visual_start != row_start_visual ||
-              glyph.row_visual_end != row_end_visual) {
-            continue;
-          }
+          // The CSR row-offset table (whitespace_row_offsets) already partitions
+          // runs strictly by row, so every glyph in [run_begin, run_end) belongs
+          // to this row by construction; no per-glyph row-bounds filter needed.
           const float cell_x =
               row_text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
                                char_width;

@@ -187,6 +187,7 @@ struct LaunchConfigPickerItem {
   std::size_t config_index = 0;
   std::string primary_label;    // launch config name (left column)
   std::string secondary_label;  // "type · request" (muted, right column)
+  std::string search_text;      // lowercased "primary secondary", built once for filtering
 };
 
 struct LaunchConfigPickerState {

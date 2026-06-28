@@ -35,16 +35,18 @@ class WorkspaceProjectFileMonitor::ProjectTraversalFilter {
     }
 
     const auto& matcher = MatcherForParentDirectory(normalized_path.parent_path().lexically_normal());
-    if (matcher.Ignored(relative, is_directory)) {
+    // `relative` is already lexically-normalized, so the string_view overload skips
+    // the per-call re-normalization the path overload would otherwise perform.
+    if (matcher.IgnoredNormalized(relative.generic_string(), is_directory)) {
       return false;
     }
-    // `relative` is already lexically-normalized, so each parent_path() is too; no
-    // need to re-normalize per ancestor. (Ignored directories are also pruned via
+    // Each parent_path() of a normalized path is also normalized; no need to
+    // re-normalize per ancestor. (Ignored directories are also pruned via
     // disable_recursion_pending in the walk, so this loop is defense-in-depth.)
     static const std::filesystem::path kDot(".");
     for (std::filesystem::path parent = relative.parent_path();
          !parent.empty() && parent != kDot; parent = parent.parent_path()) {
-      if (matcher.Ignored(parent, true)) {
+      if (matcher.IgnoredNormalized(parent.generic_string(), true)) {
         return false;
       }
     }

@@ -96,7 +96,9 @@ bool ShouldSkipWatchedDirectory(const std::filesystem::path& directory,
       relative == std::filesystem::path(".")) {
     return false;
   }
-  return matcher->Ignored(relative.lexically_normal(), /*is_directory=*/true);
+  // The path overload normalizes internally; an extra lexically_normal() here
+  // would just build and normalize a second path for nothing.
+  return matcher->Ignored(relative, /*is_directory=*/true);
 }
 
 bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
@@ -124,13 +126,15 @@ bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& relative_path,
     return false;
   }
   const std::filesystem::path normalized = relative_path.lexically_normal();
-  if (matcher->Ignored(normalized, false)) {
+  // `normalized` (and each parent_path() of it) is already normalized, so the
+  // string_view overload avoids re-normalizing on every ancestor check.
+  if (matcher->IgnoredNormalized(normalized.generic_string(), false)) {
     return true;
   }
   for (std::filesystem::path parent = normalized.parent_path();
        !parent.empty() && parent != std::filesystem::path(".");
        parent = parent.parent_path()) {
-    if (matcher->Ignored(parent.lexically_normal(), true)) {
+    if (matcher->IgnoredNormalized(parent.generic_string(), true)) {
       return true;
     }
   }

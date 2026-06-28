@@ -48,19 +48,19 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
   for (const unsigned char byte : data) {
     if (escape_mode_ == EscapeMode::AfterEscape) {
       if (byte == '[') {
-        escape_sequence_buffer_.assign(1, '[');
+        escape_sequence_buffer_.push_back('[');
         escape_mode_ = EscapeMode::Csi;
         continue;
       }
       if (byte == ']') {
-        escape_sequence_buffer_.assign(1, ']');
+        escape_sequence_buffer_.push_back(']');
         escape_mode_ = EscapeMode::Osc;
         osc_escape_pending_ = false;
         continue;
       }
       if (byte == '(' || byte == ')' || byte == '*' || byte == '+' || byte == '-' ||
           byte == '.' || byte == '/') {
-        escape_sequence_buffer_.assign(1, static_cast<char>(byte));
+        escape_sequence_buffer_.push_back(static_cast<char>(byte));
         escape_mode_ = EscapeMode::CharsetDesignate;
         continue;
       }
@@ -247,7 +247,7 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
                 PutGlyphLocked(util::kUtf8ReplacementChar);
                 break;
               }
-              pending_utf8_sequence_.assign(1, static_cast<char>(byte));
+              pending_utf8_sequence_.push_back(static_cast<char>(byte));
               if (sequence_length == 1) {
                 PutGlyphLocked(pending_utf8_sequence_);
                 pending_utf8_sequence_.clear();

@@ -341,10 +341,13 @@ void WorkspaceShell::OpenLaunchConfigPicker() {
     if (!config.request.empty()) {
       secondary += " · " + config.request;
     }
+    std::string primary = config.name.empty() ? config.type : config.name;
+    std::string search_text = util::ToLowerAscii(primary + " " + secondary);
     picker.items.push_back(LaunchConfigPickerItem{
         .config_index = i,
-        .primary_label = config.name.empty() ? config.type : config.name,
+        .primary_label = std::move(primary),
         .secondary_label = std::move(secondary),
+        .search_text = std::move(search_text),
     });
   }
   RefreshLaunchConfigPicker();
@@ -358,12 +361,8 @@ void WorkspaceShell::RefreshLaunchConfigPicker() {
   picker.selected_index = 0;
   const std::string query = util::ToLowerAscii(picker.query.text());
   for (const LaunchConfigPickerItem& item : picker.items) {
-    if (!query.empty()) {
-      const std::string haystack =
-          util::ToLowerAscii(item.primary_label + " " + item.secondary_label);
-      if (haystack.find(query) == std::string::npos) {
-        continue;
-      }
+    if (!query.empty() && item.search_text.find(query) == std::string::npos) {
+      continue;
     }
     picker.matches.push_back(item);
   }
