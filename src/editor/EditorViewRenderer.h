@@ -111,33 +111,73 @@ class EditorViewRenderer {
   const std::vector<FoldGutterMark>& last_fold_gutter_marks() const { return last_fold_gutter_marks_; }
 
  private:
+  // Borrowed lookup key: the per-row paint loop probes the cache with the
+  // frame's lowered-query string_view, so a cache hit allocates nothing. The
+  // owning std::string is materialized only when a miss inserts (see CacheKey).
+  struct SearchMatchCacheKeyView {
+    const TextViewport* viewport = nullptr;
+    std::uint64_t content_revision = 0;
+    std::size_t line_index = 0;
+    std::string_view query;
+  };
+
   struct SearchMatchCacheKey {
     const TextViewport* viewport = nullptr;
     std::uint64_t content_revision = 0;
     std::size_t line_index = 0;
     std::string query;
 
-    bool operator==(const SearchMatchCacheKey& other) const noexcept {
-      return viewport == other.viewport && content_revision == other.content_revision &&
-             line_index == other.line_index && query == other.query;
+    operator SearchMatchCacheKeyView() const noexcept {
+      return SearchMatchCacheKeyView{viewport, content_revision, line_index, query};
     }
   };
 
   struct SearchMatchCacheKeyHash {
+    using is_transparent = void;
+
     std::size_t operator()(const SearchMatchCacheKey& key) const noexcept {
+      return (*this)(static_cast<SearchMatchCacheKeyView>(key));
+    }
+
+    std::size_t operator()(const SearchMatchCacheKeyView& key) const noexcept {
       std::size_t h = std::hash<const TextViewport*>{}(key.viewport);
       h ^= static_cast<std::size_t>(key.content_revision) * 2654435761ULL + 0x9e3779b9ULL +
            (h << 6) + (h >> 2);
       h ^= key.line_index * 2654435761ULL + 0x9e3779b9ULL + (h << 6) + (h >> 2);
-      h ^= std::hash<std::string>{}(key.query) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
+      h ^= std::hash<std::string_view>{}(key.query) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
       return h;
+    }
+  };
+
+  struct SearchMatchCacheKeyEqual {
+    using is_transparent = void;
+
+    static bool Eq(const SearchMatchCacheKeyView& lhs,
+                   const SearchMatchCacheKeyView& rhs) noexcept {
+      return lhs.viewport == rhs.viewport && lhs.content_revision == rhs.content_revision &&
+             lhs.line_index == rhs.line_index && lhs.query == rhs.query;
+    }
+    bool operator()(const SearchMatchCacheKeyView& lhs,
+                    const SearchMatchCacheKeyView& rhs) const noexcept {
+      return Eq(lhs, rhs);
+    }
+    bool operator()(const SearchMatchCacheKey& lhs, const SearchMatchCacheKey& rhs) const noexcept {
+      return Eq(lhs, rhs);
+    }
+    bool operator()(const SearchMatchCacheKey& lhs,
+                    const SearchMatchCacheKeyView& rhs) const noexcept {
+      return Eq(lhs, rhs);
+    }
+    bool operator()(const SearchMatchCacheKeyView& lhs,
+                    const SearchMatchCacheKey& rhs) const noexcept {
+      return Eq(lhs, rhs);
     }
   };
 
   static constexpr std::size_t kSearchMatchCacheLimit = 512;
   mutable std::unordered_map<SearchMatchCacheKey,
                              std::vector<std::pair<std::size_t, std::size_t>>,
-                             SearchMatchCacheKeyHash>
+                             SearchMatchCacheKeyHash, SearchMatchCacheKeyEqual>
       search_match_cache_;
   mutable std::deque<SearchMatchCacheKey> search_match_cache_order_;
 

@@ -357,7 +357,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             return;
           }
 
+          // Resolve this document's marker index once (one URI hash) instead of
+          // re-hashing the URI twice per visible row.
           const std::string uri = viewport.path().generic_string();
+          const auto document_markers = review_comments_registry_.MarkersForUri(uri);
+          if (!document_markers) {
+            return;
+          }
           for (std::size_t row = 0; row < viewport.visible_lines(); ++row) {
             const std::size_t visual_row_index = viewport.scroll_line() + row;
             if (visual_row_index >= viewport.visual_line_count()) {
@@ -369,8 +375,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             }
             const std::size_t line_index = row_meta.line_index;
             const int one_based_line = static_cast<int>(line_index + 1);
-            if (!review_comments_registry_.HasThreads(uri, one_based_line) &&
-                !review_comments_registry_.HasComments(uri, one_based_line)) {
+            if (!document_markers.HasMarkerAtLine(one_based_line)) {
               continue;
             }
             const float y =

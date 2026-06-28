@@ -603,13 +603,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     prepositioned_fill_scratch_.clear();
 
     if (!lowered_search_query.empty()) {
-      const SearchMatchCacheKey cache_key{
+      // Probe with a borrowed view so a cache hit allocates nothing (the query
+      // string is identical for every row this frame).
+      const SearchMatchCacheKeyView cache_key_view{
           .viewport = &viewport,
           .content_revision = viewport.content_revision(),
           .line_index = line_index,
           .query = lowered_search_query,
       };
-      auto cache_it = search_match_cache_.find(cache_key);
+      auto cache_it = search_match_cache_.find(cache_key_view);
       if (cache_it == search_match_cache_.end()) {
         const std::string& src = lines[line_index];
         util::ToLowerAsciiInto(src, lowered_line_scratch);
@@ -623,8 +625,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           search_match_cache_.erase(search_match_cache_order_.front());
           search_match_cache_order_.pop_front();
         }
-        auto [inserted_it, _] = search_match_cache_.emplace(cache_key, std::move(matches));
-        search_match_cache_order_.push_back(cache_key);
+        // Materialize the owning key only now, on insert.
+        SearchMatchCacheKey owning_key{
+            .viewport = &viewport,
+            .content_revision = viewport.content_revision(),
+            .line_index = line_index,
+            .query = std::string(lowered_search_query),
+        };
+        search_match_cache_order_.push_back(owning_key);
+        auto [inserted_it, _] = search_match_cache_.emplace(std::move(owning_key), std::move(matches));
         cache_it = inserted_it;
       }
 
