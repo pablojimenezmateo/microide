@@ -511,6 +511,18 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   object["renderer"] = util::JsonValue(context_->render_driver_name);
   object["rendererIsGpu"] = util::JsonValue(context_->render_is_gpu);
+
+  // Whether the per-plugin kernel confinement layers are actually live on this host. The confinement
+  // is fail-open, so this lets an operator confirm it was installed rather than silently skipped.
+  const platform::SandboxSupport& sandbox = context_->sandbox_support;
+  util::JsonObject sandbox_object;
+  sandbox_object["compiledLandlock"] = util::JsonValue(sandbox.compiled_with_landlock);
+  sandbox_object["landlockAvailable"] = util::JsonValue(sandbox.landlock_runtime_available);
+  sandbox_object["landlockAbi"] = util::JsonValue(static_cast<std::int64_t>(sandbox.landlock_abi));
+  sandbox_object["compiledSeccomp"] = util::JsonValue(sandbox.compiled_with_seccomp);
+  sandbox_object["seccompAvailable"] = util::JsonValue(sandbox.seccomp_runtime_available);
+  sandbox_object["active"] = util::JsonValue(sandbox.fully_active());
+  object["sandbox"] = util::JsonValue(std::move(sandbox_object));
   return util::JsonValue(std::move(object));
 }
 

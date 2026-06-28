@@ -218,4 +218,25 @@ void ApplyChildSandbox(const SubprocessSandbox& sandbox) {
   (void)sandbox;
 }
 
+SandboxSupport ProbeSandboxSupport() {
+  SandboxSupport support;
+#if defined(MICROIDE_HAS_LANDLOCK)
+  support.compiled_with_landlock = true;
+  // Version probe only: passing a null attr returns the supported ABI without creating a ruleset or
+  // restricting this process. A negative result means Landlock is unavailable or disabled.
+  const int abi = LandlockCreateRuleset(nullptr, 0, LANDLOCK_CREATE_RULESET_VERSION);
+  if (abi >= 1) {
+    support.landlock_runtime_available = true;
+    support.landlock_abi = abi;
+  }
+#endif
+#if defined(MICROIDE_HAS_SECCOMP)
+  support.compiled_with_seccomp = true;
+  // Read-only query: returns the current filter mode (0 = none) and never installs a filter. A
+  // non-negative return means the kernel honors seccomp queries, i.e. PR_SET_SECCOMP is available.
+  support.seccomp_runtime_available = prctl(PR_GET_SECCOMP, 0, 0, 0, 0) >= 0;
+#endif
+  return support;
+}
+
 }  // namespace microide::platform

@@ -113,6 +113,11 @@
     context_.render_driver_name = std::move(driver_name);
     context_.render_is_gpu = is_gpu;
   }
+  // Record the parent-side kernel-confinement probe Application ran at startup. Cheap value setter;
+  // backs the control `status` query (`sandbox` object). No side effects.
+  void SetSandboxSupport(const platform::SandboxSupport& support) {
+    context_.sandbox_support = support;
+  }
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
   FrameToken PrepareFrameOnce(SDL_Renderer* renderer, int width, int height);

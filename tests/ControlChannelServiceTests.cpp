@@ -322,6 +322,11 @@ void TestSocketSelfHealsAfterExternalDeletion() {
   const auto status = util::ParseJson(ExchangeLine(service, healed_fd, R"({"id":1,"query":"status"})"));
   Expect(status.has_value() && (*status)["ok"].AsBool(),
          "the rebound socket answers queries");
+  // The status payload reports kernel-confinement availability so silent fail-open is observable.
+  const util::JsonValue& sandbox = (*status)["result"]["sandbox"];
+  Expect(sandbox.IsObject(), "status result carries a sandbox object");
+  Expect(sandbox["active"].IsBool(), "sandbox reports an active flag");
+  Expect(sandbox["landlockAbi"].IsInt(), "sandbox reports a landlock ABI integer");
 
   ::close(healed_fd);
   service.Stop();

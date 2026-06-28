@@ -146,9 +146,13 @@ capability. The process `cwd` is also contained to the project/data roots.
 
 On Linux, permitted `ctx.process.run` / `run_async` children **and** contributed language-server
 processes are confined in-kernel: Landlock limits writes to the project root and the plugin data dir
-(the wider system stays readable/executable so tools still run), and when `network = false` a
-seccomp filter blocks IPv4/IPv6 sockets (AF_UNIX/local IPC still works). This layer is best-effort
-defense-in-depth: on a kernel without Landlock/seccomp it degrades to the in-process gate above. A
+(the wider system stays readable/executable so tools still run, and `/tmp`, `/dev`, `/run`,
+`/var/tmp` stay writable for scratch space), and when `network = false` a seccomp filter blocks
+IPv4/IPv6 sockets (AF_UNIX/local IPC still works). This layer is best-effort defense-in-depth: on a
+kernel without Landlock/seccomp it degrades to the in-process gate above. Because that degradation is
+silent at the syscall level, the host probes Landlock/seccomp availability once at startup
+(`platform::ProbeSandboxSupport`), logs it, and surfaces it on the control-channel `status` query
+(the `sandbox` object), so an operator can confirm whether kernel confinement is actually active. A
 plugin that declares `process.exec` and runs `{"sh", "-c", "..."}` still gets a shell — but one
 whose writes are confined to the project and whose network may be blocked. (Note: a language server
 that needs to read or write outside the project — e.g. a package cache under `~/.nuget` or

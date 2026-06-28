@@ -36,4 +36,30 @@ struct SubprocessSandbox {
 // `enabled == false` (no-op).
 void ApplyChildSandbox(const SubprocessSandbox& sandbox);
 
+// Parent-side, read-only snapshot of whether the kernel-confinement layers used by
+// ApplyChildSandbox are actually usable on this host. Because that confinement is fail-open and
+// applied in a forked child right before execvp, a misconfigured or old kernel silently degrades to
+// just the in-process capability gate. This probe lets the host log and report which layers are
+// live. It performs ONLY version/get queries (e.g. landlock_create_ruleset version probe,
+// PR_GET_SECCOMP) and never calls landlock_restrict_self or PR_SET_SECCOMP, so it does not confine
+// the calling (host) process.
+struct SandboxSupport {
+  bool compiled_with_landlock = false;      // built with the Landlock uapi (MICROIDE_HAS_LANDLOCK)
+  bool landlock_runtime_available = false;  // kernel reports a usable Landlock ABI (>= 1)
+  int landlock_abi = 0;                      // reported ABI version, 0 when unavailable
+  bool compiled_with_seccomp = false;       // built with the seccomp uapi (MICROIDE_HAS_SECCOMP)
+  bool seccomp_runtime_available = false;   // kernel accepts the PR_GET_SECCOMP query
+
+  // True when both kernel layers this build can install are usable on this host. When seccomp was
+  // not compiled in, only the Landlock layer is required (the network block is optional anyway).
+  bool fully_active() const {
+    return landlock_runtime_available &&
+           (compiled_with_seccomp ? seccomp_runtime_available : true);
+  }
+};
+
+// Probes the running kernel once for kernel-confinement availability. Read-only and safe to call
+// from the host process; see SandboxSupport. Returns an all-false snapshot on non-Linux builds.
+SandboxSupport ProbeSandboxSupport();
+
 }  // namespace microide::platform

@@ -3,6 +3,7 @@
 #include "platform/AsyncSubprocess.h"
 #include "platform/HostPlatform.h"
 #include "platform/Subprocess.h"
+#include "platform/SubprocessSandbox.h"
 
 #include <atomic>
 #include <chrono>
@@ -345,9 +346,42 @@ void TestSubprocessTimeoutDoesNotTripFastCommand() {
 }
 #endif
 
+// The probe is parent-side and read-only, so it is safe to call from the test process. We assert
+// internal consistency rather than concrete availability: CI kernels vary (Landlock/seccomp may be
+// absent), so the only invariants we can guarantee are that a layer can never be reported "runtime
+// available" without also being "compiled in", and that the ABI/flag pair agrees. This also pins the
+// must-not-confine-the-host contract: calling the probe here would break every later test in this
+// binary if it accidentally restricted the process.
+void TestSandboxProbeReportsConsistentSupport() {
+  const microide::platform::SandboxSupport support = microide::platform::ProbeSandboxSupport();
+
+  Expect(!support.landlock_runtime_available || support.compiled_with_landlock,
+         "landlock cannot be runtime-available unless it was compiled in");
+  Expect(!support.seccomp_runtime_available || support.compiled_with_seccomp,
+         "seccomp cannot be runtime-available unless it was compiled in");
+  Expect((support.landlock_abi >= 1) == support.landlock_runtime_available,
+         "landlock_abi >= 1 must agree with landlock_runtime_available");
+  Expect(support.landlock_abi >= 0, "landlock_abi must never be negative");
+
+  const bool expected_active =
+      support.landlock_runtime_available &&
+      (support.compiled_with_seccomp ? support.seccomp_runtime_available : true);
+  Expect(support.fully_active() == expected_active,
+         "fully_active() must reflect the per-layer availability flags");
+
+  // A second probe must agree: the query has no side effects on the host process.
+  const microide::platform::SandboxSupport again = microide::platform::ProbeSandboxSupport();
+  Expect(again.landlock_runtime_available == support.landlock_runtime_available &&
+             again.landlock_abi == support.landlock_abi &&
+             again.seccomp_runtime_available == support.seccomp_runtime_available,
+         "repeated sandbox probes must be stable (no host-process side effects)");
+}
+
 }  // namespace
 
 void RegisterSubprocessTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Subprocess/SandboxProbeReportsConsistentSupport",
+          TestSandboxProbeReportsConsistentSupport);
   AddTest(tests, "Subprocess/CapturesStdoutAndStdin", TestSubprocessCapturesStdoutAndStdin);
   AddTest(tests, "Subprocess/CapturesStderrAndCwd", TestSubprocessCapturesStderrAndCwd);
 #if defined(__unix__) || defined(__APPLE__)

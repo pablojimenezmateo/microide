@@ -4,6 +4,7 @@
 #include <set>
 #include <string>
 
+#include "platform/SubprocessSandbox.h"
 #include "workspace/WorkspaceInteractionState.h"
 #include "workspace/WorkspaceMenuState.h"
 #include "workspace/WorkspaceProjectState.h"
@@ -34,6 +35,11 @@ struct WorkspaceContext {
   // control-channel `status` query and read by the GPU-gated batched-text path.
   std::string render_driver_name;
   bool render_is_gpu = false;
+
+  // Read-only snapshot of whether the per-plugin kernel confinement layers are usable on this host,
+  // captured once at startup (Application -> WorkspaceShell::SetSandboxSupport). Surfaced by the
+  // control-channel `status` query so silent fail-open degradation is observable.
+  platform::SandboxSupport sandbox_support;
 
   WorkspaceContext() { RebindProjectState(current_project_state); }
 
