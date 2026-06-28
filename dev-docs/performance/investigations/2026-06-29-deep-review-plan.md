@@ -117,39 +117,45 @@ that survived skeptical re-reading. Where no committed perf scenario covers a pa
 
 ---
 
-## Remaining — correctness (needs a regression test; do not auto-apply)
+## Correctness defects — all four shipped (2026-06-29)
 
-### ☐ B-WS. `ignore_whitespace` silently dropped inside changed hunks
-- `src/compare/CompareModel.cpp:747,757,862,871,1033,1038`; `CompareModel.h:73-78`.
-- `LinesEqualForDiff` (whitespace-insensitive) is used only on the matched prefix/suffix trims and
-  the all-equal fast path — **not** inside `BuildExactLineOps`/`AppendAnchoredFallbackOps`, so a
-  whitespace-only-different line *interior* to a hunk renders Modified despite the toggle. Thread
-  `CompareBuildOptions` in and replace raw `==`. **Mandatory rider:** `DiffOp` must carry both left
-  and right text for Equal ops, else the middle Equal-row assembly (1152-1163) copies left bytes
-  into the right column (guarded by `CompareModelTests.cpp:811`). Add the interior-line test.
+### ✅ B-WS. `ignore_whitespace` silently dropped inside changed hunks
+- `src/compare/CompareModel.cpp`, `CompareModel.h`. Commit: "fix(compare): honor ignore_whitespace
+  inside changed hunks".
+- Threaded `CompareBuildOptions` through `BuildExactLineOps`/`AppendAnchoredFallbackOps`, replaced
+  raw `==` with `LinesEqualForDiff`, and extended `DiffOp` with `right_text` so Equal ops that pair
+  two whitespace-different lines keep each column's own text (the `AppendEqualPairs` helper emits
+  both sides for every matched run). Default (ignore_whitespace=false) path is unchanged.
+- Test: `Compare/IgnoreWhitespaceInteriorHunkLine`.
 
-### ☐ B-Enc. LSP `positionEncoding` never negotiated — non-ASCII incremental sync corrupts
-- `src/workspace/WorkspaceLspClientInternal.h:909-938`; `LspService.cpp:472-484`; `LspProtocol.cpp:147-150`.
-- The editor column is a **UTF-8 byte offset**, but positions are emitted without negotiating
-  `general.positionEncodings`. Every position past *any* non-ASCII char is wrong → the server's
-  mirror silently diverges (wrong diagnostics/completions) until the next full DidChange. Advertise
-  `["utf-8","utf-16"]` (utf-8 first ⇒ zero conversion on the common clangd/rust-analyzer/gopls/pyright
-  path); convert byte↔UTF-16 only when the server picks utf-16/unset. Test with a 2-byte `é` and a
-  4-byte emoji before the edit point.
+### ✅ B-Enc. LSP position encoding — common case fixed; utf-16 conversion remains
+- `src/workspace/WorkspaceLspClientInternal.h`, `WorkspaceLspClient.{h,cpp}`. Commit: "fix(lsp):
+  negotiate utf-8 position encoding".
+- Now advertises `general.positionEncodings = ["utf-8","utf-16"]` (utf-8 first). UTF-8 LSP positions
+  are byte offsets == the editor's columns, so a server that honors it (clangd/rust-analyzer/gopls/
+  pyright) is correct with zero conversion. Captures `capabilities.positionEncoding`, exposes
+  `LspClient::ServerPositionEncoding()`, and logs once when a server falls back to non-utf-8.
+- Tests: initialize advertises utf-8; utf-8 negotiation captured; default → utf-16.
+- ☐ **Remaining:** full byte↔UTF-16 conversion at every position boundary (outbound completion/hover/
+  definition/references/codeAction/signatureHelp/rename + incremental-sync ranges; inbound locations/
+  hover-range/diagnostics/completion-edits) for servers that only support utf-16. Each needs the
+  relevant line text to convert; gate behind `ServerPositionEncoding() != "utf-8"`. Test with a 2-byte
+  `é` and a 4-byte emoji before the edit point.
 
-### ☐ B-Stale. Stale LSP completion/code-action responses overwrite the current session
-- `src/workspace/AssistService.cpp:175-197,576-600`.
-- The LSP completion/code-action callbacks write results unconditionally, unlike the guarded plugin
-  sibling (:117-120). Capture `request_path` (and ideally cursor line/col) by value; bail at callback
-  entry if the active viewport is null or its path differs. Manual-triggered ⇒ window is real but rare.
+### ✅ B-Stale. Stale LSP completion/code-action responses overwrite the current session
+- `src/workspace/AssistService.{h,cpp}`. Commit: "fix(assist): drop stale LSP completion/code-action
+  responses".
+- Extracted the drop decision into pure `AssistService::ResultIsStale` and routed all three callbacks
+  (plugin completion, LSP completion, LSP code action) through it; the LSP paths capture `request_path`
+  and bail after `finish_tracked_lsp_request` so the in-flight counter is not leaked.
+- Tests: `tests/AssistServiceTests.cpp` (closed-buffer, switched-path, matching-path).
 
-### ☐ B-Harvest. Plugin provider-query harvest loops are unbounded + metamethod-invoking
-- `src/plugin/PluginProviderQueryInterop.cpp:41-45,62,67,113-129` (+ sibling harvesters).
-- Harvest runs *after* `PCall` disarms the count-hook watchdog, so a returned table with an adversarial
-  `__index`/`__len` can loop forever on the worker thread, or `longjmp` with no setjmp target →
-  `lua_atpanic` → `abort()` of the whole IDE. Replace the `for(i=1;;++i)`+`lua_geti` array-spine walks
-  with `lua_rawlen`+`lua_rawgeti` (matching the accepted decoration/diagnostics parsers). Array spine
-  only — do **not** convert named-field reads to raw.
+### ✅ B-Harvest. Plugin provider-query harvest loops were unbounded + metamethod-invoking
+- `src/plugin/PluginProviderQueryInterop.cpp`. Commit: "fix(plugin): bound provider-query harvest
+  loops to the raw array spine".
+- Converted all eight array-spine walks to `lua_rawlen`+`lua_rawgeti` (bounded, no metamethods),
+  matching the accepted decoration/diagnostics parsers. Named-field reads unchanged.
+- Test: `PluginHost/ProviderQueryBoundsAdversarialMetatable` (phantom `__index` + 1e9 `__len`).
 
 ---
 
