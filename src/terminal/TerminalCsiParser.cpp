@@ -1,52 +1,52 @@
 #include "terminal/TerminalCsiParser.h"
 
 #include <algorithm>
-#include <cctype>
-#include <cstdint>
-#include <string>
-
-#include "util/Parse.h"
 
 namespace microide::terminal {
 
-namespace {
-
-// Parse one accumulated CSI/SGR digit field. Out-of-range values are clamped to
-// a generous bound (downstream clamps further to screen dimensions) so a hostile
-// "CSI 99999999999 H" can never trigger std::atoi's undefined overflow.
-int ParseCsiField(std::string_view text) {
-  if (text.empty()) {
-    return 0;
-  }
-  constexpr int kMaxParam = 65535;
-  const std::optional<std::int64_t> value = util::ParseInt64(text);
-  if (!value.has_value()) {
-    // Overflowed int64 (an absurdly long digit run): treat as a very large
-    // positive parameter rather than parsing garbage.
-    return kMaxParam;
-  }
-  return static_cast<int>(std::clamp<std::int64_t>(*value, -kMaxParam, kMaxParam));
-}
-
-}  // namespace
-
 std::vector<int> ParseCsiParameters(std::string_view body) {
+  // Accumulate each decimal field inline (no per-field heap string); clamp during
+  // accumulation so a hostile long digit run can't overflow. Mirrors
+  // ParseSgrParametersInto but preserves the optional leading +/- sign that CSI
+  // numeric parameters may legally carry.
+  constexpr int kMaxParam = 65535;
   std::vector<int> params;
-  std::string current;
+  bool field_active = false;
+  bool negative = false;
+  bool sign_allowed = true;
+  int value = 0;
+  const auto flush_field = [&]() {
+    const int result = negative ? -value : value;
+    params.push_back(std::clamp(result, -kMaxParam, kMaxParam));
+    field_active = false;
+    negative = false;
+    sign_allowed = true;
+    value = 0;
+  };
   for (char character : body) {
     if (character == ';') {
-      params.push_back(ParseCsiField(current));
-      current.clear();
+      flush_field();
       continue;
     }
-    if (std::isdigit(static_cast<unsigned char>(character)) ||
-        ((character == '-' || character == '+') && current.empty())) {
-      current.push_back(character);
+    if ((character == '-' || character == '+') && sign_allowed) {
+      negative = (character == '-');
+      field_active = true;
+      sign_allowed = false;
+      continue;
+    }
+    if (character >= '0' && character <= '9') {
+      field_active = true;
+      sign_allowed = false;
+      // Cap the running value so value*10 can never overflow int; downstream
+      // clamps further to screen/color ranges, so saturation is harmless.
+      if (value < 100000) {
+        value = value * 10 + (character - '0');
+      }
       continue;
     }
   }
-  if (!current.empty() || (!body.empty() && body.back() == ';')) {
-    params.push_back(ParseCsiField(current));
+  if (field_active || (!body.empty() && body.back() == ';')) {
+    flush_field();
   }
   return params;
 }

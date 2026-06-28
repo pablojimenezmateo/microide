@@ -12,6 +12,11 @@ class IgnoreMatcher {
   bool SetRoot(const std::filesystem::path& root);
   void LoadIgnoreFile(const std::filesystem::path& path);
   bool Ignored(const std::filesystem::path& relative_path, bool is_directory) const;
+  // Fast path for callers that already hold a forward-slash, lexically-normalized
+  // relative path (file watchers / monitors on the traversal hot path): skips the
+  // per-call lexically_normal()+generic_string() that the path overload performs.
+  // Distinct name (not an overload) so string-literal callers stay unambiguous.
+  bool IgnoredNormalized(std::string_view normalized_relative_path, bool is_directory) const;
 
  private:
   struct Rule {

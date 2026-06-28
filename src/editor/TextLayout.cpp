@@ -121,6 +121,14 @@ LayoutLine TextLayout::BuildVisibleLine(std::string_view line,
     return result;
   }
 
+  // The append loop emits at most `visible_columns` cells (it breaks once a cell
+  // reaches the right edge), so a single up-front reserve eliminates the
+  // incremental reallocations on this per-frame soft-wrap path. `text` may still
+  // grow for multibyte-heavy lines, but the common ASCII case stays alloc-free.
+  result.text_offsets.reserve(visible_columns);
+  result.source_columns.reserve(visible_columns);
+  result.text.reserve(visible_columns);
+
   std::size_t visual_column = 0;
   for (std::size_t i = 0; i < line.size();) {
     const char character = line[i];

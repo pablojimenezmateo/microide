@@ -864,8 +864,11 @@ PluginHostSnapshot PluginHost::Impl::CaptureSnapshot() const {
     }
   }
   if (raw_callbacks.get_setting) {
-    snapshot.settings.reserve(settings.size());
-    for (const auto& spec : settings) {
+    // Iterate the published (UI-thread-owned) setting specs, not the live
+    // worker-owned `settings` vector which may be mid-rewrite during a detached
+    // reload -- mirrors the published_.project_root read above.
+    snapshot.settings.reserve(published_.settings.size());
+    for (const auto& spec : published_.settings) {
       if (const std::optional<std::string> value = raw_callbacks.get_setting(spec.id);
           value.has_value()) {
         snapshot.settings.emplace_back(spec.id, *value);

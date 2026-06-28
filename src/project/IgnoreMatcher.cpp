@@ -151,10 +151,14 @@ void IgnoreMatcher::LoadIgnoreFile(const std::filesystem::path& path) {
 }
 
 bool IgnoreMatcher::Ignored(const std::filesystem::path& relative_path, bool is_directory) const {
-  const std::string rel = ToSlash(relative_path);
+  return IgnoredNormalized(ToSlash(relative_path), is_directory);
+}
+
+bool IgnoreMatcher::IgnoredNormalized(std::string_view normalized_relative_path,
+                                      bool is_directory) const {
   bool ignored = false;
   for (const auto& rule : rules_) {
-    if (!rule.Matches(rel, is_directory)) {
+    if (!rule.Matches(normalized_relative_path, is_directory)) {
       continue;
     }
     ignored = !rule.negated;

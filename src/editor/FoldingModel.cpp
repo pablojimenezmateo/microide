@@ -100,18 +100,17 @@ inline bool IsSuppressedBracketAt(std::span<const SyntaxTokenKind> tokens, std::
 
 // Silent bracket walk used to seed the bracket stack at `resume_line`.
 bool BuildBracketStackPrefix(LineSpan lines,
-                             const std::vector<std::pair<char, char>>& pairs,
+                             const BracketLookupTable& table,
                              std::size_t prefix_end_exclusive,
                              std::size_t max_line_visits,
                              std::size_t& lines_visited,
                              std::vector<StackEntry>& stack,
                              bool& complete,
                              const TextViewport* syntax_viewport) {
-  if (pairs.empty() || prefix_end_exclusive == 0) {
+  if (!table.any_bracket || prefix_end_exclusive == 0) {
     stack.clear();
     return true;
   }
-  const BracketLookupTable table = BuildBracketLookupTable(pairs);
   stack.clear();
   stack.reserve(64);
   for (std::size_t line_index = 0; line_index < prefix_end_exclusive &&
@@ -152,7 +151,7 @@ bool BuildBracketStackPrefix(LineSpan lines,
 
 // Lines `[begin_line, size)` with emission; honours `stack` seed from prefix walk.
 void ScanBracketRangesTail(LineSpan lines,
-                           const std::vector<std::pair<char, char>>& pairs,
+                           const BracketLookupTable& table,
                            std::size_t begin_line,
                            std::size_t end_line_exclusive,
                            std::vector<StackEntry> stack,
@@ -161,8 +160,7 @@ void ScanBracketRangesTail(LineSpan lines,
                            std::vector<FoldRange>& out_ranges,
                            bool& complete,
                            const TextViewport* syntax_viewport) {
-  if (pairs.empty()) return;
-  const BracketLookupTable table = BuildBracketLookupTable(pairs);
+  if (!table.any_bracket) return;
   const std::size_t scan_end = std::min(end_line_exclusive, lines.size());
   for (std::size_t line_index = begin_line; line_index < scan_end; ++line_index) {
     if (max_line_visits != 0 && lines_visited >= max_line_visits) {
@@ -208,8 +206,9 @@ void ScanBracketRanges(LineSpan lines,
   if (pairs.empty()) {
     return;
   }
+  const BracketLookupTable table = BuildBracketLookupTable(pairs);
   std::size_t lines_visited = 0;
-  ScanBracketRangesTail(lines, pairs, 0, end_line_exclusive, /*stack=*/{}, max_line_visits,
+  ScanBracketRangesTail(lines, table, 0, end_line_exclusive, /*stack=*/{}, max_line_visits,
                         lines_visited, out_ranges, complete, syntax_viewport);
 }
 void ScanIndentRanges(LineSpan lines,
@@ -221,8 +220,11 @@ void ScanIndentRanges(LineSpan lines,
                       bool& complete) {
   const std::size_t scan_end = std::min(end_line_exclusive, lines.size());
   // Build a sorted set of openers covered by bracket scans so we don't emit
-  // an indent fold on the same opener line.
-  std::vector<bool> bracket_opener(lines.size(), false);
+  // an indent fold on the same opener line. Only indices [0, scan_end) are ever
+  // read below, so sizing to scan_end (not the whole document) avoids a large
+  // unused zero-init on budgeted recomputes of big files; the bounds check below
+  // still guards openers that fall past the scan window.
+  std::vector<bool> bracket_opener(scan_end, false);
   for (const auto& r : bracket_ranges) {
     if (r.opener_line < bracket_opener.size()) {
       bracket_opener[r.opener_line] = true;
@@ -431,7 +433,10 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
   bool prefix_lines_complete = true;
   std::size_t lines_visited = 0;
   std::vector<StackEntry> prefix_stack;
-  if (!BuildBracketStackPrefix(lines, options.bracket_pairs, incremental_resume_line, max_lines,
+  // Build the bracket lookup table once and share it between the prefix walk and
+  // the tail scan (the two consumers on this incremental-resume path).
+  const BracketLookupTable bracket_table = BuildBracketLookupTable(options.bracket_pairs);
+  if (!BuildBracketStackPrefix(lines, bracket_table, incremental_resume_line, max_lines,
                                lines_visited, prefix_stack, prefix_lines_complete,
                                syntax_viewport)) {
     bracket_ranges.clear();
@@ -451,7 +456,7 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
 
   std::vector<FoldRange> tail_brackets;
   bool tail_complete = prefix_lines_complete;
-  ScanBracketRangesTail(lines, options.bracket_pairs, incremental_resume_line, scan_end,
+  ScanBracketRangesTail(lines, bracket_table, incremental_resume_line, scan_end,
                         std::move(prefix_stack), max_lines, lines_visited,
                         tail_brackets, tail_complete, syntax_viewport);
 
