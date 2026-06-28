@@ -49,6 +49,9 @@ struct CliOptions {
   std::optional<std::filesystem::path> report_text;
   std::optional<std::string> reference_runner;
   std::optional<std::string> layout_mode;
+  // SDL renderer driver to measure through (see RunOptions::renderer_driver).
+  // Default "software" keeps the portable, baseline-gated reference lane.
+  std::string renderer_driver = "software";
 };
 
 // Set by main() after CLI parse so scenario lambdas registered at static-init
@@ -252,6 +255,13 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
       options.layout_mode = value;
       continue;
     }
+    if (arg.rfind("--renderer=", 0) == 0) {
+      options.renderer_driver = arg.substr(std::string("--renderer=").size());
+      if (options.renderer_driver.empty()) {
+        return std::nullopt;
+      }
+      continue;
+    }
     return std::nullopt;
   }
   return options;
@@ -444,6 +454,44 @@ void RegisterBuiltInScenarios() {
             for (int i = 0; i < 20; ++i) {
               context.KeyDown(SDLK_PAGEDOWN);
             }
+            context.PumpFrames(2);
+          },
+  });
+  // Sustained scroll through *fresh* content across the whole 50k-line file.
+  // Unlike editor_sticky_scroll_scroll / editor_render_whitespace_paint (which
+  // re-scroll a small window and are therefore glyph-cache-friendly), this sweeps
+  // top-to-bottom so the working set (tens of thousands of distinct colored runs)
+  // far exceeds the 4096-entry texture cache and keeps missing on evicted lines
+  // across iterations. This is the workload that decides whether the
+  // composite-build path (BuildAsciiCompositeSurface + texture upload) is a real
+  // bottleneck on the GPU lane -- i.e. whether a batched glyph atlas could ever
+  // win. Advisory only (no portable baseline); run it via
+  //   microide_perf --scenarios=editor_scroll_fresh_content_large --renderer=auto
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "editor_scroll_fresh_content_large",
+      .smoke = false,
+      .baseline_gated = false,
+      .run =
+          [](ScenarioContext& context) {
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(8);
+            std::vector<double> samples_us;
+            samples_us.reserve(640);
+            // One downward sweep: ~640 page-downs over a 50k-line file paints a
+            // continuously fresh viewport, so glyph-cache misses accumulate the
+            // way they do when a user scrolls through a large file for real.
+            for (int i = 0; i < 640; ++i) {
+              const auto t0 = std::chrono::steady_clock::now();
+              context.KeyDown(SDLK_PAGEDOWN);
+              context.PumpFrames(1);
+              const auto t1 = std::chrono::steady_clock::now();
+              samples_us.push_back(
+                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+            }
+            // Advisory envelope only -- a loose ceiling to catch gross blowups;
+            // the real signal is p50 wall + the text_texture_cache_* counters.
+            EnforceP95Microseconds("editor_scroll_fresh_content_large.page_down_frame",
+                                   samples_us, 80'000.0);
             context.PumpFrames(2);
           },
   });
@@ -1186,7 +1234,8 @@ int main(int argc, char** argv) {
                  "[--require-fixtures] [--keep-artifacts] [--iterations=N] "
                  "[--report-json=path] [--report-text=path] "
                  "[--reference-runner=name] "
-                 "[--layout-mode=auto|regular|compact]\n";
+                 "[--layout-mode=auto|regular|compact] "
+                 "[--renderer=software|auto|<sdl-driver>]\n";
     return 1;
   }
 
@@ -1198,6 +1247,19 @@ int main(int argc, char** argv) {
   run_options.iterations = options->iterations;
   run_options.layout_mode_override = options->layout_mode;
   run_options.keep_artifacts = options->keep_artifacts;
+  run_options.renderer_driver = options->renderer_driver;
+
+  // A non-software renderer is the advisory GPU lane: numbers are not
+  // cross-machine portable, so they are reported but never gated or written to
+  // baselines (mirrors the DAP advisory scenarios). The software lane stays the
+  // authoritative, baseline-gated reference.
+  const bool gpu_lane = run_options.renderer_driver != "software";
+  if (gpu_lane && options->update_baseline) {
+    std::cerr << "--update-baseline is only valid on the software reference lane; "
+                 "the GPU lane (--renderer=" << run_options.renderer_driver
+              << ") is advisory and cannot write baselines\n";
+    return 1;
+  }
   const auto stale_baselines = FindStaleBaselineScenarios(PerfHarness::RegisteredScenarios());
   if (!stale_baselines.empty()) {
     std::cerr << "stale perf baselines found for unregistered scenarios:\n";
@@ -1265,6 +1327,15 @@ int main(int argc, char** argv) {
     }
     aggregates.push_back(*aggregate);
 
+    if (gpu_lane) {
+      // Advisory GPU lane: report numbers, never gate or compare to the
+      // software baselines (different backend, non-portable timings).
+      std::cerr << "[perf][gpu] " << scenario.name
+                << " p50=" << aggregate->metrics.p50_wall_ms << "ms"
+                << " p95=" << aggregate->metrics.p95_wall_ms << "ms\n";
+      continue;
+    }
+
     const std::filesystem::path baseline_path =
         std::filesystem::path("tests/perf/baselines") / (scenario.name + ".json");
     if (options->update_baseline) {
@@ -1316,8 +1387,10 @@ int main(int argc, char** argv) {
   ReportMetadata metadata;
   metadata.runner_class =
       options->reference_runner.value_or(std::string("local-advisory"));
+  // The GPU lane is always advisory regardless of --reference-runner: only the
+  // software reference lane can be authoritative.
   metadata.provenance =
-      options->reference_runner.has_value() &&
+      !gpu_lane && options->reference_runner.has_value() &&
               *options->reference_runner == std::string("perf-runner-v1")
           ? std::string("reference")
           : std::string("advisory");
@@ -1326,7 +1399,10 @@ int main(int argc, char** argv) {
   } else {
     metadata.sdl_video_driver = "default";
   }
-  metadata.sdl_renderer_driver = "software";
+  // Report the backend actually measured (the GPU lane resolves e.g. "opengl").
+  const std::string resolved_renderer = PerfHarness::ResolvedRendererDriver();
+  metadata.sdl_renderer_driver =
+      resolved_renderer.empty() ? run_options.renderer_driver : resolved_renderer;
   metadata.scenarios.reserve(aggregates.size());
   for (const Aggregate& aggregate : aggregates) {
     metadata.scenarios.push_back(aggregate.scenario_name);

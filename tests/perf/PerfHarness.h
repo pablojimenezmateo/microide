@@ -150,6 +150,13 @@ class PerfHarness {
     std::optional<std::uint64_t> random_seed;
     std::optional<std::string> layout_mode_override;
     bool keep_artifacts = false;
+    // SDL renderer driver to measure through. "software" (default) is the
+    // portable, baseline-gated reference path. "auto"/"default" lets SDL pick
+    // the platform GPU backend; any other value forces that specific SDL driver.
+    // A non-software driver is advisory only (numbers are not cross-machine
+    // portable and never update baselines) -- it exists so GPU-only paths like
+    // batched glyph text can be measured at all.
+    std::string renderer_driver = "software";
   };
 
   static void RegisterScenario(const Scenario& scenario);
@@ -159,6 +166,10 @@ class PerfHarness {
                                 const std::filesystem::path& expected_hash_file,
                                 std::string* error);
   static std::string LastError();
+  // SDL driver name the most recent InitializeDriver actually resolved (e.g.
+  // "software", "opengl"). Empty before the first driver init. Backs report
+  // metadata so the GPU advisory lane records the real backend it measured.
+  static std::string ResolvedRendererDriver();
 
  private:
   struct Driver {
@@ -172,7 +183,8 @@ class PerfHarness {
 
   static bool InitializeDriver(Driver* driver,
                                std::optional<std::uint64_t> random_seed,
-                               bool keep_artifacts = false);
+                               bool keep_artifacts = false,
+                               std::string_view renderer_driver = "software");
   static void ShutdownDriver(Driver* driver);
 };
 

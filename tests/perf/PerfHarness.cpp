@@ -16,6 +16,7 @@
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
 #include "WorkspaceShellEventHelpers.h"
+#include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
@@ -30,6 +31,12 @@ std::vector<Scenario>& ScenarioRegistry() {
 std::string& HarnessError() {
   static std::string error;
   return error;
+}
+
+// SDL driver name the last InitializeDriver actually got, for report metadata.
+std::string& ResolvedRendererDriverStorage() {
+  static std::string driver;
+  return driver;
 }
 
 double Percentile(std::vector<double> values, double p) {
@@ -407,7 +414,8 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
   }
 
   Driver driver;
-  if (!InitializeDriver(&driver, options.random_seed, options.keep_artifacts)) {
+  if (!InitializeDriver(&driver, options.random_seed, options.keep_artifacts,
+                        options.renderer_driver)) {
     return std::nullopt;
   }
 
@@ -472,12 +480,32 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
 
 bool PerfHarness::InitializeDriver(Driver* driver,
                                    std::optional<std::uint64_t> random_seed,
-                                   bool keep_artifacts) {
+                                   bool keep_artifacts,
+                                   std::string_view renderer_driver) {
   if (driver == nullptr) {
     return false;
   }
 
-  setenv("SDL_HINT_RENDER_DRIVER", "software", 1);
+  // Resolve the requested renderer driver. "software" (default) pins the
+  // portable reference backend; "auto"/"default"/"" lets SDL pick the platform
+  // GPU backend (clear the hint so SDL's own selection wins); anything else
+  // forces that specific SDL driver. `requested_driver` is the string passed to
+  // SDL_CreateRenderer (null => SDL auto-pick).
+  const bool use_software = renderer_driver.empty() || renderer_driver == "software";
+  const bool use_auto = renderer_driver == "auto" || renderer_driver == "default";
+  std::string driver_name_owner;
+  const char* requested_driver = nullptr;
+  if (use_software) {
+    setenv("SDL_HINT_RENDER_DRIVER", "software", 1);
+    requested_driver = "software";
+  } else if (use_auto) {
+    unsetenv("SDL_HINT_RENDER_DRIVER");
+    requested_driver = nullptr;
+  } else {
+    driver_name_owner = std::string(renderer_driver);
+    setenv("SDL_HINT_RENDER_DRIVER", driver_name_owner.c_str(), 1);
+    requested_driver = driver_name_owner.c_str();
+  }
   const std::string seed_text = std::to_string(ResolveSeed(random_seed));
   setenv("MICROIDE_PERF_SEED", seed_text.c_str(), 1);
 
@@ -501,13 +529,20 @@ bool PerfHarness::InitializeDriver(Driver* driver,
     ShutdownDriver(driver);
     return false;
   }
-  driver->renderer = SDL_CreateRenderer(driver->window, "software");
+  driver->renderer = SDL_CreateRenderer(driver->window, requested_driver);
   if (driver->renderer == nullptr) {
     HarnessError() = std::string("SDL_CreateRenderer failed: ") + SDL_GetError();
     ShutdownDriver(driver);
     return false;
   }
   SDL_SetRenderVSync(driver->renderer, 0);
+  // Record the backend actually selected and gate the shell's batched-text path
+  // on it, exactly as Application does in production, so the GPU advisory lane
+  // measures the real GPU draw path (and the software lane keeps the composite
+  // path).
+  ResolvedRendererDriverStorage() = std::string(render::RendererDriverName(driver->renderer));
+  driver->shell.SetRenderBackendInfo(ResolvedRendererDriverStorage(),
+                                     render::RendererIsGpu(driver->renderer));
 
   // Do not pass current_path(): the harness cwd is usually the microide repo itself,
   // and treating it as the active project pulls async git refresh into unrelated scenarios.
@@ -519,6 +554,10 @@ bool PerfHarness::InitializeDriver(Driver* driver,
   driver->shell.SetDialogWindow(driver->window);
   driver->initialized = true;
   return true;
+}
+
+std::string PerfHarness::ResolvedRendererDriver() {
+  return ResolvedRendererDriverStorage();
 }
 
 void PerfHarness::ShutdownDriver(Driver* driver) {

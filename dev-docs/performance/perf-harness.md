@@ -21,7 +21,10 @@ What they do **not** tell you:
 - how microide compares to VSCode, Zed, Helix, Sublime, or any other editor — no comparative
   measurement is performed, none is published, and the existing numbers are not meaningful in
   that comparison
-- behavior under a GPU-accelerated renderer; the reference harness pins the software renderer
+- behavior under a GPU-accelerated renderer by default; the reference (gated) lane pins the software
+  renderer. An **advisory GPU lane** exists (`--renderer=auto|<sdl-driver>`) for measuring GPU-only
+  paths like the batched glyph atlas — its numbers are printed but never gated or written to baselines
+  (cross-machine GPU timings are not portable), exactly like the DAP advisory scenarios
 - behavior on other hardware than `perf-runner-v1`; cross-machine numbers are advisory
 - whether LTO "proves" cross-translation-unit extractions are free. LTO can recover some inlining
   loss, but residual sticky-scroll/render-path regressions still need direct profiling and explicit
@@ -183,7 +186,8 @@ Before trusting results from a scenario run:
 2. keep random behavior deterministic via `MICROIDE_PERF_SEED` (default is fixed to `1337`)
 3. drive frame work through explicit `PumpFrames(...)` calls
 4. keep iteration count explicit (`--iterations=N`, default `10`)
-5. run under software renderer (`SDL_HINT_RENDER_DRIVER=software`) and fixed window (`1920x1080`)
+5. run under software renderer (`SDL_HINT_RENDER_DRIVER=software`, the `--renderer` default) and fixed
+   window (`1920x1080`); pass `--renderer=auto` for the advisory GPU lane (never baseline-gated)
 6. keep plugin-dependent scenarios explicit and bounded; do not rely on incidental plugin state
 7. capture JSON reports (`--report-json`) for reproducible hotspot triage diffs
 
