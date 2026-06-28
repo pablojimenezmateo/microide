@@ -151,7 +151,55 @@ void TestFileFinderPrependsRecentsWhenQueryEmpty() {
          "typing a query should fall back to ranked matching");
 }
 
+void TestFileFinderIncrementalTypingMatchesFreshQuery() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "incremental-typing fixture should initialize deferred file index root");
+  Expect(index.ApplyBatch(MakeInitialBatch({"src/app/main.cpp", "src/app/render.cpp",
+                                            "src/util/string_util.cpp", "src/util/parse.cpp",
+                                            "tests/main_test.cpp", "docs/readme.md"})),
+         "incremental-typing fixture should apply initial index batch");
+
+  // Forward typing narrows the candidate set; the result must be identical to a
+  // fresh finder that jumps straight to the final query (same order and scores).
+  FileFinder incremental;
+  incremental.SetIndex(&index);
+  for (const char* q : {"m", "ma", "mai", "main"}) {
+    incremental.SetQuery(q);
+  }
+
+  FileFinder fresh;
+  fresh.SetIndex(&index);
+  fresh.SetQuery("main");
+
+  Expect(incremental.results().size() == fresh.results().size(),
+         "incremental typing should yield the same match count as a fresh query");
+  for (std::size_t i = 0; i < fresh.results().size(); ++i) {
+    Expect(incremental.results()[i].path_string == fresh.results()[i].path_string,
+           "incremental typing should yield identical ranked order to a fresh query");
+    Expect(incremental.results()[i].score == fresh.results()[i].score,
+           "incremental typing should yield identical scores to a fresh query");
+  }
+
+  // Backspacing (a shrinking query) must fall back to a full scan and recover the
+  // wider match set rather than staying narrowed.
+  incremental.SetQuery("ma");
+  fresh.SetQuery("ma");
+  Expect(incremental.results().size() == fresh.results().size(),
+         "backspacing should recover the full match set");
+  for (std::size_t i = 0; i < fresh.results().size(); ++i) {
+    Expect(incremental.results()[i].path_string == fresh.results()[i].path_string,
+           "a backspaced query should match a fresh query of the same text");
+  }
+}
+
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/IncrementalTypingMatchesFreshQuery",
+          TestFileFinderIncrementalTypingMatchesFreshQuery);
   AddTest(tests, "FileFinder/PrependsRecentsWhenQueryEmpty",
           TestFileFinderPrependsRecentsWhenQueryEmpty);
   AddTest(tests, "FileFinder/RebuildsCacheWhenFileIndexVersionChanges",

@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "editor/SingleLineEditor.h"
@@ -54,9 +55,22 @@ class FileFinder {
   std::vector<std::filesystem::path> recent_relative_paths_;
   std::vector<FileFinderResult> results_;
   std::vector<CachedFileEntry> cached_entries_;
+  // path_string -> index into cached_entries_, so the empty-query recents lookup
+  // is O(1) instead of an O(recents * entries) linear find.
+  std::unordered_map<std::string, std::size_t> entry_index_by_path_;
   bool cache_ready_ = false;
   std::uint64_t cached_index_version_ = 0;
   std::size_t selected_index_ = 0;
+
+  // Forward-typing narrowing: when the new query extends the previous one,
+  // subsequence matching is monotone, so the new matches are a subset of the
+  // previous matches. Re-rank only those indices instead of the whole index.
+  // (Scores depend on query length, so the narrowed set is re-scored, not
+  // reused.) Reset whenever the cache rebuilds or the query is empty/shrinks.
+  std::string last_lower_query_;
+  std::uint64_t last_match_version_ = 0;
+  bool has_last_match_ = false;
+  std::vector<std::size_t> last_matched_indices_;
 };
 
 }  // namespace microide::project
