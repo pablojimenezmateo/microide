@@ -177,7 +177,9 @@ authoritative for `tests/perf/baselines/*.json` movement.
 
 Before trusting results from a scenario run:
 
-1. use fixed fixtures committed under `tests/perf/fixtures/` (avoid host-dependent project trees)
+1. use fixed fixtures under `tests/perf/fixtures/` (avoid host-dependent project trees); large
+   synthetic trees are gitignored but reproduced deterministically from committed generators +
+   `.sha256` manifests (see "Generated editor-essentials fixtures" below)
 2. keep random behavior deterministic via `MICROIDE_PERF_SEED` (default is fixed to `1337`)
 3. drive frame work through explicit `PumpFrames(...)` calls
 4. keep iteration count explicit (`--iterations=N`, default `10`)
@@ -210,6 +212,31 @@ Current notable scenarios:
   - baseline:
     - `tests/perf/baselines/git_sidebar_activate.json`
   - skips gracefully when fixture directory is absent
+
+### Generated editor-essentials fixtures
+
+The large synthetic editor fixtures are deterministic and **generated on demand** rather than
+checked into git (they are ~16 MB of regenerable text). Their data trees are listed in
+`tests/perf/fixtures/.gitignore`; the committed `tests/perf/fixtures/editor_essentials_*.sha256`
+manifests are the authoritative contract.
+
+| Fixture | Generator output |
+| --- | --- |
+| `tests/perf/fixtures/editor_essentials_50k_cpp/` | 50k-line synthetic C++ buffer |
+| `tests/perf/fixtures/editor_essentials_50k_py/` | 50k-line synthetic Python buffer |
+| `tests/perf/fixtures/editor_essentials_1mb/` | exactly 1 MiB mixed-content text |
+
+CTest's `microide_perf_fixtures` setup test runs the generator with `--ensure` before
+`microide_perf_tests` (wired via `FIXTURES_SETUP`/`FIXTURES_REQUIRED`), so a fresh checkout
+reproduces them automatically. `--ensure` only regenerates trees that are missing or do not match
+the committed `.sha256`, and it never rewrites the manifest — if regeneration fails to reproduce the
+committed hash it aborts (catching Python/platform drift). Regenerate manually (and refresh the
+committed `.sha256` after intentionally changing a generator) with:
+
+```bash
+python3 tests/perf/generate_editor_essentials_perf_fixtures.py --fixture all   # rewrites .sha256
+python3 tests/perf/generate_editor_essentials_perf_fixtures.py --ensure --fixture all  # restore only
+```
 
 ### Git workstation fixtures and scenarios
 

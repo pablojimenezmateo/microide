@@ -11,6 +11,12 @@
 *.swo
 *~
 
+# OS / editor / tooling cruft and Python bytecode (generators run via python3).
+.DS_Store
+__pycache__/
+*.pyc
+*.orig
+
 # libFuzzer corpora accumulate auto-generated, hash-named inputs on every run and
 # clog the tree. Ignore those, but keep each target's directory (a tracked
 # .gitkeep) so the documented `./<Target>Fuzz tests/fuzz/corpora/<Target>`

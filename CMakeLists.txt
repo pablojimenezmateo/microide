@@ -925,9 +925,19 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     endif()
   endif()
 
+  # The large editor_essentials_* perf fixtures are gitignored and generated on
+  # demand (verified against committed .sha256). Regenerate any missing/stale tree
+  # before the perf suite runs; --ensure is a no-op when they already match.
+  # python3 is already required by the perf harness (PerfHarness::VerifyFixtureTree).
+  add_test(NAME microide_perf_fixtures
+           COMMAND python3 tests/perf/generate_editor_essentials_perf_fixtures.py --ensure --fixture all
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(microide_perf_fixtures PROPERTIES FIXTURES_SETUP perf_fixtures)
+
   add_test(NAME microide_perf_tests
            COMMAND microide_perf --smoke --iterations=1
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(microide_perf_tests PROPERTIES FIXTURES_REQUIRED perf_fixtures)
 endif()
 
 add_executable(microide_diff_bench

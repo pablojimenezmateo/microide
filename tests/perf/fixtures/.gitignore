@@ -1,3 +1,12 @@
+# Deterministic synthetic fixtures: generated on demand from the committed
+# generate_*.py scripts and verified against the committed *.sha256 manifests.
+# The data trees are large and regenerable, so they are not tracked; the .sha256
+# files (outside these dirs) stay committed as the authoritative contract.
+# CTest's microide_perf_fixtures setup runs the generators with --ensure before
+# the perf suite, so a fresh checkout reproduces them automatically.
+editor_essentials_50k_cpp/
+editor_essentials_50k_py/
+editor_essentials_1mb/
 file_finder_large/
 git_status_project/
 git_large_status_project/

@@ -218,6 +218,15 @@ def main() -> int:
     parser.add_argument("--hash-cpp", default="tests/perf/fixtures/editor_essentials_50k_cpp.sha256")
     parser.add_argument("--hash-py", default="tests/perf/fixtures/editor_essentials_50k_py.sha256")
     parser.add_argument("--hash-1mb", default="tests/perf/fixtures/editor_essentials_1mb.sha256")
+    parser.add_argument(
+        "--ensure",
+        action="store_true",
+        help=(
+            "Idempotent generate-on-demand: regenerate only fixtures missing or stale "
+            "versus the committed .sha256, and treat that .sha256 as authoritative "
+            "(do not overwrite it; fail if regeneration does not reproduce it)."
+        ),
+    )
     args = parser.parse_args()
 
     cwd = Path.cwd()
@@ -229,6 +238,9 @@ def main() -> int:
     if args.fixture in ("mb", "all"):
         specs.append(("1mb", Path(args.output_1mb), Path(args.hash_1mb), write_fixture_mixed_1mb))
 
+    if args.ensure:
+        return ensure_fixtures(cwd, specs)
+
     for name, root, hash_out, writer in specs:
         root_abs = cwd / root
         writer(root_abs)
@@ -237,6 +249,38 @@ def main() -> int:
         ho.parent.mkdir(parents=True, exist_ok=True)
         ho.write_text(h + "\n", encoding="utf-8")
         print(f"[{name}] wrote {root} sha256={h}")
+    return 0
+
+
+def ensure_fixtures(cwd: Path, specs) -> int:
+    """Generate-on-demand for gitignored fixtures, keyed off the committed .sha256.
+
+    The committed .sha256 is the contract: regenerate only when the on-disk tree is
+    missing or does not match, and never rewrite the .sha256 here. If regeneration
+    fails to reproduce the committed hash, abort loudly (Python/platform drift).
+    """
+    for name, root, hash_out, writer in specs:
+        ho = cwd / hash_out
+        if not ho.exists():
+            print(f"[{name}] missing committed checksum {hash_out}", flush=True)
+            return 1
+        expected = ho.read_text(encoding="utf-8").strip()
+
+        root_abs = cwd / root
+        if root_abs.exists() and tree_hash(root_abs) == expected:
+            print(f"[{name}] up to date ({root})")
+            continue
+
+        writer(root_abs)
+        actual = tree_hash(root_abs)
+        if actual != expected:
+            print(
+                f"[{name}] regeneration drift for {root}: "
+                f"expected {expected} got {actual}",
+                flush=True,
+            )
+            return 1
+        print(f"[{name}] regenerated {root} sha256={actual}")
     return 0
 
 

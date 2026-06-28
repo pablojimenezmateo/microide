@@ -4,6 +4,11 @@ This directory is the seed for future automated coverage in the repo-root C++ pr
 
 - `fixtures/` contains committed sample inputs for large-file, syntax, and diff workflows.
 - `generate_fixtures.py` regenerates the fixture corpus and `fixtures/manifest.json`.
+- `perf/fixtures/` perf inputs: small project trees are committed, but the large synthetic
+  trees (`editor_essentials_*`, `file_finder_large`, git workstation repos) are gitignored and
+  reproduced from committed generators + `.sha256` manifests. The `editor_essentials_*` trees are
+  regenerated automatically by the `microide_perf_fixtures` CTest setup; see
+  `dev-docs/performance/perf-harness.md` for the full layout and manual regen commands.
 
 The fixture set is intentionally biased toward current migration risks:
 
