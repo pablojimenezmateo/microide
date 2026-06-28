@@ -18,6 +18,12 @@
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
+
+bool AssistService::ResultIsStale(const editor::TextViewport* active_editable,
+                                  const std::filesystem::path& request_path) {
+  return active_editable == nullptr || active_editable->path() != request_path;
+}
+
 namespace {
 
 std::string_view LineAtOrEmpty(const std::vector<std::string>& lines, std::size_t index) {
@@ -115,7 +121,7 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
         // Drop superseded results: the active editable buffer changed since the
         // request was issued.
         editor::TextViewport* current = operations_.active_editable_viewport();
-        if (current == nullptr || current->path() != request_path) {
+        if (ResultIsStale(current, request_path)) {
           return;
         }
         auto& current_session = context_->current_project_state.overlay.workflow.completion;
@@ -161,6 +167,7 @@ void AssistService::BeginLspCompletionFallback(editor::TextViewport& viewport,
   }
 
   operations_.ensure_lsp_document_open(viewport, *client, language_id);
+  const std::filesystem::path request_path = viewport.path();
   session.items.clear();
   session.selected_index = 0;
   session.replacement_range = CompletionReplacementRange(viewport);
@@ -172,8 +179,16 @@ void AssistService::BeginLspCompletionFallback(editor::TextViewport& viewport,
       FileUriForPath(viewport.path()),
       LspClient::Position{static_cast<int>(viewport.cursor_line()),
                           static_cast<int>(viewport.cursor_column())},
-      [this](std::optional<std::vector<LspClient::CompletionItem>> items) {
+      [this, request_path](std::optional<std::vector<LspClient::CompletionItem>> items) {
         operations_.finish_tracked_lsp_request();
+        // Drop superseded results: the active editable buffer changed since the
+        // request was issued (mirrors the plugin completion guard above). Without
+        // this a slow LSP response clobbers a newer completion session or lands
+        // across a file/project switch. finish_tracked above must run first so the
+        // in-flight counter is not leaked when we bail.
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          return;
+        }
         auto& current_session = context_->current_project_state.overlay.workflow.completion;
         current_session.items.clear();
         current_session.selected_index = 0;
@@ -559,6 +574,7 @@ void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
   }
 
   operations_.ensure_lsp_document_open(viewport, *client, language_id);
+  const std::filesystem::path request_path = viewport.path();
   session.items.clear();
   session.selected_index = 0;
   session.source = "lsp";
@@ -573,8 +589,14 @@ void AssistService::BeginLspCodeActionFallback(editor::TextViewport& viewport,
           .end = LspClient::Position{static_cast<int>(range.end.line),
                                      static_cast<int>(range.end.column)},
       },
-      [this](std::optional<std::vector<LspClient::CodeAction>> actions) {
+      [this, request_path](std::optional<std::vector<LspClient::CodeAction>> actions) {
         operations_.finish_tracked_lsp_request();
+        // Drop superseded results if the active editable buffer changed since the
+        // request was issued (mirrors the plugin guard); finish_tracked above must
+        // run first so the in-flight counter is not leaked when we bail.
+        if (ResultIsStale(operations_.active_editable_viewport(), request_path)) {
+          return;
+        }
         auto& current_session = context_->current_project_state.overlay.workflow.code_actions;
         current_session.items.clear();
         current_session.selected_index = 0;
