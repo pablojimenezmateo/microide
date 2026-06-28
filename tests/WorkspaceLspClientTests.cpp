@@ -588,6 +588,9 @@ while True:
          "initialize should forward plugin initializationOptions");
   Expect(init_text.find("workspaceFolders") != std::string::npos,
          "initialize should send workspaceFolders");
+  Expect(init_text.find("positionEncodings") != std::string::npos &&
+             init_text.find("utf-8") != std::string::npos,
+         "initialize should advertise the utf-8 position encoding");
 
   Expect(std::filesystem::exists(config_marker), "client should reply to workspace/configuration");
   const std::string config_text = ReadFile(config_marker);
@@ -599,6 +602,73 @@ while True:
   const std::string error_text = ReadFile(error_marker);
   Expect(error_text.find("-32601") != std::string::npos,
          "unknown server request should get a MethodNotFound error reply");
+
+  Expect(client.ServerPositionEncoding() == "utf-16",
+         "a server that reports no positionEncoding defaults to utf-16 per the LSP spec");
+
+  client.Shutdown();
+}
+
+// The client advertises utf-8 first; a server that honors it reports
+// positionEncoding "utf-8", which the client must capture so the host knows its
+// byte-offset columns are already exact LSP positions (no conversion needed).
+void TestWorkspaceLspClientCapturesNegotiatedPositionEncoding() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    return json.loads(body.decode("utf-8")) if body else None
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"],
+                       "result": {"capabilities": {"textDocumentSync": 1,
+                                                   "positionEncoding": "utf-8"}}})
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  const bool started = client.Start({"python3", server_path.string()}, "file:///tmp", "cpp");
+  Expect(started, "utf-8 negotiation fixture should start");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline && !client.IsInitialized() &&
+         client.IsRunning()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(client.IsInitialized(), "utf-8 negotiation fixture should initialize");
+  Expect(client.ServerPositionEncoding() == "utf-8",
+         "the client must capture the server's negotiated utf-8 position encoding");
 
   client.Shutdown();
 }
@@ -671,6 +741,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientReadinessSnapshotTracksProgress);
   AddTest(tests, "WorkspaceLspClient/DidOpenQueuedBeforeInitializeStillDeliversFullText",
           TestWorkspaceLspClientDidOpenQueuedBeforeInitializeStillDeliversFullText);
+  AddTest(tests, "WorkspaceLspClient/CapturesNegotiatedPositionEncoding",
+          TestWorkspaceLspClientCapturesNegotiatedPositionEncoding);
   AddTest(tests, "WorkspaceLspClient/AnswersServerRequestsAndAdvertisesEnablers",
           TestWorkspaceLspClientAnswersServerRequestsAndAdvertisesEnablers);
   AddTest(tests, "WorkspaceLspClient/LspManagerSharesOneSubprocessAcrossLanguageIds",

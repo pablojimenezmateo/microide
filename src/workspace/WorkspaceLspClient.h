@@ -144,6 +144,12 @@ class LspClient {
   // True when the server negotiated incremental document sync.
   bool SupportsIncrementalSync() const;
 
+  // The LSP position encoding the server negotiated from our advertised
+  // [utf-8, utf-16] list ("utf-8" when honored; "utf-16" by spec default when the
+  // server reports none). "utf-8" means the editor's byte-offset columns are exact
+  // LSP positions with no conversion required.
+  std::string ServerPositionEncoding() const;
+
   // True when the client currently tracks an open document for uri.
   bool HasOpenDocument(const std::string& uri) const;
 
