@@ -103,3 +103,39 @@ re-rasterized the same glyph shape once per syntax colour. Pixel-identity guarde
 `TTF_RenderText_Blended`) and `...CoversPrintableRange`. Opaque colours only; translucent text keeps
 the whole-string `TTF_RenderText_Blended` fallback. The §13 preconditions still gate any return to a
 draw-path atlas; they do not apply to this miss-path coverage atlas.
+
+### Update 2026-06-28 — preconditions met on GPU; draw-path atlas shipped GPU-gated (`perf/gpu-render-path`)
+
+The §13 preconditions above were satisfied with measurement and the draw-path atlas now ships **for
+GPU renderers only**. What changed since 2026-05-15:
+
+- **Precondition 1 (GPU backend) is now observable and measurable.** Production already renders on a
+  GPU backend (`Application` logs `SDL_GetRendererName`; this machine reports `opengles2`). The perf
+  harness gained a GPU advisory lane: `microide_perf --renderer=auto|<driver>` (default `software`
+  stays the gated reference). The 2026-05-15 +48–83% regression was a *software-renderer* artifact —
+  `SDL_RenderGeometry` rasterizes per-pixel there. The atlas is hard-gated on `render::RendererIsGpu`
+  (`src/render/RendererInfo.h`); the software path is byte-for-byte unchanged.
+- **Precondition 2 (miss-rate) holds for sustained large-file scroll.** The window-scroll scenarios
+  are still cache-friendly (<2% miss), but the new `editor_scroll_fresh_content_large` scenario
+  (a continuous top-to-bottom sweep, working set ≫ the 4096-entry cache) measures ~9.7% texture-cache
+  miss with ~58k evictions per run — the composite build+upload churn the atlas removes.
+- **The per-quad shape the old guardrail warned against was confirmed wrong, then fixed by
+  batching.** A per-*run* `SDL_RenderGeometry` still regressed whitespace-heavy frames (+27%) because
+  it flapped SDL's batcher state against the surrounding fills. The shipped design batches per *row*
+  and per *gutter flush*: `TextRendererBackend::DrawRuns` collects a whole row's runs (and the gutter
+  collects all visible line numbers) into one `SDL_RenderGeometry` submit with per-vertex colour, so a
+  multi-colour line and the entire gutter are each one draw call. Quad positions reproduce the
+  composite path's device-pixel-snapped cell layout exactly.
+- **Pixel-identity certified on GPU.** Composite vs atlas output is byte-for-byte identical
+  (0 differing pixels, max channel diff 0) on `opengles2`. The harness is headless/software so this
+  cannot run in CI; it was certified with a standalone GPU comparison and is guarded analytically by
+  the shared coverage atlas + identical colour-modulation math.
+
+Measured on `opengles2` (advisory, not cross-machine portable), min of 3×15 iters, atlas off→on:
+`editor_render_whitespace_paint` −14.7%, `editor_scroll_fresh_content_large` −10.6%,
+`editor_sticky_scroll_scroll` −8.6%, `editor_indent_guides_paint` −2.5%; no meaningful regression.
+
+Default-on for GPU; `MICROIDE_RENDER_GLYPH_ATLAS=0` forces the composite path. Counters
+`render.glyph_atlas_runs` / `_glyphs` / `_fallbacks`. The original per-quad OpenSpec proposal at
+`openspec/changes/text-renderer-glyph-atlas/` remains archaeology — the shipped design is the
+row/gutter-batched variant described here, not that one.

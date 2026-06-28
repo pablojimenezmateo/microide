@@ -58,6 +58,9 @@ constexpr std::array<std::string_view, kPerfCounterCount> kCounterNames = {
     "workspace.wake_reason_none",
     "terminal.scrollback_lines_allocated",
     "terminal.escape_sequences_aborted",
+    "render.glyph_atlas_runs",
+    "render.glyph_atlas_glyphs",
+    "render.glyph_atlas_fallbacks",
 };
 
 std::size_t ToIndex(PerfCounterId id) {

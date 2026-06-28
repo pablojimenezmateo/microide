@@ -44,6 +44,12 @@ class TextRenderer {
                   float y,
                   SDL_Color color,
                   std::string_view text) const;
+  // Draw a row's worth of positioned runs, batched into a single GPU submission
+  // when the backend supports it (else one DrawString per run).
+  void DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) const;
+  // True when DrawRuns actually batches (GPU atlas backend). Callers use it to
+  // skip run-collection overhead on backends that draw inline anyway.
+  bool BatchesRuns() const;
   void DrawStringOn(SDL_Renderer* renderer,
                     float x,
                     float y,

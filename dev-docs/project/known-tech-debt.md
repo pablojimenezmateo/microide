@@ -37,16 +37,19 @@ assert state immediately after a fixed `sleep_for`** — is recorded in
 These are dead ends proven by the perf gate. Re-attempting them in the same shape wastes effort and
 the gate will reject them again.
 
-- **Editor glyph atlas on the draw path** (GPU / `SDL_RenderGeometry` per-quad). Rejected: it
-  regressed every software-renderer paint scenario (+48% to +83% wall) because the composite texture
-  cache already runs at >99% hit rate and `DrawString` works at the run level, not the cell level. Do
-  not revisit unless **all three** preconditions hold: a GPU backend (not software), a measured
-  fixture where `render.text_texture_cache_misses / cells_visited` exceeds ~10% steady-state, and a
-  trace showing `BuildAsciiCompositeSurface` in the top-3 hotspots. Detail:
-  `guidelines/tech-debt/archive/2026-06-16-terminal-headless-and-glyph-atlas-closeout.md`,
-  `dev-docs/performance/investigations/performance-bottleneck-deep-dive-4.md`. (The endorsed
-  *miss-path* colour-independent coverage atlas already shipped — `src/render/AsciiGlyphAtlas.{h,cpp}`
-  — and is not what this guardrail forbids.)
+- **Editor glyph atlas on the draw path** (GPU / `SDL_RenderGeometry`). RESOLVED 2026-06-28 on
+  `perf/gpu-render-path`: the three preconditions were met with measurement (GPU backend confirmed +
+  measurable via the new `--renderer=auto` advisory lane; the `editor_scroll_fresh_content_large`
+  sweep shows ~9.7% texture-cache miss with heavy eviction churn), and a **GPU-gated, row/gutter-batched**
+  atlas shipped — pixel-identical to the composite path (0-pixel-diff certified on `opengles2`),
+  −8% to −15% on heavy text scenarios, software path unchanged, default-on for GPU with
+  `MICROIDE_RENDER_GLYPH_ATLAS=0` as escape hatch. The original *per-quad* shape stayed wrong (it
+  regressed whitespace +27% by flapping the batcher); the fix was batching per row + per gutter flush.
+  The 2026-05-15 +48–83% figures were a software-renderer artifact (`SDL_RenderGeometry` rasterizes
+  per-pixel there). Detail:
+  `guidelines/tech-debt/archive/2026-06-16-terminal-headless-and-glyph-atlas-closeout.md` (§13 Update
+  2026-06-28). (The endorsed *miss-path* colour-independent coverage atlas also remains —
+  `src/render/AsciiGlyphAtlas.{h,cpp}` — now also the GPU atlas's texture source.)
 - **`TextDocumentModel` ownership extraction** from `TextViewport`. Rejected: it regressed hot
   editor/render scenarios (~+15% to +30% wall) and broadly increased allocations. Do not reintroduce
   in the same shape without first proving line access, mutation, revision updates, and cache

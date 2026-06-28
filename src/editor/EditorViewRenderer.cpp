@@ -549,6 +549,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const EditorRowYLayout row_y_layout(
       metrics.first_line_y, metrics.line_height, static_cast<std::uint32_t>(scroll_line),
       view_model != nullptr ? view_model->row_gaps : std::span<const RowGap>{});
+  // Only collect gutter numbers for a batched flush when the backend actually
+  // batches (GPU atlas); otherwise draw them inline to avoid any collection cost
+  // on the software/debug path (keeps it byte-for-byte the prior behaviour).
+  const bool batch_gutter_numbers = text_renderer.BatchesRuns();
+  gutter_number_scratch_.clear();
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= viewport.visual_line_count()) {
@@ -898,10 +903,23 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (!soft_wrap || row_meta.visual_start == 0) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                                           line_index + 1);
-      text_renderer.DrawStringOn(renderer, gutter.x + kGutterLineNumberInset, y,
-                                 selected ? theme.current_line_number : theme.line_number,
-                                 selected ? theme.row_highlight : theme.gutter_background,
-                                 std::string_view{line_number_buf, end});
+      const float number_x = gutter.x + kGutterLineNumberInset;
+      const SDL_Color number_color = selected ? theme.current_line_number : theme.line_number;
+      if (batch_gutter_numbers) {
+        // Defer to a single batched DrawRuns after the loop (see flush below). The
+        // gutter background is a separate fill, and the atlas backend's DrawStringOn
+        // ignores its background arg, so deferring the foreground digits is exact.
+        GutterNumber& number = gutter_number_scratch_.emplace_back();
+        number.x = number_x;
+        number.y = y;
+        number.color = number_color;
+        number.text.assign(line_number_buf, end);
+      } else {
+        // Non-batching backend: draw inline exactly as before, no collection cost.
+        text_renderer.DrawStringOn(renderer, number_x, y, number_color,
+                                   selected ? theme.row_highlight : theme.gutter_background,
+                                   std::string_view{line_number_buf, end});
+      }
     }
 
     if (draw_caret && selected && row_layout.caret_visible) {
@@ -1002,6 +1020,26 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                    blame_overlay->lines[blame_index].text);
       }
     }
+  }
+
+  // Flush the deferred gutter line numbers in one batched DrawRuns. On the GPU
+  // atlas backend this collapses every visible line number into a single submit
+  // (digits come from the shared glyph atlas, so scrolling no longer rebuilds and
+  // uploads a composite texture per line number); on other backends it is one
+  // DrawString per number, identical to the prior inline draw.
+  if (!gutter_number_scratch_.empty()) {
+    gutter_number_run_scratch_.clear();
+    gutter_number_run_scratch_.reserve(gutter_number_scratch_.size());
+    for (const GutterNumber& number : gutter_number_scratch_) {
+      gutter_number_run_scratch_.push_back(render::TextRun{
+          .x = number.x,
+          .y = number.y,
+          .color = number.color,
+          .text = number.text,
+      });
+    }
+    text_renderer.DrawRuns(renderer, gutter_number_run_scratch_.data(),
+                           gutter_number_run_scratch_.size());
   }
 }
 

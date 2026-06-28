@@ -253,11 +253,14 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
   }
   FlushFillRun(renderer, active_color, batch);
 
-  for (const DecoratedTextRun& run : row.runs) {
-    if (run.text.empty()) {
-      continue;
-    }
-    text_renderer.DrawString(renderer, run.x, run.y, run.color, run.text);
+  // Hand the row's runs straight to DrawRuns (DecoratedTextRun *is* render::TextRun,
+  // so there is no conversion). On the GPU atlas backend this is one
+  // SDL_RenderGeometry submission for the whole row (per-vertex colour), avoiding
+  // per-run composite uploads on cache-thrashing scroll and per-run batcher-state
+  // flapping against the fills above / underlines below. On other backends it is
+  // exactly the prior per-run DrawString loop (DrawRuns skips empty runs).
+  if (!row.runs.empty()) {
+    text_renderer.DrawRuns(renderer, row.runs.data(), row.runs.size());
   }
 
   // Underlines are dimmed copies of the diagnostic palette. Their dim_alpha

@@ -167,6 +167,18 @@ void TextRenderer::DrawString(SDL_Renderer* renderer,
   backend_->DrawString(renderer, x, y, color, text);
 }
 
+void TextRenderer::DrawRuns(SDL_Renderer* renderer, const TextRun* runs,
+                            std::size_t count) const {
+  if (backend_ == nullptr || renderer == nullptr || runs == nullptr || count == 0) {
+    return;
+  }
+  backend_->DrawRuns(renderer, runs, count);
+}
+
+bool TextRenderer::BatchesRuns() const {
+  return backend_ != nullptr && backend_->BatchesRuns();
+}
+
 void TextRenderer::DrawStringOn(SDL_Renderer* renderer,
                                 float x,
                                 float y,

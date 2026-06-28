@@ -98,6 +98,44 @@ bool AsciiGlyphAtlas::EnsureSlotFilled(std::size_t index, char ch) {
   return true;
 }
 
+bool AsciiGlyphAtlas::EnsureAllSlotsFilled() {
+  if (atlas_ == nullptr) {
+    return false;
+  }
+  bool any = false;
+  for (std::size_t i = 0; i < kSlotCount; ++i) {
+    if (EnsureSlotFilled(i, static_cast<char>(kFirstChar + i))) {
+      any = true;
+    }
+  }
+  return any;
+}
+
+bool AsciiGlyphAtlas::SlotRect(char ch, int* x, int* width, int* height) {
+  if (atlas_ == nullptr) {
+    return false;
+  }
+  const unsigned char uch = static_cast<unsigned char>(ch);
+  if (uch < kFirstChar || uch > kLastChar) {
+    return false;
+  }
+  const std::size_t index = uch - kFirstChar;
+  if (!EnsureSlotFilled(index, ch)) {
+    return false;
+  }
+  const Slot& slot = slots_[index];
+  if (x != nullptr) {
+    *x = slot.x;
+  }
+  if (width != nullptr) {
+    *width = slot.w;
+  }
+  if (height != nullptr) {
+    *height = slot.h;
+  }
+  return true;
+}
+
 bool AsciiGlyphAtlas::BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color color) {
   if (atlas_ == nullptr || dst == nullptr || color.a != 255) {
     return false;

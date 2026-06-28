@@ -53,6 +53,9 @@ enum class PerfCounterId : std::size_t {
   WorkspaceWakeReasonNone,
   TerminalScrollbackLinesAllocated,
   TerminalEscapeSequencesAborted,
+  RenderGlyphAtlasRuns,
+  RenderGlyphAtlasGlyphs,
+  RenderGlyphAtlasFallbacks,
   Count,
 };
 

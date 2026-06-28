@@ -25,6 +25,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   ~SdlTtfTextBackend() override;
 
   const char* Name() const override { return "sdl3_ttf"; }
+  bool BatchesRuns() const override { return glyph_atlas_enabled_ && is_gpu_renderer_; }
   void SetPresentationScale(float scale_x, float scale_y) override;
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
@@ -35,6 +36,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
                   float y,
                   SDL_Color color,
                   std::string_view text) override;
+  // Batches an entire row's runs into a single SDL_RenderGeometry call on the
+  // GPU atlas path (per-vertex colour, so a multi-colour line is one submit);
+  // falls back to the base per-run DrawString loop otherwise.
+  void DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) override;
   // DrawStringOn is intentionally not overridden: this backend does not paint a
   // glyph background, so the base-class default (which ignores `background` and
   // forwards to DrawString) is exactly the desired behaviour.
@@ -106,6 +111,19 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void EnsureAsciiAtlas();
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
   CacheEntry* ResolveEntry(std::string_view text, SDL_Color color);
+  // GPU-only batched-text path: upload the ASCII coverage atlas once and draw a
+  // same-colour ASCII run as a single SDL_RenderGeometry call (per-vertex colour,
+  // so colour never enters a cache key). Returns false to fall back to the
+  // composite/whole-string path (non-GPU renderer, atlas opt-out, upload failed,
+  // or a glyph outside the ASCII atlas). Gated by `glyph_atlas_enabled_` +
+  // `is_gpu_renderer_`; see the glyph-atlas closeout guardrail for why this is
+  // GPU-only (SDL_RenderGeometry regresses on the software renderer).
+  bool EnsureGpuAtlas();
+  // Append `text`'s ASCII glyph quads (positioned from x,y, tinted to `color`) to
+  // the geometry scratch buffers, reproducing the composite path's device-pixel
+  // positions. Returns false without appending the offending glyph if a glyph is
+  // outside the atlas (caller falls back to the composite path for that run).
+  bool AppendAsciiRunGeometry(float x, float y, SDL_Color color, std::string_view text);
   // Approximate VRAM footprint of a cached entry (RGBA texture: w * h * 4). Used
   // to bound the cache by bytes, not just entry count -- a few thousand wide
   // whole-string textures can pin far more VRAM than the entry cap implies.
@@ -130,6 +148,19 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // Colour-independent coverage atlas for ASCII composites. Built lazily on the
   // first ASCII miss and rebuilt (via ClearCache) when the font size changes.
   std::unique_ptr<AsciiGlyphAtlas> ascii_atlas_;
+
+  // GPU batched-text path state. `is_gpu_renderer_` is captured at init from the
+  // SDL renderer driver; `glyph_atlas_enabled_` is the MICROIDE_RENDER_GLYPH_ATLAS
+  // opt-in (default off). The texture is the ascii_atlas_ surface uploaded once;
+  // it is destroyed alongside ascii_atlas_ in ClearCache (font-size change). The
+  // scratch buffers are reused across runs to avoid per-run allocation.
+  bool is_gpu_renderer_ = false;
+  bool glyph_atlas_enabled_ = false;
+  SDL_Texture* gpu_atlas_texture_ = nullptr;
+  int gpu_atlas_width_ = 0;
+  int gpu_atlas_height_ = 0;
+  std::vector<SDL_Vertex> geom_vertices_;
+  std::vector<int> geom_indices_;
 };
 
 }  // namespace microide::render

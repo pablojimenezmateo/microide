@@ -14,6 +14,7 @@
 
 #include "platform/RuntimePaths.h"
 #include "render/PixelAlign.h"
+#include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
 #include "util/StartupTrace.h"
 
@@ -88,6 +89,16 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   TTF_SetFontHinting(font_, TTF_HINTING_LIGHT_SUBPIXEL);
   TTF_SetFontKerning(font_, false);
   LoadFallbackFonts();
+
+  // Batched-text path is GPU-only: it is a measured win on a GPU backend
+  // (row + gutter runs collapse to per-row SDL_RenderGeometry submits, avoiding
+  // composite build+upload churn on scroll) and pixel-identical to the composite
+  // path, but it regresses on the software renderer (SDL_RenderGeometry
+  // rasterizes per-pixel there). So it defaults on for GPU renderers only;
+  // MICROIDE_RENDER_GLYPH_ATLAS=0 is an escape hatch to force the composite path.
+  is_gpu_renderer_ = RendererIsGpu(renderer_);
+  const char* atlas_env = SDL_getenv("MICROIDE_RENDER_GLYPH_ATLAS");
+  glyph_atlas_enabled_ = (atlas_env == nullptr) || (atlas_env[0] != '0');
 
   RefreshMetrics();
   return true;
@@ -218,6 +229,12 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
 
 void SdlTtfTextBackend::ClearCache() {
   ascii_atlas_.reset();
+  if (gpu_atlas_texture_ != nullptr) {
+    SDL_DestroyTexture(gpu_atlas_texture_);
+    gpu_atlas_texture_ = nullptr;
+    gpu_atlas_width_ = 0;
+    gpu_atlas_height_ = 0;
+  }
   for (auto& [_, entry] : cache_) {
     if (entry.texture != nullptr) {
       SDL_DestroyTexture(entry.texture);
@@ -426,6 +443,146 @@ bool SdlTtfTextBackend::CacheKeyEqual::operator()(const CacheKeyView& lhs,
                                                   const CacheKeyView& rhs) const noexcept {
   return lhs.text == rhs.text && lhs.color.r == rhs.color.r && lhs.color.g == rhs.color.g &&
          lhs.color.b == rhs.color.b && lhs.color.a == rhs.color.a;
+}
+
+bool SdlTtfTextBackend::EnsureGpuAtlas() {
+  if (gpu_atlas_texture_ != nullptr) {
+    return true;
+  }
+  if (renderer_ == nullptr) {
+    return false;
+  }
+  EnsureAsciiAtlas();
+  if (ascii_atlas_ == nullptr || !ascii_atlas_->EnsureAllSlotsFilled()) {
+    return false;
+  }
+  SDL_Surface* surface = ascii_atlas_->Surface();
+  if (surface == nullptr) {
+    return false;
+  }
+  SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+  if (texture == nullptr) {
+    return false;
+  }
+  // Coverage is sampled and modulated by per-vertex colour; alpha-blend the
+  // result over the destination. NEAREST keeps the device-pixel-snapped glyph
+  // 1:1 with its rasterized coverage, matching the composite path.
+  SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+  SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+  gpu_atlas_texture_ = texture;
+  gpu_atlas_width_ = ascii_atlas_->SurfaceWidth();
+  gpu_atlas_height_ = ascii_atlas_->SurfaceHeight();
+  return true;
+}
+
+bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color,
+                                               std::string_view text) {
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
+  const float cell_width_px = char_width_ * scale_x;
+  // Snap the run origin to the device grid exactly as DrawString does, then place
+  // each glyph at the same integer cell offset the composite surface uses
+  // (lround(index * cell_width_px)). This reproduces the composite path's pixel
+  // positions so ASCII typography is identical to the non-atlas path.
+  const float origin_x_dev = DeviceAlignedOrigin(x, scale_x) * scale_x;
+  const float origin_y_dev = DeviceAlignedOrigin(y, scale_y) * scale_y;
+  const float atlas_w = static_cast<float>(gpu_atlas_width_);
+  const float atlas_h = static_cast<float>(gpu_atlas_height_);
+  const SDL_FColor fcolor{
+      static_cast<float>(color.r) / 255.0f,
+      static_cast<float>(color.g) / 255.0f,
+      static_cast<float>(color.b) / 255.0f,
+      static_cast<float>(color.a) / 255.0f,
+  };
+
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const char ch = text[index];
+    if (ch == ' ') {
+      continue;  // spaces contribute no coverage; advance only
+    }
+    int sx = 0;
+    int sw = 0;
+    int sh = 0;
+    if (!ascii_atlas_->SlotRect(ch, &sx, &sw, &sh)) {
+      // A glyph outside the atlas (or failed raster): the caller falls back to
+      // the composite path for this whole run so output stays faithful.
+      return false;
+    }
+    if (sw <= 0 || sh <= 0) {
+      continue;
+    }
+    const float glyph_left_dev =
+        origin_x_dev + std::round(static_cast<float>(index) * cell_width_px);
+    const float left = glyph_left_dev / scale_x;
+    const float top = origin_y_dev / scale_y;
+    const float right = left + static_cast<float>(sw) / scale_x;
+    const float bottom = top + static_cast<float>(sh) / scale_y;
+
+    const float u0 = static_cast<float>(sx) / atlas_w;
+    const float u1 = static_cast<float>(sx + sw) / atlas_w;
+    const float v0 = 0.0f;
+    const float v1 = static_cast<float>(sh) / atlas_h;
+
+    const int base = static_cast<int>(geom_vertices_.size());
+    geom_vertices_.push_back(SDL_Vertex{SDL_FPoint{left, top}, fcolor, SDL_FPoint{u0, v0}});
+    geom_vertices_.push_back(SDL_Vertex{SDL_FPoint{right, top}, fcolor, SDL_FPoint{u1, v0}});
+    geom_vertices_.push_back(SDL_Vertex{SDL_FPoint{left, bottom}, fcolor, SDL_FPoint{u0, v1}});
+    geom_vertices_.push_back(SDL_Vertex{SDL_FPoint{right, bottom}, fcolor, SDL_FPoint{u1, v1}});
+    geom_indices_.push_back(base + 0);
+    geom_indices_.push_back(base + 1);
+    geom_indices_.push_back(base + 2);
+    geom_indices_.push_back(base + 2);
+    geom_indices_.push_back(base + 1);
+    geom_indices_.push_back(base + 3);
+  }
+  return true;
+}
+
+void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) {
+  // Fall back to the per-run composite path unless the GPU batched path is armed.
+  if (renderer == nullptr || renderer != renderer_ || !glyph_atlas_enabled_ ||
+      !is_gpu_renderer_ || !EnsureGpuAtlas() || gpu_atlas_width_ <= 0 || gpu_atlas_height_ <= 0) {
+    TextRendererBackend::DrawRuns(renderer, runs, count);
+    return;
+  }
+
+  // Accumulate every opaque ASCII run in this row into one geometry buffer and
+  // submit a single SDL_RenderGeometry. Per-vertex colour means a multi-colour
+  // line is one draw call; batching across runs (not just within a run) is what
+  // avoids the per-run geometry/fill state flapping that regressed the per-run
+  // variant. Non-ASCII / translucent runs (and any glyph outside the atlas) draw
+  // via the composite path; runs are non-overlapping so draw order is immaterial.
+  geom_vertices_.clear();
+  geom_indices_.clear();
+  std::size_t batched_runs = 0;
+  for (std::size_t i = 0; i < count; ++i) {
+    const TextRun& run = runs[i];
+    if (run.text.empty()) {
+      continue;
+    }
+    if (run.color.a == 255 && CanUseFastAscii(run.text)) {
+      const std::size_t mark = geom_vertices_.size();
+      if (AppendAsciiRunGeometry(run.x, run.y, run.color, run.text)) {
+        ++batched_runs;
+        continue;
+      }
+      // A glyph was uncovered: discard this run's partial geometry and composite it.
+      geom_vertices_.resize(mark);
+      geom_indices_.resize(mark / 4 * 6);
+    }
+    DrawString(renderer, run.x, run.y, run.color, run.text);
+  }
+
+  if (!geom_vertices_.empty()) {
+    util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasRuns, batched_runs);
+    util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasGlyphs,
+                                geom_vertices_.size() / 4);
+    if (!SDL_RenderGeometry(renderer, gpu_atlas_texture_, geom_vertices_.data(),
+                            static_cast<int>(geom_vertices_.size()), geom_indices_.data(),
+                            static_cast<int>(geom_indices_.size()))) {
+      util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasFallbacks);
+    }
+  }
 }
 
 SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view text,

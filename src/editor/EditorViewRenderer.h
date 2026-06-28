@@ -198,6 +198,20 @@ class EditorViewRenderer {
   mutable std::vector<std::size_t> visible_rows_for_guides_scratch_;
   mutable std::string lowered_search_query_scratch_;
   mutable std::string lowered_line_scratch_;
+
+  // Deferred gutter line numbers: collected during the row loop and flushed once
+  // through TextRenderer::DrawRuns after it, so on the GPU atlas backend the whole
+  // gutter is one batched submit instead of one composite (build+upload) per
+  // scrolled line number. `text` is a short digit string (SSO -> no heap). Drawn
+  // last in the gutter, preserving the prior numbers-over-markers z-order.
+  struct GutterNumber {
+    float x = 0.0f;
+    float y = 0.0f;
+    SDL_Color color{};
+    std::string text;
+  };
+  mutable std::vector<GutterNumber> gutter_number_scratch_;
+  mutable std::vector<render::TextRun> gutter_number_run_scratch_;
 };
 
 }  // namespace microide::editor

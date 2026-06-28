@@ -25,12 +25,10 @@ struct DecoratedTextFill {
   SDL_Color color{};
 };
 
-struct DecoratedTextRun {
-  float x = 0.0f;
-  float y = 0.0f;
-  SDL_Color color{};
-  std::string_view text;
-};
+// A decorated run is exactly a positioned text run; alias so a row's runs can be
+// handed straight to TextRenderer::DrawRuns with no per-row conversion (the
+// batched-text path on the GPU backend submits the whole row in one draw).
+using DecoratedTextRun = render::TextRun;
 
 struct DecoratedUnderline {
   SDL_FRect rect{};

@@ -54,6 +54,26 @@ class AsciiGlyphAtlas {
   // fails.
   bool BlitInto(SDL_Surface* dst, int dst_x, char ch, SDL_Color color);
 
+  // --- GPU atlas support ---------------------------------------------------
+  // The CPU coverage surface is also the source for a one-time GPU texture
+  // upload (SdlTtfTextBackend's batched-text path). These accessors expose it
+  // without changing the lazy/composite contract above.
+
+  // Rasterize every printable glyph into the surface so the whole atlas can be
+  // uploaded as one texture. Returns false only if the atlas is unusable.
+  bool EnsureAllSlotsFilled();
+
+  // The backing white-coverage surface (RGB=255, A=coverage). Valid after
+  // Build(); fully populated only after EnsureAllSlotsFilled().
+  SDL_Surface* Surface() const { return atlas_; }
+  int SurfaceWidth() const { return atlas_ != nullptr ? atlas_->w : 0; }
+  int SurfaceHeight() const { return font_height_px_; }
+
+  // Device-pixel sub-rect of `ch` within the surface (x within the strip, width,
+  // height; top is always 0). Rasterizes the glyph on first use. Returns false
+  // if `ch` is uncovered or rasterization failed.
+  bool SlotRect(char ch, int* x, int* width, int* height);
+
  private:
   static constexpr unsigned char kFirstChar = 0x20;
   static constexpr unsigned char kLastChar = 0x7E;

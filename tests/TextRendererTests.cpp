@@ -764,6 +764,8 @@ void TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers
   Expect(FindDrawCall(calls, "qrst", false) != nullptr, draw_summary);
   Expect(FindDrawCall(calls, "xy", false) != nullptr, draw_summary);
 
+  // The counting backend does not batch runs, so gutter numbers take the inline
+  // DrawStringOn path (with background), exactly as before the atlas change.
   Expect(CountDrawCalls(calls, "1", true) == 1,
          "the gutter should draw the logical line number only on the first wrapped row");
   Expect(CountDrawCalls(calls, "2", true) == 1,
