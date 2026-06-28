@@ -27,9 +27,11 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 microide is **100% vibecoded**: every source file, test, and document in this repository
 was written by AI coding agents (a mix of Claude, GPT, and other tools) under human
 direction. There is no hand-written code path. The repo is published as a real-world
-experiment in agent-driven development — interesting to read, useful to build on, but
-not pitched as production-ready software. Expect rough edges, expect the architecture
-notes to reflect what the agents settled on rather than a hand-curated design.
+experiment in agent-driven development — interesting to read, useful to build on. That
+describes how the code was *authored*, not how mature it is: the build is stable and
+covered by an extensive automated suite (unit, fuzz, sanitizer, and performance gates).
+Expect the architecture notes to reflect what the agents settled on rather than a
+hand-curated design, and see [Known Limitations](#known-limitations) for the honest edges.
 
 This project does not claim to be the fastest or smallest editor. It claims to be a native,
 responsive, single-window IDE with internal regression baselines for startup, typing, scroll,
@@ -102,7 +104,7 @@ for what is actually measured, and what is not.
 In-scope and non-goals are declared in `openspec/specs/product-vision/spec.md`.
 
 Short version: built-in editor, diff, merge, search, git, terminal, and debugger/DAP workflows stay host-owned.
-Out of scope: plugin marketplaces, cloud/collaboration/sync, recent-project surfaces.
+Out of scope: plugin marketplaces, cloud/collaboration/sync, and out-of-process plugin isolation.
 
 The strongest, most validated workflow today is the **native diff / merge / git workstation**:
 compare tabs (working-tree vs HEAD, arbitrary commits, outgoing base-branch files), three-way
@@ -201,9 +203,12 @@ serious work.
 - **No comparative benchmarks.** Internal baselines compare microide against itself; the project
   has not been measured against VSCode, Zed, Helix, or any other editor. Claims like "fastest" or
   "lower CPU than X" are not supported here and are not made.
-- **Byte-oriented text model.** The editor handles UTF-8 at codepoint boundaries for cursor
-  movement and IME, but the underlying storage is `std::vector<std::string>` line-by-line. Very
-  large files past a few MB will get slower; large-file thresholds are still under measurement.
+- **Piece-tree text model with a 32-bit offset ceiling.** The editor handles UTF-8 at codepoint
+  boundaries for cursor movement and IME. Storage is a piece tree over an immutable original buffer
+  plus an append-only add buffer: edits are O(log n) splices with no per-line heap allocation
+  (see `src/editor/TextBuffer.h`). Buffer offsets are 32-bit, so there is a practical ~4 GiB
+  per-file ceiling; behavior on extremely large files and pathological single long lines is still
+  under measurement.
 - **Multi-caret has a known gap.** Per-caret selection-range surround now works for
   single- and multi-line ranges when carets are set up with `AddSecondaryCaretWithRange`
   or add-at-match promotion; mouse-driven multi-line block selections on secondary
@@ -223,8 +228,9 @@ serious work.
   uncommon DEC/xterm sequences may render incorrectly.
 - **Linux-only.** Linux is the only supported host. macOS and Windows are not supported build
   targets; building and running on them is unsupported.
-- **No debugger/DAP support.** Debugging is out of scope unless a dedicated phase is opened.
-- **No recent-project / recent-file UI.** Deliberate non-goal.
+- **Debugger/DAP is opt-in.** A built-in DAP debugger ships (breakpoints, stepping, call stack,
+  variable inspection, watch/REPL, multi-session). It is gated behind `debug.enabled`, which
+  defaults to **off**; enable it before the `debug-*` commands do anything.
 - **No plugin marketplace, remote install, or signed-plugin verification.** Deliberate non-goal.
 
 If you find a bug or a limitation that is not listed, that itself is a bug — please file it.
@@ -250,8 +256,15 @@ Plugins declare a `capabilities` table in their `init.lua` descriptor, which the
   refused. Default: project-scoped read+write.
 - **Process execution** (`ctx.process.run` / `run_async`, and contributed formatters / language
   servers / tasks) is **default-deny**: a plugin must declare `process.exec`, optionally with an
-  `argv[0]` allowlist. On Linux, permitted children are confined with Landlock (writes limited to
-  the project + data dir) and an optional seccomp network block.
+  `argv[0]` allowlist. On Linux, permitted children are additionally confined in the kernel —
+  Landlock restricts *writes* to the project + plugin data dir, and (when network is not granted) a
+  seccomp filter denies new IPv4/IPv6 sockets. Scope this honestly: the system stays
+  *readable/executable* (so binaries and shared libraries resolve), `/tmp`, `/dev`, `/run`, and
+  `/var/tmp` stay writable for scratch space, and the seccomp rule blocks only `AF_INET`/`AF_INET6`
+  (local `AF_UNIX`/`AF_NETLINK` sockets are still allowed). Every kernel layer is **best-effort and
+  fail-open**: on a kernel without Landlock/seccomp it is skipped, because the in-process capability
+  gate — not the kernel layer — is the primary boundary. microide probes this support at startup and
+  reports it (see below).
 - **The Lua runtime** uses a narrow stdlib (`base`, `table`, `string`, `math`, `utf8`, `package`) —
   no `io`/`os` — with `package.path` pinned to the plugin directory and `package.cpath`/`loadlib`
   disabled, so plugins cannot `require` arbitrary modules or load native libraries.
@@ -261,10 +274,13 @@ Plugins declare a `capabilities` table in their `init.lua` descriptor, which the
   the renderer directly.
 
 This is real enforcement, not just documentation. On Linux the kernel confinement applies to both
-`ctx.process.run` children and contributed language-server processes. What it does **not** do:
-first-run capability prompts, signature/marketplace trust, or isolating the Lua state itself out of
-process. A plugin you grant `process.exec` can still run tools that read your whole project. Only
-install plugins you trust into `~/.config/microide/plugins/`.
+`ctx.process.run` children and contributed language-server processes. Because the kernel layer is
+fail-open, microide probes Landlock/seccomp availability once at startup, logs it, and exposes it on
+the control channel (`status` query, `sandbox` object) so you can confirm whether kernel confinement
+is actually active on your machine rather than silently skipped. What it does **not** do: first-run
+capability prompts, signature/marketplace trust, or isolating the Lua state itself out of process. A
+plugin you grant `process.exec` can still run tools that read your whole project. Only install
+plugins you trust into `~/.config/microide/plugins/`.
 
 **Recommendations:**
 
@@ -276,10 +292,13 @@ install plugins you trust into `~/.config/microide/plugins/`.
 - Project-local plugin loading remains out of scope. See [SECURITY.md](SECURITY.md) and
   [dev-docs/project/git-workstation.md](dev-docs/project/git-workstation.md) for supported scope.
 
-**Out of scope.** A meaningful plugin sandbox (capability-scoped APIs, restricted Lua standard
-library, per-plugin allowlists) is not planned for the immediate roadmap. If a plugin marketplace
-or remote install flow is ever pursued — currently a deliberate non-goal — a sandbox would have
-to land first.
+**Still out of scope.** The capability sandbox above (capability-scoped APIs, narrowed Lua stdlib,
+per-plugin allowlists, kernel confinement of children) is implemented and enforced today. What is
+*not* planned for the immediate roadmap is the next tier of isolation: running the Lua state
+out-of-process, first-run capability prompts, and plugin signing / marketplace trust. If a plugin
+marketplace or remote install flow is ever pursued — currently a deliberate non-goal — out-of-process
+isolation would need to land first. For fully untrusted code, prefer external isolation (VM /
+container) on top of the capability sandbox.
 
 For the full plugin trust documentation see [guidelines/plugin-trust-model.md](guidelines/plugin-trust-model.md).
 

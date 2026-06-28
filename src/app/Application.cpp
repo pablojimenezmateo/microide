@@ -20,6 +20,7 @@
 #include "app/ApplicationPresentationCache.h"
 #include "app/IdleWaitStrategy.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "platform/SubprocessSandbox.h"
 #include "render/RendererInfo.h"
 #include "workspace/ControlSpec.h"
 #include "util/StartupTrace.h"
@@ -281,6 +282,19 @@ bool Application::Initialize() {
     SDL_Log("microide render: SDL renderer driver='%.*s' (gpu=%s)",
             static_cast<int>(driver.size()), driver.data(), is_gpu ? "yes" : "no");
     workspace_shell_.SetRenderBackendInfo(std::string(driver), is_gpu);
+  }
+
+  // Probe (read-only) whether the per-plugin kernel confinement layers are actually usable on this
+  // host. The confinement in SubprocessSandbox is fail-open and applied in a forked child, so a
+  // missing/old kernel silently degrades to just the in-process capability gate. Logging it here and
+  // surfacing it on the control `status` query makes that degradation observable instead of silent.
+  {
+    const platform::SandboxSupport sandbox = platform::ProbeSandboxSupport();
+    SDL_Log("microide sandbox: landlock=%s (abi=%d) seccomp=%s -> kernel confinement %s",
+            sandbox.landlock_runtime_available ? "yes" : "no", sandbox.landlock_abi,
+            sandbox.seccomp_runtime_available ? "yes" : "no",
+            sandbox.fully_active() ? "active" : "unavailable (in-process gate only)");
+    workspace_shell_.SetSandboxSupport(sandbox);
   }
 
   // Warm up the syntax-highlight registry on a background thread so its
