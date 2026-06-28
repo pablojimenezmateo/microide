@@ -256,9 +256,10 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   // so that InvalidateDerivedCaches / RefreshEncoding are called once at the end
   // rather than once per replacement.
   std::string new_line;
+  std::string lowered_line;  // reused across lines to avoid a per-line allocation
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
     std::string current_line(document_->lines.LineView(line_index));
-    std::string lowered_line = util::ToLowerAscii(current_line);
+    util::ToLowerAsciiInto(current_line, lowered_line);
     std::size_t offset = lowered_line.find(lowered_needle);
     if (offset == std::string::npos) {
       continue;

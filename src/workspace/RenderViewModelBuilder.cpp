@@ -9,6 +9,7 @@
 #include "util/Parse.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
+#include "util/StringUtil.h"
 
 #include "workspace/RecentsService.h"
 #include "workspace/StatusBarService.h"
@@ -117,12 +118,7 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
 
   seed_cache.lowered_needle.clear();
   if (!occurrences_case_sensitive) {
-    const std::string_view needle_view(seed_cache.needle.data(), seed_cache.needle.size());
-    seed_cache.lowered_needle.resize(needle_view.size());
-    std::transform(needle_view.begin(), needle_view.end(), seed_cache.lowered_needle.begin(),
-                   [](unsigned char c) {
-                     return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                   });
+    util::ToLowerAsciiInto(seed_cache.needle, seed_cache.lowered_needle);
   }
 }
 
@@ -210,9 +206,7 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
       // case-sensitive branch — the previous nested loop re-lowered every
       // haystack byte O(needle) times for each candidate position.
       thread_local std::string lowered_haystack;
-      lowered_haystack.resize(haystack.size());
-      std::transform(haystack.begin(), haystack.end(), lowered_haystack.begin(),
-                     [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      util::ToLowerAsciiInto(haystack, lowered_haystack);
       for (std::size_t pos = 0; pos <= lowered_haystack.size();) {
         const std::size_t found = lowered_haystack.find(lowered_needle, pos);
         if (found == std::string::npos) {

@@ -126,6 +126,11 @@ class ProjectSearchService {
   std::uint64_t next_search_id_ = 0;
   Uint32 wake_event_type_ = 0;
   std::atomic_bool cancel_requested_{false};
+  // Set when a wake event is queued and unconsumed; cleared when the shell
+  // drains via TakePendingUpdate. Lets PushWakeEvent collapse the per-batch /
+  // per-progress flood into a single pending wake (the coalesced state always
+  // lives in pending_update_, so no update — including `finished` — is lost).
+  mutable bool wake_pending_ = false;
   ProjectSearchUpdate pending_update_;
   // Latest progress counters for the active run, retained across publishes so
   // each pending update carries the denominator even when only results changed.

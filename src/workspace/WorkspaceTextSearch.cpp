@@ -107,20 +107,14 @@ std::optional<std::size_t> FindLiteralNeedleInLine(std::string_view haystack,
     const std::size_t position = haystack.find(needle, start_from);
     return position != std::string_view::npos ? std::optional{position} : std::nullopt;
   }
-  for (std::size_t i = start_from; i + needle.size() <= haystack.size(); ++i) {
-    bool match = true;
-    for (std::size_t j = 0; j < needle.size(); ++j) {
-      if (std::tolower(static_cast<unsigned char>(haystack[i + j])) !=
-          std::tolower(static_cast<unsigned char>(needle[j]))) {
-        match = false;
-        break;
-      }
-    }
-    if (match) {
-      return i;
-    }
-  }
-  return std::nullopt;
+  // Lower both sides once (ASCII fold) and reuse the linear find, instead of the
+  // previous O(haystack * needle) per-position re-lowering nested loop.
+  thread_local std::string lowered_haystack;
+  thread_local std::string lowered_needle;
+  util::ToLowerAsciiInto(haystack, lowered_haystack);
+  util::ToLowerAsciiInto(needle, lowered_needle);
+  const std::size_t position = lowered_haystack.find(lowered_needle, start_from);
+  return position != std::string::npos ? std::optional{position} : std::nullopt;
 }
 
 namespace {

@@ -401,7 +401,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           static_cast<std::size_t>(model_index) < compare_tab->left_tokens_by_row.size()
               ? &compare_tab->left_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      const std::vector<compare::CompareTextSpan> left_changed_spans =
+      const std::vector<compare::CompareTextSpan>& left_changed_spans =
           compare::CompareInlineLeftSpans(compare_tab->presentation, compare_tab->model, model_index);
       const bool left_diff_edge = compare_row.kind == compare::CompareRowKind::Deleted ||
                                   compare_row.kind == compare::CompareRowKind::Modified;
@@ -486,7 +486,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           static_cast<std::size_t>(model_index) < compare_tab->right_tokens_by_row.size()
               ? &compare_tab->right_tokens_by_row[static_cast<std::size_t>(model_index)]
               : &kEmptyTokens;
-      const std::vector<compare::CompareTextSpan> right_changed_spans =
+      const std::vector<compare::CompareTextSpan>& right_changed_spans =
           compare::CompareInlineRightSpans(compare_tab->presentation, compare_tab->model,
                                            model_index);
       const bool right_diff_edge = compare_row.kind == compare::CompareRowKind::Added ||

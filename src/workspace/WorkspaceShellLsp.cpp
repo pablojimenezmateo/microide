@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "util/JsonValue.h"
+#include "util/StringUtil.h"
 #include "workspace/ControlSpec.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
@@ -327,16 +328,6 @@ std::string WorkspaceShell::StartAdHocDebug(const std::string& program,
   return {};
 }
 
-namespace {
-std::string ToLowerAscii(std::string_view text) {
-  std::string lowered(text);
-  for (char& c : lowered) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  return lowered;
-}
-}  // namespace
-
 void WorkspaceShell::OpenLaunchConfigPicker() {
   LaunchConfigPickerState& picker =
       context_.current_project_state.overlay.workflow.launch_config_picker;
@@ -365,10 +356,11 @@ void WorkspaceShell::RefreshLaunchConfigPicker() {
       context_.current_project_state.overlay.workflow.launch_config_picker;
   picker.matches.clear();
   picker.selected_index = 0;
-  const std::string query = ToLowerAscii(picker.query.text());
+  const std::string query = util::ToLowerAscii(picker.query.text());
   for (const LaunchConfigPickerItem& item : picker.items) {
     if (!query.empty()) {
-      const std::string haystack = ToLowerAscii(item.primary_label + " " + item.secondary_label);
+      const std::string haystack =
+          util::ToLowerAscii(item.primary_label + " " + item.secondary_label);
       if (haystack.find(query) == std::string::npos) {
         continue;
       }

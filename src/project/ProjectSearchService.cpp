@@ -196,6 +196,7 @@ ProjectSearchUpdate ProjectSearchService::TakePendingUpdate() {
   std::lock_guard lock(mutex_);
   ProjectSearchUpdate update = std::move(pending_update_);
   pending_update_ = {};
+  wake_pending_ = false;
   return update;
 }
 
@@ -520,9 +521,10 @@ void ProjectSearchService::PublishProgress(std::uint64_t run_id,
 
 void ProjectSearchService::PushWakeEvent() const {
   std::lock_guard lock(mutex_);
-  if (wake_event_type_ == 0) {
+  if (wake_event_type_ == 0 || wake_pending_) {
     return;
   }
+  wake_pending_ = true;
 
   SDL_Event event;
   SDL_zero(event);

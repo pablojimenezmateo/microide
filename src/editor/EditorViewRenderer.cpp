@@ -15,6 +15,7 @@
 #include "editor/WelcomeView.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
 
 namespace microide::editor {
@@ -346,10 +347,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   if (search_query.empty()) {
     lowered_search_query_scratch_.clear();
   } else {
-    lowered_search_query_scratch_.resize(search_query.size());
-    std::transform(search_query.begin(), search_query.end(),
-                   lowered_search_query_scratch_.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    util::ToLowerAsciiInto(search_query, lowered_search_query_scratch_);
   }
   const std::string& lowered_search_query = lowered_search_query_scratch_;
   std::size_t blame_index = 0;
@@ -614,9 +612,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       auto cache_it = search_match_cache_.find(cache_key);
       if (cache_it == search_match_cache_.end()) {
         const std::string& src = lines[line_index];
-        lowered_line_scratch.resize(src.size());
-        std::transform(src.begin(), src.end(), lowered_line_scratch.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        util::ToLowerAsciiInto(src, lowered_line_scratch);
         std::vector<std::pair<std::size_t, std::size_t>> matches;
         std::size_t match_offset = lowered_line_scratch.find(lowered_search_query);
         while (match_offset != std::string::npos) {

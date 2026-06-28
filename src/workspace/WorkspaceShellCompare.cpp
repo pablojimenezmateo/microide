@@ -476,21 +476,9 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
 
 std::size_t WorkspaceShell::CompareRowIndexForRightLine(const CompareTabState& compare_tab,
                                                         std::size_t line_index) const {
-  if (compare_tab.model.rows.empty()) {
-    return 0;
-  }
-
-  const int target_line = static_cast<int>(line_index + 1);
-  for (std::size_t i = 0; i < compare_tab.model.rows.size(); ++i) {
-    const auto& row = compare_tab.model.rows[i];
-    if (row.right_line == target_line) {
-      return i;
-    }
-    if (row.right_line > target_line) {
-      return i;
-    }
-  }
-  return compare_tab.model.rows.size() - 1;
+  // Thin forwarder onto the canonical free helper so the right-line -> model-row
+  // scan lives in exactly one place (CompareTabReview.cpp).
+  return CompareTabModelRowForRightLine(compare_tab, line_index);
 }
 
 std::size_t WorkspaceShell::CompareRightLineForRow(const CompareTabState& compare_tab,
