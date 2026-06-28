@@ -381,6 +381,21 @@ struct GitBlameService::Impl {
         .end = std::min(request.total_line_count - 1,
                         request.visible_start_line + request.visible_line_count - 1),
     };
+    // Lines actually materialized into the snapshot: the caller's result window
+    // (caret +/- a row for inline blame) clamped to the loaded visible window, or
+    // the whole visible window when no result window was requested.
+    const Span result_window =
+        request.result_line_count == 0
+            ? visible_window
+            : Span{
+                  .start = std::max(visible_window.start,
+                                    std::min(request.result_start_line,
+                                             request.total_line_count - 1)),
+                  .end = std::min(visible_window.end,
+                                  std::min(request.total_line_count - 1,
+                                           request.result_start_line +
+                                               request.result_line_count - 1)),
+              };
     const Span normalized_window =
         NormalizeWindow(request.visible_start_line, request.visible_line_count, request.total_line_count);
     const std::string file_key = BuildFileKey(request.root, *relative_path);
@@ -393,10 +408,12 @@ struct GitBlameService::Impl {
     if (cache_it != file_caches.end()) {
       const FileCache& cache = cache_it->second;
       snapshot.eligible = cache.eligible;
-      for (std::size_t line = visible_window.start; line <= visible_window.end; ++line) {
-        const auto blame_it = cache.blame_by_line.find(line);
-        if (blame_it != cache.blame_by_line.end()) {
-          snapshot.lines.push_back(blame_it->second);
+      if (result_window.start <= result_window.end) {
+        for (std::size_t line = result_window.start; line <= result_window.end; ++line) {
+          const auto blame_it = cache.blame_by_line.find(line);
+          if (blame_it != cache.blame_by_line.end()) {
+            snapshot.lines.push_back(blame_it->second);
+          }
         }
       }
       snapshot.loading =

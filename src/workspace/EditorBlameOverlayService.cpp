@@ -69,6 +69,13 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
       editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, sticky_scroll_rows);
   viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const std::size_t visible_start_line = viewport.VisualRowLineIndex(viewport.scroll_line());
+  // Inline blame only renders the caret +/- kCaretBlameRadius, so request just
+  // that window of snapshot lines (the visible window still drives prefetch).
+  const std::size_t caret_start =
+      viewport.cursor_line() > kCaretBlameRadius ? viewport.cursor_line() - kCaretBlameRadius : 0;
+  const std::size_t caret_end =
+      viewport.line_count() == 0 ? 0
+                                 : std::min(viewport.line_count() - 1, viewport.cursor_line() + kCaretBlameRadius);
   const project::GitBlameRequest request{
       .root = project_root,
       .absolute_path = viewport.path(),
@@ -76,6 +83,8 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
       .visible_line_count = metrics.visible_rows,
       .total_line_count = viewport.line_count(),
       .dirty = viewport.dirty(),
+      .result_start_line = caret_start,
+      .result_line_count = caret_end - caret_start + 1,
   };
 
   git_blame_service.Request(request);
@@ -87,11 +96,6 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
   const float char_width = std::max(1.0f, text_renderer.CharWidth());
   const float inline_gap = static_cast<float>(kInlineBlameGapColumns) * char_width;
   const float right_limit = rect.x + rect.w - 12.0f;
-  const std::size_t caret_start =
-      viewport.cursor_line() > kCaretBlameRadius ? viewport.cursor_line() - kCaretBlameRadius : 0;
-  const std::size_t caret_end =
-      viewport.line_count() == 0 ? 0
-                                 : std::min(viewport.line_count() - 1, viewport.cursor_line() + kCaretBlameRadius);
 
   editor::EditorBlameOverlay overlay;
   overlay.visible = true;
@@ -159,6 +163,14 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
 
   compare_tab.right_viewport.SetViewportSize(static_cast<std::size_t>(layout.visible_rows),
                                              layout.visible_columns);
+  const std::size_t caret_start =
+      compare_tab.right_viewport.cursor_line() > kCaretBlameRadius
+          ? compare_tab.right_viewport.cursor_line() - kCaretBlameRadius
+          : 0;
+  const std::size_t caret_end = compare_tab.right_viewport.line_count() == 0
+                                    ? 0
+                                    : std::min(compare_tab.right_viewport.line_count() - 1,
+                                               compare_tab.right_viewport.cursor_line() + kCaretBlameRadius);
   const project::GitBlameRequest request{
       .root = project_root,
       .absolute_path = compare_tab.right_viewport.path(),
@@ -166,6 +178,8 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
       .visible_line_count = static_cast<std::size_t>(layout.visible_rows),
       .total_line_count = compare_tab.right_viewport.line_count(),
       .dirty = compare_tab.right_viewport.dirty(),
+      .result_start_line = caret_start,
+      .result_line_count = caret_end - caret_start + 1,
   };
 
   git_blame_service.Request(request);
@@ -177,14 +191,6 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
   const float char_width = std::max(1.0f, text_renderer.CharWidth());
   const float inline_gap = static_cast<float>(kInlineBlameGapColumns) * char_width;
   const float right_limit = layout.right_x + layout.gutter_width + layout.right_width - 12.0f;
-  const std::size_t caret_start =
-      compare_tab.right_viewport.cursor_line() > kCaretBlameRadius
-          ? compare_tab.right_viewport.cursor_line() - kCaretBlameRadius
-          : 0;
-  const std::size_t caret_end = compare_tab.right_viewport.line_count() == 0
-                                    ? 0
-                                    : std::min(compare_tab.right_viewport.line_count() - 1,
-                                               compare_tab.right_viewport.cursor_line() + kCaretBlameRadius);
 
   editor::EditorBlameOverlay overlay;
   overlay.visible = true;
