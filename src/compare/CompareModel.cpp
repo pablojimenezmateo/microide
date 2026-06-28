@@ -156,14 +156,18 @@ std::size_t TokenMatchWeight(const LineToken& token) {
   }
 }
 
-std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const TokenizedLine& right) {
+std::size_t CommonSignificantTokenBytes(const TokenizedLine& left, const TokenizedLine& right,
+                                        std::vector<std::size_t>& dp) {
   const std::size_t left_count = left.significant_token_indices.size();
   const std::size_t right_count = right.significant_token_indices.size();
   if (left_count == 0 || right_count == 0) {
     return 0;
   }
 
-  std::vector<std::size_t> dp((left_count + 1) * (right_count + 1), 0);
+  // Reuse the caller-owned scratch (assign re-zeroes the boundary that value-init
+  // provided), so a dense modified hunk that calls this up to left*right times no
+  // longer mallocs a throwaway DP buffer per pair.
+  dp.assign((left_count + 1) * (right_count + 1), 0);
   auto at = [&](std::size_t i, std::size_t j) -> std::size_t& {
     return dp[i * (right_count + 1) + j];
   };
@@ -192,7 +196,8 @@ std::size_t LineMatchWeight(std::string_view text,
   return std::max<std::size_t>(1, (informative_bytes + 8) / rarity);
 }
 
-double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right) {
+double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right,
+                      std::vector<std::size_t>& token_scratch) {
   if (left.text == right.text) {
     return 1.0;
   }
@@ -203,7 +208,7 @@ double LineSimilarity(const TokenizedLine& left, const TokenizedLine& right) {
     return 0.0;
   }
 
-  const std::size_t common_bytes = CommonSignificantTokenBytes(left, right);
+  const std::size_t common_bytes = CommonSignificantTokenBytes(left, right, token_scratch);
   if (common_bytes == 0) {
     return 0.0;
   }
@@ -278,10 +283,11 @@ std::vector<HunkAlignmentKind> AlignHunkLines(const std::vector<std::string_view
 
   // Compute similarities lazily: -1 means "not yet computed".
   std::vector<double> similarity(left_count * right_count, -1.0);
+  std::vector<std::size_t> common_token_scratch;
   auto similarity_at = [&](std::size_t i, std::size_t j) -> double {
     double& val = similarity[i * right_count + j];
     if (val < 0.0) {
-      val = LineSimilarity(left_tokenized[i], right_tokenized[j]);
+      val = LineSimilarity(left_tokenized[i], right_tokenized[j], common_token_scratch);
     }
     return val;
   };

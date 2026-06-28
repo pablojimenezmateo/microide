@@ -908,7 +908,7 @@ editor::TextViewport* WorkspaceShell::ActiveEditableViewport() {
     auto* merge_tab = ActiveMergeTab();
     return merge_tab == nullptr ? nullptr : &merge_tab->result_viewport;
   }
-  if (!ActiveTabIsEditor() || ActiveTabIsCompare()) {
+  if (!ActiveTabIsEditor()) {
     return nullptr;
   }
   editor::TextViewport* viewport = ActiveEditorViewport();
@@ -926,7 +926,7 @@ const editor::TextViewport* WorkspaceShell::ActiveEditableViewport() const {
     const auto* merge_tab = ActiveMergeTab();
     return merge_tab == nullptr ? nullptr : &merge_tab->result_viewport;
   }
-  if (!ActiveTabIsEditor() || ActiveTabIsCompare()) {
+  if (!ActiveTabIsEditor()) {
     return nullptr;
   }
   const editor::TextViewport* viewport = ActiveEditorViewport();

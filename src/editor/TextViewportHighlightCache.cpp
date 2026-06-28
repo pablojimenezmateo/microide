@@ -93,7 +93,7 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
     highlight_cache_order_.pop_front();
     util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
   }
-  auto [it, _] = highlight_cache_.emplace(line_index, highlighted.tokens);
+  auto [it, _] = highlight_cache_.emplace(line_index, std::move(highlighted.tokens));
   highlight_cache_order_.push_back(line_index);
   return it->second;
 }
@@ -280,7 +280,7 @@ HighlightPrefetchRequest TextViewport::BuildHighlightPrefetchRequest(std::size_t
   return request;
 }
 
-void TextViewport::InstallPrefetchedHighlights(const HighlightPrefetchResult& result) {
+void TextViewport::InstallPrefetchedHighlights(HighlightPrefetchResult result) {
   if (!syntax_highlighting_enabled() || document_->lines.empty()) {
     return;
   }
@@ -307,7 +307,7 @@ void TextViewport::InstallPrefetchedHighlights(const HighlightPrefetchResult& re
     }
     // Single hash lookup: emplace reports whether the line was already cached,
     // so we skip the separate find() probe.
-    auto [it, inserted] = highlight_cache_.emplace(line, result.tokens[offset]);
+    auto [it, inserted] = highlight_cache_.emplace(line, std::move(result.tokens[offset]));
     if (!inserted) {
       continue;
     }

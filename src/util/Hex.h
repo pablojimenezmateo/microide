@@ -46,6 +46,15 @@ constexpr std::optional<std::array<std::uint8_t, 3>> DecodeHexColor(std::string_
   return std::array<std::uint8_t, 3>{*red, *green, *blue};
 }
 
+// Append the two uppercase, zero-padded hex digits of `byte` to `out`. The
+// inverse of ParseHexByte; used by percent-encoders so they need not reach for
+// std::ostringstream + iomanip manipulators on hot paths.
+inline void AppendHexByte(std::string& out, std::uint8_t byte) {
+  static constexpr char kDigits[] = "0123456789ABCDEF";
+  out.push_back(kDigits[byte >> 4]);
+  out.push_back(kDigits[byte & 0x0F]);
+}
+
 // Percent-decode `text`, replacing `%XX` escapes with the decoded byte. A `%`
 // without two following hex digits is left verbatim, matching prior callers.
 inline std::string PercentDecode(std::string_view text) {

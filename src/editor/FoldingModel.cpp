@@ -232,7 +232,10 @@ void ScanIndentRanges(LineSpan lines,
   }
 
   // Precompute indent for every line (sentinel for blank lines) within budget.
-  std::vector<std::size_t> indents(lines.size(), kSentinelIndent);
+  // Sized to the scan window, not the whole document: every read below is bounded
+  // by scan_end (matching bracket_opener above), so the tail would only be
+  // zero-inited and never touched on a budgeted recompute of a big file.
+  std::vector<std::size_t> indents(scan_end, kSentinelIndent);
   std::size_t scanned = 0;
   for (std::size_t i = 0; i < scan_end; ++i) {
     if (max_lines != 0 && scanned >= max_lines) {

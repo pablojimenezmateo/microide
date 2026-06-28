@@ -201,12 +201,14 @@ void WorkspaceShell::RequestActiveHighlightPrefetch() {
 
 void WorkspaceShell::ConsumeHighlightPrefetchResults() {
   editor::TextViewport* active_viewport = ActiveEditorViewport();
-  for (const auto& result : highlight_prefetch_service_.DrainResults()) {
+  for (auto& result : highlight_prefetch_service_.DrainResults()) {
     // result.viewport is only an identity token: install only when it still
     // matches the live active viewport (the install path additionally drops
-    // results whose document revision has moved on).
+    // results whose document revision has moved on). The result is drained and
+    // discarded here, so move it in to avoid copying every prefetched token
+    // vector on the active-scroll path.
     if (active_viewport != nullptr && result.viewport == active_viewport) {
-      active_viewport->InstallPrefetchedHighlights(result);
+      active_viewport->InstallPrefetchedHighlights(std::move(result));
     }
   }
   for (const auto& result : highlight_prefetch_service_.DrainCheckpointResults()) {

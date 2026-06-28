@@ -925,45 +925,49 @@ std::vector<MergeScrollbarMarker> BuildMergeScrollbarMarkers(
   return markers;
 }
 
-SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {
+namespace {
+// Shared geometry for the centered modal overlays. The three public helpers differ
+// only by their width/height fractions, vertical-placement fraction, and minimum
+// padded width/height, so they forward into one body to keep them in lockstep.
+struct OverlaySurfaceParams {
+  float width_frac;
+  float height_frac;
+  float vertical_frac;
+  float min_width;
+  float min_height;
+};
+
+SDL_FRect ComputeOverlaySurfaceRectImpl(const SDL_FRect& editor_area,
+                                        const OverlaySurfaceParams& params) {
   const float overlay_width =
-      std::clamp(editor_area.w * 0.58f, kOverlayMinWidth, kOverlayMaxWidth);
+      std::clamp(editor_area.w * params.width_frac, kOverlayMinWidth, kOverlayMaxWidth);
   const float overlay_height =
-      std::clamp(editor_area.h * 0.44f, kOverlayMinHeight, kOverlayMaxHeight);
-  const float final_width = std::min(overlay_width, std::max(260.0f, editor_area.w - 56.0f));
-  const float final_height = std::min(overlay_height, std::max(160.0f, editor_area.h - 48.0f));
+      std::clamp(editor_area.h * params.height_frac, kOverlayMinHeight, kOverlayMaxHeight);
+  const float final_width =
+      std::min(overlay_width, std::max(params.min_width, editor_area.w - 56.0f));
+  const float final_height =
+      std::min(overlay_height, std::max(params.min_height, editor_area.h - 48.0f));
   return MakeRect(editor_area.x + (editor_area.w - final_width) * 0.5f,
-                  editor_area.y + (editor_area.h - final_height) * 0.22f, final_width,
-                  final_height);
+                  editor_area.y + (editor_area.h - final_height) * params.vertical_frac,
+                  final_width, final_height);
+}
+}  // namespace
+
+SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {
+  return ComputeOverlaySurfaceRectImpl(editor_area, {0.58f, 0.44f, 0.22f, 260.0f, 160.0f});
 }
 
 SDL_FRect ComputePickerOverlaySurfaceRect(const SDL_FRect& editor_area) {
   // The ref/commit picker is a denser, taller modal than the search overlays: it
   // carries a header block plus two-column rows, so it gets more width and height.
-  const float overlay_width =
-      std::clamp(editor_area.w * 0.66f, kOverlayMinWidth, kOverlayMaxWidth);
-  const float overlay_height =
-      std::clamp(editor_area.h * 0.60f, kOverlayMinHeight, kOverlayMaxHeight);
-  const float final_width = std::min(overlay_width, std::max(260.0f, editor_area.w - 56.0f));
-  const float final_height = std::min(overlay_height, std::max(160.0f, editor_area.h - 48.0f));
-  return MakeRect(editor_area.x + (editor_area.w - final_width) * 0.5f,
-                  editor_area.y + (editor_area.h - final_height) * 0.18f, final_width,
-                  final_height);
+  return ComputeOverlaySurfaceRectImpl(editor_area, {0.66f, 0.60f, 0.18f, 260.0f, 160.0f});
 }
 
 SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area) {
   // The settings surface is a two-pane editor (category list + value pane), so it
   // is the largest modal: wide enough for a left rail plus roomy controls, tall
   // enough to show many rows without constant scrolling.
-  const float overlay_width =
-      std::clamp(editor_area.w * 0.72f, kOverlayMinWidth, kOverlayMaxWidth);
-  const float overlay_height =
-      std::clamp(editor_area.h * 0.66f, kOverlayMinHeight, kOverlayMaxHeight);
-  const float final_width = std::min(overlay_width, std::max(420.0f, editor_area.w - 56.0f));
-  const float final_height = std::min(overlay_height, std::max(220.0f, editor_area.h - 48.0f));
-  return MakeRect(editor_area.x + (editor_area.w - final_width) * 0.5f,
-                  editor_area.y + (editor_area.h - final_height) * 0.14f, final_width,
-                  final_height);
+  return ComputeOverlaySurfaceRectImpl(editor_area, {0.72f, 0.66f, 0.14f, 420.0f, 220.0f});
 }
 
 namespace {

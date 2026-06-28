@@ -189,10 +189,8 @@ bool PrimitiveWriter::WriteString(std::string_view value) {
   if (out_ == nullptr) {
     return false;
   }
-  out_->reserve(out_->size() + value.size());
-  for (char ch : value) {
-    out_->push_back(std::byte(static_cast<unsigned char>(ch)));
-  }
+  const auto* bytes = reinterpret_cast<const std::byte*>(value.data());
+  out_->insert(out_->end(), bytes, bytes + value.size());
   return true;
 }
 
@@ -287,12 +285,8 @@ bool PrimitiveReader::ReadString(std::string* value) {
   if (!ReadU32(&size) || offset_ + size > input_.size()) {
     return false;
   }
-  value->clear();
-  value->reserve(size);
-  for (std::uint32_t i = 0; i < size; ++i) {
-    value->push_back(static_cast<char>(
-        std::to_integer<unsigned char>(input_[offset_ + i])));
-  }
+  // Bounds checked above (offset_ + size <= input_.size()); copy the run in one shot.
+  value->assign(reinterpret_cast<const char*>(input_.data()) + offset_, size);
   offset_ += size;
   return true;
 }

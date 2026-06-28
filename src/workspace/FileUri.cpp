@@ -1,8 +1,6 @@
 #include "workspace/FileUri.h"
 
 #include <cctype>
-#include <iomanip>
-#include <sstream>
 
 #include "util/Hex.h"
 
@@ -18,22 +16,22 @@ bool IsUnreservedUriByte(unsigned char ch) {
 
 std::string FileUriForPath(const std::filesystem::path& path) {
   const std::string raw = path.lexically_normal().generic_string();
-  std::ostringstream encoded;
-  encoded << "file://";
+  std::string encoded = "file://";
+  encoded.reserve(raw.size() + 8);
 #ifdef _WIN32
   if (!raw.empty() && raw.front() != '/') {
-    encoded << '/';
+    encoded.push_back('/');
   }
 #endif
   for (unsigned char ch : raw) {
     if (IsUnreservedUriByte(ch)) {
-      encoded << static_cast<char>(ch);
+      encoded.push_back(static_cast<char>(ch));
       continue;
     }
-    encoded << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
-            << static_cast<int>(ch) << std::nouppercase << std::dec;
+    encoded.push_back('%');
+    util::AppendHexByte(encoded, ch);
   }
-  return encoded.str();
+  return encoded;
 }
 
 std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
