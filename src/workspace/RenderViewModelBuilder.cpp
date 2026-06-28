@@ -472,7 +472,11 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
 
   const SidebarMode mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id);
   std::optional<GitSidebarViewModel> git_sidebar;
-  if (mode == SidebarMode::Git) {
+  // Building the git VM walks every changed/staged/untracked/outgoing entry and
+  // allocates per-entry label strings. Only do it when the sidebar is actually
+  // visible: a hidden-but-git-selected sidebar otherwise rebuilds (and discards)
+  // the whole VM every frame. Mirrors the debug-pane VM's visibility guard.
+  if (mode == SidebarMode::Git && context_.current_project_state.sidebar.visible) {
     git_sidebar = BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
                                            context_.current_project_state.root,
                                            context_.current_project_state.branch_review);
