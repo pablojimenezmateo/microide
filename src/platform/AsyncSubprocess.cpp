@@ -255,7 +255,10 @@ bool AsyncSubprocess::Write(std::string_view data) {
     if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
       continue;
     }
-    impl_->CloseStdin();
+    // Route through the state_mutex-locked accessor (like the poll-error
+    // branches above): a concurrent shutdown thread may also be closing
+    // stdin_fd, and an unlocked close here races it (double-close / fd reuse).
+    CloseStdin();
     return false;
   }
   return true;

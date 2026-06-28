@@ -554,6 +554,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   // on the software/debug path (keeps it byte-for-byte the prior behaviour).
   const bool batch_gutter_numbers = text_renderer.BatchesRuns();
   gutter_number_scratch_.clear();
+  // Owned layout only for the soft-wrap branch (which builds a per-row slice the
+  // cache cannot serve by reference); reused across rows so the wrap path does
+  // not re-allocate its string/vectors each iteration.
+  LayoutLine wrapped_layout_scratch;
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= viewport.visual_line_count()) {
@@ -561,8 +565,17 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
     const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
     const std::size_t line_index = row_meta.line_index;
-    const auto row_layout = soft_wrap ? viewport.VisibleWrappedRowLayout(visual_row_index)
-                                      : viewport.VisibleLineLayout(line_index);
+    // Bind the row layout by reference: the soft-wrap branch fills a reusable
+    // owned scratch, the common branch hands back the cache entry in place. This
+    // avoids copying the LayoutLine (string + 2 vectors) per visible row.
+    const LayoutLine& row_layout =
+        soft_wrap ? (wrapped_layout_scratch = viewport.VisibleWrappedRowLayout(visual_row_index))
+                  : viewport.VisibleLineLayoutRef(line_index);
+    // Caret is per-call (not baked into the cached layout): the wrap branch
+    // already resolved it onto the scratch; the common branch resolves it here.
+    const TextViewport::LineCaret row_caret =
+        soft_wrap ? TextViewport::LineCaret{row_layout.caret_visible, row_layout.caret_column}
+                  : viewport.CaretForLine(line_index);
     if (line_index >= lines.size()) {
       break;
     }
@@ -922,9 +935,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
     }
 
-    if (draw_caret && selected && row_layout.caret_visible) {
+    if (draw_caret && selected && row_caret.visible) {
       const float caret_x = row_text_x +
-                            static_cast<float>(row_layout.caret_column) * text_renderer.CharWidth();
+                            static_cast<float>(row_caret.column) * text_renderer.CharWidth();
       const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};
       SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
                              theme.cursor.a);
@@ -982,10 +995,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
               ? std::span<const CodeLensDecoration>{}
               : plugin_decorations->CodeLensesForLine(static_cast<std::uint32_t>(line_index));
       if (!inline_texts.empty() || !code_lenses.empty()) {
+        // Non-wrap rows already have the full-line layout in `row_layout`; only
+        // the wrap branch (where row_layout is a single wrapped slice) needs the
+        // full-line width, served by reference from the cache.
+        const std::size_t full_line_visual_columns =
+            soft_wrap ? viewport.VisibleLineLayoutRef(line_index).visual_columns
+                      : row_layout.visual_columns;
         const float anchor_x =
             metrics.text_x +
-            static_cast<float>(viewport.VisibleLineLayout(line_index).visual_columns) *
-                text_renderer.CharWidth();
+            static_cast<float>(full_line_visual_columns) * text_renderer.CharWidth();
         const float right_limit = rect.x + rect.w - 12.0f;
         BuildEolDecorationSegments(text_renderer, inline_texts, code_lenses, anchor_x, y,
                                    metrics.line_height, right_limit, eol_decoration_scratch_);

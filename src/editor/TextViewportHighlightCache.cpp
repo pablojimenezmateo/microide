@@ -273,10 +273,10 @@ HighlightPrefetchRequest TextViewport::BuildHighlightPrefetchRequest(std::size_t
   // checkpoint chain so the worker need not replay from line 0.
   request.start_state = HighlightStateBeforeLine(start_line);
   const std::size_t end = std::min(document_->lines.size(), start_line + count);
-  request.lines.reserve(end - start_line);
-  for (std::size_t line = start_line; line < end; ++line) {
-    request.lines.push_back(document_->lines[line]);
-  }
+  // Copy once via SliceLines (matching the checkpoint-backfill path) instead of
+  // operator[] per line, which materializes each string into TextBuffer's
+  // line_cache_ and then copies it again into the request.
+  request.lines = document_->lines.SliceLines(start_line, end);
   return request;
 }
 

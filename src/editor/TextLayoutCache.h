@@ -55,6 +55,18 @@ class TextLayoutCache {
                                      std::size_t visible_columns,
                                      std::size_t tab_size) const;
 
+  // Reference-returning variant: hands back the cached LayoutLine in place
+  // instead of copying it out. The returned reference is stable until the next
+  // call that can evict it (the per-frame working set is far below
+  // kVisibleLineCacheLimit, so a renderer that consumes each row before
+  // requesting the next never sees its own entry evicted mid-use). Like the
+  // by-value variant, the cache does not set caret fields.
+  const LayoutLine& VisibleLineLayoutRefCached(LineSpan lines,
+                                               std::size_t line_index,
+                                               std::size_t horizontal_scroll,
+                                               std::size_t visible_columns,
+                                               std::size_t tab_size) const;
+
   // ---- wrapped row layout (soft-wrap + folds) ---------------------------
   // Rebuilds the wrapped-row table when its keyed inputs changed. The
   // trivial-layout fast path (no soft-wrap, no collapsed fold) leaves the
