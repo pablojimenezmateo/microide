@@ -38,12 +38,14 @@ std::vector<PluginHost::CompletionCandidate> QueryCompletions(
       return {};
     }
     if (lua_istable(state, -1)) {
-      for (lua_Integer i = 1;; ++i) {
-        lua_geti(state, -1, i);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
+      // Bound the harvest by lua_rawlen and read entries with lua_rawgeti: the
+      // result table arrives after PCall has disarmed the count-hook watchdog, so
+      // an unbounded for(;;) + metamethod-invoking lua_geti over an adversarial
+      // __index/__len would hang the worker thread or longjmp past native frames.
+      const int array_index = lua_absindex(state, -1);
+      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+      for (lua_Integer i = 1; i <= count; ++i) {
+        lua_rawgeti(state, array_index, i);
         if (!lua_istable(state, -1)) {
           lua_pop(state, 1);
           continue;
@@ -110,12 +112,10 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
       return {};
     }
     if (lua_istable(state, -1)) {
-      for (lua_Integer i = 1;; ++i) {
-        lua_geti(state, -1, i);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
+      const int array_index = lua_absindex(state, -1);
+      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+      for (lua_Integer i = 1; i <= count; ++i) {
+        lua_rawgeti(state, array_index, i);
         if (!lua_istable(state, -1)) {
           lua_pop(state, 1);
           continue;
@@ -125,12 +125,10 @@ std::vector<PluginHost::CodeActionCandidate> QueryCodeActions(
         action.command = lua_interop::ReadStringField(state, -1, "command");
         lua_getfield(state, -1, "arguments");
         if (lua_istable(state, -1)) {
-          for (lua_Integer arg_index = 1;; ++arg_index) {
-            lua_geti(state, -1, arg_index);
-            if (lua_isnil(state, -1)) {
-              lua_pop(state, 1);
-              break;
-            }
+          const int args_index = lua_absindex(state, -1);
+          const lua_Integer args_count = static_cast<lua_Integer>(lua_rawlen(state, args_index));
+          for (lua_Integer arg_index = 1; arg_index <= args_count; ++arg_index) {
+            lua_rawgeti(state, args_index, arg_index);
             if (lua_isstring(state, -1)) {
               action.arguments.emplace_back(lua_tostring(state, -1));
             }
@@ -187,12 +185,10 @@ bool DiscoverTests(
     return false;
   }
   if (lua_istable(state, -1)) {
-    for (lua_Integer i = 1;; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
+    const int array_index = lua_absindex(state, -1);
+    const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+    for (lua_Integer i = 1; i <= count; ++i) {
+      lua_rawgeti(state, array_index, i);
       if (!lua_istable(state, -1)) {
         lua_pop(state, 1);
         continue;
@@ -262,12 +258,10 @@ bool RunTests(
     return false;
   }
   if (lua_istable(state, -1)) {
-    for (lua_Integer i = 1;; ++i) {
-      lua_geti(state, -1, i);
-      if (lua_isnil(state, -1)) {
-        lua_pop(state, 1);
-        break;
-      }
+    const int array_index = lua_absindex(state, -1);
+    const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+    for (lua_Integer i = 1; i <= count; ++i) {
+      lua_rawgeti(state, array_index, i);
       if (!lua_istable(state, -1)) {
         lua_pop(state, 1);
         continue;
@@ -332,12 +326,11 @@ bool SnapshotScm(
 
     lua_getfield(state, -1, "entries");
     if (lua_istable(state, -1)) {
-      for (lua_Integer index = 1;; ++index) {
-        lua_geti(state, -1, index);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
+      const int entries_index = lua_absindex(state, -1);
+      const lua_Integer entries_count =
+          static_cast<lua_Integer>(lua_rawlen(state, entries_index));
+      for (lua_Integer index = 1; index <= entries_count; ++index) {
+        lua_rawgeti(state, entries_index, index);
         if (!lua_istable(state, -1)) {
           lua_pop(state, 1);
           continue;
@@ -405,12 +398,10 @@ std::vector<PluginHost::AnnotationLine> QueryAnnotations(
       return {};
     }
     if (lua_istable(state, -1)) {
-      for (lua_Integer index = 1;; ++index) {
-        lua_geti(state, -1, index);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
+      const int array_index = lua_absindex(state, -1);
+      const lua_Integer count = static_cast<lua_Integer>(lua_rawlen(state, array_index));
+      for (lua_Integer index = 1; index <= count; ++index) {
+        lua_rawgeti(state, array_index, index);
         if (!lua_istable(state, -1)) {
           lua_pop(state, 1);
           continue;
@@ -484,12 +475,10 @@ bool LoginAuthProvider(
     session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
     lua_getfield(state, -1, "scopes");
     if (lua_istable(state, -1)) {
-      for (lua_Integer i = 1;; ++i) {
-        lua_geti(state, -1, i);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
+      const int scopes_index = lua_absindex(state, -1);
+      const lua_Integer scopes_count = static_cast<lua_Integer>(lua_rawlen(state, scopes_index));
+      for (lua_Integer i = 1; i <= scopes_count; ++i) {
+        lua_rawgeti(state, scopes_index, i);
         if (lua_isstring(state, -1)) {
           session->scopes.emplace_back(lua_tostring(state, -1));
         }
@@ -547,12 +536,10 @@ bool RefreshAuthSession(
     session->access_token = lua_interop::ReadStringField(state, -1, "access_token");
     lua_getfield(state, -1, "scopes");
     if (lua_istable(state, -1)) {
-      for (lua_Integer i = 1;; ++i) {
-        lua_geti(state, -1, i);
-        if (lua_isnil(state, -1)) {
-          lua_pop(state, 1);
-          break;
-        }
+      const int scopes_index = lua_absindex(state, -1);
+      const lua_Integer scopes_count = static_cast<lua_Integer>(lua_rawlen(state, scopes_index));
+      for (lua_Integer i = 1; i <= scopes_count; ++i) {
+        lua_rawgeti(state, scopes_index, i);
         if (lua_isstring(state, -1)) {
           session->scopes.emplace_back(lua_tostring(state, -1));
         }

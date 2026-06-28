@@ -1160,6 +1160,77 @@ return ide.plugin({
          "test execution should preserve the returned test result fields");
 }
 
+// A malicious/buggy plugin can return a provider result table carrying a
+// metatable whose __index always yields a non-nil value and whose __len reports
+// a huge length. The harvest runs after PCall has disarmed the count-hook
+// watchdog, so the old metamethod-invoking lua_geti scan over an unbounded
+// for(;;) would loop forever on the worker thread (or longjmp past native
+// frames). The harvest must read the raw array spine (lua_rawlen + lua_rawgeti)
+// so it stays bounded and ignores the metatable entirely.
+void TestPluginHostProviderQueryBoundsAdversarialMetatable() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.todo";
+  WriteFile(source, "alpha\n");
+
+  WritePluginInit(
+      global_plugins, "evil-provider",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "evil-provider",
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "evil",
+      language_id = "todo",
+      provide = function(buffer, position, trigger)
+        local real = { { label = "REAL", insert_text = "REAL()" } }
+        return setmetatable(real, {
+          __index = function() return { label = "PHANTOM", insert_text = "PHANTOM()" } end,
+          __len = function() return 1000000000 end
+        })
+      end
+    })
+
+    ctx.code_actions.add({
+      id = "evil",
+      language_id = "todo",
+      provide = function(buffer, range)
+        local real = { { title = "REAL", command = "noop" } }
+        return setmetatable(real, {
+          __index = function() return { title = "PHANTOM", command = "noop" } end,
+          __len = function() return 1000000000 end
+        })
+      end
+    })
+  end
+})
+)lua");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root), "adversarial provider plugin should reload successfully");
+
+  std::string runtime_error;
+  const auto completions = host.QueryCompletions("todo", source, 1, 0, "", &runtime_error);
+  Expect(completions.size() == 1,
+         "completion harvest must read only the raw array spine, ignoring the __index/__len trap");
+  Expect(completions.front().label == "REAL",
+         "completion harvest must return the real entry, not a metatable phantom");
+
+  const auto actions = host.QueryCodeActions("todo", source, 1, 0, 1, 0, &runtime_error);
+  Expect(actions.size() == 1,
+         "code action harvest must read only the raw array spine, ignoring the metatable trap");
+  Expect(actions.front().title == "REAL",
+         "code action harvest must return the real entry, not a metatable phantom");
+}
+
 void TestPluginHostPhase4ContributionApis() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -2731,6 +2802,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PluginHost/Phase3DiagnosticsApis", TestPluginHostPhase3DiagnosticsApis);
   AddTest(tests, "PluginHost/Phase3HoverApis", TestPluginHostPhase3HoverApis);
   AddTest(tests, "PluginHost/Phase3RuntimeApis", TestPluginHostPhase3RuntimeApis);
+  AddTest(tests, "PluginHost/ProviderQueryBoundsAdversarialMetatable",
+          TestPluginHostProviderQueryBoundsAdversarialMetatable);
   AddTest(tests, "PluginHost/RunAsyncInvokesCallbackSynchronously",
           TestPluginHostRunAsyncInvokesCallbackSynchronously);
   AddTest(tests, "PluginHost/RunAsyncCallbackOutlivesOuterWatchdog",
