@@ -58,7 +58,10 @@ std::optional<SDL_Color> ParseExtendedSgrColor(const std::vector<std::vector<int
 }  // namespace
 
 void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
-  const std::vector<std::vector<int>> groups = ParseSgrParameters(body);
+  // Reused across SGR sequences on the reader thread so a colored-output burst
+  // does not churn the allocator with a fresh nested vector per escape.
+  thread_local std::vector<std::vector<int>> groups;
+  ParseSgrParametersInto(body, groups);
   for (std::size_t gi = 0; gi < groups.size(); ++gi) {
     const std::vector<int>& group = groups[gi];
     const int code = group.empty() ? 0 : group.front();

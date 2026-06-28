@@ -15,4 +15,11 @@ int CsiParamOrDefault(const std::vector<int>& params, std::size_t index, int fal
 // numeric field decodes to 0 (the SGR "default" placeholder).
 std::vector<std::vector<int>> ParseSgrParameters(std::string_view body);
 
+// Same as ParseSgrParameters but fills a caller-owned reusable buffer (parsing
+// integers inline, no per-field string), so the hot terminal reader path does
+// not heap-allocate a fresh nested vector per SGR escape. On return `groups`
+// holds exactly the parsed groups (size == group count); inner-vector capacity
+// is reused across calls.
+void ParseSgrParametersInto(std::string_view body, std::vector<std::vector<int>>& groups);
+
 }  // namespace microide::terminal
