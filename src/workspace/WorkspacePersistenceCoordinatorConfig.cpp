@@ -17,59 +17,21 @@ namespace {
 bool ApplyCanonicalProjectSetting(ProjectWorkspaceState& state,
                                   std::string_view id,
                                   std::string_view value) {
-  if (id == "editor.tab_size") {
-    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
-      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
-        state.editor_preferences.tab_size =
-            static_cast<std::size_t>(std::clamp(std::get<int>(*parsed), 1, 16));
-        return true;
-      }
-    }
-    return false;
-  }
-  if (id == "editor.indent_width") {
-    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
-      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
-        state.editor_preferences.indent_width =
-            static_cast<std::size_t>(std::clamp(std::get<int>(*parsed), 1, 16));
-        return true;
-      }
-    }
-    return false;
-  }
-  if (id == "editor.font_size") {
-    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
-      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
-        state.editor_preferences.font_size = std::clamp(std::get<int>(*parsed), 8, 32);
-        return true;
-      }
-    }
-    return false;
-  }
-  if (id == "editor.soft_tabs") {
-    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
-      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
-        state.editor_preferences.soft_tabs = std::get<bool>(*parsed);
-        return true;
-      }
-    }
-    return false;
-  }
-  if (id == "editor.wrap") {
-    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
-      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
-        const std::string mode = std::get<std::string>(*parsed);
-        state.editor_preferences.soft_wrap = (mode == "word");
-        return true;
-      }
-    }
-    return false;
-  }
+  // Colorscheme is project state but not an editor preference, and the load path
+  // only records the name (live theme application happens elsewhere on restore).
   if (id == "editor.colorscheme") {
     state.active_colorscheme_name = std::string(value);
     return true;
   }
-  return false;
+  const auto* spec = FindBuiltinSettingSpec(id);
+  if (spec == nullptr) {
+    return false;
+  }
+  const auto parsed = ParseSettingValue(*spec, value);
+  if (!parsed.has_value()) {
+    return false;
+  }
+  return ApplyCanonicalEditorPreference(state.editor_preferences, id, *parsed);
 }
 
 std::vector<PersistedSidebarViewPolicy> PersistedSidebarPolicies(

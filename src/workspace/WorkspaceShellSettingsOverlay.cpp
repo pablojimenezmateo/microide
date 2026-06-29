@@ -238,38 +238,14 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value, boo
     if (!parsed_builtin_value.has_value()) {
       return;
     }
-    auto& prefs = context_.current_project_state.editor_preferences;
-    if (id == "editor.tab_size") {
-      if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
-        prefs.tab_size = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
-      }
+    // Canonical editor preferences (tab size, indent, font size, soft tabs, wrap)
+    // share one id->preference mapping with the persistence load path.
+    if (ApplyCanonicalEditorPreference(context_.current_project_state.editor_preferences, id,
+                                       *parsed_builtin_value)) {
       return;
     }
-    if (id == "editor.indent_width") {
-      if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
-        prefs.indent_width = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
-      }
-      return;
-    }
-    if (id == "editor.font_size") {
-      if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
-        prefs.font_size = std::clamp(*parsed, 8, 32);
-      }
-      return;
-    }
-    if (id == "editor.soft_tabs") {
-      if (const bool* parsed = std::get_if<bool>(&*parsed_builtin_value); parsed != nullptr) {
-        prefs.soft_tabs = *parsed;
-      }
-      return;
-    }
-    if (id == "editor.wrap") {
-      if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
-          parsed != nullptr) {
-        prefs.soft_wrap = *parsed == "word";
-      }
-      return;
-    }
+    // Colorscheme is not an editor preference: apply it live here (the load path
+    // only records the name).
     if (id == "editor.colorscheme") {
       if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
           parsed != nullptr) {
