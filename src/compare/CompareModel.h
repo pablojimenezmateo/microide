@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -96,11 +97,11 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
 CompareBuildResult BuildCompareModelProfiled(const std::string& left,
                                              const std::string& right,
                                              const CompareBuildOptions& options);
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
-                                     const std::vector<std::string_view>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_lines,
+                                     std::span<const std::string_view> right_lines,
                                      LineDiffBuildStats* stats = nullptr);
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
-                                     const std::vector<std::string_view>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_lines,
+                                     std::span<const std::string_view> right_lines,
                                      const CompareBuildOptions& options,
                                      LineDiffBuildStats* stats = nullptr);
 

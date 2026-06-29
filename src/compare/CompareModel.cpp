@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <span>
 #include <unordered_map>
 #include <string_view>
 #include <vector>
@@ -700,7 +701,7 @@ void PopulateChangedSpans(CompareRow& row, CompareBuildProfile* profile) {
   TrimChangedSpansToSharedEdges(row);
 }
 
-void AppendDeleteOps(const std::vector<std::string_view>& lines,
+void AppendDeleteOps(std::span<const std::string_view> lines,
                      std::size_t begin,
                      std::size_t end,
                      std::vector<DiffOp>& ops) {
@@ -709,7 +710,7 @@ void AppendDeleteOps(const std::vector<std::string_view>& lines,
   }
 }
 
-void AppendInsertOps(const std::vector<std::string_view>& lines,
+void AppendInsertOps(std::span<const std::string_view> lines,
                      std::size_t begin,
                      std::size_t end,
                      std::vector<DiffOp>& ops) {
@@ -727,10 +728,10 @@ bool LinesEqualForDiff(std::string_view left,
 // Emit a run of Equal ops carrying both columns' text for the lockstep-matched
 // pair range [left_begin, left_end) <-> [right_begin, ...). The two ranges have
 // equal length by construction at every caller.
-void AppendEqualPairs(const std::vector<std::string_view>& left_lines,
+void AppendEqualPairs(std::span<const std::string_view> left_lines,
                       std::size_t left_begin,
                       std::size_t left_end,
-                      const std::vector<std::string_view>& right_lines,
+                      std::span<const std::string_view> right_lines,
                       std::size_t right_begin,
                       std::vector<DiffOp>& ops) {
   for (std::size_t offset = 0; left_begin + offset < left_end; ++offset) {
@@ -739,8 +740,8 @@ void AppendEqualPairs(const std::vector<std::string_view>& left_lines,
   }
 }
 
-std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_lines,
-                                      const std::vector<std::string_view>& right_lines,
+std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lines,
+                                      std::span<const std::string_view> right_lines,
                                       const CompareBuildOptions& options) {
   const std::size_t left_count = left_lines.size();
   const std::size_t right_count = right_lines.size();
@@ -806,10 +807,10 @@ std::vector<DiffOp> BuildExactLineOps(const std::vector<std::string_view>& left_
 }
 
 std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
-    const std::vector<std::string_view>& left_lines,
+    std::span<const std::string_view> left_lines,
     std::size_t left_begin,
     std::size_t left_end,
-    const std::vector<std::string_view>& right_lines,
+    std::span<const std::string_view> right_lines,
     std::size_t right_begin,
     std::size_t right_end) {
   struct AnchorInfo {
@@ -879,10 +880,10 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
   return anchors;
 }
 
-void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
+void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
                                std::size_t left_begin,
                                std::size_t left_end,
-                               const std::vector<std::string_view>& right_lines,
+                               std::span<const std::string_view> right_lines,
                                std::size_t right_begin,
                                std::size_t right_end,
                                const CompareBuildOptions& options,
@@ -922,12 +923,10 @@ void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
   const std::size_t middle_left_count = left_suffix - left_begin;
   const std::size_t middle_right_count = right_suffix - right_begin;
   if (!ProductExceeds(middle_left_count + 1, middle_right_count + 1, kMaxLineLcsMatrixCells)) {
-    const std::vector<std::string_view> left_slice(
-        left_lines.begin() + static_cast<std::ptrdiff_t>(left_begin),
-        left_lines.begin() + static_cast<std::ptrdiff_t>(left_suffix));
-    const std::vector<std::string_view> right_slice(
-        right_lines.begin() + static_cast<std::ptrdiff_t>(right_begin),
-        right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
+    const std::span<const std::string_view> left_slice =
+        left_lines.subspan(left_begin, left_suffix - left_begin);
+    const std::span<const std::string_view> right_slice =
+        right_lines.subspan(right_begin, right_suffix - right_begin);
     const std::vector<DiffOp> exact_ops = BuildExactLineOps(left_slice, right_slice, options);
     ops.insert(ops.end(), exact_ops.begin(), exact_ops.end());
     AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
@@ -958,8 +957,8 @@ void AppendAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
   AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
 }
 
-std::vector<DiffOp> BuildAnchoredFallbackOps(const std::vector<std::string_view>& left_lines,
-                                             const std::vector<std::string_view>& right_lines,
+std::vector<DiffOp> BuildAnchoredFallbackOps(std::span<const std::string_view> left_lines,
+                                             std::span<const std::string_view> right_lines,
                                              const CompareBuildOptions& options) {
   std::vector<DiffOp> ops;
   ops.reserve(left_lines.size() + right_lines.size());
@@ -1006,14 +1005,14 @@ bool LinesEqualForDiff(std::string_view left,
 
 }  // namespace
 
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
-                                     const std::vector<std::string_view>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_lines,
+                                     std::span<const std::string_view> right_lines,
                                      LineDiffBuildStats* stats) {
   return BuildLineDiffOps(left_lines, right_lines, CompareBuildOptions{}, stats);
 }
 
-std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_lines,
-                                     const std::vector<std::string_view>& right_lines,
+std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_lines,
+                                     std::span<const std::string_view> right_lines,
                                      const CompareBuildOptions& options,
                                      LineDiffBuildStats* stats) {
   std::size_t prefix = 0;
@@ -1036,12 +1035,10 @@ std::vector<DiffOp> BuildLineDiffOps(const std::vector<std::string_view>& left_l
     ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index], right_lines[index]});
   }
 
-  const std::vector<std::string_view> left_middle(
-      left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-      left_lines.begin() + static_cast<std::ptrdiff_t>(left_suffix));
-  const std::vector<std::string_view> right_middle(
-      right_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-      right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
+  const std::span<const std::string_view> left_middle =
+      left_lines.subspan(prefix, left_suffix - prefix);
+  const std::span<const std::string_view> right_middle =
+      right_lines.subspan(prefix, right_suffix - prefix);
   if (!left_middle.empty() || !right_middle.empty()) {
     const std::size_t left_count = left_middle.size();
     const std::size_t right_count = right_middle.size();
@@ -1141,12 +1138,10 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
     --right_suffix;
   }
 
-  const std::vector<std::string_view> left_middle(
-      left_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-      left_lines.begin() + static_cast<std::ptrdiff_t>(left_suffix));
-  const std::vector<std::string_view> right_middle(
-      right_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-      right_lines.begin() + static_cast<std::ptrdiff_t>(right_suffix));
+  const std::span<const std::string_view> left_middle =
+      std::span<const std::string_view>(left_lines).subspan(prefix, left_suffix - prefix);
+  const std::span<const std::string_view> right_middle =
+      std::span<const std::string_view>(right_lines).subspan(prefix, right_suffix - prefix);
 
   LineDiffBuildStats line_diff_stats;
   const std::vector<DiffOp> ops =

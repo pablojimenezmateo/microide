@@ -499,7 +499,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
     const auto& conflict = merge_tab->conflicts[preview_choice->first];
     if (conflict.valid && conflict.hunk_index < merge_tab->model.hunks.size()) {
       const std::vector<std::string> preview_lines =
-          compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index], preview_choice->second);
+          compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index],
+                                    preview_choice->second);
       const std::size_t preview_height_lines =
           std::max(preview_lines.size(), conflict.end_line > conflict.start_line
                                           ? conflict.end_line - conflict.start_line

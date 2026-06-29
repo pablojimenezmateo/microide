@@ -370,12 +370,11 @@ const PluginHost::SidebarProviderInfo* PluginHost::FindSidebarProvider(std::stri
   return nullptr;
 }
 
-bool PluginHost::SnapshotSidebar(std::string_view id,
-                                 std::vector<SidebarItem>* items,
-                                 std::string* error_message) {
-  if (items != nullptr) {
-    items->clear();
-  }
+template <typename WorkerOp>
+bool PluginHost::DispatchSidebarQuery(std::string_view id,
+                                      std::string* error_message,
+                                      [[maybe_unused]] const char* unavailable_message,
+                                      [[maybe_unused]] WorkerOp worker_op) {
   // Fast-reject unknown ids against the published view (no round-trip, race-free).
   if (FindSidebarProvider(id) == nullptr) {
     if (error_message != nullptr) {
@@ -395,79 +394,51 @@ bool PluginHost::SnapshotSidebar(std::string_view id,
       ok = false;
       return;
     }
-    ok = impl_->SnapshotSidebarProvider(it->second, items, error_message);
+    ok = worker_op(it->second, error_message);
   });
   return ok;
 #else
   if (error_message != nullptr) {
-    *error_message = "Lua plugin runtime unavailable";
+    if (unavailable_message != nullptr) {
+      *error_message = unavailable_message;
+    } else {
+      error_message->clear();
+    }
   }
   return false;
 #endif
+}
+
+bool PluginHost::SnapshotSidebar(std::string_view id,
+                                 std::vector<SidebarItem>* items,
+                                 std::string* error_message) {
+  if (items != nullptr) {
+    items->clear();
+  }
+  return DispatchSidebarQuery(
+      id, error_message, "Lua plugin runtime unavailable",
+      [&](auto& provider, std::string* worker_error) {
+        return impl_->SnapshotSidebarProvider(provider, items, worker_error);
+      });
 }
 
 bool PluginHost::ConfirmSidebarItem(std::string_view id,
                                     const SidebarItem& item,
                                     std::string* error_message) {
-  if (FindSidebarProvider(id) == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "unknown plugin sidebar: " + std::string(id);
-    }
-    return false;
-  }
-#if MICROIDE_HAS_LUA_PLUGINS
-  bool ok = false;
-  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
-    const auto it = impl_->sidebars.find(std::string(id));
-    if (it == impl_->sidebars.end()) {
-      if (error_message != nullptr) {
-        *error_message = "unknown plugin sidebar: " + std::string(id);
-      }
-      ok = false;
-      return;
-    }
-    ok = impl_->ConfirmSidebarProviderItem(it->second, item, error_message);
-  });
-  return ok;
-#else
-  (void)item;
-  if (error_message != nullptr) {
-    *error_message = "Lua plugin runtime unavailable";
-  }
-  return false;
-#endif
+  return DispatchSidebarQuery(
+      id, error_message, "Lua plugin runtime unavailable",
+      [&](auto& provider, std::string* worker_error) {
+        return impl_->ConfirmSidebarProviderItem(provider, item, worker_error);
+      });
 }
 
 bool PluginHost::ToggleSidebarItem(std::string_view id,
                                    const SidebarItem& item,
                                    std::string* error_message) {
-  if (FindSidebarProvider(id) == nullptr) {
-    if (error_message != nullptr) {
-      *error_message = "unknown plugin sidebar: " + std::string(id);
-    }
-    return false;
-  }
-#if MICROIDE_HAS_LUA_PLUGINS
-  bool ok = false;
-  impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
-    const auto it = impl_->sidebars.find(std::string(id));
-    if (it == impl_->sidebars.end()) {
-      if (error_message != nullptr) {
-        *error_message = "unknown plugin sidebar: " + std::string(id);
-      }
-      ok = false;
-      return;
-    }
-    ok = impl_->ToggleSidebarProviderItem(it->second, item, error_message);
-  });
-  return ok;
-#else
-  (void)item;
-  if (error_message != nullptr) {
-    error_message->clear();
-  }
-  return false;
-#endif
+  return DispatchSidebarQuery(
+      id, error_message, nullptr, [&](auto& provider, std::string* worker_error) {
+        return impl_->ToggleSidebarProviderItem(provider, item, worker_error);
+      });
 }
 
 bool PluginHost::QueryHover(const std::filesystem::path& path,

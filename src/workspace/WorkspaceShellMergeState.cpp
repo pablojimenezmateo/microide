@@ -285,7 +285,7 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
     current_line += unchanged_lines;
     result_line += unchanged_lines;
 
-    const std::vector<std::string> result_lines = compare::MergeChoiceLines(hunk, hunk.choice);
+    const std::size_t result_line_count = compare::MergeChoiceLineCount(hunk, hunk.choice);
     if (hunk.conflict) {
       conflicts.push_back(MergeTrackedConflict{
           .hunk_index = static_cast<std::size_t>(hunk.index),
@@ -294,7 +294,7 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
           .current_start_line = current_line,
           .current_end_line = current_line + hunk.current_lines.size(),
           .start_line = result_line,
-          .end_line = result_line + result_lines.size(),
+          .end_line = result_line + result_line_count,
           .last_choice = hunk.choice,
           .bootstrap_choice = hunk.bootstrap_choice,
           .valid = true,
@@ -304,7 +304,7 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
 
     incoming_line += hunk.incoming_lines.size();
     current_line += hunk.current_lines.size();
-    result_line += result_lines.size();
+    result_line += result_line_count;
     base_cursor = hunk.base_end;
   }
   return conflicts;
@@ -400,7 +400,7 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
       result_line += committed_lines.size();
       ++conflict_index;
     } else {
-      result_line += compare::MergeChoiceLines(hunk, hunk.choice).size();
+      result_line += compare::MergeChoiceLineCount(hunk, hunk.choice);
     }
 
     incoming_line += hunk.incoming_lines.size();
@@ -533,14 +533,16 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
     conflict.valid = false;
   }
 
-  const std::size_t changed_start = std::min(change.old_start, merge_tab.result_viewport.lines().size());
-  const std::size_t changed_end = std::min(change.new_end, merge_tab.result_viewport.lines().size());
+  // Snapshot() returns a cached, lazily materialized whole-document vector; bind
+  // it once and pass a non-owning span over the changed sub-range instead of
+  // copying those lines into a temporary vector.
+  const std::vector<std::string>& result_snapshot = merge_tab.result_viewport.lines().Snapshot();
+  const std::size_t changed_start = std::min(change.old_start, result_snapshot.size());
+  const std::size_t changed_end = std::min(change.new_end, result_snapshot.size());
   if (changed_start < changed_end) {
     UpdateMergeMaxVisualColumns(
-        merge_tab, std::vector<std::string>(merge_tab.result_viewport.lines().begin() +
-                                                static_cast<std::ptrdiff_t>(changed_start),
-                                            merge_tab.result_viewport.lines().begin() +
-                                                static_cast<std::ptrdiff_t>(changed_end)));
+        merge_tab, std::span<const std::string>(result_snapshot.data() + changed_start,
+                                                changed_end - changed_start));
   }
 
   merge_tab.hover_state.reset();

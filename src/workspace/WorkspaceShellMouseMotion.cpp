@@ -18,14 +18,9 @@ namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseMotion");
-  const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.HasAnyRedraw()) {
-      request_redraw();
-    }
-  };
   if (context_.prompts.dirty_visible) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
-    ensure_redraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw([this]() { RequestPromptRedraw(); });
     return true;
   }
   const auto layout_state = CurrentWorkspaceLayout();
@@ -40,14 +35,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     if (HandleSingleLineInputDrag(event, layout)) {
       switch (context_.interaction_state.single_line_drag_surface) {
         case TextInputSurface::PromptInput:
-          ensure_redraw([this]() { RequestPromptRedraw(); });
+          EnsureRedraw([this]() { RequestPromptRedraw(); });
           break;
         case TextInputSurface::SidebarSearchQuery:
         case TextInputSurface::SidebarSearchReplace:
-          ensure_redraw([this]() { RequestSidebarRedraw(); });
+          EnsureRedraw([this]() { RequestSidebarRedraw(); });
           break;
         default:
-          ensure_redraw([this]() { RequestOverlayRedraw(); });
+          EnsureRedraw([this]() { RequestOverlayRedraw(); });
           break;
       }
       return true;
@@ -68,13 +63,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
             0, vm.max_scroll));
       }
     }
-    ensure_redraw([this]() { RequestOverlayRedraw(); });
+    EnsureRedraw([this]() { RequestOverlayRedraw(); });
     return true;
   }
 
   if (context_.prompts.surface_visible) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
-    ensure_redraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw([this]() { RequestPromptRedraw(); });
     return true;
   }
   const bool previous_mouse_position_valid = last_mouse_position_valid_;
@@ -233,7 +228,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
           window_width - static_cast<float>(event.motion.x), window_width, resolved_sidebar_width);
       MarkLayoutDirty();
-      ensure_redraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
       return true;
     }
 
@@ -248,7 +243,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
       ps.group_split_fraction = std::clamp(fraction, 0.1f, 0.9f);
       MarkLayoutDirty();
-      ensure_redraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
       return true;
     }
 
@@ -260,19 +255,19 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
 
     if (MakePanelMouseCoordinator().HandleDrag(event, drag_layout)) {
-      ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+      EnsureRedraw([this]() { RequestBottomPanelRedraw(); });
       return true;
     }
 
     if (MakeMergeMouseCoordinator().HandleDrag(event, drag_layout)) {
-      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
 
     if (context_.interaction_state.drag_target == DragTarget::SidebarScrollbar) {
       const bool handled = MakeSidebarMouseCoordinator().HandleDrag(event, drag_layout);
       if (handled) {
-        ensure_redraw([this]() { RequestSidebarRedraw(); });
+        EnsureRedraw([this]() { RequestSidebarRedraw(); });
       }
       return handled;
     }
@@ -292,17 +287,17 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                                               context_.interaction_state.drag_scrollbar_offset))),
                      0, list_layout.max_scroll);
       context_.current_project_state.surface.focus = FocusTarget::Overlay;
-      ensure_redraw([this]() { RequestOverlayRedraw(); });
+      EnsureRedraw([this]() { RequestOverlayRedraw(); });
       return true;
     }
 
     if (MakeCompareMouseCoordinator().HandleDrag(event, drag_layout)) {
-      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
 
     if (MakeEditorMouseCoordinator().HandleDrag(event, drag_layout)) {
-      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
 
@@ -319,7 +314,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     if (ActiveTabIsCompare()) {
       const bool handled = MakeCompareMouseCoordinator().HandleSelectionMotion(event, layout);
       if (handled) {
-        ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
       }
       return handled;
     }
@@ -327,14 +322,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     if (ActiveTabIsMerge()) {
       const bool handled = MakeMergeMouseCoordinator().HandleSelectionMotion(event, layout);
       if (handled) {
-        ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
       }
       return handled;
     }
 
     const bool handled = MakeEditorMouseCoordinator().HandleSelectionMotion(event, layout);
     if (handled) {
-      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
   }
@@ -541,20 +536,20 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                                         HoveredSidebarSearchTooltipLabel(layout.sidebar),
                                         HoveredSidebarSearchTooltipRect(layout));
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
-    ensure_redraw([this]() { RequestChromeRedraw(); });
+    EnsureRedraw([this]() { RequestChromeRedraw(); });
     return true;
   }
 
   if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
     const bool handled = HandleTabMouseMotion(event, layout);
     if (handled) {
-      ensure_redraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
     }
     return handled;
   }
 
   if (MakePanelMouseCoordinator().HandleMotion(event)) {
-    ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
@@ -570,7 +565,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (hover_visual_changed) {
-    ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
   }
 
   return hover_visual_changed || chrome_tooltip_visual_changed || sidebar_hover_button_changed ||
@@ -579,22 +574,17 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
 bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseWheel");
-  const auto ensure_redraw = [this](auto request_redraw) {
-    if (!pending_render_invalidation_.HasAnyRedraw()) {
-      request_redraw();
-    }
-  };
   if (context_.prompts.dirty_visible) {
-    ensure_redraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw([this]() { RequestPromptRedraw(); });
     return true;
   }
   if (context_.prompts.surface_visible) {
-    ensure_redraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw([this]() { RequestPromptRedraw(); });
     return true;
   }
 
   if (MenuSurfaceCapturingMouse()) {
-    ensure_redraw([this]() { RequestChromeRedraw(); });
+    EnsureRedraw([this]() { RequestChromeRedraw(); });
     return true;
   }
 
@@ -642,32 +632,32 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
             std::clamp(settings_overlay_service_.ScrollRow() - vertical_ticks, 0, max_scroll));
       }
     }
-    ensure_redraw([this]() { RequestOverlayRedraw(); });
+    EnsureRedraw([this]() { RequestOverlayRedraw(); });
     return true;
   }
 
   if (MakeChromeMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks)) {
-    ensure_redraw([this]() { RequestWindowRedraw(); });
+    EnsureRedraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (HandleTabMouseWheel(event, layout, vertical_ticks)) {
-    ensure_redraw([this]() { RequestWindowRedraw(); });
+    EnsureRedraw([this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (MakeSidebarMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
-    ensure_redraw([this]() { RequestSidebarRedraw(); });
+    EnsureRedraw([this]() { RequestSidebarRedraw(); });
     return true;
   }
 
   if (MakeDebugPaneMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
-    ensure_redraw([this]() { RequestDebugPaneRedraw(); });
+    EnsureRedraw([this]() { RequestDebugPaneRedraw(); });
     return true;
   }
 
   if (MakePanelMouseCoordinator().HandleWheel(event, layout, vertical_ticks)) {
-    ensure_redraw([this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw([this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
@@ -676,7 +666,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       const bool handled =
           MakeCompareMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
       if (handled) {
-        ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
       }
       return handled;
     }
@@ -684,13 +674,13 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       const bool handled =
           MakeMergeMouseCoordinator().HandleWheel(event, layout, vertical_ticks, horizontal_ticks);
       if (handled) {
-        ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
       }
       return handled;
     }
     const bool handled = MakeEditorMouseCoordinator().HandleWheel(event, layout, vertical_ticks);
     if (handled) {
-      ensure_redraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
   }

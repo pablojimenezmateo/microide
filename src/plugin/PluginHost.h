@@ -807,6 +807,17 @@ class PluginHost {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+
+  // Shared scaffolding for the sidebar query entry points (Snapshot/Confirm/Toggle):
+  // fast-reject unknown ids against the published view, then resolve the live
+  // worker-owned provider on the worker thread and run `worker_op` against it.
+  // `unavailable_message` is used (or cleared, when null) when the Lua runtime is
+  // compiled out. Defined in PluginHostPublicApi.inc; only instantiated there.
+  template <typename WorkerOp>
+  bool DispatchSidebarQuery(std::string_view id,
+                            std::string* error_message,
+                            const char* unavailable_message,
+                            WorkerOp worker_op);
 };
 
 }  // namespace microide::plugin

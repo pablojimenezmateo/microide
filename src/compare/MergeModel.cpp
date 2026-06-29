@@ -276,6 +276,42 @@ std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice cho
   }
 }
 
+std::size_t MergeChoiceLineCount(const MergeHunk& hunk, MergeChoice choice) {
+  switch (choice) {
+    case MergeChoice::Base:
+      return hunk.base_lines.size();
+    case MergeChoice::Incoming:
+      return hunk.incoming_lines.size();
+    case MergeChoice::Current:
+      return hunk.current_lines.size();
+    case MergeChoice::Both:
+    case MergeChoice::BothIncomingFirst:
+      if (hunk.incoming_lines == hunk.current_lines) {
+        return hunk.incoming_lines.size();
+      }
+      if (hunk.incoming_lines == hunk.base_lines) {
+        return hunk.current_lines.size();
+      }
+      if (hunk.current_lines == hunk.base_lines) {
+        return hunk.incoming_lines.size();
+      }
+      return hunk.incoming_lines.size() + hunk.current_lines.size();
+    case MergeChoice::BothCurrentFirst:
+      if (hunk.incoming_lines == hunk.current_lines) {
+        return hunk.current_lines.size();
+      }
+      if (hunk.incoming_lines == hunk.base_lines) {
+        return hunk.current_lines.size();
+      }
+      if (hunk.current_lines == hunk.base_lines) {
+        return hunk.incoming_lines.size();
+      }
+      return hunk.current_lines.size() + hunk.incoming_lines.size();
+    default:
+      return MergeChoiceLineCount(hunk, BootstrapMergeChoice(hunk));
+  }
+}
+
 std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model) {
   std::vector<std::string> lines;
   int base_cursor = 0;

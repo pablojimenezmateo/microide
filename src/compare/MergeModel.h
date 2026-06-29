@@ -62,6 +62,9 @@ MergeModel BuildMergeModel(const std::string& base,
                            const std::string& current);
 MergeChoice BootstrapMergeChoice(const MergeHunk& hunk);
 std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice choice);
+// Allocation-free count of what MergeChoiceLines(hunk, choice) would return.
+// Use at size-only callsites to avoid materializing and copying the line vector.
+std::size_t MergeChoiceLineCount(const MergeHunk& hunk, MergeChoice choice);
 std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model);
 std::string BootstrapMergeResultText(const MergeModel& model,
                                      std::string_view separator = "\n");

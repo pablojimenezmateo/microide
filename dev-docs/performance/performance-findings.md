@@ -1244,6 +1244,66 @@ directly. The `line_cache_` design (`TextBuffer.h`) is left as-is: no hot path
 indexes the whole document through `operator[]`, and its node-stability backs the
 `&buffer[i]`-stays-valid contract.
 
+## Compare/Merge Allocation Pass (2026-06-29)
+
+Multi-agent review pass over the diff/compare/merge build path. The review's
+"per-frame render hot path" claims were all demoted on verification; the genuine
+wins were constant-factor allocation removals on the compare/merge *build* path
+(diff open, merge load, per-keystroke merge edits), plus two pure-dedup cleanups.
+
+### `std::span` for the line-diff builders (eliminates slice copies)
+
+`AppendAnchoredFallbackOps` / `BuildLineDiffOps` / `BuildCompareModelProfiled` each
+materialized `const std::vector<std::string_view>` *copies* of sub-ranges
+(`{begin+off, begin+off2}`) just to recurse into the exact/anchored aligners —
+one heap allocation + O(n) `string_view` copy per large hunk and once per build.
+`BuildExactLineOps`, `AppendAnchoredFallbackOps`, `BuildAnchoredFallbackOps`,
+`BuildUniqueLineAnchors`, `AppendEqualPairs/Insert/Delete`, and both public
+`BuildLineDiffOps` overloads now take `std::span<const std::string_view>`; the
+three slice sites became non-owning `subspan(...)`. `span<const T>` is implicitly
+constructible from `vector<T>`, so the one external caller (`MergeModel.cpp`) and
+all tests compile unchanged. The backing `SplitLineViews` vectors outlive every
+call, so the spans are always valid.
+
+### `MergeChoiceLineCount` for size-only merge callsites
+
+`compare::MergeChoiceLines` returns a full `vector<std::string>` (and the `Both*`
+choices concatenate a fresh one). `BuildMergeTrackedConflicts(ForResult)` in
+`WorkspaceShellMergeState.cpp` called it twice purely for `.size()`. A new
+allocation-free `compare::MergeChoiceLineCount(hunk, choice)` mirrors the branch
+logic and returns just the count; the two size-only sites use it. A span-returning
+variant was rejected — the `Both*` cases have no contiguous backing storage to
+point at. The render-path preview site (`WorkspaceShellMergeRender.cpp`) was left
+on `MergeChoiceLines`: it genuinely draws the line *contents*, so it is not
+size-only (the review mislabeled it).
+
+### Merge viewport edit: span over the cached snapshot
+
+`UpdateMergeTrackingAfterViewportEdit` copied the changed line slice into a
+temporary `vector<std::string>` to feed `UpdateMergeMaxVisualColumns`, which
+already takes `std::span<const std::string>`. It now binds the (cached, lazily
+materialized) `TextBuffer::Snapshot()` once and passes a `span` over the changed
+sub-range — zero copies per keystroke. Safe only because `Snapshot()` returns
+contiguous storage with no intervening mutation before the synchronous consume.
+
+### Dedup cleanups (maintainability, no measurable perf delta)
+
+- The `ensure_redraw` guard lambda (`if (!HasAnyRedraw()) req();`) was copy-pasted
+  into four mouse/wheel/motion handlers. Replaced with a single inlined private
+  template `WorkspaceShell::EnsureRedraw` (not `std::function` — keeps the input
+  path allocation-free). The structurally-different copy in
+  `WorkspaceKeyInputCoordinator` (a different class guarding on `operations_`) was
+  deliberately left alone to respect the coordinator service-ref boundary.
+- The plugin sidebar query trio (`SnapshotSidebar` / `ConfirmSidebarItem` /
+  `ToggleSidebarItem` in `PluginHostPublicApi.inc`) repeated an identical
+  published-view check + worker-thread live-map lookup + error literal. Folded into
+  a private `PluginHost::DispatchSidebarQuery` template that takes the worker op as
+  a callback (the live provider lookup stays *inside* the `RunOnWorkerBlocking`
+  lambda, so no worker-owned pointer escapes). Not a hot path (each blocks on a
+  cross-thread round-trip); pure dedup.
+
+Validation: full `ctest` suite (incl. the architecture-invariants lint) green.
+
 ## Notes
 
 - The blame overlay remains performance-sensitive, but the width-cache work should reduce its layout

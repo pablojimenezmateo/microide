@@ -1627,6 +1627,15 @@
   void RequestBottomPanelContentRedraw();
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
+  // Invoke a specific Request*Redraw only when nothing else has already queued a
+  // redraw this frame. Centralizes the guard shared by every mouse/input handler;
+  // a template (not std::function) so the call stays inlined with no heap churn.
+  template <typename RequestRedraw>
+  void EnsureRedraw(RequestRedraw request_redraw) {
+    if (!pending_render_invalidation_.HasAnyRedraw()) {
+      request_redraw();
+    }
+  }
   void QueueEditorHoverRefresh();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
   std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
