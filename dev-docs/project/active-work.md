@@ -1,6 +1,8 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-06-27 (v2.3.0 shipped — plugin rendering surface; first GPG-signed release).
+Reviewed on 2026-06-29 (v2.4.0 shipped — performance & correctness cycle: allocation-free
+editor/render/terminal hot paths, piece-tree document model, GPU-gated glyph atlas, debugger
+surfaced as first-class, plus a `--version` CLI flag. Prior: v2.3.0 plugin rendering surface).
 
 This is the single source of truth for:
 

@@ -124,6 +124,19 @@ void TestParseSetMissingTokensFails() {
   Expect(parsed.exit_code == 2, "--set with a missing value token should exit 2");
 }
 
+void TestParseVersionFlag() {
+  for (const char* flag : {"--version", "-V"}) {
+    std::vector<std::string> args = {"microide", flag};
+    auto argv = ArgvFromStrings(args);
+    const auto parsed = ParseAppStartupOptions(static_cast<int>(argv.size()), argv.data());
+    Expect(parsed.show_version, "version flag should request the version print");
+    Expect(parsed.exit_code == 0, "version flag should parse cleanly");
+    Expect(!parsed.show_usage, "version flag should not request usage");
+    Expect(!parsed.options.project_path.has_value(),
+           "version flag should not be treated as a project path");
+  }
+}
+
 void TestDisablePluginsSkipsUserPluginsAndSyntax() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -207,6 +220,7 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "AppStartupOptions/ParseSetOverridesAreRepeatable",
           TestParseSetOverridesAreRepeatable);
   AddTest(tests, "AppStartupOptions/ParseSetMissingTokensFails", TestParseSetMissingTokensFails);
+  AddTest(tests, "AppStartupOptions/ParseVersionFlag", TestParseVersionFlag);
   AddTest(tests, "AppStartupOptions/ParseDapLogDefaultsPath", TestParseDapLogDefaultsPath);
   AddTest(tests, "AppStartupOptions/ParseDapLogBeforeFlagUsesDefault",
           TestParseDapLogBeforeFlagUsesDefault);

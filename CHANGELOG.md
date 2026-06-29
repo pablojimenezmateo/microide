@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.4.0] - 2026-06-29
+
+A **performance & correctness** cycle. The bulk of this release is a sustained
+deep-review pass that drives allocation out of the editor, render, and terminal
+hot paths, swaps the document model to a piece tree for fast mid-file edits, and
+gates the glyph atlas on the GPU renderer. The debugger is surfaced as a
+first-class feature and several correctness defects (LSP encoding, whitespace
+diffing, stale completions) are fixed. No persisted-format or plugin-API breaks.
+
+### Editor & debugger
+- Debugger is now a first-class feature surfaced in the shell (`PluginHost`
+  decomposed along the way).
+- Project-scoped editor font size, persisted per project.
+- Document storage routed behind an `editor::TextBuffer` seam, now backed by a
+  **piece tree** that beats the previous vector model on mid-file edits; large
+  files load directly past the old split/rejoin round-trip.
+
+### CLI
+- New `--version` / `-V` flag prints the version (`microide <x.y.z>`) and exits.
+
+### Fixes
+- LSP: negotiate UTF-8 position encoding (correct multi-byte column mapping).
+- Compare: honor `ignore_whitespace` inside changed hunks.
+- Assist: drop stale LSP completion / code-action responses.
+- Plugins: bound provider-query harvest loops to the raw array spine.
+- App: map the startup window once to kill the black-flash double-popup.
+
+### Performance
+- Allocation-free editor, render, and terminal hot paths (search-match cache,
+  multi-caret undo capture, per-row layout, SGR parsing on the reader thread).
+- Incremental buffer-local find and bounded-head highlight reads — no whole-doc
+  snapshots; off-thread checkpoint backfill removes the first-paint syntax freeze.
+- GPU-gated, row/gutter-batched glyph atlas; glyph texture cache bounded by a VRAM
+  budget; render gates on the reported SDL renderer backend.
+- Skip building the git sidebar view model when hidden; O(1) file-finder recents
+  and narrowed candidate set on forward typing; caret-window-only blame snapshots.
+- Coalesce search wakes; bound `RunSubprocess` with an optional timeout and cap
+  format-on-save; copy trace labels only when tracing is enabled.
+
+### Build & tooling
+- Shared `microide_core` object library plus a shared PCH (~15% faster test
+  build); ccache / ld.lld / split-dwarf auto-used when present.
+- Untrack regenerable perf fixtures and harden `.gitignore`; advisory GPU renderer
+  lane and sustained-scroll scenario added to the perf harness.
+
 ## [2.3.0] - 2026-06-27
 
 Substantially widens the **plugin rendering surface**. Plugins now move onto a dedicated worker

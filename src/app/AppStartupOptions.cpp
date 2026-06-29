@@ -68,10 +68,15 @@ AppStartupParseResult ParseAppStartupOptions(int argc, char** argv) {
       i += 2;
       continue;
     }
+    if (arg == "--version" || arg == "-V") {
+      result.show_version = true;
+      return result;
+    }
     if (arg == "--help" || arg == "-h") {
       std::cerr << "usage: microide [--disable-plugins] [--safe-mode] [--control] "
                    "[--set <id> <value>]...\n"
-                   "                [--control-spec <file>] [--dap-log [path]] [project-path]\n"
+                   "                [--control-spec <file>] [--dap-log [path]] [--version] "
+                   "[project-path]\n"
                    "       microide control-send [...]   send one command/query to an instance\n"
                    "       microide control-help         protocol + spec reference\n"
                    "       microide control-commands     list runnable command names\n"

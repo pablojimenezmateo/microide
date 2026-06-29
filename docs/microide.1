@@ -3,7 +3,7 @@
 microide \- compact native desktop IDE shell
 .SH SYNOPSIS
 .B microide
-[\fB--disable-plugins\fR] [\fB--safe-mode\fR] [\fB--control\fR] [\fB--set\fR \fIid value\fR]... [\fB--control-spec\fR \fIfile\fR] [\fIproject-path\fR]
+[\fB--disable-plugins\fR] [\fB--safe-mode\fR] [\fB--control\fR] [\fB--set\fR \fIid value\fR]... [\fB--control-spec\fR \fIfile\fR] [\fB--version\fR] [\fIproject-path\fR]
 .br
 .B microide control-send
 [\fB--pid\fR \fIn\fR | \fB--socket\fR \fIpath\fR] (\fIcommand\fR... | \fB--query\fR \fIverb\fR | \fB--json\fR \fIobject\fR) [\fB--wait\fR \fIevent\fR] [\fB--timeout\fR \fIsecs\fR]
@@ -46,6 +46,9 @@ window becomes interactive. See
 .B microide control-help
 for the JSON schema. Spec line numbers are 1-based; relative paths resolve
 against the project root.
+.TP
+.B --version, -V
+Print the microide version and exit.
 .SH CONTROL CHANNEL
 An external tool (such as an LLM) can drive a running instance over a private
 Unix-domain socket. The one-shot client

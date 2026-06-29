@@ -39,6 +39,9 @@ struct AppStartupOptions {
 struct AppStartupParseResult {
   AppStartupOptions options;
   bool show_usage = false;
+  // `--version` / `-V`: print the version string and exit. main() owns the
+  // print so the parser stays independent of the MICROIDE_VERSION define.
+  bool show_version = false;
   int exit_code = 0;
 };
 

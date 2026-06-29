@@ -14,6 +14,10 @@
 #include <string>
 #include <string_view>
 
+#ifndef MICROIDE_VERSION
+#define MICROIDE_VERSION "dev"
+#endif
+
 int main(int argc, char** argv) {
   // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
   // EPIPE, not kill the editor. Install this before any I/O can occur.
@@ -67,6 +71,10 @@ int main(int argc, char** argv) {
   const microide::app::AppStartupParseResult parsed =
       microide::app::ParseAppStartupOptions(argc, argv);
   if (parsed.show_usage) {
+    return 0;
+  }
+  if (parsed.show_version) {
+    std::cout << "microide " << MICROIDE_VERSION << '\n';
     return 0;
   }
   if (parsed.exit_code != 0) {
