@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 #include "TestRunnerCli.h"
+#include "terminal/TerminalSession.h"
 
 #include <SDL3/SDL.h>
 
@@ -271,6 +272,11 @@ void ListSelectedTestsGtest(const std::vector<microide::tests::TestCase>& tests,
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Use in-process placeholder terminals for the whole suite instead of spawning
+  // real PTY-backed shells. Formerly a compile-time MICROIDE_TESTING fork; now a
+  // runtime switch so core compiles identically for the production binary.
+  microide::terminal::SetUsePlaceholderTerminalsForTesting(true);
+
   const auto shutdown_sdl = []() { SDL_Quit(); };
 
   // Isolate every user-directory write (recents MRU, user config, per-project state,

@@ -19,15 +19,12 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   if (terminal_event_type_ != 0) {
     terminal_tab->session.SetWakeEventType(terminal_event_type_);
   }
-#ifdef MICROIDE_TESTING
-  if (!terminal_tab->session.StartPlaceholderForTesting(working_directory, command)) {
+  const bool started = terminal::UsePlaceholderTerminalsForTesting()
+                           ? terminal_tab->session.StartPlaceholderForTesting(working_directory, command)
+                           : terminal_tab->session.Start(working_directory, command);
+  if (!started) {
     return;
   }
-#else
-  if (!terminal_tab->session.Start(working_directory, command)) {
-    return;
-  }
-#endif
 
   context_.current_project_state.terminal_tabs.push_back(std::move(terminal_tab));
   context_.current_project_state.active_terminal_tab_index = context_.current_project_state.terminal_tabs.size() - 1;
@@ -43,6 +40,20 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
     RequestWindowRedraw();
   } else {
     RequestBottomPanelRedraw();
+  }
+}
+
+void WorkspaceShell::OpenDefaultTerminalForProjectInit() {
+  if (terminal::UsePlaceholderTerminalsForTesting()) {
+    // Test mode: install a bare, unstarted terminal tab — no real shell spawn.
+    context_.current_project_state.terminal_tabs.push_back(
+        std::make_unique<TerminalTabState>());
+    context_.current_project_state.active_terminal_tab_index =
+        context_.current_project_state.terminal_tabs.size() - 1;
+    context_.current_project_state.panel.content = PanelContentKind::Terminal;
+    context_.current_project_state.surface.focus = FocusTarget::Panel;
+  } else {
+    OpenTerminal({}, true, false);
   }
 }
 

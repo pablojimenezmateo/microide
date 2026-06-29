@@ -192,10 +192,11 @@
 
   WorkspaceActionContext MakeActionContext();
 
-#ifdef MICROIDE_TESTING
+  // Test seam: the full TestAccess definition lives in the test-only header
+  // WorkspaceShellTestAccess.h. Forward-declared + friended unconditionally so
+  // core compiles identically for the production and test binaries.
   struct TestAccess;
   friend struct TestAccess;
-#endif
 
  private:
   class Bootstrapper;
@@ -1214,6 +1215,11 @@
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
   void ConsumeLspCallbacks();
   void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
+  // Opens the default terminal during project initialization. In placeholder
+  // terminal test mode (terminal::UsePlaceholderTerminalsForTesting) it installs
+  // a bare, unstarted terminal tab to avoid spawning a real shell; otherwise it
+  // delegates to OpenTerminal. Shared by every project-init entry point.
+  void OpenDefaultTerminalForProjectInit();
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;

@@ -30,6 +30,17 @@ RuleResult CheckWorkspaceFriends(const std::filesystem::path& repo_root) {
       if (pos < testing_mask.size() && testing_mask[pos]) {
         continue;
       }
+      // Sanctioned exception: the test-only TestAccess backdoor. It is now
+      // declared unconditionally (not under #ifdef MICROIDE_TESTING) so the
+      // shared core object library compiles an ODR-identical WorkspaceShell for
+      // the production and test binaries. Exempt the friend by the befriended
+      // type name rather than by guard.
+      const std::size_t decl_end = text.find(';', pos);
+      const std::string_view decl(text.data() + pos,
+                                  (decl_end == std::string::npos ? text.size() : decl_end) - pos);
+      if (decl.find("TestAccess") != std::string_view::npos) {
+        continue;
+      }
       result.violations.push_back(Violation{
           .path = entry.path(),
           .line = LineNumberAt(text, pos),

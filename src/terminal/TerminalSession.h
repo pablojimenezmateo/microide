@@ -23,6 +23,15 @@ struct TerminalSessionTestAccess;
 
 namespace microide::terminal {
 
+// Process-wide test switch: when enabled, terminal startup uses in-process
+// placeholders instead of spawning real PTY-backed child processes, and
+// SendBytes captures output to TerminalSession::test_sent_bytes_ when no backend
+// is attached. Defaults to false, so production behavior is unchanged; the test
+// harness enables it once at startup. Replaces the former compile-time test
+// forks so core compiles identically for the production and test binaries.
+void SetUsePlaceholderTerminalsForTesting(bool enabled);
+bool UsePlaceholderTerminalsForTesting();
+
 class TerminalSession {
  public:
   enum class Key {
@@ -107,10 +116,11 @@ class TerminalSession {
   void SetWakeEventType(Uint32 event_type);
   bool Start(const std::filesystem::path& working_directory, std::string_view command = {});
   void Stop();
-#ifdef MICROIDE_TESTING
+  // Test seam: brings the session up without spawning a real PTY/child process.
+  // Always compiled; selected at runtime when placeholder-terminal test mode is
+  // enabled (see SetUsePlaceholderTerminalsForTesting). Inert in production.
   bool StartPlaceholderForTesting(const std::filesystem::path& working_directory,
                                   std::string_view command = {});
-#endif
   void Resize(std::size_t rows, std::size_t columns);
   void SendBytes(std::string_view bytes);
   void SendKey(Key key);
@@ -280,13 +290,12 @@ class TerminalSession {
   std::size_t scroll_region_bottom_ = 23;
   std::uint64_t snapshot_generation_ = 1;
 
-#ifdef MICROIDE_TESTING
+  // Test seam: captures bytes written while no backend is attached (placeholder
+  // test mode). Always present so the core ABI is identical for the production
+  // and test binaries; never read in production.
   std::string test_sent_bytes_;
-#endif
 
-#ifdef MICROIDE_TESTING
   friend struct ::microide::tests::TerminalSessionTestAccess;
-#endif
 };
 
 }  // namespace microide::terminal

@@ -346,7 +346,6 @@ void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_r
   }
 }
 
-#ifdef MICROIDE_TESTING
 void GitRepositoryService::RunRefreshSynchronouslyForTesting(
     const std::filesystem::path& project_root,
     GitSidebarRefreshScope scope,
@@ -382,7 +381,6 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
   GitSidebarState::RefreshSnapshot snapshot = BuildSidebarSnapshot(repository_state, request);
   PublishSnapshot(std::move(snapshot), request.generation);
 }
-#endif
 
 bool GitRepositoryService::ConsumePendingSidebarSnapshot(
     GitSidebarState::RefreshSnapshot* snapshot) {

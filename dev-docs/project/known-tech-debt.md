@@ -65,6 +65,29 @@ the gate will reject them again.
   collision mechanically. The shipped win instead was **precompiled headers** (stable std + SDL set,
   shared by `microide`/`microide_tests`/`microide_perf`): clean `microide_tests` build 141.3 s → 120.0 s
   (~15%), suite still green, runtime byte-for-byte unchanged.
+
+## Shipped build-speed wins (2026-06-29, after the PCH pass)
+
+- **Shared `microide_core` object library.** `MICROIDE_CORE_SOURCES` (≈373 TUs) is now an
+  `OBJECT` library compiled once and spliced (`$<TARGET_OBJECTS:microide_core>`) into
+  `microide`/`microide_tests`/`microide_perf`, instead of being re-listed in each target. This
+  removed the previous double compile of the entire core. The prerequisite was making core
+  **`MICROIDE_TESTING`-free**: ABI-neutral seams (`*ForTesting` methods, `TestAccess`/test friends,
+  the `before_cache_apply_hook`, `test_sent_bytes_`) are now compiled unconditionally, and the
+  genuinely behavioral forks (placeholder-vs-real terminal startup, project-init default terminal,
+  `SendBytes` capture) are gated at **runtime** via `terminal::SetUsePlaceholderTerminalsForTesting`
+  (the test/perf `main()` enables it), mirroring the existing `SetHostPlatformOverrideForTesting`
+  precedent. Core must stay free of `#ifdef MICROIDE_TESTING`, or the shared object set diverges by
+  ABI between binaries. Measured: clean build of `microide` + `microide_tests` 148 s → 91 s (~38%,
+  ccache disabled for the comparison). `WorkspaceShellTestAccess.h` keeps its guard — it is a
+  test-only header, never compiled into core.
+- **ccache + ld.lld + split-dwarf**, all conditionally enabled in `CMakeLists.txt` (no-ops when the
+  tool is absent; toggle with `-DMICROIDE_USE_CCACHE=OFF` / `-DMICROIDE_USE_LLD=OFF`). lld is skipped
+  under LTO so the `microide-perf` preset keeps its default linker. `tools/run-checks.sh` exports
+  `CCACHE_SLOPPINESS=pch_defines,time_macros` so PCH TUs cache.
+- **Scoped inner-loop build.** `tools/run-checks.sh tests` and the documented loop build
+  `--target microide_tests` (the only binary `ctest` invokes), skipping `microide` and the bench
+  binaries.
 - **Splitting `microide_tests` into multiple filtered `add_test` invocations for `ctest -j`**
   (test-run speed). Rejected 2026-06-29: partitioning ~121 files' worth of tests by name-substring
   filters is a silent-coverage hazard — a test matching no subset is dropped from the run with no

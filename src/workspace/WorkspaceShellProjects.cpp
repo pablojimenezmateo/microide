@@ -59,18 +59,7 @@ ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
               [this]() {
                 if (!context_.current_project_state.root.empty() &&
                     context_.current_project_state.terminal_tabs.empty()) {
-#ifdef MICROIDE_TESTING
-                  context_.current_project_state.terminal_tabs.push_back(
-                      std::make_unique<WorkspaceShell::TerminalTabState>());
-                  context_.current_project_state.active_terminal_tab_index =
-                      context_.current_project_state.terminal_tabs.size() - 1;
-                  context_.current_project_state.panel.content =
-                      WorkspaceShell::PanelContentKind::Terminal;
-                  context_.current_project_state.surface.focus =
-                      WorkspaceShell::FocusTarget::Panel;
-#else
-                  OpenTerminal({}, true, false);
-#endif
+                  OpenDefaultTerminalForProjectInit();
                 }
               },
           .activate_current_tab_after_state_load =

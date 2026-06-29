@@ -19,8 +19,8 @@ std::string_view HostPlatformName(HostPlatform platform);
 // at startup before any subprocess/terminal/LSP I/O. Idempotent and no-op on Windows.
 void IgnoreBrokenPipeSignal();
 
-#ifdef MICROIDE_TESTING
+// Test seam: overrides the platform reported by CurrentHostPlatform(). Always
+// compiled (the override defaults to unset, so production behavior is native).
 void SetHostPlatformOverrideForTesting(std::optional<HostPlatform> platform);
-#endif
 
 }  // namespace microide::platform

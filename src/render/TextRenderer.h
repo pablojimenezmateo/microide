@@ -85,9 +85,7 @@ class TextRenderer {
   mutable std::size_t width_cache_queries_ = 0;
   mutable std::size_t width_cache_hits_ = 0;
 
-#ifdef MICROIDE_TESTING
-  friend struct ::microide::tests::TextRendererTestAccess;
-#endif
+  friend struct ::microide::tests::TextRendererTestAccess;  // test seam
 };
 
 }  // namespace microide::render

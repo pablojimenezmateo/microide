@@ -26,6 +26,11 @@ namespace microide::terminal {
 
 namespace {
 
+// Process-wide flag backing UsePlaceholderTerminalsForTesting(). Set once by the
+// test harness before any terminal is created and never mutated concurrently, so
+// a plain bool is sufficient.
+bool g_use_placeholder_terminals_for_testing = false;
+
 std::string DefaultShellPath() {
   if (const char* shell = std::getenv("SHELL"); shell != nullptr && shell[0] != '\0') {
     return shell;
@@ -39,6 +44,14 @@ std::string ShellProgramName(const std::string& shell_path) {
 }
 
 }  // namespace
+
+void SetUsePlaceholderTerminalsForTesting(bool enabled) {
+  g_use_placeholder_terminals_for_testing = enabled;
+}
+
+bool UsePlaceholderTerminalsForTesting() {
+  return g_use_placeholder_terminals_for_testing;
+}
 
 TerminalSession::~TerminalSession() {
   Stop();
@@ -155,7 +168,6 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   return result.started;
 }
 
-#ifdef MICROIDE_TESTING
 bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& working_directory,
                                                  std::string_view command) {
   Stop();
@@ -203,7 +215,6 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
   PushWakeEvent();
   return true;
 }
-#endif
 
 void TerminalSession::Stop() {
   std::unique_ptr<platform::TerminalBackend> backend;
@@ -314,26 +325,23 @@ void TerminalSession::SendBytes(std::string_view bytes) {
   if (bytes.empty()) {
     return;
   }
-#ifdef MICROIDE_TESTING
-  {
+  if (UsePlaceholderTerminalsForTesting()) {
     std::scoped_lock lock(mutex_);
     if (!backend_ || !backend_->running()) {
       test_sent_bytes_.append(bytes);
       return;
     }
   }
-#endif
   platform::TerminalBackend* backend = nullptr;
   {
     std::scoped_lock lock(mutex_);
     backend = backend_.get();
   }
   if (!backend) {
-#ifdef MICROIDE_TESTING
-    std::scoped_lock lock(mutex_);
-    test_sent_bytes_.append(bytes);
-    return;
-#endif
+    if (UsePlaceholderTerminalsForTesting()) {
+      std::scoped_lock lock(mutex_);
+      test_sent_bytes_.append(bytes);
+    }
     return;
   }
   backend->Write(bytes);

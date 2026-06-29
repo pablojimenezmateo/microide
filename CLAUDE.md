@@ -62,6 +62,21 @@ cmake -S . -B build
 cmake --build build -j8
 ```
 
+For the inner test loop, build only the test binary — `ctest` invokes just
+`microide_tests`, so this skips the production `microide` executable and the
+bench binaries (roughly halves the build):
+
+```bash
+cmake --build build --target microide_tests -j8
+```
+
+The build auto-uses **ccache** (compiler cache) and **ld.lld** (fast linker)
+when installed; both are no-ops if absent. For the best inner-loop speed install
+`ccache` once (`sudo apt install ccache`, then `ccache --max-size=10G`); the
+shared `microide_core` object library means core compiles once across the
+`microide`/`microide_tests`/`microide_perf` targets. `tools/run-checks.sh`
+already exports the `CCACHE_SLOPPINESS` needed for ccache to cache PCH builds.
+
 Run the full automated test suite with:
 
 ```bash
@@ -116,7 +131,7 @@ cmake --build build/microide-fuzz -j8
 Several patterns were intentionally removed by the 2026-04-29 `comprehensive-tech-debt-cleanup` change. Do not reintroduce them. The architectural-lint test (`tests/ArchitectureInvariantsTests.cpp`) hard-fails on the load-bearing ones; the policy ones are reviewer-enforced.
 
 - Workspace coordinator constructors take service-interface references, never `WorkspaceShell&` or `WorkspaceShell*`. Services live alongside the shell (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`).
-- No `friend class`/`friend struct` in `src/workspace/*`.
+- No `friend class`/`friend struct` in `src/workspace/*`, except the sanctioned `WorkspaceShell::TestAccess` backdoor (now declared unconditionally so the shared `microide_core` object library compiles an ODR-identical `WorkspaceShell` for the production and test binaries; the lint exempts friends naming a `*TestAccess` type).
 - Numeric token parsing uses `util/Parse.h` (`ParseInt`, `ParseInt64`, `ParseSize`, `ParseFloat`). No `try`/`catch` around `std::sto*`.
 - The shell stays a thin orchestrator: `src/workspace/WorkspaceShell.h` ≤ 400 lines, `src/workspace/WorkspaceShell.cpp` ≤ 600 lines.
 - Workspace-state persistence (project state, user config, session restore) routes through `PersistenceService` plus `PersistedRecordReader`/`PersistedRecordWriter`. Do not hand-roll a new text format or open these files directly elsewhere.

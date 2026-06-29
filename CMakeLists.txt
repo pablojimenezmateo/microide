@@ -35,6 +35,46 @@ if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
   endif()
 endif()
 
+# --- Build-iteration acceleration -------------------------------------------
+# These speed up the inner edit/build/test loop and are all no-ops when the
+# underlying tool is absent, so a stock toolchain still configures cleanly.
+
+# Compiler cache: dedups recompiles across clean rebuilds, branch switches, and
+# preset toggles. PCH-using TUs only cache when ccache is told to tolerate the
+# pch_defines/time_macros sloppiness (callers also export CCACHE_SLOPPINESS;
+# see tools/run-checks.sh). Disable with -DMICROIDE_USE_CCACHE=OFF.
+option(MICROIDE_USE_CCACHE "Use ccache as the compiler launcher when available" ON)
+if(MICROIDE_USE_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+  find_program(MICROIDE_CCACHE ccache)
+  if(MICROIDE_CCACHE)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${MICROIDE_CCACHE}")
+    set(CMAKE_C_COMPILER_LAUNCHER "${MICROIDE_CCACHE}")
+    message(STATUS "ccache enabled: ${MICROIDE_CCACHE}")
+  endif()
+endif()
+
+# Faster linker for the inner loop: the test binary relinks on every edit. lld
+# links the multi-hundred-MB binary several times faster than GNU ld. Skipped
+# when LTO is on (gcc's LTO drives its own plugin/link path) so the perf preset
+# keeps its default linker. Override with -DMICROIDE_USE_LLD=OFF.
+option(MICROIDE_USE_LLD "Use ld.lld for faster links when available (non-LTO builds)" ON)
+if(MICROIDE_USE_LLD AND NOT CMAKE_INTERPROCEDURAL_OPTIMIZATION
+   AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  find_program(MICROIDE_LLD ld.lld)
+  if(MICROIDE_LLD)
+    add_link_options(-fuse-ld=lld)
+    message(STATUS "Linker: ld.lld (${MICROIDE_LLD})")
+  endif()
+endif()
+
+# Split DWARF for Debug iteration builds: debug info lands in .dwo files instead
+# of the object/link stream, shrinking objects and cutting link time while
+# keeping full debuggability (gdb/lldb read .dwo transparently).
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  add_compile_options($<$<CONFIG:Debug>:-gsplit-dwarf>)
+endif()
+# ----------------------------------------------------------------------------
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/microide")
 
 find_package(PkgConfig QUIET)
@@ -535,6 +575,38 @@ if(NOT MICROIDE_SDL3_TARGET STREQUAL "")
   list(APPEND MICROIDE_PCH_HEADERS <SDL3/SDL.h>)
 endif()
 
+# Shared core: the bulk of the codebase, compiled exactly once and linked (as
+# object files) into microide, microide_tests, and microide_perf. Core no longer
+# branches on MICROIDE_TESTING (test seams are runtime-gated), so a single object
+# set is ABI- and behavior-identical for all three binaries — eliminating the
+# former double compile of these translation units. Consumers splice the objects
+# in via $<TARGET_OBJECTS:microide_core> and keep their own link libraries, so the
+# library only needs the usage requirements to *compile* these sources.
+add_library(microide_core OBJECT ${MICROIDE_CORE_SOURCES})
+target_include_directories(microide_core PRIVATE src third_party/stb)
+target_precompile_headers(microide_core PRIVATE ${MICROIDE_PCH_HEADERS})
+target_link_libraries(microide_core PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+if(NOT MICROIDE_LUA_TARGET STREQUAL "")
+  target_link_libraries(microide_core PRIVATE ${MICROIDE_LUA_TARGET})
+endif()
+target_compile_definitions(microide_core PRIVATE
+  MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
+  MICROIDE_VERSION="${PROJECT_VERSION}"
+)
+if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
+  # TextRenderer.cpp (a core TU) compiles against the TTF backend header under
+  # this define; link the TTF target for its include dirs. The backend .cpp files
+  # themselves stay per-binary (see each target below).
+  target_compile_definitions(microide_core PRIVATE MICROIDE_HAS_SDL3_TTF=1)
+  target_link_libraries(microide_core PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
+endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide_core PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_core PRIVATE -Werror)
+  endif()
+endif()
+
 add_executable(microide
   src/app/main.cpp
   src/app/AppStartupOptions.cpp
@@ -543,7 +615,7 @@ add_executable(microide
   src/app/RedrawTraceAccumulator.cpp
   src/app/SceneTexturePresenter.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
-  ${MICROIDE_CORE_SOURCES}
+  $<TARGET_OBJECTS:microide_core>
 )
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
@@ -640,7 +712,7 @@ add_executable(microide_tests
   src/app/DirtyRegionPolicy.cpp
   src/app/RedrawTraceAccumulator.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
-  ${MICROIDE_CORE_SOURCES}
+  $<TARGET_OBJECTS:microide_core>
   tests/ApplicationTests.cpp
   tests/AppDirectoriesTests.cpp
   tests/AppStartupOptionsTests.cpp
@@ -925,7 +997,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   add_executable(microide_perf
     src/app/DirtyRegionPolicy.cpp
     $<TARGET_OBJECTS:microide_runtime_syntax_generated>
-    ${MICROIDE_CORE_SOURCES}
+    $<TARGET_OBJECTS:microide_core>
     tests/perf/AllocationCounter.cpp
     tests/perf/PerfHarness.cpp
     tests/perf/PerfHarnessIsolation.cpp

@@ -8,12 +8,10 @@ namespace microide::platform {
 
 namespace {
 
-#ifdef MICROIDE_TESTING
 std::optional<HostPlatform>& HostPlatformOverride() {
   static std::optional<HostPlatform> platform;
   return platform;
 }
-#endif
 
 HostPlatform NativeHostPlatform() {
 #if defined(_WIN32)
@@ -28,11 +26,10 @@ HostPlatform NativeHostPlatform() {
 }  // namespace
 
 HostPlatform CurrentHostPlatform() {
-#ifdef MICROIDE_TESTING
+  // Test override defaults to unset, so this is native in production builds.
   if (const std::optional<HostPlatform> override = HostPlatformOverride(); override.has_value()) {
     return *override;
   }
-#endif
   return NativeHostPlatform();
 }
 
@@ -48,11 +45,9 @@ std::string_view HostPlatformName(HostPlatform platform) {
   return "linux";
 }
 
-#ifdef MICROIDE_TESTING
 void SetHostPlatformOverrideForTesting(std::optional<HostPlatform> platform) {
   HostPlatformOverride() = platform;
 }
-#endif
 
 void IgnoreBrokenPipeSignal() {
 #if !defined(_WIN32)

@@ -6,6 +6,7 @@
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceLspClient.h"
 #include "workspace/WorkspaceShellTestAccess.h"
+#include "terminal/TerminalSession.h"
 
 #include <algorithm>
 #include <array>
@@ -1227,6 +1228,9 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
 
 int main(int argc, char** argv) {
   using namespace microide::tests::perf;
+  // Placeholder terminals (no real shell spawn) during perf measurement; was a
+  // compile-time MICROIDE_TESTING fork, now a runtime switch (see TestMain.cpp).
+  microide::terminal::SetUsePlaceholderTerminalsForTesting(true);
   RegisterBuiltInScenarios();
   const std::optional<CliOptions> options = ParseCli(argc, argv);
   if (!options.has_value()) {

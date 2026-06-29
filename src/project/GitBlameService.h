@@ -4,9 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
-#ifdef MICROIDE_TESTING
 #include <functional>
-#endif
 #include <string>
 #include <string_view>
 #include <vector>
@@ -80,16 +78,14 @@ class GitBlameService {
   void Stop();
 
  private:
-#ifdef MICROIDE_TESTING
+  // Test seam: lets tests deterministically interpose before cache application.
+  // Always compiled; the hook defaults to empty so production is unaffected.
   void SetBeforeCacheApplyHook(std::function<void()> hook);
-#endif
 
   struct Impl;
   Impl* impl_ = nullptr;
 
-#ifdef MICROIDE_TESTING
   friend struct ::microide::tests::GitBlameServiceTestAccess;
-#endif
 };
 
 }  // namespace microide::project

@@ -44,10 +44,10 @@ class PatchApplyService {
   bool ConfirmPendingDiscard();
   void CancelPendingDiscard();
 
-#ifdef MICROIDE_TESTING
+  // Test seam: applies a patch synchronously. Always compiled; production uses
+  // the async discard/apply paths above.
   project::PatchApplyResult ApplyPatchSynchronouslyForTesting(project::PatchApplyRequest request,
                                                               std::string patch_text);
-#endif
 
  private:
   struct PendingDiscard {

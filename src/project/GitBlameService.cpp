@@ -569,9 +569,7 @@ struct GitBlameService::Impl {
 
       const std::vector<GitBlameAttribution> attributions =
           ParseGitBlameIncrementalOutput(output.output);
-#ifdef MICROIDE_TESTING
-      RunBeforeCacheApplyHook();
-#endif
+      RunBeforeCacheApplyHook();  // no-op unless a test installed a hook
       std::lock_guard lock(mutex);
       if (token.IsCancellationRequested() || !RequestStillCurrentLocked(request)) {
         return;
@@ -647,7 +645,6 @@ struct GitBlameService::Impl {
     return changed;
   }
 
-#ifdef MICROIDE_TESTING
   void SetBeforeCacheApplyHook(std::function<void()> hook) {
     std::lock_guard lock(mutex);
     before_cache_apply_hook = std::move(hook);
@@ -663,7 +660,6 @@ struct GitBlameService::Impl {
       hook();
     }
   }
-#endif
 
   void EnforceCacheBudgets() {
     if (file_caches.empty()) {
@@ -714,9 +710,7 @@ struct GitBlameService::Impl {
   std::uint64_t clear_generation = 0;
   std::uint64_t access_generation = 0;
   util::TaskExecutor executor;
-#ifdef MICROIDE_TESTING
-  std::function<void()> before_cache_apply_hook;
-#endif
+  std::function<void()> before_cache_apply_hook;  // test seam; empty in production
 };
 
 GitBlameService::~GitBlameService() {
@@ -767,13 +761,11 @@ void GitBlameService::Stop() {
   impl_->Stop();
 }
 
-#ifdef MICROIDE_TESTING
 void GitBlameService::SetBeforeCacheApplyHook(std::function<void()> hook) {
   if (impl_ == nullptr) {
     impl_ = new Impl();
   }
   impl_->SetBeforeCacheApplyHook(std::move(hook));
 }
-#endif
 
 }  // namespace microide::project

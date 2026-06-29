@@ -184,6 +184,7 @@ durable invariant moves.
 
 - Every meaningful bug fix should add or tighten regression coverage.
 - Run targeted builds and tests for the changed area before committing.
+- For the inner loop, build `--target microide_tests` (ctest only needs that binary; skips `microide` + benches). The build auto-detects `ccache` + `ld.lld` when present; core is shared once via the `microide_core` object library. Test seams are runtime-gated (`terminal::SetUsePlaceholderTerminalsForTesting`, `platform::SetHostPlatformOverrideForTesting`), NOT compile-time `#ifdef MICROIDE_TESTING` — keep core free of `MICROIDE_TESTING` branches so it stays ABI-identical across the production and test binaries.
 - Always run the suite and sanitizers through `tools/run-checks.sh {tests|asan|ubsan|tsan|all}` — never raw `ctest` or the sanitizer binary directly. The wrapper tees build+test output to `/tmp/microide-<target>.log` (read that instead of rerunning) AND sets the sanitizer runtime options, notably `TSAN_OPTIONS=...:suppressions=tests/tsan.supp`. Running `ctest` directly skips the suppressions, so environmental races (Mesa `libgallium` GPU driver via `ApplicationTests`, libdbus) surface as false failures and you waste a second run capturing output.
 - Run sanitizer variants (`microide-asan`, `microide-ubsan`, `microide-tsan`) for memory/thread-sensitive changes.
 - TSAN runs require `sudo sysctl vm.mmap_rnd_bits=28` on Linux before test execution.

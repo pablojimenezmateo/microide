@@ -11,12 +11,10 @@ void TerminalSession::SendBytesLocked(std::string_view bytes) {
     return;
   }
 
-#ifdef MICROIDE_TESTING
-  if (!backend_ || !backend_->running()) {
+  if (UsePlaceholderTerminalsForTesting() && (!backend_ || !backend_->running())) {
     test_sent_bytes_.append(bytes);
     return;
   }
-#endif
 
   if (!backend_) {
     return;
@@ -67,11 +65,10 @@ bool TerminalSession::SendMouseButton(MouseButton button,
   std::string bytes;
   {
     std::scoped_lock lock(mutex_);
-#ifdef MICROIDE_TESTING
-    const bool can_encode = (backend_ && backend_->running()) || running_;
-#else
-    const bool can_encode = backend_ && backend_->running();
-#endif
+    // Placeholder test mode has no backend, so it falls back to running_; in
+    // production (flag off) this is exactly `backend_ && backend_->running()`.
+    const bool can_encode = (backend_ && backend_->running()) ||
+                            (UsePlaceholderTerminalsForTesting() && running_);
     if (!EncodeTerminalSessionMouseEvent(mouse_tracking_any_, mouse_tracking_drag_,
                                          mouse_tracking_normal_, mouse_sgr_ext_mode_, rows_,
                                          columns_, button, pressed, false, row, column, modifiers,
@@ -90,11 +87,10 @@ bool TerminalSession::SendMouseMotion(MouseButton button,
   std::string bytes;
   {
     std::scoped_lock lock(mutex_);
-#ifdef MICROIDE_TESTING
-    const bool can_encode = (backend_ && backend_->running()) || running_;
-#else
-    const bool can_encode = backend_ && backend_->running();
-#endif
+    // Placeholder test mode has no backend, so it falls back to running_; in
+    // production (flag off) this is exactly `backend_ && backend_->running()`.
+    const bool can_encode = (backend_ && backend_->running()) ||
+                            (UsePlaceholderTerminalsForTesting() && running_);
     if (!EncodeTerminalSessionMouseEvent(mouse_tracking_any_, mouse_tracking_drag_,
                                          mouse_tracking_normal_, mouse_sgr_ext_mode_, rows_,
                                          columns_, button, true, true, row, column, modifiers,

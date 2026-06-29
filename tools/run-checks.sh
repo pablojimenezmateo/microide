@@ -25,6 +25,11 @@ cd "$REPO_ROOT"
 
 JOBS="${MICROIDE_BUILD_JOBS:-8}"
 
+# ccache caches PCH-using translation units only when told to tolerate the
+# precompiled-header define/time-macro sloppiness. Harmless when ccache is not
+# installed (CMake then skips the launcher entirely).
+export CCACHE_SLOPPINESS="${CCACHE_SLOPPINESS:-pch_defines,time_macros}"
+
 # Where build/test/sanitizer logs land. Defaults to /tmp (the documented
 # location agents read back from); override with MICROIDE_LOG_DIR when /tmp is a
 # small tmpfs or logs must survive a reboot.
@@ -48,10 +53,14 @@ run_logged() {
 
 check_tests() {
   local log="${LOG_DIR}/microide-tests.log"
+  # ctest in the default build only invokes the microide_tests binary (see
+  # add_test in CMakeLists.txt), so scope the build to that target and its deps.
+  # This skips the production microide executable and the bench binaries, which
+  # the test run does not need — roughly halving inner-loop build work.
   run_logged "$log" bash -c '
     set -e
     cmake -S . -B build
-    cmake --build build -j'"$JOBS"'
+    cmake --build build --target microide_tests -j'"$JOBS"'
     ctest --test-dir build --output-on-failure
   '
   local rc=$?
