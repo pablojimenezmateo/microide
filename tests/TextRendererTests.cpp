@@ -607,6 +607,44 @@ void TestSdlTtfAsciiGlyphsStayWithinLineBands() {
          "the second ASCII line should begin at its own row band");
 }
 
+void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 160);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "font-size regression should exercise the SDL_ttf backend");
+
+  const float base_char_width = renderer.CharWidth();
+  const float base_line_height = renderer.LineHeight();
+  Expect(base_char_width > 0.0f && base_line_height > 0.0f,
+         "baseline font metrics should be positive");
+
+  renderer.SetFontPointSize(24.0f);
+  const float large_char_width = renderer.CharWidth();
+  const float large_line_height = renderer.LineHeight();
+  Expect(large_char_width > base_char_width,
+         "a larger point size should widen the monospace glyph advance");
+  Expect(large_line_height > base_line_height,
+         "a larger point size should increase the line height");
+  Expect(std::abs(renderer.MeasureWidth("MM") - 2.0f * large_char_width) <= 0.5f,
+         "measured ASCII width should track the resized monospace advance");
+
+  // Restoring the default size restores the original metrics (the backend re-opens
+  // the same font at the original point size and refreshes metrics).
+  renderer.SetFontPointSize(13.0f);
+  Expect(std::abs(renderer.CharWidth() - base_char_width) <= 0.5f,
+         "restoring the default point size should restore the baseline char width");
+  Expect(std::abs(renderer.LineHeight() - base_line_height) <= 0.5f,
+         "restoring the default point size should restore the baseline line height");
+
+  // Out-of-range requests clamp into the supported 8..32 range instead of breaking
+  // metrics.
+  renderer.SetFontPointSize(1000.0f);
+  Expect(renderer.CharWidth() > base_char_width,
+         "an oversized request should clamp to the max supported size, not zero metrics");
+}
+
 #endif
 
 void TestDecoratedTextGridRendererPaintsRowFillAndUnderline() {
@@ -1945,6 +1983,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf repeated glyphs measure by char width",
           TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth);
+  AddTest(tests,
+          "TextRenderer SDL_ttf SetFontPointSize resizes glyph metrics",
+          TestSdlTtfSetFontPointSizeResizesGlyphMetrics);
   AddTest(tests,
           "TextRenderer SDL_ttf ASCII prefix glyph stays fixed when appending matches",
           TestSdlTtfAsciiPrefixGlyphStaysFixedWhenAppendingMatches);

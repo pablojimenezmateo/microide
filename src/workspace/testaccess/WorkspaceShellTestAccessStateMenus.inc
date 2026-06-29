@@ -506,6 +506,9 @@
   static std::size_t EditorIndentWidth(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.indent_width;
   }
+  static int EditorFontSize(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.editor_preferences.font_size;
+  }
   static bool SoftWrapEnabled(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_preferences.soft_wrap;
   }

@@ -1,7 +1,8 @@
 # microide
 
 A native, low-footprint C++/SDL3 desktop IDE focused on built-in editor, diff, merge, git,
-search, and terminal workflows. Single-window, keyboard-first, runs without GPU acceleration.
+search, and terminal workflows. Single-window, keyboard-first, and does not require a GPU (it uses
+one when available to speed up text, and runs fully on a software renderer otherwise).
 
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
@@ -344,7 +345,9 @@ What is **not** measured:
   `large_file_open_first_paint` exists for explicit local runs, but the gated suite is still
   stronger on typing, scrolling, save normalization, and compare/merge interaction than on the
   initial-paint path for very large files.
-- behavior on GPU-accelerated paths. The reference harness uses the software renderer.
+- behavior on GPU-accelerated paths. The reference harness pins the software renderer for
+  determinism; GPU-accelerated paths (e.g. the batched-text glyph atlas) do run when a GPU is
+  present but are validated separately, not by the gated suite.
 - multi-host comparison. `perf-runner-v1` is one self-hosted runner class; results from other
   machines are advisory only.
 - LTO as a proof that extraction costs are gone. LTO currently helps recover some

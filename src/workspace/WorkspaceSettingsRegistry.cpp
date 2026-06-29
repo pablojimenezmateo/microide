@@ -150,9 +150,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "editor.font_size",
           .label = "Font Size",
-          .description = "Editor font size in points (8..32).",
+          .description = "Editor font size in points (8..32). Applies to all buffers in this project.",
           .type = SettingType::Int,
-          .scope = SettingScope::User,
+          .scope = SettingScope::Project,
           .default_bool = false,
           .default_int = 13,
           .default_float = 0.0f,

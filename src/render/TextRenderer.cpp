@@ -61,6 +61,17 @@ void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
   }
 }
 
+void TextRenderer::SetFontPointSize(float points) {
+  if (backend_ == nullptr) {
+    return;
+  }
+  backend_->SetFontPointSize(points);
+  // Glyph advances change with the point size, so the measured-width cache is
+  // stale; drop it and re-anchor metrics on the next query.
+  ClearWidthCache();
+  width_cache_initialized_ = false;
+}
+
 float TextRenderer::CharWidth() const {
   return backend_ != nullptr ? backend_->CharWidth() : 8.0f;
 }

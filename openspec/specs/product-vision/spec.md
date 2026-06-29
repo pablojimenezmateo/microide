@@ -5,9 +5,10 @@ Define the durable product thesis, priority order, ownership boundaries, and non
 ### Requirement: Product Thesis
 
 MicroIDE SHALL be a native desktop IDE built in C++20 with SDL3, distributed as a single-window
-application with no GPU acceleration, and positioned as a compact, responsive editor-plus-workflow
-shell validated through internal methodology-first performance baselines rather than comparative
-marketing claims.
+application with no GPU requirement (it MAY use a GPU when available to accelerate rendering, but
+MUST remain fully functional on a software renderer), and positioned as a compact, responsive
+editor-plus-workflow shell validated through internal methodology-first performance baselines rather
+than comparative marketing claims.
 
 #### Scenario: Rendering backend does not require a GPU
 - **WHEN** MicroIDE is launched on a host without hardware-accelerated OpenGL, Vulkan, or Metal available to the user session

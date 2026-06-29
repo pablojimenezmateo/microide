@@ -81,6 +81,16 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport) cons
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs() {
   util::AddPerformanceCounter(util::PerfCounterId::FrameApplyEditorPreferencesAllTabsCalls);
+  // Font size is a project preference but the text renderer is shared across all
+  // projects, so push the active project's value here -- this hook fires on
+  // project activation, session restore, and live setting changes, so switching
+  // projects automatically re-applies that project's font size. SetFontPointSize
+  // no-ops when the size is unchanged, so the common case stays cheap.
+  text_renderer_.SetFontPointSize(
+      static_cast<float>(context_.current_project_state.editor_preferences.font_size));
+  MarkLayoutDirty();
+  tab_strip_service_.InvalidateEditorTabGeometry();
+  RequestWindowRedraw();
   ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
   for (auto& tab : context_.current_project_state.focused_group().open_tabs) {
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {

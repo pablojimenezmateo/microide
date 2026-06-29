@@ -30,6 +30,9 @@ class TextRenderer {
   void EnsureInitialized(SDL_Renderer* renderer,
                          float presentation_scale_x = 1.0f,
                          float presentation_scale_y = 1.0f);
+  // Change the editor glyph point size at runtime (the project `editor.font_size`
+  // setting). Forwards to the active backend and invalidates the width cache.
+  void SetFontPointSize(float points);
   float CharWidth() const;
   float LineHeight() const;
   TextClipPadding ClipPadding() const;

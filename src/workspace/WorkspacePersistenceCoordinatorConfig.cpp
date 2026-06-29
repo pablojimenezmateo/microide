@@ -37,6 +37,15 @@ bool ApplyCanonicalProjectSetting(ProjectWorkspaceState& state,
     }
     return false;
   }
+  if (id == "editor.font_size") {
+    if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+      if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
+        state.editor_preferences.font_size = std::clamp(std::get<int>(*parsed), 8, 32);
+        return true;
+      }
+    }
+    return false;
+  }
   if (id == "editor.soft_tabs") {
     if (const auto* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
       if (const auto parsed = ParseSettingValue(*spec, value); parsed.has_value()) {
@@ -98,6 +107,8 @@ void SyncCanonicalProjectSettings(std::vector<std::pair<std::string, std::string
   settings_layer::Upsert(
       settings, "editor.indent_width",
       SerializeSettingValue(static_cast<int>(state.editor_preferences.indent_width)));
+  settings_layer::Upsert(settings, "editor.font_size",
+                         SerializeSettingValue(state.editor_preferences.font_size));
   settings_layer::Upsert(settings, "editor.soft_tabs",
                          SerializeSettingValue(state.editor_preferences.soft_tabs));
   settings_layer::Upsert(settings, "editor.wrap",
