@@ -19,6 +19,41 @@ namespace {
 
 constexpr float kSidebarInset = 10.0f;
 
+// True when `surface` is drawn by the shared single-line caret/selection
+// machinery. The multi-line and self-rendering surfaces (commit body, Settings
+// query, Variables value field) and the non-input surfaces opt out. Kept as one
+// exhaustive switch — no `default:` — so adding a TextInputSurface value forces a
+// classification decision here (via -Wswitch) instead of silently defaulting.
+bool UsesSharedSingleLineCaret(TextInputSurface surface) {
+  switch (surface) {
+    case TextInputSurface::PromptInput:
+    case TextInputSurface::FileFinder:
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+    case TextInputSurface::BufferReplaceReplace:
+    case TextInputSurface::ProjectSearchOverlay:
+    case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::CommandPalette:
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::CommitSubject:
+      return true;
+    case TextInputSurface::CommitBody:
+      // The body is a multi-line field rendered by the sidebar panel, not the
+      // shared single-line caret/selection machinery.
+    case TextInputSurface::SettingsQuery:
+      // The Settings overlay renders its own caret/selection.
+    case TextInputSurface::DebugVariableEdit:
+      // The Variables value field renders its own caret/selection in the bottom panel.
+    case TextInputSurface::None:
+    case TextInputSurface::Editor:
+    case TextInputSurface::Terminal:
+      return false;
+  }
+  return false;
+}
+
 }  // namespace
 
 using namespace detail;
@@ -412,31 +447,8 @@ void WorkspaceShell::RenderSingleLineTextSelection(
     return;
   }
 
-  switch (visual->surface) {
-    case TextInputSurface::PromptInput:
-    case TextInputSurface::FileFinder:
-    case TextInputSurface::BufferSearch:
-    case TextInputSurface::BufferReplaceSearch:
-    case TextInputSurface::BufferReplaceReplace:
-    case TextInputSurface::ProjectSearchOverlay:
-    case TextInputSurface::CommitPicker:
-    case TextInputSurface::LaunchConfigPicker:
-    case TextInputSurface::CommandPalette:
-    case TextInputSurface::SidebarSearchQuery:
-    case TextInputSurface::SidebarSearchReplace:
-    case TextInputSurface::CommitSubject:
-      break;
-    case TextInputSurface::CommitBody:
-      // The body is a multi-line field rendered by the sidebar panel, not the shared
-      // single-line caret/selection machinery.
-    case TextInputSurface::SettingsQuery:
-      // The Settings overlay renders its own caret/selection.
-    case TextInputSurface::DebugVariableEdit:
-      // The Variables value field renders its own selection in the bottom panel.
-    case TextInputSurface::None:
-    case TextInputSurface::Editor:
-    case TextInputSurface::Terminal:
-      return;
+  if (!UsesSharedSingleLineCaret(visual->surface)) {
+    return;
   }
 
   const auto [sel_start_byte, sel_end_byte] = *visual->selection_bytes;
@@ -474,31 +486,8 @@ void WorkspaceShell::RenderActiveTextInputCaret(
     return;
   }
 
-  switch (visual->surface) {
-    case TextInputSurface::PromptInput:
-    case TextInputSurface::FileFinder:
-    case TextInputSurface::BufferSearch:
-    case TextInputSurface::BufferReplaceSearch:
-    case TextInputSurface::BufferReplaceReplace:
-    case TextInputSurface::ProjectSearchOverlay:
-    case TextInputSurface::CommitPicker:
-    case TextInputSurface::LaunchConfigPicker:
-    case TextInputSurface::CommandPalette:
-    case TextInputSurface::SidebarSearchQuery:
-    case TextInputSurface::SidebarSearchReplace:
-    case TextInputSurface::CommitSubject:
-      break;
-    case TextInputSurface::CommitBody:
-      // The body is a multi-line field rendered by the sidebar panel, not the shared
-      // single-line caret/selection machinery.
-    case TextInputSurface::SettingsQuery:
-      // The Settings overlay renders its own caret.
-    case TextInputSurface::DebugVariableEdit:
-      // The Variables value field renders its own static caret in the bottom panel.
-    case TextInputSurface::None:
-    case TextInputSurface::Editor:
-    case TextInputSurface::Terminal:
-      return;
+  if (!UsesSharedSingleLineCaret(visual->surface)) {
+    return;
   }
 
   if (!CaretVisibleNow()) {
