@@ -379,6 +379,20 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                                                                  : CursorKind::Default;
   }
 
+  // Breadcrumb band: a plugin status item with a bound command is clickable (see
+  // the click handler in WorkspaceShellMouse.cpp). Match it exactly — only
+  // command-bound items get the pointer; bare path text and command-less items
+  // keep the arrow.
+  if (layout.breadcrumb.w > 0.0f && layout.breadcrumb.h > 0.0f &&
+      Contains(layout.breadcrumb, x, y)) {
+    for (const VisibleStatusItem& status_item : ComputeVisibleStatusItems(layout.breadcrumb)) {
+      if (!status_item.item.command.empty() && Contains(status_item.rect, x, y)) {
+        return CursorKind::Pointer;
+      }
+    }
+    return CursorKind::Default;
+  }
+
   if (Contains(layout.project_tab_strip, x, y)) {
     const auto project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     const auto project_overflow =
@@ -397,27 +411,43 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     return CursorKind::Default;
   }
 
-  if (Contains(layout.tab_strip, x, y)) {
-    if (context_.current_project_state.root.empty()) {
-      return CursorKind::Default;
-    }
-    if (context_.current_project_state.focused_group().open_tabs.empty()) {
-      return Contains(EmptyTabStripPlaceholderRect(layout.tab_strip), x, y)
-                 ? CursorKind::Pointer
-                 : CursorKind::Default;
-    }
-    const auto tabs = tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
-    const auto tab_overflow = tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, tabs);
-    if ((tab_overflow.hidden_left > 0 && Contains(tab_overflow.left_button, x, y)) ||
-        (tab_overflow.hidden_right > 0 && Contains(tab_overflow.right_button, x, y))) {
-      return CursorKind::Pointer;
-    }
-    for (const VisibleStripTab& tab : tabs) {
-      if (Contains(tab.rect, x, y)) {
+  // Editor tab strips are per-group. A split lays out one strip per group, either
+  // side by side (within the top tab band) or stacked (the second strip is
+  // synthesized inside the editor surface). Probe every group's own strip rect with
+  // its *ForGroup tab geometry, mirroring the renderer (WorkspaceShellRenderChrome)
+  // and the click handler (WorkspaceTabMouseCoordinator), so tabs in a non-focused
+  // group resolve correctly and no phantom tab geometry appears over an empty strip.
+  {
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    const std::vector<EditorGroup>& editor_groups = context_.current_project_state.editor_groups;
+    for (std::size_t gi = 0; gi < group_rects.groups.size(); ++gi) {
+      const SDL_FRect group_tab_strip = group_rects.groups[gi].tab_strip;
+      if (group_tab_strip.w <= 0.0f || group_tab_strip.h <= 0.0f ||
+          !Contains(group_tab_strip, x, y)) {
+        continue;
+      }
+      if (context_.current_project_state.root.empty()) {
+        return CursorKind::Default;
+      }
+      if (gi >= editor_groups.size() || editor_groups[gi].open_tabs.empty()) {
+        return Contains(EmptyTabStripPlaceholderRect(group_tab_strip), x, y)
+                   ? CursorKind::Pointer
+                   : CursorKind::Default;
+      }
+      const auto tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip);
+      const auto tab_overflow =
+          tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, group_tab_strip, tabs);
+      if ((tab_overflow.hidden_left > 0 && Contains(tab_overflow.left_button, x, y)) ||
+          (tab_overflow.hidden_right > 0 && Contains(tab_overflow.right_button, x, y))) {
         return CursorKind::Pointer;
       }
+      for (const VisibleStripTab& tab : tabs) {
+        if (Contains(tab.rect, x, y)) {
+          return CursorKind::Pointer;
+        }
+      }
+      return CursorKind::Default;
     }
-    return CursorKind::Default;
   }
 
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
@@ -470,6 +500,20 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (const auto button_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
           button_rect.has_value() && Contains(*button_rect, x, y)) {
         return CursorKind::Pointer;
+      }
+      // Commit workflow (open after the user begins a commit): the subject/body are
+      // text inputs and the confirm button is clickable. The renderer caches these
+      // rects each frame; mirror the click handlers (WorkspaceShellSingleLineInputMouse
+      // / WorkspaceSidebarMouseCoordinator) so the cursor matches what is actionable.
+      if (const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+          workflow.open) {
+        if ((workflow.subject_field_rect.w > 0.0f && Contains(workflow.subject_field_rect, x, y)) ||
+            (workflow.body_field_rect.w > 0.0f && Contains(workflow.body_field_rect, x, y))) {
+          return CursorKind::Text;
+        }
+        if (workflow.commit_button_rect.w > 0.0f && Contains(workflow.commit_button_rect, x, y)) {
+          return CursorKind::Pointer;
+        }
       }
       const auto lines = BuildGitSidebarLines();
       const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
@@ -979,7 +1023,8 @@ bool WorkspaceShell::MenuSurfaceCapturingMouse() const {
 }
 
 void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hover,
-                                       bool workspace_layout_recomputed) {
+                                       bool workspace_layout_recomputed,
+                                       bool during_frame_prepare) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::UpdateMouseCursor");
   const bool mouse_moved =
       !last_mouse_position_valid_ || x != last_mouse_x_ || y != last_mouse_y_;
@@ -995,64 +1040,26 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
     editor_hover_refresh_pending_ = false;
   }
 
-  // Fast-path: if the inputs CursorKindForPosition reads haven't changed since the
-  // last call (typical PrepareFrameOnce frame where the mouse is still and no menu
-  // / prompt / drag state changed), skip the hit-testing work entirely.
+  // Fast-path: skip the hit-test entirely when neither the pointer position nor any
+  // cursor-relevant state changed since the last call. Correctness rests on a single
+  // invariant: every redraw that can change a cursor surface bumps one of the two
+  // generations (see CursorKindFingerprint in WorkspaceShellMembers.inc for why this
+  // subsumes the old hand-maintained scalar allowlist). A still pointer on an idle
+  // caret-blink frame (no generation bump) short-circuits here; anything that redrew
+  // a surface re-runs CursorKindForPosition.
   const CursorKindFingerprint next_fp{
       .x = x,
       .y = y,
-      .drag_target = static_cast<int>(context_.interaction_state.drag_target),
       .valid = true,
-      .dirty_prompt = context_.prompts.dirty_visible,
-      .prompt_surface = context_.prompts.surface_visible,
-      .menu_bar_open = context_.menu_state.menu_bar_open,
-      .overflow_popup_open = context_.menu_state.overflow_popup_open,
-      .tree_context_menu_open = context_.menu_state.tree_context_menu.open,
-      .active_menu_id = static_cast<int>(context_.menu_state.active_menu_id),
-      .hovered_popup_row_index = context_.menu_state.hovered_popup_row_index,
-      .hovered_submenu_row_index = context_.menu_state.hovered_submenu_row_index,
-      .active_submenu_id = static_cast<int>(context_.menu_state.active_submenu_id),
-      .overlay_visible = context_.current_project_state.overlay.visible,
-      .settings_overlay_visible = settings_overlay_service_.Visible(),
-      .bottom_panel_visible = BottomPanelVisible(),
-      .debug_toolbar_visible = DebugToolbarVisible(),
-      .chrome_custom_enabled = window_presentation_.chrome.custom_enabled,
-      .chrome_maximized = window_presentation_.chrome.maximized,
-      .chrome_fullscreen = window_presentation_.chrome.fullscreen,
-      .window_width = window_presentation_.logical_width,
-      .window_height = window_presentation_.logical_height,
-      .active_tab_index =
-          static_cast<std::uint32_t>(context_.current_project_state.focused_group().active_tab_index),
-      .cursor_hit_generation = cursor_hit_generation_,
-      .editor_hover_target_generation = editor_hover_target_generation_,
+      .hit_generation = cursor_hit_generation_,
+      .hover_generation = editor_hover_target_generation_,
   };
   if (!force_cursor_reassert_ &&
       cursor_kind_fingerprint_.valid &&
       cursor_kind_fingerprint_.x == next_fp.x &&
       cursor_kind_fingerprint_.y == next_fp.y &&
-      cursor_kind_fingerprint_.drag_target == next_fp.drag_target &&
-      cursor_kind_fingerprint_.dirty_prompt == next_fp.dirty_prompt &&
-      cursor_kind_fingerprint_.prompt_surface == next_fp.prompt_surface &&
-      cursor_kind_fingerprint_.menu_bar_open == next_fp.menu_bar_open &&
-      cursor_kind_fingerprint_.overflow_popup_open == next_fp.overflow_popup_open &&
-      cursor_kind_fingerprint_.tree_context_menu_open == next_fp.tree_context_menu_open &&
-      cursor_kind_fingerprint_.active_menu_id == next_fp.active_menu_id &&
-      cursor_kind_fingerprint_.hovered_popup_row_index == next_fp.hovered_popup_row_index &&
-      cursor_kind_fingerprint_.hovered_submenu_row_index == next_fp.hovered_submenu_row_index &&
-      cursor_kind_fingerprint_.active_submenu_id == next_fp.active_submenu_id &&
-      cursor_kind_fingerprint_.overlay_visible == next_fp.overlay_visible &&
-      cursor_kind_fingerprint_.settings_overlay_visible == next_fp.settings_overlay_visible &&
-      cursor_kind_fingerprint_.bottom_panel_visible == next_fp.bottom_panel_visible &&
-      cursor_kind_fingerprint_.debug_toolbar_visible == next_fp.debug_toolbar_visible &&
-      cursor_kind_fingerprint_.chrome_custom_enabled == next_fp.chrome_custom_enabled &&
-      cursor_kind_fingerprint_.chrome_maximized == next_fp.chrome_maximized &&
-      cursor_kind_fingerprint_.chrome_fullscreen == next_fp.chrome_fullscreen &&
-      cursor_kind_fingerprint_.window_width == next_fp.window_width &&
-      cursor_kind_fingerprint_.window_height == next_fp.window_height &&
-      cursor_kind_fingerprint_.active_tab_index == next_fp.active_tab_index &&
-      cursor_kind_fingerprint_.cursor_hit_generation == next_fp.cursor_hit_generation &&
-      cursor_kind_fingerprint_.editor_hover_target_generation ==
-          next_fp.editor_hover_target_generation &&
+      cursor_kind_fingerprint_.hit_generation == next_fp.hit_generation &&
+      cursor_kind_fingerprint_.hover_generation == next_fp.hover_generation &&
       !workspace_layout_recomputed) {
     return;
   }
@@ -1087,6 +1094,18 @@ void WorkspaceShell::UpdateMouseCursor(float x, float y, bool update_editor_hove
     }
   }
   (void)SDL_SetCursor(cursor);
+
+  // A cursor shape only becomes visible once the compositor recomposites: on
+  // Wayland the shape rides a hardware cursor plane that is re-latched on a frame
+  // commit, not on the bare wl_pointer.set_cursor request. At event time nothing
+  // else may have dirtied the scene (hovering an item with no hover visual, or an
+  // idle welcome screen with no caret blink), so request a minimal present here —
+  // otherwise the new shape sits queued and the stale one stays on screen until
+  // some unrelated repaint. The render-path call already presents this frame, so it
+  // skips this. See dev-docs/platform/wayland-stale-cursor.md.
+  if (!during_frame_prepare) {
+    RequestCursorPresent();
+  }
 }
 
 char WorkspaceShell::KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers) {

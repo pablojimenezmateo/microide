@@ -165,6 +165,22 @@
   // after a window resize.
   void ForceCursorReassert();
 
+  // Seed the cached pointer position from an event-time live query (window
+  // resize/move/restore/maximize, where the window manager can suppress the motion
+  // events that normally keep last_mouse_* fresh). Coordinates are render-space, so
+  // the caller (which owns the renderer) converts before calling. This keeps the
+  // render path free of any live SDL_GetMouseState poll — the source of
+  // nondeterministic hover highlights in retained-vs-full redraw comparisons.
+  void SeedPointerPosition(float render_x, float render_y);
+
+  // Bump the cursor hit-generation so the next UpdateMouseCursor re-runs the
+  // hit-test instead of taking the stationary-pointer fast path. Call this whenever
+  // a cursor surface may have moved without a Request* redraw helper running — most
+  // notably the Application apply seam for full-redraw EventResult literals (async
+  // file/plugin reloads, window show/expose) that repaint the scene under a still
+  // pointer. Every Request* redraw already calls this internally.
+  void InvalidateCursorKindFingerprint();
+
   struct VisiblePopupMenuItem {
     std::size_t index = 0;
     SDL_FRect rect{};
@@ -1605,6 +1621,11 @@
   void Notify(NotificationService::Tone tone, std::string message);
   void RequestRedrawRect(const SDL_FRect& rect);
   void RequestWindowRedraw();
+  // Request the smallest present that still re-latches the hardware cursor plane
+  // after an event-time cursor change (see UpdateMouseCursor / the Wayland cursor
+  // desync note). Not a visual repaint — just a commit so an idle compositor shows
+  // the new shape.
+  void RequestCursorPresent();
   void RequestChromeRedraw();
   void RequestSidebarRedraw();
   void RequestSidebarLayoutChangeRedraw(const WorkspaceLayout& previous_layout);
@@ -1682,9 +1703,14 @@
   CursorKind CursorKindForPosition(float x, float y) const;
   SDL_Cursor* CursorHandle(CursorKind kind);
   void ClearMouseHoverState();
-  void InvalidateCursorKindFingerprint();
+  // during_frame_prepare is true only for the render-path call (PrepareFrameOnce),
+  // which already presents this frame. Event-time calls leave it false so that a
+  // cursor re-application requests a present — without one, an idle compositor
+  // (e.g. caret not blinking, welcome screen) never recomposites and the hardware
+  // cursor plane keeps the stale shape. See dev-docs/platform/wayland-stale-cursor.md.
   void UpdateMouseCursor(float x, float y, bool update_editor_hover = true,
-                         bool workspace_layout_recomputed = false);
+                         bool workspace_layout_recomputed = false,
+                         bool during_frame_prepare = false);
 
   render::Theme theme_ = render::MakeDefaultTheme();
   render::TextRenderer text_renderer_;
@@ -1847,34 +1873,28 @@
   // unchanged-kind short-circuits and forces the platform cursor to be re-shown.
   // See ForceCursorReassert.
   bool force_cursor_reassert_ = false;
-  // Cached fingerprint of state CursorKindForPosition depends on, so the per-frame
-  // UpdateMouseCursor call can short-circuit when nothing relevant changed.
+  // Cached fingerprint that lets the per-frame UpdateMouseCursor short-circuit the
+  // expensive CursorKindForPosition hit-test when nothing relevant changed.
+  //
+  // The cursor only needs recomputing when (a) the pointer moved, or (b) something
+  // that affects cursor geometry/state changed. Proxy for (b): a redraw was
+  // requested. EVERY redraw path bumps cursor_hit_generation_ — partial redraws
+  // through RequestRedrawRect/RequestFullRedraw/MarkLayoutDirty, and full-redraw
+  // EventResult literals via the Application apply choke point (which calls
+  // InvalidateCursorKindFingerprint when applying redraw.full). The lone exception
+  // is the idle caret-blink partial redraw, which deliberately does NOT bump the
+  // generation so a stationary pointer keeps skipping the hit-test while only the
+  // caret toggles. This makes the previous 20+ hand-maintained scalar fields
+  // redundant: if a cursor-relevant surface changed, a redraw bumped the generation;
+  // if nothing redrew, UpdateMouseCursor never ran. Tracking x/y plus the two
+  // generations is therefore exact — and cannot silently under-specify the way the
+  // hand-maintained allowlist did (the long-standing stale-cursor bug).
   struct CursorKindFingerprint {
     float x = 0.0f;
     float y = 0.0f;
-    int drag_target = 0;
     bool valid = false;
-    bool dirty_prompt = false;
-    bool prompt_surface = false;
-    bool menu_bar_open = false;
-    bool overflow_popup_open = false;
-    bool tree_context_menu_open = false;
-    int active_menu_id = 0;
-    int hovered_popup_row_index = -1;
-    int hovered_submenu_row_index = -1;
-    int active_submenu_id = 0;
-    bool overlay_visible = false;
-    bool settings_overlay_visible = false;
-    bool bottom_panel_visible = false;
-    bool debug_toolbar_visible = false;
-    bool chrome_custom_enabled = false;
-    bool chrome_maximized = false;
-    bool chrome_fullscreen = false;
-    int window_width = 0;
-    int window_height = 0;
-    std::uint32_t active_tab_index = 0;
-    std::uint32_t cursor_hit_generation = 0;
-    std::uint32_t editor_hover_target_generation = 0;
+    std::uint32_t hit_generation = 0;
+    std::uint32_t hover_generation = 0;
   };
   CursorKindFingerprint cursor_kind_fingerprint_{};
   std::uint32_t cursor_hit_generation_ = 0;

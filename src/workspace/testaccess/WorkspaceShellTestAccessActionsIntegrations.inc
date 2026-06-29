@@ -145,6 +145,7 @@
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::SidebarShow, {"git"}, WorkspaceShell::ActionSource::Menu);
   }
+  static void OpenCommandPalette(WorkspaceShell& shell) { shell.OpenCommandPalette(); }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static bool SelectTreePath(WorkspaceShell& shell, const std::filesystem::path& path) {

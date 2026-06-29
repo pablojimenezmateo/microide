@@ -164,15 +164,19 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         std::min(viewport->lines().size(), viewport->VisualRowLineIndex(last_visible_row) + 1);
   }
   ++prepared_frame_id_;
-  float mouse_x = last_mouse_x_;
-  float mouse_y = last_mouse_y_;
-  if (!last_mouse_position_valid_) {
-    SDL_GetMouseState(&mouse_x, &mouse_y);
-    SDL_RenderCoordinatesFromWindow(renderer, mouse_x, mouse_y, &mouse_x, &mouse_y);
-  }
-  {
+  // PrepareFrameOnce stays a pure function of stored, event-sourced state so the
+  // retained and full redraws of one frame paint identically. Never poll the live OS
+  // pointer here: SDL_GetMouseState returns the real cursor position, which varies
+  // run-to-run and would seed last_mouse_* nondeterministically — driving hover
+  // highlights (gated on last_mouse_position_valid_) and breaking retained==full
+  // redraw equivalence. The pointer position comes only from mouse events (and the
+  // event-time SeedPointerPosition on platform stomps); until one arrives there is
+  // nothing to hover and the cursor keeps its default. A pending forced reassert is
+  // held until a valid position exists, then applied on the next prepared frame.
+  if (last_mouse_position_valid_) {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::UpdateMouseCursor");
-    UpdateMouseCursor(mouse_x, mouse_y, !MenuSurfaceCapturingMouse(), workspace_layout_recomputed);
+    UpdateMouseCursor(last_mouse_x_, last_mouse_y_, !MenuSurfaceCapturingMouse(),
+                      workspace_layout_recomputed, /*during_frame_prepare=*/true);
   }
   return FrameToken{prepared_frame_id_, visible_line_range};
 }

@@ -37,6 +37,23 @@
     }
     return {};
   }
+  static SDL_FRect GroupTabStripRect(WorkspaceShell& shell, std::size_t group_index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto group_rects = shell.ComputeEditorGroupRectsForState(layout);
+    return group_index < group_rects.groups.size() ? group_rects.groups[group_index].tab_strip
+                                                    : SDL_FRect{};
+  }
+  static SDL_FRect GroupEditorTabRect(WorkspaceShell& shell, std::size_t group_index,
+                                      std::size_t tab_index) {
+    const SDL_FRect strip = GroupTabStripRect(shell, group_index);
+    for (const WorkspaceShell::VisibleStripTab& tab :
+         shell.tab_strip_chrome_.ComputeVisibleTabsForGroup(group_index, strip)) {
+      if (tab.index == tab_index) {
+        return tab.rect;
+      }
+    }
+    return {};
+  }
   static std::vector<std::string> EditorTabDisplayTitles(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     std::vector<std::string> titles;
@@ -451,6 +468,18 @@
   }
   static bool CachedCursorIs(const WorkspaceShell& shell, WorkspaceShell::CursorKind expected) {
     return shell.cursor_kind_ == expected;
+  }
+  static int CachedCursorValue(const WorkspaceShell& shell) {
+    return static_cast<int>(shell.cursor_kind_);
+  }
+  static bool MousePositionValid(const WorkspaceShell& shell) {
+    return shell.last_mouse_position_valid_;
+  }
+  // Consumes any pending render invalidation and reports whether one was queued.
+  // Used to prove an event-time cursor change requests a present (so an idle
+  // compositor recomposites and re-latches the hardware cursor plane).
+  static bool ConsumePendingRedraw(WorkspaceShell& shell) {
+    return shell.ConsumePendingRenderInvalidation().HasAnyRedraw();
   }
   static bool CachedCursorIsDefault(const WorkspaceShell& shell) {
     return shell.cursor_kind_ == WorkspaceShell::CursorKind::Default;

@@ -39,6 +39,12 @@ class Application {
   void Render(std::vector<SDL_FRect> dirty_rects = {},
               const char* reason = "full");
   bool UpdateRendererPresentation(int* logical_width = nullptr, int* logical_height = nullptr);
+  // Re-seed the shell's cached pointer position from a live query, then force the
+  // cursor to re-apply. Used on window resize/move/restore/maximize, where the
+  // window manager can suppress the motion events that keep the position fresh and
+  // can repaint the displayed cursor behind SDL's back. The live query happens here
+  // (event time, renderer available) so the render path never polls input.
+  void ReseedPointerAndForceCursorReassert();
   void ConsumeWindowActions();
   SDL_HitTestResult WindowHitTest(const SDL_Point& area) const;
   static SDL_HitTestResult SDLCALL WindowHitTestCallback(SDL_Window* window,

@@ -34,9 +34,15 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
   util::PerformanceTrace::Scope perf_scope("WorkspaceEventDispatcher::Handle");
   const ScopeExit sync_terminal_focus{operations_.sync_terminal_focus};
   const auto finish = [this](bool handled) {
+    // A handler may request a redraw (e.g. UpdateMouseCursor queuing a present so
+    // the compositor re-latches the hardware cursor plane) yet still return false
+    // because nothing "interesting" changed. The app loop ignores result.redraw
+    // unless result.handled is set, so treat any pending redraw as handled —
+    // otherwise the queued present is silently dropped and the cursor goes stale.
+    RenderInvalidation redraw = operations_.consume_pending_render_invalidation();
     return EventResult{
-        .handled = handled,
-        .redraw = operations_.consume_pending_render_invalidation(),
+        .handled = handled || redraw.HasAnyRedraw(),
+        .redraw = std::move(redraw),
     };
   };
 
@@ -169,9 +175,13 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowMouseEnter");
       // SDL re-asserts a (possibly stale) hit-test cursor on pointer-enter; make
       // the next cursor update re-apply ours so the displayed cursor is correct.
+      // Request a redraw too: the force flag is consumed inside the next prepared
+      // frame, so without a queued frame (nothing else dirtied the scene) the
+      // reassert would sit latent until unrelated work or motion triggered a paint.
       if (operations_.force_cursor_reassert) {
         operations_.force_cursor_reassert();
       }
+      operations_.request_window_redraw();
       return finish(true);
       }
     case SDL_EVENT_WINDOW_FOCUS_GAINED:
@@ -188,6 +198,12 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowFocusLost");
       state_.window_has_input_focus = false;
+      // While unfocused another app or the compositor can repaint the global
+      // cursor; force a reassert so regaining focus restores ours even if no
+      // pointer-enter (which separately forces) crosses the window edge.
+      if (operations_.force_cursor_reassert) {
+        operations_.force_cursor_reassert();
+      }
       operations_.request_window_redraw();
       return finish(true);
       }

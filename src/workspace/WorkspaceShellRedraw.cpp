@@ -40,6 +40,16 @@ void WorkspaceShell::ForceCursorReassert() {
   InvalidateCursorKindFingerprint();
 }
 
+void WorkspaceShell::SeedPointerPosition(float render_x, float render_y) {
+  last_mouse_x_ = render_x;
+  last_mouse_y_ = render_y;
+  last_mouse_position_valid_ = true;
+  // The position moved without a motion event, so recompute the cursor and refresh
+  // editor hover against the new location on the next prepared frame.
+  QueueEditorHoverRefresh();
+  InvalidateCursorKindFingerprint();
+}
+
 void WorkspaceShell::MarkLayoutDirty() {
   layout_dirty_ = true;
   InvalidateCursorKindFingerprint();
@@ -154,6 +164,15 @@ void WorkspaceShell::RequestWindowRedraw() {
   } else {
     RequestFullRedraw();
   }
+}
+
+void WorkspaceShell::RequestCursorPresent() {
+  // A 1x1 damage rect at the pointer is the cheapest way to force
+  // Application::Render to run and call SDL_RenderPresent. The retained scene
+  // texture is re-blit whole on every present, so the rect's size is irrelevant to
+  // correctness — it exists only to make the compositor recomposite and re-latch
+  // the hardware cursor plane so an event-time cursor change actually shows.
+  RequestRedrawRect(SDL_FRect{last_mouse_x_, last_mouse_y_, 1.0f, 1.0f});
 }
 
 void WorkspaceShell::RequestChromeRedraw() {

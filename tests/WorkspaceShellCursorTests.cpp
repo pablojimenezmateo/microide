@@ -15,6 +15,7 @@ using microide::workspace::BottomPanelResizeHandleRect;
 using microide::workspace::BottomPanelResizeCursorRect;
 using microide::workspace::BottomPanelResizeHitRect;
 using microide::workspace::Contains;
+using microide::workspace::EditorSplitOrientation;
 using microide::workspace::SidebarResizeCursorRect;
 using microide::workspace::SidebarResizeHandleRect;
 using microide::workspace::SidebarResizeHitRect;
@@ -348,6 +349,148 @@ void TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion(
          "the repopulated search result row should resolve to the pointer cursor");
 }
 
+void TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "splitting the editor should succeed with an active tab");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "the split should create a second editor group");
+  // Splitting focuses the new (right) group, so group 0 is the non-focused one whose
+  // tabs the old focused-group-only cursor hit-test computed against the wrong strip.
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "the split should focus the new group");
+
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 0, 0);
+  Expect(tab_rect.w > 0.0f && tab_rect.h > 0.0f,
+         "the non-focused split group should expose its own tab rect");
+  const float x = tab_rect.x + tab_rect.w * 0.5f;
+  const float y = tab_rect.y + tab_rect.h * 0.5f;
+
+  WorkspaceShellTestAccess::UpdateMouseCursor(shell, x, y);
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, x, y),
+         "a tab in the non-focused split group should resolve to the pointer cursor");
+  Expect(WorkspaceShellTestAccess::CachedCursorIsPointer(shell),
+         "hovering a non-focused split-group tab should cache the pointer cursor");
+}
+
+void TestWorkspaceShellCursorRecomputesWhenCommandPaletteOpensWithoutMotion() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const float x = layout.editor_surface.x + layout.editor_surface.w * 0.5f;
+  const float y = layout.editor_surface.y + layout.editor_surface.h * 0.5f;
+
+  WorkspaceShellTestAccess::UpdateMouseCursor(shell, x, y);
+  const int before = WorkspaceShellTestAccess::CachedCursorValue(shell);
+
+  WorkspaceShellTestAccess::OpenCommandPalette(shell);
+  const int fresh_after = WorkspaceShellTestAccess::CursorKindAtValue(shell, x, y);
+  Expect(fresh_after != before,
+         "command palette open should change the resolved cursor kind at the test point");
+
+  // The collapsed cursor fingerprint dropped the overlay-visible scalar, so a
+  // stationary-pointer recompute now relies solely on the overlay-open path bumping
+  // the cursor hit generation. Without motion, the cached cursor must still update.
+  WorkspaceShellTestAccess::UpdateMouseCursor(shell, x, y);
+  Expect(WorkspaceShellTestAccess::CachedCursorValue(shell) == fresh_after,
+         "opening the command palette must recompute the stationary cursor (no stale fast path)");
+}
+
+void TestWorkspaceShellRenderDoesNotPollLivePointer() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  // No mouse event has been delivered, so the pointer position must stay invalid
+  // across renders. The render path must never poll the live OS pointer
+  // (SDL_GetMouseState) to seed it — that would make hover highlights, and thus
+  // retained-vs-full redraw equivalence, depend on the real cursor location.
+  Expect(!WorkspaceShellTestAccess::MousePositionValid(shell),
+         "a freshly opened workspace should have no cached pointer position");
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  Expect(!WorkspaceShellTestAccess::MousePositionValid(shell),
+         "rendering must not seed the pointer position from a live OS poll");
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  Expect(!WorkspaceShellTestAccess::MousePositionValid(shell),
+         "repeated renders must remain free of any live pointer poll");
+}
+
+// Regression: an event-time cursor change must request a present. On Wayland the
+// cursor shape rides a hardware plane that only re-latches on a frame commit, so a
+// cursor change that dirties nothing else (hovering an item with no hover visual,
+// or an idle welcome screen with no caret blink) would sit queued and show the
+// stale shape until some unrelated repaint. While the caret blinks its periodic
+// frames hide this; when it stops, the staleness becomes visible. See
+// dev-docs/platform/wayland-stale-cursor.md.
+void TestWorkspaceShellCursorChangeRequestsPresent() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  // The left window-frame border reliably resolves to a non-default (resize)
+  // cursor with custom chrome, so moving onto it from the default cursor is a
+  // guaranteed cursor change.
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const float border_x = 2.0f;
+  const float border_y = layout.menu_bar.y + layout.menu_bar.h + 200.0f;
+
+  // Drain any redraws queued during setup so the assertions see only cursor work.
+  (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
+
+  // Moving onto the resize border changes the cursor (Default -> a resize cursor).
+  // That change must request a present so an idle compositor recomposites and
+  // shows it.
+  WorkspaceShellTestAccess::UpdateMouseCursor(shell, border_x, border_y);
+  Expect(!WorkspaceShellTestAccess::CachedCursorIsDefault(shell),
+         "the left window frame border should resolve to a resize cursor");
+  Expect(WorkspaceShellTestAccess::ConsumePendingRedraw(shell),
+         "an event-time cursor change must request a present to re-latch the cursor plane");
+
+  // Re-resolving the same point changes nothing, so it must not request a present:
+  // the fix adds no per-motion cost once the cursor is stable.
+  WorkspaceShellTestAccess::UpdateMouseCursor(shell, border_x, border_y);
+  Expect(!WorkspaceShellTestAccess::ConsumePendingRedraw(shell),
+         "an unchanged cursor must not request a present");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
@@ -367,6 +510,14 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusBarClickableSegmentsUsePointerCursor);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenProjectSearchResultsArriveWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion);
+  AddTest(tests, "WorkspaceShell/CursorSplitNonFocusedGroupTabUsesPointer",
+          TestWorkspaceShellCursorSplitNonFocusedGroupTabUsesPointer);
+  AddTest(tests, "WorkspaceShell/CursorRecomputesWhenCommandPaletteOpensWithoutMotion",
+          TestWorkspaceShellCursorRecomputesWhenCommandPaletteOpensWithoutMotion);
+  AddTest(tests, "WorkspaceShell/RenderDoesNotPollLivePointer",
+          TestWorkspaceShellRenderDoesNotPollLivePointer);
+  AddTest(tests, "WorkspaceShell/CursorChangeRequestsPresent",
+          TestWorkspaceShellCursorChangeRequestsPresent);
 }
 
 }  // namespace microide::tests

@@ -179,6 +179,13 @@ int Application::Run() {
       const auto scheduled = workspace_shell_.HandleScheduledWake();
       if (scheduled.handled) {
         if (scheduled.redraw.full) {
+          // A full-redraw repaints the whole scene, so any cursor surface may have
+          // moved underneath a stationary pointer (tree refresh, plugin/outline
+          // population, asset reload). These EventResult literals bypass the
+          // Request* helpers, so bump the cursor hit-generation here — the single
+          // universal seam where async full redraws are applied — so the next
+          // frame's UpdateMouseCursor re-runs the hit-test instead of skipping it.
+          workspace_shell_.InvalidateCursorKindFingerprint();
           full_redraw_pending = true;
           dirty_rects.clear();
           redraw_reason = "scheduled-full";
@@ -211,6 +218,10 @@ int Application::Run() {
       const auto result = HandleEvent(event);
       if (result.handled) {
         if (result.redraw.full) {
+          // See the scheduled-wake path above: a full redraw can reshuffle cursor
+          // surfaces under a still pointer, and the EventResult literals that drive
+          // it (file/plugin reloads, window show/expose) skip the Request* bump.
+          workspace_shell_.InvalidateCursorKindFingerprint();
           full_redraw_pending = true;
           dirty_rects.clear();
         } else if (!full_redraw_pending) {
@@ -468,12 +479,29 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       };
     case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+    case SDL_EVENT_WINDOW_RESTORED:
+    case SDL_EVENT_WINDOW_MAXIMIZED:
       presentation_state_dirty_ = true;
       scene_texture_.NoteResizeEvent(SDL_GetTicksNS());
       UpdateRendererPresentation();
-      // A compositor-driven resize can leave the displayed cursor stale (e.g. the
-      // resize cursor lingering over a border); force the next update to re-apply.
-      workspace_shell_.ForceCursorReassert();
+      // A compositor-driven resize/restore/maximize can leave the displayed cursor
+      // stale (e.g. the resize cursor lingering over a border) and may suppress the
+      // motion events that keep the pointer position fresh; reseed from the live
+      // pointer and force the next update to re-apply at that position.
+      ReseedPointerAndForceCursorReassert();
+      return workspace::WorkspaceShell::EventResult{
+          .handled = true,
+          .redraw = workspace::WorkspaceShell::RenderInvalidation{
+              .full = true,
+              .rects = {},
+          },
+      };
+    case SDL_EVENT_WINDOW_MOVED:
+      // Interactive title-bar moves (SDL_HITTEST_DRAGGABLE) let the window manager
+      // paint its own move/grab cursor without telling SDL. On release the pointer
+      // can sit stationary over the title bar, so reseed the live position and force
+      // a reassert, scheduling a frame to consume it (geometry size is unchanged).
+      ReseedPointerAndForceCursorReassert();
       return workspace::WorkspaceShell::EventResult{
           .handled = true,
           .redraw = workspace::WorkspaceShell::RenderInvalidation{
@@ -692,6 +720,17 @@ bool Application::UpdateRendererPresentation(int* logical_width, int* logical_he
     *logical_height = presentation->logical_height;
   }
   return true;
+}
+
+void Application::ReseedPointerAndForceCursorReassert() {
+  if (renderer_ != nullptr) {
+    float mouse_x = 0.0f;
+    float mouse_y = 0.0f;
+    SDL_GetMouseState(&mouse_x, &mouse_y);
+    SDL_RenderCoordinatesFromWindow(renderer_, mouse_x, mouse_y, &mouse_x, &mouse_y);
+    workspace_shell_.SeedPointerPosition(mouse_x, mouse_y);
+  }
+  workspace_shell_.ForceCursorReassert();
 }
 
 void Application::ConsumeWindowActions() {
