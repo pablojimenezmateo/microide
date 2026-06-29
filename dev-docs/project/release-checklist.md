@@ -3,6 +3,14 @@
 Use this checklist when cutting a microide release tag (e.g. `v1.3.0`). Items assume Linux is the
 primary validated host unless release notes state otherwise.
 
+## One-command driver
+
+`tools/release.sh <version>` performs the whole procedure below. It is **local-only by default**
+(bump → build → test gate → regenerate man page + showcase media → package + checksum + GPG-sign,
+then stops), and `tools/release.sh <version> --publish` additionally commits, tags, pushes, and
+creates the GitHub release. The numbered steps below are the canonical reference the script
+implements; run them by hand if you need to deviate.
+
 ## Standard release procedure
 
 When a release is requested ("do a release", "cut a release", "release vX.Y.Z"), perform **all** of
@@ -14,7 +22,9 @@ checksum so users have a packaged install path.
 2. **Update `CHANGELOG.md`.** Add a new dated section for the version with grouped changes derived
    from `git log <previous-tag>..HEAD`.
 3. **Build.** `cmake -S . -B build && cmake --build build -j8`; confirm the new version is baked
-   into the binary.
+   into the binary. Then **regenerate generated docs + media**: `tools/gen-man.sh` (man page) and
+   `tools/capture-media.sh` (the showcase gallery + hero video under `docs/media/`). If the UI
+   changed this cycle the old media is stale — regeneration is mandatory, not optional.
 4. **Build the package.** From `build/`, run `cpack -G DEB` to produce `microide_X.Y.Z_amd64.deb`.
 5. **Generate the checksum.** `sha256sum microide_X.Y.Z_amd64.deb > microide_X.Y.Z_amd64.deb.sha256`.
 6. **GPG-sign the artifacts.** Sign the package and its checksum with the maintainer release key
@@ -52,8 +62,9 @@ checksum so users have a packaged install path.
 
 ## User-facing artifacts
 
-- [ ] Screenshot gallery or equivalent visual walkthrough (Git sidebar, compare, merge, commit)
-- [ ] Short demo or scripted walkthrough (asciinema, video, or step list in release notes)
+- [ ] Screenshot gallery regenerated (`tools/capture-media.sh --shots-only`) — editor, control, diff, merge, debugger; committed under `docs/media/`
+- [ ] Hero demo video regenerated (`tools/capture-media.sh --video-only`) — `docs/media/hero-demo.{mp4,webm}` + poster
+- [ ] **UI-change gate:** if anything touched the UI this cycle, the media above was regenerated (not reused). See `dev-docs/project/media-generation.md`
 - [ ] Known limitations section (copy/adapt from README **Known Limitations** + Git Workstation doc)
 - [ ] Tested workflows matrix (below)
 - [ ] Crash / data-loss reporting instructions (link `SECURITY.md`)

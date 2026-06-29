@@ -220,7 +220,13 @@
       color: var(--muted-2); font-family: var(--mono); font-size: 13px;
       background: repeating-linear-gradient(45deg, #11161d, #11161d 12px, #131a22 12px, #131a22 24px);
     }
+    .gallery { align-items: start; }
+    .shot img {
+      display: block; width: 100%; height: auto;
+      border-bottom: 1px solid var(--border); background: #0f131b;
+    }
     .shot figcaption { text-align: left; padding: 10px 14px; margin: 0; }
+    .shot figcaption b { color: var(--text); font-weight: 600; }
 
     /* ---- Tech stack ---- */
     .stack { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -685,12 +691,33 @@
         <p class="eyebrow">see it running</p>
         <h2>See it for yourself</h2>
         <p class="lead">
-          No screenshot gallery is committed yet — and that's deliberate. A single-window,
-          keyboard-first shell changes fast, and the workflow docs in the repository track the
-          current UI more faithfully than a static gallery would. The most honest look is the
-          running app: build it in two commands (see <a href="#start">Get started</a>) and open
-          your own project.
+          One single-window shell — editor, source control, debugger, and a scriptable control
+          channel. These are captured straight from the running app and regenerated on every
+          release, so they never drift from what you build.
         </p>
+
+        <div class="grid gallery" style="margin-top:28px;">
+          <figure class="shot">
+            <img src="media/shot-editor.png" alt="microide editor with C++ syntax highlighting, file tree, and inline git blame" loading="lazy" width="1440" height="900">
+            <figcaption><b>Editor</b> — syntax highlighting, file tree, inline git blame, integrated terminal.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="media/shot-git-diff.png" alt="Side-by-side diff of working tree against a branch with staged changes" loading="lazy" width="1440" height="900">
+            <figcaption><b>Diff</b> — side-by-side compare of the working tree against any ref, hunk by hunk.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="media/shot-git-merge.png" alt="Three-way merge view resolving a conflict" loading="lazy" width="1440" height="900">
+            <figcaption><b>Three-way merge</b> — incoming, result, and current panes with per-chunk resolution.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="media/shot-dap.png" alt="Debugger paused on a breakpoint with the variables pane open" loading="lazy" width="1440" height="900">
+            <figcaption><b>Debugger</b> — breakpoints, stepping, call stack, and live locals over DAP.</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="media/shot-control.png" alt="Editor driven by JSON control-channel commands shown in the terminal" loading="lazy" width="1440" height="900">
+            <figcaption><b>Control channel</b> — drive the same commands as the UI over JSON, by a script or an LLM.</figcaption>
+          </figure>
+        </div>
       </div>
     </section>
 

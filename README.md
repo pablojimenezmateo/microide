@@ -4,6 +4,12 @@ A native, low-footprint C++/SDL3 desktop IDE focused on built-in editor, diff, m
 search, and terminal workflows. Single-window, keyboard-first, and does not require a GPU (it uses
 one when available to speed up text, and runs fully on a software renderer otherwise).
 
+[![microide — native C++/SDL3 IDE](docs/media/hero-poster.png)](https://pablojimenezmateo.github.io/microide/)
+
+> Editor, file tree, syntax highlighting, git blame, debugger pane, and terminal — captured straight
+> from the running app. See the full screenshot gallery and hero demo video on the
+> [project site](https://pablojimenezmateo.github.io/microide/).
+
 For the authoritative in-scope / non-goal list see `openspec/specs/product-vision/spec.md`.
 
 > **Status: stable.** Tagged `v2.4.0` (see [CHANGELOG](CHANGELOG.md)) and actively developed.
@@ -139,8 +145,9 @@ Current validation flow is still intentionally narrow and practical:
   before installing — see [Verifying releases](#verifying-releases). You can also build from source
   or create a local Debian package from this repository. See [CHANGELOG](CHANGELOG.md) for what
   shipped.
-- No screenshot or demo gallery is committed yet. That is deliberate for now: workflow docs track
-  the current UI more honestly than a marketing gallery would.
+- A screenshot gallery and a hero demo video ship on the [project site](https://pablojimenezmateo.github.io/microide/).
+  They are generated straight from the running app (`tools/capture-media.sh`) and regenerated every
+  release, so they never drift from the current UI.
 
 ### Verifying releases
 
@@ -161,9 +168,12 @@ A "Good signature" line plus a matching checksum means the package is authentic 
 
 ## Current UI Preview
 
-No screenshot or demo gallery is committed. This is deliberate: the workflow docs under `dev-docs/`
-track the current UI more faithfully than a static gallery would, and the single-window, keyboard-first
-shell is best understood by building and running it (see [Build](#build)).
+See the editor, side-by-side diff, three-way merge, debugger, and control channel in the gallery and
+hero video on the [project site](https://pablojimenezmateo.github.io/microide/). Those assets are
+captured from the running app by `tools/capture-media.sh` and regenerated on every release (see
+[`dev-docs/project/media-generation.md`](dev-docs/project/media-generation.md)), so they stay in sync
+with the shipped UI. The most honest look is still the running app: build it in two commands (see
+[Build](#build)) and open your own project.
 
 ## What Works Today
 
