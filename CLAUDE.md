@@ -140,7 +140,7 @@ The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `
 ## Related Docs
 
 - `AGENTS.md`: repo policy, priorities, and iteration loop
-- `dev-docs/debugger/dap-integration.md`: debugger/DAP architecture, status, and phased roadmap (active phase; Phases 0–9 done, on `feat/dap`)
+- `dev-docs/debugger/dap-integration.md`: debugger/DAP architecture, status, and phased roadmap (shipped on `main` in v2.0.0; Phases 0–10 done)
 - `dev-docs/control/control-channel.md`: external control channel for headless/LLM-driven control. Headless entry point: `microide --control [--set <id> <value>]... [--control-spec <file>]` force-starts the channel and mirrors responses/events/applied lines to stdout as JSONL (live AF_UNIX socket + `--control-spec` cold start also supported)
 - `dev-docs/project/active-work.md`: current shipped baseline and active phases
 - `dev-docs/project/implementation-guide.md`: durable product and subsystem map

@@ -1,10 +1,10 @@
 # Debugger / DAP Integration
 
-Status: **feature-complete on `feat/dap`** (promoted from the durable non-goal list
-on 2026-06-17). Phases 0–10 are done; the locked goals below are all met. The
-remaining step is merging `feat/dap` → `main`. This document is the single
-self-sufficient source of truth for the debugger effort — a fresh agent on any
-machine should be able to read this file and continue without external context.
+Status: **shipped and merged to `main`** — released in **v2.0.0 (2026-06-20)** (promoted from
+the durable non-goal list on 2026-06-17). Phases 0–10 are done and all locked goals below are
+met; the `feat/dap` work merged via `ccdeebf4` and the debugger is a first-class host surface on
+`main`. This document is the single self-sufficient source of truth for the debugger effort — a
+fresh agent on any machine should be able to read this file and continue without external context.
 
 > **UI rework (2026-06-17, post-Phase 8):** the four *structured* debug surfaces
 > (Call Stack, Variables, Watch, Breakpoints) no longer live as bottom-panel tabs.
@@ -1302,12 +1302,10 @@ via `DrainCallbacks` (the structural guard behind the TSAN coverage above).
 
 ## Next steps
 
-Phases 0–10 are done; the debugger is **feature-complete** against the locked goals.
-The remaining step is to **merge `feat/dap` → `main`** (this doc's "do not merge
-until the effort is complete" gate is now reached). Before merging: run the
-sanitizer presets (ASAN/UBSAN/TSAN — TSAN needs `sudo sysctl vm.mmap_rnd_bits=28`)
-and the focused DAP suite; then fast-forward/merge and drop the per-phase "what
-shipped" sections into a single changelog entry if desired.
+Phases 0–10 are done; the debugger is **feature-complete** against the locked goals and
+**merged to `main`**, shipped in v2.0.0 (2026-06-20). Keep the sanitizer presets
+(ASAN/UBSAN/TSAN — TSAN needs `sudo sysctl vm.mmap_rnd_bits=28`) and the focused DAP suite
+green on any further change to the subsystem.
 
 Anything further (launch-config editor, function/data breakpoints, deep lazy REPL
 expansion) is out of scope — see "Beyond Phase 10" above; pick up only on request.
@@ -1417,5 +1415,6 @@ which is a larger, test-heavy change deferred to a dedicated follow-up — a
 half-correct version that moves a breakpoint to the wrong line is worse than the
 current stays-put behaviour.
 
-All debugger work lands on the canonical `feat/dap` branch; do not merge to
-`main` until the effort is complete.
+The debugger effort is complete and merged to `main` (v2.0.0). Further hardening or
+additional adapters should land via focused feature branches off `main`, keeping the
+sanitizer presets and the DAP suite green.

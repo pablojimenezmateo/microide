@@ -237,6 +237,9 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginWorkspaceInterop.cpp
   src/plugin/LuaRuntime.cpp
   src/plugin/PluginHost.cpp
+  src/plugin/PluginHostCallbacks.cpp
+  src/plugin/PluginHostSnapshot.cpp
+  src/plugin/PluginHostSaveParticipants.cpp
   src/project/DirectoryTree.cpp
   src/project/FileOperationService.cpp
   src/project/GitCompareService.cpp

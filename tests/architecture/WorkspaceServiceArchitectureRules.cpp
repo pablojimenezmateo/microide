@@ -36,7 +36,8 @@ RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& r
 
 RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path& repo_root) {
   RuleResult result;
-  result.label = "render translation units avoid std::to_string / std::format / fmt::format";
+  result.label =
+      "render translation units avoid std::to_string / std::format / fmt::format / string concat";
   result.hard_fail = true;
 
   std::vector<std::filesystem::path> render_files;
@@ -59,6 +60,11 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   const std::regex to_string_pattern(R"(\bstd::to_string\s*\()");
   const std::regex std_format_pattern(R"(\bstd::format\s*\()");
   const std::regex fmt_format_pattern(R"(\bfmt::format\s*\()");
+  // Throwaway string concatenation in the render path: `std::string(view) + ...`
+  // or `... + std::string(view)` builds a temporary buffer per frame. Numeric `+`
+  // is unaffected — these only match an std::string construction adjacent to `+`.
+  const std::regex concat_lhs_pattern(R"(std::string\s*\([^)]*\)\s*\+)");
+  const std::regex concat_rhs_pattern(R"(\+\s*std::string\s*\()");
   for (const auto& path : render_files) {
     if (!std::filesystem::exists(path)) {
       continue;
@@ -73,6 +79,14 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
     AppendCodeMaskRegexViolations(
         result, path, text, fmt_format_pattern,
         "render TU must not call fmt::format; compute strings in RenderViewModelBuilder");
+    AppendCodeMaskRegexViolations(
+        result, path, text, concat_lhs_pattern,
+        "render TU must not build concatenated strings in the hot path; measure across "
+        "segments or compute the string in RenderViewModelBuilder");
+    AppendCodeMaskRegexViolations(
+        result, path, text, concat_rhs_pattern,
+        "render TU must not build concatenated strings in the hot path; measure across "
+        "segments or compute the string in RenderViewModelBuilder");
   }
   return result;
 }

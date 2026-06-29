@@ -10,6 +10,10 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 > Release binaries are GPG-signed — verify them per [Verifying releases](#verifying-releases).
 > No third-party comparative benchmarks yet. Read [Known Limitations](#known-limitations) and
 > [Security & Trust Model](#security--trust-model) before using on a real project.
+>
+> **Verified, not just written.** 117 test files and 9 fuzz targets back the build, gated by
+> ASAN / UBSAN / TSAN sanitizer runs, committed startup/typing/scroll/diff/search performance
+> baselines, and architecture-invariant lints enforced on every test run.
 
 ## Start Here
 
@@ -81,6 +85,19 @@ for what is actually measured, and what is not.
 - OSC 52 clipboard copy, focus notifications, basic device/cursor query replies
 - Terminal text selection, copy, and paste shortcuts
 - Tab drag reordering; right-click for "Copy Last Command + Output"
+
+### Debugging
+- Built-in DAP debugger (validated against gdb 17.2): per-language launch configs, line /
+  function / conditional breakpoints and logpoints, gutter breakpoint menu
+- Continue, Step Over / In / Out, Pause, Restart; capability-gated reverse execution
+  (`reverseContinue` / `stepBack`)
+- Dedicated right-side debug pane: Call Stack, Variables / Scopes (lazy tree with inline edit),
+  Watch expressions, and Breakpoints — plus hover-to-inspect and exception breakpoints
+- Multi-session debugging with a session selector; Debug Console REPL, with program
+  stdout/stderr surfaced as an Output channel
+- Agent-drivable headless debugging through the control channel (set breakpoints, start/step,
+  query variables/threads from stdin/stdout)
+- Gated behind `debug.enabled` (default off); enable it before the `debug-*` commands act
 
 ### Plugins
 - Manual Lua 5.4 plugins from `~/.config/microide/plugins/`, run on a dedicated worker thread
@@ -167,6 +184,9 @@ Mature enough to use day-to-day on the maintainer's own work:
 
 Shipped but with caveats (see [Known Limitations](#known-limitations)):
 
+- debugger (DAP): breakpoints, stepping, call stack, variables, watch, hover, exception
+  breakpoints, multi-session, and a console REPL — validated end-to-end against gdb 17.2. It is
+  opt-in (`debug.enabled`, default off), and adapter coverage beyond gdb is still expanding
 - LSP transport: implemented and tested against fake servers; real-world server validation is
   ongoing
 - Tool downloader / SHA verification: implemented, not exercised against production tool catalogs
