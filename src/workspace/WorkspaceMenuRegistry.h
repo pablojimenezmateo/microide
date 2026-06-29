@@ -44,6 +44,8 @@ enum class TreeContextTargetKind {
   Background,
   // Debugger (Phase 6): right-click on the breakpoint gutter for a source line.
   BreakpointLine,
+  // Git sidebar: right-click on a changed-file entry row.
+  GitEntry,
 };
 
 struct MenuItemSpec {

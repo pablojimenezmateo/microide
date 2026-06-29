@@ -46,18 +46,8 @@ constexpr float kGitSidebarSummaryLineHeight = 17.0f;
 // values used in WorkspaceShellRenderSidebar.cpp / GitSidebarSummaryHeight.
 constexpr float kGitSidebarCommitButtonHeight = 22.0f;
 constexpr float kGitSidebarCommitButtonGap = 8.0f;
-constexpr float kGitSidebarEntryButtonGap = 4.0f;
-constexpr float kGitSidebarEntryButtonHoverPadding = 4.0f;
 constexpr float kGitSidebarHeaderMenuButtonSize = 16.0f;
 constexpr float kSidebarHeaderCompactButtonSize = 18.0f;
-
-SDL_FRect ExpandRect(const SDL_FRect& rect, float padding) {
-  if (rect.w <= 0.0f || rect.h <= 0.0f) {
-    return rect;
-  }
-  return MakeRect(rect.x - padding, rect.y - padding, rect.w + padding * 2.0f,
-                  rect.h + padding * 2.0f);
-}
 
 bool UseCompactTreeHeader(float sidebar_width,
                           float mode_min_width,
@@ -395,53 +385,8 @@ std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sideb
                                                                  : "Refresh";
   }
 
-  if (last_mouse_y_ < GitSidebarListTop(sidebar_rect)) {
-    return {};
-  }
-
-  const auto lines = BuildGitSidebarLines();
-  const auto list_layout = ComputeGitSidebarListLayout(sidebar_rect, lines.size());
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    const auto& line = lines[i];
-    if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0 ||
-        static_cast<std::size_t>(line.entry_index) >= context_.current_project_state.sidebar.git.entries.size()) {
-      continue;
-    }
-
-    const int visible_row = static_cast<int>(i) - list_layout.scroll_row;
-    if (visible_row < 0 || visible_row >= list_layout.visible_rows) {
-      continue;
-    }
-
-    const auto& entry = context_.current_project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
-    const SDL_FRect row_rect = ScrollableListRowRect(list_layout, visible_row);
-    const GitSidebarEntryActionLayout actions = ComputeGitSidebarEntryActionLayout(row_rect, entry);
-    if (actions.primary_rect.has_value() &&
-        Contains(ExpandRect(*actions.primary_rect, kGitSidebarEntryButtonHoverPadding),
-                 last_mouse_x_, last_mouse_y_)) {
-      const GitSidebarActionAvailability availability = GitSidebarActionAvailabilityForEntry(
-          entry, context_.current_project_state.sidebar.git.repo_available,
-          context_.current_project_state.sidebar.git.supports_mutations);
-      return availability.unstage ? "Unstage file" : "Stage file";
-    }
-    if (actions.discard_rect.has_value() &&
-        Contains(ExpandRect(*actions.discard_rect, kGitSidebarEntryButtonHoverPadding),
-                 last_mouse_x_, last_mouse_y_)) {
-      switch (entry.section) {
-        case GitSidebarEntry::Section::Staged:
-          return "Discard staged changes";
-        case GitSidebarEntry::Section::Conflicts:
-          return "Discard conflicted changes";
-        case GitSidebarEntry::Section::Untracked:
-          return "Discard untracked file";
-        case GitSidebarEntry::Section::Changed:
-          return "Discard unstaged changes";
-        case GitSidebarEntry::Section::Outgoing:
-          return "Discard is unavailable";
-      }
-      return "Discard changes";
-    }
-  }
+  // Per-entry actions live on the right-click context menu, so the only git
+  // sidebar tooltip is the header refresh button above.
   return {};
 }
 
@@ -504,47 +449,6 @@ bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_
     collapsed.erase(it);
   }
   return true;
-}
-
-WorkspaceShell::GitSidebarEntryActionLayout WorkspaceShell::ComputeGitSidebarEntryActionLayout(
-    const SDL_FRect& row_rect,
-    const GitSidebarEntry& entry) const {
-  GitSidebarEntryActionLayout layout;
-  layout.content_right_edge = row_rect.x + row_rect.w - 8.0f;
-  if (row_rect.w <= 0.0f || row_rect.h <= 0.0f) {
-    return layout;
-  }
-
-  const GitSidebarActionAvailability availability = GitSidebarActionAvailabilityForEntry(
-      entry, context_.current_project_state.sidebar.git.repo_available,
-      context_.current_project_state.sidebar.git.supports_mutations);
-  const auto& entries = context_.current_project_state.sidebar.git.entries;
-  const std::size_t selected_index = context_.current_project_state.sidebar.git.selected_index;
-  const bool selected_entry = selected_index < entries.size() && &entry == &entries[selected_index];
-  if (!selected_entry) {
-    return layout;
-  }
-  if (!availability.stage && !availability.unstage && !availability.discard) {
-    return layout;
-  }
-
-  const auto button_rect = [&](float right_edge, std::string_view label) {
-    const float width = std::max(22.0f, text_renderer_.MeasureWidth(label) + 12.0f);
-    return MakeRect(right_edge - width, row_rect.y + 1.0f, width, row_rect.h - 2.0f);
-  };
-
-  if (availability.stage || availability.unstage) {
-    const SDL_FRect primary_rect = button_rect(layout.content_right_edge,
-                                               availability.unstage ? "Unstage" : "Stage");
-    layout.primary_rect = primary_rect;
-    layout.content_right_edge = primary_rect.x - kGitSidebarEntryButtonGap;
-  }
-  if (availability.discard) {
-    const SDL_FRect discard_rect = button_rect(layout.content_right_edge, "Discard");
-    layout.discard_rect = discard_rect;
-    layout.content_right_edge = discard_rect.x - 6.0f;
-  }
-  return layout;
 }
 
 std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {

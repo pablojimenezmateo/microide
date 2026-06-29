@@ -10,7 +10,6 @@
   using GitSidebarEntry = workspace::GitSidebarEntry;
   using GitSidebarActionId = workspace::GitSidebarActionId;
   using GitSidebarLine = workspace::GitSidebarLine;
-  using GitSidebarEntryActionLayout = workspace::GitSidebarEntryActionLayout;
   using ProblemsSidebarEntry = workspace::ProblemsSidebarEntry;
   using TestsSidebarEntry = workspace::TestsSidebarEntry;
   using GitSidebarState = workspace::GitSidebarState;
@@ -1027,8 +1026,6 @@
                                                       std::size_t line_count) const;
   std::vector<GitSidebarLine> BuildGitSidebarLines() const;
   bool ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key);
-  GitSidebarEntryActionLayout ComputeGitSidebarEntryActionLayout(const SDL_FRect& row_rect,
-                                                                 const GitSidebarEntry& entry) const;
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
   const GitSidebarEntry* SelectedGitSidebarEntry() const;
   void RevealSelectedTreeSidebarLine();
@@ -1060,7 +1057,6 @@
   bool StageGitSidebarEntry(std::size_t entry_index);
   bool UnstageGitSidebarEntry(std::size_t entry_index);
   bool DiscardGitSidebarEntry(std::size_t entry_index);
-  void OpenDiscardGitSidebarEntryPrompt(std::size_t entry_index);
   bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
@@ -1589,8 +1585,6 @@
   // Hovered interactive-element rects used both by the cursor (pointer feedback) and by
   // the motion handler (hover-state redraw invalidation). Centralizing the geometry here
   // keeps render, cursor, and invalidation from each maintaining their own hit-test copy.
-  std::optional<SDL_FRect> HoveredGitSidebarActionButtonRect(const WorkspaceLayout& layout,
-                                                             float x, float y) const;
   std::optional<SDL_FRect> HoveredStatusBarSegmentRect(const WorkspaceLayout& layout, float x,
                                                        float y) const;
   // Screen region for the surface that currently owns keyboard focus (nullopt for the

@@ -84,60 +84,126 @@ void TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache() {
          "refreshing the git sidebar should preserve blame metadata for the active editor");
 }
 
-void TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips() {
+void TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
-  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
-  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  const std::filesystem::path alpha = root / "src" / "alpha.cpp";
+  const std::filesystem::path beta = root / "src" / "beta.cpp";
+  WriteFile(alpha, "int alpha() {\n  return 1;\n}\n");
+  WriteFile(beta, "int beta() {\n  return 2;\n}\n");
 
   InitializeGitRepo(root);
-  CommitAll(root, "Add git sidebar tooltip fixture", "git sidebar tooltip fixture");
-  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+  CommitAll(root, "context menu fixture", "context menu fixture");
+  WriteFile(alpha, "int alpha() {\n  return 10;\n}\n");
+  WriteFile(beta, "int beta() {\n  return 20;\n}\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 2),
+         "context menu fixture should expose two changed entries");
 
+  const SDL_FRect row_rect = WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, 1);
+  Expect(SendMouseDown(shell, row_rect.x + row_rect.w - 12.0f, row_rect.y + row_rect.h * 0.5f,
+                       SDL_BUTTON_RIGHT),
+         "right-clicking a git sidebar entry should be handled");
+
+  Expect(WorkspaceShellTestAccess::GitEntryContextMenuOpen(shell),
+         "right-clicking a git sidebar entry should open the entry context menu");
+  Expect(WorkspaceShellTestAccess::GitSidebarSelectedIndex(shell) == 1,
+         "right-clicking should select the clicked entry");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).empty(),
+         "right-clicking should not open a compare/editor tab on its own");
+
+  const auto labels = WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell);
+  const std::vector<std::string> expected = {"Open Changes", "Stage", "Discard…",
+                                             "Copy Relative Path", "Copy Absolute Path"};
+  Expect(labels == expected,
+         "the git entry context menu should expose the expected action labels");
+}
+
+void TestWorkspaceShellGitSidebarLeftClickDoesNotFireActions() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "left_click.cpp";
+  WriteFile(source, "int value() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "left-click fixture", "left-click fixture");
+  WriteFile(source, "int value() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 1),
-         "git sidebar tooltip fixture should expose a single modified entry");
-  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
-
-  const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
-  SendMouseMotion(
-      shell, top_action_rects[0].x + top_action_rects[0].w * 0.5f,
-      top_action_rects[0].y + top_action_rects[0].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell).empty(),
-         "hovering the full-width stage-all button should not show a tooltip");
+         "left-click fixture should expose one changed entry");
 
   const SDL_FRect row_rect = WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, 0);
-  const float stage_button_x = row_rect.x + row_rect.w - 12.0f;
-  const float row_center_y = row_rect.y + row_rect.h * 0.5f;
-  SendMouseMotion(shell, stage_button_x, row_center_y, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage file",
-         "hovering the compact stage button should expose the full action name");
+  // Click on the far right of the row, where the inline Stage/Discard buttons
+  // used to live: this must select + open the diff, never stage the entry.
+  Expect(SendMouseDown(shell, row_rect.x + row_rect.w - 8.0f, row_rect.y + row_rect.h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "left-clicking a git sidebar entry should be handled");
 
-  SendMouseMotion(shell, stage_button_x - 2.0f, row_center_y, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage file",
-         "stage button hover should tolerate a small hitbox miss");
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  Expect(entries.size() == 1 &&
+             entries[0].section == WorkspaceShell::GitSidebarEntry::Section::Changed &&
+             !entries[0].staged,
+         "left-clicking a git sidebar entry must not stage it");
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == entries[0].path.lexically_normal(),
+         "left-clicking a git sidebar entry should open its comparison");
+  Expect(!WorkspaceShellTestAccess::GitEntryContextMenuOpen(shell),
+         "left-clicking a git sidebar entry should not open the context menu");
+}
 
-  const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
-  SendMouseMotion(shell, action_rects[1].x + action_rects[1].w * 0.5f,
-                                              action_rects[1].y + action_rects[1].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) ==
-             "Discard unstaged changes",
-         "hovering the compact discard button should expose the full action name");
+void TestWorkspaceShellGitSidebarContextMenuActionsActOnSelectedEntry() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "menu_action.cpp";
+  WriteFile(source, "int value() {\n  return 1;\n}\n");
 
-  Expect(WorkspaceShellTestAccess::StageAllGitSidebarEntries(shell),
-         "staging the tooltip fixture should succeed");
+  InitializeGitRepo(root);
+  CommitAll(root, "menu action fixture", "menu action fixture");
+  WriteFile(source, "int value() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 1),
-         "git sidebar should re-populate after the stage-all refresh completes");
-  const auto staged_action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
-  SendMouseMotion(
-      shell, staged_action_rects[0].x + staged_action_rects[0].w * 0.5f,
-      staged_action_rects[0].y + staged_action_rects[0].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Unstage file",
-         "hovering the compact unstage button should expose the full action name");
+         "menu action fixture should expose one changed entry");
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
+
+  // Unstaged entry: the toggle item stages it and reports "Stage".
+  Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[1] == "Stage",
+         "an unstaged entry's toggle item should read Stage");
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::GitDiscardEntry),
+         "Discard should be enabled for a working-tree entry");
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
+             shell, WorkspaceShell::ActionId::GitStageToggleEntry),
+         "the stage toggle context-menu action should be handled");
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "git sidebar should settle after the stage refresh");
+  const auto& staged_entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  Expect(std::any_of(staged_entries.begin(), staged_entries.end(),
+                     [](const WorkspaceShell::GitSidebarEntry& entry) {
+                       return entry.section == WorkspaceShell::GitSidebarEntry::Section::Staged;
+                     }),
+         "the stage toggle action should move the entry into the staged section");
+
+  // Now staged: the toggle item flips to "Unstage".
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
+  Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[1] == "Unstage",
+         "a staged entry's toggle item should read Unstage");
+
+  // Discard opens the confirmation prompt rather than mutating immediately.
+  Expect(WorkspaceShellTestAccess::ExecuteContextMenuAction(
+             shell, WorkspaceShell::ActionId::GitDiscardEntry),
+         "the discard context-menu action should be handled");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "the discard context-menu action should open a confirmation prompt");
 }
 
 void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
@@ -213,10 +279,6 @@ void TestWorkspaceShellGitSidebarUntrackedEntryOpensEditor() {
 
   const SDL_FRect row_rect =
       WorkspaceShellTestAccess::GitSidebarEntryRowRect(shell, untracked_index);
-  const auto action_rects =
-      WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, untracked_index);
-  Expect(action_rects[0].w > 0.0f && action_rects[1].w > 0.0f,
-         "untracked rows should still expose stage and discard buttons");
 
   SDL_Event event{};
   event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
@@ -642,8 +704,12 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",
           TestWorkspaceShellGitSidebarRefreshPreservesActiveEditorBlameCache);
-  AddTest(tests, "WorkspaceShell/GitSidebarCompactButtonsExposeHoverTooltips",
-          TestWorkspaceShellGitSidebarCompactButtonsExposeHoverTooltips);
+  AddTest(tests, "WorkspaceShell/GitSidebarEntryRightClickOpensContextMenu",
+          TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu);
+  AddTest(tests, "WorkspaceShell/GitSidebarLeftClickDoesNotFireActions",
+          TestWorkspaceShellGitSidebarLeftClickDoesNotFireActions);
+  AddTest(tests, "WorkspaceShell/GitSidebarContextMenuActionsActOnSelectedEntry",
+          TestWorkspaceShellGitSidebarContextMenuActionsActOnSelectedEntry);
   AddTest(tests, "WorkspaceShell/OpeningGitSidebarEntryAlsoInvalidatesSidebarSelection",
           TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection);
   AddTest(tests, "WorkspaceShell/GitSidebarUntrackedEntryOpensEditor",

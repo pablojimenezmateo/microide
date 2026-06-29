@@ -653,10 +653,6 @@ bool WorkspaceShell::DiscardGitSidebarEntry(std::size_t entry_index) {
   return MakeSidebarService().DiscardGitEntry(entry_index);
 }
 
-void WorkspaceShell::OpenDiscardGitSidebarEntryPrompt(std::size_t entry_index) {
-  MakeSidebarService().OpenDiscardGitEntryPrompt(entry_index);
-}
-
 bool WorkspaceShell::DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index) {
   return MakeSidebarService().DispatchGitSidebarAction(action, entry_index);
 }

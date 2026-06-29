@@ -96,6 +96,20 @@
   static bool BreakpointContextMenuEnabledFlag(const WorkspaceShell& shell) {
     return shell.context_.menu_state.tree_context_menu.breakpoint_enabled;
   }
+  static bool GitEntryContextMenuOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.tree_context_menu.open &&
+           shell.context_.menu_state.tree_context_menu.target == TreeContextTargetKind::GitEntry;
+  }
+  static std::vector<std::string> GitEntryContextMenuLabels(const WorkspaceShell& shell) {
+    std::vector<std::string> labels;
+    for (const auto& item : WorkspaceTreeContextMenuItems(TreeContextTargetKind::GitEntry)) {
+      if (item.separator) {
+        continue;
+      }
+      labels.push_back(shell.MenuItemLabel(item));
+    }
+    return labels;
+  }
   static bool ExecuteBreakpointMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
     return ActionCoordinator(shell.MakeActionContext())
         .Execute(id, {}, WorkspaceShell::ActionSource::ContextMenu);
@@ -198,6 +212,9 @@
   static const std::vector<WorkspaceShell::GitSidebarEntry>& GitSidebarEntries(
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.entries;
+  }
+  static std::size_t GitSidebarSelectedIndex(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.git.selected_index;
   }
   static void SetPluginSidebarSelectedIndex(WorkspaceShell& shell, std::size_t index) {
     shell.context_.current_project_state.sidebar.plugin.selected_index = index;

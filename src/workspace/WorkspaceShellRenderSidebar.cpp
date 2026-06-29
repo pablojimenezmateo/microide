@@ -697,36 +697,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const float label_x = tree_x + kTreeChevronSlotWidth + 4.0f;
 
       const project::GitFileStatus row_status = row_vm != nullptr ? row_vm->status : entry.status;
-      const GitSidebarEntryActionLayout actions =
-          ComputeGitSidebarEntryActionLayout(row_rect, entry);
-      float right_edge = actions.content_right_edge;
-
-      const auto draw_button = [&](const SDL_FRect& button_rect,
-                                   std::string_view label,
-                                   ButtonTone tone,
-                                   bool enabled) {
-        DrawButtonCentered(
-            text_renderer_, renderer, theme_, button_rect, label, tone,
-            ButtonVisualState{
-                .enabled = enabled,
-                .hovered = enabled && last_mouse_position_valid_ &&
-                           Contains(button_rect, last_mouse_x_, last_mouse_y_),
-                .active = selected,
-            });
-      };
-
-      const GitSidebarActionAvailability row_actions =
-          row_vm != nullptr ? row_vm->actions
-                            : GitSidebarActionAvailabilityForEntry(
-                                  entry, project_state.sidebar.git.repo_available,
-                                  project_state.sidebar.git.supports_mutations);
-      if (actions.primary_rect.has_value()) {
-        draw_button(*actions.primary_rect, row_actions.unstage ? "Unstage" : "Stage",
-                    ButtonTone::Accent, row_actions.stage || row_actions.unstage);
-      }
-      if (actions.discard_rect.has_value()) {
-        draw_button(*actions.discard_rect, "Discard", ButtonTone::Destructive, row_actions.discard);
-      }
+      // Entry actions (stage/unstage/discard) live on the right-click context
+      // menu, so the row text simply runs to the row's right padding.
+      const float right_edge = row_rect.x + row_rect.w - 8.0f;
 
       // Leading status badge before the filename (see draw_leading_git_badge): a bright,
       // status-colored M/A/D/U/! glyph, matching the file tree.

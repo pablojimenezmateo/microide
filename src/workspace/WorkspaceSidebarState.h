@@ -108,12 +108,6 @@ struct GitSidebarLine {
   int entry_index = -1;
 };
 
-struct GitSidebarEntryActionLayout {
-  std::optional<SDL_FRect> primary_rect;
-  std::optional<SDL_FRect> discard_rect;
-  float content_right_edge = 0.0f;
-};
-
 struct ProblemsSidebarEntry {
   editor::PublishedDiagnostic diagnostic;
   std::string primary_label;

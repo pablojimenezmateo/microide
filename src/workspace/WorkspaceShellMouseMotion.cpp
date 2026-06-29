@@ -169,12 +169,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
             outgoing_base_rect.has_value() && Contains(*outgoing_base_rect, x, y)) {
           return outgoing_base_rect;
         }
-        // Per-row Stage / Discard buttons share this hover-invalidation path so their
-        // hover state repaints on enter/leave like the header buttons above.
-        if (const auto row_button = HoveredGitSidebarActionButtonRect(layout, x, y);
-            row_button.has_value()) {
-          return row_button;
-        }
         return std::nullopt;
       }
       case SidebarMode::Tree: {

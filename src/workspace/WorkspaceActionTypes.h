@@ -33,6 +33,11 @@ enum class ActionId {
   SignatureHelp,
   Goto,
   GitRefresh,
+  // Git sidebar entry context-menu actions (right-click on a changed-file row).
+  // Context-menu only; act on the selected git entry. Not registered as commands.
+  GitOpenChanges,
+  GitStageToggleEntry,
+  GitDiscardEntry,
   IndentWidth,
   InlineCompletion,
   Jump,

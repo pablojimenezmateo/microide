@@ -344,6 +344,14 @@ std::string WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
     return context_.menu_state.tree_context_menu.breakpoint_enabled ? "Disable Breakpoint"
                                                                      : "Enable Breakpoint";
   }
+  // The git entry menu's stage/unstage item flips its verb based on whether the
+  // selected entry is currently staged.
+  if (item.action == ActionId::GitStageToggleEntry) {
+    const auto& git = context_.current_project_state.sidebar.git;
+    const bool staged = git.selected_index < git.entries.size() &&
+                        git.entries[git.selected_index].staged;
+    return staged ? "Unstage" : "Stage";
+  }
   const ActionSpec* command_action =
       item.command_name.empty() ? nullptr : FindActionByCommand(item.command_name);
   const ActionId effective_action =

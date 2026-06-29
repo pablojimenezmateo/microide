@@ -52,9 +52,6 @@ class SidebarMouseCoordinator {
     std::function<std::vector<GitSidebarLine>()> build_git_sidebar_lines;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_git_sidebar_list_layout;
     std::function<bool(const std::string&)> toggle_git_sidebar_directory_collapsed;
-    std::function<GitSidebarEntryActionLayout(const SDL_FRect&, const GitSidebarEntry&)>
-        compute_git_sidebar_entry_action_layout;
-    std::function<void(std::size_t)> open_discard_git_entry_prompt;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_problems_sidebar_list_layout;

@@ -534,13 +534,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
         return CursorKind::Default;
       }
-      const auto& entry = context_.current_project_state.sidebar.git.entries[static_cast<std::size_t>(line.entry_index)];
-      const GitSidebarEntryActionLayout actions =
-          ComputeGitSidebarEntryActionLayout(row_rect, entry);
-      if ((actions.primary_rect.has_value() && Contains(*actions.primary_rect, x, y)) ||
-          (actions.discard_rect.has_value() && Contains(*actions.discard_rect, x, y))) {
-        return CursorKind::Pointer;
-      }
+      // Whole entry row is clickable (select + open diff; right-click for the
+      // action menu), so any hit over the row shows the pointer cursor.
       return CursorKind::Pointer;
     }
     if (sidebar_mode == SidebarMode::Problems) {
@@ -1199,40 +1194,6 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredStatusBarSegmentRect(
       return row;
     }
     right_x -= kStatusGap;
-  }
-  return std::nullopt;
-}
-
-std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarActionButtonRect(
-    const WorkspaceLayout& layout, float x, float y) const {
-  if (!context_.current_project_state.sidebar.visible ||
-      ActiveSidebarMode() != SidebarMode::Git || !Contains(layout.sidebar, x, y)) {
-    return std::nullopt;
-  }
-  const auto lines = BuildGitSidebarLines();
-  const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-  const auto line_index = ScrollableListIndexAtY(list_layout, y);
-  if (!line_index.has_value() || *line_index < 0 ||
-      *line_index >= static_cast<int>(lines.size())) {
-    return std::nullopt;
-  }
-  const SDL_FRect row_rect =
-      ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-  if (!Contains(row_rect, x, y)) {
-    return std::nullopt;
-  }
-  const auto& line = lines[static_cast<std::size_t>(*line_index)];
-  if (line.kind != GitSidebarLine::Kind::Entry || line.entry_index < 0) {
-    return std::nullopt;
-  }
-  const auto& entry = context_.current_project_state.sidebar.git
-                          .entries[static_cast<std::size_t>(line.entry_index)];
-  const GitSidebarEntryActionLayout actions = ComputeGitSidebarEntryActionLayout(row_rect, entry);
-  if (actions.primary_rect.has_value() && Contains(*actions.primary_rect, x, y)) {
-    return *actions.primary_rect;
-  }
-  if (actions.discard_rect.has_value() && Contains(*actions.discard_rect, x, y)) {
-    return *actions.discard_rect;
   }
   return std::nullopt;
 }

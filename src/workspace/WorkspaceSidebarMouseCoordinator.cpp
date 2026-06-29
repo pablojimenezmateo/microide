@@ -116,38 +116,44 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
 bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
                                                   const WorkspaceLayout& layout,
                                                   float local_y) {
-  if (event.button.button != SDL_BUTTON_LEFT) {
+  const bool is_left = event.button.button == SDL_BUTTON_LEFT;
+  const bool is_right = event.button.button == SDL_BUTTON_RIGHT;
+  if (!is_left && !is_right) {
     return true;
   }
-  if (operations_.can_stage_all_git_sidebar_entries() &&
-      Contains(operations_.git_sidebar_stage_all_button_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    return operations_.stage_all_git_sidebar_entries();
-  }
-  if (operations_.can_discard_all_git_sidebar_entries() &&
-      Contains(operations_.git_sidebar_discard_all_button_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    operations_.open_discard_all_git_sidebar_prompt();
-    return true;
-  }
-  if (Contains(operations_.git_sidebar_refresh_button_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
-  }
-  if (operations_.can_open_git_commit_button() &&
-      Contains(operations_.git_sidebar_commit_button_rect(layout.sidebar), event.button.x,
-               event.button.y)) {
-    return operations_.open_git_commit_workflow();
-  }
-  if (auto& workflow = state_.sidebar.git.commit_workflow;
-      workflow.open && workflow.commit_button_rect.w > 0.0f &&
-      Contains(workflow.commit_button_rect, event.button.x, event.button.y)) {
-    return operations_.confirm_commit_workflow();
-  }
-  if (const auto button_rect = operations_.git_sidebar_outgoing_base_button_rect(layout.sidebar);
-      button_rect.has_value() && Contains(*button_rect, event.button.x, event.button.y)) {
-    operations_.open_anchored_menu(MenuId::GitOutgoingBase, *button_rect);
-    return true;
+  // Header chrome (stage-all / discard-all / refresh / commit / outgoing base)
+  // responds to left-click only.
+  if (is_left) {
+    if (operations_.can_stage_all_git_sidebar_entries() &&
+        Contains(operations_.git_sidebar_stage_all_button_rect(layout.sidebar), event.button.x,
+                 event.button.y)) {
+      return operations_.stage_all_git_sidebar_entries();
+    }
+    if (operations_.can_discard_all_git_sidebar_entries() &&
+        Contains(operations_.git_sidebar_discard_all_button_rect(layout.sidebar), event.button.x,
+                 event.button.y)) {
+      operations_.open_discard_all_git_sidebar_prompt();
+      return true;
+    }
+    if (Contains(operations_.git_sidebar_refresh_button_rect(layout.sidebar), event.button.x,
+                 event.button.y)) {
+      return operations_.execute_action(ActionId::GitRefresh, {}, ActionSource::Shortcut);
+    }
+    if (operations_.can_open_git_commit_button() &&
+        Contains(operations_.git_sidebar_commit_button_rect(layout.sidebar), event.button.x,
+                 event.button.y)) {
+      return operations_.open_git_commit_workflow();
+    }
+    if (auto& workflow = state_.sidebar.git.commit_workflow;
+        workflow.open && workflow.commit_button_rect.w > 0.0f &&
+        Contains(workflow.commit_button_rect, event.button.x, event.button.y)) {
+      return operations_.confirm_commit_workflow();
+    }
+    if (const auto button_rect = operations_.git_sidebar_outgoing_base_button_rect(layout.sidebar);
+        button_rect.has_value() && Contains(*button_rect, event.button.x, event.button.y)) {
+      operations_.open_anchored_menu(MenuId::GitOutgoingBase, *button_rect);
+      return true;
+    }
   }
   if (event.button.y < operations_.git_sidebar_list_top(layout.sidebar) || local_y < 0.0f) {
     return true;
@@ -162,6 +168,9 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
 
   const auto& line = lines[static_cast<std::size_t>(*line_index)];
   if (line.kind == GitSidebarLine::Kind::Directory) {
+    if (!is_left) {
+      return true;  // Right-click on a directory header is a no-op.
+    }
     return operations_.toggle_git_sidebar_directory_collapsed != nullptr &&
            operations_.toggle_git_sidebar_directory_collapsed(line.tree_node_key);
   }
@@ -169,20 +178,16 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     return true;
   }
 
+  // Both buttons select the entry. Left-click opens its diff (DefaultView);
+  // right-click opens the entry context menu (Stage/Unstage, Discard, …). The
+  // menu acts on the selected entry, so selecting first keeps them in sync.
   state_.sidebar.git.selected_index = static_cast<std::size_t>(line.entry_index);
-  const auto& entry = state_.sidebar.git.entries[state_.sidebar.git.selected_index];
-  const SDL_FRect row_rect = ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-  const GitSidebarEntryActionLayout actions =
-      operations_.compute_git_sidebar_entry_action_layout(row_rect, entry);
-  if (actions.primary_rect.has_value() &&
-      Contains(*actions.primary_rect, event.button.x, event.button.y)) {
-    const GitSidebarActionId action =
-        entry.staged ? GitSidebarActionId::Unstage : GitSidebarActionId::Stage;
-    return operations_.dispatch_git_sidebar_action(action, state_.sidebar.git.selected_index);
-  }
-  if (actions.discard_rect.has_value() &&
-      Contains(*actions.discard_rect, event.button.x, event.button.y)) {
-    operations_.open_discard_git_entry_prompt(state_.sidebar.git.selected_index);
+  if (is_right) {
+    operations_.open_tree_context_menu(
+        TreeContextTargetKind::GitEntry,
+        state_.sidebar.git.entries[state_.sidebar.git.selected_index].path,
+        MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
+                 1.0f));
     return true;
   }
   return operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,

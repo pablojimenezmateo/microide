@@ -962,11 +962,11 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
-  const auto action_rects = WorkspaceShellTestAccess::GitSidebarEntryActionRects(shell, 0);
+  const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
   (void)SendMouseMotion(
-      shell, action_rects[0].x + action_rects[0].w * 0.5f,
-      action_rects[0].y + action_rects[0].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Stage file",
+      shell, top_action_rects[2].x + top_action_rects[2].w * 0.5f,
+      top_action_rects[2].y + top_action_rects[2].h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Refresh",
          "git tooltip fixture should expose the compact action tooltip");
 
   const auto tooltip_rect = WorkspaceShellTestAccess::HoveredGitSidebarTooltipRect(shell);

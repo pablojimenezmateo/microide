@@ -315,6 +315,17 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuSeparator(),
       MenuItem(ActionId::DebugBreakpointRemove, "Remove Breakpoint"),
   });
+  // Git sidebar entry context menu. The Stage/Unstage label flips in
+  // WorkspaceShell::MenuItemLabel based on the selected entry's staged flag.
+  static const auto kGitEntryItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::GitOpenChanges, "Open Changes"),
+      MenuSeparator(),
+      MenuItem(ActionId::GitStageToggleEntry, "Stage"),
+      MenuItem(ActionId::GitDiscardEntry, "Discard…"),
+      MenuSeparator(),
+      MenuItem(ActionId::CopyRelativePath),
+      MenuItem(ActionId::CopyAbsolutePath),
+  });
 
   switch (target) {
     case TreeContextTargetKind::File:
@@ -327,6 +338,8 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       return kBackgroundItems;
     case TreeContextTargetKind::BreakpointLine:
       return kBreakpointItems;
+    case TreeContextTargetKind::GitEntry:
+      return kGitEntryItems;
     case TreeContextTargetKind::None:
     default:
       return {};

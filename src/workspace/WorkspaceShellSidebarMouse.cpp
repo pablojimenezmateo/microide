@@ -77,12 +77,6 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
               [this](const std::string& tree_node_key) {
                 return ToggleGitSidebarDirectoryCollapsed(tree_node_key);
               },
-          .compute_git_sidebar_entry_action_layout =
-              [this](const SDL_FRect& rect, const GitSidebarEntry& entry) {
-                return ComputeGitSidebarEntryActionLayout(rect, entry);
-              },
-          .open_discard_git_entry_prompt =
-              [this](std::size_t index) { OpenDiscardGitSidebarEntryPrompt(index); },
           .dispatch_git_sidebar_action =
               [this](GitSidebarActionId action, std::size_t index) {
                 return DispatchGitSidebarAction(action, index);

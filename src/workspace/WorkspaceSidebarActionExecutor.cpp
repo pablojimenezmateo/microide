@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceActionRequests.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/WorkspaceSidebarRegistry.h"
@@ -79,6 +80,24 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       context_.RefreshProjectFiles();
       context_.ReloadCleanOpenBuffersFromDisk();
       return DispatchResult::Handled;
+    case ActionId::GitOpenChanges:
+    case ActionId::GitStageToggleEntry:
+    case ActionId::GitDiscardEntry: {
+      // Git sidebar entry context-menu actions; they act on the selected entry.
+      if (source != ActionSource::ContextMenu) {
+        return DispatchResult::Unhandled;
+      }
+      const bool handled =
+          id == ActionId::GitStageToggleEntry
+              ? context_.ToggleStageSelectedGitEntry()
+              : context_.DispatchSelectedGitSidebarAction(
+                    id == ActionId::GitOpenChanges ? GitSidebarActionId::DefaultView
+                                                   : GitSidebarActionId::Discard);
+      if (!handled) {
+        return reject("Git action is unavailable for this entry");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::CreateFile:
     case ActionId::CreateDirectory: {
       if (!context_.HasProjectRoot()) {

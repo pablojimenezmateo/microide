@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/SettingFlags.h"
 
 namespace microide::workspace {
@@ -129,6 +130,25 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Breakpoint-gutter context-menu items; the menu only opens when the
       // debugger is enabled, and editing works with or without a live session.
       return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::GitOpenChanges:
+    case ActionId::GitStageToggleEntry:
+    case ActionId::GitDiscardEntry: {
+      // Git sidebar entry context-menu items; gate on the selected entry's
+      // action availability (e.g. Discard is disabled for the Outgoing section).
+      const auto& git = context_.current_project_state.sidebar.git;
+      if (git.selected_index >= git.entries.size()) {
+        return false;
+      }
+      const GitSidebarActionAvailability availability = GitSidebarActionAvailabilityForEntry(
+          git.entries[git.selected_index], git.repo_available, git.supports_mutations);
+      if (id == ActionId::GitOpenChanges) {
+        return availability.default_view;
+      }
+      if (id == ActionId::GitStageToggleEntry) {
+        return availability.stage || availability.unstage;
+      }
+      return availability.discard;
+    }
     case ActionId::BreakpointSet:
     case ActionId::BreakpointRemove:
     case ActionId::BreakpointEnable:

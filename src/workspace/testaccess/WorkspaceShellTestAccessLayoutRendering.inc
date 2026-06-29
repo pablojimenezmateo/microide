@@ -138,27 +138,6 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.GitSidebarOutgoingBaseButtonRect(layout.sidebar);
   }
-  static std::array<SDL_FRect, 2> GitSidebarEntryActionRects(WorkspaceShell& shell,
-                                                             std::size_t entry_index) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto lines = shell.BuildGitSidebarLines();
-    auto list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-    for (std::size_t i = 0; i < lines.size(); ++i) {
-      if (lines[i].entry_index < 0 || static_cast<std::size_t>(lines[i].entry_index) != entry_index) {
-        continue;
-      }
-      shell.context_.current_project_state.sidebar.scroll_row =
-          RevealScrollableListIndex(list_layout, static_cast<int>(i));
-      list_layout = shell.ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-      const int visible_row = static_cast<int>(i) - list_layout.scroll_row;
-      const SDL_FRect row_rect = ScrollableListRowRect(list_layout, visible_row);
-      const auto& entry = shell.context_.current_project_state.sidebar.git.entries[entry_index];
-      const auto actions = shell.ComputeGitSidebarEntryActionLayout(row_rect, entry);
-      return {actions.primary_rect.value_or(SDL_FRect{}),
-              actions.discard_rect.value_or(SDL_FRect{})};
-    }
-    return {};
-  }
   static SDL_FRect GitSidebarEntryRowRect(WorkspaceShell& shell, std::size_t entry_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto lines = shell.BuildGitSidebarLines();

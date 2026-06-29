@@ -19,6 +19,10 @@
 
 namespace microide::workspace {
 
+// Defined in GitSidebarCommandCenter.h; only the type is needed here (function
+// signatures + a parameter), so forward-declare to avoid the heavy include.
+enum class GitSidebarActionId;
+
 enum class ProjectOpenPickerResult {
   Launched,
   AlreadyOpen,
@@ -207,6 +211,9 @@ class WorkspaceActionContext {
     std::function<void(ActionId)> edit_breakpoint_modifier_from_menu;
     std::function<void(ActionId)> breakpoint_quick_action_from_menu;
     std::function<void()> remove_breakpoint_from_menu;
+    // Git sidebar entry context-menu dispatch: forwards to the shell's
+    // DispatchGitSidebarAction for the given entry index.
+    std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     // Right-side debug pane: toggle visibility, or show a specific surface.
     std::function<void()> toggle_debug_pane;
     std::function<void(DebugPaneMode)> show_debug_pane_mode;
@@ -410,6 +417,11 @@ class WorkspaceActionContext {
   void EditBreakpointModifierFromMenu(ActionId id);
   void BreakpointQuickActionFromMenu(ActionId id);
   void RemoveBreakpointFromMenu();
+  // Git sidebar entry context-menu handlers. Act on the selected git entry;
+  // return false when there is no valid selection. The toggle picks Stage vs
+  // Unstage from the selected entry's staged flag.
+  bool DispatchSelectedGitSidebarAction(GitSidebarActionId action);
+  bool ToggleStageSelectedGitEntry();
   // Headless breakpoint control: the project breakpoint store, a resend hook,
   // and named-launch start. Used by the breakpoint-* / debug-launch commands.
   editor::BreakpointStore& MutableBreakpointStore();

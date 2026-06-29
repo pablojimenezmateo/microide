@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceActionServices.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
@@ -210,6 +211,24 @@ void WorkspaceActionContext::RemoveBreakpointFromMenu() {
   if (operations_.remove_breakpoint_from_menu) {
     operations_.remove_breakpoint_from_menu();
   }
+}
+
+bool WorkspaceActionContext::DispatchSelectedGitSidebarAction(GitSidebarActionId action) {
+  const auto& git = state_.sidebar.git;
+  if (git.selected_index >= git.entries.size() || !operations_.dispatch_git_sidebar_action) {
+    return false;
+  }
+  return operations_.dispatch_git_sidebar_action(action, git.selected_index);
+}
+
+bool WorkspaceActionContext::ToggleStageSelectedGitEntry() {
+  const auto& git = state_.sidebar.git;
+  if (git.selected_index >= git.entries.size()) {
+    return false;
+  }
+  return DispatchSelectedGitSidebarAction(git.entries[git.selected_index].staged
+                                              ? GitSidebarActionId::Unstage
+                                              : GitSidebarActionId::Stage);
 }
 
 editor::BreakpointStore& WorkspaceActionContext::MutableBreakpointStore() {
@@ -590,6 +609,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .breakpoint_quick_action_from_menu =
               [this](ActionId id) { BreakpointQuickActionFromMenu(id); },
           .remove_breakpoint_from_menu = [this]() { RemoveBreakpointFromMenu(); },
+          .dispatch_git_sidebar_action =
+              [this](GitSidebarActionId action, std::size_t index) {
+                return DispatchGitSidebarAction(action, index);
+              },
           .toggle_debug_pane = [this]() { ToggleDebugPane(); },
           .show_debug_pane_mode = [this](DebugPaneMode mode) { ShowDebugPaneMode(mode); },
           .show_debug_output = [this]() { ShowDebugOutput(); },
