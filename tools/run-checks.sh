@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # run-checks.sh — build and run microide tests / sanitizers, persisting all
-# output to a deterministic file under /tmp so it can be read back later
-# WITHOUT rebuilding and rerunning the whole suite.
+# output to a deterministic file under /tmp (override with MICROIDE_LOG_DIR) so
+# it can be read back later WITHOUT rebuilding and rerunning the whole suite.
 #
 # Usage:
 #   tools/run-checks.sh tests   # plain Debug build + ctest     -> /tmp/microide-tests.log
@@ -25,6 +25,12 @@ cd "$REPO_ROOT"
 
 JOBS="${MICROIDE_BUILD_JOBS:-8}"
 
+# Where build/test/sanitizer logs land. Defaults to /tmp (the documented
+# location agents read back from); override with MICROIDE_LOG_DIR when /tmp is a
+# small tmpfs or logs must survive a reboot.
+LOG_DIR="${MICROIDE_LOG_DIR:-/tmp}"
+mkdir -p "$LOG_DIR"
+
 # Run a command, tee combined stdout+stderr to $1, and return the command's
 # real exit status (not tee's).
 run_logged() {
@@ -41,7 +47,7 @@ run_logged() {
 }
 
 check_tests() {
-  local log="/tmp/microide-tests.log"
+  local log="${LOG_DIR}/microide-tests.log"
   run_logged "$log" bash -c '
     set -e
     cmake -S . -B build
@@ -58,14 +64,14 @@ check_sanitizer() {
   local san="$1"
   local preset="microide-${san}"
   local build_dir="build/${preset}"
-  local log="/tmp/microide-${san}.log"
+  local log="${LOG_DIR}/microide-${san}.log"
 
-  # Route the sanitizer runtime's own diagnostics into /tmp as well. The tee'd
+  # Route the sanitizer runtime's own diagnostics into LOG_DIR as well. The tee'd
   # log is the primary artifact; log_path is belt-and-suspenders and appends a
   # ".<pid>" suffix per the sanitizer runtime.
-  export ASAN_OPTIONS="halt_on_error=1:log_path=/tmp/microide-asan-rt"
-  export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:log_path=/tmp/microide-ubsan-rt"
-  export TSAN_OPTIONS="halt_on_error=1:suppressions=${REPO_ROOT}/tests/tsan.supp:log_path=/tmp/microide-tsan-rt"
+  export ASAN_OPTIONS="halt_on_error=1:log_path=${LOG_DIR}/microide-asan-rt"
+  export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:log_path=${LOG_DIR}/microide-ubsan-rt"
+  export TSAN_OPTIONS="halt_on_error=1:suppressions=${REPO_ROOT}/tests/tsan.supp:log_path=${LOG_DIR}/microide-tsan-rt"
 
   if [[ "$san" == "tsan" ]]; then
     echo "run-checks: TSAN requires 'sudo sysctl vm.mmap_rnd_bits=28' before running." >&2
@@ -85,7 +91,7 @@ check_sanitizer() {
   # never sees it. Fold every per-pid report into the main log so a single file
   # has the full failure, then clean the scratch files up.
   shopt -s nullglob
-  local rt_files=(/tmp/microide-"${san}"-rt.*)
+  local rt_files=("${LOG_DIR}"/microide-"${san}"-rt.*)
   if (( ${#rt_files[@]} )); then
     {
       echo

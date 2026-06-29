@@ -303,21 +303,15 @@ def build_side(where: Path, label: str, log_path: Path) -> Path:
 # Fixtures + scenarios
 # ---------------------------------------------------------------------------
 
-FIXTURES_TO_MIRROR = [
-    "tests/perf/fixtures/file_finder_large",
-    "tests/perf/fixtures/file_finder_large.sha256",
-    "tests/perf/fixtures/git_status_project",
-    "tests/perf/fixtures/git_large_status_project",
-    "tests/perf/fixtures/git_many_untracked_project",
-    "tests/perf/fixtures/git_1000_changed_project",
-    "tests/perf/fixtures/git_large_diff_project",
-    "tests/perf/fixtures/git_large_staged_project",
-    "tests/perf/fixtures/git_many_conflicts_project",
-]
+FIXTURE_ROOT_REL = "tests/perf/fixtures"
+# Entries under the fixture root that are not fixtures and must never be mirrored.
+FIXTURE_MIRROR_SKIP = {".gitignore"}
 
 # Scenarios where additional iterations add no signal (long deterministic
 # sleeps whose value is a single binary wake-budget assertion). Capped here so
-# `perf-compare.py` doesn't multiply minutes of idle time by ITERATIONS.
+# `perf-compare.py` doesn't multiply minutes of idle time by ITERATIONS. Any new
+# deterministic-sleep scenario must be registered here or it will run the full
+# ITERATIONS count and add minutes of idle wall-time per comparison.
 SLOW_SCENARIO_ITERS: dict[str, int] = {
     "idle_soak_30s": 1,
     "long_soak_8h": 1,
@@ -325,18 +319,27 @@ SLOW_SCENARIO_ITERS: dict[str, int] = {
 
 
 def mirror_fixtures(src_root: Path, dst_root: Path, label: str) -> None:
-    """Mirror gitignored perf fixtures from src_root into dst_root via symlink.
+    """Mirror perf fixtures from src_root into dst_root via symlink.
 
-    Without this, target SHAs that use `EnsureFixtureOrSkip` silently return
-    without doing the scenario's real work — producing ~0 ms / ~0 alloc metrics
-    that look like absurd regressions vs the current side."""
-    (dst_root / "tests/perf/fixtures").mkdir(parents=True, exist_ok=True)
-    for rel in FIXTURES_TO_MIRROR:
-        src = src_root / rel
-        dst = dst_root / rel
-        if src.exists() and not dst.exists():
-            os.symlink(src.resolve(), dst)
-            log(label, dim(f"mirrored fixture: {rel}"))
+    The fixture set is discovered dynamically from the current side's fixture
+    tree rather than a hand-maintained list, so it can never drift out of sync
+    with the scenarios that consume it. Generated (gitignored) trees are absent
+    on a fresh target checkout and would otherwise make `EnsureFixtureOrSkip`
+    scenarios silently return ~0 ms / ~0 alloc metrics that look like absurd
+    regressions vs the current side. Committed fixtures already arrive with the
+    target checkout, so the `not dst.exists()` guard makes mirroring them a
+    no-op and never masks a legitimate per-commit fixture difference."""
+    src_fixtures = src_root / FIXTURE_ROOT_REL
+    (dst_root / FIXTURE_ROOT_REL).mkdir(parents=True, exist_ok=True)
+    if not src_fixtures.is_dir():
+        return
+    for entry in sorted(src_fixtures.iterdir()):
+        if entry.name in FIXTURE_MIRROR_SKIP:
+            continue
+        dst = dst_root / FIXTURE_ROOT_REL / entry.name
+        if entry.exists() and not dst.exists():
+            os.symlink(entry.resolve(), dst)
+            log(label, dim(f"mirrored fixture: {FIXTURE_ROOT_REL}/{entry.name}"))
 
 
 def discover_scenarios(root: Path) -> list[str]:

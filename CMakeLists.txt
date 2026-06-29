@@ -509,6 +509,32 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceShell.cpp
 )
 
+# Precompiled-header set shared by the heavyweight C++ targets (microide,
+# microide_tests, microide_perf). Deliberately limited to stable standard-library
+# and SDL headers that are pulled in by hundreds of translation units but never
+# edited during normal development, so the PCH stays valid across iteration and
+# accelerates both clean and incremental builds. Project headers are intentionally
+# excluded: adding them would invalidate the PCH on every edit and erase the
+# incremental-build win.
+set(MICROIDE_PCH_HEADERS
+  <algorithm>
+  <array>
+  <cstddef>
+  <cstdint>
+  <filesystem>
+  <functional>
+  <memory>
+  <optional>
+  <string>
+  <string_view>
+  <unordered_map>
+  <utility>
+  <vector>
+)
+if(NOT MICROIDE_SDL3_TARGET STREQUAL "")
+  list(APPEND MICROIDE_PCH_HEADERS <SDL3/SDL.h>)
+endif()
+
 add_executable(microide
   src/app/main.cpp
   src/app/AppStartupOptions.cpp
@@ -537,6 +563,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide PRIVATE src third_party/stb)
+target_precompile_headers(microide PRIVATE ${MICROIDE_PCH_HEADERS})
 target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide PRIVATE ${MICROIDE_LUA_TARGET})
@@ -760,6 +787,7 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
 endif()
 
 target_include_directories(microide_tests PRIVATE src tests third_party/stb)
+target_precompile_headers(microide_tests PRIVATE ${MICROIDE_PCH_HEADERS})
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
@@ -918,6 +946,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   endif()
 
   target_include_directories(microide_perf PRIVATE src tests third_party/stb)
+  target_precompile_headers(microide_perf PRIVATE ${MICROIDE_PCH_HEADERS})
   target_link_libraries(microide_perf PRIVATE
     ${MICROIDE_SDL3_TARGET}
     ${MICROIDE_PCRE2_TARGET}

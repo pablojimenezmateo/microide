@@ -35,6 +35,13 @@ When guidance conflicts, use this order:
 5. Focused subsystem docs in `dev-docs/`
 6. The handbook under `guidelines/`
 
+The list above orders *durable contracts* (specs over docs). It is not a recency
+order: `dev-docs/project/active-work.md` is the single source of truth for the
+**current shipped baseline and active priority stack**, so for "what is true /
+what to do right now" decisions it supersedes the forward-looking material in
+`openspec/specs/` and the roadmap. Consult active-work.md first when a spec or
+roadmap entry describes intended rather than shipped state.
+
 ## Agent Best Practices
 
 - Start by narrowing the problem with fast repo inspection. Prefer `rg`, `rg --files`, `sed -n`, `git show`, and targeted reads over broad dumps.

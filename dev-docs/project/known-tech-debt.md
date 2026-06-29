@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed on 2026-06-17.
+Reviewed on 2026-06-29.
 
 This file is the queue for tech debt that is **open, actionable, and still present in the tree**.
 It is deliberately short. Closed debt does not live here — it is archived (see below).
@@ -55,6 +55,23 @@ the gate will reject them again.
   in the same shape without first proving line access, mutation, revision updates, and cache
   invalidation are allocation-free and performance-neutral in the editor benchmarks. Detail:
   `guidelines/tech-debt/archive/2026-05-20-textviewport-and-shell-decomposition.md`.
+- **`UNITY_BUILD` on `microide_tests`** (build-speed). Rejected 2026-06-29: 116 of 121 test TUs
+  define helpers in anonymous namespaces, with confirmed same-name collisions across files
+  (`MakeService`, `MakeViewport`, `MakeFixtureRoot`, …). CMake's unity batching concatenates files
+  into one TU without isolating their unnamed namespaces, so those become colliding
+  `(anonymous namespace)::` symbols → redefinition errors. Making it compile would mean rewriting
+  ~116 files (per-file `UNITY_BUILD_UNIQUE_ID` namespace wrapping) for a speculative win the PCH pass
+  below already captured the safe part of. Do not retry without first solving the anonymous-namespace
+  collision mechanically. The shipped win instead was **precompiled headers** (stable std + SDL set,
+  shared by `microide`/`microide_tests`/`microide_perf`): clean `microide_tests` build 141.3 s → 120.0 s
+  (~15%), suite still green, runtime byte-for-byte unchanged.
+- **Splitting `microide_tests` into multiple filtered `add_test` invocations for `ctest -j`**
+  (test-run speed). Rejected 2026-06-29: partitioning ~121 files' worth of tests by name-substring
+  filters is a silent-coverage hazard — a test matching no subset is dropped from the run with no
+  signal, trading a correctness guarantee for ~2× wall-clock on an already-acceptable 47 s suite. The
+  in-binary substring filter (`TestRunnerCli`) already covers focused local iteration. Do not retry
+  without a mechanically-proven complete-and-disjoint partition (e.g. generated from the registry, not
+  hand-maintained filter strings).
 
 ## Where the history lives
 
