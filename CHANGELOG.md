@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.4.1] - 2026-06-29
+
+A small **fixes & presentation** patch on top of 2.4.0. The git sidebar's
+per-row actions move to a right-click context menu, cursor-shape changes now
+show on idle Wayland compositors, and the repository gains a generated showcase
+gallery (screenshots + hero demo video) surfaced from the README. No
+persisted-format or plugin-API breaks.
+
+### Fixes
+- Git: replace the inline per-row buttons in the sidebar with a right-click
+  context menu, decluttering the change list.
+- Cursor: surface cursor-shape changes on idle Wayland compositors that
+  previously coalesced the update away.
+
+### Docs & media
+- Ship a generated showcase gallery and hero demo video under `docs/media/`,
+  produced by `tools/capture-media.sh` and regenerated every release.
+- Embed the hero shot in the README and point the former "no screenshots" notes
+  at the [project site](https://pablojimenezmateo.github.io/microide/).
+
 ## [2.4.0] - 2026-06-29
 
 A **performance & correctness** cycle. The bulk of this release is a sustained
