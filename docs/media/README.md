@@ -1,36 +1,42 @@
-# docs/media — assets for the showcase page
+# docs/media — showcase assets (generated)
 
-Drop the showcase media here. `../index.html` references these filenames; add the
-files and they light up automatically (no markup changes needed for the names below).
+Everything in this directory is **generated**, not hand-recorded. `../index.html`
+references these filenames; regenerate them with one command:
 
-## Demo video (combined hero)
+```bash
+tools/capture-media.sh            # all assets (screenshots + hero video)
+tools/capture-media.sh --shots-only
+tools/capture-media.sh --video-only
+```
 
-One take that walks through multiple projects, diff & merge, the debugger, and
-LLM control.
+The pipeline runs a headless microide on a private Xvfb display, drives it through
+the control channel, and captures the frames — it never touches the real desktop
+or your real microide config. Full details + the scene list:
+[`dev-docs/project/media-generation.md`](../../dev-docs/project/media-generation.md).
 
-| File | Purpose | Required? |
-|------|---------|-----------|
-| `hero-demo.mp4`   | H.264/AAC MP4 — the broadly-compatible source | Yes |
-| `hero-demo.webm`  | VP9/Opus WebM — smaller, optional second source | Optional |
-| `hero-poster.png` | Still frame shown before the video plays | Optional but recommended |
+## Files
 
-Tips:
-- Keep the file reasonably small — it ships in the git repo and loads on GitHub Pages.
-  Consider `-crf` ~28 and a capped resolution (e.g. 1080p) when encoding.
-- `preload="none"` is set, so the video only downloads once the visitor hits play.
+| File | What | Produced by |
+|------|------|-------------|
+| `shot-editor.png`    | Editor: highlighting, tree, blame, terminal | `capture-shots.sh` |
+| `shot-control.png`   | LLM/script driving the control channel       | `capture-shots.sh` |
+| `shot-git-diff.png`  | Side-by-side working-tree diff               | `capture-shots.sh` |
+| `shot-git-merge.png` | Three-way merge conflict view                | `capture-shots.sh` |
+| `shot-dap.png`       | Debugger paused on a breakpoint              | `capture-shots.sh` |
+| `hero-demo.mp4`      | Hero walkthrough — H.264/MP4 (primary source) | `record-hero.sh` |
+| `hero-demo.webm`     | Hero walkthrough — VP9/WebM (smaller source)  | `record-hero.sh` |
+| `hero-poster.png`    | Still shown before the video plays            | `record-hero.sh` |
+| `og.png`             | *(optional)* 1200×630 social preview — add by hand | — |
 
-## Screenshots
+## Regenerate on any UI change
 
-The gallery in `index.html` references placeholder names. Either drop in PNGs with
-these names and swap the placeholder `<div class="frame">` for an `<img>`, or rename
-to taste:
+**If a change touches the UI, these assets are stale and must be regenerated**
+(`tools/capture-media.sh`) and re-committed. This is a release-checklist gate — see
+[`dev-docs/project/release-checklist.md`](../../dev-docs/project/release-checklist.md).
+`tools/release.sh` regenerates them automatically as part of a release.
 
-- `shot-1.png`, `shot-2.png`, `shot-3.png`
+## Dependencies
 
-Suggested shots: editor with git blame, a three-way merge, the debugger paused on a
-breakpoint with the variables pane open.
-
-## Open Graph image (optional)
-
-- `og.png` — 1200×630 social preview. Uncomment the `og:image`/`og:url` tags in
-  `index.html` once it exists and the site URL is final.
+`Xvfb`, `ffmpeg` (libx264 + libvpx-vp9), ImageMagick (`import`/`convert`),
+`xdotool`, and — for the debugger scene — `gdb` plus the bundled `gdb-dap` plugin.
+On Debian/Ubuntu: `sudo apt install xvfb ffmpeg imagemagick xdotool gdb`.
