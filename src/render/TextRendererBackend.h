@@ -34,6 +34,9 @@ class TextRendererBackend {
     (void) scale_x;
     (void) scale_y;
   }
+  // Set the editor glyph point size. Default no-op: the debug-text fallback
+  // renders at a fixed size and has no font to resize.
+  virtual void SetFontPointSize(float points) { (void) points; }
   virtual float CharWidth() const = 0;
   virtual float LineHeight() const = 0;
   virtual TextClipPadding ClipPadding() const { return {}; }

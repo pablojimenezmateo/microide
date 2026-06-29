@@ -41,6 +41,18 @@ struct SettingSpec {
 
 using SettingValue = std::variant<bool, int, float, std::string>;
 
+struct EditorPreferences;
+
+// Applies a parsed canonical editor-preference setting (tab size, indent width,
+// font size, soft tabs, wrap mode) to `prefs`, clamping numeric values to their
+// supported ranges. Returns true when `id` is one of these canonical editor
+// preferences (whether or not the value's type matched), and false for ids this
+// helper does not own (e.g. `editor.colorscheme`, which callers apply with
+// context-specific side effects). Shared by the persistence load path and the
+// settings-overlay setter so the id->preference mapping lives in one place.
+bool ApplyCanonicalEditorPreference(EditorPreferences& prefs, std::string_view id,
+                                    const SettingValue& value);
+
 std::span<const SettingSpec> BuiltinSettingSpecs();
 const SettingSpec* FindBuiltinSettingSpec(std::string_view id);
 

@@ -1781,6 +1781,7 @@
     std::filesystem::path project_root;
     std::size_t tab_size = 0;
     std::size_t indent_width = 0;
+    int font_size = 0;
     bool soft_tabs = false;
     bool soft_wrap = false;
     std::optional<std::string> auto_close_enabled;

@@ -238,32 +238,14 @@ bool WorkspaceShell::SetSettingValue(std::string_view id, std::string value, boo
     if (!parsed_builtin_value.has_value()) {
       return;
     }
-    auto& prefs = context_.current_project_state.editor_preferences;
-    if (id == "editor.tab_size") {
-      if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
-        prefs.tab_size = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
-      }
+    // Canonical editor preferences (tab size, indent, font size, soft tabs, wrap)
+    // share one id->preference mapping with the persistence load path.
+    if (ApplyCanonicalEditorPreference(context_.current_project_state.editor_preferences, id,
+                                       *parsed_builtin_value)) {
       return;
     }
-    if (id == "editor.indent_width") {
-      if (const int* parsed = std::get_if<int>(&*parsed_builtin_value); parsed != nullptr) {
-        prefs.indent_width = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
-      }
-      return;
-    }
-    if (id == "editor.soft_tabs") {
-      if (const bool* parsed = std::get_if<bool>(&*parsed_builtin_value); parsed != nullptr) {
-        prefs.soft_tabs = *parsed;
-      }
-      return;
-    }
-    if (id == "editor.wrap") {
-      if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
-          parsed != nullptr) {
-        prefs.soft_wrap = *parsed == "word";
-      }
-      return;
-    }
+    // Colorscheme is not an editor preference: apply it live here (the load path
+    // only records the name).
     if (id == "editor.colorscheme") {
       if (const std::string* parsed = std::get_if<std::string>(&*parsed_builtin_value);
           parsed != nullptr) {
@@ -364,6 +346,7 @@ void WorkspaceShell::ApplyLiveSettings() {
   snapshot.project_root = context_.current_project_state.root.lexically_normal();
   snapshot.tab_size = context_.current_project_state.editor_preferences.tab_size;
   snapshot.indent_width = context_.current_project_state.editor_preferences.indent_width;
+  snapshot.font_size = context_.current_project_state.editor_preferences.font_size;
   snapshot.soft_tabs = context_.current_project_state.editor_preferences.soft_tabs;
   snapshot.soft_wrap = context_.current_project_state.editor_preferences.soft_wrap;
   snapshot.auto_close_enabled = GetSettingValue("editor.brackets.auto_close.enabled");
@@ -378,6 +361,7 @@ void WorkspaceShell::ApplyLiveSettings() {
       last_live_settings_editor_snapshot_->project_root == snapshot.project_root &&
       last_live_settings_editor_snapshot_->tab_size == snapshot.tab_size &&
       last_live_settings_editor_snapshot_->indent_width == snapshot.indent_width &&
+      last_live_settings_editor_snapshot_->font_size == snapshot.font_size &&
       last_live_settings_editor_snapshot_->soft_tabs == snapshot.soft_tabs &&
       last_live_settings_editor_snapshot_->soft_wrap == snapshot.soft_wrap &&
       last_live_settings_editor_snapshot_->auto_close_enabled == snapshot.auto_close_enabled &&

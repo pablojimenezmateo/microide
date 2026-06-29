@@ -7,6 +7,7 @@
 #include "plugin/PluginHost.h"
 #include "util/Parse.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/WorkspaceTabState.h"
 
 namespace microide::workspace {
 
@@ -150,9 +151,9 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "editor.font_size",
           .label = "Font Size",
-          .description = "Editor font size in points (8..32).",
+          .description = "Editor font size in points (8..32). Applies to all buffers in this project.",
           .type = SettingType::Int,
-          .scope = SettingScope::User,
+          .scope = SettingScope::Project,
           .default_bool = false,
           .default_int = 13,
           .default_float = 0.0f,
@@ -753,6 +754,41 @@ std::string SerializeSettingValue(const SettingValue& value) {
         }
       },
       value);
+}
+
+bool ApplyCanonicalEditorPreference(EditorPreferences& prefs, std::string_view id,
+                                    const SettingValue& value) {
+  if (id == "editor.tab_size") {
+    if (const int* parsed = std::get_if<int>(&value); parsed != nullptr) {
+      prefs.tab_size = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
+    }
+    return true;
+  }
+  if (id == "editor.indent_width") {
+    if (const int* parsed = std::get_if<int>(&value); parsed != nullptr) {
+      prefs.indent_width = static_cast<std::size_t>(std::clamp(*parsed, 1, 16));
+    }
+    return true;
+  }
+  if (id == "editor.font_size") {
+    if (const int* parsed = std::get_if<int>(&value); parsed != nullptr) {
+      prefs.font_size = std::clamp(*parsed, 8, 32);
+    }
+    return true;
+  }
+  if (id == "editor.soft_tabs") {
+    if (const bool* parsed = std::get_if<bool>(&value); parsed != nullptr) {
+      prefs.soft_tabs = *parsed;
+    }
+    return true;
+  }
+  if (id == "editor.wrap") {
+    if (const std::string* parsed = std::get_if<std::string>(&value); parsed != nullptr) {
+      prefs.soft_wrap = (*parsed == "word");
+    }
+    return true;
+  }
+  return false;
 }
 
 std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host) {

@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -22,7 +23,11 @@ namespace microide::render {
 
 namespace {
 
-constexpr float kFontPointSize = 13.0f;
+// Bounds for the runtime-configurable font point size. These mirror the
+// `editor.font_size` setting range (8..32) so a stored project value can never
+// drive the backend outside a sane glyph range.
+constexpr float kMinFontPointSize = 8.0f;
+constexpr float kMaxFontPointSize = 32.0f;
 // Cache stores whole-string composites. Editor content can produce more unique
 // (text, color) pairs than the legacy per-glyph cache, so the upper bound is
 // larger than the 2048 used when each entry held a single glyph.
@@ -79,7 +84,7 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
     return false;
   }
 
-  font_ = TTF_OpenFont(font_path.string().c_str(), kFontPointSize);
+  font_ = TTF_OpenFont(font_path.string().c_str(), font_point_size_);
   if (font_ == nullptr) {
     SDL_Log("microide text: TTF_OpenFont failed for %s: %s", font_path.string().c_str(),
             SDL_GetError());
@@ -104,6 +109,28 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   return true;
 }
 
+void SdlTtfTextBackend::ApplyFontSizeAtCurrentScale() {
+  if (font_ == nullptr) {
+    return;
+  }
+  const int hdpi = std::max(1, static_cast<int>(std::lround(
+                                  72.0f * std::max(kMinPresentationScale, presentation_scale_x_))));
+  const int vdpi = std::max(1, static_cast<int>(std::lround(
+                                  72.0f * std::max(kMinPresentationScale, presentation_scale_y_))));
+  if (!TTF_SetFontSizeDPI(font_, font_point_size_, hdpi, vdpi)) {
+    return;
+  }
+  for (TTF_Font* fallback_font : fallback_fonts_) {
+    if (fallback_font != nullptr) {
+      TTF_SetFontSizeDPI(fallback_font, font_point_size_, hdpi, vdpi);
+    }
+  }
+  // ClearCache also drops the ASCII coverage atlas and the GPU atlas texture, so
+  // both the composite and batched-text paths rebuild against the new glyph size.
+  ClearCache();
+  RefreshMetrics();
+}
+
 void SdlTtfTextBackend::SetPresentationScale(float scale_x, float scale_y) {
   const float resolved_scale_x =
       std::isfinite(scale_x) && scale_x > 0.0f ? scale_x : 1.0f;
@@ -115,23 +142,18 @@ void SdlTtfTextBackend::SetPresentationScale(float scale_x, float scale_y) {
     return;
   }
 
-  const int hdpi = std::max(1, static_cast<int>(std::lround(
-                                  72.0f * std::max(kMinPresentationScale, resolved_scale_x))));
-  const int vdpi = std::max(1, static_cast<int>(std::lround(
-                                  72.0f * std::max(kMinPresentationScale, resolved_scale_y))));
-  if (!TTF_SetFontSizeDPI(font_, kFontPointSize, hdpi, vdpi)) {
-    return;
-  }
-  for (TTF_Font* fallback_font : fallback_fonts_) {
-    if (fallback_font != nullptr) {
-      TTF_SetFontSizeDPI(fallback_font, kFontPointSize, hdpi, vdpi);
-    }
-  }
-
   presentation_scale_x_ = resolved_scale_x;
   presentation_scale_y_ = resolved_scale_y;
-  ClearCache();
-  RefreshMetrics();
+  ApplyFontSizeAtCurrentScale();
+}
+
+void SdlTtfTextBackend::SetFontPointSize(float points) {
+  const float resolved = std::clamp(points, kMinFontPointSize, kMaxFontPointSize);
+  if (font_ == nullptr || std::fabs(font_point_size_ - resolved) < 0.01f) {
+    return;
+  }
+  font_point_size_ = resolved;
+  ApplyFontSizeAtCurrentScale();
 }
 
 void SdlTtfTextBackend::RefreshMetrics() {
@@ -410,7 +432,7 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
   }
 
   for (const auto& fallback_path : LocateFallbackFontFiles(font_path_)) {
-    TTF_Font* fallback_font = TTF_OpenFont(fallback_path.string().c_str(), kFontPointSize);
+    TTF_Font* fallback_font = TTF_OpenFont(fallback_path.string().c_str(), font_point_size_);
     if (fallback_font == nullptr) {
       continue;
     }

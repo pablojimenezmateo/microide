@@ -1456,6 +1456,70 @@ void TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart() {
          "restored project settings should retain editor.tab_size for settings overlay display");
 }
 
+void TestWorkspaceShellFontSizeSettingAppliesImmediately() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(WorkspaceShellTestAccess::EditorFontSize(shell) == 13,
+         "font-size settings fixture should start from the default font size");
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.font_size", "20"),
+         "setting editor.font_size should succeed through the settings path");
+  Expect(WorkspaceShellTestAccess::EditorFontSize(shell) == 20,
+         "editor font-size preference should update immediately after the setting change");
+  // Out-of-range values clamp into the supported 8..32 range.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.font_size", "100"),
+         "setting an out-of-range editor.font_size should still succeed");
+  Expect(WorkspaceShellTestAccess::EditorFontSize(shell) == 32,
+         "editor font-size preference should clamp to the maximum supported size");
+}
+
+void TestWorkspaceShellFontSizeIsProjectScopedAndPersists() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "project-a";
+  const std::filesystem::path source_a = root_a / "main.cpp";
+  WriteFile(source_a, "int main() { return 0; }\n");
+  const std::filesystem::path root_b = temp_dir.path() / "project-b";
+  const std::filesystem::path source_b = root_b / "main.cpp";
+  WriteFile(source_b, "int main() { return 1; }\n");
+
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config";
+  ScopedProjectAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root_a);
+  WorkspaceShellTestAccess::OpenFile(shell, source_a);
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.font_size", "20"),
+         "setting editor.font_size should succeed before restart");
+
+  // Round-trips for project A: the canonical value is reapplied to the editor
+  // preferences and the stored setting survives for the overlay display.
+  WorkspaceShell reloaded_shell;
+  WorkspaceShellTestAccess::SetProjectRoot(reloaded_shell, root_a);
+  Expect(WorkspaceShellTestAccess::RestoreConfigState(reloaded_shell),
+         "restarted shell should restore project config state");
+  Expect(WorkspaceShellTestAccess::EditorFontSize(reloaded_shell) == 20,
+         "restored project should reapply its persisted editor font size");
+  const auto stored_font_size =
+      WorkspaceShellTestAccess::ProjectStoredSettingValue(reloaded_shell, "editor.font_size");
+  Expect(stored_font_size.has_value() && *stored_font_size == "20",
+         "restored project settings should retain editor.font_size for settings overlay display");
+
+  // Project B (under the same app homes but a different root) keeps the default:
+  // font size is project-scoped and must not leak across projects.
+  WorkspaceShell other_shell;
+  WorkspaceShellTestAccess::SetProjectRoot(other_shell, root_b);
+  WorkspaceShellTestAccess::OpenFile(other_shell, source_b);
+  Expect(WorkspaceShellTestAccess::EditorFontSize(other_shell) == 13,
+         "a different project should keep the default font size; the setting is project-scoped");
+}
+
 void TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3300,6 +3364,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabSizeSettingAppliesImmediately);
   AddTest(tests, "WorkspaceShell/TabSizeSettingStaysVisibleAfterRestart",
           TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart);
+  AddTest(tests, "WorkspaceShell/FontSizeSettingAppliesImmediately",
+          TestWorkspaceShellFontSizeSettingAppliesImmediately);
+  AddTest(tests, "WorkspaceShell/FontSizeIsProjectScopedAndPersists",
+          TestWorkspaceShellFontSizeIsProjectScopedAndPersists);
   AddTest(tests, "WorkspaceShell/CommandTabSizeStaysVisibleAfterRestart",
           TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart);
   AddTest(tests, "WorkspaceShell/AutoCloseToggleUpdatesViewportContract",

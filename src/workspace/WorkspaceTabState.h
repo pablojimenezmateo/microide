@@ -222,6 +222,10 @@ struct EditorPreferences {
   std::size_t indent_width = 4;
   bool soft_tabs = false;
   bool soft_wrap = false;
+  // Editor glyph point size for this project (the `editor.font_size` setting).
+  // Applied to the shared text renderer when the project's preferences are
+  // applied; clamped to the setting range (8..32) on load/set.
+  int font_size = 13;
 };
 
 }  // namespace microide::workspace

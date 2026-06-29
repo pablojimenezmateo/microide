@@ -27,6 +27,7 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   const char* Name() const override { return "sdl3_ttf"; }
   bool BatchesRuns() const override { return glyph_atlas_enabled_ && is_gpu_renderer_; }
   void SetPresentationScale(float scale_x, float scale_y) override;
+  void SetFontPointSize(float points) override;
   float CharWidth() const override { return char_width_; }
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }
@@ -100,6 +101,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   SdlTtfTextBackend() = default;
 
   bool Initialize(SDL_Renderer* renderer);
+  // Re-applies `font_point_size_` to the primary + fallback fonts at the current
+  // presentation scale, then clears caches and refreshes metrics. Shared by the
+  // presentation-scale and font-size entry points.
+  void ApplyFontSizeAtCurrentScale();
   void RefreshMetrics();
   void ClearCache();
   static std::filesystem::path LocateFontFile();
@@ -136,6 +141,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float char_width_ = 8.0f;
   float line_height_ = 14.0f;
   TextClipPadding clip_padding_{};
+  // Project-configurable glyph point size (the `editor.font_size` setting). The
+  // default matches the setting/registry default; runtime changes route through
+  // SetFontPointSize. Applied at the current presentation scale via TTF DPI.
+  float font_point_size_ = 13.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
