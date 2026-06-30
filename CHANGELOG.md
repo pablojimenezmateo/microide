@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.5.0] - 2026-06-30
+
+A **UI, session & packaging** release on top of 2.4.1: seamless session
+restore, friendlier tab context menus, a runtime window icon, sharper resize
+affordances, and a Nix flake for reproducible builds. The session format gains
+additive fields only — old session files still load — and there are no
+plugin-API breaks.
+
+### Session
+- Seamless restore: per-buffer scroll position is now honored on reopen instead
+  of snapping back to the caret, via an authoritative
+  `TextViewport::ApplyRestoredViewState` (cursor/selection first, scroll last).
+- File-tree state is now persisted and restored: expanded/collapsed folders,
+  the selected node, sidebar scroll row, and the active sidebar view. New
+  session-record fields are additive (tags 15–19); older session files decode
+  with empty tree state.
+
+### UI
+- Tab context menus now lead with copy-path and trail with close, putting the
+  common action first.
+- The application window icon is set at runtime via `SDL_SetWindowIcon`.
+- Precise resize handles with consistent mouse hover affordances across the
+  shell.
+
+### Packaging
+- Add a Nix flake for reproducible build, run, dev shell, and test.
+
 ## [2.4.1] - 2026-06-29
 
 A small **fixes & presentation** patch on top of 2.4.0. The git sidebar's
