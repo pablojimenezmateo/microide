@@ -2,6 +2,12 @@
 /build-*/
 /_CPack_Packages/
 /*.deb
+# Generated release-artifact siblings of the .deb (detached signatures + checksums).
+# These are uploaded to the GitHub release, not committed; the tracked public key
+# (microide-signing-key.asc) is intentionally NOT matched by these patterns.
+/microide_*_amd64.deb.asc
+/microide_*_amd64.deb.sha256
+/microide_*_amd64.deb.sha256.asc
 /.microide-config
 /.microide-session
 /.codex
