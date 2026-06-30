@@ -1635,7 +1635,11 @@ return ide.plugin({
   id = "async.run",
   capabilities = { process = { exec = true } },
   on_buffer_open = function(ctx, buffer)
-    ctx.process.run_async({"sh", "-lc", "printf done"}, nil, function(result)
+    -- Non-login shell on purpose: this asserts exit_code == 0, and a login
+    -- shell (-l) sources the host's /etc/profile.d scripts, which fail (exit 2)
+    -- under the plugin subprocess sandbox where $HOME and arbitrary writes are
+    -- denied. "printf" needs no profile, so -c keeps the result environment-stable.
+    ctx.process.run_async({"sh", "-c", "printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
     end)
   end
@@ -1694,7 +1698,10 @@ return ide.plugin({
   id = "async.slow",
   capabilities = { process = { exec = true } },
   on_buffer_open = function(ctx, buffer)
-    ctx.process.run_async({"sh", "-lc", "sleep 1; printf done"}, nil, function(result)
+    -- Non-login shell (-c): a login shell sources the host profile, which exits
+    -- nonzero under the plugin subprocess sandbox and would break the exit_code==0
+    -- assertion below; the sleep already exercises the watchdog timing this checks.
+    ctx.process.run_async({"sh", "-c", "sleep 1; printf done"}, nil, function(result)
       local x = 0
       for i = 1, 500000 do x = x + i end
       ctx.log("slow-async-complete:" .. tostring(result.exit_code) .. ":" .. tostring(x))

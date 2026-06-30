@@ -2321,7 +2321,10 @@ return ide.plugin({
     if project.name ~= "project-a" then
       return
     end
-    ctx.process.run_async({"sh", "-lc", "sleep 0.5; printf done"}, nil, function(result)
+    -- Non-login shell (-c): a login shell sources the host profile, which exits
+    -- nonzero under the plugin subprocess sandbox and would break the
+    -- exit_code==0 assertion below; "printf" needs no profile.
+    ctx.process.run_async({"sh", "-c", "sleep 0.5; printf done"}, nil, function(result)
       ctx.log("async-complete:" .. tostring(result.exit_code))
     end)
   end
