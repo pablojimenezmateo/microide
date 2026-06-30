@@ -879,6 +879,113 @@ void TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent() {
          "dirty editor-session restore should preserve the scroll position");
 }
 
+// A file scrolled (without moving the caret) must reopen at the SAME scroll line.
+// The 2-space-indented body makes indent-detection change the tab size on open,
+// which runs EnsureCursorVisible -- the operation that used to snap the restored
+// scroll back onto the line-0 caret.
+void TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "deep.py";
+  std::string content;
+  for (int i = 0; i < 200; ++i) {
+    content += "  line\n";  // consistent 2-space indentation
+  }
+  WriteFile(source, content);
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  // Caret stays at line 0; only the viewport scrolls (scroll-wheel behaviour).
+  editor.SetScrollLine(40);
+  Expect(editor.cursor_line() == 0,
+         "scroll-independence fixture should leave the caret at line 0");
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "scroll-independence restore should succeed");
+  // Mirror the real startup path: this hydrates the active tab's deferred viewport.
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+
+  const auto& reopened = WorkspaceShellTestAccess::ActiveEditor(restored);
+  Expect(reopened.cursor_line() == 0,
+         "restore should preserve the line-0 caret");
+  Expect(reopened.scroll_line() == 40,
+         "restore should preserve the scroll position independent of the caret");
+}
+
+// Expanded folders + the selected node survive a session round-trip.
+void TestWorkspaceShellRestoreSessionPreservesTreeExpansion() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path leaf = root / "dir_a" / "sub" / "leaf.txt";
+  WriteFile(root / "README.md", "root\n");
+  WriteFile(leaf, "leaf\n");
+  WriteFile(root / "dir_b" / "other.txt", "other\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  // Selecting the leaf expands every ancestor directory (dir_a, dir_a/sub).
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, leaf),
+         "tree fixture should be able to select the nested leaf");
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "tree-expansion restore should succeed");
+
+  const auto& entries = WorkspaceShellTestAccess::TreeEntries(restored);
+  const auto expanded_dir = [&](const std::filesystem::path& path) {
+    const auto normalized = path.lexically_normal();
+    for (const auto& entry : entries) {
+      if (entry.path.lexically_normal() == normalized) {
+        return entry.is_directory && entry.expanded;
+      }
+    }
+    return false;
+  };
+  const auto leaf_visible = [&]() {
+    const auto normalized = leaf.lexically_normal();
+    for (const auto& entry : entries) {
+      if (entry.path.lexically_normal() == normalized) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(expanded_dir(root / "dir_a"),
+         "restore should re-expand dir_a");
+  Expect(expanded_dir(root / "dir_a" / "sub"),
+         "restore should re-expand dir_a/sub");
+  Expect(leaf_visible(),
+         "restore should reveal the nested leaf under the restored expansion");
+  Expect(WorkspaceShellTestAccess::SelectedTreePath(restored).lexically_normal() ==
+             leaf.lexically_normal(),
+         "restore should re-select the saved tree node");
+}
+
 void TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1946,6 +2053,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFoldAllUnfoldAllCtrlKChord);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyEditorBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyEditorBufferContent);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesIndependentScrollPosition",
+          TestWorkspaceShellRestoreSessionPreservesIndependentScrollPosition);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesTreeExpansion",
+          TestWorkspaceShellRestoreSessionPreservesTreeExpansion);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyUntitledBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent);
   AddTest(tests, "WorkspaceShell/QuitShutdownPersistsDirtyEditorBuffers",
