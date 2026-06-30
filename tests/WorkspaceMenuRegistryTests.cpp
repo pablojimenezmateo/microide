@@ -188,6 +188,51 @@ void TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot() {
          "project-tree root context menu should no longer expose Close Project");
 }
 
+const MenuItemSpec* FirstActionableItem(MenuId id) {
+  const auto* spec = FindWorkspaceMenuSpec(id);
+  if (spec == nullptr) {
+    return nullptr;
+  }
+  for (const auto& item : spec->items) {
+    if (!item.separator) {
+      return &item;
+    }
+  }
+  return nullptr;
+}
+
+const MenuItemSpec* LastActionableItem(MenuId id) {
+  const auto* spec = FindWorkspaceMenuSpec(id);
+  if (spec == nullptr) {
+    return nullptr;
+  }
+  for (auto it = spec->items.rbegin(); it != spec->items.rend(); ++it) {
+    if (!it->separator) {
+      return &*it;
+    }
+  }
+  return nullptr;
+}
+
+// Closing a tab/project is destructive and the context menu pre-highlights its
+// first enabled item, so copy-path must lead and the close actions must trail.
+// This locks in that intent against an accidental future reorder.
+void TestMenuRegistryTabContextMenusLeadWithCopyAndTrailWithClose() {
+  const MenuItemSpec* editor_first = FirstActionableItem(MenuId::EditorTabContext);
+  const MenuItemSpec* editor_last = LastActionableItem(MenuId::EditorTabContext);
+  Expect(editor_first != nullptr && editor_first->action == ActionId::CopyRelativePath,
+         "editor tab context menu should lead with Copy Relative Path");
+  Expect(editor_last != nullptr && editor_last->action == ActionId::CloseTabsToLeft,
+         "editor tab context menu should trail with the close actions");
+
+  const MenuItemSpec* project_first = FirstActionableItem(MenuId::ProjectTabContext);
+  const MenuItemSpec* project_last = LastActionableItem(MenuId::ProjectTabContext);
+  Expect(project_first != nullptr && project_first->action == ActionId::ProjectCopyAbsolutePath,
+         "project tab context menu should lead with Copy Absolute Path");
+  Expect(project_last != nullptr && project_last->action == ActionId::ProjectClose,
+         "project tab context menu should trail with Close Project");
+}
+
 }  // namespace
 
 void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
@@ -203,6 +248,8 @@ void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
           TestMenuRegistrySplitItemsPresentInTabAndTreeMenus);
   AddTest(tests, "WorkspaceMenuRegistry/ProjectTabContextExposesCopyAbsolutePathNotTreeRoot",
           TestMenuRegistryProjectTabContextExposesCopyAbsolutePathNotTreeRoot);
+  AddTest(tests, "WorkspaceMenuRegistry/TabContextMenusLeadWithCopyAndTrailWithClose",
+          TestMenuRegistryTabContextMenusLeadWithCopyAndTrailWithClose);
 }
 
 }  // namespace microide::tests
