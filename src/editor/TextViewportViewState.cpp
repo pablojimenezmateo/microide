@@ -37,6 +37,26 @@ void TextViewport::SetHorizontalScroll(std::size_t horizontal_scroll) {
   ClampScrollState();
 }
 
+void TextViewport::ApplyRestoredViewState(std::size_t cursor_line,
+                                          std::size_t cursor_column,
+                                          std::size_t scroll_line,
+                                          std::size_t horizontal_scroll,
+                                          const std::optional<SelectionRange>& selection) {
+  // Cursor / selection first: MoveCursorTo runs EnsureCursorVisible, which we let
+  // happen here so the caret is well-placed, then override scroll below.
+  if (selection.has_value()) {
+    MoveCursorTo(selection->start.line, selection->start.column);
+    MoveCursorTo(selection->end.line, selection->end.column, true);
+  } else {
+    MoveCursorTo(cursor_line, cursor_column);
+  }
+  // Scroll LAST so it is authoritative. ClampScrollState only reduces against the
+  // current (possibly default) viewport size; the first real-size SetViewportSize
+  // at render re-clamps safely.
+  SetScrollLine(scroll_line);
+  SetHorizontalScroll(horizontal_scroll);
+}
+
 void TextViewport::SetTabSize(std::size_t tab_size) {
   const std::size_t next_tab_size = std::clamp<std::size_t>(tab_size, 1, 16);
   if (tab_size_ == next_tab_size) {

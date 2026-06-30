@@ -153,6 +153,14 @@ struct PersistedProjectSessionState {
   bool right_pane_visible = false;
   float right_pane_width = 288.0f;
   std::uint8_t right_pane_mode = 0;
+  // File-tree / sidebar restore (additive; empty/default on old records). Tree
+  // paths are relative to the project root. `sidebar_view_id` is the active
+  // sidebar view (e.g. "tree", "search", "git"); empty means "leave default".
+  std::vector<std::string> expanded_tree_paths;
+  std::vector<std::string> collapsed_tree_paths;
+  std::string selected_tree_path;  // relative to root; empty if none
+  int sidebar_scroll_row = 0;
+  std::string sidebar_view_id;
 };
 
 struct PersistedWorkspaceSessionState {

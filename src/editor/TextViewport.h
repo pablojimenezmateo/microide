@@ -101,6 +101,17 @@ class TextViewport {
   void SetViewportSize(std::size_t visible_lines, std::size_t visible_columns);
   void SetScrollLine(std::size_t scroll_line);
   void SetHorizontalScroll(std::size_t horizontal_scroll);
+  // Authoritatively re-applies a previously captured view state: cursor (or
+  // selection) first, then scroll LAST so the restored scroll survives even when
+  // the caret is off-screen (e.g. scroll-wheel without moving the cursor).
+  // Performs no trailing EnsureCursorVisible. Call this AFTER preference/indent
+  // application, which internally re-runs EnsureCursorVisible and would otherwise
+  // snap scroll back onto the caret.
+  void ApplyRestoredViewState(std::size_t cursor_line,
+                              std::size_t cursor_column,
+                              std::size_t scroll_line,
+                              std::size_t horizontal_scroll,
+                              const std::optional<SelectionRange>& selection = std::nullopt);
   void SetTabSize(std::size_t tab_size);
   void SetIndentWidth(std::size_t indent_width);
   void SetSoftTabs(bool soft_tabs);

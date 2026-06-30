@@ -64,8 +64,31 @@ bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
       !AppendRecord(ProjectSessionTag::RightPaneWidth,
                     [&](PrimitiveWriter& w) { return w.WriteF32(state.right_pane_width); }, out) ||
       !AppendRecord(ProjectSessionTag::RightPaneMode,
-                    [&](PrimitiveWriter& w) { return w.WriteU8(state.right_pane_mode); }, out)) {
+                    [&](PrimitiveWriter& w) { return w.WriteU8(state.right_pane_mode); }, out) ||
+      !AppendRecord(ProjectSessionTag::SelectedTreePath,
+                    [&](PrimitiveWriter& w) { return w.WriteString(state.selected_tree_path); },
+                    out) ||
+      !AppendRecord(ProjectSessionTag::SidebarScrollRow,
+                    [&](PrimitiveWriter& w) {
+                      return w.WriteU32(static_cast<std::uint32_t>(std::max(0, state.sidebar_scroll_row)));
+                    },
+                    out) ||
+      !AppendRecord(ProjectSessionTag::SidebarViewId,
+                    [&](PrimitiveWriter& w) { return w.WriteString(state.sidebar_view_id); }, out)) {
     return false;
+  }
+
+  for (const auto& path : state.expanded_tree_paths) {
+    if (!AppendRecord(ProjectSessionTag::ExpandedTreePath,
+                      [&](PrimitiveWriter& w) { return w.WriteString(path); }, out)) {
+      return false;
+    }
+  }
+  for (const auto& path : state.collapsed_tree_paths) {
+    if (!AppendRecord(ProjectSessionTag::CollapsedTreePath,
+                      [&](PrimitiveWriter& w) { return w.WriteString(path); }, out)) {
+      return false;
+    }
   }
 
   for (const auto& group : state.groups) {
@@ -128,6 +151,34 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    return reader.ReadF32(&state->right_pane_width) && reader.remaining() == 0;
                  case ProjectSessionTag::RightPaneMode:
                    return reader.ReadU8(&state->right_pane_mode) && reader.remaining() == 0;
+                 case ProjectSessionTag::ExpandedTreePath: {
+                   std::string value;
+                   if (!reader.ReadString(&value) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->expanded_tree_paths.push_back(std::move(value));
+                   return true;
+                 }
+                 case ProjectSessionTag::CollapsedTreePath: {
+                   std::string value;
+                   if (!reader.ReadString(&value) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->collapsed_tree_paths.push_back(std::move(value));
+                   return true;
+                 }
+                 case ProjectSessionTag::SelectedTreePath:
+                   return reader.ReadString(&state->selected_tree_path) && reader.remaining() == 0;
+                 case ProjectSessionTag::SidebarScrollRow: {
+                   std::uint32_t value = 0;
+                   if (!reader.ReadU32(&value) || reader.remaining() != 0) {
+                     return false;
+                   }
+                   state->sidebar_scroll_row = static_cast<int>(value);
+                   return true;
+                 }
+                 case ProjectSessionTag::SidebarViewId:
+                   return reader.ReadString(&state->sidebar_view_id) && reader.remaining() == 0;
                  case ProjectSessionTag::Group: {
                    PersistedEditorGroupState group;
                    if (!DecodeEditorGroup(payload, &group)) {

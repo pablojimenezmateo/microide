@@ -422,6 +422,75 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
   }
 }
 
+namespace {
+
+std::vector<std::string> RelativeKeysExcludingRoot(
+    const std::unordered_set<std::string>& keys,
+    const std::filesystem::path& root) {
+  const std::string root_key = std::filesystem::absolute(root).lexically_normal().generic_string();
+  std::vector<std::string> relative;
+  relative.reserve(keys.size());
+  for (const auto& key : keys) {
+    if (key == root_key) {
+      continue;
+    }
+    const auto rel = std::filesystem::path(key).lexically_relative(root);
+    if (rel.empty() || rel == std::filesystem::path(".")) {
+      continue;
+    }
+    relative.push_back(rel.generic_string());
+  }
+  // Deterministic order so persisted records are stable across saves.
+  std::sort(relative.begin(), relative.end());
+  return relative;
+}
+
+}  // namespace
+
+std::vector<std::string> DirectoryTree::ExpandedRelativePaths() const {
+  if (root_.empty()) {
+    return {};
+  }
+  return RelativeKeysExcludingRoot(expanded_paths_, root_);
+}
+
+std::vector<std::string> DirectoryTree::ManuallyCollapsedRelativePaths() const {
+  if (root_.empty()) {
+    return {};
+  }
+  return RelativeKeysExcludingRoot(manually_collapsed_paths_, root_);
+}
+
+std::optional<std::filesystem::path> DirectoryTree::SelectedPath() const {
+  if (entries_.empty() || selected_index_ >= entries_.size()) {
+    return std::nullopt;
+  }
+  return entries_[selected_index_].path;
+}
+
+void DirectoryTree::RestoreExpansionState(const std::vector<std::string>& expanded_relative,
+                                          const std::vector<std::string>& collapsed_relative) {
+  if (root_.empty()) {
+    return;
+  }
+  expanded_paths_.clear();
+  expanded_paths_.insert(NormalizePathKey(root_));
+  for (const auto& relative : expanded_relative) {
+    if (relative.empty()) {
+      continue;
+    }
+    expanded_paths_.insert(NormalizePathKey(root_ / std::filesystem::path(relative)));
+  }
+  manually_collapsed_paths_.clear();
+  for (const auto& relative : collapsed_relative) {
+    if (relative.empty()) {
+      continue;
+    }
+    manually_collapsed_paths_.insert(NormalizePathKey(root_ / std::filesystem::path(relative)));
+  }
+  RebuildEntries(false);
+}
+
 bool DirectoryTree::has_dirty_files() const {
   for (const auto& [_, status] : git_statuses_) {
     if (status != GitFileStatus::Clean) {

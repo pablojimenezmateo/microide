@@ -379,12 +379,15 @@ bool PersistenceCoordinator::RestoreSessionState() {
       restored_view.LoadContent(
           util::SerializeLines(persisted_tab.buffer_lines, persisted_tab.line_ending), view_path,
           persisted_tab.line_ending);
-      restored_view.MoveCursorTo(persisted_tab.cursor_line, persisted_tab.cursor_column);
-      restored_view.SetScrollLine(persisted_tab.scroll_line);
-      restored_view.SetHorizontalScroll(persisted_tab.horizontal_scroll);
       restored_view.SetDirty(true);
+      // Apply preferences / indent detection first (they re-run EnsureCursorVisible),
+      // then restore view state last so scroll survives independent of the caret.
       operations_.apply_editor_preferences(restored_view);
       operations_.apply_detected_indent_on_open(restored_view);
+      restored_view.ApplyRestoredViewState(persisted_tab.cursor_line,
+                                           persisted_tab.cursor_column,
+                                           persisted_tab.scroll_line,
+                                           persisted_tab.horizontal_scroll);
       editor_state.viewport = std::move(restored_view);
       editor_state.needs_restore = false;
     } else if (!view_path.empty() && std::filesystem::exists(view_path)) {
@@ -486,6 +489,20 @@ bool PersistenceCoordinator::RestoreSessionState() {
     const bool debugger_enabled =
         operations_.debugger_enabled && operations_.debugger_enabled();
     state.debug_pane.visible = persisted_session.right_pane_visible && debugger_enabled;
+
+    // File-tree expansion + sidebar view. RestoreExpansionState rebuilds the tree
+    // rows; a later Refresh() (on tab activation / sidebar refresh) preserves the
+    // restored expansion because it reads the same expanded_paths_ set.
+    state.directory_tree.RestoreExpansionState(persisted_session.expanded_tree_paths,
+                                               persisted_session.collapsed_tree_paths);
+    if (!persisted_session.selected_tree_path.empty() && !state.root.empty()) {
+      state.directory_tree.SelectPath(
+          state.root / std::filesystem::path(persisted_session.selected_tree_path));
+    }
+    state.sidebar.scroll_row = std::max(0, persisted_session.sidebar_scroll_row);
+    if (!persisted_session.sidebar_view_id.empty()) {
+      state.sidebar.view_id = persisted_session.sidebar_view_id;
+    }
   }
 
   {
@@ -531,6 +548,22 @@ void PersistenceCoordinator::SaveSessionState() {
   persisted_session.right_pane_visible = state.debug_pane.visible;
   persisted_session.right_pane_width = state.debug_pane.width;
   persisted_session.right_pane_mode = static_cast<std::uint8_t>(state.debug_pane.mode);
+
+  // File-tree expansion + sidebar view state, so reopening lands on the same
+  // expanded folders / selected node / scroll position (terminals excluded).
+  persisted_session.expanded_tree_paths = state.directory_tree.ExpandedRelativePaths();
+  persisted_session.collapsed_tree_paths = state.directory_tree.ManuallyCollapsedRelativePaths();
+  if (const auto selected = state.directory_tree.SelectedPath();
+      selected.has_value() && !state.root.empty()) {
+    const auto relative = selected->lexically_relative(state.root);
+    if (!relative.empty() && relative != std::filesystem::path(".") &&
+        !(relative.begin() != relative.end() &&
+          *relative.begin() == std::filesystem::path(".."))) {
+      persisted_session.selected_tree_path = relative.generic_string();
+    }
+  }
+  persisted_session.sidebar_scroll_row = state.sidebar.scroll_row;
+  persisted_session.sidebar_view_id = state.sidebar.view_id;
 
   for (auto& group : state.editor_groups) {
     PersistedEditorGroupState persisted_group;

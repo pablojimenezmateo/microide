@@ -29,11 +29,15 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
       return false;
     }
   }
-  loaded_view.MoveCursorTo(editor_state.restored_cursor_line, editor_state.restored_cursor_column);
-  loaded_view.SetScrollLine(editor_state.restored_scroll_line);
-  loaded_view.SetHorizontalScroll(editor_state.restored_horizontal_scroll);
+  // Preferences / indent detection internally re-run EnsureCursorVisible, so apply
+  // them BEFORE restoring view state — otherwise they snap scroll back onto the
+  // caret (the "reopen lands on line 1 after scrolling" bug).
   operations_.apply_editor_preferences(loaded_view);
   operations_.apply_detected_indent_on_open(loaded_view);
+  loaded_view.ApplyRestoredViewState(editor_state.restored_cursor_line,
+                                     editor_state.restored_cursor_column,
+                                     editor_state.restored_scroll_line,
+                                     editor_state.restored_horizontal_scroll);
   editor_state.viewport = std::move(loaded_view);
   editor_state.needs_restore = false;
   return true;

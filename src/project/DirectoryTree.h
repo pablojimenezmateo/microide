@@ -54,6 +54,16 @@ class DirectoryTree {
   const std::vector<TreeEntry>& entries() const { return entries_; }
   std::size_t selected_index() const { return selected_index_; }
 
+  // Session-persistence accessors. Expansion/collapse state is reported as paths
+  // relative to root() (portable if the project directory moves); the root itself
+  // is omitted. RestoreExpansionState repopulates the in-memory sets and rebuilds
+  // the visible rows. Call it after SetRoot() and before the first Refresh().
+  std::vector<std::string> ExpandedRelativePaths() const;
+  std::vector<std::string> ManuallyCollapsedRelativePaths() const;
+  std::optional<std::filesystem::path> SelectedPath() const;
+  void RestoreExpansionState(const std::vector<std::string>& expanded_relative,
+                             const std::vector<std::string>& collapsed_relative);
+
   // Monotonic counter bumped whenever entries_ is rebuilt (set-root, refresh,
   // expand/collapse, activate). Lets render-side caches keyed on the entries
   // vector invalidate without diffing it. Git-status updates do not bump this:

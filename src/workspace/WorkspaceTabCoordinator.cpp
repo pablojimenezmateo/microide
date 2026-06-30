@@ -41,13 +41,8 @@ void RestoreViewportText(editor::TextViewport& viewport, std::string_view text) 
 
   viewport.LoadContent(text, path, line_ending);
   viewport.SetViewportSize(visible_lines, visible_columns);
-  viewport.MoveCursorTo(cursor_line, cursor_column);
-  viewport.SetScrollLine(scroll_line);
-  viewport.SetHorizontalScroll(horizontal_scroll);
-  if (selection.has_value()) {
-    viewport.MoveCursorTo(selection->start.line, selection->start.column);
-    viewport.MoveCursorTo(selection->end.line, selection->end.column, true);
-  }
+  viewport.ApplyRestoredViewState(cursor_line, cursor_column, scroll_line, horizontal_scroll,
+                                  selection);
 }
 
 }  // namespace
@@ -302,10 +297,17 @@ void TabCoordinator::Activate(std::size_t index) {
       return true;
     }
     if (tab.editor_state.has_value()) {
+      // A deferred tab gets its preferences applied inside RestoreEditorTab, after
+      // which view state (scroll) is authoritative. Re-applying preferences here
+      // would run EnsureCursorVisible again and snap scroll back onto the caret, so
+      // only refresh preferences for tabs that were already loaded.
+      const bool was_deferred = tab.editor_state->needs_restore;
       if (!EnsureEditorTabLoaded(tab)) {
         return false;
       }
-      operations_.apply_editor_preferences(tab.editor_state->viewport);
+      if (!was_deferred) {
+        operations_.apply_editor_preferences(tab.editor_state->viewport);
+      }
       return true;
     }
     if (tab.deferred_handle.has_value()) {
@@ -316,15 +318,13 @@ void TabCoordinator::Activate(std::size_t index) {
       }
       operations_.apply_editor_preferences(loaded_view);
       operations_.apply_detected_indent_on_open(loaded_view);
-      loaded_view.MoveCursorTo(tab.deferred_handle->cursor_line,
-                               tab.deferred_handle->cursor_column);
-      loaded_view.SetScrollLine(tab.deferred_handle->scroll_line);
-      loaded_view.SetHorizontalScroll(tab.deferred_handle->horizontal_scroll);
-      if (tab.deferred_handle->selection.has_value()) {
-        const auto& selection = *tab.deferred_handle->selection;
-        loaded_view.MoveCursorTo(selection.start.line, selection.start.column);
-        loaded_view.MoveCursorTo(selection.end.line, selection.end.column, true);
-      }
+      // View state last: scroll stays authoritative even when a restored selection
+      // would otherwise drag scroll back onto the caret.
+      loaded_view.ApplyRestoredViewState(tab.deferred_handle->cursor_line,
+                                         tab.deferred_handle->cursor_column,
+                                         tab.deferred_handle->scroll_line,
+                                         tab.deferred_handle->horizontal_scroll,
+                                         tab.deferred_handle->selection);
       tab.editor_state = operations_.make_editor_tab_state(loaded_view);
       tab.deferred_handle.reset();
       return true;
@@ -403,9 +403,14 @@ bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
       continue;
     }
     TabEntry& tab = group.open_tabs[group.active_tab_index];
-    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-        EnsureEditorTabLoaded(tab)) {
-      operations_.apply_editor_preferences(tab.editor_state->viewport);
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+      // Skip the preference re-apply for a freshly-hydrated tab: RestoreEditorTab
+      // already applied current preferences, and re-running them here would fire
+      // EnsureCursorVisible and clobber the restored scroll.
+      const bool was_deferred = tab.editor_state->needs_restore;
+      if (EnsureEditorTabLoaded(tab) && !was_deferred) {
+        operations_.apply_editor_preferences(tab.editor_state->viewport);
+      }
     }
   }
 
@@ -477,9 +482,9 @@ void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& p
     const editor::TextViewport* current_view = &editor_state.viewport;
     editor::TextViewport restored_view = reopened_view;
     restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
-    restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
-    restored_view.SetScrollLine(current_view->scroll_line());
-    restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
+    restored_view.ApplyRestoredViewState(current_view->cursor_line(), current_view->cursor_column(),
+                                         current_view->scroll_line(),
+                                         current_view->horizontal_scroll());
     editor_state.viewport = restored_view;
     editor_state.restored_path = normalized_path;
     editor_state.restored_cursor_line = restored_view.cursor_line();
@@ -526,9 +531,9 @@ void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path
     const editor::TextViewport* current_view = &editor_state.viewport;
     editor::TextViewport restored_view = reopened_view;
     restored_view.SetViewportSize(current_view->visible_lines(), current_view->visible_columns());
-    restored_view.MoveCursorTo(current_view->cursor_line(), current_view->cursor_column());
-    restored_view.SetScrollLine(current_view->scroll_line());
-    restored_view.SetHorizontalScroll(current_view->horizontal_scroll());
+    restored_view.ApplyRestoredViewState(current_view->cursor_line(), current_view->cursor_column(),
+                                         current_view->scroll_line(),
+                                         current_view->horizontal_scroll());
     editor_state.viewport = restored_view;
     editor_state.restored_path = normalized_path;
     editor_state.restored_cursor_line = restored_view.cursor_line();
