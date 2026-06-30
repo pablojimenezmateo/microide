@@ -214,25 +214,25 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::PasteClipboard),
   });
   static const auto kEditorTabContextItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::CopyRelativePath),
+      MenuItem(ActionId::CopyAbsolutePath),
+      MenuSeparator(),
+      MenuItem(ActionId::SplitEditorRight, "Split Right"),
+      MenuItem(ActionId::SplitEditorDown, "Split Down"),
+      MenuSeparator(),
       MenuItem(ActionId::CloseActiveTab, "Close Tab"),
       MenuItem(ActionId::CloseAllTabs),
       MenuItem(ActionId::CloseOtherTabs),
       MenuItem(ActionId::CloseTabsToRight),
       MenuItem(ActionId::CloseTabsToLeft),
-      MenuSeparator(),
-      MenuItem(ActionId::SplitEditorRight, "Split Right"),
-      MenuItem(ActionId::SplitEditorDown, "Split Down"),
-      MenuSeparator(),
-      MenuItem(ActionId::CopyRelativePath),
-      MenuItem(ActionId::CopyAbsolutePath),
   });
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopyLastTerminalCommand),
   });
   static const auto kProjectTabContextItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::ProjectClose, "Close Project"),
-      MenuSeparator(),
       MenuItem(ActionId::ProjectCopyAbsolutePath, "Copy Absolute Path"),
+      MenuSeparator(),
+      MenuItem(ActionId::ProjectClose, "Close Project"),
   });
   static const auto kMenus = std::to_array<MenuSpec>({
       MenuSpec{MenuId::File, "File", kFileItems},
