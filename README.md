@@ -427,6 +427,14 @@ cmake --build build -j8
 ./build/microide/microide
 ```
 
+With Nix (flakes), no dependencies to install:
+
+```bash
+nix build        # optimized binary -> ./result/bin/microide
+nix run          # build and launch
+nix develop      # drop into a shell with the full toolchain
+```
+
 Local Debian package:
 
 ```bash

@@ -3,6 +3,37 @@
 The supported Linux bring-up path is a recent Ubuntu/Debian with SDL3 and SDL3_ttf
 either available as distro packages or built from source.
 
+## Nix (flakes)
+
+If you have Nix with flakes enabled, the repo `flake.nix` builds microide with no
+manual dependency install — it is the canonical, reproducible dependency set:
+
+```bash
+nix build              # optimized (LTO) binary -> ./result/bin/microide
+nix run                # build and launch
+nix develop            # toolchain + libs shell (cmake/ninja/lld + SDL3/PCRE2/Lua)
+nix flake check        # build microide_tests and run ctest headless
+```
+
+`nix develop` gives the same compilers and libraries the package uses, so the
+`cmake … && cmake --build …` inner loop works inside it. On non-NixOS hosts, GPU
+GL may need a wrapper such as `nixGL` to launch the GUI (a general SDL/OpenGL
+caveat, not specific to microide).
+
+The packaged binary is wrapped (`postFixup` in `flake.nix`) to set `XCURSOR_PATH`.
+microide draws every mouse cursor with the host's X cursor theme
+(`SDL_CreateSystemCursor`), and the Nix-built `libXcursor` only searches the Nix
+store by default, so on a non-NixOS host an unwrapped binary falls back to tiny
+monochrome core cursors. The wrapper points the search path at the standard host
+locations (`/usr/share/icons`, `~/.icons`, …) so the desktop's theme is
+discoverable; any `XCURSOR_PATH` the user already exports still wins. The wrapper
+deliberately does **not** set `XCURSOR_SIZE`: on X11 `libXcursor` reads the
+desktop-configured size from the X resource database (`Xcursor.size`), and an
+`XCURSOR_SIZE` env var would override it — pinning a fixed size that ignores the
+desktop and HiDPI scaling. Leaving it unset lets X11 honor xrdb/DPI and Wayland
+honor the output scale. Nothing in `src/` is Nix-specific — the apt/`.deb` build
+links the system `libXcursor`, which already searches `/usr/share/icons`.
+
 ## Quick path (distro packages, where new enough)
 
 ```bash

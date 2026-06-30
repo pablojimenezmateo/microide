@@ -6,12 +6,16 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include <fstream>
 #include <iterator>
@@ -20,7 +24,9 @@
 #include "app/ApplicationPresentationCache.h"
 #include "app/IdleWaitStrategy.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "platform/RuntimePaths.h"
 #include "platform/SubprocessSandbox.h"
+#include "render/RasterDecode.h"
 #include "render/RendererInfo.h"
 #include "workspace/ControlSpec.h"
 #include "util/StartupTrace.h"
@@ -94,6 +100,48 @@ void SyncWindowState(SDL_Window* window) {
   if (!SDL_SyncWindow(window)) {
     SDL_Log("SDL_SyncWindow failed: %s", SDL_GetError());
   }
+}
+
+// Give the window its own icon so it shows correctly in the taskbar / window
+// list regardless of how the app was launched (bare run, no .desktop registered,
+// non-NixOS Nix store, etc.). The bundled PNG is resolved via the same asset
+// search as fonts/themes, decoded with the shared raster decoder, and handed to
+// SDL. Best-effort: any failure leaves the platform default icon in place.
+void SetWindowIconFromAssets(SDL_Window* window) {
+  if (window == nullptr) {
+    return;
+  }
+  const std::filesystem::path icon_path =
+      platform::ResolveBundledAssetPath("icons/microide.png");
+  if (icon_path.empty()) {
+    return;
+  }
+
+  std::size_t encoded_size = 0;
+  void* encoded = SDL_LoadFile(icon_path.string().c_str(), &encoded_size);
+  if (encoded == nullptr) {
+    return;
+  }
+  std::vector<std::uint8_t> rgba;
+  int width = 0;
+  int height = 0;
+  const bool decoded = render::DecodeRasterToRgba(
+      std::span<const std::byte>(static_cast<const std::byte*>(encoded), encoded_size), rgba, width,
+      height);
+  SDL_free(encoded);
+  if (!decoded) {
+    return;
+  }
+
+  // SDL_SetWindowIcon copies the surface contents, so the borrowed pixel buffer
+  // and the surface wrapper only need to outlive this call.
+  SDL_Surface* icon =
+      SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA32, rgba.data(), width * 4);
+  if (icon == nullptr) {
+    return;
+  }
+  SDL_SetWindowIcon(window, icon);
+  SDL_DestroySurface(icon);
 }
 
 }  // namespace
@@ -270,6 +318,11 @@ bool Application::Initialize() {
   if (window_ == nullptr) {
     SDL_Log("SDL_CreateWindow failed: %s", SDL_GetError());
     return false;
+  }
+
+  {
+    util::StartupTrace::Scope set_icon_scope("SDL_SetWindowIcon");
+    SetWindowIconFromAssets(window_);
   }
 
   {
