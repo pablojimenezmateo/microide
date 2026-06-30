@@ -344,31 +344,22 @@ SDL_FRect RightPaneResizeCursorRect(const WorkspaceLayout& layout) {
                   visual.w + kWorkspaceResizeHandleCursorInflate * 2.0f, visual.h);
 }
 
+// The grab (hit) region is intentionally identical to the cursor-change region:
+// the user only ever sees a resize cursor inside *ResizeCursorRect, so the drag
+// must start in exactly that span and never extend past it. (Earlier these
+// inflated wider than the cursor zone to compensate for the cursor failing to
+// refresh on idle Wayland compositors; that bug is fixed, so the padding is gone
+// and the two can no longer drift.)
 SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout) {
-  const SDL_FRect visual = SidebarResizeHandleRect(layout);
-  if (visual.w <= 0.0f || visual.h <= 0.0f) {
-    return visual;
-  }
-  return MakeRect(visual.x - kWorkspaceResizeHandleHitInflate, visual.y,
-                  visual.w + kWorkspaceResizeHandleHitInflate * 2.0f, visual.h);
+  return SidebarResizeCursorRect(layout);
 }
 
 SDL_FRect RightPaneResizeHitRect(const WorkspaceLayout& layout) {
-  const SDL_FRect visual = RightPaneResizeHandleRect(layout);
-  if (visual.w <= 0.0f || visual.h <= 0.0f) {
-    return visual;
-  }
-  return MakeRect(visual.x - kWorkspaceResizeHandleHitInflate, visual.y,
-                  visual.w + kWorkspaceResizeHandleHitInflate * 2.0f, visual.h);
+  return RightPaneResizeCursorRect(layout);
 }
 
 SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout) {
-  const SDL_FRect visual = BottomPanelResizeHandleRect(layout);
-  if (visual.w <= 0.0f || visual.h <= 0.0f) {
-    return visual;
-  }
-  return MakeRect(visual.x, visual.y - kWorkspaceResizeHandleHitInflate, visual.w,
-                  visual.h + kWorkspaceResizeHandleHitInflate * 2.0f);
+  return BottomPanelResizeCursorRect(layout);
 }
 
 SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect) {

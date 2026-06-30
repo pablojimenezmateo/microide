@@ -54,10 +54,13 @@ using microide::workspace::kWorkspaceLayoutCompactBreakpointDefault;
 using microide::workspace::kWorkspaceLayoutCompactHysteresis;
 using microide::workspace::SidebarResizeHandleRect;
 using microide::workspace::SidebarResizeHitRect;
+using microide::workspace::SidebarResizeCursorRect;
 using microide::workspace::TabCloseHitRect;
 using microide::workspace::VerticalScrollbarHitRect;
 using microide::workspace::BottomPanelResizeHandleRect;
 using microide::workspace::BottomPanelResizeHitRect;
+using microide::workspace::BottomPanelResizeCursorRect;
+using microide::workspace::RectsEqual;
 using microide::workspace::MergeHoverInteractionLayout;
 using microide::workspace::MergeHoverResultLayout;
 using microide::workspace::MergeHoverState;
@@ -724,21 +727,18 @@ void TestWorkspaceSharedOverlayRectHelpers() {
 void TestWorkspaceSharedHitTargets() {
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 300.0f, 180.0f);
 
+  // The resize grab pad equals the cursor-change region exactly (no over-extension).
   const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
   const SDL_FRect sidebar_hit = SidebarResizeHitRect(layout);
-  Expect(sidebar_hit.w >= 12.0f,
-         "sidebar resize hit rect should meet the WCAG 2.2 minimum width");
-  Expect(sidebar_hit.h >= 24.0f,
-         "sidebar resize hit rect should meet the WCAG 2.2 minimum length");
+  Expect(RectsEqual(sidebar_hit, SidebarResizeCursorRect(layout)),
+         "sidebar resize hit rect must equal the cursor rect");
   Expect(sidebar_hit.x <= sidebar_visual.x && sidebar_hit.y == sidebar_visual.y,
          "sidebar hit rect should inflate horizontally only");
 
   const SDL_FRect panel_visual = BottomPanelResizeHandleRect(layout);
   const SDL_FRect panel_hit = BottomPanelResizeHitRect(layout);
-  Expect(panel_hit.h >= 12.0f,
-         "bottom panel resize hit rect should meet the WCAG 2.2 minimum thickness");
-  Expect(panel_hit.w >= 24.0f,
-         "bottom panel resize hit rect should meet the WCAG 2.2 minimum length");
+  Expect(RectsEqual(panel_hit, BottomPanelResizeCursorRect(layout)),
+         "bottom panel resize hit rect must equal the cursor rect");
   Expect(panel_hit.y <= panel_visual.y && panel_hit.x == panel_visual.x,
          "panel hit rect should inflate vertically only");
 
@@ -772,13 +772,16 @@ void TestWorkspaceHitTargetClickRouting() {
   const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
   const SDL_FRect sidebar_hit = SidebarResizeHitRect(layout);
 
-  const float just_outside_left = sidebar_visual.x - 2.0f;
-  const float just_outside_right = sidebar_visual.x + sidebar_visual.w + 2.0f;
+  // The hit pad equals the cursor rect, which inflates the visual seam by 1px each
+  // side: a click 1px outside the visual divider still lands on the seam, but a click
+  // deep in the editor must not.
+  const float just_outside_left = sidebar_visual.x - 1.0f;
+  const float just_outside_right = sidebar_visual.x + sidebar_visual.w + 0.5f;
   const float mid_y = sidebar_visual.y + sidebar_visual.h * 0.5f;
   Expect(microide::workspace::Contains(sidebar_hit, just_outside_left, mid_y),
-         "click 2px left of the visual divider must land inside the inflated hit rect");
+         "click 1px left of the visual divider must land inside the hit rect");
   Expect(microide::workspace::Contains(sidebar_hit, just_outside_right, mid_y),
-         "click 2px right of the visual divider must land inside the inflated hit rect");
+         "click just right of the visual divider must land inside the hit rect");
 
   const float editor_text_x = layout.editor_surface.x + 80.0f;
   Expect(!microide::workspace::Contains(sidebar_hit, editor_text_x, mid_y),
@@ -786,13 +789,13 @@ void TestWorkspaceHitTargetClickRouting() {
 
   const SDL_FRect panel_visual = BottomPanelResizeHandleRect(layout);
   const SDL_FRect panel_hit = BottomPanelResizeHitRect(layout);
-  const float just_above = panel_visual.y - 2.0f;
-  const float just_below = panel_visual.y + panel_visual.h + 2.0f;
+  const float just_above = panel_visual.y - 1.0f;
+  const float just_below = panel_visual.y + panel_visual.h + 0.5f;
   const float mid_x = panel_visual.x + panel_visual.w * 0.5f;
   Expect(microide::workspace::Contains(panel_hit, mid_x, just_above),
-         "click 2px above the bottom-panel divider must land inside the inflated hit rect");
+         "click 1px above the bottom-panel divider must land inside the hit rect");
   Expect(microide::workspace::Contains(panel_hit, mid_x, just_below),
-         "click 2px below the bottom-panel divider must land inside the inflated hit rect");
+         "click just below the bottom-panel divider must land inside the hit rect");
 }
 
 void TestWorkspaceLayoutModeResolution() {

@@ -90,6 +90,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const StripTabPalette panel_tab_palette{
       .active_fill = render::BlendColors(theme_.chrome_active, theme_.surface_background, 0.42f),
       .inactive_fill = render::BlendColors(theme_.surface_raised, theme_.surface_background, 0.66f),
+      .hover_fill = theme_.row_highlight,
       .active_text = theme_.chrome_active_text,
       .inactive_text = theme_.text_secondary,
       .active_glyph = theme_.chrome_active_text,
@@ -293,7 +294,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                        .close_right_reserve = 40.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
-                   panel_tab_palette);
+                   panel_tab_palette, PointerOver(tab.rect));
       draw_tab_close_button(tab.close_rect,
                             tab.active ? panel_tab_palette.active_glyph
                                        : panel_tab_palette.inactive_glyph,

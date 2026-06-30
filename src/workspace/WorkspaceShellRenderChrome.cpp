@@ -41,10 +41,14 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   const StripTabPalette chrome_tab_palette{
       .active_fill = theme_.chrome_active,
       .inactive_fill = theme_.surface_raised,
+      .hover_fill = theme_.row_highlight,
       .active_text = theme_.chrome_active_text,
       .inactive_text = theme_.surface_text,
       .active_glyph = theme_.chrome_text_secondary,
       .inactive_glyph = theme_.text_disabled,
+  };
+  const auto tab_hovered = [&](const SDL_FRect& rect) {
+    return last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
   };
 
   const auto visible_menu_items = ComputeVisibleMenuBarItems(layout.menu_bar);
@@ -54,7 +58,11 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     if (menu == nullptr) {
       continue;
     }
-    const SDL_Color background = item.active ? theme_.chrome_active : theme_.chrome_background;
+    const bool hovered = !item.active && last_mouse_position_valid_ &&
+                         Contains(item.rect, last_mouse_x_, last_mouse_y_);
+    const SDL_Color background = item.active ? theme_.chrome_active
+                                : hovered    ? theme_.row_highlight
+                                             : theme_.chrome_background;
     DrawFilledRect(renderer, item.rect, background);
     if (item.active) {
       DrawFilledRect(renderer,
@@ -62,8 +70,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                      theme_.accent);
     }
     DrawVCenteredTextOn(text_renderer_, renderer, item.rect, 10.0f,
-                        item.active ? theme_.chrome_active_text : theme_.chrome_text, background,
-                        menu->label);
+                        item.active || hovered ? theme_.chrome_active_text : theme_.chrome_text,
+                        background, menu->label);
   }
 
   if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value()) {
@@ -124,7 +132,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                      .close_right_reserve = 46.0f,
                      .accent_edge = StripAccentEdge::Top,
                  },
-                 chrome_tab_palette);
+                 chrome_tab_palette, tab_hovered(tab.rect));
     draw_tab_close_button(tab.close_rect,
                           tab.active ? chrome_tab_palette.active_glyph
                                      : chrome_tab_palette.inactive_glyph,
@@ -197,7 +205,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                          .close_right_reserve = 46.0f,
                          .accent_edge = StripAccentEdge::Top,
                      },
-                     chrome_tab_palette);
+                     chrome_tab_palette, tab_hovered(tab.rect));
         draw_tab_close_button(tab.close_rect,
                               tab.active ? chrome_tab_palette.active_glyph
                                          : chrome_tab_palette.inactive_glyph,
@@ -251,15 +259,19 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
         break;
     }
     const bool has_tone = item.item.tone != StatusItemTone::Default;
-    const SDL_Color text_color = item.hovered ? theme_.text_primary : theme_.text_muted;
-    if (item.hovered) {
+    // Only command-bound items are clickable, so only they earn the hover lift.
+    // A bare path/status segment must not advertise clickability it doesn't have
+    // (this also keeps the breadcrumb's hover/cursor/click regions in agreement).
+    const bool hovered = item.hovered && !item.item.command.empty();
+    const SDL_Color text_color = hovered ? theme_.text_primary : theme_.text_muted;
+    if (hovered) {
       DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.chrome_background, true);
     } else if (has_tone) {
       const SDL_Color tinted = render::BlendColors(theme_.chrome_background, tone_fill, 0.28f);
       SDL_SetRenderDrawColor(renderer, tinted.r, tinted.g, tinted.b, 0xff);
       SDL_RenderFillRect(renderer, &item.rect);
     }
-    const SDL_Color row_bg = item.hovered ? theme_.row_highlight
+    const SDL_Color row_bg = hovered ? theme_.row_highlight
                                           : (has_tone ? render::BlendColors(theme_.chrome_background,
                                                                     tone_fill, 0.28f)
                                                       : theme_.chrome_background);

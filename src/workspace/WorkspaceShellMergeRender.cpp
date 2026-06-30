@@ -237,7 +237,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                detail::ButtonTone::Neutral,
                                detail::ButtonVisualState{
                                    .enabled = primary,
-                                   .hovered = false,
+                                   .hovered = PointerOver(button_rect),
                                    .active = selected,
                                });
   };

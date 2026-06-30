@@ -1138,6 +1138,17 @@
                                                     float max_width,
                                                     std::size_t max_lines) const;
   void UpdateEditorBlameHover(float x, float y);
+  // True when the last-known pointer position is inside `rect`. Shared by render
+  // paths that lift a surface to its hover style; centralizes the
+  // last_mouse_position_valid_ + Contains idiom so hover affordances stay uniform.
+  bool PointerOver(const SDL_FRect& rect) const;
+  // The rect of the row/tab/menu element under (x, y) that paints a hover
+  // background, or nullopt over no such element. Rendering is surface-granular, so
+  // the motion handler only needs a rect that *changes* when the hovered element
+  // changes; pushing it as damage re-renders the containing surface with the new
+  // hover. Mirrors the surfaces threaded through PointerOver in the render TUs.
+  std::optional<SDL_FRect> HoveredInteractiveRect(const WorkspaceLayout& layout,
+                                                  float x, float y) const;
   void InvalidateEditorBlamePath(const std::filesystem::path& path);
   void ClearEditorBlame();
   std::optional<std::size_t> FindOpenCompareTabIndex(const std::filesystem::path& path,

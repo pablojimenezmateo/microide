@@ -1476,6 +1476,9 @@ void TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender() {
 
   Expect(WorkspaceShellTestAccess::ExecuteShowGitSidebar(retained_shell),
          "sidebar redraw regression fixture should switch to the git sidebar");
+  // Settle the async git refresh so the retained (rendered twice) and reference
+  // (rendered once) shells capture the same deterministic git sidebar state.
+  WorkspaceShellTestAccess::SettleGitSidebarRefresh(retained_shell);
   const auto redraw = retained_shell.ConsumePendingRenderInvalidation();
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(retained_shell);
   Expect(!redraw.full && !redraw.rects.empty(),
@@ -1489,6 +1492,7 @@ void TestWorkspaceShellSidebarModeRetainedRedrawMatchesFullRender() {
   configure_shell(reference_shell);
   Expect(WorkspaceShellTestAccess::ExecuteShowGitSidebar(reference_shell),
          "reference sidebar redraw fixture should switch to the git sidebar");
+  WorkspaceShellTestAccess::SettleGitSidebarRefresh(reference_shell);
   SoftwareCanvas reference_canvas(kCanvasWidth, kCanvasHeight);
   reference_shell.Render(reference_canvas.renderer(), kCanvasWidth, kCanvasHeight);
 

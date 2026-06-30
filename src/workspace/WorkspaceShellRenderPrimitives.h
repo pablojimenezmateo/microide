@@ -51,6 +51,9 @@ enum class StripAccentEdge {
 struct StripTabPalette {
   SDL_Color active_fill{};
   SDL_Color inactive_fill{};
+  // Background for an inactive tab while the pointer is over it. Defaults (zero
+  // alpha) fall back to inactive_fill so callers that never set it keep the old look.
+  SDL_Color hover_fill{};
   SDL_Color active_text{};
   SDL_Color inactive_text{};
   SDL_Color active_glyph{};
@@ -778,8 +781,11 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
                          bool show_badge,
                          bool active,
                          const StripTabStyle& style,
-                         const StripTabPalette& palette) {
-  const SDL_Color background = active ? palette.active_fill : palette.inactive_fill;
+                         const StripTabPalette& palette,
+                         bool hovered = false) {
+  const SDL_Color inactive_background =
+      (hovered && palette.hover_fill.a != 0) ? palette.hover_fill : palette.inactive_fill;
+  const SDL_Color background = active ? palette.active_fill : inactive_background;
   FillRect(renderer, rect, background);
   if (active) {
     const SDL_FRect accent =
@@ -795,7 +801,7 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
     const SDL_FRect badge_rect{rect.x + style.text_left_padding, badge_y, style.badge_size,
                                style.badge_size};
     FillRect(renderer, badge_rect, badge_color);
-    OutlineRect(renderer, badge_rect, active ? palette.active_fill : palette.inactive_fill);
+    OutlineRect(renderer, badge_rect, background);
     const SDL_Color badge_text_color =
         render::RelativeLuminance(badge_color) > 0.45f ? theme.chrome_background
                                                        : theme.text_primary;
