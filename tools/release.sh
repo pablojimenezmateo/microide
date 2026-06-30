@@ -10,17 +10,20 @@
 #
 # Usage:
 #   tools/release.sh <version> [--publish] [--skip-media] [--skip-tests]
-#                    [--notes <file>] [--yes]
+#                    [--changelog-file <file>] [--notes <file>] [--yes]
 #
 # Examples:
 #   tools/release.sh 2.4.1                 # local dry build + package + sign, no git
 #   tools/release.sh 2.4.1 --publish       # the whole thing, including gh release
+#   tools/release.sh 2.5.0 --publish --changelog-file notes.md
+#                                          # inject a curated CHANGELOG body (no TODO draft)
 
 set -euo pipefail
+INVOKE_PWD="$PWD"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
-PUBLISH=0; SKIP_MEDIA=0; SKIP_TESTS=0; ASSUME_YES=0; NOTES_FILE=""
+PUBLISH=0; SKIP_MEDIA=0; SKIP_TESTS=0; ASSUME_YES=0; NOTES_FILE=""; CHANGELOG_FILE=""
 VERSION=""
 KEY_FPR="0E32 39B7 1B0F 9598 B71A FB7B 6D33 9CCB FC51 5D70"
 
@@ -35,6 +38,7 @@ while [[ $# -gt 0 ]]; do
     --skip-tests) SKIP_TESTS=1 ;;
     --yes|-y)     ASSUME_YES=1 ;;
     --notes)      NOTES_FILE="$2"; shift ;;
+    --changelog-file) CHANGELOG_FILE="$2"; shift ;;
     -h|--help)    sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)           die "unknown flag '$1'" ;;
     *)            [[ -z "$VERSION" ]] && VERSION="$1" || die "unexpected arg '$1'" ;;
@@ -45,6 +49,11 @@ done
 VERSION="${VERSION#v}"
 [[ -n "$VERSION" ]] || die "usage: tools/release.sh <version> [--publish]"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "version must be X.Y.Z (got '$VERSION')"
+
+if [[ -n "$CHANGELOG_FILE" ]]; then
+  [[ "$CHANGELOG_FILE" == /* ]] || CHANGELOG_FILE="$INVOKE_PWD/$CHANGELOG_FILE"
+  [[ -f "$CHANGELOG_FILE" ]] || die "changelog file '$CHANGELOG_FILE' not found"
+fi
 
 OLD_VERSION="$(grep -oP 'project\(microide VERSION \K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)"
 [[ -n "$OLD_VERSION" ]] || die "could not read current version from CMakeLists.txt"
@@ -81,9 +90,14 @@ PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
 {
   echo "## [$VERSION] - $DATE"
   echo
-  echo "<!-- TODO(release): summarize the cycle. Draft from commits since ${PREV_TAG:-the start}: -->"
-  echo "### Changes"
-  git log ${PREV_TAG:+$PREV_TAG..HEAD} --no-merges --pretty='- %s' | grep -vE '^- (release|chore): ' || true
+  if [[ -n "$CHANGELOG_FILE" ]]; then
+    # Curated section body supplied by --changelog-file (header/date stay ours).
+    cat "$CHANGELOG_FILE"
+  else
+    echo "<!-- TODO(release): summarize the cycle. Draft from commits since ${PREV_TAG:-the start}: -->"
+    echo "### Changes"
+    git log ${PREV_TAG:+$PREV_TAG..HEAD} --no-merges --pretty='- %s' | grep -vE '^- (release|chore): ' || true
+  fi
   echo
 } > "$REPO/.changelog-section.tmp"
 # Insert the new section just before the most recent existing version block.
@@ -92,7 +106,11 @@ awk 'NR==FNR{sec=sec $0 ORS; next}
      { print }' "$REPO/.changelog-section.tmp" CHANGELOG.md > CHANGELOG.md.new
 mv CHANGELOG.md.new CHANGELOG.md
 rm -f "$REPO/.changelog-section.tmp"
-info "added '## [$VERSION] - $DATE' (review & tighten the TODO before publishing)"
+if [[ -n "$CHANGELOG_FILE" ]]; then
+  info "inserted curated '## [$VERSION] - $DATE' from $CHANGELOG_FILE"
+else
+  info "added '## [$VERSION] - $DATE' (review & tighten the TODO before publishing)"
+fi
 
 # --- 3. build --------------------------------------------------------------
 log "3/8  Build (Release)"

@@ -11,6 +11,12 @@ then stops), and `tools/release.sh <version> --publish` additionally commits, ta
 creates the GitHub release. The numbered steps below are the canonical reference the script
 implements; run them by hand if you need to deviate.
 
+To ship a curated changelog in a single `--publish` run (instead of the auto-drafted
+`<!-- TODO -->` section), write the section **body** to a file and pass
+`--changelog-file <file>`: the script inserts it under a generated `## [version] - date`
+header, so the version and date stay authoritative. Example:
+`tools/release.sh 2.5.0 --publish --changelog-file notes.md`.
+
 ## Standard release procedure
 
 When a release is requested ("do a release", "cut a release", "release vX.Y.Z"), perform **all** of
