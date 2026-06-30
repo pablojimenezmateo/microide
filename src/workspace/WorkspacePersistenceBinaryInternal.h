@@ -167,6 +167,11 @@ enum class ProjectSessionTag : std::uint16_t {
   RightPaneMode = 12,
   GroupSplitOrientation = 13,
   GroupSplitFraction = 14,
+  ExpandedTreePath = 15,    // repeated; one relative path per record
+  CollapsedTreePath = 16,   // repeated; one relative path per record
+  SelectedTreePath = 17,
+  SidebarScrollRow = 18,
+  SidebarViewId = 19,
 };
 
 enum class EditorGroupTag : std::uint16_t {

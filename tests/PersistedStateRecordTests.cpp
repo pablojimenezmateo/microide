@@ -144,6 +144,11 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   session.right_pane_visible = true;
   session.right_pane_width = 312.0f;
   session.right_pane_mode = static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch);
+  session.expanded_tree_paths = {"dir_a", "dir_a/sub"};
+  session.collapsed_tree_paths = {"dir_b"};
+  session.selected_tree_path = "dir_a/sub/leaf.txt";
+  session.sidebar_scroll_row = 7;
+  session.sidebar_view_id = "git";
   return session;
 }
 
@@ -223,6 +228,47 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
              decoded_workspace.project_roots[1] == "/tmp/project-b" &&
              decoded_workspace.active_project_index == 1,
          "workspace session should round-trip");
+}
+
+void TestPersistedStateProjectSessionRoundTripsTreeState() {
+  PersistedProjectSessionState session = BuildProjectSessionFixture();
+  std::vector<std::byte> record;
+  Expect(EncodeProjectSessionRecord(session, &record),
+         "project session encode should succeed");
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(record, &decoded),
+         "project session decode should succeed");
+  Expect(decoded.expanded_tree_paths.size() == 2 &&
+             decoded.expanded_tree_paths[0] == "dir_a" &&
+             decoded.expanded_tree_paths[1] == "dir_a/sub",
+         "expanded tree paths should round-trip in order");
+  Expect(decoded.collapsed_tree_paths.size() == 1 &&
+             decoded.collapsed_tree_paths[0] == "dir_b",
+         "collapsed tree paths should round-trip");
+  Expect(decoded.selected_tree_path == "dir_a/sub/leaf.txt" &&
+             decoded.sidebar_scroll_row == 7 && decoded.sidebar_view_id == "git",
+         "selected node, sidebar scroll, and active view should round-trip");
+
+  // An older session file lacking the tree/sidebar tags decodes to the empty/zero
+  // defaults rather than failing (additive backward compatibility).
+  PersistedProjectSessionState legacy = BuildProjectSessionFixture();
+  legacy.expanded_tree_paths.clear();
+  legacy.collapsed_tree_paths.clear();
+  legacy.selected_tree_path.clear();
+  legacy.sidebar_scroll_row = 0;
+  legacy.sidebar_view_id.clear();
+  std::vector<std::byte> legacy_record;
+  Expect(EncodeProjectSessionRecord(legacy, &legacy_record),
+         "legacy project session encode should succeed");
+  PersistedProjectSessionState decoded_legacy;
+  Expect(DecodeProjectSessionRecord(legacy_record, &decoded_legacy),
+         "legacy project session decode should succeed");
+  Expect(decoded_legacy.expanded_tree_paths.empty() &&
+             decoded_legacy.collapsed_tree_paths.empty() &&
+             decoded_legacy.selected_tree_path.empty() &&
+             decoded_legacy.sidebar_scroll_row == 0 &&
+             decoded_legacy.sidebar_view_id.empty(),
+         "absent tree/sidebar tags decode to defaults");
 }
 
 void TestPersistedStateProjectSessionAcceptsLegacyChatRegistryTag() {
@@ -519,6 +565,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateProjectSessionRoundTripOmitsChatRegistry);
   AddTest(tests, "PersistedStateRecord/ProjectSessionAcceptsLegacyChatRegistryTag",
           TestPersistedStateProjectSessionAcceptsLegacyChatRegistryTag);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripsTreeState",
+          TestPersistedStateProjectSessionRoundTripsTreeState);
   AddTest(tests, "PersistedStateRecord/DecodersSkipUnknownTags",
           TestPersistedStateRecordDecodersSkipUnknownTags);
   AddTest(tests, "PersistedStateRecord/ProjectSessionDefaultsMissingOutgoingBaseChoiceToAuto",
