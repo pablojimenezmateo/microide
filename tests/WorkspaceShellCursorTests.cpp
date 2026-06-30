@@ -16,6 +16,7 @@ using microide::workspace::BottomPanelResizeCursorRect;
 using microide::workspace::BottomPanelResizeHitRect;
 using microide::workspace::Contains;
 using microide::workspace::EditorSplitOrientation;
+using microide::workspace::RectsEqual;
 using microide::workspace::SidebarResizeCursorRect;
 using microide::workspace::SidebarResizeHandleRect;
 using microide::workspace::SidebarResizeHitRect;
@@ -160,12 +161,16 @@ void TestWorkspaceShellResizeCursorFallsBackOutsideVisibleSeams() {
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
 
+  // The grab (hit) region must equal the cursor-change region exactly: now that the
+  // cursor reliably refreshes, a point outside the cursor rect is outside the drag pad
+  // too — there is no longer a band where you can grab but the cursor stays an arrow.
   const SDL_FRect sidebar_visual = SidebarResizeHandleRect(layout);
-  const SDL_FRect sidebar_hit = SidebarResizeHitRect(layout);
+  Expect(RectsEqual(SidebarResizeHitRect(layout), SidebarResizeCursorRect(layout)),
+         "sidebar resize hit rect must equal the cursor rect (no over-extended grab pad)");
   const float sidebar_x = sidebar_visual.x + sidebar_visual.w + 2.0f;
   const float sidebar_y = sidebar_visual.y + sidebar_visual.h * 0.5f;
-  Expect(Contains(sidebar_hit, sidebar_x, sidebar_y),
-         "sidebar seam regression should still probe a point inside the drag hit pad");
+  Expect(!Contains(SidebarResizeHitRect(layout), sidebar_x, sidebar_y),
+         "just outside the seam should fall outside the drag pad");
   Expect(!Contains(SidebarResizeCursorRect(layout), sidebar_x, sidebar_y),
          "sidebar seam regression should probe a point just outside the cursor rect");
   WorkspaceShellTestAccess::UpdateMouseCursor(shell, sidebar_x, sidebar_y);
@@ -175,11 +180,12 @@ void TestWorkspaceShellResizeCursorFallsBackOutsideVisibleSeams() {
          "just outside the sidebar seam the cursor should no longer resolve to horizontal resize");
 
   const SDL_FRect panel_visual = BottomPanelResizeHandleRect(layout);
-  const SDL_FRect panel_hit = BottomPanelResizeHitRect(layout);
+  Expect(RectsEqual(BottomPanelResizeHitRect(layout), BottomPanelResizeCursorRect(layout)),
+         "panel resize hit rect must equal the cursor rect (no over-extended grab pad)");
   const float panel_x = panel_visual.x + panel_visual.w * 0.5f;
   const float panel_y = panel_visual.y - 2.0f;
-  Expect(Contains(panel_hit, panel_x, panel_y),
-         "panel seam regression should still probe a point inside the drag hit pad");
+  Expect(!Contains(BottomPanelResizeHitRect(layout), panel_x, panel_y),
+         "just outside the seam should fall outside the drag pad");
   Expect(!Contains(BottomPanelResizeCursorRect(layout), panel_x, panel_y),
          "panel seam regression should probe a point just outside the cursor rect");
   WorkspaceShellTestAccess::UpdateMouseCursor(shell, panel_x, panel_y);

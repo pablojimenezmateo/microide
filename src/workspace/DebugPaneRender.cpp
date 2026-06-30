@@ -190,13 +190,12 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     const std::vector<DebugVariableRowView>& rows = model.Rows();
     const DebugVariableRowView& var_row = rows[row_index];
     const bool selected = row_index == model.SelectedRow();
+    const SDL_FRect row_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+                                        panel_layout.content_rect.w, panel_layout.line_height);
     SDL_Color background = theme_.surface_background;
-    if (selected) {
+    if (selected || PointerOver(row_band)) {
       background = theme_.row_highlight;
-      DrawFilledRect(renderer,
-                     MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
-                              panel_layout.content_rect.w, panel_layout.line_height),
-                     background);
+      DrawFilledRect(renderer, row_band, background);
     }
     const float indent = static_cast<float>(var_row.depth) * kDebugPaneTreeIndentStep;
     const float row_x = panel_layout.text_x + indent;
@@ -310,13 +309,12 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       constexpr float kIndentStep = 16.0f;
       const auto row_ref = debug_view->PanelRowAt(static_cast<std::size_t>(index));
       const auto fill_row_background = [&](bool focused) -> SDL_Color {
+        const SDL_FRect row_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+                                            panel_layout.content_rect.w, panel_layout.line_height);
         SDL_Color background = theme_.surface_background;
-        if (focused) {
+        if (focused || PointerOver(row_band)) {
           background = theme_.row_highlight;
-          DrawFilledRect(renderer,
-                         MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
-                                  panel_layout.content_rect.w, panel_layout.line_height),
-                         background);
+          DrawFilledRect(renderer, row_band, background);
         }
         return background;
       };
@@ -376,15 +374,24 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
                    text_renderer_.TruncateToWidth(bp_row.display, panel_layout.text_width));
         continue;
       }
+      // Non-header breakpoint rows are clickable (toggle/edit), so lift the row band on
+      // hover and use that as the text background for the whole row.
+      const SDL_FRect bp_band = MakeRect(panel_layout.content_rect.x, line_y - 1.0f,
+                                         panel_layout.content_rect.w, panel_layout.line_height);
+      SDL_Color bp_bg = theme_.surface_background;
+      if (PointerOver(bp_band)) {
+        bp_bg = theme_.row_highlight;
+        DrawFilledRect(renderer, bp_band, bp_bg);
+      }
       if (bp_row.kind == DebugBreakpointRowView::Kind::ExceptionFilter) {
         const char* checkbox = bp_row.enabled ? "[x] " : "[ ] ";
         const float box_w = text_renderer_.MeasureWidth(checkbox);
         DrawTextOn(text_renderer_, renderer, panel_layout.text_x, line_y,
                    bp_row.enabled ? theme_.text_primary : theme_.text_secondary,
-                   theme_.surface_background, checkbox);
+                   bp_bg, checkbox);
         DrawTextOn(text_renderer_, renderer, panel_layout.text_x + box_w, line_y,
                    bp_row.enabled ? theme_.text_primary : theme_.text_secondary,
-                   theme_.surface_background,
+                   bp_bg,
                    text_renderer_.TruncateToWidth(bp_row.display,
                                                   panel_layout.text_width - box_w));
         continue;
@@ -398,12 +405,11 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
       const SDL_Color bp_primary = bp_row.failed       ? theme_.diagnostic_warning
                                    : bp_row.enabled    ? theme_.text_secondary
                                                        : theme_.text_disabled;
-      DrawTextOn(text_renderer_, renderer, bp_x, line_y, bp_primary, theme_.surface_background,
-                 bp_checkbox);
+      DrawTextOn(text_renderer_, renderer, bp_x, line_y, bp_primary, bp_bg, bp_checkbox);
       draw_two_column_row(bp_x + bp_box_w,
                           panel_layout.text_width - kDebugPaneBreakpointIndent - bp_box_w,
                           bp_row.display, bp_primary, bp_row.secondary, theme_.text_muted, line_y,
-                          theme_.surface_background);
+                          bp_bg);
       continue;
     }
   }

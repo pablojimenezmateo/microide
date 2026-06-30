@@ -259,7 +259,8 @@ inline constexpr float kWorkspaceDiffMarkerLaneGap = 3.0f;
 inline constexpr float kWorkspaceStatusBarHeight = 22.0f;
 inline constexpr float kWorkspaceMenuOverflowChevronWidth = 28.0f;
 inline constexpr float kWorkspaceTabCloseHitInflate = 3.0f;
-inline constexpr float kWorkspaceResizeHandleHitInflate = 3.0f;
+// Resize dividers: the grab (hit) region equals the cursor-change region. A single
+// inflate governs both so they can never drift — see *ResizeHitRect/*ResizeCursorRect.
 inline constexpr float kWorkspaceResizeHandleCursorInflate = 1.0f;
 inline constexpr float kWorkspaceScrollbarHitInflate = 4.0f;
 inline constexpr float kWorkspaceWindowControlButtonHitInflate = 2.0f;

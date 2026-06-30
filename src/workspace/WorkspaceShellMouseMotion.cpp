@@ -423,6 +423,32 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         request_hover_button_redraw(current_button_rect);
       }
     }
+
+    // Generic hover-background surfaces (menu-bar items, tab strips, sidebar/overlay
+    // list rows, bottom-panel tabs, debug-pane rows). Rendering is surface-granular,
+    // so damaging the changed element's rect re-renders that surface with the new
+    // hover. One unified probe keeps every list/tab hover affordance in lockstep.
+    const std::optional<SDL_FRect> previous_interactive_rect =
+        previous_mouse_position_valid
+            ? HoveredInteractiveRect(layout, previous_mouse_x, previous_mouse_y)
+            : std::nullopt;
+    const std::optional<SDL_FRect> current_interactive_rect = HoveredInteractiveRect(
+        layout, static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
+    const bool previous_interactive_present = previous_interactive_rect.has_value();
+    const bool current_interactive_present = current_interactive_rect.has_value();
+    const SDL_FRect previous_interactive = previous_interactive_rect.value_or(SDL_FRect{});
+    const SDL_FRect current_interactive = current_interactive_rect.value_or(SDL_FRect{});
+    if (previous_interactive_present != current_interactive_present ||
+        (previous_interactive_present && current_interactive_present &&
+         !rects_equal(previous_interactive, current_interactive))) {
+      if (previous_interactive_present) {
+        RequestRedrawRect(previous_interactive);
+      }
+      if (current_interactive_present) {
+        RequestRedrawRect(current_interactive);
+      }
+      sidebar_hover_button_changed = true;  // reuse the "redraw was requested" return signal
+    }
     const bool current_action_hovered =
         EditorHoverPopupPrimaryActionHovered(static_cast<float>(event.motion.x),
                                              static_cast<float>(event.motion.y));

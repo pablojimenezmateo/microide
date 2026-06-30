@@ -84,15 +84,18 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   const auto draw_overlay_row = [&](int row_index, int selected_index, std::string_view label) {
     const bool selected = row_index == selected_index;
     SDL_FRect row = ScrollableListRowRect(overlay_list_layout, row_index);
-    DrawSelectableRowBackground(renderer, theme_, row, theme_.surface_raised, selected, selected);
+    // Keyboard selection keeps the accent strip; the pointer hovering a different
+    // row still lifts that row's background so the click target is obvious.
+    const bool emphasized = selected || PointerOver(row);
+    DrawSelectableRowBackground(renderer, theme_, row, theme_.surface_raised, emphasized, selected);
     // Accent left-bar on the selected row, matching the two-column pickers, so the
     // keyboard focus is unmistakable in the finder / completion / code-action lists.
     if (selected) {
       DrawFilledRect(renderer, MakeRect(row.x, row.y + 2.0f, 3.0f, row.h - 4.0f), theme_.accent);
     }
     DrawVCenteredTextOn(text_renderer_, renderer, row, 10.0f,
-                        selected ? theme_.text_primary : theme_.text_secondary,
-                        selected ? theme_.row_highlight : theme_.surface_raised,
+                        emphasized ? theme_.text_primary : theme_.text_secondary,
+                        emphasized ? theme_.row_highlight : theme_.surface_raised,
                         TruncateLabel(label, row.w - 16.0f));
   };
 
@@ -109,9 +112,10 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
                                          std::string_view secondary) {
           const bool selected = row_index == sel_index;
           SDL_FRect row = ScrollableListRowRect(overlay_list_layout, row_index);
-          DrawSelectableRowBackground(renderer, theme_, row, theme_.surface_raised, selected,
+          const bool emphasized = selected || PointerOver(row);
+          DrawSelectableRowBackground(renderer, theme_, row, theme_.surface_raised, emphasized,
                                       selected);
-          const SDL_Color row_bg = selected ? theme_.row_highlight : theme_.surface_raised;
+          const SDL_Color row_bg = emphasized ? theme_.row_highlight : theme_.surface_raised;
           if (selected) {
             DrawFilledRect(renderer, MakeRect(row.x, row.y + 2.0f, 3.0f, row.h - 4.0f),
                            theme_.accent);
@@ -127,7 +131,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
           const float primary_width = std::max(20.0f, row.w - 12.0f - secondary_width);
           DrawVCenteredTextOn(text_renderer_, renderer,
                               MakeRect(row.x + 10.0f, row.y, primary_width, row.h), 0.0f,
-                              selected ? theme_.text_primary : theme_.text_secondary, row_bg,
+                              emphasized ? theme_.text_primary : theme_.text_secondary, row_bg,
                               TruncateLabel(primary, primary_width));
         };
 

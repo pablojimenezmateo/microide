@@ -28,6 +28,18 @@
         shell.context_.current_project_state.sidebar.git.tree_git_badges_materialized);
     shell.ConsumeGitSidebarRefresh();
   }
+  // Force the git sidebar into a deterministic, fully-settled state. Showing the git
+  // sidebar dispatches an asynchronous `git status` on the background executor whose
+  // result lands on a later frame; any test that renders or compares pixels after
+  // switching to git must call this first, or it races the executor (the in-flight
+  // refresh may or may not have landed by capture time — see the retained-vs-full
+  // redraw fixtures, which render twice and so resolve the race differently than a
+  // single full render). Cancel drains the pending async result, then a synchronous
+  // refresh recomputes the same snapshot regardless of whether the async one landed.
+  static void SettleGitSidebarRefresh(WorkspaceShell& shell) {
+    shell.project_background_executor_.Cancel();
+    PerfRunGitSidebarRefreshSync(shell);
+  }
 
   static void OpenSingleEditorTab(WorkspaceShell& shell, const std::filesystem::path& path) {
     editor::TextViewport opened_view;

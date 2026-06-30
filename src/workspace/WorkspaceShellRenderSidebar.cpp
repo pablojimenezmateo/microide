@@ -383,7 +383,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const bool selected =
           static_cast<std::size_t>(result_index) ==
           project_state.overlay.workflow.project_search.selected_index;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+      const bool emphasized = selected || PointerOver(row_rect);
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, emphasized,
                                   selected);
 
       // Highlight the matched span inside the preview with the editor's search
@@ -410,8 +411,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const std::string_view label =
           BuildProjectSearchResultLabel(result.line, result.column, result.preview);
       DrawVCenteredTextOn(text_renderer_, renderer, row_rect, 6.0f,
-                          selected ? theme_.text_primary : theme_.text_secondary,
-                          selected ? theme_.row_highlight : theme_.surface_background,
+                          emphasized ? theme_.text_primary : theme_.text_secondary,
+                          emphasized ? theme_.row_highlight : theme_.surface_background,
                           TruncateLabel(label, row_rect.w - 12.0f));
     }
 
@@ -649,6 +650,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         continue;
       }
       if (line.kind == GitSidebarLine::Kind::Directory) {
+        const bool hovered = PointerOver(row_rect);
+        const SDL_Color row_background =
+            hovered ? theme_.row_highlight : theme_.surface_background;
+        DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, hovered,
+                                    false);
         const float depth_offset = static_cast<float>(line.depth) * kTreeIndentWidth;
         const float tree_x = row_rect.x + 6.0f + depth_offset;
         const float chevron_x = tree_x;
@@ -659,7 +665,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         DrawVCenteredTextOn(
             text_renderer_, renderer,
             MakeRect(label_x, row_rect.y, label_width, row_rect.h), 0.0f, theme_.text_primary,
-            theme_.surface_background, TruncateLabel(line.label, label_width));
+            row_background, TruncateLabel(line.label, label_width));
         continue;
       }
       if (line.kind == GitSidebarLine::Kind::Empty || line.entry_index < 0) {
@@ -689,7 +695,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       }
       const bool selected =
           static_cast<std::size_t>(line.entry_index) == project_state.sidebar.git.selected_index;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+      const bool emphasized = selected || PointerOver(row_rect);
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, emphasized,
                                   selected);
 
       const float depth_offset = static_cast<float>(line.depth) * kTreeIndentWidth;
@@ -704,7 +711,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       // Leading status badge before the filename (see draw_leading_git_badge): a bright,
       // status-colored M/A/D/U/! glyph, matching the file tree.
       const SDL_Color row_background =
-          selected ? theme_.row_highlight : theme_.surface_background;
+          emphasized ? theme_.row_highlight : theme_.surface_background;
       const float name_x =
           draw_leading_git_badge(row_rect, label_x, row_status, selected, row_background);
 
@@ -713,8 +720,8 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         primary_label = "[" + row_vm->review_marker_label + "] " + primary_label;
       }
       const std::string secondary_label;
-      const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
-      const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
+      const SDL_Color primary_color = emphasized ? theme_.text_primary : theme_.text_secondary;
+      const SDL_Color secondary_color = emphasized ? theme_.text_secondary : theme_.text_muted;
       DrawPrimarySecondaryRowText(text_renderer_, renderer, row_rect, name_x, right_edge,
                                   primary_color, secondary_color, row_background, primary_label,
                                   secondary_label, 1.0f);
@@ -740,13 +747,14 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
       const bool selected =
           static_cast<std::size_t>(item_index) == project_state.sidebar.plugin.selected_index;
+      const bool emphasized = selected || PointerOver(row_rect);
       const SDL_Color row_background =
-          selected ? theme_.row_highlight : theme_.surface_background;
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+          emphasized ? theme_.row_highlight : theme_.surface_background;
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, emphasized,
                                   selected);
 
-      const SDL_Color primary_color = selected ? theme_.text_primary : theme_.text_secondary;
-      const SDL_Color secondary_color = selected ? theme_.text_secondary : theme_.text_muted;
+      const SDL_Color primary_color = emphasized ? theme_.text_primary : theme_.text_secondary;
+      const SDL_Color secondary_color = emphasized ? theme_.text_secondary : theme_.text_muted;
 
       // Tree rows: host-drawn indentation by depth plus a disclosure twisty on
       // collapsible rows. Flat sidebars (depth 0, not collapsible) keep the
@@ -842,7 +850,13 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       SDL_FRect row_rect = ScrollableListRowRect(list_layout, row);
       const bool selected =
           static_cast<std::size_t>(entry_index) == project_state.directory_tree.selected_index();
-      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, selected,
+      // Hover lifts only the row background (the accent strip and the brighter text
+      // stay reserved for the actual selection), so the tree reads as "this is what
+      // I'd click" without masquerading as selected.
+      const bool emphasized = selected || PointerOver(row_rect);
+      const SDL_Color row_background =
+          emphasized ? theme_.row_highlight : theme_.surface_background;
+      DrawSelectableRowBackground(renderer, theme_, row_rect, theme_.surface_background, emphasized,
                                   selected);
 
       const float depth_offset = static_cast<float>(entry.depth) * kTreeIndentWidth;
@@ -884,14 +898,14 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
               ? theme_.text_primary
               : (entry.ignored ? theme_.text_muted
                                : (entry.is_directory ? theme_.text_primary : theme_.text_secondary)),
-          selected ? theme_.row_highlight : theme_.surface_background,
+          row_background,
           TruncateLabel(entry.label, label_width));
       if (has_git_marker) {
         DrawVCenteredTextOn(
             text_renderer_, renderer,
             MakeRect(marker_x, row_rect.y, marker_width, row_rect.h), 0.0f,
             selected ? theme_.text_primary : GitMarkerColor(theme_, entry.git_status),
-            selected ? theme_.row_highlight : theme_.surface_background, git_marker_text);
+            row_background, git_marker_text);
       }
     }
 

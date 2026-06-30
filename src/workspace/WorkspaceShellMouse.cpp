@@ -252,10 +252,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (event.button.button == SDL_BUTTON_LEFT) {
     for (const EditorSplitDividerLayout& divider :
          ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
-      const float inflate = kWorkspaceResizeHandleHitInflate;
-      const SDL_FRect hit = MakeRect(divider.rect.x - inflate, divider.rect.y - inflate,
-                                     divider.rect.w + 2.0f * inflate, divider.rect.h + 2.0f * inflate);
-      if (Contains(hit, event.button.x, event.button.y)) {
+      // Grab region == cursor region: the resize cursor is shown over divider.rect
+      // exactly (see CursorKindForPosition), so the drag starts in the same span and
+      // does not extend past where the cursor changes.
+      if (Contains(divider.rect, event.button.x, event.button.y)) {
         context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
         context_.interaction_state.drag_editor_split_divider_index = divider.divider_index;
         context_.interaction_state.drag_editor_split_path = divider.node_path;

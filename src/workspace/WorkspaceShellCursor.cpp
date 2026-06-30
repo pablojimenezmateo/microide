@@ -501,6 +501,14 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           button_rect.has_value() && Contains(*button_rect, x, y)) {
         return CursorKind::Pointer;
       }
+      // Top-level Commit button (shown before the commit draft opens — see
+      // GitSidebarCommandCenter, show_commit_button = repo_available && !workflow.open).
+      // It is clearly clickable, so it must claim the pointer like every other action.
+      if (const auto& git_state = context_.current_project_state.sidebar.git;
+          git_state.repo_available && !git_state.commit_workflow.open &&
+          Contains(GitSidebarCommitButtonRect(layout.sidebar), x, y)) {
+        return CursorKind::Pointer;
+      }
       // Commit workflow (open after the user begins a commit): the subject/body are
       // text inputs and the confirm button is clickable. The renderer caches these
       // rects each frame; mirror the click handlers (WorkspaceShellSingleLineInputMouse
@@ -1010,6 +1018,141 @@ void WorkspaceShell::ClearMouseHoverState() {
   }
 
   cursor_kind_ = CursorKind::Default;
+}
+
+bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
+  return last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
+}
+
+std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceLayout& layout,
+                                                               float x, float y) const {
+  // Menu bar: top-level items lift on hover (the dropdown-open case is handled by the
+  // chrome coordinator's menu-motion path, so this only matters when no menu is open).
+  if (layout.menu_bar.w > 0.0f && Contains(layout.menu_bar, x, y)) {
+    for (const VisibleMenuBarItem& item : ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (Contains(item.rect, x, y)) {
+        return item.rect;
+      }
+    }
+    return std::nullopt;
+  }
+
+  // Project tab strip.
+  if (layout.project_tab_strip.w > 0.0f && Contains(layout.project_tab_strip, x, y)) {
+    for (const VisibleStripTab& tab :
+         tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip)) {
+      if (Contains(tab.rect, x, y)) {
+        return tab.rect;
+      }
+    }
+    return std::nullopt;
+  }
+
+  // Per-group editor tab strips.
+  {
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    for (std::size_t gi = 0; gi < group_rects.groups.size(); ++gi) {
+      const SDL_FRect strip = group_rects.groups[gi].tab_strip;
+      if (strip.w <= 0.0f || strip.h <= 0.0f || !Contains(strip, x, y)) {
+        continue;
+      }
+      for (const VisibleStripTab& tab : tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip)) {
+        if (Contains(tab.rect, x, y)) {
+          return tab.rect;
+        }
+      }
+      return std::nullopt;
+    }
+  }
+
+  // Overlay list rows (command palette / pickers / completion / code actions).
+  if (context_.current_project_state.overlay.visible) {
+    const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
+    if (overlay_mode != OverlayMode::BufferSearch && overlay_mode != OverlayMode::BufferReplace) {
+      const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
+      if (Contains(overlay, x, y)) {
+        const auto list_layout = ComputeOverlayListLayout(overlay);
+        if (const auto idx = ScrollableListIndexAtY(list_layout, y);
+            idx.has_value() && *idx >= 0 && *idx < static_cast<int>(OverlayItemCount())) {
+          const SDL_FRect row = ScrollableListRowRect(list_layout, *idx - list_layout.scroll_row);
+          if (Contains(row, x, y)) {
+            return row;
+          }
+        }
+      }
+    }
+  }
+
+  // Sidebar list rows for whichever mode is active.
+  if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
+    const auto row_band = [&](const ScrollableListLayout& list_layout,
+                              std::size_t count) -> std::optional<SDL_FRect> {
+      const auto idx = ScrollableListIndexAtY(list_layout, y);
+      if (!idx.has_value() || *idx < 0 || *idx >= static_cast<int>(count)) {
+        return std::nullopt;
+      }
+      const SDL_FRect row = ScrollableListRowRect(list_layout, *idx - list_layout.scroll_row);
+      return Contains(row, x, y) ? std::optional<SDL_FRect>(row) : std::nullopt;
+    };
+    switch (ActiveSidebarMode()) {
+      case SidebarMode::Git: {
+        const auto lines = BuildGitSidebarLines();
+        return row_band(ComputeGitSidebarListLayout(layout.sidebar, lines.size()), lines.size());
+      }
+      case SidebarMode::Search: {
+        const auto line_map = BuildProjectSearchLineMap();
+        return row_band(ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size()),
+                        line_map.size());
+      }
+      case SidebarMode::Plugin:
+      case SidebarMode::Outline: {
+        const std::size_t count = context_.current_project_state.sidebar.plugin.items.size();
+        return row_band(ComputePluginSidebarListLayout(layout.sidebar, count), count);
+      }
+      case SidebarMode::Tree: {
+        const auto& entries = context_.current_project_state.directory_tree.entries();
+        return row_band(ComputeTreeSidebarListLayout(layout.sidebar, entries.size()),
+                        entries.size());
+      }
+      default:
+        return std::nullopt;
+    }
+  }
+
+  // Bottom-panel header tabs.
+  if (BottomPanelVisible() && Contains(layout.bottom_panel, x, y)) {
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                 kWorkspaceBottomPanelHeaderHeight);
+    if (Contains(panel_header, x, y)) {
+      for (const VisibleStripTab& tab : tab_strip_service_.ComputeVisibleBottomPanelTabs(
+               context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
+               [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+               output_channels_.Channels())) {
+        if (Contains(tab.rect, x, y)) {
+          return tab.rect;
+        }
+      }
+    }
+    return std::nullopt;
+  }
+
+  // Debug pane rows: quantize the pointer to a fixed-height row band so the band
+  // changes as the pointer crosses rows (the render lifts each row on hover).
+  if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
+      Contains(layout.right_pane, x, y)) {
+    const std::size_t row_count = DebugPaneActiveRowCount();
+    const auto panel_layout = ComputeDebugPaneListLayout(layout, row_count);
+    if (panel_layout.line_height > 0.0f && Contains(panel_layout.content_rect, x, y) &&
+        y >= panel_layout.text_y) {
+      const int visible_row = static_cast<int>((y - panel_layout.text_y) / panel_layout.line_height);
+      return MakeRect(panel_layout.content_rect.x,
+                      panel_layout.text_y + static_cast<float>(visible_row) * panel_layout.line_height,
+                      panel_layout.content_rect.w, panel_layout.line_height);
+    }
+  }
+
+  return std::nullopt;
 }
 
 bool WorkspaceShell::MenuSurfaceCapturingMouse() const {
