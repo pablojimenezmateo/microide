@@ -13,7 +13,6 @@ class ProjectCatalogCoordinator {
     std::function<bool(const std::filesystem::path&, bool, bool)> initialize_current_project;
     std::function<bool(ProjectWorkspaceState&, bool)> activate_project_state;
     std::function<void(ProjectWorkspaceState&)> store_current_project_state;
-    std::function<void(ProjectWorkspaceState&)> load_project_state;
     std::function<void()> save_config_state;
     std::function<void()> save_session_state;
     std::function<void()> save_workspace_session;
@@ -32,7 +31,6 @@ class ProjectCatalogCoordinator {
   void Close(std::size_t index, bool activate_restored_tab = true);
   bool RestoreAfterRemoval(std::size_t preferred_index, bool activate_restored_tab = true);
   void PersistActiveEntry();
-  void PersistInactiveEntriesForShutdown();
 
  private:
   struct ActivationCheckpoint {

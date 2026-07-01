@@ -156,6 +156,13 @@ void DirtyPromptCoordinator::ConfirmQuit(const DirtyPromptState& prompt) {
     }
 
     for (const auto& root : project_roots) {
+      // Only projects with unsaved buffers need saving. DirtyIndicesForProject
+      // inspects the catalog entry's in-memory tabs without activating it, so we
+      // avoid a full persist-out/load-in round trip for every clean project.
+      const auto index = FindProjectIndexByRoot(root);
+      if (!index.has_value() || editor_tabs_.DirtyIndicesForProject(*index).empty()) {
+        continue;
+      }
       if (!SwitchProjectByRoot(root)) {
         continue;
       }

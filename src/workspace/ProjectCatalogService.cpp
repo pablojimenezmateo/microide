@@ -29,7 +29,6 @@ ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOpe
           },
       .store_current_project_state =
           [this](ProjectWorkspaceState& state) { StoreCurrentProjectState(state); },
-      .load_project_state = [this](ProjectWorkspaceState& state) { LoadProjectState(state); },
       .save_config_state = [this]() { operations_.save_config_state(); },
       .save_session_state = [this]() { operations_.save_session_state(); },
       .save_workspace_session = [this]() { operations_.save_workspace_session(); },
@@ -62,10 +61,6 @@ bool ProjectCatalogService::RestoreAfterRemoval(std::size_t preferred_index,
 
 void ProjectCatalogService::PersistActiveEntry() {
   coordinator_.PersistActiveEntry();
-}
-
-void ProjectCatalogService::PersistInactiveEntriesForShutdown() {
-  coordinator_.PersistInactiveEntriesForShutdown();
 }
 
 bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,

@@ -659,6 +659,47 @@ void TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject()
          "closing an inactive dirty project should save that project's dirty tabs first");
 }
 
+// Quit-with-save must persist dirty tabs across every project, including inactive
+// ones, while the optimized path skips switching into clean projects. This guards
+// the DirtyIndicesForProject-based skip in ConfirmQuit against wrongly dropping a
+// dirty inactive project (the one behavior the skip could regress).
+void TestWorkspaceShellQuitWithSavePersistsInactiveDirtyProject() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
+  const std::filesystem::path root_b = temp_dir.path() / "beta-project";
+  const std::filesystem::path file_a = root_a / "alpha.txt";
+  const std::filesystem::path file_b = root_b / "beta.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
+         "first project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("saved ");
+  // Open a second, clean project so project A becomes inactive+dirty and B is the
+  // active+clean project the quit path should not need to re-save.
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
+         "second project should open");
+
+  WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "quitting with an inactive dirty project should show the quit dirty prompt");
+
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "confirming save-and-quit should dismiss the dirty prompt");
+  Expect(ReadFile(file_a) == "saved alpha\n",
+         "save-and-quit should persist the inactive project's dirty tab");
+  Expect(ReadFile(file_b) == "beta\n",
+         "save-and-quit should leave the clean project's file untouched");
+  Expect(WorkspaceShellTestAccess::ProjectRoot(shell) == root_b.lexically_normal(),
+         "save-and-quit should restore the originally active project");
+  Expect(shell.ConsumeQuitRequested(),
+         "save-and-quit should set the pending quit request");
+}
+
 void TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures() {
   WorkspaceShell shell;
   const std::filesystem::path project_root = FixturePath("large");
@@ -788,6 +829,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellQuitDoesNotPromptForDirtyTabs);
   AddTest(tests, "WorkspaceShell/CloseInactiveDirtyProjectPreservesOriginalActiveProject",
           TestWorkspaceShellCloseInactiveDirtyProjectPreservesOriginalActiveProject);
+  AddTest(tests, "WorkspaceShell/QuitWithSavePersistsInactiveDirtyProject",
+          TestWorkspaceShellQuitWithSavePersistsInactiveDirtyProject);
   AddTest(tests, "WorkspaceShell/EditorBreadcrumbUsesRelativePathForLargeFixtures",
           TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures);
 #if defined(__linux__) || defined(__APPLE__)

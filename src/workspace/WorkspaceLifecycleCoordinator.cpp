@@ -79,7 +79,11 @@ void LifecycleCoordinator::Shutdown() {
   operations_.save_user_config();
   operations_.stop_git_blame_service();
   operations_.persist_active_project();
-  operations_.persist_inactive_projects_for_shutdown();
+  // Inactive projects are already durably persisted the moment they are switched
+  // away from (PersistActiveEntry writes config+session before the state is moved
+  // into the catalog entry), and nothing mutates an inactive project while it is
+  // inactive. Re-persisting them here would re-hydrate and re-write identical data
+  // for every inactive project, so it is intentionally omitted.
   operations_.save_workspace_session();
   operations_.shutdown_project_search_runtime();
   // Stop the control listener and remove the discovery descriptor. Cheap (the
@@ -360,8 +364,6 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
                   MakeProjectCatalogService().PersistActiveEntry();
                 }
               },
-          .persist_inactive_projects_for_shutdown =
-              [this]() { MakeProjectCatalogService().PersistInactiveEntriesForShutdown(); },
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },

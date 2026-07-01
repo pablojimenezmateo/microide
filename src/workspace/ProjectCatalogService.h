@@ -47,7 +47,6 @@ class ProjectCatalogService {
   void Close(std::size_t index, bool activate_restored_tab = true);
   bool RestoreAfterRemoval(std::size_t preferred_index, bool activate_restored_tab = true);
   void PersistActiveEntry();
-  void PersistInactiveEntriesForShutdown();
 
  private:
   ProjectCatalogCoordinator::Operations BuildCoordinatorOperations();

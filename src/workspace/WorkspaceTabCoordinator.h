@@ -105,6 +105,14 @@ class TabCoordinator {
  private:
   bool RestoreEditorTab(TabEntry::EditorTabState& editor_state);
   bool EnsureEditorTabLoaded(TabEntry& tab);
+  // The normalized buffer path a tab contributes to LSP open-view accounting, or
+  // empty if the tab holds no editable buffer view. Mirrors OpenBufferViewPath so
+  // the live per-close count and the whole-group count map agree on keys/kinds.
+  std::filesystem::path LspCloseCandidatePath(const TabEntry& tab) const;
+  // Fire LSP didClose for the tab about to close when it is the last open view of
+  // its buffer. Uses a live count (correct for sequential closes, where an earlier
+  // close in the same batch drops a shared buffer to its last remaining view).
+  void MaybeNotifyLspClose(const TabEntry& tab);
   // Remove the focused (expected-empty) group and collapse back to a single
   // full-area group, resetting split orientation/fraction.
   void CollapseFocusedGroup();
