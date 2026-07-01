@@ -24,6 +24,50 @@ namespace {
 
 const DecoratedTextGridRenderer kDecoratedRowRenderer;
 
+// A caret is a 1px-wide vertical bar spanning the row, drawn in theme.cursor.
+// The primary caret and every secondary caret share this exact geometry.
+void DrawCaret(SDL_Renderer* renderer, float caret_x, float y, float line_height,
+               SDL_Color cursor) {
+  const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, line_height};
+  SDL_SetRenderDrawColor(renderer, cursor.r, cursor.g, cursor.b, cursor.a);
+  SDL_RenderFillRect(renderer, &caret);
+}
+
+// Full-width row background highlight (execution line / selected row), inset 1px
+// from the viewport edges so it never paints over the border.
+SDL_FRect MakeRowBackgroundRect(const SDL_FRect& rect, float y, float line_height) {
+  return SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, line_height};
+}
+
+// True when a visual row is the first (or only) visual row of its logical line,
+// i.e. the row that owns the gutter elements (line number, fold/breakpoint/plugin
+// marks). With soft-wrap off every row is a head; with it on only visual_start==0.
+bool IsLogicalLineHead(bool soft_wrap, std::size_t visual_start) {
+  return !soft_wrap || visual_start == 0;
+}
+
+// Append the render-whitespace marker for one cell: a 2x2 dot centered in the
+// cell for a space, or a thin horizontal bar spanning the tab's cells. Both the
+// view-model glyph-run path and the text-iteration fallback build byte-identical
+// rects, so they share this one constructor. `cell_span_width` is the tab's full
+// pixel width (cell count * char_width); it is unused for spaces.
+void PushWhitespaceMarker(std::vector<DecoratedTextFill>& scratch, bool is_tab, float cell_x,
+                          float char_width, float cell_span_width, float y, float line_height,
+                          SDL_Color color) {
+  if (is_tab) {
+    scratch.push_back(DecoratedTextFill{
+        .rect = SDL_FRect{cell_x + 2.0f, y + line_height * 0.5f, cell_span_width - 4.0f, 1.0f},
+        .color = color,
+    });
+  } else {
+    scratch.push_back(DecoratedTextFill{
+        .rect = SDL_FRect{cell_x + char_width * 0.5f - 1.0f, y + line_height * 0.5f - 1.0f, 2.0f,
+                          2.0f},
+        .color = color,
+    });
+  }
+}
+
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count) {
   char buf[20];
   const auto [end, _] = std::to_chars(buf, buf + sizeof(buf), std::max<std::size_t>(1, line_count));
@@ -492,7 +536,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       sticky_input.layout = &row_layout;
       sticky_input.has_background_fill = true;
       sticky_input.background_fill = DecoratedTextFill{
-          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .rect = MakeRowBackgroundRect(rect, y, metrics.line_height),
           .color = row_background,
       };
       sticky_input.diagnostics = diagnostics;
@@ -516,7 +560,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
                                    *severity);
       }
-      if (!soft_wrap || row_meta.visual_start == 0) {
+      if (IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
         const auto [end_sticky, _] =
             std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                           line_index + 1);
@@ -526,7 +570,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             selected ? theme.row_highlight : theme.gutter_background,
             std::string_view{line_number_buf, end_sticky});
       }
-      if (folding_model != nullptr && (!soft_wrap || row_meta.visual_start == 0) &&
+      if (folding_model != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start) &&
           folding_model->FoldStartingAt(line_index).has_value()) {
         DrawFoldGutterMarker(renderer,
                              selected ? theme.current_line_number : theme.line_number,
@@ -560,6 +604,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   // needs it to flag the caret row, and recomputing it per visible row is an
   // O(visible_rows * caret_column) redundancy.
   const std::size_t caret_visual_row = soft_wrap ? viewport.cursor_visual_row() : 0;
+  // CharWidth() is fixed for the whole frame (font size does not change mid-render),
+  // so resolve the backend's advance once instead of per row / per glyph-cell.
+  const float char_width_px = text_renderer.CharWidth();
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= viewport.visual_line_count()) {
@@ -590,7 +637,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // highlights, guides, whitespace markers) right by `indent` cells. Zero for
     // first rows and non-wrapped rows, so this is a no-op there.
     const float row_text_x =
-        metrics.text_x + static_cast<float>(row_meta.indent) * text_renderer.CharWidth();
+        metrics.text_x + static_cast<float>(row_meta.indent) * char_width_px;
     const bool selected = line_index == cursor_line;
     const bool is_execution_line = view_model != nullptr &&
                                    view_model->execution_line_index.has_value() &&
@@ -726,8 +773,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             .rect =
                 SDL_FRect{
                     row_text_x +
-                        static_cast<float>(guide.column - row_start_visual) *
-                            text_renderer.CharWidth(),
+                        static_cast<float>(guide.column - row_start_visual) * char_width_px,
                     y - 1.0f,
                     1.0f,
                     metrics.line_height,
@@ -740,7 +786,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (render_whitespace_enabled) {
       const std::size_t row_start_visual = row_meta.visual_start;
       const std::size_t row_end_visual = row_meta.visual_end;
-      const float char_width = text_renderer.CharWidth();
+      const float char_width = char_width_px;
       // Round-2 Finding 2: use the CSR-style row-offset table so we iterate only this row's runs
       // instead of scanning the flat whitespace_glyph_runs vector.
       const bool use_vm_whitespace =
@@ -757,30 +803,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           const float cell_x =
               row_text_x + static_cast<float>(glyph.cell_visual_start - row_start_visual) *
                                char_width;
-          if (!glyph.is_tab_rule) {
-            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
-                .rect =
-                    SDL_FRect{
-                        cell_x + char_width * 0.5f - 1.0f,
-                        y + metrics.line_height * 0.5f - 1.0f,
-                        2.0f,
-                        2.0f,
-                    },
-                .color = theme.text_disabled,
-            });
-          } else {
-            const float cell_w = static_cast<float>(glyph.cell_visual_extent) * char_width;
-            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
-                .rect =
-                    SDL_FRect{
-                        cell_x + 2.0f,
-                        y + metrics.line_height * 0.5f,
-                        cell_w - 4.0f,
-                        1.0f,
-                    },
-                .color = theme.text_disabled,
-            });
-          }
+          const float cell_w = static_cast<float>(glyph.cell_visual_extent) * char_width;
+          PushWhitespaceMarker(prepositioned_fill_scratch_, glyph.is_tab_rule, cell_x, char_width,
+                               cell_w, y, metrics.line_height, theme.text_disabled);
         }
       } else {
         const std::string& line_text = lines[line_index];
@@ -800,29 +825,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           const float cell_x =
               row_text_x +
               static_cast<float>(cell_start - row_start_visual) * char_width;
-          if (c == ' ') {
-            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
-                .rect =
-                    SDL_FRect{
-                        cell_x + char_width * 0.5f - 1.0f,
-                        y + metrics.line_height * 0.5f - 1.0f,
-                        2.0f,
-                        2.0f,
-                    },
-                .color = theme.text_disabled,
-            });
-          } else if (c == '\t') {
+          if (c == ' ' || c == '\t') {
             const float cell_w = static_cast<float>(cell_width) * char_width;
-            prepositioned_fill_scratch_.push_back(DecoratedTextFill{
-                .rect =
-                    SDL_FRect{
-                        cell_x + 2.0f,
-                        y + metrics.line_height * 0.5f,
-                        cell_w - 4.0f,
-                        1.0f,
-                    },
-                .color = theme.text_disabled,
-            });
+            PushWhitespaceMarker(prepositioned_fill_scratch_, c == '\t', cell_x, char_width,
+                                 cell_w, y, metrics.line_height, theme.text_disabled);
           }
         }
       }
@@ -837,7 +843,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     RowDecorationInput row_input;
     row_input.text_x = row_text_x;
     row_input.y = y;
-    row_input.char_width = text_renderer.CharWidth();
+    row_input.char_width = char_width_px;
     row_input.line_height = metrics.line_height;
     row_input.row_visual_start = row_visual_origin;
     row_input.row_visual_end = row_meta.visual_end;
@@ -850,12 +856,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.has_background_fill = selected || is_execution_line;
     if (is_execution_line) {
       row_input.background_fill = DecoratedTextFill{
-          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .rect = MakeRowBackgroundRect(rect, y, metrics.line_height),
           .color = theme.debug_execution_line,
       };
     } else if (selected) {
       row_input.background_fill = DecoratedTextFill{
-          .rect = SDL_FRect{rect.x + 1.0f, y - 1.0f, rect.w - 2.0f, metrics.line_height},
+          .rect = MakeRowBackgroundRect(rect, y, metrics.line_height),
           .color = theme.row_highlight,
       };
     }
@@ -886,7 +892,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // highest-priority mark (first after the line-sorted, priority-desc order)
     // once per logical line, before the breakpoint dot / execution arrow so the
     // debugger's own glyphs win when they coincide.
-    if (plugin_decorations != nullptr && (!soft_wrap || row_meta.visual_start == 0)) {
+    if (plugin_decorations != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       const std::span<const GutterMarkDecoration> marks =
           plugin_decorations->GutterMarksForLine(static_cast<std::uint32_t>(line_index));
       if (!marks.empty()) {
@@ -922,7 +928,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                            (*fold_gutter_marks)[fold_gutter_mark_index].collapsed);
       ++fold_gutter_mark_index;
     }
-    if (!soft_wrap || row_meta.visual_start == 0) {
+    if (IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                                           line_index + 1);
       const float number_x = gutter.x + kGutterLineNumberInset;
@@ -945,12 +951,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     if (draw_caret && selected && row_caret.visible) {
-      const float caret_x = row_text_x +
-                            static_cast<float>(row_caret.column) * text_renderer.CharWidth();
-      const SDL_FRect caret = SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};
-      SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
-                             theme.cursor.a);
-      SDL_RenderFillRect(renderer, &caret);
+      const float caret_x = row_text_x + static_cast<float>(row_caret.column) * char_width_px;
+      DrawCaret(renderer, caret_x, y, metrics.line_height, theme.cursor);
       // Ghost-text tail: the suggestion's first line, drawn dimmed starting at the
       // caret. Below-caret rows (if any) render as a Below inset gap by the shell.
       if (view_model != nullptr && view_model->ghost_text_tail.has_value() &&
@@ -978,14 +980,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           continue;
         }
         const float caret_x =
-            row_text_x +
-            static_cast<float>(visual_column - row_start_visual_sc) *
-                text_renderer.CharWidth();
-        const SDL_FRect caret =
-            SDL_FRect{std::round(caret_x), y - 1.0f, 1.0f, metrics.line_height};
-        SDL_SetRenderDrawColor(renderer, theme.cursor.r, theme.cursor.g, theme.cursor.b,
-                               theme.cursor.a);
-        SDL_RenderFillRect(renderer, &caret);
+            row_text_x + static_cast<float>(visual_column - row_start_visual_sc) * char_width_px;
+        DrawCaret(renderer, caret_x, y, metrics.line_height, theme.cursor);
       }
     }
 
@@ -994,7 +990,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // line's last glyph. The segment geometry mirrors WorkspaceShell's click
     // hit-test (shared BuildEolDecorationSegments) so a click lands exactly where
     // the code-lens affordance was painted.
-    if (plugin_decorations != nullptr && (!soft_wrap || row_meta.visual_start == 0)) {
+    if (plugin_decorations != nullptr && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       const std::span<const InlineTextDecoration> inline_texts =
           plugin_decorations->InlineTextsForLine(static_cast<std::uint32_t>(line_index));
       // Phase E2: when above-line code lenses are active they render as inset
@@ -1011,8 +1007,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
             soft_wrap ? viewport.VisibleLineLayoutRef(line_index).visual_columns
                       : row_layout.visual_columns;
         const float anchor_x =
-            metrics.text_x +
-            static_cast<float>(full_line_visual_columns) * text_renderer.CharWidth();
+            metrics.text_x + static_cast<float>(full_line_visual_columns) * char_width_px;
         const float right_limit = rect.x + rect.w - 12.0f;
         BuildEolDecorationSegments(text_renderer, inline_texts, code_lenses, anchor_x, y,
                                    metrics.line_height, right_limit, eol_decoration_scratch_);

@@ -1879,6 +1879,74 @@ void TestTextLayoutIdentifierRangeAt() {
          "identifier after tabs resolves by byte offset");
 }
 
+// The render-whitespace markers have two producers: the fast view-model path
+// (CSR-indexed whitespace_glyph_runs) and the text-iteration fallback used when
+// no view model is supplied. Both now build their fill rects through the shared
+// PushWhitespaceMarker helper, so for a fully-visible, non-wrapped buffer they
+// must paint pixel-for-pixel identically. This guards the dedup that unified them.
+void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths() {
+  EnsureDummySdlVideo();
+  const SDL_Color background{0x08, 0x08, 0x08, 0xff};
+  const SDL_FRect rect{0.0f, 0.0f, 320.0f, 96.0f};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("\tint x = 1;\n  two  spaces\n", "/tmp/ws-parity.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.SetViewportSize(4, 80);
+  viewport.SetScrollLine(0);
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.editor_background = background;
+  theme.gutter_background = SDL_Color{0x12, 0x12, 0x12, 0xff};
+
+  // View-model path: build the CSR whitespace glyph runs the fast path iterates.
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+  microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/4, /*folding_model=*/nullptr,
+                                   /*occurrences_highlight_enabled=*/false,
+                                   /*occurrences_case_sensitive=*/false,
+                                   /*sticky_scroll_enabled=*/false,
+                                   /*sticky_max_depth=*/3,
+                                   /*render_whitespace_enabled=*/true);
+  Expect(!vm.whitespace_glyph_runs.empty(),
+         "whitespace parity test should produce glyph runs to exercise the view-model path");
+
+  const auto render_to = [&](SoftwareCanvas& canvas, const microide::editor::EditorViewModel* view_model) {
+    microide::render::TextRenderer text_renderer;
+    TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+    Expect(SDL_SetRenderDrawColor(canvas.renderer(), background.r, background.g, background.b,
+                                  background.a),
+           "whitespace parity test should set the canvas background");
+    Expect(SDL_RenderClear(canvas.renderer()), "whitespace parity test should clear the canvas");
+    microide::editor::EditorViewRenderer renderer;
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, /*draw_caret=*/false,
+                    /*search_query=*/{}, /*active_search_match=*/std::nullopt,
+                    /*blame_overlay=*/std::nullopt, /*diagnostics=*/{}, view_model,
+                    /*bracket_match_highlight_enabled=*/false, /*indent_guides_enabled=*/false,
+                    /*render_whitespace_enabled=*/true);
+  };
+
+  SoftwareCanvas vm_canvas(320, 96);
+  SoftwareCanvas fallback_canvas(320, 96);
+  render_to(vm_canvas, &vm);
+  render_to(fallback_canvas, /*view_model=*/nullptr);
+
+  SDL_Surface* vm_pixels = SDL_RenderReadPixels(vm_canvas.renderer(), nullptr);
+  SDL_Surface* fallback_pixels = SDL_RenderReadPixels(fallback_canvas.renderer(), nullptr);
+  Expect(vm_pixels != nullptr && fallback_pixels != nullptr,
+         "whitespace parity test should read software pixels");
+  Expect(NonBackgroundBounds(vm_pixels, background).valid(),
+         "whitespace parity test should paint visible content");
+  Expect(CountPixelDifferences(vm_pixels, fallback_pixels) == 0,
+         "view-model whitespace path and text-iteration fallback must paint identical pixels");
+  SDL_DestroySurface(vm_pixels);
+  SDL_DestroySurface(fallback_pixels);
+}
+
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
@@ -1909,6 +1977,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view paints diagnostic underlines",
           TestEditorViewRendererPaintsDiagnosticUnderlines);
+  AddTest(tests,
+          "TextRenderer editor view whitespace markers match across view-model and fallback paths",
+          TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths);
   AddTest(tests,
           "TextRenderer diagnostic line severity prefers the most severe match",
           TestHighestDiagnosticSeverityForLinePrefersTheMostSevereMatch);
