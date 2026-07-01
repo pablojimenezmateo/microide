@@ -4,6 +4,8 @@
 #include <cmath>
 
 #include <optional>
+#include <span>
+#include <utility>
 
 #include "util/StringUtil.h"
 
@@ -219,6 +221,34 @@ void FlushFillRun(SDL_Renderer* renderer,
   batch.clear();
 }
 
+// Paint a list of items as color-batched fills: consecutive items sharing a
+// color coalesce into one SDL_RenderFillRects call (see FlushFillRun). `project`
+// maps each item to its (rect, color); items with a non-positive rect are
+// skipped. Order is preserved so earlier items draw under later ones when colors
+// differ. Reuses `batch` (caller's persistent scratch) — allocation-free.
+template <class Item, class Project>
+void RenderColorBatchedFills(SDL_Renderer* renderer,
+                             std::vector<SDL_FRect>& batch,
+                             std::span<const Item> items,
+                             Project project) {
+  batch.clear();
+  SDL_Color active_color{};
+  bool batch_open = false;
+  for (const Item& item : items) {
+    const auto [rect, color] = project(item);
+    if (rect.w <= 0.0f || rect.h <= 0.0f) {
+      continue;
+    }
+    if (!batch_open || !SameColor(active_color, color)) {
+      FlushFillRun(renderer, active_color, batch);
+      active_color = color;
+      batch_open = true;
+    }
+    batch.push_back(rect);
+  }
+  FlushFillRun(renderer, active_color, batch);
+}
+
 }  // namespace
 
 void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
@@ -233,21 +263,11 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
   // consume. Order is preserved relative to the input so painters layered
   // earlier still draw under painters layered later when colors differ.
   std::vector<SDL_FRect>& batch = fill_batch_scratch_;
-  batch.clear();
-  SDL_Color active_color{};
-  bool batch_open = false;
-  for (const DecoratedTextFill& fill : row.fills) {
-    if (fill.rect.w <= 0.0f || fill.rect.h <= 0.0f) {
-      continue;
-    }
-    if (!batch_open || !SameColor(active_color, fill.color)) {
-      FlushFillRun(renderer, active_color, batch);
-      active_color = fill.color;
-      batch_open = true;
-    }
-    batch.push_back(fill.rect);
-  }
-  FlushFillRun(renderer, active_color, batch);
+  RenderColorBatchedFills<DecoratedTextFill>(
+      renderer, batch, row.fills,
+      [](const DecoratedTextFill& fill) {
+        return std::pair<SDL_FRect, SDL_Color>{fill.rect, fill.color};
+      });
 
   // Hand the row's runs straight to DrawRuns (DecoratedTextRun *is* render::TextRun,
   // so there is no conversion). On the GPU atlas backend this is one
@@ -263,25 +283,15 @@ void DecoratedTextGridRenderer::RenderRow(SDL_Renderer* renderer,
   // depends only on the source color's alpha channel, so all underlines that
   // share a source color end up with the same final color and can also be
   // batched.
-  active_color = SDL_Color{};
-  batch_open = false;
-  for (const DecoratedUnderline& underline : row.underlines) {
-    if (underline.rect.w <= 0.0f || underline.rect.h <= 0.0f) {
-      continue;
-    }
-    const Uint8 dim_alpha =
-        static_cast<Uint8>(std::clamp(std::lround(static_cast<double>(underline.color.a) * 0.55),
-                                      0l, 255l));
-    const SDL_Color rendered_color{underline.color.r, underline.color.g, underline.color.b,
-                                   dim_alpha};
-    if (!batch_open || !SameColor(active_color, rendered_color)) {
-      FlushFillRun(renderer, active_color, batch);
-      active_color = rendered_color;
-      batch_open = true;
-    }
-    batch.push_back(underline.rect);
-  }
-  FlushFillRun(renderer, active_color, batch);
+  RenderColorBatchedFills<DecoratedUnderline>(
+      renderer, batch, row.underlines,
+      [](const DecoratedUnderline& underline) {
+        const Uint8 dim_alpha = static_cast<Uint8>(
+            std::clamp(std::lround(static_cast<double>(underline.color.a) * 0.55), 0l, 255l));
+        return std::pair<SDL_FRect, SDL_Color>{
+            underline.rect,
+            SDL_Color{underline.color.r, underline.color.g, underline.color.b, dim_alpha}};
+      });
 }
 
 }  // namespace microide::editor

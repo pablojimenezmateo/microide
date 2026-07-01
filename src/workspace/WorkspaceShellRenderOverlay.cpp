@@ -209,6 +209,9 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
         progress_suffix;
     DrawTextOn(text_renderer_, renderer, overlay.x + kOverlayInset, overlay.y + 62.0f,
                theme_.text_muted, theme_.overlay_background, summary);
+    // Reused across rows so the per-row label build keeps its capacity instead of
+    // reallocating a fresh std::string each iteration.
+    std::string label;
     for (int row = 0; row < overlay_list_layout.visible_rows; ++row) {
       const int item_index = overlay_vm.scroll_row + row;
       if (item_index >= static_cast<int>(overlay_state.workflow.project_search.results.size())) {
@@ -216,10 +219,12 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
       }
       const auto& result =
           overlay_state.workflow.project_search.results[static_cast<std::size_t>(item_index)];
-      std::string label =
-          result.relative_path_string.empty() ? result.relative_path.string()
-                                              : result.relative_path_string;
-      label.reserve(label.size() + 64);
+      label.clear();
+      if (result.relative_path_string.empty()) {
+        label += result.relative_path.string();
+      } else {
+        label += result.relative_path_string;
+      }
       label += ":";
       AppendUnsigned(label, result.line + 1);
       label += ":";

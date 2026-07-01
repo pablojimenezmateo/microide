@@ -607,6 +607,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const int scroll_row = list_layout.scroll_row;
     project_state.sidebar.scroll_row = scroll_row;
 
+    // Reused across rows so the per-row primary label keeps its capacity instead
+    // of allocating (twice, when a review marker prefixes it) each iteration.
+    std::string primary_label;
     for (int row = 0; row < list_layout.visible_rows; ++row) {
       const int line_index = scroll_row + row;
       if (line_index >= static_cast<int>(lines.size())) {
@@ -717,9 +720,16 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       const float name_x =
           draw_leading_git_badge(row_rect, label_x, row_status, selected, row_background);
 
-      std::string primary_label = line.label.empty() ? entry.relative_path.filename().string() : line.label;
+      primary_label.clear();
       if (row_vm != nullptr && !row_vm->review_marker_label.empty()) {
-        primary_label = "[" + row_vm->review_marker_label + "] " + primary_label;
+        primary_label += "[";
+        primary_label += row_vm->review_marker_label;
+        primary_label += "] ";
+      }
+      if (line.label.empty()) {
+        primary_label += entry.relative_path.filename().string();
+      } else {
+        primary_label += line.label;
       }
       const std::string secondary_label;
       const SDL_Color primary_color = emphasized ? theme_.text_primary : theme_.text_secondary;
