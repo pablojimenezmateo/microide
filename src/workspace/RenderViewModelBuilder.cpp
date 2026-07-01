@@ -2,6 +2,7 @@
 
 #include "workspace/DebugPaneRegistry.h"
 #include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/WorkspaceGitSidebarPresentation.h"
 
 #include "editor/EditorInsetLayout.h"
 #include "editor/FoldingModel.h"
@@ -472,14 +473,22 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
 
   const SidebarMode mode = SidebarModeFromViewId(context_.current_project_state.sidebar.view_id);
   std::optional<GitSidebarViewModel> git_sidebar;
+  std::vector<GitSidebarLine> git_sidebar_lines;
   // Building the git VM walks every changed/staged/untracked/outgoing entry and
   // allocates per-entry label strings. Only do it when the sidebar is actually
   // visible: a hidden-but-git-selected sidebar otherwise rebuilds (and discards)
   // the whole VM every frame. Mirrors the debug-pane VM's visibility guard.
   if (mode == SidebarMode::Git && context_.current_project_state.sidebar.visible) {
-    git_sidebar = BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
-                                           context_.current_project_state.root,
-                                           context_.current_project_state.branch_review);
+    // Pull the view model + flattened rows from the revision-exact memo so a
+    // hover/scroll repaint that changed no git state skips the whole rebuild.
+    // Copied out because the returned SidebarSurfaceViewModel outlives the frame
+    // and the cache entry is only stable until the next CachedGitSidebarPresentation
+    // call on this thread.
+    const GitSidebarPresentation& presentation = CachedGitSidebarPresentation(
+        context_.current_project_state.sidebar.git, context_.current_project_state.root,
+        context_.current_project_state.branch_review);
+    git_sidebar = presentation.view_model;
+    git_sidebar_lines = presentation.lines;
   }
 
   return SidebarSurfaceViewModel{
@@ -491,6 +500,7 @@ SidebarSurfaceViewModel RenderViewModelBuilder::BuildSidebarSurface() const {
       .query_fallback_text = query_fallback_text,
       .replace_fallback_text = replace_fallback_text,
       .git_sidebar = std::move(git_sidebar),
+      .git_sidebar_lines = std::move(git_sidebar_lines),
       .project_state = const_cast<ProjectWorkspaceState*>(&context_.current_project_state),
   };
 }

@@ -96,6 +96,10 @@ struct SidebarSurfaceViewModel {
   std::string_view query_fallback_text;
   std::string_view replace_fallback_text;
   std::optional<GitSidebarViewModel> git_sidebar;
+  // Flattened, render-ready git sidebar rows built once here (per frame) so the
+  // render TU, hit-testing, and selection all consume one list instead of each
+  // rebuilding the git view model from scratch. Empty unless `git_sidebar` is set.
+  std::vector<GitSidebarLine> git_sidebar_lines;
   ProjectWorkspaceState* project_state = nullptr;
 };
 

@@ -1946,9 +1946,44 @@ void TestTextViewportFastLoadDetectsEncoding() {
   Expect(bytes.line_count() == 2, "NUL is in-line content, only '\\n' splits lines");
 }
 
+// LoadLines (dirty-tab session restore) moves an already line-split buffer straight
+// in, skipping the LoadContent(SerializeLines(...)) join-then-resplit. It must be
+// exactly equivalent to that old round-trip: same lines, same line ending, dirty.
+void TestTextViewportLoadLinesMatchesSerializeRoundTrip() {
+  const std::vector<std::vector<std::string>> cases = {
+      {"solo"},
+      {"a", "b", "c"},
+      {"a", "b", "c", ""},  // trailing empty line
+      {"", "", ""},         // only empty lines
+      {"  indented", "\ttab", "end"},
+  };
+  const util::LineEnding endings[] = {util::LineEnding::LF, util::LineEnding::CRLF};
+  for (const auto& lines : cases) {
+    for (util::LineEnding ending : endings) {
+      editor::TextViewport via_load_lines;
+      via_load_lines.LoadLines(lines, "/tmp/loadlines.txt", ending);
+
+      editor::TextViewport via_round_trip;
+      via_round_trip.LoadContent(util::SerializeLines(lines, ending), "/tmp/loadlines.txt", ending);
+      via_round_trip.SetDirty(true);
+
+      Expect(via_load_lines.lines().Snapshot() == via_round_trip.lines().Snapshot(),
+             "LoadLines content should match the LoadContent(SerializeLines(...)) round-trip");
+      Expect(via_load_lines.lines().Snapshot() == lines,
+             "LoadLines should preserve the exact input lines");
+      Expect(via_load_lines.line_ending() == ending, "LoadLines should preserve the line ending");
+      Expect(via_load_lines.dirty(), "LoadLines should mark the restored buffer dirty");
+      Expect(via_load_lines.line_ending() == via_round_trip.line_ending(),
+             "LoadLines line ending should match the round-trip path");
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/LoadLinesMatchesSerializeRoundTrip",
+          TestTextViewportLoadLinesMatchesSerializeRoundTrip);
   AddTest(tests, "TextViewport/FastLoadMatchesCrlfDecode",
           TestTextViewportFastLoadMatchesCrlfDecode);
   AddTest(tests, "TextViewport/FastLoadNoTrailingNewline",

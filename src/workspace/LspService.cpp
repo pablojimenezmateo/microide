@@ -297,12 +297,14 @@ LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport
 }
 
 void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, LspClient& client,
-                                       std::string_view language_id) {
+                                       std::string_view language_id,
+                                       std::string_view precomputed_uri) {
   util::PerformanceTrace::Scope perf_scope("LspService::EnsureLspDocumentOpen");
   if (viewport.path().empty() || language_id.empty()) {
     return;
   }
-  const std::string uri = FileUriForPath(viewport.path());
+  const std::string uri = precomputed_uri.empty() ? FileUriForPath(viewport.path())
+                                                   : std::string(precomputed_uri);
   if (client.HasOpenDocument(uri)) {
     return;
   }
@@ -414,13 +416,13 @@ void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& 
   if (client == nullptr) {
     return;
   }
-  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  const std::string uri = FileUriForPath(viewport->path());
+  EnsureLspDocumentOpen(*viewport, *client, language_id, uri);
 
   // Full-document sync for the bulk-change path. The per-keystroke path
   // (SyncLspForActiveEditableLastChange) sends true ranged incremental edits via
   // the viewport's last applied edit; here we only have before/after snapshots,
   // so a clean full replace is the correct, desync-proof choice.
-  const std::string uri = FileUriForPath(viewport->path());
   client->DidChange(uri, util::SerializeLines(after_lines, viewport->line_ending()));
   // Refresh semantic tokens on bulk edits (paste/undo/format/multi-edit). The
   // per-keystroke path stays request-free to keep typing fast; live incremental
@@ -445,13 +447,16 @@ void LspService::SyncLspForActiveEditableLastChange() {
   if (client == nullptr) {
     return;
   }
+  // Compute the document URI once and reuse it for both the ensure-open check and
+  // the DidChange below, so FileUriForPath's normalize+percent-encode runs once
+  // per keystroke instead of twice.
+  const std::string uri = FileUriForPath(viewport->path());
   {
     util::PerformanceTrace::Scope scope(
         "LspService::SyncLspForActiveEditableLastChange::EnsureDocumentOpen");
-    EnsureLspDocumentOpen(*viewport, *client, language_id);
+    EnsureLspDocumentOpen(*viewport, *client, language_id, uri);
   }
 
-  const std::string uri = FileUriForPath(viewport->path());
   const auto& applied_edit = viewport->last_applied_edit();
   if (!applied_edit.has_value()) {
     util::PerformanceTrace::Scope scope(

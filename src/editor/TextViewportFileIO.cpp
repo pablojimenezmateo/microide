@@ -120,6 +120,16 @@ void TextViewport::LoadContent(std::string_view content,
              false, false);
 }
 
+void TextViewport::LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,
+                            LineEnding line_ending) {
+  EnsureDocument();
+  // ResetState moves `lines` into the piece tree (no join/re-split). The encoding is
+  // recomputed from the loaded buffer afterwards, mirroring LoadContent's detection.
+  ResetState(std::move(lines), path, line_ending, /*mixed_line_endings=*/false,
+             TextEncoding::ASCII, /*placeholder=*/false, /*dirty=*/true);
+  RefreshEncoding();
+}
+
 void TextViewport::SetPath(const std::filesystem::path& path) {
   EnsureDocument();
   SetDocumentPath(path);

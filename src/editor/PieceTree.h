@@ -137,6 +137,12 @@ class PieceTree {
   // --- navigation / extraction ---
   std::uint32_t LineStartByte(std::size_t line) const;
   void CopyRange(std::uint32_t pos, std::uint32_t length, std::string& out) const;
+  // Append lines [begin_line, end_line) (newlines excluded) to `out` in a single
+  // in-order treap walk -- O(N + p) instead of the O(N log p) that per-line
+  // LineView() extraction costs (two tree descents per line). Callers guarantee
+  // begin_line < end_line <= line_count_.
+  void ExtractLineRange(std::size_t begin_line, std::size_t end_line,
+                        std::vector<std::string>& out) const;
   // If [pos, pos+length) lies wholly inside one piece, return a view into the
   // backing buffer; otherwise return an empty optional-substitute via `ok`.
   std::string_view TryViewRange(std::uint32_t pos, std::uint32_t length, bool& ok) const;

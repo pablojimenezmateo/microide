@@ -33,6 +33,9 @@ std::uint64_t BranchReviewStateService::NowUnixMs() {
 
 BranchReviewTargetState* BranchReviewStateService::FindOrCreateTarget(
     const BranchReviewTargetIdentity& target) {
+  // Mutation entry point for every Mark*/Note operation. Bump the revision here so
+  // cache consumers rebuild; over-bumping on a no-op re-mark is harmless.
+  ++revision_;
   for (BranchReviewTargetState& existing : targets_) {
     if (existing.target == target) {
       TouchTarget(existing);
@@ -242,6 +245,7 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
 }
 
 void BranchReviewStateService::ClearTarget(const BranchReviewTargetIdentity& target) {
+  ++revision_;
   targets_.erase(std::remove_if(targets_.begin(), targets_.end(),
                                 [&](const BranchReviewTargetState& existing) {
                                   return existing.target == target;
@@ -252,6 +256,7 @@ void BranchReviewStateService::ClearTarget(const BranchReviewTargetIdentity& tar
 void BranchReviewStateService::PruneForRepository(
     const std::filesystem::path& repository_root,
     const BranchReviewTargetIdentity* active_target) {
+  ++revision_;
   const std::filesystem::path normalized_root = repository_root.lexically_normal();
   std::vector<BranchReviewTargetState> matching;
   matching.reserve(targets_.size());

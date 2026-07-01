@@ -313,6 +313,35 @@ void TestMultiCaretBackspaceShiftsSameLineCarets() {
          "lower same-line erases should shift higher carets left without losing any");
 }
 
+// The single-pass SetSecondaryCarets rebuild (which the multi-caret apply paths
+// now funnel through) must reproduce the old AddSecondaryCaret-in-a-loop result:
+// clamp every position into the document, sort, drop duplicates -- including two
+// positions that clamp to the same column on a short line -- and drop any caret
+// coinciding with the primary. This pins the edge cases that the O(k^2) -> O(k log k)
+// rewrite could have regressed.
+void TestSetSecondaryCaretsClampCollapseDedupeAndPrimaryDrop() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\nxy\nghijk", "/tmp/mc-clamp-collapse.txt");
+  viewport.MoveCursorTo(0, 2);  // primary at (0,2)
+
+  // Deliberately unsorted and adversarial:
+  //  - (1,5) and (1,9) both clamp to (1,2) on the 2-char line -> collapse to one
+  //  - (2,1) appears twice -> dedupe
+  //  - (0,2) coincides with the primary -> dropped
+  //  - line 99 is out of range -> clamps into the last line (index 2) at column 0
+  viewport.SetSecondaryCarets({{2, 1}, {1, 5}, {0, 2}, {1, 9}, {2, 1}, {99, 0}});
+
+  const auto& carets = viewport.secondary_carets();
+  Expect(carets.size() == 3,
+         "clamp-collapse + dedupe + primary-drop should leave exactly three carets");
+  Expect(carets[0] == TextPosition{1, 2},
+         "the two short-line carets clamp-collapse to (1,2) and sort first");
+  Expect(carets[1] == TextPosition{2, 0},
+         "the out-of-range line 99 clamps into the last line at column 0");
+  Expect(carets[2] == TextPosition{2, 1},
+         "the duplicate (2,1) carets dedupe to one, sorted last");
+}
+
 }  // namespace
 
 void TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine() {
@@ -356,6 +385,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretSplitBracesAtEveryCaret);
   AddTest(tests, "EditorMultiCaret/MultiCaretSplitBracesMixedWithPlainNewline",
           TestMultiCaretSplitBracesMixedWithPlainNewline);
+  AddTest(tests, "EditorMultiCaret/SetSecondaryCaretsClampCollapseDedupeAndPrimaryDrop",
+          TestSetSecondaryCaretsClampCollapseDedupeAndPrimaryDrop);
 }
 
 }  // namespace microide::tests

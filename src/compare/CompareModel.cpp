@@ -1087,43 +1087,13 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   const std::vector<std::string_view> right_lines = util::SplitLineViews(right);
   profile.split_lines_ns = DurationNs(split_start, Clock::now());
 
-  const bool lines_equal = [&]() {
-    if (left_lines.size() != right_lines.size()) {
-      return false;
-    }
-    for (std::size_t i = 0; i < left_lines.size(); ++i) {
-      if (!LinesEqualForDiff(left_lines[i], right_lines[i], options)) {
-        return false;
-      }
-    }
-    return true;
-  }();
-  if (lines_equal) {
-    model.rows.reserve(left_lines.size());
-    int line_number = 1;
-    for (std::size_t i = 0; i < left_lines.size(); ++i) {
-      // Under ignore_whitespace the two sides can compare equal while differing in
-      // whitespace; the right column must still show the right file's actual text,
-      // not a copy of the left line.
-      model.rows.push_back(CompareRow{
-          .left_text = std::string(left_lines[i]),
-          .right_text = std::string(right_lines[i]),
-          .left_line = line_number,
-          .right_line = line_number,
-          .kind = CompareRowKind::Unchanged,
-          .hunk = -1,
-          .left_changed_spans = {},
-          .right_changed_spans = {},
-      });
-      ++line_number;
-    }
-    profile.total_ns = DurationNs(total_start, Clock::now());
-    profile.row_assembly_ns =
-        profile.total_ns - profile.split_lines_ns - profile.line_alignment_ns -
-        profile.hunk_alignment_ns - profile.intraline_ns;
-    return result;
-  }
-
+  // The all-equal case is handled by the general prefix/suffix path below: when
+  // every line matches, `prefix` walks the whole document, `left_middle`/
+  // `right_middle` are empty, and the prefix loop emits one Unchanged row per line
+  // with left_line == right_line — byte-identical to a dedicated fast path. A prior
+  // `lines_equal` pre-scan re-walked all lines via LinesEqualForDiff only to have
+  // the prefix loop immediately re-scan the identical prefix; it was pure redundant
+  // work per rebuild and has been removed.
   const Clock::time_point line_alignment_start = Clock::now();
   std::size_t prefix = 0;
   while (prefix < left_lines.size() && prefix < right_lines.size() &&

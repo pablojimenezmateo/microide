@@ -148,10 +148,11 @@ std::optional<SDL_FRect> WorkspaceShell::GitSidebarOutgoingBaseButtonRect(
 std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
   std::vector<std::string> lines;
 
-  const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
-                             context_.current_project_state.root,
-                             context_.current_project_state.branch_review);
+  const GitSidebarViewModel& view_model =
+      workspace::CachedGitSidebarPresentation(context_.current_project_state.sidebar.git,
+                                              context_.current_project_state.root,
+                                              context_.current_project_state.branch_review)
+          .view_model;
   lines.insert(lines.end(), view_model.summary_lines.begin(), view_model.summary_lines.end());
   if (!view_model.workflow_summary_line.empty()) {
     lines.push_back(view_model.workflow_summary_line);
@@ -166,10 +167,11 @@ std::vector<std::string> WorkspaceShell::GitSidebarSummaryLines() const {
 }
 
 float WorkspaceShell::GitSidebarSummaryHeight() const {
-  const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
-                               context_.current_project_state.root,
-                               context_.current_project_state.branch_review);
+  const GitSidebarViewModel& view_model =
+      workspace::CachedGitSidebarPresentation(context_.current_project_state.sidebar.git,
+                                              context_.current_project_state.root,
+                                              context_.current_project_state.branch_review)
+          .view_model;
 
   float height = 0.0f;
   // Keep list offset in sync with the compact grouped summary block. summary_lines
@@ -410,31 +412,14 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarTooltipRect(const Work
 }
 
 std::vector<WorkspaceShell::GitSidebarLine> WorkspaceShell::BuildGitSidebarLines() const {
-  const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
-                             context_.current_project_state.root,
-                             context_.current_project_state.branch_review);
-  const auto specs = BuildGitSidebarLineSpecs(
-      view_model, &context_.current_project_state.sidebar.git.collapsed_directory_keys);
-  std::vector<GitSidebarLine> lines;
-  lines.reserve(specs.size());
-  for (const GitSidebarLineSpec& spec : specs) {
-    lines.push_back(GitSidebarLine{
-        .kind = spec.kind == GitSidebarLineKind::Header
-                    ? GitSidebarLine::Kind::Header
-                    : spec.kind == GitSidebarLineKind::Directory
-                        ? GitSidebarLine::Kind::Directory
-                    : spec.kind == GitSidebarLineKind::Entry ? GitSidebarLine::Kind::Entry
-                                                             : GitSidebarLine::Kind::Empty,
-        .section = spec.section,
-        .label = spec.label,
-        .tree_node_key = spec.tree_node_key,
-        .expanded = spec.expanded,
-        .depth = spec.depth,
-        .entry_index = spec.entry_index,
-    });
-  }
-  return lines;
+  // Always reads live git state through the shared revision-exact memo (never the
+  // possibly-stale per-frame prepare cache), so hit-testing between frames matches
+  // the current collapse/entry state and is cheap when nothing changed. The render
+  // TU instead consumes the frame's pre-flattened `git_sidebar_lines` directly.
+  return workspace::CachedGitSidebarPresentation(context_.current_project_state.sidebar.git,
+                                                 context_.current_project_state.root,
+                                                 context_.current_project_state.branch_review)
+      .lines;
 }
 
 bool WorkspaceShell::ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key) {
@@ -456,13 +441,8 @@ std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
     return std::nullopt;
   }
 
-  const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
-                             context_.current_project_state.root,
-                             context_.current_project_state.branch_review);
-  const auto specs = BuildGitSidebarLineSpecs(
-      view_model, &context_.current_project_state.sidebar.git.collapsed_directory_keys);
-  return FindSelectedGitSidebarLineIndex(specs, context_.current_project_state.sidebar.git.selected_index);
+  return FindSelectedGitSidebarLineIndex(BuildGitSidebarLines(),
+                                         context_.current_project_state.sidebar.git.selected_index);
 }
 
 const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry() const {

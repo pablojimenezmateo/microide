@@ -157,17 +157,9 @@ bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
-  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), detail::PositionLess);
-  updated_secondary_carets.erase(
-      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
-      updated_secondary_carets.end());
-  updated_secondary_carets.erase(
-      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
-      updated_secondary_carets.end());
-  secondary_carets_.clear();
-  for (const TextPosition& caret : updated_secondary_carets) {
-    AddSecondaryCaret(caret.line, caret.column);
-  }
+  // cursor_line_/cursor_column_ were just set to primary_after above, so
+  // SetSecondaryCarets clamps, sorts, dedups, and drops the primary in one pass.
+  SetSecondaryCarets(std::move(updated_secondary_carets));
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   document_->placeholder = false;
@@ -278,17 +270,9 @@ bool TextViewport::ApplyMultiCaretBackspace(bool record_undo) {
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
-  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), detail::PositionLess);
-  updated_secondary_carets.erase(
-      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
-      updated_secondary_carets.end());
-  updated_secondary_carets.erase(
-      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
-      updated_secondary_carets.end());
-  secondary_carets_.clear();
-  for (const TextPosition& caret : updated_secondary_carets) {
-    AddSecondaryCaret(caret.line, caret.column);
-  }
+  // cursor_line_/cursor_column_ were just set to primary_after above, so
+  // SetSecondaryCarets clamps, sorts, dedups, and drops the primary in one pass.
+  SetSecondaryCarets(std::move(updated_secondary_carets));
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   document_->placeholder = false;
@@ -396,17 +380,9 @@ bool TextViewport::ApplyMultiCaretDeleteForward(bool record_undo) {
 
   cursor_line_ = primary_after.line;
   cursor_column_ = primary_after.column;
-  std::sort(updated_secondary_carets.begin(), updated_secondary_carets.end(), detail::PositionLess);
-  updated_secondary_carets.erase(
-      std::unique(updated_secondary_carets.begin(), updated_secondary_carets.end()),
-      updated_secondary_carets.end());
-  updated_secondary_carets.erase(
-      std::remove(updated_secondary_carets.begin(), updated_secondary_carets.end(), primary_after),
-      updated_secondary_carets.end());
-  secondary_carets_.clear();
-  for (const TextPosition& caret : updated_secondary_carets) {
-    AddSecondaryCaret(caret.line, caret.column);
-  }
+  // cursor_line_/cursor_column_ were just set to primary_after above, so
+  // SetSecondaryCarets clamps, sorts, dedups, and drops the primary in one pass.
+  SetSecondaryCarets(std::move(updated_secondary_carets));
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   document_->placeholder = false;

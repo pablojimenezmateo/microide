@@ -70,8 +70,13 @@ class LspService {
 
   // Document lifecycle / synchronization.
   LspClient* LspClientForViewport(const editor::TextViewport& viewport, std::string* language_id);
+  // `precomputed_uri`, when non-empty, is used verbatim instead of re-deriving the
+  // document URI from the viewport path (FileUriForPath does path normalization +
+  // percent-encoding). The per-keystroke sync path already computes the URI once and
+  // threads it in so the encode does not run twice per keystroke.
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport, LspClient& client,
-                             std::string_view language_id);
+                             std::string_view language_id,
+                             std::string_view precomputed_uri = {});
   void PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
                              std::vector<LspClient::Diagnostic> diagnostics);
   // Request textDocument/semanticTokens/full for `viewport` and publish the

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -26,6 +27,14 @@ class BranchReviewStateService {
 
   const std::vector<BranchReviewTargetState>& targets() const { return targets_; }
   std::vector<BranchReviewTargetState>& targets() { return targets_; }
+
+  // Monotonic counter bumped on every state mutation. Consumers that derive cached
+  // output from review state (e.g. the git sidebar Outgoing review markers) key
+  // their cache on this so a mutation forces a rebuild. Over-bumping is safe (it
+  // only forces an extra rebuild); a missed bump would show stale markers, so all
+  // mutation entry points must funnel through the bump (FindOrCreateTarget covers
+  // the Mark*/Note mutators; ClearTarget/PruneForRepository bump directly).
+  std::uint64_t revision() const { return revision_; }
 
   BranchReviewTargetState* FindOrCreateTarget(const BranchReviewTargetIdentity& target);
   const BranchReviewTargetState* FindTarget(const BranchReviewTargetIdentity& target) const;
@@ -65,6 +74,7 @@ class BranchReviewStateService {
   void PruneTarget(BranchReviewTargetState& target_state);
 
   std::vector<BranchReviewTargetState> targets_;
+  std::uint64_t revision_ = 0;
 };
 
 }  // namespace microide::compare

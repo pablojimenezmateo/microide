@@ -376,10 +376,10 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
     if (persisted_tab.dirty_snapshot) {
       editor::TextViewport restored_view;
-      restored_view.LoadContent(
-          util::SerializeLines(persisted_tab.buffer_lines, persisted_tab.line_ending), view_path,
-          persisted_tab.line_ending);
-      restored_view.SetDirty(true);
+      // Load the already line-split snapshot straight in (dirty=true baked in).
+      // LoadContent would SerializeLines(...) then re-split -- two extra full passes
+      // over the buffer plus a throwaway joined string.
+      restored_view.LoadLines(persisted_tab.buffer_lines, view_path, persisted_tab.line_ending);
       // Apply preferences / indent detection first (they re-run EnsureCursorVisible),
       // then restore view state last so scroll survives independent of the caret.
       operations_.apply_editor_preferences(restored_view);

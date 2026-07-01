@@ -94,6 +94,12 @@ class TextViewport {
   void LoadContent(std::string_view content,
                    const std::filesystem::path& path = {},
                    std::optional<LineEnding> line_ending = std::nullopt);
+  // Load an already line-split buffer directly (dirty-tab session restore), moving
+  // `lines` straight into the document instead of the LoadContent(SerializeLines(...))
+  // round-trip that joins the lines into one string only to re-split it. Marks the
+  // buffer dirty, since a restored dirty snapshot differs from the file on disk.
+  void LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,
+                 LineEnding line_ending);
   void SetPath(const std::filesystem::path& path);
   void SetDirty(bool dirty);
   void SetPlaceholderText(std::string text);

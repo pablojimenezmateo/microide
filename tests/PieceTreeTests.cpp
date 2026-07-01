@@ -147,6 +147,50 @@ void TestPieceTreeSliceLines() {
   Expect(tree.SliceLines(4, 99).size() == 1, "slice clamps to end");
 }
 
+// SliceLines / ToVector share one single-pass in-order extractor (ExtractLineRange)
+// that splits piece bytes on '\n' with an early stop for partial ranges and a
+// post-walk push for the final unterminated line. Fuzz every (begin, end) slice of
+// a heavily-fragmented multi-piece tree against the naive oracle so the early-stop
+// boundary, the final-line push, and slices that straddle piece boundaries all stay
+// exact.
+void TestPieceTreeSliceLinesEquivalence() {
+  const std::uint64_t seeds[] = {3u, 19u, 0xABCDu, 0xFEEDu};
+  for (std::uint64_t seed : seeds) {
+    Rng rng(seed);
+    PieceTree tree;
+    VectorModel model;
+    std::vector<std::string> initial;
+    const std::size_t initial_lines = rng.Below(30);
+    for (std::size_t i = 0; i < initial_lines; ++i) initial.push_back(MakeLine(rng));
+    tree.Reset(initial);
+    model.Reset(initial);
+
+    // Fragment the tree with many small edits (each spawns add-buffer pieces).
+    for (int step = 0; step < 120; ++step) {
+      const std::size_t n = model.lines.size();
+      const std::size_t start = rng.Below(n + 1);
+      const std::size_t removed = rng.Below((n - std::min(start, n)) + 1);
+      std::vector<std::string> inserted;
+      for (std::size_t i = 0; i < rng.Below(3); ++i) inserted.push_back(MakeLine(rng));
+      tree.ReplaceLineRange(start, removed, inserted);
+      model.ReplaceLineRange(start, removed, inserted);
+
+      const std::size_t lc = tree.LineCount();
+      for (std::size_t begin = 0; begin <= lc + 1; ++begin) {
+        for (std::size_t end = begin; end <= lc + 1; ++end) {
+          std::vector<std::string> expected;
+          if (begin < end && begin < lc) {
+            const std::size_t clamped_end = std::min(end, lc);
+            expected.assign(model.lines.begin() + static_cast<std::ptrdiff_t>(begin),
+                            model.lines.begin() + static_cast<std::ptrdiff_t>(clamped_end));
+          }
+          Expect(tree.SliceLines(begin, end) == expected, "SliceLines matches oracle slice");
+        }
+      }
+    }
+  }
+}
+
 // ResetFromText (the Phase 4 large-file load fast path) must be exactly
 // equivalent to splitting the same canonical '\n'-joined bytes into lines and
 // feeding them through Reset -- it just skips the intermediate vector.
@@ -195,6 +239,7 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/MidLineEdits", TestPieceTreeMidLineEdits);
   AddTest(tests, "PieceTree/RandomizedEquivalence", TestPieceTreeRandomizedEquivalence);
   AddTest(tests, "PieceTree/SliceLines", TestPieceTreeSliceLines);
+  AddTest(tests, "PieceTree/SliceLinesEquivalence", TestPieceTreeSliceLinesEquivalence);
   AddTest(tests, "PieceTree/ResetFromTextMatchesReset", TestPieceTreeResetFromTextMatchesReset);
 }
 

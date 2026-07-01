@@ -600,7 +600,9 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
                          commit_workflow_service_.CanExecuteCommit(workflow), ButtonTone::Accent);
     }
 
-    const auto lines = BuildGitSidebarLines();
+    // Reuse the rows already flattened during PrepareFrameOnce instead of
+    // rebuilding the git view model + line specs a second time this frame.
+    const std::vector<GitSidebarLine>& lines = sidebar_vm.git_sidebar_lines;
     const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
     const int scroll_row = list_layout.scroll_row;
     project_state.sidebar.scroll_row = scroll_row;

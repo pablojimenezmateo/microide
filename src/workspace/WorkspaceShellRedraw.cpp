@@ -755,11 +755,16 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
     wait_ms = std::max<Uint32>(1, *next_delay);
   }
   // While a debug-adapter request is in flight, poll on a short interval so the
-  // async response is applied promptly. Otherwise a fully-idle blocking wait
-  // relies solely on the cross-thread SDL wake to deliver it, which can defer the
-  // scopes/variables/evaluate result by seconds and makes expansion feel frozen.
+  // async response is applied promptly. The response path already wakes the loop
+  // via MainThreadMailbox::PushWake (SDL_PushEvent), but a cross-thread pushed
+  // event is not a guaranteed wake for a blocking SDL_WaitEventTimeout on every
+  // platform, so this poll is the backstop that stops scopes/variables/evaluate
+  // from feeling frozen. 16 ms (~62 wakes/sec) was needlessly tight given the
+  // wake usually fires: 64 ms cuts the idle-wake rate ~4x while keeping the
+  // worst-case backstop latency (only hit if the wake is dropped) below the
+  // ~100 ms perception threshold, so stepping still feels immediate.
   if (DebugEnabled() && debug_service_.HasInFlightDapWork()) {
-    constexpr Uint32 kDapPollMs = 16;
+    constexpr Uint32 kDapPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDapPollMs) : kDapPollMs;
   }
   if (wait_ms.has_value()) {

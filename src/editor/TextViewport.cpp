@@ -435,9 +435,38 @@ void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
 }
 
 void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
+  // Single-pass rebuild: clamp every position, sort once, then emit while
+  // dropping duplicates and the primary caret. The previous implementation
+  // called AddSecondaryCaret in a loop, and AddSecondaryCaret itself does a
+  // linear find_if plus a full std::sort on every insert -- so rebuilding k
+  // carets was O(k^2 log k), redundantly re-sorting an already-clamped set.
+  // This is O(k log k) and produces the identical final set/order (clamping is
+  // monotonic, so sorting after clamping matches AddSecondaryCaret's
+  // sort-by-clamped-position, and the primary skip mirrors its cursor check).
   secondary_carets_.clear();
+  if (carets.empty() || document_->lines.empty()) {
+    return;
+  }
+  const TextPosition primary{cursor_line_, cursor_column_};
+  const std::size_t last_line = document_->lines.size() - 1;
+  for (TextPosition& caret : carets) {
+    caret.line = std::min(caret.line, last_line);
+    caret.column = TextLayout::ClampTextColumn(document_->lines.LineView(caret.line), caret.column);
+  }
+  std::sort(carets.begin(), carets.end(), detail::PositionLess);
+  secondary_carets_.reserve(carets.size());
   for (const TextPosition& caret : carets) {
-    AddSecondaryCaret(caret.line, caret.column);
+    if (caret == primary) {
+      continue;
+    }
+    if (!secondary_carets_.empty() && secondary_carets_.back().position == caret) {
+      continue;
+    }
+    secondary_carets_.push_back(SecondaryCaret{
+        .position = caret,
+        .preferred_column = PreferredColumnForCaret(caret),
+        .selection_anchor = std::nullopt,
+    });
   }
 }
 

@@ -336,23 +336,82 @@ std::size_t PieceTree::LineLength(std::size_t index) const {
   return end - start;
 }
 
+void PieceTree::ExtractLineRange(std::size_t begin_line, std::size_t end_line,
+                                 std::vector<std::string>& out) const {
+  const std::size_t count = end_line - begin_line;
+  const std::size_t target = out.size() + count;
+  out.reserve(target);
+  const std::uint32_t start = LineStartByte(begin_line);
+
+  // In-order pruned walk over [start, ByteSize()). Each visited piece contributes
+  // a contiguous byte span; we split those bytes on '\n' straight into `out`
+  // (newline excluded), stopping the instant `count` lines have been emitted. The
+  // final requested line (when end_line == line_count_) has no terminating '\n' in
+  // the byte stream, so it is pushed once after the walk drains.
+  std::string current;
+  bool done = false;
+  struct Frame {
+    NodeId id;
+    std::uint32_t base;
+    bool emit;  // false: expand children; true: consume this node's span
+  };
+  std::vector<Frame> stack;
+  stack.push_back({root_, 0, false});
+  while (!stack.empty() && !done) {
+    const Frame frame = stack.back();
+    stack.pop_back();
+    if (frame.id == kNull) continue;
+    const Node& node = nodes_[frame.id];
+    const std::uint32_t left_len = TreeLength(node.left);
+    const std::uint32_t piece_start = frame.base + left_len;
+    const std::uint32_t piece_end = piece_start + node.length;
+    if (frame.emit) {
+      const std::uint32_t s = std::max(start, piece_start);
+      if (s < piece_end) {
+        const char* data = BufferOf(node.buffer).data() + node.start + (s - piece_start);
+        const std::uint32_t len = piece_end - s;
+        std::uint32_t seg_begin = 0;
+        for (std::uint32_t i = 0; i < len; ++i) {
+          if (data[i] == '\n') {
+            current.append(data + seg_begin, i - seg_begin);
+            out.push_back(std::move(current));
+            current.clear();
+            seg_begin = i + 1;
+            if (out.size() == target) {
+              done = true;
+              break;
+            }
+          }
+        }
+        if (!done) {
+          current.append(data + seg_begin, len - seg_begin);
+        }
+      }
+      continue;
+    }
+    if (frame.base + node.subtree_length <= start) continue;  // prune: entirely before start
+    // Push in reverse so the in-order sequence (left, self, right) pops in order.
+    stack.push_back({node.right, piece_end, false});
+    stack.push_back({frame.id, frame.base, true});
+    stack.push_back({node.left, frame.base, false});
+  }
+  if (!done && out.size() < target) {
+    out.push_back(std::move(current));
+  }
+}
+
 std::vector<std::string> PieceTree::SliceLines(std::size_t begin, std::size_t end) const {
   if (begin >= end || begin >= line_count_) return {};
   end = std::min(end, line_count_);
   std::vector<std::string> out;
-  out.reserve(end - begin);
-  for (std::size_t i = begin; i < end; ++i) {
-    out.emplace_back(LineView(i));
-  }
+  ExtractLineRange(begin, end, out);
   return out;
 }
 
 std::vector<std::string> PieceTree::ToVector() const {
   std::vector<std::string> out;
-  out.reserve(line_count_);
-  for (std::size_t i = 0; i < line_count_; ++i) {
-    out.emplace_back(LineView(i));
-  }
+  if (line_count_ == 0) return out;
+  ExtractLineRange(0, line_count_, out);
   return out;
 }
 

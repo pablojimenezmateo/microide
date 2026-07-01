@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "workspace/WorkspaceActionCoordinator.h"
+#include "workspace/WorkspaceGitSidebarPresentation.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/PromptSurfaceService.h"
 #include "workspace/SidebarService.h"
@@ -618,10 +619,11 @@ bool WorkspaceShell::CanStageAllGitSidebarEntries() const {
 }
 
 bool WorkspaceShell::CanOpenGitCommitButton() const {
-  const GitSidebarViewModel view_model =
-      BuildGitSidebarViewModel(context_.current_project_state.sidebar.git,
-                               context_.current_project_state.root,
-                               context_.current_project_state.branch_review);
+  const GitSidebarViewModel& view_model =
+      workspace::CachedGitSidebarPresentation(context_.current_project_state.sidebar.git,
+                                              context_.current_project_state.root,
+                                              context_.current_project_state.branch_review)
+          .view_model;
   return view_model.show_commit_button && view_model.commit_ready;
 }
 
