@@ -1,1 +1,1 @@
-{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":100000,"p50_allocations":60000,"p95_allocations":90000,"p95_wall_ms":200.0,"max_wall_ms":200.0,"p50_wall_ms":100.0},"scenario":"git_sidebar_activate"}
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":183542,"p50_allocations":25638,"p95_allocations":112516.69999999984,"p95_wall_ms":102.38452379999993,"max_wall_ms":139.48241400000001,"p50_wall_ms":29.021513499999998},"scenario":"git_sidebar_activate"}

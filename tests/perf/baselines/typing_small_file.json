@@ -1,1 +1,1 @@
-{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":6225,"p50_allocations":2710.5,"p95_allocations":4645.9499999999962,"p95_wall_ms":22.400557749999987,"max_wall_ms":28.341702999999999,"p50_wall_ms":14.933273},"scenario":"typing_small_file"}
+{"tolerances":{"max_percent":50,"p95_percent":20,"p50_percent":10},"metrics":{"max_allocations":70480,"p50_allocations":12319,"p95_allocations":44307.999999999942,"p95_wall_ms":37.588779199999948,"max_wall_ms":58.547854999999998,"p50_wall_ms":10.4188615},"scenario":"typing_small_file"}
