@@ -187,10 +187,23 @@ struct Rule {
   GeneratedRuleKind kind = GeneratedRuleKind::Pattern;
   SyntaxTokenKind group = SyntaxTokenKind::Plain;
   SyntaxTokenKind limit_group = SyntaxTokenKind::Plain;
-  CompiledRegex pattern;
-  CompiledRegex start;
-  CompiledRegex end;
-  CompiledRegex skip;
+  // Compiled regexes. For lazily-built definitions (built-in generated rules)
+  // these start empty and are populated on first highlight of the owning
+  // definition (see EnsureDefinitionCompiled) from the *_src back-pointers
+  // below; `mutable` so the compile can happen through the const registry
+  // reference returned by GetRegistry(). Eager (plugin/runtime) rules populate
+  // these at build time and leave the *_src pointers null.
+  mutable CompiledRegex pattern;
+  mutable CompiledRegex start;
+  mutable CompiledRegex end;
+  mutable CompiledRegex skip;
+  // Non-owning back-pointers into the static kGeneratedRules string literals,
+  // set only for built-in lazily-compiled rules. Stable for the process
+  // lifetime; nullptr for eager runtime rules.
+  const char* pattern_src = nullptr;
+  const char* start_src = nullptr;
+  const char* end_src = nullptr;
+  const char* skip_src = nullptr;
   std::size_t first_child = 0;
   std::size_t child_count = 0;
   std::uint32_t parent_region_id = 0;
@@ -203,6 +216,11 @@ struct Definition {
   CompiledRegex signature_regex;
   std::size_t first_rule = 0;
   std::size_t rule_count = 0;
+  // True for built-in generated definitions whose rule regexes are compiled
+  // lazily via the owning registry's definition_compile_flags entry. Plugin /
+  // runtime definitions stay eager (false) so their regexes are validated at
+  // reload time.
+  bool lazy_rules = false;
   std::unordered_map<std::uint32_t, std::vector<std::size_t>> pattern_rule_indices_by_parent;
   std::unordered_map<std::uint32_t, std::vector<std::size_t>> region_rule_indices_by_parent;
 };
@@ -211,6 +229,13 @@ struct Registry {
   std::vector<Definition> definitions;
   std::vector<Rule> rules;
   std::uint32_t default_definition_id = 0;
+  // One guard per definition (indexed by definition_id - 1), sized in
+  // PartitionDefinitionRules. std::once_flag is non-movable/non-copyable, so it
+  // cannot live inside Definition (which is moved and copied by value during
+  // registry construction); a vector<once_flag> is movable (buffer steal) but
+  // not copyable, which makes Registry move-only. `mutable` so EnsureDefinition-
+  // Compiled can std::call_once through a const registry reference.
+  mutable std::vector<std::once_flag> definition_compile_flags;
 };
 
 struct BuildOutput {
@@ -421,18 +446,13 @@ void AppendGeneratedDefinitions(Registry& registry) {
     rule.group = TokenKindForGroupName(generated.group_name == nullptr ? "" : generated.group_name);
     rule.limit_group =
         TokenKindForGroupName(generated.limit_group_name == nullptr ? "" : generated.limit_group_name);
-    if (generated.pattern != nullptr) {
-      rule.pattern = CompileSyntaxRegex(generated.pattern);
-    }
-    if (generated.start_regex != nullptr) {
-      rule.start = CompileSyntaxRegex(generated.start_regex);
-    }
-    if (generated.end_regex != nullptr) {
-      rule.end = CompileSyntaxRegex(generated.end_regex);
-    }
-    if (generated.skip_regex != nullptr) {
-      rule.skip = CompileSyntaxRegex(generated.skip_regex);
-    }
+    // Defer regex compilation: retain the source pointers and compile them the
+    // first time the owning definition is highlighted (EnsureDefinitionCompiled).
+    // These literals live in static storage for the whole process lifetime.
+    rule.pattern_src = generated.pattern;
+    rule.start_src = generated.start_regex;
+    rule.end_src = generated.end_regex;
+    rule.skip_src = generated.skip_regex;
     rule.first_child =
         generated.child_count == 0 ? 0 : rule_offset + generated.first_child;
     rule.child_count = generated.child_count;
@@ -458,6 +478,10 @@ void AppendGeneratedDefinitions(Registry& registry) {
     }
     definition.first_rule = rule_offset + generated.first_rule;
     definition.rule_count = generated.rule_count;
+    // Rule regexes for built-in definitions are compiled lazily; detection
+    // regexes above stay eager so DetectFiletype/DetectState never pay the
+    // rule-compile cost.
+    definition.lazy_rules = true;
     registry.definitions.push_back(std::move(definition));
   }
 }
@@ -475,6 +499,11 @@ void PartitionDefinitionRules(Registry& registry) {
       table[rule.parent_region_id].push_back(index);
     }
   }
+  // Fresh, per-registry lazy-compile guards. Whole-vector move-assign (never
+  // resize()) because vector<once_flag> cannot relocate its elements. Runs at
+  // the end of every build/reload, so both BuiltInRegistry() and each reloaded
+  // MutableRegistry() get an independent set of flags sized to their definitions.
+  registry.definition_compile_flags = std::vector<std::once_flag>(registry.definitions.size());
 }
 
 Registry BuildGeneratedRegistry() {
@@ -528,8 +557,13 @@ void AppendRegistryWithOffset(Registry& destination, const Registry& source) {
 BuildOutput BuildRegistry(const std::vector<RuntimeSyntaxDefinitionData>& runtime_definitions,
                           std::vector<std::string>* errors) {
   BuildOutput output;
+  // Registry is move-only (its per-definition once_flag guards cannot be
+  // copied), so clone the built-in registry element-wise via
+  // AppendRegistryWithOffset rather than copy-assigning it. The trailing
+  // PartitionDefinitionRules gives the clone its own fresh guard table.
   if (runtime_definitions.empty()) {
-    output.registry = BuiltInRegistry();
+    AppendRegistryWithOffset(output.registry, BuiltInRegistry());
+    PartitionDefinitionRules(output.registry);
     return output;
   }
 
@@ -579,6 +613,41 @@ const Definition* DefinitionById(const Registry& registry, std::uint32_t definit
     return nullptr;
   }
   return &registry.definitions[definition_id - 1];
+}
+
+// Compile a lazily-built (built-in) definition's rule regexes on first use.
+// std::call_once serializes concurrent callers (background prefetch worker vs.
+// the main render cache-miss path) and publishes the compiled regexes with a
+// happens-before edge, independent of RegistryMutex. A no-op for eager
+// (plugin/runtime) definitions, which compiled their regexes at reload time.
+void EnsureDefinitionCompiled(const Registry& registry, std::uint32_t definition_id) {
+  if (definition_id == 0 || definition_id > registry.definitions.size()) {
+    return;
+  }
+  const Definition& definition = registry.definitions[definition_id - 1];
+  if (!definition.lazy_rules ||
+      definition_id > registry.definition_compile_flags.size()) {
+    return;
+  }
+  std::call_once(registry.definition_compile_flags[definition_id - 1], [&]() {
+    const std::size_t end_rule = definition.first_rule + definition.rule_count;
+    for (std::size_t index = definition.first_rule;
+         index < end_rule && index < registry.rules.size(); ++index) {
+      const Rule& rule = registry.rules[index];
+      if (rule.pattern_src != nullptr) {
+        rule.pattern = CompileSyntaxRegex(rule.pattern_src);
+      }
+      if (rule.start_src != nullptr) {
+        rule.start = CompileSyntaxRegex(rule.start_src);
+      }
+      if (rule.end_src != nullptr) {
+        rule.end = CompileSyntaxRegex(rule.end_src);
+      }
+      if (rule.skip_src != nullptr) {
+        rule.skip = CompileSyntaxRegex(rule.skip_src);
+      }
+    }
+  });
 }
 
 const Rule* RuleByRegionId(const Registry& registry, std::uint32_t region_id) {
@@ -678,6 +747,11 @@ void HighlightLineScoped(const Registry& registry,
                          std::vector<SyntaxTokenKind>& tokens,
                          SyntaxState* end_state) {
   const Definition* definition = DefinitionById(registry, definition_id);
+  // Compile this definition's rule regexes (if lazily built) before any of the
+  // rule.pattern/start/end.valid() checks below — an uncompiled rule would
+  // otherwise be silently skipped. Covers the definition's whole rule range,
+  // including its nested region children.
+  EnsureDefinitionCompiled(registry, definition_id);
 
   std::uint32_t stack[SyntaxState::kMaxRegionDepth] = {};
   std::size_t depth = std::min<std::size_t>(initial_depth, SyntaxState::kMaxRegionDepth);

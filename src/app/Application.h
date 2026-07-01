@@ -3,7 +3,6 @@
 #include <SDL3/SDL.h>
 
 #include <optional>
-#include <thread>
 #include <vector>
 
 #include "app/AppStartupOptions.h"
@@ -65,11 +64,6 @@ class Application {
 
   AppStartupOptions startup_options_;
   workspace::WorkspaceShell workspace_shell_;
-  // Background-init worker for the syntax-highlight registry. Runs in
-  // parallel with shell construction so its parse cost is hidden behind
-  // the vsync-blocked blank present. Joined in Shutdown() to ensure no
-  // worker is live when static destructors run.
-  std::thread syntax_registry_warmup_;
 };
 
 }  // namespace microide::app

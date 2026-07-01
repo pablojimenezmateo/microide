@@ -14,7 +14,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 #include <fstream>
@@ -23,7 +22,6 @@
 #include "app/DirtyRegionPolicy.h"
 #include "app/ApplicationPresentationCache.h"
 #include "app/IdleWaitStrategy.h"
-#include "editor/RuntimeSyntaxRegistry.h"
 #include "platform/RuntimePaths.h"
 #include "platform/SubprocessSandbox.h"
 #include "render/RasterDecode.h"
@@ -151,11 +149,6 @@ Application::Application(AppStartupOptions startup_options)
 
 Application::~Application() {
   Shutdown();
-  // Safety net: join the warmup thread even if Shutdown() early-returned
-  // because Initialize() failed mid-startup.
-  if (syntax_registry_warmup_.joinable()) {
-    syntax_registry_warmup_.join();
-  }
 }
 
 int Application::Run() {
@@ -361,15 +354,6 @@ bool Application::Initialize() {
     workspace_shell_.SetSandboxSupport(sandbox);
   }
 
-  // Warm up the syntax-highlight registry on a background thread so its
-  // ~30ms parse cost overlaps with the WorkspaceShell construction below.
-  // Magic-static init in MutableRegistry() synchronizes against the first
-  // foreground access, so the worker can race safely; whichever thread arrives
-  // second blocks on the same init barrier.
-  syntax_registry_warmup_ = std::thread([]() {
-    editor::runtime_syntax::EnsureInitialized();
-  });
-
   {
     // Parse a cold-start control spec (if any) up front: its `project` selects
     // the project to open, overriding the positional path / cwd.
@@ -464,10 +448,6 @@ bool Application::Initialize() {
 void Application::Shutdown() {
   if (!initialized_) {
     return;
-  }
-
-  if (syntax_registry_warmup_.joinable()) {
-    syntax_registry_warmup_.join();
   }
 
   workspace_shell_.SetDialogWindow(nullptr);

@@ -15,7 +15,55 @@ Updated on 2026-04-23 with review-comment line indexing and O(1) render marker l
 This note captures concrete bottlenecks that were found in the current codebase, what was already
 fixed, and what still remains worth doing.
 
+Updated on 2026-07-01 with lazy per-definition syntax-rule compilation, removing the dominant
+~75 ms startup cost and deleting the ineffective syntax-warmup thread.
+
 ## Fixed In This Pass
+
+### Lazy per-definition syntax-rule compilation (startup)
+
+Problem:
+
+- `RuntimeSyntaxRegistry::EnsureInitialized` eagerly PCRE2-compiled every rule regex across all 157
+  built-in language definitions (~8,800 patterns) when the `BuiltInRegistry()` magic-static first
+  ran. A `MICROIDE_STARTUP_TRACE` capture showed this single scope at **~75 ms of the ~94 ms**
+  startup-to-first-frame path (≈80%).
+- A background "warmup" thread in `Application::Initialize` was meant to hide this cost, but
+  `WorkspaceShell::Initialize` forced `EnsureInitialized()` ~0.1 ms later, so the main thread
+  blocked on the same magic-static barrier and the full 75 ms stayed on the critical path.
+- A session opens files of only a handful of languages, yet all 157 definitions' rules were
+  compiled. Only the detection regexes (`filename`/`header`/`signature`, ~200 total) are needed for
+  `DetectFiletype`.
+
+Implemented:
+
+- Built-in definitions' rule regexes are now compiled lazily on first highlight of that language.
+  `Rule` retains `const char*` back-pointers into the static generated tables and `mutable`
+  `CompiledRegex` fields; `Registry` owns a `std::vector<std::once_flag>` guard table (sized in
+  `PartitionDefinitionRules`); `EnsureDefinitionCompiled` runs at the top of `HighlightLineScoped`
+  under `std::call_once`. Detection regexes stay eager. Plugin/runtime definitions stay eager so
+  their regex errors still surface at reload time.
+- The `Registry` becomes move-only (once_flags are non-copyable); `BuildRegistry`'s empty-runtime
+  path clones the built-in registry element-wise via `AppendRegistryWithOffset` instead of
+  copy-assigning it.
+- The now-pointless `syntax_registry_warmup_` thread (spawn, joins, member, `<thread>` includes) was
+  removed from `Application`.
+
+Impact (`MICROIDE_STARTUP_TRACE=1 SDL_VIDEODRIVER=dummy … --safe-mode`):
+
+- `RuntimeSyntaxRegistry::EnsureInitialized`: **~75 ms → ~3 ms**
+- `Application::Initialize`: **~82 ms → ~10 ms**
+- startup-to-first-frame: **~94 ms → ~18–24 ms**
+- Also lowers memory (only used languages compile) and removes a thread spawn/join per launch.
+
+Thread-safety: `std::call_once` serializes concurrent compiles (background prefetch worker vs.
+main-thread render cache-miss) and publishes the compiled regexes with a happens-before edge,
+independent of `RegistryMutex`. Verified clean under TSan/ASan/UBSan, with a new concurrent
+same-language highlight regression test.
+
+Note: committed perf baselines (`tests/perf/baselines/cold_startup_*.json`) are captured on
+reference hardware only and were left unchanged; the improvement should be re-baselined there with a
+`perf-baseline:` tag.
 
 ### Syntax highlight hot-path allocation and cache invalidation cleanup
 
