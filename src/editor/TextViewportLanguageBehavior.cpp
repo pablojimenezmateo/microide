@@ -486,12 +486,13 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   recorded.reserve(slots.size());
 
   const auto remap_recorded = [&](const SelectionRange& removed, std::string_view replacement) {
+    const detail::ReplacementShape shape = detail::ComputeReplacementShape(replacement);
     for (Recorded& r : recorded) {
       r.position =
-          detail::RemapPositionAfterReplace(r.position, removed.start, removed.end, replacement);
+          detail::RemapPositionAfterReplace(r.position, removed.start, removed.end, shape);
       if (r.anchor.has_value()) {
         r.anchor =
-            detail::RemapPositionAfterReplace(*r.anchor, removed.start, removed.end, replacement);
+            detail::RemapPositionAfterReplace(*r.anchor, removed.start, removed.end, shape);
       }
     }
   };

@@ -238,6 +238,11 @@ class TextViewport {
   const LayoutLine& VisibleLineLayoutRef(std::size_t line_index) const;
 
   LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index) const;
+  // Overload for the per-frame render loop: the caller resolves the caret's
+  // visual row once and threads it in, so this does not recompute
+  // CursorVisualRow() (an O(caret column) walk) for every visible row.
+  LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index,
+                                     std::size_t cursor_visual_row) const;
   WrappedVisualRow WrappedVisualRowLayout(std::size_t visual_row_index) const;
   LogicalPosition LogicalPositionForVisualHit(int visual_row, int visual_col) const;
   int VisualRowCount() const;
@@ -422,6 +427,13 @@ class TextViewport {
   HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
                                      std::size_t end_line,
                                      const std::vector<std::string>& replacement) const;
+  // The three multi-caret edit fan-outs share one pipeline (collect+sort+dedup
+  // carets, capture the affected slice, reverse-walk applying one history entry
+  // per caret with position remap, then commit one aggregate undo entry). Only
+  // the per-caret edit differs, so they route through ApplyMultiCaretEdit.
+  enum class MultiCaretEditKind { Insert, Backspace, DeleteForward };
+  bool ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view insert_text,
+                           bool record_undo);
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
@@ -457,6 +469,9 @@ class TextViewport {
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
                                         const std::vector<std::string>& inserted_lines);
+  void UpdateWrappedRowsAfterEdit(std::size_t start_line,
+                                  std::size_t removed_count,
+                                  const std::vector<std::string>& inserted_lines);
   std::size_t MaxVisualColumns() const;
   void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();

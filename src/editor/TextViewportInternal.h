@@ -31,6 +31,14 @@ inline bool PositionLess(const TextPosition& lhs, const TextPosition& rhs) {
   return lhs.column < rhs.column;
 }
 
+// Order secondary carets by their caret position. Shared by the
+// AddSecondaryCaret / AddSecondaryCaretWithRange / DedupeSecondaryCaretsAgainstPrimary
+// sort sites so they cannot drift apart.
+inline bool SecondaryCaretPositionLess(const TextViewportUndoHistory::SecondaryCaret& lhs,
+                                       const TextViewportUndoHistory::SecondaryCaret& rhs) {
+  return PositionLess(lhs.position, rhs.position);
+}
+
 inline std::optional<SelectionRange> SelectionRangeForSecondaryCaret(
     const TextPosition& position,
     const std::optional<TextPosition>& selection_anchor) {
@@ -78,27 +86,40 @@ inline std::string TextBetweenLines(LineSpan lines, const SelectionRange& n) {
   return out;
 }
 
+// Newline / trailing-column counts of a replacement string. Computed once per
+// edit so the per-caret remap below is a branch-only update instead of
+// re-scanning the replacement for every previously-placed caret (the multi-caret
+// fan-out remaps O(k) prior carets per applied edit, so the rescan was
+// O(k^2 * |replacement|)).
+struct ReplacementShape {
+  std::size_t inserted_newlines = 0;
+  std::size_t last_segment_cols = 0;
+};
+
+inline ReplacementShape ComputeReplacementShape(std::string_view replacement) {
+  ReplacementShape shape;
+  for (const char ch : replacement) {
+    if (ch == '\n') {
+      ++shape.inserted_newlines;
+      shape.last_segment_cols = 0;
+    } else {
+      ++shape.last_segment_cols;
+    }
+  }
+  return shape;
+}
+
 // Maps a caret position forward across one applied edit that replaced the
-// (normalized) range [removed_start, removed_end) with `replacement`. The
-// multi-caret pipelines walk carets high-to-low, so a caret recorded earlier
-// always sits at or after a later (lower) edit; remapping keeps positions
-// correct when several carets share a line (without it, the higher carets are
-// left stale by the byte/line counts inserted below them).
+// (normalized) range [removed_start, removed_end) with a replacement whose
+// newline/column shape is `shape`. The multi-caret pipelines walk carets
+// high-to-low, so a caret recorded earlier always sits at or after a later
+// (lower) edit; remapping keeps positions correct when several carets share a
+// line (without it, the higher carets are left stale by the byte/line counts
+// inserted below them).
 inline TextPosition RemapPositionAfterReplace(TextPosition position,
                                               TextPosition removed_start,
                                               TextPosition removed_end,
-                                              std::string_view replacement) {
-  std::size_t inserted_newlines = 0;
-  std::size_t last_segment_cols = 0;
-  for (const char ch : replacement) {
-    if (ch == '\n') {
-      ++inserted_newlines;
-      last_segment_cols = 0;
-    } else {
-      ++last_segment_cols;
-    }
-  }
-
+                                              const ReplacementShape& shape) {
   // Positions strictly before the end of the removed range are unaffected.
   if (PositionLess(position, removed_end)) {
     return position;
@@ -106,16 +127,16 @@ inline TextPosition RemapPositionAfterReplace(TextPosition position,
 
   if (position.line == removed_end.line) {
     TextPosition result;
-    result.line = removed_start.line + inserted_newlines;
+    result.line = removed_start.line + shape.inserted_newlines;
     const std::size_t tail = position.column - removed_end.column;
-    result.column = inserted_newlines == 0
-                        ? removed_start.column + last_segment_cols + tail
-                        : last_segment_cols + tail;
+    result.column = shape.inserted_newlines == 0
+                        ? removed_start.column + shape.last_segment_cols + tail
+                        : shape.last_segment_cols + tail;
     return result;
   }
 
   const std::ptrdiff_t line_delta =
-      static_cast<std::ptrdiff_t>(inserted_newlines) -
+      static_cast<std::ptrdiff_t>(shape.inserted_newlines) -
       static_cast<std::ptrdiff_t>(removed_end.line - removed_start.line);
   TextPosition result = position;
   result.line = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(position.line) + line_delta);

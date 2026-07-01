@@ -375,6 +375,9 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   // Undo/redo replays a content delta starting at start_line.
   InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line);
   UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines);
+  // Keep the wrapped-row table in sync incrementally so soft-wrap editing does
+  // not force a full O(document) re-wrap per keystroke.
+  UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_lines);
   EnsureCursorVisible();
 }
 

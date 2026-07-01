@@ -430,9 +430,7 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
 
 void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
   std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
-              return detail::PositionLess(lhs.position, rhs.position);
-            });
+            detail::SecondaryCaretPositionLess);
   secondary_carets_.erase(
       std::unique(secondary_carets_.begin(), secondary_carets_.end(),
                   [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {

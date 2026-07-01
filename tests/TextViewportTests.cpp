@@ -1034,6 +1034,100 @@ void TestTextViewportSoftWrapHangingIndentAlignsContinuationRows() {
          "continuation-row hit-testing subtracts the hanging indent before mapping the column");
 }
 
+// Editing under soft-wrap must keep the wrapped-row table in sync with the
+// buffer. The wrapped table is built lazily on first access; these tests force
+// a build with the pre-edit content, then edit, then assert the post-edit
+// visual-row mapping — the exact scenario left stale when the table was keyed
+// only on layout_shape_revision (which content edits do not bump).
+void TestTextViewportSoftWrapEditGrowsWrapRowCount() {
+  TextViewport viewport;
+  viewport.LoadContent("abc\nXYZ\n", "/tmp/soft-wrap-edit-grow.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  // Force a build with the pre-edit content: 3 single-row logical lines.
+  Expect(viewport.VisualRowCount() == 3, "pre-edit: three single-row lines");
+
+  viewport.MoveCursorTo(0, 3);
+  viewport.InsertText("defghijkl");  // line0 -> "abcdefghijkl" (12 cols -> 2 rows)
+
+  Expect(viewport.VisualRowCount() == 4,
+         "growing a line past the wrap width must add a visual row");
+  Expect(viewport.WrappedVisualRowLayout(0).line_index == 0 &&
+             viewport.WrappedVisualRowLayout(1).line_index == 0,
+         "the grown line should now own two visual rows");
+  Expect(viewport.WrappedVisualRowLayout(2).line_index == 1,
+         "the following line's rows must shift down after the edit");
+  Expect(viewport.WrappedVisualRowLayout(3).line_index == 2,
+         "the trailing empty-line row must remain mapped to the last line");
+}
+
+void TestTextViewportSoftWrapEnterSplitUpdatesRowMapping() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\nZZ\n", "/tmp/soft-wrap-edit-split.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  Expect(viewport.VisualRowCount() == 3, "pre-edit: three single-row lines");
+
+  viewport.MoveCursorTo(0, 3);
+  viewport.InsertNewline();  // "abcdef" -> "abc" / "def"
+
+  Expect(viewport.VisualRowCount() == 4,
+         "splitting a line with Enter must add a logical line and its visual row");
+  Expect(viewport.WrappedVisualRowLayout(1).line_index == 1,
+         "the second half of the split lands on the new line index 1");
+  Expect(viewport.WrappedVisualRowLayout(2).line_index == 2,
+         "subsequent lines shift down by one after the split");
+  Expect(viewport.WrappedVisualRowLayout(3).line_index == 3,
+         "the trailing empty line shifts to index 3 after the split");
+}
+
+void TestTextViewportSoftWrapBackspaceMergeUpdatesRowMapping() {
+  TextViewport viewport;
+  viewport.LoadContent("abc\ndef\nZZ\n", "/tmp/soft-wrap-edit-merge.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  Expect(viewport.VisualRowCount() == 4, "pre-edit: four single-row lines");
+
+  viewport.MoveCursorTo(1, 0);
+  viewport.Backspace();  // merges "def" onto "abc" -> "abcdef"
+
+  Expect(viewport.VisualRowCount() == 3,
+         "merging two logical lines must drop a visual row");
+  Expect(viewport.WrappedVisualRowLayout(0).line_index == 0,
+         "the merged line remains at index 0");
+  Expect(viewport.WrappedVisualRowLayout(1).line_index == 1,
+         "the line after the merge must map to the new index 1 (ZZ)");
+  // Would read document_->lines[2] out of bounds if the table kept its stale
+  // pre-merge row count / line indices.
+  const auto last = viewport.VisibleWrappedRowLayout(2);
+  Expect(last.text.empty(),
+         "the trailing empty-line row must resolve without a stale line index");
+}
+
+#ifndef NDEBUG
+void TestTextViewportSoftWrapEditUpdatesWrapIncrementally() {
+  TextViewport viewport;
+  viewport.LoadContent("hello world one\nsecond line two\nthird line three\n",
+                       "/tmp/soft-wrap-edit-incremental.txt");
+  viewport.SetViewportSize(10, 8);
+  viewport.SetSoftWrap(true);
+
+  (void)viewport.VisualRowCount();  // force the initial full build
+  const std::size_t builds = viewport.WrappedRowLayoutBuildCountForDebug();
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.InsertText("x");
+  (void)viewport.VisualRowCount();
+
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == builds,
+         "a content edit under soft wrap must update the wrapped table in place, "
+         "not trigger a full O(document) rebuild");
+}
+#endif
+
 FoldingModel::ComputeOptions DefaultFoldOptions() {
   FoldingModel::ComputeOptions options;
   options.bracket_pairs = {{'{', '}'}};
@@ -2078,6 +2172,16 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows);
   AddTest(tests, "TextViewport/SoftWrapHangingIndentAlignsContinuationRows",
           TestTextViewportSoftWrapHangingIndentAlignsContinuationRows);
+  AddTest(tests, "TextViewport/SoftWrapEditGrowsWrapRowCount",
+          TestTextViewportSoftWrapEditGrowsWrapRowCount);
+  AddTest(tests, "TextViewport/SoftWrapEnterSplitUpdatesRowMapping",
+          TestTextViewportSoftWrapEnterSplitUpdatesRowMapping);
+  AddTest(tests, "TextViewport/SoftWrapBackspaceMergeUpdatesRowMapping",
+          TestTextViewportSoftWrapBackspaceMergeUpdatesRowMapping);
+#ifndef NDEBUG
+  AddTest(tests, "TextViewport/SoftWrapEditUpdatesWrapIncrementally",
+          TestTextViewportSoftWrapEditUpdatesWrapIncrementally);
+#endif
   AddTest(tests, "TextViewport/CollapsedFoldHidesBodyRows",
           TestTextViewportCollapsedFoldHidesBodyRows);
   AddTest(tests, "TextViewport/CollapsedFoldRowSpansTrackHorizontalScroll",
