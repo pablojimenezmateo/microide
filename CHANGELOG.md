@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.5.1] - 2026-07-01
+
+A **performance & internals** patch on top of 2.5.0. Startup and teardown get
+lighter, editor hot paths shed allocations, and a broad dedup pass consolidates
+buffer-renderer helpers. No persisted-format or plugin-API breaks; perf baselines
+were refreshed to match.
+
+### Performance
+- Faster startup: syntax highlighting compiles its per-definition rules lazily on
+  first use instead of eagerly at load.
+- Lighter teardown: redundant work on buffer, project, and application close is
+  trimmed.
+- Fewer hot-path allocations across the editor and render paths, plus path-handling
+  dedup, from the continued deep-review passes.
+
+### Fixes
+- Action availability: gate the `debug-run` (Start Debugging by program) command
+  on `debug.enabled` like the other debug-launch actions, so it no longer appears
+  enabled while the debugger is off.
+
+### Internal
+- Unify buffer-renderer batching, caret, whitespace, and gutter helpers behind
+  shared code paths.
+- Multi-caret and soft-wrap speed and correctness pass.
+- Fix a latent out-of-bounds access surfaced during deep review.
+- Silence the two remaining build warnings (unhandled `DebugRun` switch case;
+  a `std::filesystem::path` copy in a test loop).
+
+### Performance baselines
+- Refresh committed perf baselines under `tests/perf/baselines/` to reflect the
+  startup/teardown/render optimizations shipped since 2.5.0.
+
 ## [2.5.0] - 2026-06-30
 
 A **UI, session & packaging** release on top of 2.4.1: seamless session
