@@ -421,6 +421,14 @@ The gate run is measured on a dedicated self-hosted runner class tagged `perf-ru
 must be updated from this class (or a machine with equivalent characteristics) before tightening or
 replacing gate numbers.
 
+The maintainer's development workstation is the designated `perf-runner-v1` host. Baselines
+regenerated there with `microide_perf --update-baseline` (under `xvfb-run -a env
+SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy`, passing `--reference-runner=perf-runner-v1` so reports
+carry reference provenance) are authoritative, not local-advisory. One caveat: the
+`repo_open_rss_idle` hard 256 MiB steady-state RSS gate cannot pass on this host under xvfb
+software-GL (llvmpipe inflates idle RSS to ~300 MiB), so that scenario is excluded from workstation
+rebaselines and its committed baseline is left unchanged.
+
 ## Ad-hoc Branch-vs-Commit Comparison
 
 For a one-shot "current working tree vs some other commit" comparison (including
