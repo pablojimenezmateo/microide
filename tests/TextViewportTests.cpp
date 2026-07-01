@@ -1533,6 +1533,169 @@ void TestSyntaxHighlightNestedRegionResumesParentScope() {
   Expect(state.region_depth == 0, "closing the outer region returns to the top level");
 }
 
+// Built-in language rule regexes are compiled lazily on first highlight of that
+// definition. Two threads highlighting the same never-yet-highlighted built-in
+// language must not race: EnsureDefinitionCompiled's per-definition call_once
+// serializes the compile. Run under TSan to catch a data race on the mutable
+// per-rule CompiledRegex fields.
+void TestRuntimeSyntaxLazyCompileIsThreadSafeForSameLanguage() {
+  using microide::editor::SyntaxHighlighter;
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  // Fresh registry clone with uncompiled (lazy) built-in definitions and fresh
+  // per-definition guards, so the compile genuinely happens under contention.
+  microide::editor::runtime_syntax::ReloadDefinitions({});
+
+  const std::filesystem::path path = "/tmp/lazy_race.cpp";
+  const std::string line = "int value = 42; // note";
+
+  constexpr int kThreads = 8;
+  constexpr int kIterations = 200;
+  std::atomic<bool> go{false};
+  std::atomic<int> non_plain_seen{0};
+  std::vector<std::thread> workers;
+  workers.reserve(kThreads);
+  for (int t = 0; t < kThreads; ++t) {
+    workers.emplace_back([&]() {
+      while (!go.load(std::memory_order_acquire)) {
+      }
+      for (int i = 0; i < kIterations; ++i) {
+        const auto highlighted = SyntaxHighlighter::HighlightLine(line, path, {});
+        Expect(highlighted.tokens.size() == line.size(),
+               "lazy-compiled highlight should still return one token per byte");
+        if (std::any_of(highlighted.tokens.begin(), highlighted.tokens.end(),
+                        [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Plain; })) {
+          non_plain_seen.fetch_add(1, std::memory_order_relaxed);
+        }
+      }
+    });
+  }
+  go.store(true, std::memory_order_release);
+  for (auto& worker : workers) {
+    worker.join();
+  }
+  Expect(non_plain_seen.load() == kThreads * kIterations,
+         "every concurrent highlight of a built-in language should produce syntax tokens");
+}
+
+// After a plugin reload, the built-in definitions live in a fresh registry
+// clone (still lazy) with their own guard table. Highlighting a built-in
+// language before and after a reload must both compile and colorize correctly.
+void TestRuntimeSyntaxLazyCompileSurvivesReload() {
+  using microide::editor::SyntaxHighlighter;
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+
+  const std::filesystem::path path = "/tmp/reload_lazy.cpp";
+  const std::string line = "int value = 42;";
+  const auto has_syntax = [](const microide::editor::HighlightedLine& highlighted) {
+    return std::any_of(highlighted.tokens.begin(), highlighted.tokens.end(),
+                       [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Plain; });
+  };
+
+  Expect(has_syntax(SyntaxHighlighter::HighlightLine(line, path, {})),
+         "built-in C++ should colorize before any plugin reload");
+
+  // A valid, in-code plugin definition for an unrelated filetype forces the
+  // mutable-registry clone path (built-in defs copied in, lazy, fresh guards).
+  microide::editor::runtime_syntax::RuntimeSyntaxDefinitionData plugin;
+  plugin.filetype = "lazyfixture";
+  plugin.filename_patterns = {"\\.lazyfixture$"};
+  microide::editor::runtime_syntax::RuntimeSyntaxRuleData rule;
+  rule.kind = microide::editor::runtime_syntax::GeneratedRuleKind::Pattern;
+  rule.group_name = "keyword";
+  rule.pattern = "\\bTODO\\b";
+  plugin.rules.push_back(rule);
+  std::vector<std::string> reload_errors;
+  microide::editor::runtime_syntax::ReloadDefinitions({plugin}, &reload_errors);
+  Expect(reload_errors.empty(), "valid plugin definition should reload without errors");
+
+  Expect(has_syntax(SyntaxHighlighter::HighlightLine(line, path, {})),
+         "built-in C++ should still colorize after a plugin reload (lazy compile in the clone)");
+}
+
+// Plugin/runtime definitions stay eagerly compiled, so a malformed plugin regex
+// must surface as a reload error at reload time (not be silently deferred).
+void TestRuntimeSyntaxBadPluginRegexReportsErrorEagerly() {
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+
+  microide::editor::runtime_syntax::RuntimeSyntaxDefinitionData plugin;
+  plugin.filetype = "badfixture";
+  plugin.filename_patterns = {"\\.badfixture$"};
+  microide::editor::runtime_syntax::RuntimeSyntaxRuleData rule;
+  rule.kind = microide::editor::runtime_syntax::GeneratedRuleKind::Pattern;
+  rule.group_name = "keyword";
+  rule.pattern = "([unterminated";  // invalid: unbalanced group/class
+  plugin.rules.push_back(rule);
+
+  std::vector<std::string> reload_errors;
+  microide::editor::runtime_syntax::ReloadDefinitions({plugin}, &reload_errors);
+  Expect(!reload_errors.empty(),
+         "an invalid plugin regex should be reported at reload time (runtime defs stay eager)");
+}
+
+// A cold (never-highlighted) registry must still resolve built-in multi-line
+// regions: EnsureDefinitionCompiled has to run before the region start/end
+// .valid() checks, or the region rules would be silently skipped.
+void TestRuntimeSyntaxLazyCompileColorsBuiltInBlockComment() {
+  using microide::editor::SyntaxHighlighter;
+  using microide::editor::SyntaxState;
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  microide::editor::runtime_syntax::ReloadDefinitions({});  // cold, uncompiled clone
+
+  const std::filesystem::path path = "/tmp/block_comment.c";
+  const std::vector<std::string> no_lines;
+  SyntaxState state = SyntaxHighlighter::InitialState(path, no_lines);
+
+  const auto open = SyntaxHighlighter::HighlightLine("/* opening comment", path, state);
+  state = open.end_state;
+  Expect(state.region_depth >= 1, "a C block-comment open should enter a multi-line region");
+
+  const auto middle = SyntaxHighlighter::HighlightLine("still inside the comment", path, state);
+  Expect(std::all_of(middle.tokens.begin(), middle.tokens.end(),
+                     [](SyntaxTokenKind kind) { return kind == SyntaxTokenKind::Comment; }),
+         "a line wholly inside a C block comment should be comment-colored from a cold registry");
+}
+
+// Exercises lazy compilation across many built-in definitions: each first
+// highlight compiles a different definition. Guards against a definition whose
+// deferred compile fails or is skipped (recovers the eager-validation sweep
+// startup used to perform implicitly).
+void TestRuntimeSyntaxLazyCompileSweepsCommonLanguages() {
+  using microide::editor::SyntaxHighlighter;
+  ScopedRuntimeSyntaxRegistryReset syntax_reset;
+  microide::editor::runtime_syntax::ReloadDefinitions({});
+
+  struct Sample {
+    const char* path;
+    const char* line;
+  };
+  const Sample samples[] = {
+      {"/tmp/a.cpp", "int value = 42; // c++"},
+      {"/tmp/a.c", "int value = 42; /* c */"},
+      {"/tmp/a.py", "def f(x): return x + 1  # python"},
+      {"/tmp/a.js", "const x = 42; // javascript"},
+      {"/tmp/a.ts", "const x: number = 42; // typescript"},
+      {"/tmp/a.go", "func main() { return }"},
+      {"/tmp/a.rs", "fn main() -> i32 { 42 }"},
+      {"/tmp/a.java", "public class A { int x = 1; }"},
+      {"/tmp/a.json", "{ \"key\": 42 }"},
+      {"/tmp/a.yaml", "key: value  # yaml"},
+      {"/tmp/a.lua", "local x = 42 -- lua"},
+      {"/tmp/a.md", "# Heading with `code`"},
+      {"/tmp/a.sh", "echo \"hello\" # shell"},
+      {"/tmp/a.rb", "def f; 42; end # ruby"},
+      {"/tmp/a.toml", "key = 42 # toml"},
+  };
+  for (const Sample& sample : samples) {
+    const std::string line = sample.line;
+    const auto highlighted = SyntaxHighlighter::HighlightLine(line, sample.path, {});
+    Expect(highlighted.tokens.size() == line.size(),
+           "lazy compile should return one token per byte for every built-in language");
+    Expect(std::any_of(highlighted.tokens.begin(), highlighted.tokens.end(),
+                       [](SyntaxTokenKind kind) { return kind != SyntaxTokenKind::Plain; }),
+           "each sampled built-in language should produce at least one syntax token");
+  }
+}
+
 void TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness() {
   std::string content;
   for (int i = 0; i < 60; ++i) {
@@ -2228,6 +2391,16 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportLoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories);
   AddTest(tests, "TextViewport/SyntaxHighlightNestedRegionResumesParentScope",
           TestSyntaxHighlightNestedRegionResumesParentScope);
+  AddTest(tests, "TextViewport/RuntimeSyntaxLazyCompileIsThreadSafeForSameLanguage",
+          TestRuntimeSyntaxLazyCompileIsThreadSafeForSameLanguage);
+  AddTest(tests, "TextViewport/RuntimeSyntaxLazyCompileSurvivesReload",
+          TestRuntimeSyntaxLazyCompileSurvivesReload);
+  AddTest(tests, "TextViewport/RuntimeSyntaxBadPluginRegexReportsErrorEagerly",
+          TestRuntimeSyntaxBadPluginRegexReportsErrorEagerly);
+  AddTest(tests, "TextViewport/RuntimeSyntaxLazyCompileColorsBuiltInBlockComment",
+          TestRuntimeSyntaxLazyCompileColorsBuiltInBlockComment);
+  AddTest(tests, "TextViewport/RuntimeSyntaxLazyCompileSweepsCommonLanguages",
+          TestRuntimeSyntaxLazyCompileSweepsCommonLanguages);
   AddTest(tests, "TextViewport/HighlightPrefetchInstallPopulatesCacheAndRespectsStaleness",
           TestHighlightPrefetchInstallPopulatesCacheAndRespectsStaleness);
   AddTest(tests, "TextViewport/HighlightPrefetchServiceTokenizesOnWorkerThread",
