@@ -226,6 +226,14 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) c
   if (!soft_wrap_) {
     return VisibleLineLayout(visual_row_index);
   }
+  return VisibleWrappedRowLayout(visual_row_index, CursorVisualRow());
+}
+
+LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index,
+                                                 std::size_t cursor_visual_row) const {
+  if (!soft_wrap_) {
+    return VisibleLineLayout(visual_row_index);
+  }
   EnsureWrappedRowLayouts();
   if (visual_row_index >= WrappedRowCount()) {
     return LayoutLine{};
@@ -237,7 +245,7 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index) c
   LayoutLine layout = TextLayout::BuildVisibleLine(
       document_->lines[row.line_index], row.visual_start,
       std::min(visible_columns_, row_columns), tab_size_);
-  if (row.line_index == cursor_line_ && visual_row_index == CursorVisualRow()) {
+  if (row.line_index == cursor_line_ && visual_row_index == cursor_visual_row) {
     const std::size_t caret_visual = cursor_visual_column();
     layout.caret_visible = true;
     layout.caret_column = caret_visual >= row.visual_start ? caret_visual - row.visual_start : 0;
@@ -386,9 +394,7 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
       .selection_anchor = std::nullopt,
   });
   std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
-              return detail::PositionLess(lhs.position, rhs.position);
-            });
+            detail::SecondaryCaretPositionLess);
 }
 
 void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
@@ -428,9 +434,7 @@ void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
   }
   secondary_carets_.push_back(candidate);
   std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
-              return detail::PositionLess(lhs.position, rhs.position);
-            });
+            detail::SecondaryCaretPositionLess);
   DedupeSecondaryCaretsAgainstPrimary();
 }
 
@@ -488,12 +492,16 @@ void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
   ClearSelection();
   MoveCursorTo(target_line, column, false);
 
+  // Build the full caret set once and rebuild through SetSecondaryCarets (a
+  // single clamp+sort+dedup pass). The previous per-line AddSecondaryCaret loop
+  // re-ran a linear find_if plus a full std::sort on every insert, making a
+  // column selection across N lines O(N^2 log N); this is O(N log N).
+  std::vector<TextPosition> carets;
+  carets.reserve(hi - lo + 1);
   for (std::size_t line = lo; line <= hi; ++line) {
-    if (line == cursor_line_) {
-      continue;
-    }
-    AddSecondaryCaret(line, column);
+    carets.push_back(TextPosition{line, column});
   }
+  SetSecondaryCarets(std::move(carets));
 }
 
 bool TextViewport::has_selection() const {
@@ -966,6 +974,18 @@ void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                                   document_->content_revision);
 }
 
+void TextViewport::UpdateWrappedRowsAfterEdit(std::size_t start_line,
+                                              std::size_t removed_count,
+                                              const std::vector<std::string>& inserted_lines) {
+  // Fast path for the pure soft-wrap case: splice only the edited rows. Any
+  // unsupported shape returns false and the content_revision guard rebuilds.
+  layout_cache_.UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_lines,
+                                           document_->lines, tab_size_, visible_columns_,
+                                           soft_wrap_, folding_model_,
+                                           document_->layout_shape_revision,
+                                           document_->content_revision);
+}
+
 std::size_t TextViewport::MaxVisualColumns() const {
   return layout_cache_.MaxVisualColumns(document_->lines, tab_size_, document_->content_revision);
 }
@@ -975,7 +995,8 @@ void TextViewport::EnsureWrappedRowLayouts() const {
     return;
   }
   layout_cache_.EnsureWrappedRowLayouts(document_->lines, tab_size_, visible_columns_, soft_wrap_,
-                                        folding_model_, document_->layout_shape_revision);
+                                        folding_model_, document_->layout_shape_revision,
+                                        document_->content_revision);
 }
 
 SelectionRange TextViewport::NormalizeRange(const SelectionRange& range) {

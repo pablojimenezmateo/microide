@@ -36,7 +36,7 @@ LineRange ResolveLineRange(const TextViewport& viewport) {
     }
   }
 
-  for (const TextPosition& secondary : viewport.secondary_carets()) {
+  for (const TextPosition& secondary : viewport.secondary_caret_positions()) {
     r.first = std::min(r.first, secondary.line);
     r.last = std::max(r.last, secondary.line);
   }
@@ -195,9 +195,15 @@ void RestoreCaretsAfterLineMove(TextViewport& viewport,
     viewport.MoveCursorTo(shift(snapshot.primary_line), snapshot.primary_column);
   }
 
+  // Rebuild the shifted secondary carets in a single SetSecondaryCarets pass
+  // instead of an AddSecondaryCaret-per-caret loop, which re-sorted the whole
+  // set on every insert (O(N^2 log N) for a line move with many carets).
+  std::vector<TextPosition> shifted;
+  shifted.reserve(snapshot.secondaries.size());
   for (const TextPosition& secondary : snapshot.secondaries) {
-    viewport.AddSecondaryCaret(shift(secondary.line), secondary.column);
+    shifted.push_back(TextPosition{shift(secondary.line), secondary.column});
   }
+  viewport.SetSecondaryCarets(std::move(shifted));
 }
 
 }  // namespace

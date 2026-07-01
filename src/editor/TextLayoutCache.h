@@ -5,6 +5,7 @@
 #include <deque>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -77,7 +78,26 @@ class TextLayoutCache {
                                std::size_t visible_columns,
                                bool soft_wrap,
                                const FoldingModel* folding_model,
-                               std::uint64_t layout_shape_revision) const;
+                               std::uint64_t layout_shape_revision,
+                               std::uint64_t content_revision) const;
+
+  // Incrementally re-wraps only the edited logical-line range and splices the
+  // new rows into the wrapped-row table, keeping per-keystroke cost proportional
+  // to the edit size instead of the whole document. Handles the pure soft-wrap
+  // path (no collapsed folds); any other mode (trivial, fold-but-no-wrap,
+  // collapsed folds, or a table that is out of sync / built for different keys)
+  // returns false without touching the cache, so the content_revision guard in
+  // EnsureWrappedRowLayouts safely triggers a full rebuild on next access.
+  bool UpdateWrappedRowsAfterEdit(std::size_t start_line,
+                                  std::size_t removed_count,
+                                  const std::vector<std::string>& inserted_lines,
+                                  LineSpan lines,
+                                  std::size_t tab_size,
+                                  std::size_t visible_columns,
+                                  bool soft_wrap,
+                                  const FoldingModel* folding_model,
+                                  std::uint64_t layout_shape_revision,
+                                  std::uint64_t content_revision) const;
 
   // Trivial-mode-aware accessors. EnsureWrappedRowLayouts() must have been
   // called for the current input set before any of these are used. The
@@ -167,6 +187,16 @@ class TextLayoutCache {
     }
   };
 
+  // Appends the wrapped rows for a single logical line to `out` (always at
+  // least one row, even for an empty line). Shared by the full-table build and
+  // the incremental post-edit update so both use one wrap implementation.
+  // `wrap_columns` must already be clamped to >= 1.
+  static void WrapSingleLine(std::string_view line_text,
+                             std::size_t line_index,
+                             std::size_t tab_size,
+                             std::size_t wrap_columns,
+                             std::vector<WrappedRow>& out);
+
   static constexpr std::size_t kVisibleLineCacheLimit = 256;
 
   // Visible-line LRU
@@ -185,6 +215,10 @@ class TextLayoutCache {
   mutable bool wrapped_row_layouts_soft_wrap_ = false;
   mutable const FoldingModel* wrapped_row_layouts_folding_model_ = nullptr;
   mutable std::size_t wrapped_row_layouts_fold_revision_ = 0;
+  // Content-tier guard: the wrapped-row table is content-derived, so a content
+  // edit that is not reflected by an incremental UpdateWrappedRowsAfterEdit must
+  // force a rebuild even though layout_shape_revision is unchanged.
+  mutable std::uint64_t wrapped_row_layouts_content_revision_ = 0;
   mutable bool wrapped_row_layouts_trivial_ = false;
   // Fold-but-no-soft-wrap: the table records line visibility/order only; each
   // row's visual span is synthesized from the live horizontal_scroll in

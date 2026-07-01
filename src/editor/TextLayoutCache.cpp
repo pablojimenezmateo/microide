@@ -44,12 +44,92 @@ LayoutLine TextLayoutCache::VisibleLineLayoutCached(LineSpan lines,
                                     tab_size);
 }
 
+void TextLayoutCache::WrapSingleLine(std::string_view line_text,
+                                     std::size_t line_index,
+                                     std::size_t tab_size,
+                                     std::size_t wrap_columns,
+                                     std::vector<WrappedRow>& out) {
+  if (line_text.empty()) {
+    out.push_back(WrappedRow{line_index, 0, 0, 0});
+    return;
+  }
+
+  // Hanging indent: continuation rows of this line render aligned under the
+  // line's leading whitespace. Compute that indent once, clamped so a deep
+  // indent never collapses continuation rows to a degenerate width.
+  std::size_t hanging_indent = 0;
+  {
+    std::size_t indent_visual = 0;
+    for (std::size_t k = 0; k < line_text.size(); ++k) {
+      const char ch = line_text[k];
+      if (ch != ' ' && ch != '\t') {
+        break;
+      }
+      indent_visual = TextLayout::AdvanceVisualColumn(indent_visual, ch, tab_size);
+    }
+    hanging_indent = std::min(indent_visual, wrap_columns / 2);
+  }
+
+  // Single pass: walk the line tracking the visual column, the last whitespace
+  // break opportunity, and the current row's text start. Break before any
+  // character that would push the row past the row's available width; prefer
+  // breaking after the most recent whitespace if one is available inside the
+  // current row. Hard-break inside a long word only when no whitespace fits.
+  // Continuation rows (row_start_visual > 0) lose `hanging_indent` columns of
+  // width to the rendered indent.
+  std::size_t row_start_visual = 0;
+  std::size_t row_start_text = 0;
+  std::size_t last_break_visual = 0;
+  std::size_t last_break_text = 0;
+  std::size_t visual = 0;
+  std::size_t i = 0;
+  const std::size_t line_size = line_text.size();
+  while (i < line_size) {
+    const char ch = line_text[i];
+    const std::size_t seq_len = util::Utf8SequenceLength(line_text, i);
+    const std::size_t next_visual = TextLayout::AdvanceVisualColumn(visual, ch, tab_size);
+    const std::size_t effective_wrap =
+        wrap_columns - (row_start_visual == 0 ? 0 : hanging_indent);
+
+    if (next_visual - row_start_visual > effective_wrap && i > row_start_text) {
+      std::size_t break_visual;
+      std::size_t break_text;
+      if (last_break_text > row_start_text) {
+        break_visual = last_break_visual;
+        break_text = last_break_text;
+      } else {
+        break_visual = visual;
+        break_text = i;
+      }
+      out.push_back(WrappedRow{line_index, row_start_visual, break_visual,
+                               row_start_visual == 0 ? 0 : hanging_indent});
+      row_start_visual = break_visual;
+      row_start_text = break_text;
+      last_break_visual = row_start_visual;
+      last_break_text = row_start_text;
+      visual = break_visual;
+      i = break_text;
+      continue;
+    }
+
+    visual = next_visual;
+    i += seq_len;
+    if (ch == ' ' || ch == '\t') {
+      last_break_visual = visual;
+      last_break_text = i;
+    }
+  }
+  out.push_back(WrappedRow{line_index, row_start_visual, visual,
+                           row_start_visual == 0 ? 0 : hanging_indent});
+}
+
 void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
                                               std::size_t tab_size,
                                               std::size_t visible_columns,
                                               bool soft_wrap,
                                               const FoldingModel* folding_model,
-                                              std::uint64_t layout_shape_revision) const {
+                                              std::uint64_t layout_shape_revision,
+                                              std::uint64_t content_revision) const {
   // O(1) collapsed-fold probe (the previous std::vector<bool> linear scan was
   // paid on every edit before the maintained counter landed).
   const bool has_any_collapsed_fold =
@@ -66,6 +146,7 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
   }
 
   if (!trivial_now && wrapped_row_layouts_layout_shape_revision_ == layout_shape_revision &&
+      wrapped_row_layouts_content_revision_ == content_revision &&
       wrapped_row_layouts_tab_size_ == tab_size &&
       wrapped_row_layouts_visible_columns_ == visible_columns &&
       wrapped_row_layouts_soft_wrap_ == soft_wrap &&
@@ -86,6 +167,7 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
     wrapped_row_layouts_tab_size_ = tab_size;
     wrapped_row_layouts_visible_columns_ = visible_columns;
     wrapped_row_layouts_layout_shape_revision_ = layout_shape_revision;
+    wrapped_row_layouts_content_revision_ = content_revision;
     wrapped_row_layouts_soft_wrap_ = soft_wrap;
     wrapped_row_layouts_folding_model_ = folding_model;
     wrapped_row_layouts_fold_revision_ =
@@ -125,82 +207,8 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
       }
       wrapped_line_row_offsets_.push_back(wrapped_row_layouts_.size());
       last_visible_row = wrapped_row_layouts_.size();
-
-      const std::string_view line_text = lines[line_index];
-      if (line_text.empty()) {
-        wrapped_row_layouts_.push_back(WrappedRow{line_index, 0, 0, 0});
-        continue;
-      }
-
-      // Hanging indent: continuation rows of this line render aligned under the
-      // line's leading whitespace. Compute that indent once, clamped so a deep
-      // indent never collapses continuation rows to a degenerate width.
-      std::size_t hanging_indent = 0;
-      {
-        std::size_t indent_visual = 0;
-        for (std::size_t k = 0; k < line_text.size(); ++k) {
-          const char ch = line_text[k];
-          if (ch != ' ' && ch != '\t') {
-            break;
-          }
-          indent_visual = TextLayout::AdvanceVisualColumn(indent_visual, ch, tab_size);
-        }
-        hanging_indent = std::min(indent_visual, wrap_columns / 2);
-      }
-
-      // Single pass: walk the line tracking the visual column, the last whitespace
-      // break opportunity, and the current row's text start. Break before any
-      // character that would push the row past the row's available width; prefer
-      // breaking after the most recent whitespace if one is available inside the
-      // current row. Hard-break inside a long word only when no whitespace fits.
-      // Continuation rows (row_start_visual > 0) lose `hanging_indent` columns of
-      // width to the rendered indent.
-      std::size_t row_start_visual = 0;
-      std::size_t row_start_text = 0;
-      std::size_t last_break_visual = 0;
-      std::size_t last_break_text = 0;
-      std::size_t visual = 0;
-      std::size_t i = 0;
-      const std::size_t line_size = line_text.size();
-      while (i < line_size) {
-        const char ch = line_text[i];
-        const std::size_t seq_len = util::Utf8SequenceLength(line_text, i);
-        const std::size_t next_visual = TextLayout::AdvanceVisualColumn(visual, ch, tab_size);
-        const std::size_t effective_wrap =
-            wrap_columns - (row_start_visual == 0 ? 0 : hanging_indent);
-
-        if (next_visual - row_start_visual > effective_wrap && i > row_start_text) {
-          std::size_t break_visual;
-          std::size_t break_text;
-          if (last_break_text > row_start_text) {
-            break_visual = last_break_visual;
-            break_text = last_break_text;
-          } else {
-            break_visual = visual;
-            break_text = i;
-          }
-          wrapped_row_layouts_.push_back(WrappedRow{
-              line_index, row_start_visual, break_visual,
-              row_start_visual == 0 ? 0 : hanging_indent});
-          row_start_visual = break_visual;
-          row_start_text = break_text;
-          last_break_visual = row_start_visual;
-          last_break_text = row_start_text;
-          visual = break_visual;
-          i = break_text;
-          continue;
-        }
-
-        visual = next_visual;
-        i += seq_len;
-        if (ch == ' ' || ch == '\t') {
-          last_break_visual = visual;
-          last_break_text = i;
-        }
-      }
-      wrapped_row_layouts_.push_back(WrappedRow{
-          line_index, row_start_visual, visual,
-          row_start_visual == 0 ? 0 : hanging_indent});
+      WrapSingleLine(lines[line_index], line_index, tab_size, wrap_columns,
+                     wrapped_row_layouts_);
     }
   }
   if (wrapped_row_layouts_.empty()) {
@@ -210,6 +218,7 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
   wrapped_row_layouts_tab_size_ = tab_size;
   wrapped_row_layouts_visible_columns_ = visible_columns;
   wrapped_row_layouts_layout_shape_revision_ = layout_shape_revision;
+  wrapped_row_layouts_content_revision_ = content_revision;
   wrapped_row_layouts_soft_wrap_ = soft_wrap;
   wrapped_row_layouts_folding_model_ = folding_model;
   wrapped_row_layouts_fold_revision_ =
@@ -217,6 +226,103 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
 #ifndef NDEBUG
   ++wrapped_row_layout_build_count_;
 #endif
+}
+
+bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
+    std::size_t start_line, std::size_t removed_count,
+    const std::vector<std::string>& inserted_lines, LineSpan lines,
+    std::size_t tab_size, std::size_t visible_columns, bool soft_wrap,
+    const FoldingModel* folding_model, std::uint64_t layout_shape_revision,
+    std::uint64_t content_revision) const {
+  // Only the pure soft-wrap path (no collapsed folds) is spliced incrementally.
+  // Every other mode bails so the content_revision guard forces a full rebuild.
+  const bool has_any_collapsed_fold =
+      folding_model != nullptr && folding_model->has_any_collapsed_fold();
+  if (!soft_wrap || has_any_collapsed_fold || wrapped_row_layouts_trivial_ ||
+      wrapped_row_layouts_fold_no_wrap_ || !wrapped_row_layouts_soft_wrap_ ||
+      wrapped_row_layouts_tab_size_ != tab_size ||
+      wrapped_row_layouts_visible_columns_ != visible_columns ||
+      wrapped_row_layouts_layout_shape_revision_ != layout_shape_revision ||
+      wrapped_row_layouts_folding_model_ != folding_model ||
+      wrapped_row_layouts_fold_revision_ !=
+          (folding_model != nullptr ? folding_model->revision() : 0)) {
+    return false;
+  }
+
+  // The table must be in sync with the *pre-edit* buffer: one offset entry per
+  // pre-edit logical line, contiguous rows per line (pure soft-wrap has no
+  // hidden lines). old_line_count is derived from the new buffer + edit deltas.
+  const std::size_t inserted_count = inserted_lines.size();
+  if (lines.size() + removed_count < inserted_count) {
+    return false;
+  }
+  const std::size_t old_line_count = lines.size() + removed_count - inserted_count;
+  if (wrapped_line_row_offsets_.size() != old_line_count || old_line_count == 0 ||
+      start_line + removed_count > old_line_count) {
+    return false;
+  }
+
+  const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns);
+  const std::size_t total_rows = wrapped_row_layouts_.size();
+  const std::size_t first_row = wrapped_line_row_offsets_[start_line];
+  const std::size_t removed_end_line = start_line + removed_count;
+  const std::size_t removed_rows_end =
+      removed_end_line < old_line_count ? wrapped_line_row_offsets_[removed_end_line] : total_rows;
+  if (first_row > removed_rows_end || removed_rows_end > total_rows) {
+    return false;
+  }
+
+  // Re-wrap only the inserted lines (read from the live buffer).
+  std::vector<WrappedRow> new_rows;
+  new_rows.reserve(inserted_count);
+  std::vector<std::size_t> inserted_offsets;  // row offset (relative to first_row) per inserted line
+  inserted_offsets.reserve(inserted_count);
+  for (std::size_t i = 0; i < inserted_count; ++i) {
+    inserted_offsets.push_back(new_rows.size());
+    WrapSingleLine(lines[start_line + i], start_line + i, tab_size, wrap_columns, new_rows);
+  }
+
+  const std::ptrdiff_t line_delta =
+      static_cast<std::ptrdiff_t>(inserted_count) - static_cast<std::ptrdiff_t>(removed_count);
+
+  // Splice rows in place: shift the trailing rows' line_index by line_delta,
+  // then replace [first_row, removed_rows_end) with the freshly wrapped rows.
+  for (std::size_t r = removed_rows_end; r < total_rows; ++r) {
+    wrapped_row_layouts_[r].line_index = static_cast<std::size_t>(
+        static_cast<std::ptrdiff_t>(wrapped_row_layouts_[r].line_index) + line_delta);
+  }
+  wrapped_row_layouts_.erase(
+      wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(first_row),
+      wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(removed_rows_end));
+  wrapped_row_layouts_.insert(
+      wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(first_row),
+      new_rows.begin(), new_rows.end());
+
+  // Rebuild the line->row offset table for the new line count. Prefix offsets
+  // are unchanged; inserted lines use first_row + their relative offset; the
+  // suffix shifts by the row-count delta.
+  const std::ptrdiff_t row_delta = static_cast<std::ptrdiff_t>(new_rows.size()) -
+                                   static_cast<std::ptrdiff_t>(removed_rows_end - first_row);
+  const std::size_t new_line_count = lines.size();  // == old_line_count + line_delta
+  std::vector<std::size_t> new_offsets;
+  new_offsets.reserve(new_line_count);
+  for (std::size_t l = 0; l < start_line; ++l) {
+    new_offsets.push_back(wrapped_line_row_offsets_[l]);
+  }
+  for (std::size_t i = 0; i < inserted_count; ++i) {
+    new_offsets.push_back(first_row + inserted_offsets[i]);
+  }
+  for (std::size_t l = removed_end_line; l < old_line_count; ++l) {
+    new_offsets.push_back(static_cast<std::size_t>(
+        static_cast<std::ptrdiff_t>(wrapped_line_row_offsets_[l]) + row_delta));
+  }
+  if (new_offsets.size() != new_line_count || wrapped_row_layouts_.empty()) {
+    // Shape mismatch (should not happen); fall back to a full rebuild.
+    return false;
+  }
+  wrapped_line_row_offsets_ = std::move(new_offsets);
+  wrapped_row_layouts_content_revision_ = content_revision;
+  return true;
 }
 
 TextLayoutCache::WrappedRow TextLayoutCache::WrappedRowAt(std::size_t visual_row_index,
@@ -309,7 +415,12 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     std::size_t tab_size, std::uint64_t content_revision) {
   if (cached_max_visual_columns_tab_size_ != tab_size ||
       cached_visual_line_columns_.size() != lines.size() - inserted_lines.size() + removed_count) {
-    InvalidateAll();
+    // Reset only the visual-column + visible-line caches here. The wrapped-row
+    // table is content-guarded separately (content_revision) and updated
+    // incrementally by UpdateWrappedRowsAfterEdit, so it must not be wiped on
+    // this hot path — doing so forced a full O(document) re-wrap per keystroke
+    // under soft wrap.
+    ClearVisibleLineAndMaxColumns();
     return;
   }
 
@@ -392,6 +503,7 @@ void TextLayoutCache::InvalidateAll() {
   wrapped_row_layouts_soft_wrap_ = false;
   wrapped_row_layouts_folding_model_ = nullptr;
   wrapped_row_layouts_fold_revision_ = 0;
+  wrapped_row_layouts_content_revision_ = 0;
   wrapped_row_layouts_trivial_ = false;
   wrapped_row_layouts_fold_no_wrap_ = false;
 }

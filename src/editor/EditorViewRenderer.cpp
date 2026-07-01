@@ -556,6 +556,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   // cache cannot serve by reference); reused across rows so the wrap path does
   // not re-allocate its string/vectors each iteration.
   LayoutLine wrapped_layout_scratch;
+  // Resolve the caret's visual row once per frame; the soft-wrap layout only
+  // needs it to flag the caret row, and recomputing it per visible row is an
+  // O(visible_rows * caret_column) redundancy.
+  const std::size_t caret_visual_row = soft_wrap ? viewport.cursor_visual_row() : 0;
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= viewport.visual_line_count()) {
@@ -567,7 +571,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // owned scratch, the common branch hands back the cache entry in place. This
     // avoids copying the LayoutLine (string + 2 vectors) per visible row.
     const LayoutLine& row_layout =
-        soft_wrap ? (wrapped_layout_scratch = viewport.VisibleWrappedRowLayout(visual_row_index))
+        soft_wrap ? (wrapped_layout_scratch =
+                         viewport.VisibleWrappedRowLayout(visual_row_index, caret_visual_row))
                   : viewport.VisibleLineLayoutRef(line_index);
     // Caret is per-call (not baked into the cached layout): the wrap branch
     // already resolved it onto the scratch; the common branch resolves it here.
